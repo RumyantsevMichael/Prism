@@ -1,0 +1,8 @@
+{
+  "name": "lux",
+  "description": "Spec-driven agentic engineering workflow: roadmap → ideate → plan → design → implement, with debug, refactor, and orchestration. ADRs, Gherkin feature files, and dependency-ordered track plans as the spec layer.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Michael Rumyantsev"
+  }
+}
