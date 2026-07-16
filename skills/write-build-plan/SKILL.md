@@ -1,7 +1,7 @@
 ---
 name: write-build-plan
 description: Author or update a track's build plan in the plans directory — build order, reuse map, plug points, tests, risks. Use when planning how to build one track of an initiative.
-argument-hint: [initiative/track]
+argument-hint: '[initiative/track]'
 ---
 
 # Write build plan

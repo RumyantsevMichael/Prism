@@ -1,7 +1,7 @@
 ---
 name: implement
 description: Drive a feature's implementation session — validate the spec, write tests first, implement to green, verify, security-audit the diff. Invoke in a fresh session to build a track from its handoff in the plans directory.
-argument-hint: [initiative/track]
+argument-hint: '[initiative/track]'
 ---
 
 # Implement a feature

@@ -1,7 +1,7 @@
 ---
 name: write-handoff
 description: Author a track's implementation handoff in the plans directory — authoritative inputs, locked constraints, model/effort. Use when wrapping up a design session.
-argument-hint: [initiative/track]
+argument-hint: '[initiative/track]'
 ---
 
 # Write handoff

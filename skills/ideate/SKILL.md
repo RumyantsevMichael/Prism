@@ -2,7 +2,7 @@
 name: ideate
 description: Shape a raw, shapeless idea into one or more Proposed ADRs — brainstorm it, challenge it, and fit it into the existing system — so a later /plan or /design session can take it up. Use when the user floats a shapeless idea.
 disable-model-invocation: true
-argument-hint: [idea]
+argument-hint: '[idea]'
 ---
 
 # Ideate on a fresh idea

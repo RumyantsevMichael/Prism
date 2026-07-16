@@ -1,7 +1,7 @@
 ---
 name: design
 description: Drive a feature's design session — ADR → technical design → plan + contracts + feature files → handoff — using subagents for exploration and drafting. Invoke to start the heavyweight spec-driven flow for a feature.
-argument-hint: [initiative/track]
+argument-hint: '[initiative/track]'
 ---
 
 # Design a feature

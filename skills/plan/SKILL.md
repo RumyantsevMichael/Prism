@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Drive an initiative's planning session — decompose a settled ADR cluster into dependency-ordered tracks, de-risk with spikes, define the release subset. Produces the initiative plan that feeds /design + /implement per track.
-argument-hint: [initiative]
+argument-hint: '[initiative]'
 ---
 
 # Plan an initiative

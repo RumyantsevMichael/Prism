@@ -1,7 +1,7 @@
 ---
 name: validate-artifacts
 description: Adversarial pre-code validation of a track's spec (ADR, build plan, contracts, feature files) — try to implement contracts, break invariants, surface gaps. Use at the start of an implementation session, before coding.
-argument-hint: [initiative/track]
+argument-hint: '[initiative/track]'
 ---
 
 # Validate artifacts

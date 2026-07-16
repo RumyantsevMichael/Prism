@@ -1,7 +1,7 @@
 ---
 name: write-contracts
 description: Author or update a track's contracts in the plans directory — boundary interfaces/types, no implementations, ADR-cited. Use when pinning a track's shapes before implementation.
-argument-hint: [initiative/track]
+argument-hint: '[initiative/track]'
 ---
 
 # Write contracts

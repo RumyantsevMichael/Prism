@@ -2,7 +2,7 @@
 name: orchestrate
 description: Drive a whole initiative end to end — plan (if needed), then design → implement per track, running every independent track concurrently — by spawning and orchestrating subagent sessions. Invoke to run a multi-track initiative with every human gate still live.
 disable-model-invocation: true
-argument-hint: [initiative]
+argument-hint: '[initiative]'
 ---
 
 # Orchestrate an initiative

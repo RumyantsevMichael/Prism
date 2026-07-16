@@ -1,7 +1,7 @@
 ---
 name: roadmap
 description: Maintain the durable, priority-ordered roadmap of whole initiatives — the rung between product strategy and /plan. Survey and (re)prioritize into Now/Next/Later, or flip one initiative's state as plans land.
-argument-hint: [initiative]
+argument-hint: '[initiative]'
 ---
 
 # Maintain the roadmap
