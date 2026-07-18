@@ -87,9 +87,9 @@ Only an item that genuinely **blocks the launch** additionally surfaces as a roa
 
 ## Presenting decisions to the user
 
-When a session surfaces a decision that is the user's to make — at a gate, or any choice you cannot resolve from the spec — state it **plainly first**: the situation in everyday terms, the concrete choice, and your recommendation. Lead with that framing; cite the ADR / track / section *after*, as the paper trail, never as the explanation.
+When a session surfaces a decision that is the user's to make — at a gate, or any choice you cannot resolve from the spec — state it **in plain language first**: the situation in everyday terms, the concrete choice, and your recommendation. Lead with that framing; cite the ADR / track / section *after*, as the paper trail, never as the explanation.
 
-The user reviews as an informed engineer, not as a co-author of the spec's vocabulary — so "the session cache is wiped on restart, so signing out one device would silently sign out the others" lands where "the `SessionRegistry` isn't persisted" does not. Keep the rigor in the artifacts; keep the conversation plain.
+The user reviews as an informed engineer, not as a co-author of the spec's vocabulary — so "the session cache is wiped on restart, so signing out one device would silently sign out the others" lands where "the `SessionRegistry` isn't persisted" does not. Keep the rigor in the artifacts; keep the conversation in plain language. This governs the *wording*, never the delivery mechanism — see below.
 
 ### How to deliver the question
 
