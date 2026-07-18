@@ -13,13 +13,16 @@ until the user guide reflects it.
 
 Project settings for this workflow live in `.claude/workflow-config.md` at the
 project root (created by the `workflow-init` skill). Read it first if it
-exists; it overrides the default paths below. If absent, use the defaults and
-the project's own CLAUDE.md conventions.
+exists — it overrides the default paths and stack assumptions below. If
+absent, use the defaults and the project's own CLAUDE.md conventions. The
+session map and lifecycle rules live in the `workflow` overview skill.
 
 Before writing, read:
 
-1. The user guide's `README.md` — the index, any maturity disclaimer, and the
-   page map. Match its structure and tone.
+1. The user guide's `README.md` — the index, the maturity disclaimer, and the
+   page map. Match its structure and tone. The index is expected to carry a
+   maturity disclaimer: a user guide should state plainly how mature and
+   complete the product is. If one is missing, add it.
 2. The specific page(s) you're changing, plus any sibling page they cross-link.
 3. The glossary (default `/docs/Glossary.md`) — use terms exactly as defined
    there; do not coin user-facing synonyms for established concepts.
@@ -48,7 +51,8 @@ it belongs in the developer docs, not here.
 1. **Honesty about maturity is non-negotiable.** Describe what *runs today*
    plainly. Mark anything not yet shipped as **Planned** — never document a
    feature as available before it ships. When unsure whether something works,
-   verify against the code before claiming it.
+   verify against the implementing module in the source tree before claiming
+   it.
 
 2. **One source of truth per fact.** Ports, defaults, and paths come from the
    authoritative config module or ADR — restate them only where a user needs

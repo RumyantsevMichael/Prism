@@ -14,8 +14,10 @@ the *initiative* plan one altitude up — `/docs/plans/<initiative>/plan.md` —
 different artifact; this skill authors the per-track **build plan**.)
 
 Project settings for this workflow live in `.claude/workflow-config.md` at the
-project root (created by the `workflow-init` skill). Read it first if it exists;
-it overrides the default paths and stack assumptions below.
+project root (created by the `workflow-init` skill). Read it first if it exists —
+it overrides the default paths and stack assumptions below. If absent, use the
+defaults and the project's own CLAUDE.md conventions. The session map and
+lifecycle rules live in the `workflow` overview skill.
 
 The build plan and the contracts are **mutually validating** and authored in
 parallel. The contracts own *shapes*; the build plan owns *sequence, reuse, and

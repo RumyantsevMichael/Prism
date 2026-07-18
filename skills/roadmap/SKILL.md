@@ -9,7 +9,7 @@ argument-hint: '[initiative]'
 This is the rung **one altitude above `/plan`**: it orders **whole initiatives** by **priority** (the one thing `/plan` is forbidden to do) and is the **only durable** planning surface.
 It answers "what do we do next, why this not that, and what blocks what" — never "how do we build one initiative" (that is `/plan`).
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists; it overrides the default paths and stack assumptions below. If absent, use the defaults and the project's own CLAUDE.md conventions. The session map and lifecycle rules live in the `workflow` overview skill.
+Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists — it overrides the default paths and stack assumptions below. If absent, use the defaults and the project's own CLAUDE.md conventions. The session map and lifecycle rules live in the `workflow` overview skill.
 
 The artifact is the roadmap file (default `/docs/roadmap.md`) — a single **durable, living** file.
 Unlike the one-shot skills, the roadmap is **not** authored once: it is revisited continuously as new information arrives.
@@ -30,7 +30,7 @@ Run **inline with the user**; delegate the read-heavy "what exists / what shippe
   Band (priority) and arrow (dependency) are orthogonal — keep both visible; never collapse to one axis.
   Sequencing whole initiatives is **not** phasing a design (see Conventions).
 3. **Check band load, sub-order if overloaded.**
-  A band — especially **Now** — feeds a finite delivery lane.
+  A band — especially **Now** — feeds a finite delivery lane (tracks are built one per session, so the lane clears only as fast as that cadence allows).
   When a band holds more concurrent initiatives than that lane can actually advance, breadth *is* the risk: everything inches and nothing ships.
   Surface the overload explicitly, then add an explicit **within-band order** — a finer priority call than the band itself, answering "finish which before starting which."
   Favour initiatives that **unblock downstream nodes** (dependency-aware priority — see **Prioritization lenses**).
@@ -47,6 +47,8 @@ Run **inline with the user**; delegate the read-heavy "what exists / what shippe
   Each strategic question routes to a banding decision or a new ADR — never an indefinite parking lot.
 
 **Gate:** present the re-banded roadmap; the user accepts before you write it.
+Deliver this gate — and any banding fork you cannot resolve from the lenses — per **"How to deliver the question"** in the `workflow` overview skill.
+This applies to Mode A only; Mode B is ungated and asks the user nothing.
 
 ## Mode B — state flip (fired inside another session, no gate)
 
@@ -78,7 +80,7 @@ Three lenses, in the order you reach for them:
   **Won't, this cycle** goes to `parked` with a reason.
   This is the discipline behind "what comes off?" — adding to a band without demoting something is how a finite lane silently overcommits.
 - **Value vs effort, to spot quick wins.**
-  Within a band, pull near-done, low-effort, high-value nodes forward to bank progress;
+  Within a band, pull near-done, low-effort, high-value nodes forward to bank progress and release the bundle;
   name any high-effort/low-value node as a candidate to **park**, not sequence.
 
 **Deferred on purpose — RICE and ICE.**

@@ -13,8 +13,10 @@ drift, and say how to begin. One of three prep-bundle artifacts under the plans
 directory (default `/docs/plans/<initiative>/<track>/`).
 
 Project settings for this workflow live in `.claude/workflow-config.md` at the
-project root (created by the `workflow-init` skill). Read it first if it exists;
-it overrides the default paths below.
+project root (created by the `workflow-init` skill). Read it first if it exists —
+it overrides the default paths and stack assumptions below. If absent, use the
+defaults and the project's own CLAUDE.md conventions. The session map and
+lifecycle rules live in the `workflow` overview skill.
 
 Keep it **short** — it points at the ADR, contracts, build plan, the initiative
 spine, and feature files; it does not restate them. Its job is precedence, scope, and the non-negotiables, not a
@@ -64,7 +66,9 @@ each citing its ADR. These prevent design drift mid-implementation.
 
 ## Process
 
-- Follow the project's code-style rules and conventions.
+- Follow the project's code-style rules and conventions — these may auto-load for
+  the file types being edited, so check whether they already apply before going
+  looking for them.
 - Reuse / mirror existing patterns named in the build plan — do not reinvent.
 - Validate the spec first; report any gaps to the design session and wait for it to
   clarify — do not self-resolve a gap or proceed past it.

@@ -12,9 +12,10 @@ that cannot be executed is incomplete (unless the project's workflow-config
 marks feature files as spec-only).
 
 Project settings for this workflow live in `.claude/workflow-config.md` at the
-project root (created by the `workflow-init` skill). Read it first if it
-exists; it overrides the default paths and stack assumptions below. If absent,
-use the defaults and the project's own CLAUDE.md conventions.
+project root (created by the `workflow-init` skill). Read it first if it exists —
+it overrides the default paths and stack assumptions below. If absent, use the
+defaults and the project's own CLAUDE.md conventions. The session map and
+lifecycle rules live in the `workflow` overview skill.
 
 Before writing, read in order:
 1. The glossary (default `/docs/Glossary.md`) — use domain terms exactly as

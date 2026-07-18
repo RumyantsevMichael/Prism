@@ -9,7 +9,7 @@ argument-hint: '[initiative/track]'
 This is **design**: produce a **validated spec** and hand it to an implementation session.
 You run **inline with the user** and delegate the heavy reading and drafting to **subagents**, keeping your own context coherent and lean.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists; it overrides the default paths and stack assumptions below. If absent, use the defaults and the project's own CLAUDE.md conventions.
+Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists — it overrides the default paths and stack assumptions below. If absent, use the defaults and the project's own CLAUDE.md conventions. The session map and lifecycle rules live in the `workflow` overview skill.
 
 For a small change that needs no spec, don't run this — make the change directly
 under the project's baseline conventions.
@@ -99,6 +99,7 @@ Confirm the **right-size check** passed — the track as specified fits one fres
 if it didn't, present the **split** (a separate integration track + an updated
 DAG), not a single over-sized spec.
 Wait for the user to accept before the work moves to an implementation session (`/implement`).
+Put the acceptance question — and any fork you could not resolve from the spec — to the user per **"How to deliver the question"** in the `workflow` overview skill.
 
 **Expect validation feedback.**
 The artifacts are not done when you present them — the fresh implementation session's first act is to validate them adversarially and return gaps.

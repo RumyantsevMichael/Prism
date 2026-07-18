@@ -12,7 +12,7 @@ It takes an idea that has **no concrete shape yet** — a feature or a whole ini
 `/plan` or `/design` session picks up cold.
 You run **inline with the user** and delegate the read-heavy integration work to **subagents**, keeping your context lean.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists; it overrides the default paths below. If absent, use the defaults and the project's own CLAUDE.md conventions.
+Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists — it overrides the default paths and stack assumptions below. If absent, use the defaults and the project's own CLAUDE.md conventions. The session map and lifecycle rules live in the `workflow` overview skill.
 
 The job is **shaping and challenging, not specifying.**
 You decide *what the idea is, whether it should exist, and how it fits the system* — not how to build it.
@@ -85,6 +85,7 @@ Update the glossary if shaping the idea introduced a genuinely new term.
 Stop and present the Proposed ADR(s) — or the reasoned recommendation to **not**
 build, with no ADR.
 **Open no plan, design no track, write no code.**
+Put the acceptance — and any build-or-kill fork you reached — to the user per **"How to deliver the question"** in the `workflow` overview skill.
 Wait for the user to accept the shaping, then **recommend the next step** and why:
 
 - **Self-contained feature** (one ADR) → `/design`.

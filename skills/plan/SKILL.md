@@ -9,7 +9,7 @@ argument-hint: '[initiative]'
 This is the **plan**, one altitude above `/design` + `/implement`: it takes a body of work spanning several ADRs and decomposes it into **tracks**, each of which then becomes its own design → implement cycle.
 You run **inline with the user** and delegate the ADR/codebase reading to **subagents**, keeping your context lean.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists; it overrides the default paths below. If absent, use the defaults and the project's own CLAUDE.md conventions.
+Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists — it overrides the default paths and stack assumptions below. If absent, use the defaults and the project's own CLAUDE.md conventions. The session map and lifecycle rules live in the `workflow` overview skill.
 
 Run this only when the work is genuinely multi-track.
 A single self-contained feature does not need a plan — start it at its ADR with `/design`.
@@ -27,7 +27,7 @@ Read first: the glossary (default `/docs/Glossary.md`) and the ADR cluster this 
 ## 1. Frame the initiative
 
 Settle with the user: the scope, which ADRs it sequences, what it *serves* (its
-roadmap node and, if the project has a strategy document, the pillar that node advances — cite both), and what "first release" means.
+roadmap node and the strategy pillar that node advances — cite both; if the project has no strategy document, say so explicitly rather than silently skipping the pillar), and what "first release" means.
 If this initiative has no roadmap node yet, add one (`/roadmap <initiative>`, Mode B) as part of framing.
 ADRs and the plan **co-evolve**: if decomposition surfaces an undecided question, that is a missing ADR — feed it back (load `write-adr`), don't bury the decision in the plan.
 
@@ -83,7 +83,7 @@ Each track's `/design` session nests its prep bundle inside as `<plans dir>/<ini
 ````markdown
 # <Initiative> — plan
 
-Serves: <its roadmap node> → <the strategy pillar it advances, if the project names pillars>.
+Serves: <its roadmap node> → <the strategy pillar it advances; if the project has no strategy document, write "no strategy document" rather than omitting this>.
 Sequences ADRs <list> into dependency-ordered tracks.
 This is a build-order plan, **not** a phased rollout — the architecture lands end-to-end;
 the order exists only to avoid dead-end work.
@@ -184,4 +184,5 @@ not-started / in-progress / blocked / deferred / done — kept in sync with the 
 Stop and present the plan.
 **Design no track yet.**
 Wait for the user to accept before any track enters `/design`.
+Deliver that acceptance question — and any scoping fork the plan raises — per **"How to deliver the question"** in the `workflow` overview skill.
 On acceptance, flip this initiative's roadmap node `envisioned → planned` (gains its ADRs + the plan deep-link) — a one-line edit per the roadmap's Mode B; no separate gate.

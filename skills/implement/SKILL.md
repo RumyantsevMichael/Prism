@@ -10,7 +10,7 @@ This is **implementation**: a single **fresh** session that validates the spec, 
 Run it in a new session — its independence from the design session is exactly what makes it a fair validator.
 The `workflow` overview skill places this session in the flow; this is the operational playbook.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists; it overrides the default paths and stack assumptions below (test runner, BDD harness, typecheck/lint commands, verification method). If absent, use the defaults and the project's own CLAUDE.md conventions.
+Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists — it overrides the default paths and stack assumptions below. If absent, use the defaults and the project's own CLAUDE.md conventions. The session map and lifecycle rules live in the `workflow` overview skill.
 
 **One workflow skill per session** (the rule and its rationale live in the `workflow` overview skill).
 The nuance here: if `/plan` or `/design` already ran in this session, stop and have the user run `/implement` in a fresh one — the cold read *is* the validation pass.
@@ -81,6 +81,7 @@ If unfinished work remains, **the track is not done**: report it and re-scope it
 (A clean way to tell them apart: could a competent engineer finish it on a dev machine today? Then it's unfinished, and it blocks.)
 
 The user's confirmation of correctness completes the session.
+Ask for it — and put any residual-acceptance or re-scoping fork to the user — per **"How to deliver the question"** in the `workflow` overview skill.
 Do not propose a commit on your own — committing is user-initiated.
 When the user asks for one, prepare the message per the Git conventions in the `workflow` overview skill (or the project's own commit skill); that landing commit must also **accept the implemented ADRs** (flip each from `Status: Proposed` to `Status: Accepted` — the implementation session owns this transition, because acceptance means the decision survived being built and validated; see the ADR status lifecycle in the `workflow` overview skill).
 

@@ -13,8 +13,11 @@ of the implementation handoff — contracts pin *structure*, feature files pin
 `/docs/plans/<initiative>/<track>/`).
 
 Project settings for this workflow live in `.claude/workflow-config.md` at the
-project root (created by the `workflow-init` skill). Read it first if it exists;
-it names the project's language and paths and overrides the defaults below.
+project root (created by the `workflow-init` skill). Read it first if it exists —
+it overrides the default paths and stack assumptions below. If absent, use the
+defaults and the project's own CLAUDE.md conventions. The session map and
+lifecycle rules live in the `workflow` overview skill. The config also names the
+project's language, which this skill depends on.
 
 Writing contracts is **itself a design check**: types force under-specification into
 the open. If a shape is hard to name or a field's meaning is unclear, the design is
@@ -37,7 +40,7 @@ files you are pairing with.
 
 ## Where it lives
 
-`<plans-dir>/<initiative>/<track>/contracts.ts` (extension per the project's
+`<plans-dir>/<initiative>/<track>/contracts.<ext>` (extension per the project's
 language), alongside `build-plan.md` and `handoff.md`. It is **scratch** — the
 durable version is the real interfaces the implementer writes into the codebase.
 So it may redeclare existing repo types locally (see below) without colliding

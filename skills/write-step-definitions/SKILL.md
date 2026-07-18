@@ -12,8 +12,9 @@ must remain clean of this knowledge; step definitions embrace it.
 
 Project settings for this workflow live in `.claude/workflow-config.md` at the
 project root (created by the `workflow-init` skill). Read it first if it
-exists; it names the test runner, BDD harness, and acceptance-test location.
-If absent, use the defaults below and the project's own CLAUDE.md conventions.
+exists — it overrides the default paths and stack assumptions below. If
+absent, use the defaults and the project's own CLAUDE.md conventions. The
+session map and lifecycle rules live in the `workflow` overview skill.
 
 Before writing, read in order:
 1. The feature file being implemented — understand every step's domain meaning
@@ -126,15 +127,67 @@ design.
 
 Many When steps require driving the system — running a loop, processing a
 queue, advancing a workflow. Put that drive logic in shared helpers (e.g.
-`tests/helpers/`), not inline in step definitions:
+`tests/helpers/`), not inline in step definitions.
 
-- If the system runs continuously, give tests a clean termination mechanism —
-  a sentinel error or stop condition defined **once** in a shared helper and
-  imported everywhere (an `instanceof` check depends on reference equality of
-  the class, so never redefine it per file).
-- Provide named helpers for common drive patterns ("run until the handoff",
-  "process exactly N events") and add new ones to the helper module when a
-  pattern repeats.
+### Terminating a continuously-running system — the sentinel throw
+
+A system under test that runs continuously (an iteration loop, a queue worker,
+an event pump, a workflow engine) never returns on its own, so a test that
+starts it would hang. The technique: give the test a way to **throw a sentinel
+error from inside a lifecycle hook or callback the system invokes**, and have
+the shared drive helper **catch that sentinel at the driver boundary** and stop
+the loop cleanly. Any other error propagates and fails the scenario, so a real
+bug is never swallowed.
+
+The sentinel type must be defined **once** in a shared helper and imported
+everywhere. An identity check (`instanceof`, `isinstance`, type matching)
+depends on reference equality of the class, so a per-file redefinition silently
+stops matching and the loop runs forever.
+
+*One worked example — the same shape applies in any language with typed
+exceptions.*
+
+```typescript
+// tests/helpers/loop-break.ts — defined once, imported everywhere
+export class LoopBreak extends Error {
+  constructor() { super('loop break'); }
+}
+```
+
+```typescript
+// In a step: throw from inside a hook the system calls
+given<State>('the system stops after the first iteration', (state) => {
+  state.hooks.onIterationComplete = () => { throw new LoopBreak(); };
+});
+```
+
+```typescript
+// In the shared drive helper: catch at the driver boundary
+export async function driveUntilLoopBreak(config: Config): Promise<void> {
+  try {
+    await runSystem(config);
+  } catch (err) {
+    if (!(err instanceof LoopBreak)) throw err;
+  }
+}
+```
+
+### Drive-helper shapes
+
+Provide named helpers for the two recurring patterns, each taking the
+scenario's config/state as its argument:
+
+```typescript
+// Drive until a predicate holds — the condition the scenario cares about
+await driveUntilHandoff(config);
+await driveUntilLoopBreak(config);
+
+// Drive for exactly N iterations
+await driveForIterations(config, 2);
+```
+
+If a needed helper does not exist, add it to the shared helpers module. Do not
+inline loop-running logic in step definitions.
 
 ---
 

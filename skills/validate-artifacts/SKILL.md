@@ -30,9 +30,7 @@ distinct:
 - **Live verification** validates the *running system* — after code, for what tests
   cannot capture.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the
-project root (created by the `workflow-init` skill); read it first if it exists —
-it overrides the default paths below.
+Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists — it overrides the default paths and stack assumptions below. If absent, use the defaults and the project's own CLAUDE.md conventions. The session map and lifecycle rules live in the `workflow` overview skill.
 
 Read the handoff first (default
 `/docs/plans/<initiative>/<track>/handoff.md`) — it names the authoritative

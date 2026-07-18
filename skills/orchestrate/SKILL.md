@@ -11,7 +11,7 @@ This is **orchestration**: the same `plan` → `design` → `implement` flow the
 `workflow` overview skill defines, run as a chain of **subagent sessions** you
 spawn and orchestrate, instead of sessions the user opens and closes by hand.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists; it overrides the default paths below. If absent, use the defaults and the project's own CLAUDE.md conventions.
+Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists — it overrides the default paths and stack assumptions below. If absent, use the defaults and the project's own CLAUDE.md conventions. The session map and lifecycle rules live in the `workflow` overview skill.
 
 It is the **one exception** to "one workflow skill per session" — this skill's
 entire job is to *chain* the others. It never authors an ADR, plan, contract, or
@@ -36,7 +36,10 @@ point of this skill is to remove the manual session-switch; re-introducing a
 The only things that ever stop the chain are: a subagent escalating a real
 question (step 1's dial), a terminal Gate that the underlying skill itself
 requires the user to accept, or a track ending unfinished. Outside those three,
-keep moving without asking.
+keep moving without asking. When one of the three *does* stop the chain, deliver
+it per **"How to deliver the question"** in the `workflow` overview skill — a
+structured prompt by default, plain text if workflow-config says so; that
+delivery is for real forks only, never for the motion above.
 
 ## 1. Set this run's autonomy contract
 
@@ -104,8 +107,9 @@ from that point forward, not retroactively.
 ## 3. Plan phase (only when no plan exists)
 
 Spawn a subagent named `plan-<initiative>` loading the `plan` skill for this
-initiative. State a model/effort for it yourself — there is no upstream
-recommendation to inherit here. Instruct it explicitly, at the
+initiative. State a model/effort for it yourself, in the model/effort
+recommendation format the `workflow` overview skill defines — there is no
+upstream recommendation to inherit here. Instruct it explicitly, at the
 decision-autonomy level set in step 1:
 
 > Resolve anything answerable from existing ADRs, the glossary, the product
@@ -184,7 +188,8 @@ concurrently.
 
 Spawn a subagent named `design-<track>` loading the `design` skill for
 `<initiative>/<track>`, with the same decision-autonomy-scoped instruction as
-step 3 and your own model/effort call. Run the orchestrator loop until it reaches
+step 3 and your own model/effort call, in the format the `workflow` overview
+skill defines. Run the orchestrator loop until it reaches
 its Gate (artifacts presented, right-size check stated).
 
 Present the artifacts and the right-size check to the user yourself. **Wait for
