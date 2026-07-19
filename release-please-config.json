@@ -5,6 +5,7 @@
       "release-type": "simple",
       "package-name": "prism",
       "include-component-in-tag": false,
+      "bump-minor-pre-major": true,
       "extra-files": [
         {
           "type": "json",

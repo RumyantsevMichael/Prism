@@ -63,6 +63,10 @@ Because skills are prompts rather than code, the levels map to workflow behavior
 - **MINOR** - a new skill, a new capability inside an existing skill, or a new optional config key.
 - **PATCH** - wording, clarity, and correctness fixes that leave the workflow's shape and artifacts unchanged.
 
+While the version is below `1.0.0`, those levels are shifted down one: a breaking change bumps the minor, not the major.
+This is release-please's `bump-minor-pre-major` setting, and it keeps the plugin in `0.x` while the workflow's shape is still moving.
+Reaching `1.0.0` should be a deliberate decision that the skill set and its artifacts are stable, not the automatic consequence of the first breaking change.
+
 `version` lives only in `.claude-plugin/plugin.json`.
 It is deliberately not mirrored into the marketplace entry: Claude Code pins the plugin if a version is set in either file, so two copies could drift and silently stop users from receiving updates.
 
