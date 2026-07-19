@@ -94,6 +94,15 @@ Check that the proposed bump matches the actual behavior change before merging.
 
 To override the computed version, add a `Release-As: 1.0.0` footer to a commit on `main`.
 
+### Release workflow setup
+
+The release workflow authenticates with a `RELEASE_PLEASE_TOKEN` repository secret, a fine-grained personal access token scoped to this repository with **Contents** and **Pull requests** set to read/write.
+It is used instead of the default `GITHUB_TOKEN` because pull requests opened by `GITHUB_TOKEN` do not trigger other workflows, which would leave the release pull request unvalidated by CI.
+
+If that secret is missing or expired, the workflow falls back to `GITHUB_TOKEN`.
+That fallback only works when **Allow GitHub Actions to create and approve pull requests** is enabled under Settings, Actions, General, Workflow permissions.
+With neither in place the job fails with `GitHub Actions is not permitted to create or approve pull requests`.
+
 Run `claude plugin validate . --strict` before merging a release pull request.
 CI runs it on every push, but the release pull request is the last point where a broken manifest can still be caught cheaply.
 
