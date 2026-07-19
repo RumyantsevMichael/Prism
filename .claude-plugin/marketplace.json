@@ -1,21 +1,21 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
-  "name": "lux",
-  "description": "Home of the lux plugin — a spec-driven agentic engineering workflow for Claude Code.",
+  "name": "prism",
+  "description": "Home of the prism plugin — a spec-driven agentic engineering workflow for Claude Code.",
   "owner": {
     "name": "Michael Rumyantsev"
   },
   "plugins": [
     {
-      "name": "lux",
+      "name": "prism",
       "source": "./",
-      "displayName": "Lux",
+      "displayName": "Prism",
       "description": "Spec-driven agentic engineering workflow: roadmap → ideate → plan → design → implement, with orchestration across tracks.",
       "author": {
         "name": "Michael Rumyantsev"
       },
-      "homepage": "https://github.com/RumyantsevMichael/Lux#readme",
-      "repository": "https://github.com/RumyantsevMichael/Lux",
+      "homepage": "https://github.com/RumyantsevMichael/Prism#readme",
+      "repository": "https://github.com/RumyantsevMichael/Prism",
       "license": "MIT",
       "category": "workflow",
       "tags": [

@@ -1,15 +1,15 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
-  "name": "lux",
-  "displayName": "Lux",
+  "name": "prism",
+  "displayName": "Prism",
   "description": "Spec-driven agentic engineering workflow: roadmap → ideate → plan → design → implement, with orchestration across tracks. ADRs, Gherkin feature files, and dependency-ordered track plans as the spec layer.",
   "version": "0.1.0",
   "author": {
     "name": "Michael Rumyantsev",
     "url": "https://github.com/RumyantsevMichael"
   },
-  "homepage": "https://github.com/RumyantsevMichael/Lux#readme",
-  "repository": "https://github.com/RumyantsevMichael/Lux",
+  "homepage": "https://github.com/RumyantsevMichael/Prism#readme",
+  "repository": "https://github.com/RumyantsevMichael/Prism",
   "license": "MIT",
   "keywords": [
     "workflow",

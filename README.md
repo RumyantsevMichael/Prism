@@ -1,4 +1,4 @@
-# lux
+# prism
 
 A spec-driven agentic engineering workflow for Claude Code — one beam of an idea in, an ordered spectrum of shippable tracks out.
 
@@ -9,53 +9,53 @@ Small changes skip the flow entirely.
 
 | Rung | Skill | Job |
 |---|---|---|
-| Priority | `lux:roadmap` | Order whole initiatives Now/Next/Later |
-| Shaping *(optional)* | `lux:ideate` | Brainstorm a shapeless idea into Proposed ADR(s) — or kill it |
-| Build order | `lux:plan` | Decompose a multi-ADR initiative into dependency-ordered tracks |
-| Spec | `lux:design` | Per track: ADR ⇄ design → contracts + build plan + feature files → handoff |
-| Build | `lux:implement` | Fresh session: validate the spec, tests first, implement to green |
+| Priority | `prism:roadmap` | Order whole initiatives Now/Next/Later |
+| Shaping *(optional)* | `prism:ideate` | Brainstorm a shapeless idea into Proposed ADR(s) — or kill it |
+| Build order | `prism:plan` | Decompose a multi-ADR initiative into dependency-ordered tracks |
+| Spec | `prism:design` | Per track: ADR ⇄ design → contracts + build plan + feature files → handoff |
+| Build | `prism:implement` | Fresh session: validate the spec, tests first, implement to green |
 
-`lux:orchestrate` chains plan → design → implement across tracks via fresh subagent sessions.
+`prism:orchestrate` chains plan → design → implement across tracks via fresh subagent sessions.
 The `write-*` skills and `validate-artifacts` are sub-skills loaded inside sessions, never sessions of their own.
 Defect repair sits outside the flow: diagnose and report against the settled spec before any fix.
 
-Start with `lux:workflow` for the full picture — session discipline, cross-session lifecycles, and the durable-artifact rules.
+Start with `prism:workflow` for the full picture — session discipline, cross-session lifecycles, and the durable-artifact rules.
 
 ## Install
 
 In Claude Code:
 
 ```
-/plugin marketplace add RumyantsevMichael/Lux
-/plugin install lux@lux
+/plugin marketplace add RumyantsevMichael/Prism
+/plugin install prism@prism
 ```
 
-Then, in each project, run `/lux:workflow-init` once — it inspects the project, interviews you, and writes `.claude/workflow-config.md` (doc paths, stack, verification, tracker, commit conventions).
-Every lux skill reads that file first.
+Then, in each project, run `/prism:workflow-init` once — it inspects the project, interviews you, and writes `.claude/workflow-config.md` (doc paths, stack, verification, tracker, commit conventions).
+Every prism skill reads that file first.
 
 Without a config, skills fall back to the default layout: `/docs/ADRs/`, `/docs/plans/`, `/docs/Features/`, `/docs/roadmap.md`, `/docs/Glossary.md`, `/docs/user-guide/`.
 
 ### For a whole team
 
-Commit this to a project's `.claude/settings.json` so collaborators get lux on clone:
+Commit this to a project's `.claude/settings.json` so collaborators get prism on clone:
 
 ```json
 {
   "extraKnownMarketplaces": {
-    "lux": { "source": { "source": "github", "repo": "RumyantsevMichael/Lux" } }
+    "prism": { "source": { "source": "github", "repo": "RumyantsevMichael/Prism" } }
   },
-  "enabledPlugins": { "lux@lux": true }
+  "enabledPlugins": { "prism@prism": true }
 }
 ```
 
 ## Updating
 
 ```
-/plugin marketplace update lux
-/plugin update lux@lux
+/plugin marketplace update prism
+/plugin update prism@prism
 ```
 
-To stay on a fixed release instead of tracking `main`, add the marketplace at a tag: `/plugin marketplace add RumyantsevMichael/Lux@v0.1.0`.
+To stay on a fixed release instead of tracking `main`, add the marketplace at a tag: `/plugin marketplace add RumyantsevMichael/Prism@v0.1.0`.
 
 Releases follow semantic versioning and are recorded in [CHANGELOG.md](CHANGELOG.md).
 A major bump means a skill was renamed or removed, or that artifacts written by an earlier version need migrating - the changelog says which.

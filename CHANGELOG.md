@@ -11,4 +11,4 @@
 - `workflow-init` to interview a project and write `.claude/workflow-config.md`.
 - Plugin and marketplace manifests, so the repo installs as a Claude Code plugin.
 
-[0.1.0]: https://github.com/RumyantsevMichael/Lux/releases/tag/v0.1.0
+[0.1.0]: https://github.com/RumyantsevMichael/Prism/releases/tag/v0.1.0

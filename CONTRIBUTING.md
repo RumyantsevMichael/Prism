@@ -1,6 +1,6 @@
-# Contributing to lux
+# Contributing to prism
 
-lux is a Claude Code plugin whose content is almost entirely prompts.
+prism is a Claude Code plugin whose content is almost entirely prompts.
 There is no build step and nothing to compile: a change is a change to Markdown that Claude reads at session time.
 
 ## Repository layout
@@ -22,10 +22,10 @@ Putting a component directory inside `.claude-plugin/` is the most common way to
 Load the working tree into a live session:
 
 ```bash
-claude --plugin-dir path/to/lux
+claude --plugin-dir path/to/prism
 ```
 
-Skills resolve under the plugin namespace, so `/lux:design` runs the local copy.
+Skills resolve under the plugin namespace, so `/prism:design` runs the local copy.
 A `--plugin-dir` plugin shadows an installed one of the same name for that session, so you can test against a version you already have installed.
 
 After editing a skill, run `/reload-plugins` to pick it up without restarting.
@@ -49,7 +49,7 @@ To validate `plugin.json` in isolation, copy the plugin into a scratch directory
   Prefer concrete trigger phrases over abstract summary.
 - **Add `disable-model-invocation: true`** for skills that should only ever run when the user explicitly asks, rather than being auto-selected mid-task.
 - **Use `argument-hint`** for skills that take a target, and quote the value in YAML when it starts with `[`.
-- **Sibling references resolve under the plugin namespace.** When a skill says "load `write-adr`", that means `lux:write-adr`.
+- **Sibling references resolve under the plugin namespace.** When a skill says "load `write-adr`", that means `prism:write-adr`.
   Names outside the plugin's own set resolve to Claude Code built-ins or project-local skills, and the `workflow` skill documents which are which.
   Keep that distinction intact when editing.
 - **Every session skill reads `.claude/workflow-config.md` first.** A new skill that touches project paths should follow the same convention and fall back to the documented defaults when the file is absent.

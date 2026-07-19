@@ -1,6 +1,6 @@
-# lux
+# prism
 
-lux is a Claude Code plugin distributed through its own marketplace.
+prism is a Claude Code plugin distributed through its own marketplace.
 Its content is prompts, not code: every skill is a Markdown file that Claude reads at session time.
 There is no build, no test suite, and no runtime.
 The consequence is that wording *is* behavior, and an edit that reads like a harmless rephrase can change what the plugin does.
@@ -35,7 +35,7 @@ A skill's frontmatter `description` is its trigger, not a summary: it decides wh
 Preserve both halves of it, what the skill does and when to use it, when editing.
 
 Skill files cross-reference each other.
-A reference to a sibling such as `write-adr` resolves under the plugin namespace as `lux:write-adr`, while a name outside the plugin's own set resolves to a Claude Code built-in or a project-local skill.
+A reference to a sibling such as `write-adr` resolves under the plugin namespace as `prism:write-adr`, while a name outside the plugin's own set resolves to a Claude Code built-in or a project-local skill.
 The `workflow` skill documents which names fall on which side.
 Keep that distinction intact.
 

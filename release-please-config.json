@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "package-name": "lux",
+      "package-name": "prism",
       "include-component-in-tag": false,
       "extra-files": [
         {

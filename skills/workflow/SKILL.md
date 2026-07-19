@@ -11,7 +11,7 @@ A small change that needs no spec skips the flow entirely: make it directly unde
 Project settings (paths, stack, tracker) live in `.claude/workflow-config.md` at the project root, created by the `workflow-init` skill.
 Read it if it exists; it overrides the default paths and stack assumptions below.
 
-The workflow skills named here — `roadmap`, `ideate`, `plan`, `design`, `implement`, `orchestrate`, `validate-artifacts`, and the `write-*` family — are siblings in this plugin: when one says "load `write-adr`" or "`/plan`", resolve it under the plugin's namespace (e.g. `lux:write-adr`, `/lux:plan`).
+The workflow skills named here — `roadmap`, `ideate`, `plan`, `design`, `implement`, `orchestrate`, `validate-artifacts`, and the `write-*` family — are siblings in this plugin: when one says "load `write-adr`" or "`/plan`", resolve it under the plugin's namespace (e.g. `prism:write-adr`, `/prism:plan`).
 Skills named here that are *not* in that list — `verify`, `run`, `security-review`, a commit skill, a repair skill — resolve outside it: to a Claude Code built-in, or to a project-local skill of that name.
 A project may also override any sibling with a local skill; the local one wins.
 
