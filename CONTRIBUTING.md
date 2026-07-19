@@ -76,13 +76,16 @@ Mark a breaking change with `!` after the type, as in `feat!:`, or a `BREAKING C
 
 **Any commit that changes a file under `skills/` is `feat:` or `fix:`, never `docs:`.**
 A skill is a prompt, so editing its wording changes what the plugin does.
-`docs:` is reserved for `README.md`, `CONTRIBUTING.md`, and `CHANGELOG.md`, the files that describe the plugin without being part of it.
+`docs:` is reserved for `README.md` and `CONTRIBUTING.md`, the files that describe the plugin without being part of it.
 Getting this wrong is silent: a behavior change committed as `docs:` produces no version bump, so it never reaches anyone who installed the plugin.
 
 ## Cutting a release
 
 Releases are automated with [release-please](https://github.com/googleapis/release-please).
 On every push to `main` it opens or updates a release pull request that bumps `version` in `.claude-plugin/plugin.json`, writes the `CHANGELOG.md` section, and computes the next version from the commits since the last release.
+
+`CHANGELOG.md` is generated from commit messages, so do not edit it by hand.
+Anything you want to appear there belongs in a commit subject.
 
 To ship, review that pull request and merge it.
 Merging tags the commit and publishes a GitHub Release.
