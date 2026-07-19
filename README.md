@@ -18,9 +18,42 @@ Changes big enough to need a spec move through dedicated sessions over a layered
 
 Start with `lux:workflow` for the full picture — session discipline, cross-session lifecycles, and the durable-artifact rules.
 
-## Setup
+## Install
 
-1. Place this plugin at `~/.claude/skills/lux/` (it auto-loads as `lux@skills-dir`; no install needed) or load it with `claude --plugin-dir path/to/lux`.
-2. In each project, run `/lux:workflow-init` once — it inspects the project, interviews you, and writes `.claude/workflow-config.md` (doc paths, stack, verification, tracker, commit conventions). Every lux skill reads that file first.
+In Claude Code:
+
+```
+/plugin marketplace add RumyantsevMichael/Lux
+/plugin install lux@lux
+```
+
+Then, in each project, run `/lux:workflow-init` once — it inspects the project, interviews you, and writes `.claude/workflow-config.md` (doc paths, stack, verification, tracker, commit conventions). Every lux skill reads that file first.
 
 Without a config, skills fall back to the default layout: `/docs/ADRs/`, `/docs/plans/`, `/docs/Features/`, `/docs/roadmap.md`, `/docs/Glossary.md`, `/docs/user-guide/`.
+
+To pin a release instead of tracking `main`, add the marketplace at a tag: `/plugin marketplace add RumyantsevMichael/Lux@v0.1.0`. Update later with `/plugin marketplace update lux` followed by `/plugin update lux@lux`.
+
+### Team-wide
+
+Commit this to a project's `.claude/settings.json` so collaborators get lux on clone:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "lux": { "source": { "source": "github", "repo": "RumyantsevMichael/Lux" } }
+  },
+  "enabledPlugins": { "lux@lux": true }
+}
+```
+
+### Local development
+
+Work on the plugin against a live session with `claude --plugin-dir path/to/lux`, and check the manifests with `claude plugin validate . --strict`.
+
+## Versioning
+
+Semantic versioning, with releases tagged and recorded in [CHANGELOG.md](CHANGELOG.md). Since skills are prompts, MAJOR means a skill was removed or renamed or its artifacts/config changed incompatibly; MINOR means new skills or capabilities; PATCH means clarity and correctness fixes that leave the workflow's shape intact.
+
+## License
+
+[MIT](LICENSE)

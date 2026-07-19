@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "lux",
   "description": "Home of the lux plugin — a spec-driven agentic engineering workflow for Claude Code.",
   "owner": {
@@ -8,7 +9,18 @@
     {
       "name": "lux",
       "source": "./",
-      "description": "Spec-driven agentic engineering workflow: roadmap → ideate → plan → design → implement, with orchestration across tracks."
+      "description": "Spec-driven agentic engineering workflow: roadmap → ideate → plan → design → implement, with orchestration across tracks.",
+      "category": "workflow",
+      "keywords": [
+        "workflow",
+        "spec-driven",
+        "adr",
+        "bdd",
+        "gherkin",
+        "planning",
+        "architecture",
+        "tdd"
+      ]
     }
   ]
 }
