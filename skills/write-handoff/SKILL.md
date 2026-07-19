@@ -6,33 +6,26 @@ argument-hint: '[initiative/track]'
 
 # Write handoff
 
-The handoff is the **prompt that starts implementation**. It hands a validated spec to a
-fresh implementation session that has none of the design session's context, so
-it must be self-contained: point at the authoritative artifacts, fix what must not
-drift, and say how to begin. One of three prep-bundle artifacts under the plans
-directory (default `/docs/plans/<initiative>/<track>/`).
+The handoff is the **prompt that starts implementation**.
+It hands a validated spec to a fresh implementation session that has none of the design session's context, so it must be self-contained: point at the authoritative artifacts, fix what must not drift, and say how to begin.
+One of three prep-bundle artifacts under the plans directory (default `/docs/plans/<initiative>/<track>/`).
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the
-project root (created by the `workflow-init` skill). Read it first if it exists —
-it overrides the default paths and stack assumptions below. If absent, use the
-defaults and the project's own CLAUDE.md conventions. The session map and
-lifecycle rules live in the `workflow` overview skill.
+Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Read it first if it exists — it overrides the default paths and stack assumptions below.
+If absent, use the defaults and the project's own CLAUDE.md conventions.
+The session map and lifecycle rules live in the `workflow` overview skill.
 
-Keep it **short** — it points at the ADR, contracts, build plan, the initiative
-spine, and feature files; it does not restate them. Its job is precedence, scope, and the non-negotiables, not a
-re-derivation of the design.
+Keep it **short** — it points at the ADR, contracts, build plan, the initiative spine, and feature files; it does not restate them.
+Its job is precedence, scope, and the non-negotiables, not a re-derivation of the design.
 
-The handoff is written at the **end of the design session**, before the user-acceptance
-gate. The fresh session's *first* act is to validate these same artifacts
-(`validate-artifacts`) and feed gaps back — so the handoff should make that easy by
-naming the inputs precisely.
+The handoff is written at the **end of the design session**, before the user-acceptance gate.
+The fresh session's *first* act is to validate these same artifacts (`validate-artifacts`) and feed gaps back — so the handoff should make that easy by naming the inputs precisely.
 
 ---
 
 ## Where it lives
 
-`<plans-dir>/<initiative>/<track>/handoff.md`, alongside `build-plan.md` and
-the contracts file.
+`<plans-dir>/<initiative>/<track>/handoff.md`, alongside `build-plan.md` and the contracts file.
 
 ---
 
@@ -76,8 +69,8 @@ each citing its ADR. These prevent design drift mid-implementation.
 - Cite ADRs, never plan tracks, in durable artifacts.
 - Do not resolve an ADR/feature conflict yourself — stop and report.
 - Do not commit, push, or propose a commit on your own; only when the user asks,
-  prepare the message per the Git conventions in the `workflow` overview skill. That landing commit accepts the ADR(s) and — with
-  the user's approval — deletes the prep bundle.
+  prepare the message per the Git conventions in the `workflow` overview skill.
+  That landing commit accepts the ADR(s) and — with the user's approval — deletes the prep bundle.
 
 ## Suggested order
 
@@ -97,19 +90,13 @@ overview skill.)
 
 ## Conventions
 
-- **State input precedence and the conflict rule up front** — this is the single
-  most important thing the handoff does; it prevents drift.
-- **Locked constraints are restated facts, each ADR-cited** — the implementer
-  should not have to re-derive a settled decision, nor go looking for why.
-- **Recommend model + effort** — the handoff is a context boundary, so this is
-  where that recommendation belongs (not at the start of the design session).
-- **Validation gaps go back to design** — the implementer's first act is to validate
-  the spec; gaps are reported to the design session for clarification, never
-  self-resolved.
-- **Include a collaborative gate** — have the implementer propose the build order
-  and `// OPEN:` resolutions and confirm *before* coding.
-- **Keep it compact.** Point, don't restate. If you are copying design rationale in,
-  it belongs in the ADR.
+- **State input precedence and the conflict rule up front** — this is the single most important thing the handoff does; it prevents drift.
+- **Locked constraints are restated facts, each ADR-cited** — the implementer should not have to re-derive a settled decision, nor go looking for why.
+- **Recommend model + effort** — the handoff is a context boundary, so this is where that recommendation belongs (not at the start of the design session).
+- **Validation gaps go back to design** — the implementer's first act is to validate the spec; gaps are reported to the design session for clarification, never self-resolved.
+- **Include a collaborative gate** — have the implementer propose the build order and `// OPEN:` resolutions and confirm *before* coding.
+- **Keep it compact.** Point, don't restate.
+  If you are copying design rationale in, it belongs in the ADR.
 
 ---
 
@@ -120,3 +107,4 @@ overview skill.)
 - Every locked constraint cites an ADR; none reference plan tracks.
 - A justified model + effort recommendation is present.
 - It points at the artifacts rather than restating them.
+

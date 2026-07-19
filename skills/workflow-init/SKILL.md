@@ -6,7 +6,8 @@ disable-model-invocation: true
 
 # Initialize the workflow in this project
 
-Set up a project to use the workflow skills (see the `workflow` overview skill for what the flow is). The output is `.claude/workflow-config.md` — the single file every workflow skill reads first — plus the scaffolded docs directories.
+Set up a project to use the workflow skills (see the `workflow` overview skill for what the flow is).
+The output is `.claude/workflow-config.md` — the single file every workflow skill reads first — plus the scaffolded docs directories.
 
 If `.claude/workflow-config.md` already exists, read it and switch to update mode: confirm each existing value instead of asking cold.
 
@@ -21,14 +22,17 @@ Inspect the project first so the interview proposes rather than interrogates:
 
 ## 2. Interview
 
-Present findings as defaults and ask only what's genuinely open (plain-text options in the message body). Cover:
+Present findings as defaults and ask only what's genuinely open (plain-text options in the message body).
+Cover:
 
-1. **Doc paths** — ADRs, plans (scratch), feature files, roadmap, glossary, user-guide, and a product strategy document if one exists (`roadmap`/`ideate` consult it when present). Defaults: `/docs/ADRs/`, `/docs/plans/`, `/docs/Features/`, `/docs/roadmap.md`, `/docs/Glossary.md`, `/docs/user-guide/`.
+1. **Doc paths** — ADRs, plans (scratch), feature files, roadmap, glossary, user-guide, and a product strategy document if one exists (`roadmap`/`ideate` consult it when present).
+   Defaults: `/docs/ADRs/`, `/docs/plans/`, `/docs/Features/`, `/docs/roadmap.md`, `/docs/Glossary.md`, `/docs/user-guide/`.
 2. **Stack facts** — test command, BDD harness (or "none — feature files are spec-only"), typecheck/lint commands, whether lint is destructive (write-mode).
 3. **Verification** — how to prove a change works on this project (dev server, CLI, test suite only).
 4. **Tracker** — issue tracker and label conventions (defaults: GitHub, `type:bug`/`type:enhancement`, `area:*` scopes, `needs-design`).
 5. **Commit conventions** — scopes vocabulary, anything beyond the standard conventional-commit rules.
-6. **Interaction style** — how gates and decision forks should reach the user: `structured` (default; `AskUserQuestion` renders selectable options) or `plain-text` (a numbered list in the message body, answered in prose). Ask only if the user has a preference; otherwise take the default.
+6. **Interaction style** — how gates and decision forks should reach the user: `structured` (default; `AskUserQuestion` renders selectable options) or `plain-text` (a numbered list in the message body, answered in prose).
+   Ask only if the user has a preference; otherwise take the default.
 7. **Constraints** — anything the skills must never do here (e.g. never touch generated dirs, no pushes, sign-off requirements).
 
 ## 3. Write the config
@@ -77,7 +81,8 @@ Write `.claude/workflow-config.md` with exactly these sections (omit none; use "
 - <project-specific MUST NOTs>
 ```
 
-`Interaction style` picks how gates and decision forks reach the user: `structured` (the default) uses the `AskUserQuestion` tool to render selectable options; `plain-text` presents the same options as a numbered list in the message body, answered in prose. It changes delivery only — the framing rule in the `workflow` overview skill applies either way.
+`Interaction style` picks how gates and decision forks reach the user: `structured` (the default) uses the `AskUserQuestion` tool to render selectable options; `plain-text` presents the same options as a numbered list in the message body, answered in prose.
+It changes delivery only — the framing rule in the `workflow` overview skill applies either way.
 
 ## 4. Scaffold
 
@@ -92,4 +97,6 @@ Do not scaffold over existing files; integrate with what's there.
 
 ## 5. Close
 
-Summarize what was written and where, and point the user at the `workflow` skill for the map. Do not commit — committing is user-initiated.
+Summarize what was written and where, and point the user at the `workflow` skill for the map.
+Do not commit — committing is user-initiated.
+

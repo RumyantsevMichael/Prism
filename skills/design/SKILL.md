@@ -9,10 +9,12 @@ argument-hint: '[initiative/track]'
 This is **design**: produce a **validated spec** and hand it to an implementation session.
 You run **inline with the user** and delegate the heavy reading and drafting to **subagents**, keeping your own context coherent and lean.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill). Read it first if it exists — it overrides the default paths and stack assumptions below. If absent, use the defaults and the project's own CLAUDE.md conventions. The session map and lifecycle rules live in the `workflow` overview skill.
+Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Read it first if it exists — it overrides the default paths and stack assumptions below.
+If absent, use the defaults and the project's own CLAUDE.md conventions.
+The session map and lifecycle rules live in the `workflow` overview skill.
 
-For a small change that needs no spec, don't run this — make the change directly
-under the project's baseline conventions.
+For a small change that needs no spec, don't run this — make the change directly under the project's baseline conventions.
 
 **One workflow skill per session** (the rule and its rationale live in the `workflow` overview skill).
 The nuance here: never roll straight into `/implement` after this — that session must be fresh to validate the spec fairly.
@@ -25,20 +27,17 @@ Read first: the glossary (default `/docs/Glossary.md`), the initiative spine + t
 
 ## 1. Start from the right artifact
 
-- **Mark the track started.**
-  Flip this track `not-started → in-progress` — both its node class in the spine's Mermaid DAG (`plan.md`) and the `Status` in its `<track>.md`.
+- **Mark the track started.** Flip this track `not-started → in-progress` — both its node class in the spine's Mermaid DAG (`plan.md`) and the `Status` in its `<track>.md`.
   Design beginning is when the track stops being not-started, so this is the board's `in-progress` transition; the implementation session owns the `→ done` flip at landing.
   If a dependency or undecided question actually blocks the track, set `blocked`/`deferred` with a one-line reason instead.
   If this is the **first** track of the initiative to enter design, also flip the initiative's roadmap node (default `/docs/roadmap.md`) `planned → in-progress` (roadmap Mode B).
   (Standalone feature: no spine to update, but the roadmap flip still applies — a standalone feature is an initiative of one track, so flip its node `→ in-progress`, adding the node first if it was never roadmapped; Mode B covers both.)
-- **Track-feasibility spike first.**
-  If the initiative plan named a feasibility spike against this track, run it now — its finding shapes the ADR, so it must resolve before the design settles.
+- **Track-feasibility spike first.** If the initiative plan named a feasibility spike against this track, run it now — its finding shapes the ADR, so it must resolve before the design settles.
   Record the finding in the track file's *Spike findings*.
 - **New feature/capability → open an ADR**, created `Proposed` (load `write-adr`).
   It stays `Proposed` through this session — the implementation session accepts it.
   If the idea came through `/ideate`, the `Proposed` ADR **already exists** — start from it and refine it as the design settles, do not open a second one.
-- **Bug/unknown → investigate first**;
-  graduate to an ADR only if a real decision emerges.
+- **Bug/unknown → investigate first**; graduate to an ADR only if a real decision emerges.
 
 Delegate exploration (codebase, docs, web) to subagents so file dumps stay out of your context; you integrate their findings.
 
@@ -50,8 +49,7 @@ Update the glossary as new terms appear.
 
 ## 3. Draft build plan, contracts, and feature files
 
-Once the design settles, spawn subagents **in parallel**, each loading its skill
-and given the ADR and sibling-artifact paths (not inlined contents):
+Once the design settles, spawn subagents **in parallel**, each loading its skill and given the ADR and sibling-artifact paths (not inlined contents):
 
 - **contracts** (`write-contracts`) — the boundary shapes; may lead the build plan.
 - **build plan** (`write-build-plan`) — build order, reuse map, plug points, tests, risks.
@@ -94,14 +92,11 @@ Updating the spine and a sibling track file does not violate the one-skill-per-s
 ## Gate
 
 Stop and present the artifacts.
-**Write no implementation code.**
-Confirm the **right-size check** passed — the track as specified fits one fresh implementation session;
-if it didn't, present the **split** (a separate integration track + an updated
-DAG), not a single over-sized spec.
+**Write no implementation code.** Confirm the **right-size check** passed — the track as specified fits one fresh implementation session; if it didn't, present the **split** (a separate integration track + an updated DAG), not a single over-sized spec.
 Wait for the user to accept before the work moves to an implementation session (`/implement`).
 Put the acceptance question — and any fork you could not resolve from the spec — to the user per **"How to deliver the question"** in the `workflow` overview skill.
 
-**Expect validation feedback.**
-The artifacts are not done when you present them — the fresh implementation session's first act is to validate them adversarially and return gaps.
+**Expect validation feedback.** The artifacts are not done when you present them — the fresh implementation session's first act is to validate them adversarially and return gaps.
 Stay available: when the user relays those gaps back, clarify them here (update the ADR/contracts/feature files) while your context is still warm.
 Resolving the gap is *your* responsibility, not the implementer's; it resumes only once you have.
+
