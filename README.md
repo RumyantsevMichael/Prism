@@ -31,9 +31,7 @@ Then, in each project, run `/lux:workflow-init` once — it inspects the project
 
 Without a config, skills fall back to the default layout: `/docs/ADRs/`, `/docs/plans/`, `/docs/Features/`, `/docs/roadmap.md`, `/docs/Glossary.md`, `/docs/user-guide/`.
 
-To pin a release instead of tracking `main`, add the marketplace at a tag: `/plugin marketplace add RumyantsevMichael/Lux@v0.1.0`. Update later with `/plugin marketplace update lux` followed by `/plugin update lux@lux`.
-
-### Team-wide
+### For a whole team
 
 Commit this to a project's `.claude/settings.json` so collaborators get lux on clone:
 
@@ -46,22 +44,20 @@ Commit this to a project's `.claude/settings.json` so collaborators get lux on c
 }
 ```
 
-### Local development
+## Updating
 
-Work on the plugin against a live session with `claude --plugin-dir path/to/lux`, and check the manifests with `claude plugin validate . --strict`.
+```
+/plugin marketplace update lux
+/plugin update lux@lux
+```
 
-## Versioning
+To stay on a fixed release instead of tracking `main`, add the marketplace at a tag: `/plugin marketplace add RumyantsevMichael/Lux@v0.1.0`.
 
-Semantic versioning, with releases tagged and recorded in [CHANGELOG.md](CHANGELOG.md). Since skills are prompts, MAJOR means a skill was removed or renamed or its artifacts/config changed incompatibly; MINOR means new skills or capabilities; PATCH means clarity and correctness fixes that leave the workflow's shape intact.
+Releases follow semantic versioning and are recorded in [CHANGELOG.md](CHANGELOG.md). A major bump means a skill was renamed or removed, or that artifacts written by an earlier version need migrating - the changelog says which.
 
-`version` lives only in `.claude-plugin/plugin.json` - deliberately not mirrored into the marketplace entry, so there is one place to bump. Users receive an update only when that string changes.
+## Contributing
 
-To cut a release:
-
-1. Bump `version` in `.claude-plugin/plugin.json`.
-2. Move the `Unreleased` entries in `CHANGELOG.md` under the new version, and update the link refs at the bottom.
-3. `claude plugin validate . --strict`.
-4. `claude plugin tag . --push` - reads the manifest version and pushes the matching git tag.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for repository layout, local development, validation, and the release process.
 
 ## License
 
