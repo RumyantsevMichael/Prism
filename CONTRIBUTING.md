@@ -65,16 +65,34 @@ Because skills are prompts rather than code, the levels map to workflow behavior
 
 `version` lives only in `.claude-plugin/plugin.json`.
 It is deliberately not mirrored into the marketplace entry: Claude Code pins the plugin if a version is set in either file, so two copies could drift and silently stop users from receiving updates.
-One file, one bump.
 
 Users only receive an update when that string changes, so a shipped fix needs a version bump to reach anyone.
 
+## Commit messages
+
+Releases are generated from commit messages, so the prefix on a commit decides whether that change ever reaches users.
+Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `refactor:`, `style:`, `chore:`.
+Mark a breaking change with `!` after the type, as in `feat!:`, or a `BREAKING CHANGE:` footer.
+
+**Any commit that changes a file under `skills/` is `feat:` or `fix:`, never `docs:`.**
+A skill is a prompt, so editing its wording changes what the plugin does.
+`docs:` is reserved for `README.md`, `CONTRIBUTING.md`, and `CHANGELOG.md`, the files that describe the plugin without being part of it.
+Getting this wrong is silent: a behavior change committed as `docs:` produces no version bump, so it never reaches anyone who installed the plugin.
+
 ## Cutting a release
 
-1. Bump `version` in `.claude-plugin/plugin.json`.
-2. Move the `Unreleased` entries in `CHANGELOG.md` under the new version heading, and update the link references at the bottom of the file.
-3. `claude plugin validate . --strict`
-4. `claude plugin tag . --push` - reads the manifest version and pushes the matching git tag.
+Releases are automated with [release-please](https://github.com/googleapis/release-please).
+On every push to `main` it opens or updates a release pull request that bumps `version` in `.claude-plugin/plugin.json`, writes the `CHANGELOG.md` section, and computes the next version from the commits since the last release.
+
+To ship, review that pull request and merge it.
+Merging tags the commit and publishes a GitHub Release.
+Nothing is released until you merge, which is the point: the computed bump is a guess derived from commit prefixes, and semantic versioning for prompts is a judgment call.
+Check that the proposed bump matches the actual behavior change before merging.
+
+To override the computed version, add a `Release-As: 1.0.0` footer to a commit on `main`.
+
+Run `claude plugin validate . --strict` before merging a release pull request.
+CI runs it on every push, but the release pull request is the last point where a broken manifest can still be caught cheaply.
 
 Users on the default install track `main` and pick up the change on their next marketplace update.
 Users who pinned a tag stay put until they re-add at the new one.

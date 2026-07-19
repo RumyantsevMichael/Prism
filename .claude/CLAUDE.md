@@ -22,9 +22,12 @@ This applies to subagents as well: if you are dispatched to work on a file here,
 - **Run `claude plugin validate . --strict` before committing.**
   It parses both manifests and the frontmatter of every skill.
   CI runs the same command.
-- **`version` lives only in `.claude-plugin/plugin.json`.**
-  Do not mirror it into the marketplace entry.
+- **`version` lives only in `.claude-plugin/plugin.json`, and release-please owns it.**
+  Do not bump it by hand, and do not mirror it into the marketplace entry.
   A version set in either file pins the plugin, so two copies can drift and silently stop users from receiving updates.
+- **Any commit touching `skills/` is `feat:` or `fix:`, never `docs:`.**
+  Releases are computed from commit prefixes, and a skill is a prompt, so editing its wording changes what the plugin does.
+  A behavior change committed as `docs:` produces no version bump and silently never reaches users.
 
 ## Editing skills
 
