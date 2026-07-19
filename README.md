@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="A prism refracting a beam of white light into a spectrum" width="640">
+</p>
+
 # prism
 
 A spec-driven agentic engineering workflow for Claude Code — one beam of an idea in, an ordered spectrum of shippable tracks out.
