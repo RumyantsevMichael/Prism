@@ -9,9 +9,16 @@
     {
       "name": "lux",
       "source": "./",
+      "displayName": "Lux",
       "description": "Spec-driven agentic engineering workflow: roadmap → ideate → plan → design → implement, with orchestration across tracks.",
+      "author": {
+        "name": "Michael Rumyantsev"
+      },
+      "homepage": "https://github.com/RumyantsevMichael/Lux#readme",
+      "repository": "https://github.com/RumyantsevMichael/Lux",
+      "license": "MIT",
       "category": "workflow",
-      "keywords": [
+      "tags": [
         "workflow",
         "spec-driven",
         "adr",

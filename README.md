@@ -54,6 +54,15 @@ Work on the plugin against a live session with `claude --plugin-dir path/to/lux`
 
 Semantic versioning, with releases tagged and recorded in [CHANGELOG.md](CHANGELOG.md). Since skills are prompts, MAJOR means a skill was removed or renamed or its artifacts/config changed incompatibly; MINOR means new skills or capabilities; PATCH means clarity and correctness fixes that leave the workflow's shape intact.
 
+`version` lives only in `.claude-plugin/plugin.json` - deliberately not mirrored into the marketplace entry, so there is one place to bump. Users receive an update only when that string changes.
+
+To cut a release:
+
+1. Bump `version` in `.claude-plugin/plugin.json`.
+2. Move the `Unreleased` entries in `CHANGELOG.md` under the new version, and update the link refs at the bottom.
+3. `claude plugin validate . --strict`.
+4. `claude plugin tag . --push` - reads the manifest version and pushes the matching git tag.
+
 ## License
 
 [MIT](LICENSE)
