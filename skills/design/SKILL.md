@@ -56,20 +56,32 @@ Update the glossary as new terms appear.
 
 ## 3. Draft build plan, contracts, and feature files
 
-Once the design settles, spawn subagents **in parallel**, each loading its skill and given the ADR and sibling-artifact paths (not inlined contents):
+Once the design settles, spawn the drafters **in parallel as forks** (the Agent tool with `subagent_type: "fork"`), one per artifact, each instructed to load its skill:
 
 - **contracts** (`write-contracts`): the boundary shapes.
   May lead the build plan.
 - **build plan** (`write-build-plan`): build order, reuse map, plug points, tests, risks.
 - **feature files** (`write-feature`): behavior against the contracts' structure.
 
+A fork inherits this session's full context: the user's request, the interview answers, and every settled decision.
+That inheritance is the point.
+A decision that lives only in this conversation still reaches the artifact, because the drafter saw it first-hand.
+The fork's tool work stays out of your context, and only the finished artifact comes back.
+
 Integrate and reconcile their output.
 A gap any artifact surfaces feeds back to the ADR, not patched locally.
 
-## 4. Pre-validate
+## 4. Validation loop
 
-Spawn a subagent, instruct it to load `validate-artifacts` and run pre-validation to catch gaps early.
-Close the gaps.
+Invoke `validate-artifacts` on the drafted bundle.
+The skill runs isolated by its own `context: fork`: a cold reader with only the on-disk artifacts, which is what makes its findings predictive of the implementation session's cold read.
+Then alternate: fix every finding by updating the owning artifact (a wrong invariant feeds back to the ADR), and invoke the skill again.
+The loop ends when a run reports no gaps.
+
+Keep the user in control of the loop.
+After each round, report the findings and the fixes in one or two lines.
+The user may stop the loop at any round and accept the residual gaps.
+If the loop has not converged after five rounds, stop and put the surviving gaps to the user per "How to deliver the question" in the `workflow` overview skill.
 
 ## 5. Recommend the implementation model and effort
 

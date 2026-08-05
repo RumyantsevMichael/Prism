@@ -27,17 +27,18 @@ Do not resolve it silently.
 
 ## 1. Validate before any code
 
-Load `validate-artifacts`.
-Do this **inline, yourself**.
-You must internalize the spec to build it, and as a fresh session your cold read already is the independent perspective.
-Read it adversarially: try to implement each contract, try to break each invariant, hunt under-specification.
+Invoke `validate-artifacts` on the track.
+The skill runs isolated by its own `context: fork` and returns a findings report plus the track's security surface.
+Do not stop at its report: read every artifact **yourself, adversarially** before any code, and merge your findings with the report's.
+You must internalize the spec to build it, and as a fresh session your own cold read is a second independent pass.
+Try to implement each contract, try to break each invariant, hunt under-specification.
 **Report the gaps and stop.** Do not resolve them yourself or recommend how to proceed.
 Clarifying an under-specified spec or a wrong invariant is the design session's responsibility, not yours: it updates the ADR/contracts/feature files **while its context is still warm**, and you resume only when the user relays that clarification back.
 (`// OPEN:` seams are the exception: those are decisions design deliberately delegated to you, so resolve them in step 3.
 On a large or high-stakes spec you MAY spawn extra validator subagents for adversarial breadth, passing them the artifact paths, not the contents.)
 When the spec holds, say so and proceed to tests.
 
-This pass includes a **threat-model lens** (`validate-artifacts` step 5): read the spec as an attacker and state the track's **security surface** (secrets, network, privilege/isolation, untrusted input, IPC, or `none`).
+This pass includes a **threat-model lens** (the threat-model step in `validate-artifacts`): read the spec as an attacker and state the track's **security surface** (secrets, network, privilege/isolation, untrusted input, IPC, or `none`).
 A security hole in the spec feeds back to design like any other gap.
 The surface you name here gates the post-code security audit in step 5 below, so record it explicitly even when it is `none`.
 
