@@ -65,21 +65,30 @@ each citing its ADR. These prevent design drift mid-implementation.
   the file types being edited, so check whether they already apply before going
   looking for them.
 - Reuse / mirror existing patterns named in the build plan - do not reinvent.
-- Validate the spec first; report any gaps to the design session and wait for it to
-  clarify - do not self-resolve a gap or proceed past it.
+- The spec arrives pre-validated by the design session's validation loop; do not
+  repeat that pass. Report any gap you still hit and wait for clarification - do
+  not self-resolve a gap or proceed past it.
 - Tests first (acceptance + integration), then implement to green.
 - Cite ADRs, never plan tracks, in durable artifacts.
 - Do not resolve an ADR/feature conflict yourself - stop and report.
 - Do not commit, push, or propose a commit on your own; only when the user asks,
   prepare the message per the Git conventions in the `workflow` overview skill.
-  That landing commit accepts the ADR(s) and - with the user's approval - deletes the prep bundle.
+  The user's confirmation of correctness flips the ADR(s) to Accepted (a file
+  edit, not a commit). The landing commit - with the user's approval - deletes
+  the prep bundle.
 
 ## Suggested order
 
-Read the inputs → validate them (`validate-artifacts`): report any gaps to the design
-session and wait for clarification, do not self-resolve → then propose your build
-sequence and your `// OPEN:` resolutions, confirm with the user → implement in the
+Read the inputs cold → report any spec gap you hit and wait for clarification, do
+not self-resolve → propose your build sequence and your `// OPEN:` resolutions,
+confirm with the user → record the resolutions in the contracts → implement in the
 build plan's order.
+
+## Security surface
+
+<the surface design's validation loop determined: secrets, network,
+privilege/isolation, untrusted input, IPC, or `none` - this gates the
+implementation session's post-code security audit>
 
 ## Model & effort
 
@@ -95,8 +104,9 @@ overview skill.)
 - **State input precedence and the conflict rule up front.** This is the single most important thing the handoff does, and it prevents drift.
 - **Locked constraints are restated facts, each ADR-cited.** The implementer should not have to re-derive a settled decision, nor go looking for why.
 - **Recommend model + effort.** The handoff is a context boundary, so this is where that recommendation belongs (not at the start of the design session).
-- **Validation gaps go back to design.** The implementer's first act is to validate the spec.
-  Gaps are reported to the design session for clarification, never self-resolved.
+- **The spec ships pre-validated.** Design looped `validate-artifacts` until a run reported no gaps.
+  A gap the implementer still hits goes back to design, never self-resolved.
+- **State the security surface.** Design's validation loop determined it, and the implementer's post-code audit fires on it, so the handoff must carry it.
 - **Include a collaborative gate.** Have the implementer propose the build order and `// OPEN:` resolutions and confirm *before* coding.
 - **Keep it compact.** Point, do not restate.
   If you are copying design rationale in, it belongs in the ADR.

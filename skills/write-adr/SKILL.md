@@ -33,7 +33,8 @@ Here is what you act on while writing one:
 - **Edit the body in place while `Proposed`.** The body is the working draft, so refine the decision directly.
   Do **not** add Decision Log entries to a `Proposed` ADR, because there is no settled record to amend against yet (see below).
 - **Do not flip it to `Accepted` in design or planning.** It stays `Proposed` through design and through validation.
-  Only the **implementation session** flips it to `Accepted`, in the commit that lands the code.
+  Only the **implementation session** flips it to `Accepted`, at the moment the user confirms the implementation is correct.
+  The flip is a file edit and does not wait for a commit.
   Acceptance means the decision survived being built and validated.
 - **Once `Accepted`**, the amendment rules below apply: clarify via the Decision Log, or write a new superseding ADR for a meaningful change.
 

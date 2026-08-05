@@ -80,7 +80,8 @@ The mechanics live in the named skill.
 - **Roadmap state** (envisioned → planned → in-progress → shipped): `roadmap`.
   Status flips fire inside whichever session triggers them, standalone features included.
 - **ADR status** (Proposed → Accepted): created `Proposed` by an ideation, planning, or design session.
-  **Only the implementation session** flips it `Accepted`, in the change that lands the code.
+  **Only the implementation session** flips it `Accepted`, at the user's confirmation of correctness.
+  The flip is a file edit and does not wait for a commit.
   Acceptance means the decision survived being built.
   Mechanics in `write-adr`.
 - **Track status** (not-started → in-progress → done, or blocked/deferred): `design` flips a track `in-progress` at its start, and `implement` flips it `done` at landing, in both the spine DAG and the track file.
