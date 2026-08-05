@@ -54,6 +54,21 @@ To validate `plugin.json` in isolation, copy the plugin into a scratch directory
   Keep that distinction intact when editing.
 - **Every session skill reads `.claude/workflow-config.md` first.** A new skill that touches project paths should follow the same convention and fall back to the documented defaults when the file is absent.
 
+## Benchmarking a change
+
+`bench/` holds a benchmark that compares plugin versions by the code their agents produce.
+Hidden acceptance tests score each run, and a paired bootstrap over tasks decides whether a delta is real.
+The methodology, the commands, and the threats to validity live in [bench/README.md](bench/README.md).
+
+Before you trust or publish a result:
+
+1. Run `python3 bench/harness/bench.py selfcheck`.
+2. Compare arms with the same pinned model and at least 3 repetitions.
+3. Quote the confidence interval, never the point delta alone.
+
+The benchmark spends real API money on real runs.
+Use `--mock` to test the pipeline itself for free.
+
 ## Versioning
 
 Semantic versioning.
