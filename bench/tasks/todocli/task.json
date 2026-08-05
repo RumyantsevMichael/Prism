@@ -1,0 +1,12 @@
+{
+  "id": "todocli",
+  "name": "Todo CLI",
+  "summary": "A command-line todo list manager with JSON storage, exact output formats, and exit codes.",
+  "deliverable": "todo.py",
+  "language": "python",
+  "test_count": 20,
+  "phases": {
+    "design": { "max_turns": 60, "timeout_s": 1800 },
+    "implement": { "max_turns": 120, "timeout_s": 3600 }
+  }
+}
