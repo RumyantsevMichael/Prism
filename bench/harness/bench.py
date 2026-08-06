@@ -83,10 +83,10 @@ Rules:
 - When asked to accept or approve work and nothing in the message contradicts the reference, approve briefly.
 - If the message contains no question and no acceptance request, reply: "Acknowledged. Continue."
 - Be concise. Answer each numbered question directly, in the same numbering.
-
+{diff_rule}
 === REFERENCE SPECIFICATION ===
 {spec}
-
+{diff_section}
 === ENGINEER'S MESSAGE ===
 {message}
 """
@@ -500,14 +500,48 @@ def count_items(text):
     return len(_ENUM_ITEM.findall(text)) or 1
 
 
-def ask_product_owner(spec_text, message, po_model, log_dir, tag):
+DIFF_RULE = (
+    "- The engineer's changes so far are shown below. Judge what the code does, "
+    "not only what the message claims.\n"
+    "- Still answer only from the reference specification. Do not review style "
+    "and do not prescribe implementation."
+)
+DIFF_LIMIT_CHARS = 20_000
+
+
+def workspace_diff(workspace, limit=DIFF_LIMIT_CHARS):
+    """The agent's uncommitted changes this stage, as a truncated diff.
+
+    `git add -N` registers untracked files so new files appear in the diff.
+    It touches the index only, never HEAD, so the per-stage numstat in
+    stage_activity still compares against the previous stage snapshot.
+
+    Truncated from the front: the tail holds the most recent edits, which is
+    what a reviewer looking at "what did you just do" wants.
+    """
+    workspace = Path(workspace)
+    if not (workspace / ".git").exists():
+        return ""
+    git(workspace, "add", "-N", ".")
+    text = git(workspace, "diff").stdout or ""
+    if len(text) > limit:
+        text = "...[earlier hunks elided]...\n" + text[-limit:]
+    return text
+
+
+def ask_product_owner(spec_text, message, po_model, log_dir, tag, diff=""):
     """One product-owner reply, generated strictly from the reference spec.
 
     Also returns elicitation stats for the exchange. `unspecified` counts the
     items the spec did not settle, which is how well the agent aimed its
     questions, not how many it asked.
     """
-    prompt = PO_PROMPT.format(spec=spec_text, message=message)
+    prompt = PO_PROMPT.format(
+        spec=spec_text,
+        message=message,
+        diff_rule=f"{DIFF_RULE}\n" if diff else "",
+        diff_section=f"\n=== ENGINEER'S CHANGES SO FAR (diff) ===\n{diff}\n" if diff else "",
+    )
     payload, stdout, _, duration, error = claude_call(
         prompt,
         cwd=log_dir,
@@ -544,6 +578,7 @@ def run_phase(
     spec_text,
     po_model,
     max_exchanges,
+    po_sees_diff=False,
 ):
     """One agent session with a product-owner question loop."""
     log_dir = Path(log_dir)
@@ -601,7 +636,12 @@ def run_phase(
         if exchange == max_exchanges:
             break
         answer, po_cost, po_duration, po_stats = ask_product_owner(
-            spec_text, text, po_model, log_dir, f"{phase}.{exchange}"
+            spec_text,
+            text,
+            po_model,
+            log_dir,
+            f"{phase}.{exchange}",
+            diff=workspace_diff(workspace) if po_sees_diff else "",
         )
         record["po_asked"] += po_stats["asked"]
         record["po_unspecified"] += po_stats["unspecified"]
@@ -759,6 +799,7 @@ def run_stage_phases(args, plugin_dir, task, stage_index, wdir, log_dir):
         spec_text=spec_text,
         po_model=args.po_model,
         max_exchanges=args.max_exchanges,
+        po_sees_diff=args.po_sees_diff,
     )
     if not prism_arm:
         return [
@@ -815,6 +856,7 @@ def cmd_run(args):
         "model": args.model,
         "po_model": args.po_model,
         "max_exchanges": args.max_exchanges,
+        "po_sees_diff": args.po_sees_diff,
         "reps": args.reps,
         "mock": args.mock,
         "arms": resolved,
@@ -1211,6 +1253,14 @@ def main():
     p_run.add_argument("--model", default="claude-sonnet-5")
     p_run.add_argument("--po-model", default="claude-haiku-4-5-20251001", help="model that simulates the product owner")
     p_run.add_argument("--max-exchanges", type=int, default=4, help="max product-owner replies per agent session")
+    p_run.add_argument(
+        "--po-sees-diff",
+        action="store_true",
+        help="show the product owner the agent's uncommitted diff alongside its message, "
+             "so it reacts to what was written rather than only what was claimed. "
+             "Changes what the product owner sees, so results are NOT comparable to "
+             "runs made without it. Off by default.",
+    )
     p_run.add_argument("--stages", type=int, default=None, help="run only the first N stages of each task")
     p_run.add_argument("--out", default=None)
     p_run.add_argument("--mock", action="store_true", help="copy oracles instead of invoking agents (pipeline test)")
