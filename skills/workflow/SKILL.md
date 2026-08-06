@@ -31,7 +31,8 @@ Each rung is a skill, and each runs as **its own session**:
 - **Build** (`implement`): fresh session, validate the spec, tests first, implement to green, verify, audit.
 
 `orchestrate` chains plan → design → implement across tracks through fresh subagent sessions.
-The `write-*` skills and `validate-artifacts` are sub-skills loaded *inside* these sessions, never sessions of their own.
+The `write-*` skills load inside the drafter forks that `design` spawns, and `validate-artifacts` always runs as an isolated forked subagent through its own `context: fork`.
+None of them is ever a session of its own.
 
 **Defect repair** sits outside the flow.
 A repair session restores code to the already-settled spec: reproduce it with a failing test, diagnose the root cause **without touching production code**, then stop and report the diagnosis for approval before any fix.
@@ -79,7 +80,8 @@ The mechanics live in the named skill.
 - **Roadmap state** (envisioned → planned → in-progress → shipped): `roadmap`.
   Status flips fire inside whichever session triggers them, standalone features included.
 - **ADR status** (Proposed → Accepted): created `Proposed` by an ideation, planning, or design session.
-  **Only the implementation session** flips it `Accepted`, in the change that lands the code.
+  **Only the implementation session** flips it `Accepted`, at the user's confirmation of correctness.
+  The flip is a file edit and does not wait for a commit.
   Acceptance means the decision survived being built.
   Mechanics in `write-adr`.
 - **Track status** (not-started → in-progress → done, or blocked/deferred): `design` flips a track `in-progress` at its start, and `implement` flips it `done` at landing, in both the spine DAG and the track file.

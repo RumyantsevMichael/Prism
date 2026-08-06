@@ -25,21 +25,19 @@ Start by reading the track's `handoff.md` in the plans directory (default `/docs
 On any conflict between them, stop and report.
 Do not resolve it silently.
 
-## 1. Validate before any code
+## 1. Read the spec cold
 
-Load `validate-artifacts`.
-Do this **inline, yourself**.
-You must internalize the spec to build it, and as a fresh session your cold read already is the independent perspective.
-Read it adversarially: try to implement each contract, try to break each invariant, hunt under-specification.
-**Report the gaps and stop.** Do not resolve them yourself or recommend how to proceed.
-Clarifying an under-specified spec or a wrong invariant is the design session's responsibility, not yours: it updates the ADR/contracts/feature files **while its context is still warm**, and you resume only when the user relays that clarification back.
-(`// OPEN:` seams are the exception: those are decisions design deliberately delegated to you, so resolve them in step 3.
-On a large or high-stakes spec you MAY spawn extra validator subagents for adversarial breadth, passing them the artifact paths, not the contents.)
-When the spec holds, say so and proceed to tests.
+The spec arrives **pre-validated**: the design session looped `validate-artifacts` until a run reported no gaps, so do not repeat that pass here.
+Your job is to internalize it.
+Read the handoff, the ADR, the contracts, the build plan, and the feature files, in the precedence the handoff states.
+You must hold the whole spec to build it.
+If you still hit a real spec gap, while reading or mid-build, **report it and stop** rather than resolving it silently.
+Clarifying an under-specified spec or a wrong invariant is the design session's responsibility, not yours, and you resume only when the user relays that clarification back.
+(`// OPEN:` seams are the exception: those are decisions design deliberately delegated to you, so resolve them in step 3.)
 
-This pass includes a **threat-model lens** (`validate-artifacts` step 5): read the spec as an attacker and state the track's **security surface** (secrets, network, privilege/isolation, untrusted input, IPC, or `none`).
-A security hole in the spec feeds back to design like any other gap.
-The surface you name here gates the post-code security audit in step 5 below, so record it explicitly even when it is `none`.
+The handoff records the track's **security surface** (secrets, network, privilege/isolation, untrusted input, IPC, or `none`), determined by design's validation loop.
+Carry it forward: it gates the post-code security audit in step 5 below.
+If the handoff does not state it, determine it yourself from the spec and record it explicitly, even when it is `none`.
 
 ## 2. Tests first
 
@@ -54,6 +52,9 @@ For a **bug**, write a failing reproduction test first.
 
 Build in the build plan's order.
 Confirm your resolutions to the contracts' `// OPEN:` seams with the user **before** coding them.
+Then **record each resolution in the owning contract**: replace the `// OPEN:` marker with the decision and a one-line rationale, in the same change as the code.
+A resolution that lives only in the conversation is lost to every later session.
+Report the recorded resolutions again at the Gate.
 Use subagents for parallel, independent work.
 Give each the artifact paths and a scoped task, not inlined contents.
 Keep the user guide (default `/docs/user-guide/`) and operator runbooks current in the same change.
@@ -79,10 +80,10 @@ This is the human-confirmable proof the feature works beyond green tests.
 
 ## 5. Security-audit the diff
 
-When step 1's threat-model lens found a **non-empty security surface**, audit the implementation before the landing gate.
+When the security surface carried from step 1 is **non-empty**, audit the implementation before the landing gate.
 Green tests prove behavior, not safety.
 Load `security-review` against the branch diff (the actual code, not the spec).
-This is the code-time counterpart to step 1's paper pass, catching the bug classes that only exist once written: a secret in a log line, an unvalidated input reaching a sink, a privilege not dropped, or a missing authorization check.
+This is the code-time counterpart to the design loop's paper pass, catching the bug classes that only exist once written: a secret in a log line, an unvalidated input reaching a sink, a privilege not dropped, or a missing authorization check.
 Findings are **your own code, so fix them inline and re-run** until clean.
 The one exception: a finding that traces to a *design* flaw (an invariant the spec never required) feeds back to design like a validation gap rather than being patched locally.
 A track whose surface was `none` skips this, but **say so explicitly**, and do not drop it silently.
@@ -103,10 +104,11 @@ Then it is unfinished, and it blocks.)
 
 The user's confirmation of correctness completes the session.
 Ask for it, and put any residual-acceptance or re-scoping fork to the user, per **"How to deliver the question"** in the `workflow` overview skill.
+**On that confirmation, accept the implemented ADRs**: flip each from `Status: Proposed` to `Status: Accepted` immediately, as a file edit.
+Do not defer the flip to a commit, because a lifecycle transition that waits on an optional act drifts.
+The implementation session owns this transition, because acceptance means the decision survived being built and validated (see the ADR status lifecycle in the `workflow` overview skill).
 Do not propose a commit on your own, because committing is user-initiated.
 When the user asks for one, prepare the message per the Git conventions in the `workflow` overview skill (or the project's own commit skill).
-That landing commit must also **accept the implemented ADRs**: flip each from `Status: Proposed` to `Status: Accepted`.
-The implementation session owns this transition, because acceptance means the decision survived being built and validated (see the ADR status lifecycle in the `workflow` overview skill).
 
 That same landing commit **MAY delete this track's prep bundle** (the track's plan folder) if the user accepts this.
 

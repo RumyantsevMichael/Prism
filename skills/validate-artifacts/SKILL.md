@@ -2,20 +2,26 @@
 name: validate-artifacts
 description: "Adversarial pre-code validation of a track's spec (ADR, build plan, contracts, feature files): try to implement contracts, break invariants, surface gaps. Use at the start of an implementation session, before coding."
 argument-hint: '[initiative/track]'
+context: fork
+background: false
 ---
 
 # Validate artifacts
 
 This is the **adversarial pre-implementation check**: before a line of code, a fresh reader tries to *break* the spec on paper, where fixing a gap costs a sentence instead of a refactor.
+This skill declares `context: fork`, so it always runs as an **isolated subagent**: no conversation history, only what is on disk.
+That isolation is the point.
+You cannot be led by the authoring session's assumptions, so read everything you need from the files.
+
 It runs at two points, and the caller changes what happens to the findings:
 
 - **In the implementation session, as its first act**: the primary invocation.
   Done cold, by someone who did not author the artifacts, which is exactly what makes it a fair test.
   Gaps route back to the design session and you stop, per "What to produce" below.
-- **At the end of the design session, as a pre-validation subagent**: a cheaper early pass to catch gaps before handoff.
-  You are still a fresh reader (you did not author the artifacts), but you report to the design session that spawned you, and it closes the gaps immediately.
+- **Inside the design session's validation loop**: design invokes this skill on the drafted bundle, fixes every finding, and invokes it again until a run reports no gaps.
+  Each run is a fresh, isolated reader.
   The stop-and-wait-for-the-user-to-relay choreography below is for the implementation-session invocation, not this one.
-  Passing pre-validation never waives the implementation session's own cold pass.
+  Passing the design loop never waives the implementation session's own invocation.
 
 It is not implementation, and it is not the post-code checks.
 Keep the three distinct:
@@ -32,6 +38,8 @@ The session map and lifecycle rules live in the `workflow` overview skill.
 
 Read the handoff first (default `/docs/plans/<initiative>/<track>/handoff.md`).
 It names the authoritative inputs and their precedence.
+Then read the **source request** the track answers: the track file, and any recorded product request or interview notes in the plan folder.
+The request is what the artifacts must satisfy, so it is part of your input, not optional background.
 
 ---
 
@@ -46,13 +54,17 @@ Your goal is to find the gap the design session is too close to see.
    A contract you cannot satisfy is under-specified.
 2. **Try to break each invariant.** Take each ADR MUST/MUST NOT and look for a path, an input, or an ordering that violates it.
    If you find one, either the invariant is wrong (feed back to the ADR) or the design admits a hole.
-3. **Check the artifacts agree.** Do the contracts satisfy the ADR?
+3. **Check the artifacts against the source request.** Compare the spec with what was actually asked: the track file, the recorded product request, and any interview answers captured in the plan folder.
+   Every requirement in the request must appear in an artifact, unchanged.
+   Verify concrete surface details letter-for-letter: names, keywords, formats, commands, and error strings.
+   A renamed keyword or an invented capability is a real defect, not a style choice.
+4. **Check the artifacts agree.** Do the contracts satisfy the ADR?
    Do the feature files describe behavior the contracts can actually express?
    Does the build plan build what the contracts declare?
-   Disagreement between artifacts is a real defect.
-4. **Hunt under-specification.** Every `// OPEN:` in the contracts is a known gap, so confirm each is genuinely the implementer's call and not a missing decision.
+   Disagreement between artifacts is a real defect, including two artifacts that name the same thing differently.
+5. **Hunt under-specification.** Every `// OPEN:` in the contracts is a known gap, so confirm each is genuinely the implementer's call and not a missing decision.
    Then look for the *unmarked* gaps: a field whose meaning is ambiguous, a failure mode no artifact addresses, or a feature example that cannot be turned into a clean test.
-5. **Threat-model the spec.** Read it as an attacker, not a builder.
+6. **Threat-model the spec.** Read it as an attacker, not a builder.
    What is the track's **security surface**, meaning does it touch secrets, the network, privilege or isolation boundaries, untrusted input, or IPC?
    For each surface, look for the hole the spec leaves open: a secret with no defined at-rest path, a trust boundary the contracts do not enforce, an input no invariant constrains, a capability granted wider than the feature needs.
    A security gap is a spec gap: it feeds back to the ADR like any other.
@@ -77,6 +89,7 @@ But a spec that survives a genuine attempt is cleared to build.
 
 - Every contract was checked for "can I implement this with what's given?"
 - Every ADR invariant was checked for a way to violate it.
+- The artifacts were checked against the source request, letter-for-letter on names, keywords, and formats, with no requirement dropped and no capability invented.
 - Cross-artifact agreement (ADR ↔ contracts ↔ feature files ↔ build plan) was verified.
 - Each `// OPEN:` is confirmed as implementer's-choice, and unmarked gaps were hunted.
 - The spec was threat-modeled and the track's security surface stated in one line (`none` is valid), the post-code audit's trigger.
