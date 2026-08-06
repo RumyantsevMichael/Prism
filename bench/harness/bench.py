@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import json
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -447,8 +448,29 @@ def claude_call(prompt, cwd, model, extra_args, timeout):
     return payload, stdout, stderr, duration, error
 
 
+UNSPECIFIED_REPLY = "Not specified. Your decision."
+_ENUM_ITEM = re.compile(r"^\s*(?:\d+[.)]|[-*])\s+\S", re.M)
+
+
+def count_items(text):
+    """Number of enumerated items in a message, at least 1 for non-empty text.
+
+    Both the agent's questions and the product owner's reply are asked for as
+    numbered lists, so this counts either. Falls back to 1 rather than 0 so a
+    single unnumbered question still registers.
+    """
+    if not text or not text.strip():
+        return 0
+    return len(_ENUM_ITEM.findall(text)) or 1
+
+
 def ask_product_owner(spec_text, message, po_model, log_dir, tag):
-    """One product-owner reply, generated strictly from the reference spec."""
+    """One product-owner reply, generated strictly from the reference spec.
+
+    Also returns elicitation stats for the exchange. `unspecified` counts the
+    items the spec did not settle, which is how well the agent aimed its
+    questions, not how many it asked.
+    """
     prompt = PO_PROMPT.format(spec=spec_text, message=message)
     payload, stdout, _, duration, error = claude_call(
         prompt,
@@ -458,11 +480,20 @@ def ask_product_owner(spec_text, message, po_model, log_dir, tag):
         timeout=PO_TIMEOUT_S,
     )
     (Path(log_dir) / f"{tag}.po.json").write_text(redact(stdout) or "")
-    answer = (payload or {}).get("result") or "Not specified. Your decision."
+    answer = (payload or {}).get("result") or UNSPECIFIED_REPLY
     cost = (payload or {}).get("total_cost_usd") or 0.0
     if error:
-        answer = "Not specified. Your decision."
-    return answer, cost, duration
+        answer = UNSPECIFIED_REPLY
+    # A harness error produces the same fallback text as a genuine "the spec
+    # does not cover this". Flag it so a timed-out product owner is never
+    # counted as the agent asking an off-spec question.
+    stats = {
+        "asked": count_items(message),
+        "answer_items": count_items(answer),
+        "unspecified": 0 if error else answer.count(UNSPECIFIED_REPLY),
+        "po_error": bool(error),
+    }
+    return answer, cost, duration, stats
 
 
 def run_phase(
@@ -495,6 +526,14 @@ def run_phase(
         "total_cost_usd": 0.0,
         "po_cost_usd": 0.0,
         "exchanges": 0,
+        # Elicitation. `asked` and `answered` measure whether the agent aimed
+        # its questions at what the spec actually settles. Raw exchange count
+        # cannot: an agent that asks nothing spends zero exchanges and looks
+        # maximally efficient while inventing every unstated requirement.
+        "po_asked": 0,
+        "po_answered": 0,
+        "po_unspecified": 0,
+        "po_errors": 0,
         "completed_marker": False,
         "is_error": None,
         "error": None,
@@ -525,8 +564,14 @@ def run_phase(
             break
         if exchange == max_exchanges:
             break
-        answer, po_cost, po_duration = ask_product_owner(
+        answer, po_cost, po_duration, po_stats = ask_product_owner(
             spec_text, text, po_model, log_dir, f"{phase}.{exchange}"
+        )
+        record["po_asked"] += po_stats["asked"]
+        record["po_unspecified"] += po_stats["unspecified"]
+        record["po_errors"] += 1 if po_stats["po_error"] else 0
+        record["po_answered"] += max(
+            0, po_stats["answer_items"] - po_stats["unspecified"]
         )
         record["po_cost_usd"] += po_cost
         record["duration_s"] = round(record["duration_s"] + po_duration, 1)
@@ -911,6 +956,35 @@ def cmd_report(args):
             f"| {mean(costs):.2f} | {mean(po_costs):.2f} | {mean(turns):.0f} | {mean(durations):.0f} |"
         )
     out("")
+    if any(p.get("po_asked") for r in records for p in r["phases"]):
+        out("## Elicitation (all stages, mean per repetition)")
+        out("")
+        out("| arm | items asked | answered from spec | not specified | yield | po errors |")
+        out("|-----|-------------|--------------------|---------------|-------|-----------|")
+        for arm in arms:
+            arm_records = [r for r in records if r["arm"] == arm]
+            def per_rep(field):
+                return [sum(p.get(field) or 0 for p in r["phases"]) for r in arm_records]
+            asked = per_rep("po_asked")
+            answered = per_rep("po_answered")
+            unspec = per_rep("po_unspecified")
+            errors = per_rep("po_errors")
+            total_items = sum(answered) + sum(unspec)
+            yield_ = (sum(answered) / total_items) if total_items else 0.0
+            out(
+                f"| {arm} | {mean(asked):.1f} | {mean(answered):.1f} "
+                f"| {mean(unspec):.1f} | {yield_:.2f} | {mean(errors):.1f} |"
+            )
+        out("")
+        out(
+            "Yield is answered / (answered + not specified): how well the arm aimed its "
+            "questions at what the spec settles."
+        )
+        out(
+            "Read it with items asked, never alone. An arm that asks nothing scores no "
+            "yield at all, and an arm that asks a lot off-spec scores low yield."
+        )
+        out("")
     staged_tasks = sorted({r["task"] for r in records if r["stage_index"] > 0})
     if staged_tasks:
         out("## Stage progression (mean pass fraction by stage index)")
