@@ -19,6 +19,7 @@ questions using a hidden per-stage reference spec, and nothing else.
 import argparse
 import hashlib
 import json
+import os
 import random
 import re
 import shutil
@@ -38,6 +39,7 @@ PYTEST_SPEC = "pytest>=8,<9"
 BOOTSTRAP_RESAMPLES = 10_000
 PHASE_DONE_MARKER = "PHASE COMPLETE"
 PO_TIMEOUT_S = 600
+TOKEN_KEYS = ("input_tokens", "cached_input_tokens", "output_tokens")
 
 INTERACTION_RULES = f"""
 You are running inside a benchmark harness, driven over a text channel.
@@ -51,14 +53,15 @@ When this session's work is finished, end your message with the exact line:
 """.strip()
 
 DESIGN_PROMPT = """Read BRIEF.md at the repository root. It is the product request for {stage_intro}.
-Run the prism design workflow for it now: invoke /prism:design {slug} (a standalone feature with the slug "{slug}").
+Run the prism design workflow for it now: {invocation}.
 Produce the full spec: ADR, contracts, build plan, feature files, and the handoff under the plans directory.
 The product owner is available throughout: interview them about requirements the request leaves open, and present the finished artifacts for acceptance.
 Write no implementation code in this session.
 {rules}"""
 
 IMPLEMENT_PROMPT = """This repository contains a spec that an earlier design session produced under docs/plans/{slug}/.
-Run /prism:implement {slug} now and follow the skill fully: validate the spec, write tests first, implement to green, verify, and audit.
+Run the prism implementation workflow now: {invocation}.
+Follow the skill fully: validate the spec, write tests first, implement to green, verify, and audit.
 If validation finds spec gaps, report them as questions: the product owner will answer or delegate the decision to you.
 Finish only when the deliverable in BRIEF.md is complete and your own tests pass.
 {rules}"""
@@ -108,14 +111,14 @@ WORKFLOW_CONFIG_TEMPLATE = """# Workflow config
 - Product strategy: n/a
 
 ## Stack
-- Languages: Python 3 (standard library only)
-- Test command: python3 -m unittest discover -s tests -v
+- Languages: {language}
+- Test command: {test_command}
 - BDD harness: none, feature files are spec-only
 - Typecheck: n/a
 - Lint/format: n/a
 
 ## Verification
-- Run the unittest suite. Exercise the deliverable exactly as BRIEF.md describes.
+- {verification}
 
 ## Tracker
 - System: n/a (benchmark run, no tracker)
@@ -329,6 +332,9 @@ def score_workspace(workspace, task, upto_stage, venv_py, keep_dir=None):
         score["tests_passed"] = max(0, min(passed, expected))
         score["pass_fraction"] = round(score["tests_passed"] / expected, 4)
         score["resolved"] = score["tests_passed"] == expected
+        if result.returncode != 0 and score["error"] is None:
+            output = (result.stdout + result.stderr).strip()
+            score["error"] = f"test command exited {result.returncode}: {output[-400:]}"
     else:
         score["error"] = f"pytest produced no report: {result.stderr[-400:]}"
     if keep_dir is None:
@@ -349,7 +355,8 @@ def artifact_checks(workspace):
     guide_files = [p for p in guide_files if p.name.lower() != "readme.md" or len(p.read_text(errors="ignore")) > 200]
     agent_tests = [
         p
-        for p in ws.rglob("test*.py")
+        for pattern in ("test*.py", "*_test.go")
+        for p in ws.rglob(pattern)
         if "_bench_tests" not in p.parts and ".git" not in p.parts
     ]
     return {
@@ -386,30 +393,123 @@ def make_workspace(dest, task, with_config):
     seed = task["dir"] / "seed"
     if seed.exists():
         shutil.copytree(seed, dest, dirs_exist_ok=True)
-    # Brownfield seed: clone a real repository at a pinned commit instead of
-    # vendoring it. The upstream code keeps its own license and never enters
-    # this repository, and the pin makes the workspace reproducible.
     seed_repo = task.get("seed_repo")
     if seed_repo:
-        run_cmd(["git", "clone", "--quiet", seed_repo["url"], str(dest / seed_repo.get("path", "repo"))])
+        cache = BENCH_DIR / ".cache" / "seeds" / hashlib.sha256(
+            seed_repo["url"].encode()
+        ).hexdigest()[:16]
+        if not cache.exists():
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            result = run_cmd(
+                ["git", "clone", "--mirror", "--quiet", seed_repo["url"], str(cache)]
+            )
+            if result.returncode != 0:
+                shutil.rmtree(cache, ignore_errors=True)
+                sys.exit(f"seed_repo clone failed for {task['id']}: {result.stderr.strip()}")
+        seed_path = dest / seed_repo.get("path", "repo")
+        result = run_cmd(["git", "clone", "--quiet", str(cache), str(seed_path)])
+        if result.returncode != 0:
+            sys.exit(f"seed_repo cache clone failed for {task['id']}: {result.stderr.strip()}")
         checkout = run_cmd(
             ["git", "checkout", "--quiet", seed_repo["commit"]],
-            cwd=dest / seed_repo.get("path", "repo"),
+            cwd=seed_path,
         )
         if checkout.returncode != 0:
             sys.exit(f"seed_repo checkout failed for {task['id']}: {checkout.stderr.strip()}")
-        shutil.rmtree(dest / seed_repo.get("path", "repo") / ".git", ignore_errors=True)
+        shutil.rmtree(seed_path / ".git", ignore_errors=True)
     if with_config:
         claude_dir = dest / ".claude"
         claude_dir.mkdir(exist_ok=True)
         (claude_dir / "workflow-config.md").write_text(
-            WORKFLOW_CONFIG_TEMPLATE.format(name=task["name"], summary=task["summary"])
+            WORKFLOW_CONFIG_TEMPLATE.format(
+                name=task["name"],
+                summary=task["summary"],
+                language=task.get("workflow_language", "Python 3 (standard library only)"),
+                test_command=task.get(
+                    "workflow_test_command", "python3 -m unittest discover -s tests -v"
+                ),
+                verification=task.get(
+                    "workflow_verification",
+                    "Run the unittest suite. Exercise the deliverable exactly as BRIEF.md describes.",
+                ),
+            )
         )
     write_stage_brief(dest, task, 0)
     git(dest, "init", "--quiet")
     git(dest, "add", "-A")
     git(dest, "commit", "--quiet", "-m", "chore: seed benchmark workspace")
     return dest
+
+
+def external_source_text(source):
+    """Read one file from a pinned external repository without vendoring it."""
+    commit = source["commit"]
+    candidates = []
+    env_name = source.get("local_env")
+    if env_name and os.environ.get(env_name):
+        candidates.append(Path(os.environ[env_name]).expanduser())
+    if source.get("sibling"):
+        candidates.append(REPO_ROOT.parent / source["sibling"])
+    cache = BENCH_DIR / ".cache" / "sources" / hashlib.sha256(
+        source["repo_url"].encode()
+    ).hexdigest()[:16]
+    candidates.append(cache)
+    repo = next(
+        (
+            path
+            for path in candidates
+            if (path / ".git").exists()
+            and run_cmd(["git", "-C", str(path), "cat-file", "-e", f"{commit}^{{commit}}"])
+            .returncode
+            == 0
+        ),
+        None,
+    )
+    if repo is None:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        result = run_cmd(
+            ["git", "clone", "--quiet", "--filter=blob:none", source["repo_url"], str(cache)]
+        )
+        if result.returncode != 0:
+            sys.exit(f"external source clone failed: {result.stderr.strip()}")
+        repo = cache
+    result = run_cmd(
+        ["git", "-C", str(repo), "show", f"{commit}:{source['path']}"]
+    )
+    if result.returncode != 0:
+        sys.exit(f"external source read failed: {result.stderr.strip()}")
+    return result.stdout
+
+
+def apply_oracle(workspace, task):
+    """Apply a local oracle tree or an externally stored patch."""
+    workspace = Path(workspace)
+    oracle_dir = task["dir"] / "oracle"
+    if oracle_dir.exists():
+        for oracle_file in sorted(oracle_dir.iterdir()):
+            target = workspace / oracle_file.name
+            if oracle_file.is_dir():
+                shutil.copytree(oracle_file, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(oracle_file, target)
+        return
+    config = task.get("oracle_patch")
+    if not config:
+        sys.exit(f"task {task['id']} has no oracle or oracle_patch")
+    document = json.loads(external_source_text(config["source"]))
+    patch = document[config.get("json_field", "patch")]
+    directory = task.get("seed_repo", {}).get("path", ".")
+    base = ["git", "apply", "--whitespace=nowarn"]
+    if directory != ".":
+        base += [f"--directory={directory}"]
+    # mock_solve runs once per stage. A full external oracle is already present
+    # after stage one, so a successful reverse check makes later calls no-ops.
+    reverse = run_cmd(base + ["--reverse", "--check", "-"], cwd=workspace, input=patch)
+    if reverse.returncode == 0:
+        return
+    result = run_cmd(base + ["-"], cwd=workspace, input=patch)
+    if result.returncode != 0:
+        sys.exit(f"oracle patch failed for {task['id']}: {result.stderr.strip()}")
 
 
 def write_stage_brief(workspace, task, stage_index):
@@ -476,6 +576,46 @@ def parse_claude_json(stdout):
         return None
 
 
+def parse_codex_jsonl(stdout):
+    """Normalize Codex JSONL into the payload shape used by the harness."""
+    thread_id = None
+    messages = []
+    usage = dict.fromkeys(TOKEN_KEYS, 0)
+    turns = 0
+    is_error = False
+    parsed = 0
+    for line in (stdout or "").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        parsed += 1
+        event_type = event.get("type")
+        if event_type == "thread.started":
+            thread_id = event.get("thread_id") or thread_id
+        elif event_type == "item.completed":
+            item = event.get("item") or {}
+            if item.get("type") == "agent_message" and item.get("text"):
+                messages.append(item["text"])
+        elif event_type == "turn.completed":
+            turns += 1
+            event_usage = event.get("usage") or {}
+            for key in usage:
+                usage[key] += event_usage.get(key) or 0
+        elif event_type in ("error", "turn.failed"):
+            is_error = True
+    if not parsed:
+        return None
+    return {
+        "result": messages[-1] if messages else "",
+        "session_id": thread_id,
+        "num_turns": turns,
+        "total_cost_usd": 0.0,
+        "usage": usage,
+        "is_error": is_error,
+    }
+
+
 def claude_call(prompt, cwd, model, extra_args, timeout):
     cmd = [
         "claude",
@@ -503,6 +643,133 @@ def claude_call(prompt, cwd, model, extra_args, timeout):
     if payload is None and error is None:
         error = "unparsable claude output"
     return payload, stdout, stderr, duration, error
+
+
+def prepare_codex_marketplace(plugin_dir):
+    """Build a Codex-compatible copy without changing the Claude plugin."""
+    root = BENCH_DIR / ".cache" / "codex-marketplace"
+    plugin = root / "plugin"
+    if root.exists():
+        shutil.rmtree(root)
+    (root / ".agents" / "plugins").mkdir(parents=True)
+    (plugin / ".codex-plugin").mkdir(parents=True)
+    shutil.copytree(Path(plugin_dir) / "skills", plugin / "skills")
+    for skill_file in (plugin / "skills").glob("*/SKILL.md"):
+        text = skill_file.read_text()
+        skill_file.write_text(
+            text.replace(
+                "disable-model-invocation: true", "disable-model-invocation: false"
+            )
+        )
+    claude_manifest = json.loads(
+        (Path(plugin_dir) / ".claude-plugin" / "plugin.json").read_text()
+    )
+    manifest = {
+        "name": "prism",
+        "version": claude_manifest["version"],
+        "description": claude_manifest["description"],
+        "skills": "./skills",
+        "author": claude_manifest["author"],
+        "interface": {
+            "displayName": "Prism",
+            "shortDescription": "Design and implement software from explicit specifications.",
+            "longDescription": "Prism separates product design from implementation and stores the approved specification as project artifacts.",
+            "developerName": claude_manifest["author"]["name"],
+            "category": "Engineering",
+            "capabilities": [
+                "Product design",
+                "Architecture decisions",
+                "Implementation planning",
+                "Test-driven implementation",
+            ],
+            "defaultPrompt": "Use Prism to design and implement this change.",
+        },
+    }
+    (plugin / ".codex-plugin" / "plugin.json").write_text(
+        json.dumps(manifest, indent=2) + "\n"
+    )
+    marketplace = {
+        "name": "prism",
+        "interface": {"displayName": "Prism"},
+        "plugins": [
+            {
+                "name": "prism",
+                "source": {"source": "local", "path": "./plugin"},
+                "policy": {
+                    "installation": "AVAILABLE",
+                    "authentication": "ON_INSTALL",
+                },
+                "category": "Engineering",
+            }
+        ],
+    }
+    (root / ".agents" / "plugins" / "marketplace.json").write_text(
+        json.dumps(marketplace, indent=2) + "\n"
+    )
+    return root
+
+
+def codex_call(prompt, cwd, model, plugin_dir, session_id, timeout, extra_args=None):
+    common = [
+        "--json",
+        "--skip-git-repo-check",
+        "--model",
+        model,
+        "-c",
+        'approval_policy="never"',
+        "-c",
+        "sandbox_workspace_write.network_access=true",
+        *(extra_args or []),
+    ]
+    if session_id:
+        cmd = ["codex", "exec", "resume", *common, session_id, prompt]
+    else:
+        cmd = [
+            "codex",
+            "exec",
+            *common,
+            "--sandbox",
+            "workspace-write",
+            "--cd",
+            str(cwd),
+            prompt,
+        ]
+    started = time.monotonic()
+    error = None
+    try:
+        result = run_cmd(cmd, cwd=cwd, timeout=timeout)
+        stdout, stderr = result.stdout, result.stderr
+        if result.returncode != 0:
+            error = f"codex exited {result.returncode}"
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode(errors="replace")
+        stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode(errors="replace")
+        error = "timeout"
+    duration = round(time.monotonic() - started, 1)
+    payload = parse_codex_jsonl(stdout)
+    if payload is None and error is None:
+        error = "unparsable codex output"
+    elif payload and payload.get("is_error") and error is None:
+        error = "codex turn failed"
+    return payload, stdout, stderr, duration, error
+
+
+def agent_call(agent, prompt, cwd, model, plugin_dir, session_id, timeout, extra_args=None):
+    if agent == "codex":
+        return codex_call(
+            prompt, cwd, model, plugin_dir, session_id, timeout, extra_args=extra_args
+        )
+    args = list(extra_args or [])
+    if session_id:
+        args += ["--resume", session_id]
+    return claude_call(prompt, cwd, model, args, timeout)
+
+
+def skill_invocation(agent, skill, slug):
+    """Return the agent-specific syntax for one prism skill call."""
+    if agent == "claude":
+        return f"invoke /prism:{skill} {slug} for a standalone feature"
+    return f'use the `prism:{skill}` skill for the standalone feature "{slug}"'
 
 
 UNSPECIFIED_REPLY = "Not specified. Your decision."
@@ -559,7 +826,16 @@ def workspace_diff(workspace, limit=DIFF_LIMIT_CHARS):
     return text
 
 
-def ask_product_owner(spec_text, message, po_model, log_dir, tag, diff="", reactive=False):
+def ask_product_owner(
+    spec_text,
+    message,
+    po_agent,
+    po_model,
+    log_dir,
+    tag,
+    diff="",
+    reactive=False,
+):
     """One product-owner reply, generated strictly from the reference spec.
 
     Also returns elicitation stats for the exchange. `unspecified` counts the
@@ -573,12 +849,19 @@ def ask_product_owner(spec_text, message, po_model, log_dir, tag, diff="", react
         diff_rule=f"{DIFF_RULE}\n" if diff else "",
         diff_section=f"\n=== ENGINEER'S CHANGES SO FAR (diff) ===\n{diff}\n" if diff else "",
     )
-    payload, stdout, _, duration, error = claude_call(
+    payload, stdout, _, duration, error = agent_call(
+        po_agent,
         prompt,
-        cwd=log_dir,
-        model=po_model,
-        extra_args=["--max-turns", "2"],
+        log_dir,
+        po_model,
+        plugin_dir=None,
+        session_id=None,
         timeout=PO_TIMEOUT_S,
+        extra_args=(
+            ["--ignore-user-config"]
+            if po_agent == "codex"
+            else ["--max-turns", "2"]
+        ),
     )
     (Path(log_dir) / f"{tag}.po.json").write_text(redact(stdout) or "")
     answer = (payload or {}).get("result") or UNSPECIFIED_REPLY
@@ -597,6 +880,7 @@ def ask_product_owner(spec_text, message, po_model, log_dir, tag, diff="", react
         # is not pinned at a ceiling.
         "corrections": 0 if error else answer.count(CORRECTION_TAG),
         "po_error": bool(error),
+        "usage": (payload or {}).get("usage") or {},
     }
     return answer, cost, duration, stats
 
@@ -605,12 +889,14 @@ def run_phase(
     phase,
     initial_prompt,
     workspace,
+    agent,
     model,
     plugin_dir,
     max_turns,
     timeout,
     log_dir,
     spec_text,
+    po_agent,
     po_model,
     max_exchanges,
     po_sees_diff=False,
@@ -619,11 +905,14 @@ def run_phase(
     """One agent session with a product-owner question loop."""
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
-    base_args = ["--dangerously-skip-permissions", "--max-turns", str(max_turns)]
-    if plugin_dir is not None:
-        base_args += ["--plugin-dir", str(plugin_dir)]
+    base_args = []
+    if agent == "claude":
+        base_args = ["--dangerously-skip-permissions", "--max-turns", str(max_turns)]
+        if plugin_dir is not None:
+            base_args += ["--plugin-dir", str(plugin_dir)]
     record = {
         "name": phase,
+        "agent": agent,
         "model": model,
         "max_turns": max_turns,
         "timeout_s": timeout,
@@ -632,6 +921,8 @@ def run_phase(
         "num_turns": 0,
         "total_cost_usd": 0.0,
         "po_cost_usd": 0.0,
+        "usage": dict.fromkeys(TOKEN_KEYS, 0),
+        "po_usage": dict.fromkeys(TOKEN_KEYS, 0),
         "exchanges": 0,
         # Elicitation. `asked` and `answered` measure whether the agent aimed
         # its questions at what the spec actually settles. Raw exchange count
@@ -649,9 +940,15 @@ def run_phase(
     prompt = initial_prompt
     session_id = None
     for exchange in range(max_exchanges + 1):
-        args = base_args + (["--resume", session_id] if session_id else [])
-        payload, stdout, stderr, duration, error = claude_call(
-            prompt, workspace, model, args, timeout
+        payload, stdout, stderr, duration, error = agent_call(
+            agent,
+            prompt,
+            workspace,
+            model,
+            plugin_dir,
+            session_id,
+            timeout,
+            extra_args=base_args,
         )
         (log_dir / f"{phase}.{exchange}.stdout.json").write_text(redact(stdout) or "")
         if stderr:
@@ -663,6 +960,8 @@ def run_phase(
             record["total_cost_usd"] += payload.get("total_cost_usd") or 0.0
             record["is_error"] = payload.get("is_error")
             session_id = payload.get("session_id") or session_id
+            for key in TOKEN_KEYS:
+                record["usage"][key] += ((payload.get("usage") or {}).get(key) or 0)
         if error:
             record["error"] = error
             break
@@ -675,6 +974,7 @@ def run_phase(
         answer, po_cost, po_duration, po_stats = ask_product_owner(
             spec_text,
             text,
+            po_agent,
             po_model,
             log_dir,
             f"{phase}.{exchange}",
@@ -685,6 +985,8 @@ def run_phase(
         record["po_unspecified"] += po_stats["unspecified"]
         record["po_errors"] += 1 if po_stats["po_error"] else 0
         record["po_corrections"] += po_stats["corrections"]
+        for key in TOKEN_KEYS:
+            record["po_usage"][key] += po_stats["usage"].get(key) or 0
         record["po_answered"] += max(
             0, po_stats["answer_items"] - po_stats["unspecified"]
         )
@@ -705,12 +1007,7 @@ def mock_solve(workspace, task, prism_arm):
     This exists to test the pipeline without model cost. It never
     stands in for a real measurement.
     """
-    for oracle_file in sorted((task["dir"] / "oracle").iterdir()):
-        target = Path(workspace) / oracle_file.name
-        if oracle_file.is_dir():
-            shutil.copytree(oracle_file, target, dirs_exist_ok=True)
-        else:
-            shutil.copy2(oracle_file, target)
+    apply_oracle(workspace, task)
     if prism_arm:
         docs = Path(workspace) / "docs"
         adr_dir = docs / "ADRs" / "0001-mock-decision"
@@ -768,15 +1065,45 @@ def env_fingerprint():
     """Record machine context that leaks into every agent session."""
     global_claude_md = Path.home() / ".claude" / "CLAUDE.md"
     version = run_cmd(["claude", "--version"])
+    codex_version = run_cmd(["codex", "--version"])
     return {
         "global_claude_md": sha256_file(global_claude_md)[:16] if global_claude_md.exists() else None,
         "claude_version": version.stdout.strip() if version.returncode == 0 else None,
+        "codex_version": codex_version.stdout.strip() if codex_version.returncode == 0 else None,
         "platform": sys.platform,
         "python": sys.version.split()[0],
     }
 
 
 # ---------------------------------------------------------------- commands
+
+
+def configure_codex_prism(plugin_dir):
+    plugins = run_cmd(["codex", "plugin", "list"])
+    if re.search(r"^prism@prism\s+installed", plugins.stdout, re.M):
+        result = run_cmd(["codex", "plugin", "remove", "prism@prism"])
+        if result.returncode != 0:
+            sys.exit(f"cannot remove the prism plugin: {result.stderr.strip()}")
+    if plugin_dir is None:
+        return
+    marketplace = prepare_codex_marketplace(plugin_dir)
+    marketplaces = run_cmd(["codex", "plugin", "marketplace", "list"])
+    if re.search(r"^prism\s", marketplaces.stdout, re.M):
+        result = run_cmd(["codex", "plugin", "marketplace", "remove", "prism"])
+        if result.returncode != 0:
+            sys.exit(f"cannot remove the old prism marketplace: {result.stderr.strip()}")
+    result = run_cmd(["codex", "plugin", "marketplace", "add", str(marketplace)])
+    if result.returncode != 0:
+        sys.exit(f"cannot add the prism marketplace: {result.stderr.strip()}")
+    result = run_cmd(["codex", "plugin", "add", "prism@prism"])
+    if result.returncode != 0:
+        sys.exit(f"cannot install the prism plugin: {result.stderr.strip()}")
+    return marketplace
+
+
+def cmd_setup_codex(args):
+    marketplace = configure_codex_prism(args.plugin)
+    log(f"Codex benchmark plugin installed from {marketplace}")
 
 
 def cmd_selfcheck(args):
@@ -787,13 +1114,8 @@ def cmd_selfcheck(args):
             stage = task["stages"][stage_index]
             with tempfile.TemporaryDirectory(prefix=f"prism-oracle-{task['id']}-") as tmp:
                 ws = Path(tmp) / "ws"
-                ws.mkdir()
-                for oracle_file in sorted((task["dir"] / "oracle").iterdir()):
-                    target = ws / oracle_file.name
-                    if oracle_file.is_dir():
-                        shutil.copytree(oracle_file, target)
-                    else:
-                        shutil.copy2(oracle_file, target)
+                make_workspace(ws, task, with_config=False)
+                apply_oracle(ws, task)
                 score = score_workspace(ws, task, stage_index, venv_py)
             _, expected = cumulative_tests(task, stage_index)
             ok = score["resolved"] and score["tests_collected"] == expected
@@ -833,9 +1155,11 @@ def run_stage_phases(args, plugin_dir, task, stage_index, wdir, log_dir):
     spec_text = stage_spec_text(task, stage_index)
     common = dict(
         workspace=wdir,
+        agent=args.agent,
         model=args.model,
         log_dir=log_dir,
         spec_text=spec_text,
+        po_agent=args.po_agent,
         po_model=args.po_model,
         max_exchanges=args.max_exchanges,
         po_sees_diff=args.po_sees_diff,
@@ -852,10 +1176,16 @@ def run_stage_phases(args, plugin_dir, task, stage_index, wdir, log_dir):
                 **common,
             )
         ]
+    design_invocation = skill_invocation(args.agent, "design", slug)
+    implement_invocation = skill_invocation(args.agent, "implement", slug)
     phases = [
         run_phase(
             "design",
-            DESIGN_PROMPT.format(stage_intro=stage_intro, slug=slug, rules=INTERACTION_RULES),
+            DESIGN_PROMPT.format(
+                stage_intro=stage_intro,
+                invocation=design_invocation,
+                rules=INTERACTION_RULES,
+            ),
             plugin_dir=plugin_dir,
             max_turns=stage["phases"]["design"]["max_turns"],
             timeout=stage["phases"]["design"]["timeout_s"],
@@ -865,7 +1195,11 @@ def run_stage_phases(args, plugin_dir, task, stage_index, wdir, log_dir):
     phases.append(
         run_phase(
             "implement",
-            IMPLEMENT_PROMPT.format(slug=slug, rules=INTERACTION_RULES),
+            IMPLEMENT_PROMPT.format(
+                slug=slug,
+                invocation=implement_invocation,
+                rules=INTERACTION_RULES,
+            ),
             plugin_dir=plugin_dir,
             max_turns=stage["phases"]["implement"]["max_turns"],
             timeout=stage["phases"]["implement"]["timeout_s"],
@@ -881,6 +1215,12 @@ def cmd_run(args):
     out_dir = Path(args.out) if args.out else BENCH_DIR / "results" / datetime.now(timezone.utc).strftime("run-%Y%m%d-%H%M%S")
     out_dir.mkdir(parents=True, exist_ok=True)
     venv_py = ensure_venv()
+    codex_was_installed = False
+    if args.agent == "codex" and not args.mock:
+        plugins = run_cmd(["codex", "plugin", "list"])
+        codex_was_installed = bool(
+            re.search(r"^prism@prism\s+installed", plugins.stdout, re.M)
+        )
     worktrees = []
     resolved = {}
     plugin_dirs = {}
@@ -894,7 +1234,9 @@ def cmd_run(args):
         "schema_version": SCHEMA_VERSION,
         "started_at": utc_now(),
         "model": args.model,
+        "agent": args.agent,
         "po_model": args.po_model,
+        "po_agent": args.po_agent,
         "max_exchanges": args.max_exchanges,
         "po_sees_diff": args.po_sees_diff,
         "po_reactive": args.po_reactive,
@@ -912,6 +1254,8 @@ def cmd_run(args):
             for name, ref in arms:
                 arm_info = resolved[name]
                 prism_arm = plugin_dirs[name] is not None
+                if args.agent == "codex" and not args.mock:
+                    configure_codex_prism(plugin_dirs[name])
                 for task in tasks:
                     stages_to_run = task["stages"][: args.stages] if args.stages else task["stages"]
                     for rep in range(1, args.reps + 1):
@@ -962,6 +1306,8 @@ def cmd_run(args):
                         if not args.keep_work:
                             shutil.rmtree(wdir, ignore_errors=True)
     finally:
+        if args.agent == "codex" and not args.mock:
+            configure_codex_prism(REPO_ROOT if codex_was_installed else None)
         for worktree in worktrees:
             run_cmd(["git", "-C", str(REPO_ROOT), "worktree", "remove", "--force", str(worktree)])
     log(f"done. report with:\n  python3 bench/harness/bench.py report {results_path}")
@@ -1354,6 +1700,12 @@ def main():
     p_selfcheck.add_argument("--tasks", default="all")
     p_selfcheck.set_defaults(func=cmd_selfcheck)
 
+    p_setup_codex = sub.add_parser(
+        "setup-codex", help="install the generated Codex adapter for benchmark runs"
+    )
+    p_setup_codex.add_argument("--plugin", default=str(REPO_ROOT))
+    p_setup_codex.set_defaults(func=cmd_setup_codex)
+
     p_run = sub.add_parser("run", help="run benchmark arms")
     p_run.add_argument(
         "--arm",
@@ -1364,8 +1716,10 @@ def main():
     )
     p_run.add_argument("--tasks", default="all")
     p_run.add_argument("--reps", type=int, default=3)
-    p_run.add_argument("--model", default="claude-sonnet-5")
-    p_run.add_argument("--po-model", default="claude-haiku-4-5-20251001", help="model that simulates the product owner")
+    p_run.add_argument("--agent", choices=["claude", "codex"], default="claude")
+    p_run.add_argument("--model", default=None)
+    p_run.add_argument("--po-agent", choices=["claude", "codex"], default=None)
+    p_run.add_argument("--po-model", default=None, help="model that simulates the product owner")
     p_run.add_argument("--max-exchanges", type=int, default=4, help="max product-owner replies per agent session")
     p_run.add_argument(
         "--po-reactive",
@@ -1416,6 +1770,22 @@ def main():
     p_summary.set_defaults(func=cmd_summary)
 
     args = parser.parse_args()
+    go_cache = Path(tempfile.gettempdir()) / "prism-bench-go"
+    os.environ.setdefault("GOCACHE", str(go_cache / "build"))
+    os.environ.setdefault("GOMODCACHE", str(go_cache / "pkg" / "mod"))
+    if getattr(args, "po_agent", None) is None:
+        args.po_agent = getattr(args, "agent", "claude")
+    if hasattr(args, "model") and args.model is None:
+        args.model = "gpt-5.4" if args.agent == "codex" else "claude-sonnet-5"
+    if hasattr(args, "po_model") and args.po_model is None:
+        if args.po_agent == args.agent:
+            args.po_model = args.model
+        else:
+            args.po_model = (
+                "gpt-5.4"
+                if args.po_agent == "codex"
+                else "claude-haiku-4-5-20251001"
+            )
     args.func(args)
 
 

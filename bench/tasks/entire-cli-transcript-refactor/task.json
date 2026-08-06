@@ -1,0 +1,61 @@
+{
+  "id": "entire-cli-transcript-refactor",
+  "name": "Entire CLI transcript parser consolidation",
+  "summary": "A staged transcript parser refactor in a large Go CLI.",
+  "deliverable": "repo",
+  "language": "go",
+  "workflow_language": "Go 1.25.6",
+  "workflow_test_command": "go test ./...",
+  "workflow_verification": "Run the Go test suite from repo. Exercise the transcript parser requirements in BRIEF.md.",
+  "seed_repo": {
+    "url": "https://github.com/entireio/cli.git",
+    "commit": "380a9451b5d268fcc230bfb217b9df7ba4def8c6",
+    "path": "repo"
+  },
+  "oracle_patch": {
+    "source": {
+      "repo_url": "https://github.com/Togetherbench/SWE-Together.git",
+      "commit": "811a70a28ff20bfbeabf9a8b5ec42152d16c9b4f",
+      "path": "tasks/cli-task-32ba47/reference_patch.json",
+      "local_env": "SWE_TOGETHER_DIR",
+      "sibling": "SWE-Together"
+    },
+    "json_field": "patch"
+  },
+  "test_timeout_s": 1200,
+  "stages": [
+    {
+      "name": "shared-parser",
+      "brief": "briefs/stage1.md",
+      "spec": "specs/stage1.md",
+      "tests": ["tests/test_stage1.py"],
+      "test_count": 4,
+      "phases": {
+        "design": { "max_turns": 60, "timeout_s": 1800 },
+        "implement": { "max_turns": 120, "timeout_s": 3600 }
+      }
+    },
+    {
+      "name": "consumer-migration",
+      "brief": "briefs/stage2.md",
+      "spec": "specs/stage2.md",
+      "tests": ["tests/test_stage2.py"],
+      "test_count": 4,
+      "phases": {
+        "design": { "max_turns": 60, "timeout_s": 1800 },
+        "implement": { "max_turns": 120, "timeout_s": 3600 }
+      }
+    },
+    {
+      "name": "unbounded-records",
+      "brief": "briefs/stage3.md",
+      "spec": "specs/stage3.md",
+      "tests": ["tests/test_stage3.py"],
+      "test_count": 3,
+      "phases": {
+        "design": { "max_turns": 60, "timeout_s": 1800 },
+        "implement": { "max_turns": 120, "timeout_s": 3600 }
+      }
+    }
+  ]
+}

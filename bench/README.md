@@ -23,7 +23,7 @@ An arm is one plugin version, or the no-plugin baseline.
 For each arm, task, and repetition the harness:
 
 1. Creates a fresh workspace with `BRIEF.md` (the current stage's product request), an optional seed, and (for prism arms) a fixed `.claude/workflow-config.md`.
-2. Runs the agent headlessly with `claude -p`.
+2. Runs the selected agent headlessly with `claude -p` or `codex exec`.
    A prism arm runs two sessions per stage, `design` then `implement`, because the workflow itself mandates a fresh session per phase.
    The baseline arm runs one plain "implement this brief" session per stage.
 3. Relays questions: when a session ends without the completion marker, the harness sends the agent's message to the **product owner**, a pinned model prompted to answer only from the stage's hidden reference spec, and resumes the session with the reply (`--resume`).
@@ -43,7 +43,8 @@ After stage `n` the workspace is scored against the tests of stages 1 through `n
 - **Stage progression**: mean pass fraction by stage index per arm.
   A workflow that pays off holds its level while the baseline decays.
 - **Artifact discipline**: mechanical checks that the workflow's promised durable artifacts exist (ADR present and flipped to `Accepted`, feature files, user guide, agent-written tests).
-- **Cost**: agent cost, product-owner cost, turns, exchanges, and wall time, straight from the `claude -p` JSON output.
+- **Cost**: agent cost, product-owner cost, token usage, turns, exchanges, and wall time from the agent JSON output.
+- Codex subscription runs report token usage but report zero API cost.
 - **Phase errors**: timeouts, turn-limit hits, and crashed sessions.
   A run with a phase error still gets scored (intent-to-treat), because giving up is a behavior of the workflow under test.
 
@@ -77,7 +78,30 @@ Test the pipeline without model cost:
 python3 bench/harness/bench.py run --mock --arm current=. --arm baseline=none --reps 1
 ```
 
-Compare two plugin versions (this invokes real agent sessions and spends real money):
+Prepare Codex to load a benchmark-only adapter for the Claude plugin:
+
+```bash
+python3 bench/harness/bench.py setup-codex --plugin .
+```
+
+The adapter copies prism into `bench/.cache` and changes Claude-only skill flags in that copy.
+The command does not change the released plugin files.
+
+Run one brownfield task with a Codex subscription:
+
+```bash
+python3 bench/harness/bench.py run \
+  --agent codex --po-agent codex \
+  --model gpt-5.4 --po-model gpt-5.4 \
+  --arm baseline=none --arm prism=. \
+  --tasks entire-cli-transcript-refactor --reps 1
+```
+
+Install Go before you run this task.
+The harness fetches the pinned Entire CLI source, the external oracle, and Go modules during selfcheck.
+Run the command from a normal shell so upstream tests can bind local test ports.
+
+Compare two plugin versions with real agent sessions:
 
 ```bash
 python3 bench/harness/bench.py run --arm v020=v0.2.0 --arm candidate=. --tasks minidb --reps 3
@@ -85,6 +109,7 @@ python3 bench/harness/bench.py run --arm v020=v0.2.0 --arm candidate=. --tasks m
 
 An arm ref is a plugin directory, a git ref of this repository (resolved through a temporary worktree), or `none` for the no-plugin baseline.
 Useful knobs: `--model` (agent), `--po-model` (product owner), `--max-exchanges`, `--stages N` (run only the first N stages), `--keep-work` (keep workspaces for inspection).
+Use `--agent codex --po-agent codex` for Codex subscription runs.
 
 Aggregate one or more runs:
 
@@ -109,16 +134,16 @@ python3 bench/harness/bench.py report bench/results/<run-dir> --out bench/result
 - **The config is seeded, not generated.** The harness writes the same `.claude/workflow-config.md` into every prism workspace, so `workflow-init` variance never contaminates the measurement.
 - **The completion marker.** Sessions signal completion with a `PHASE COMPLETE` line.
   Anything else routes to the product owner, up to the exchange budget, after which the session's state stands as-is.
-- **Sandboxing is your job.** Agent sessions run with `--dangerously-skip-permissions` inside their workspace.
-  Run benchmarks in a container or a dedicated user account.
+- **Sandboxing is your job.** Claude sessions skip permission checks, while Codex sessions use `workspace-write` with network access.
+  Run Claude benchmarks in a container or a dedicated user account.
 
 ## Threats to validity
 
 Read these before quoting a number.
 
-- **Few tasks.** Six tasks bound what a task-level bootstrap can detect.
+- **Few tasks.** Seven tasks bound what a task-level bootstrap can detect.
   Grow the suite before claiming small effects.
-  Per-test granularity (240 hidden tests today) helps, but tests within a task are correlated.
+  Per-test granularity (251 hidden tests today) helps, but tests within a task are correlated.
 - **The product owner is a model.** Its answers vary between runs and can err, which adds noise and, rarely, wrong guidance.
   Mitigations: pinned cheap model, a strict quote-the-spec prompt, full transcripts for audit, and the same product owner for every arm.
   Judge disputes by reading the logged exchanges.
@@ -130,9 +155,9 @@ Read these before quoting a number.
 - **Machine context leaks.** A global `~/.claude/CLAUDE.md` and user settings load into every agent session.
   The run records its fingerprint so results disclose it.
   Keep it constant within a run, and prefer a clean profile for published results.
-- **Two difficulty tiers.** The small tasks (`ratelimit`, `todocli`, `mdtable`) pin a full interface in the brief and mostly measure spec fidelity, and strong models saturate them.
+- **Three difficulty tiers.** The small tasks (`ratelimit`, `todocli`, `mdtable`) pin a full interface and mostly measure spec fidelity.
   The design-heavy tasks (`sheetcalc`, `kvstore`) and the staged task (`minidb`) are where workflow versions can separate.
-  Brownfield tasks with a `seed/` directory are the next growth direction.
+  The Entire CLI transcript task tests staged work in a large brownfield codebase.
 
 ## Adding a task
 
@@ -156,8 +181,10 @@ A seeded task starts from a large existing codebase instead, where reading every
 Two optional `task.json` fields support this:
 
 - `seed_repo`: `{"url": ..., "commit": ..., "path": "repo"}`.
-  The harness clones the repository, checks out the pinned commit, and removes the upstream `.git`.
+  The harness caches the repository, checks out the pinned commit, and removes the upstream `.git`.
   The code never enters this repository, so each upstream project keeps its own license, and the pin keeps the workspace reproducible.
+- `oracle_patch`: a pinned external repository file and JSON field that contain the reference patch.
+  The harness applies the patch during selfcheck and mock runs without storing it in prism.
 - `test_command`: the scoring command, as a list.
   It must write JUnit XML to `{junit}`, which keeps one parser for every language.
   `{venv_py}` and `{tests}` are also substituted.
