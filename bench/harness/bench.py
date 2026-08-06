@@ -985,6 +985,72 @@ def cmd_report(args):
         print(report)
 
 
+def arm_version(records):
+    """Label an arm by its plugin commit: short sha, '*' when dirty, or 'baseline'."""
+    sha = next((r.get("arm_sha") for r in records if r.get("arm_sha")), None)
+    if sha is None:
+        return "baseline"
+    dirty = sha.endswith("-dirty")
+    return sha.split("-")[0][:9] + ("*" if dirty else "")
+
+
+def cmd_summary(args):
+    results_root = BENCH_DIR / "results"
+    run_dirs = sorted(
+        d for d in results_root.iterdir() if d.is_dir() and (d / "results.jsonl").exists()
+    )
+    if not run_dirs:
+        sys.exit("no runs under bench/results/")
+    lines = []
+    out = lines.append
+    out("# prism benchmark results")
+    out("")
+    out("One row per arm per run, newest last.")
+    out(f"Regenerate with: `python3 bench/harness/bench.py summary --out bench/results/RESULTS.md`")
+    out("The version column is the plugin commit the arm ran (`*` marks a dirty tree), or `baseline` for no plugin.")
+    out("Stage cells are mean hidden-test pass fractions, cumulative per stage.")
+    out("")
+    out("| run | date | model | task | version | stages | final | cost/rep | reps |")
+    out("|-----|------|-------|------|---------|--------|-------|----------|------|")
+    for run_dir in run_dirs:
+        records = load_results([run_dir])
+        if not records:
+            continue
+        meta = {}
+        if (run_dir / "run.json").exists():
+            meta = json.loads((run_dir / "run.json").read_text())
+        date = (meta.get("started_at") or records[0]["timestamp"])[:10]
+        for arm in sorted({r["arm"] for r in records}):
+            arm_records = [r for r in records if r["arm"] == arm]
+            version = arm_version(arm_records)
+            models = sorted({r.get("model", "?") for r in arm_records})
+            tasks = sorted({r["task"] for r in arm_records})
+            reps = len({r["rep"] for r in arm_records})
+            by_stage = {}
+            for r in arm_records:
+                by_stage.setdefault(r["stage_index"], []).append(r["score"]["pass_fraction"])
+            stages = " / ".join(f"{mean(v):.3f}" for _, v in sorted(by_stage.items()))
+            final = mean(
+                r["score"]["pass_fraction"] for r in arm_records if r["final_stage"]
+            )
+            cost = sum(
+                sum(p.get("total_cost_usd") or 0.0 for p in r["phases"]) for r in arm_records
+            ) / max(reps, 1)
+            mock = " (mock)" if any(r.get("mock") for r in arm_records) else ""
+            out(
+                f"| {run_dir.name}{mock} | {date} | {', '.join(models)} | {', '.join(tasks)} "
+                f"| `{version}` | {stages} | {final:.3f} | ${cost:.2f} | {reps} |"
+            )
+    out("")
+    out("Compare arms only within a run, or across runs that share the model, the task, and the product-owner setup.")
+    report = "\n".join(lines)
+    if args.out:
+        Path(args.out).write_text(report + "\n")
+        log(f"wrote {args.out}")
+    else:
+        print(report)
+
+
 # ---------------------------------------------------------------- main
 
 
@@ -1026,6 +1092,10 @@ def main():
     p_report.add_argument("results", nargs="+", help="results.jsonl files or run directories")
     p_report.add_argument("--out", default=None)
     p_report.set_defaults(func=cmd_report)
+
+    p_summary = sub.add_parser("summary", help="consolidated table over all runs, one row per arm")
+    p_summary.add_argument("--out", default=None)
+    p_summary.set_defaults(func=cmd_summary)
 
     args = parser.parse_args()
     args.func(args)
