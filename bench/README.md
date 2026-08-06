@@ -145,6 +145,26 @@ Read these before quoting a number.
 3. Set each stage's `test_count` to the exact number of test cases, parametrized cases included.
 4. Write the oracle, then run `selfcheck` until every stage reports `ok`.
 5. Keep the deliverable standard-library only, so the agent needs no package installs.
+   A **seeded brownfield task** is the exception, because it starts from a real repository with its own dependencies.
+
+## Seeded brownfield tasks
+
+A greenfield task builds a small deliverable, so a fresh session can read the whole workspace and rebuild the design from the code.
+That makes durable artifacts redundant and hides the effect the workflow claims.
+A seeded task starts from a large existing codebase instead, where reading everything is not a substitute for a written design.
+
+Two optional `task.json` fields support this:
+
+- `seed_repo`: `{"url": ..., "commit": ..., "path": "repo"}`.
+  The harness clones the repository, checks out the pinned commit, and removes the upstream `.git`.
+  The code never enters this repository, so each upstream project keeps its own license, and the pin keeps the workspace reproducible.
+- `test_command`: the scoring command, as a list.
+  It must write JUnit XML to `{junit}`, which keeps one parser for every language.
+  `{venv_py}` and `{tests}` are also substituted.
+  Set `test_timeout_s` when the suite needs more than 600 seconds.
+
+Pin the toolchain the task needs, and state it in the task's own documentation.
+The agent must never see the hidden tests, so keep `test_command` pointed at `{tests}` only.
 
 Task content is frozen once a published comparison uses it.
 Fixing a task's spec or tests invalidates every earlier result for that task, so bump the task id instead (for example `minidb2`).

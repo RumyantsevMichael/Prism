@@ -288,8 +288,18 @@ def score_workspace(workspace, task, upto_stage, venv_py, keep_dir=None):
     for test_file in test_files:
         shutil.copy2(test_file, tests_dir / test_file.name)
     xml_path = scoring / "junit.xml"
-    result = run_cmd(
-        [
+    # A task may override the runner. Seeded brownfield tasks are not Python,
+    # so they supply their own command; it must write JUnit XML to {junit} so
+    # the parser below stays the single scoring path. {venv_py} is available
+    # for tasks that still want the private venv.
+    command = task.get("test_command")
+    if command:
+        command = [
+            part.format(junit=str(xml_path), venv_py=str(venv_py), tests="_bench_tests")
+            for part in command
+        ]
+    else:
+        command = [
             str(venv_py),
             "-m",
             "pytest",
@@ -298,10 +308,8 @@ def score_workspace(workspace, task, upto_stage, venv_py, keep_dir=None):
             "-p",
             "no:cacheprovider",
             f"--junitxml={xml_path}",
-        ],
-        cwd=ws,
-        timeout=600,
-    )
+        ]
+    result = run_cmd(command, cwd=ws, timeout=task.get("test_timeout_s", 600))
     score = {
         "tests_expected": expected,
         "tests_collected": 0,
@@ -378,6 +386,19 @@ def make_workspace(dest, task, with_config):
     seed = task["dir"] / "seed"
     if seed.exists():
         shutil.copytree(seed, dest, dirs_exist_ok=True)
+    # Brownfield seed: clone a real repository at a pinned commit instead of
+    # vendoring it. The upstream code keeps its own license and never enters
+    # this repository, and the pin makes the workspace reproducible.
+    seed_repo = task.get("seed_repo")
+    if seed_repo:
+        run_cmd(["git", "clone", "--quiet", seed_repo["url"], str(dest / seed_repo.get("path", "repo"))])
+        checkout = run_cmd(
+            ["git", "checkout", "--quiet", seed_repo["commit"]],
+            cwd=dest / seed_repo.get("path", "repo"),
+        )
+        if checkout.returncode != 0:
+            sys.exit(f"seed_repo checkout failed for {task['id']}: {checkout.stderr.strip()}")
+        shutil.rmtree(dest / seed_repo.get("path", "repo") / ".git", ignore_errors=True)
     if with_config:
         claude_dir = dest / ".claude"
         claude_dir.mkdir(exist_ok=True)
