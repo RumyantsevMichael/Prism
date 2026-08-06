@@ -146,11 +146,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 HOME = str(Path.home())
+REPO_ROOT_TEXT = str(REPO_ROOT.resolve())
 
 
 def redact(text):
-    """Strip the local home directory from text destined for saved records."""
-    return text.replace(HOME, "~") if text else text
+    """Remove local filesystem paths from text destined for saved records."""
+    if not text:
+        return text
+    return text.replace(REPO_ROOT_TEXT, "<repo>").replace(HOME, "<home>")
 
 
 def log(message):
@@ -1227,7 +1230,7 @@ def cmd_run(args):
     for name, ref in arms:
         plugin_dir, sha, worktree = resolve_arm(name, ref, out_dir)
         plugin_dirs[name] = plugin_dir
-        resolved[name] = {"ref": ref, "plugin_dir": redact(str(plugin_dir)) if plugin_dir else None, "sha": sha}
+        resolved[name] = {"ref": ref, "sha": sha}
         if worktree:
             worktrees.append(worktree)
     meta = {
