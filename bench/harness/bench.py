@@ -1258,6 +1258,73 @@ def cmd_summary(args):
 # ---------------------------------------------------------------- main
 
 
+def cmd_backfill(args):
+    """Recover elicitation counts from a finished run's saved logs.
+
+    Runs made before the harness recorded po_asked/po_answered/po_unspecified
+    still have the raw exchanges on disk: `<phase>.<n>.po.json` holds the
+    product owner's reply and `<phase>.<n>.stdout.json` the agent message that
+    prompted it. That is everything the counters need, so an old run can get
+    the metric without being re-run.
+
+    Corrections are NOT backfilled. They need --po-reactive, which did not
+    exist for those runs, so the count would be a true zero rather than a
+    missing value and would read as "never corrected".
+    """
+    run_dir = Path(args.run_dir)
+    results_path = run_dir / "results.jsonl" if run_dir.is_dir() else run_dir
+    if not results_path.exists():
+        sys.exit(f"no results.jsonl at {results_path}")
+    logs_root = results_path.parent / "logs"
+    if not logs_root.exists():
+        sys.exit(f"no logs directory at {logs_root}")
+
+    records = [json.loads(line) for line in results_path.read_text().splitlines() if line.strip()]
+    patched, skipped = 0, 0
+    for record in records:
+        log_dir = (
+            logs_root
+            / record["arm"]
+            / record["task"]
+            / f"rep{record['rep']}"
+            / f"stage{record['stage_index'] + 1}"
+        )
+        if not log_dir.exists():
+            skipped += 1
+            continue
+        for phase in record["phases"]:
+            totals = {"po_asked": 0, "po_answered": 0, "po_unspecified": 0, "po_errors": 0}
+            for po_file in sorted(log_dir.glob(f"{phase['name']}.*.po.json")):
+                exchange = po_file.name.split(".")[-3]
+                try:
+                    answer = (json.loads(po_file.read_text() or "{}") or {}).get("result") or ""
+                except json.JSONDecodeError:
+                    continue
+                message = ""
+                agent_file = log_dir / f"{phase['name']}.{exchange}.stdout.json"
+                if agent_file.exists():
+                    try:
+                        message = (json.loads(agent_file.read_text() or "{}") or {}).get("result") or ""
+                    except json.JSONDecodeError:
+                        message = ""
+                unspecified = answer.count(UNSPECIFIED_REPLY)
+                totals["po_asked"] += count_items(message)
+                totals["po_unspecified"] += unspecified
+                totals["po_answered"] += max(0, count_items(answer) - unspecified)
+            phase.update(totals)
+            phase.setdefault("po_corrections", None)
+        patched += 1
+
+    if not args.write:
+        log(f"dry run: would patch {patched} records ({skipped} without logs)")
+        log("re-run with --write to update results.jsonl in place")
+        return
+    backup = results_path.with_suffix(".jsonl.bak")
+    shutil.copy2(results_path, backup)
+    results_path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    log(f"patched {patched} records ({skipped} without logs); backup at {backup}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1313,6 +1380,15 @@ def main():
     p_report.add_argument("results", nargs="+", help="results.jsonl files or run directories")
     p_report.add_argument("--out", default=None)
     p_report.set_defaults(func=cmd_report)
+
+    p_backfill = sub.add_parser(
+        "backfill", help="recover elicitation counts for an old run from its saved logs"
+    )
+    p_backfill.add_argument("run_dir", help="run directory or results.jsonl")
+    p_backfill.add_argument(
+        "--write", action="store_true", help="rewrite results.jsonl in place (keeps a .bak)"
+    )
+    p_backfill.set_defaults(func=cmd_backfill)
 
     p_summary = sub.add_parser("summary", help="consolidated table over all runs, one row per arm")
     p_summary.add_argument("--out", default=None)
