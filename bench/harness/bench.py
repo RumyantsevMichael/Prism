@@ -404,6 +404,42 @@ def write_stage_brief(workspace, task, stage_index):
     shutil.copy2(task["dir"] / stage["brief"], brief)
 
 
+def stage_activity(workspace, phases):
+    """Mechanical evidence that the agent actually did work this stage.
+
+    A scored run that produced no edits is an infrastructure failure wearing a
+    result's clothes: it reports a plausible low pass fraction with no error,
+    and nothing in the record says the agent never ran. That is exactly how a
+    malformed model name presented in an earlier SWE-Together trial, so the
+    check is cheap insurance on every result.
+
+    Stats come from git against the previous stage snapshot, so they measure
+    this stage only. Staging happens here rather than in snapshot_stage so
+    untracked files count as work.
+    """
+    git(workspace, "add", "-A")
+    numstat = git(workspace, "diff", "--cached", "--numstat", "HEAD").stdout or ""
+    files, insertions, deletions = 0, 0, 0
+    for line in numstat.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        files += 1
+        # "-" marks a binary file, which has no line counts.
+        insertions += int(parts[0]) if parts[0].isdigit() else 0
+        deletions += int(parts[1]) if parts[1].isdigit() else 0
+    turns = sum(p.get("num_turns") or 0 for p in phases)
+    return {
+        "files_changed": files,
+        "insertions": insertions,
+        "deletions": deletions,
+        "agent_turns": turns,
+        # Flagged, never fatal: the record still scores (intent-to-treat), but
+        # a reader can exclude these instead of averaging them in as zeros.
+        "no_agent_progress": files == 0 or turns == 0,
+    }
+
+
 def snapshot_stage(workspace, stage_name):
     git(workspace, "add", "-A")
     git(workspace, "commit", "--quiet", "-m", f"chore: snapshot after stage {stage_name}")
@@ -825,6 +861,7 @@ def cmd_run(args):
                                 "phases": phases,
                                 "phase_error": any(p.get("error") for p in phases),
                                 "score": score,
+                                "activity": stage_activity(wdir, phases),
                                 "artifacts": artifact_checks(wdir) if prism_arm else None,
                             }
                             results_file.write(json.dumps(record) + "\n")
@@ -956,6 +993,31 @@ def cmd_report(args):
             f"| {mean(costs):.2f} | {mean(po_costs):.2f} | {mean(turns):.0f} | {mean(durations):.0f} |"
         )
     out("")
+    flagged = [r for r in records if (r.get("activity") or {}).get("no_agent_progress")]
+    if flagged:
+        out("## Infrastructure warnings")
+        out("")
+        out(
+            f"**{len(flagged)} of {len(records)} records show no agent progress** "
+            "(no files changed, or no agent turns)."
+        )
+        out("")
+        out("| arm | task | stage | rep | files changed | agent turns | pass fraction |")
+        out("|-----|------|-------|-----|---------------|-------------|---------------|")
+        for r in flagged:
+            a = r["activity"]
+            out(
+                f"| {r['arm']} | {r['task']} | {r['stage_index'] + 1} | {r['rep']} "
+                f"| {a['files_changed']} | {a['agent_turns']} | {r['score']['pass_fraction']:.3f} |"
+            )
+        out("")
+        out(
+            "These scored without the agent editing anything, so they measure the "
+            "harness, not the arm. Fix the cause and re-run before quoting any "
+            "number above, because a broken session averages in as a low score "
+            "rather than as an error."
+        )
+        out("")
     if any(p.get("po_asked") for r in records for p in r["phases"]):
         out("## Elicitation (all stages, mean per repetition)")
         out("")
