@@ -1,0 +1,12 @@
+{
+  "id": "kvstore",
+  "name": "Durable key-value store",
+  "summary": "An embedded key-value store with an append-only log, torn-tail crash recovery, and compaction.",
+  "deliverable": "kvstore (module or package)",
+  "language": "python",
+  "test_count": 34,
+  "phases": {
+    "design": { "max_turns": 100, "timeout_s": 3600 },
+    "implement": { "max_turns": 300, "timeout_s": 7200 }
+  }
+}

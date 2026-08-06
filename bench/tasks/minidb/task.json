@@ -1,0 +1,42 @@
+{
+  "id": "minidb",
+  "name": "Mini SQL database",
+  "summary": "An embeddable SQL database engine with typed tables, querying, durability, and transactions, built in three staged product requests.",
+  "deliverable": "minidb (module or package)",
+  "language": "python",
+  "stages": [
+    {
+      "name": "core",
+      "brief": "briefs/stage1.md",
+      "spec": "specs/stage1.md",
+      "tests": ["tests/test_stage1.py"],
+      "test_count": 34,
+      "phases": {
+        "design": { "max_turns": 100, "timeout_s": 3600 },
+        "implement": { "max_turns": 300, "timeout_s": 7200 }
+      }
+    },
+    {
+      "name": "querying",
+      "brief": "briefs/stage2.md",
+      "spec": "specs/stage2.md",
+      "tests": ["tests/test_stage2.py"],
+      "test_count": 34,
+      "phases": {
+        "design": { "max_turns": 100, "timeout_s": 3600 },
+        "implement": { "max_turns": 300, "timeout_s": 7200 }
+      }
+    },
+    {
+      "name": "durability",
+      "brief": "briefs/stage3.md",
+      "spec": "specs/stage3.md",
+      "tests": ["tests/test_stage3.py"],
+      "test_count": 21,
+      "phases": {
+        "design": { "max_turns": 100, "timeout_s": 3600 },
+        "implement": { "max_turns": 300, "timeout_s": 7200 }
+      }
+    }
+  ]
+}

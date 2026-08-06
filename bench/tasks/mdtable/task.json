@@ -1,0 +1,12 @@
+{
+  "id": "mdtable",
+  "name": "Markdown table formatter",
+  "summary": "A Python function that normalizes and aligns a Markdown table with exact padding rules.",
+  "deliverable": "mdtable.py",
+  "language": "python",
+  "test_count": 21,
+  "phases": {
+    "design": { "max_turns": 60, "timeout_s": 1800 },
+    "implement": { "max_turns": 120, "timeout_s": 3600 }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "id": "ratelimit",
+  "name": "Token-bucket rate limiter",
+  "summary": "A small Python library that throttles actions with a token bucket and an injectable clock.",
+  "deliverable": "ratelimit.py",
+  "language": "python",
+  "test_count": 25,
+  "phases": {
+    "design": { "max_turns": 60, "timeout_s": 1800 },
+    "implement": { "max_turns": 120, "timeout_s": 3600 }
+  }
+}

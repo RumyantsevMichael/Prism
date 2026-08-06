@@ -1,0 +1,12 @@
+{
+  "id": "sheetcalc",
+  "name": "Spreadsheet formula engine",
+  "summary": "A spreadsheet calculation engine with formula parsing, dependencies, recalculation, cycles, and error semantics.",
+  "deliverable": "sheetcalc (module or package)",
+  "language": "python",
+  "test_count": 51,
+  "phases": {
+    "design": { "max_turns": 100, "timeout_s": 3600 },
+    "implement": { "max_turns": 300, "timeout_s": 7200 }
+  }
+}

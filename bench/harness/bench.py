@@ -1,0 +1,1035 @@
+#!/usr/bin/env python3
+"""Benchmark harness for the prism workflow plugin.
+
+Subcommands:
+  selfcheck  Verify that every task's oracle passes its hidden tests, per stage.
+  run        Run benchmark arms over the task suite and score the results.
+  score      Score one existing workspace directory against one task.
+  report     Aggregate results.jsonl records into a Markdown report.
+
+The methodology lives in bench/README.md.
+The harness uses the Python standard library only.
+Scoring runs pytest from a private venv under bench/.venv.
+
+Tasks can be staged: a sequence of product requests implemented in fresh
+sessions over one persistent workspace, scored cumulatively after each stage.
+Agent sessions are interactive: a simulated product owner answers the agent's
+questions using a hidden per-stage reference spec, and nothing else.
+"""
+import argparse
+import hashlib
+import json
+import random
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from xml.etree import ElementTree
+
+SCHEMA_VERSION = 2
+BENCH_DIR = Path(__file__).resolve().parents[1]
+TASKS_DIR = BENCH_DIR / "tasks"
+REPO_ROOT = BENCH_DIR.parent
+PYTEST_SPEC = "pytest>=8,<9"
+BOOTSTRAP_RESAMPLES = 10_000
+PHASE_DONE_MARKER = "PHASE COMPLETE"
+PO_TIMEOUT_S = 600
+
+INTERACTION_RULES = f"""
+You are running inside a benchmark harness, driven over a text channel.
+A product owner is available: when you need requirements, decisions, or acceptance, end your message with concise numbered questions, and the answers arrive as the next message.
+The product owner knows the intended behavior in detail but only answers what is asked. Elicit what you need instead of inventing unstated requirements.
+Never use the AskUserQuestion tool. Ask in plain text.
+Do not commit and do not push. The harness snapshots files directly.
+The deliverable interface named in BRIEF.md is a hard contract: do not rename or move it.
+When this session's work is finished, end your message with the exact line:
+{PHASE_DONE_MARKER}
+""".strip()
+
+DESIGN_PROMPT = """Read BRIEF.md at the repository root. It is the product request for {stage_intro}.
+Run the prism design workflow for it now: invoke /prism:design {slug} (a standalone feature with the slug "{slug}").
+Produce the full spec: ADR, contracts, build plan, feature files, and the handoff under the plans directory.
+The product owner is available throughout: interview them about requirements the request leaves open, and present the finished artifacts for acceptance.
+Write no implementation code in this session.
+{rules}"""
+
+IMPLEMENT_PROMPT = """This repository contains a spec that an earlier design session produced under docs/plans/{slug}/.
+Run /prism:implement {slug} now and follow the skill fully: validate the spec, write tests first, implement to green, verify, and audit.
+If validation finds spec gaps, report them as questions: the product owner will answer or delegate the decision to you.
+Finish only when the deliverable in BRIEF.md is complete and your own tests pass.
+{rules}"""
+
+BASELINE_PROMPT = """Read BRIEF.md at the repository root. It is the product request for {stage_intro}.
+Implement it in this repository until it is complete: write the code and the tests, and make the tests pass.
+The product owner is available for questions about intended behavior.
+{rules}"""
+
+STAGE_ZERO_INTRO = "a new product"
+STAGE_LATER_INTRO = "a change request on the product already built in this repository"
+
+PO_PROMPT = """You simulate the product owner of a software project inside a benchmark.
+The reference specification below is your only source of truth.
+An engineer sends you a message: questions, a status report, or work presented for acceptance.
+
+Rules:
+- Answer only from the reference specification. Restate or quote its rules.
+- If the reference does not settle an asked question, reply for that item exactly: "Not specified. Your decision."
+- Do not volunteer requirements the engineer did not ask about.
+- Do not write code and do not prescribe implementation choices.
+- When asked to accept or approve work and nothing in the message contradicts the reference, approve briefly.
+- If the message contains no question and no acceptance request, reply: "Acknowledged. Continue."
+- Be concise. Answer each numbered question directly, in the same numbering.
+
+=== REFERENCE SPECIFICATION ===
+{spec}
+
+=== ENGINEER'S MESSAGE ===
+{message}
+"""
+
+WORKFLOW_CONFIG_TEMPLATE = """# Workflow config
+<!-- Read by the workflow skills. Created by the benchmark harness. -->
+
+## Product
+- Name: {name}
+- One-line description: {summary}
+
+## Paths
+- ADRs: /docs/ADRs/
+- Plans (scratch): /docs/plans/
+- Feature files: /docs/Features/
+- Roadmap: /docs/roadmap.md
+- Glossary: /docs/Glossary.md
+- User guide: /docs/user-guide/
+- Product strategy: n/a
+
+## Stack
+- Languages: Python 3 (standard library only)
+- Test command: python3 -m unittest discover -s tests -v
+- BDD harness: none, feature files are spec-only
+- Typecheck: n/a
+- Lint/format: n/a
+
+## Verification
+- Run the unittest suite. Exercise the deliverable exactly as BRIEF.md describes.
+
+## Tracker
+- System: n/a (benchmark run, no tracker)
+- Labels: n/a
+
+## Commits
+- Scopes: free-form
+- Notes: committing is disabled in benchmark runs.
+
+## Interaction
+- Interaction style: plain-text
+
+## Constraints
+- This is a benchmark session driven over a text channel.
+- The user on the channel is the product owner. Deliver gates and questions as plain text and wait for the reply.
+- Do not use the AskUserQuestion tool.
+- Do not commit and do not push.
+"""
+
+CONFTEST = """import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+"""
+
+
+HOME = str(Path.home())
+
+
+def redact(text):
+    """Strip the local home directory from text destined for saved records."""
+    return text.replace(HOME, "~") if text else text
+
+
+def log(message):
+    print(message, flush=True)
+
+
+def utc_now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def sha256_file(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def run_cmd(cmd, **kwargs):
+    return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
+
+
+# ---------------------------------------------------------------- tasks
+
+
+def all_task_ids():
+    return sorted(p.parent.name for p in TASKS_DIR.glob("*/task.json"))
+
+
+def load_task(task_id):
+    task_dir = TASKS_DIR / task_id
+    task = json.loads((task_dir / "task.json").read_text())
+    task["dir"] = task_dir
+    if "stages" not in task:
+        # Legacy single-stage layout: brief.md + tests/ + top-level counts.
+        task["stages"] = [
+            {
+                "name": "build",
+                "brief": "brief.md",
+                "spec": task.get("spec", "brief.md"),
+                "tests": sorted(
+                    p.relative_to(task_dir).as_posix()
+                    for p in (task_dir / "tests").glob("*.py")
+                ),
+                "test_count": task["test_count"],
+                "phases": task["phases"],
+            }
+        ]
+    return task
+
+
+def select_tasks(selector):
+    if selector in (None, "all"):
+        ids = all_task_ids()
+    else:
+        ids = [t.strip() for t in selector.split(",") if t.strip()]
+        unknown = [t for t in ids if not (TASKS_DIR / t / "task.json").exists()]
+        if unknown:
+            sys.exit(f"unknown tasks: {', '.join(unknown)}")
+    return [load_task(t) for t in ids]
+
+
+def cumulative_tests(task, upto_stage):
+    """Test files and expected count for stages 0..upto_stage."""
+    files = []
+    count = 0
+    for stage in task["stages"][: upto_stage + 1]:
+        files.extend(task["dir"] / rel for rel in stage["tests"])
+        count += stage["test_count"]
+    return files, count
+
+
+def stage_spec_text(task, upto_stage):
+    """The product owner's reference: specs of all stages so far."""
+    parts = []
+    for index, stage in enumerate(task["stages"][: upto_stage + 1]):
+        text = (task["dir"] / stage["spec"]).read_text()
+        parts.append(f"# Stage {index + 1}: {stage['name']}\n\n{text}")
+    return "\n\n---\n\n".join(parts)
+
+
+# ---------------------------------------------------------------- venv
+
+
+def venv_python(venv_dir):
+    for candidate in (venv_dir / "bin" / "python", venv_dir / "Scripts" / "python.exe"):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def ensure_venv():
+    venv_dir = BENCH_DIR / ".venv"
+    py = venv_python(venv_dir)
+    if py is None:
+        log(f"creating scoring venv at {venv_dir}")
+        result = run_cmd([sys.executable, "-m", "venv", str(venv_dir)])
+        if result.returncode != 0:
+            sys.exit(f"venv creation failed: {result.stderr}")
+        py = venv_python(venv_dir)
+    check = run_cmd([str(py), "-c", "import pytest"])
+    if check.returncode != 0:
+        log(f"installing {PYTEST_SPEC} into the scoring venv")
+        result = run_cmd([str(py), "-m", "pip", "install", "--quiet", PYTEST_SPEC])
+        if result.returncode != 0:
+            sys.exit(f"pytest install failed: {result.stderr}")
+    return py
+
+
+# ---------------------------------------------------------------- scoring
+
+
+def parse_junit(xml_path):
+    totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+    root = ElementTree.parse(xml_path).getroot()
+    suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+    for suite in suites:
+        for key in totals:
+            totals[key] += int(suite.get(key, 0))
+    return totals
+
+
+def score_workspace(workspace, task, upto_stage, venv_py, keep_dir=None):
+    """Copy the workspace, overlay the hidden tests, run pytest, parse."""
+    workspace = Path(workspace)
+    test_files, expected = cumulative_tests(task, upto_stage)
+    if keep_dir is not None:
+        scoring = Path(keep_dir)
+        if scoring.exists():
+            shutil.rmtree(scoring)
+    else:
+        scoring = Path(tempfile.mkdtemp(prefix=f"prism-score-{task['id']}-"))
+    shutil.copytree(
+        workspace,
+        scoring / "ws",
+        ignore=shutil.ignore_patterns(".git", "_bench_tests", "__pycache__"),
+    )
+    ws = scoring / "ws"
+    tests_dir = ws / "_bench_tests"
+    tests_dir.mkdir()
+    (tests_dir / "conftest.py").write_text(CONFTEST)
+    for test_file in test_files:
+        shutil.copy2(test_file, tests_dir / test_file.name)
+    xml_path = scoring / "junit.xml"
+    result = run_cmd(
+        [
+            str(venv_py),
+            "-m",
+            "pytest",
+            "_bench_tests",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            f"--junitxml={xml_path}",
+        ],
+        cwd=ws,
+        timeout=600,
+    )
+    score = {
+        "tests_expected": expected,
+        "tests_collected": 0,
+        "tests_passed": 0,
+        "pass_fraction": 0.0,
+        "resolved": False,
+        "error": None,
+    }
+    if xml_path.exists():
+        totals = parse_junit(xml_path)
+        collected = totals["tests"]
+        passed = collected - totals["failures"] - totals["errors"] - totals["skipped"]
+        score["tests_collected"] = collected
+        if collected < expected:
+            # A collection failure hides tests, so the missing ones count as failed.
+            score["error"] = "collection incomplete (missing deliverable or import error)"
+        score["tests_passed"] = max(0, min(passed, expected))
+        score["pass_fraction"] = round(score["tests_passed"] / expected, 4)
+        score["resolved"] = score["tests_passed"] == expected
+    else:
+        score["error"] = f"pytest produced no report: {result.stderr[-400:]}"
+    if keep_dir is None:
+        shutil.rmtree(scoring, ignore_errors=True)
+    return score
+
+
+def artifact_checks(workspace):
+    """Mechanical checks on the durable artifacts the workflow promises."""
+    ws = Path(workspace)
+    adr_files = list((ws / "docs" / "ADRs").rglob("*.md")) if (ws / "docs" / "ADRs").exists() else []
+    adr_files = [p for p in adr_files if p.name.lower() != "readme.md"]
+    accepted = any("status: accepted" in p.read_text(errors="ignore").lower() for p in adr_files)
+    features_dir = ws / "docs" / "Features"
+    feature_files = list(features_dir.rglob("*.feature")) if features_dir.exists() else []
+    guide_dir = ws / "docs" / "user-guide"
+    guide_files = [p for p in guide_dir.rglob("*.md")] if guide_dir.exists() else []
+    guide_files = [p for p in guide_files if p.name.lower() != "readme.md" or len(p.read_text(errors="ignore")) > 200]
+    agent_tests = [
+        p
+        for p in ws.rglob("test*.py")
+        if "_bench_tests" not in p.parts and ".git" not in p.parts
+    ]
+    return {
+        "adr_count": len(adr_files),
+        "adr_accepted": accepted,
+        "feature_file_count": len(feature_files),
+        "user_guide_present": len(guide_files) > 0,
+        "agent_test_files": len(agent_tests),
+    }
+
+
+# ---------------------------------------------------------------- workspaces
+
+
+def git(workspace, *args):
+    return run_cmd(
+        [
+            "git",
+            "-c",
+            "user.name=prism-bench",
+            "-c",
+            "user.email=bench@localhost",
+            *args,
+        ],
+        cwd=workspace,
+    )
+
+
+def make_workspace(dest, task, with_config):
+    dest = Path(dest)
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    seed = task["dir"] / "seed"
+    if seed.exists():
+        shutil.copytree(seed, dest, dirs_exist_ok=True)
+    if with_config:
+        claude_dir = dest / ".claude"
+        claude_dir.mkdir(exist_ok=True)
+        (claude_dir / "workflow-config.md").write_text(
+            WORKFLOW_CONFIG_TEMPLATE.format(name=task["name"], summary=task["summary"])
+        )
+    write_stage_brief(dest, task, 0)
+    git(dest, "init", "--quiet")
+    git(dest, "add", "-A")
+    git(dest, "commit", "--quiet", "-m", "chore: seed benchmark workspace")
+    return dest
+
+
+def write_stage_brief(workspace, task, stage_index):
+    """Install the stage's product request as BRIEF.md, archiving the old one."""
+    workspace = Path(workspace)
+    brief = workspace / "BRIEF.md"
+    if stage_index > 0 and brief.exists():
+        archive = workspace / "BRIEF-archive"
+        archive.mkdir(exist_ok=True)
+        previous = task["stages"][stage_index - 1]
+        shutil.move(brief, archive / f"stage-{stage_index}-{previous['name']}.md")
+    stage = task["stages"][stage_index]
+    shutil.copy2(task["dir"] / stage["brief"], brief)
+
+
+def snapshot_stage(workspace, stage_name):
+    git(workspace, "add", "-A")
+    git(workspace, "commit", "--quiet", "-m", f"chore: snapshot after stage {stage_name}")
+
+
+# ---------------------------------------------------------------- agent runs
+
+
+def parse_claude_json(stdout):
+    try:
+        return json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def claude_call(prompt, cwd, model, extra_args, timeout):
+    cmd = [
+        "claude",
+        "-p",
+        prompt,
+        "--output-format",
+        "json",
+        "--model",
+        model,
+        *extra_args,
+    ]
+    started = time.monotonic()
+    error = None
+    try:
+        result = run_cmd(cmd, cwd=cwd, timeout=timeout)
+        stdout, stderr = result.stdout, result.stderr
+        if result.returncode != 0:
+            error = f"claude exited {result.returncode}"
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode(errors="replace")
+        stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode(errors="replace")
+        error = "timeout"
+    duration = round(time.monotonic() - started, 1)
+    payload = parse_claude_json(stdout)
+    if payload is None and error is None:
+        error = "unparsable claude output"
+    return payload, stdout, stderr, duration, error
+
+
+def ask_product_owner(spec_text, message, po_model, log_dir, tag):
+    """One product-owner reply, generated strictly from the reference spec."""
+    prompt = PO_PROMPT.format(spec=spec_text, message=message)
+    payload, stdout, _, duration, error = claude_call(
+        prompt,
+        cwd=log_dir,
+        model=po_model,
+        extra_args=["--max-turns", "2"],
+        timeout=PO_TIMEOUT_S,
+    )
+    (Path(log_dir) / f"{tag}.po.json").write_text(redact(stdout) or "")
+    answer = (payload or {}).get("result") or "Not specified. Your decision."
+    cost = (payload or {}).get("total_cost_usd") or 0.0
+    if error:
+        answer = "Not specified. Your decision."
+    return answer, cost, duration
+
+
+def run_phase(
+    phase,
+    initial_prompt,
+    workspace,
+    model,
+    plugin_dir,
+    max_turns,
+    timeout,
+    log_dir,
+    spec_text,
+    po_model,
+    max_exchanges,
+):
+    """One agent session with a product-owner question loop."""
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    base_args = ["--dangerously-skip-permissions", "--max-turns", str(max_turns)]
+    if plugin_dir is not None:
+        base_args += ["--plugin-dir", str(plugin_dir)]
+    record = {
+        "name": phase,
+        "model": model,
+        "max_turns": max_turns,
+        "timeout_s": timeout,
+        "started_at": utc_now(),
+        "duration_s": 0.0,
+        "num_turns": 0,
+        "total_cost_usd": 0.0,
+        "po_cost_usd": 0.0,
+        "exchanges": 0,
+        "completed_marker": False,
+        "is_error": None,
+        "error": None,
+    }
+    prompt = initial_prompt
+    session_id = None
+    for exchange in range(max_exchanges + 1):
+        args = base_args + (["--resume", session_id] if session_id else [])
+        payload, stdout, stderr, duration, error = claude_call(
+            prompt, workspace, model, args, timeout
+        )
+        (log_dir / f"{phase}.{exchange}.stdout.json").write_text(redact(stdout) or "")
+        if stderr:
+            (log_dir / f"{phase}.{exchange}.stderr.txt").write_text(redact(stderr))
+        record["duration_s"] = round(record["duration_s"] + duration, 1)
+        record["exchanges"] = exchange + 1
+        if payload:
+            record["num_turns"] += payload.get("num_turns") or 0
+            record["total_cost_usd"] += payload.get("total_cost_usd") or 0.0
+            record["is_error"] = payload.get("is_error")
+            session_id = payload.get("session_id") or session_id
+        if error:
+            record["error"] = error
+            break
+        text = (payload or {}).get("result") or ""
+        if PHASE_DONE_MARKER in text:
+            record["completed_marker"] = True
+            break
+        if exchange == max_exchanges:
+            break
+        answer, po_cost, po_duration = ask_product_owner(
+            spec_text, text, po_model, log_dir, f"{phase}.{exchange}"
+        )
+        record["po_cost_usd"] += po_cost
+        record["duration_s"] = round(record["duration_s"] + po_duration, 1)
+        prompt = (
+            f"Product owner reply:\n{answer}\n\n"
+            f"Continue this session's work. End with the line {PHASE_DONE_MARKER} when it is finished."
+        )
+    record["total_cost_usd"] = round(record["total_cost_usd"], 4)
+    record["po_cost_usd"] = round(record["po_cost_usd"], 4)
+    return record
+
+
+def mock_solve(workspace, task, prism_arm):
+    """Copy the oracle into the workspace instead of invoking an agent.
+
+    This exists to test the pipeline without model cost. It never
+    stands in for a real measurement.
+    """
+    for oracle_file in sorted((task["dir"] / "oracle").iterdir()):
+        target = Path(workspace) / oracle_file.name
+        if oracle_file.is_dir():
+            shutil.copytree(oracle_file, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(oracle_file, target)
+    if prism_arm:
+        docs = Path(workspace) / "docs"
+        adr_dir = docs / "ADRs" / "0001-mock-decision"
+        adr_dir.mkdir(parents=True, exist_ok=True)
+        (adr_dir / "ADR.md").write_text("# ADR 0001: mock decision\n\nStatus: Accepted\n")
+        features = docs / "Features"
+        features.mkdir(parents=True, exist_ok=True)
+        (features / "mock.feature").write_text(
+            "Feature: mock\n  Scenario: mock\n    Given a mock run\n"
+        )
+        guide = docs / "user-guide"
+        guide.mkdir(parents=True, exist_ok=True)
+        (guide / "usage.md").write_text("# Usage\n\nMock user guide for pipeline tests.\n")
+    return [
+        {
+            "name": "mock",
+            "error": None,
+            "duration_s": 0.0,
+            "total_cost_usd": 0.0,
+            "po_cost_usd": 0.0,
+            "num_turns": 0,
+            "exchanges": 0,
+            "completed_marker": True,
+        }
+    ]
+
+
+# ---------------------------------------------------------------- arms
+
+
+def resolve_arm(name, ref, out_dir):
+    """Resolve an arm ref into (plugin_dir, sha, worktree_created)."""
+    if ref == "none":
+        return None, None, None
+    candidate = Path(ref).expanduser()
+    if candidate.is_dir():
+        plugin_dir = candidate.resolve()
+        sha_result = run_cmd(["git", "-C", str(plugin_dir), "rev-parse", "HEAD"])
+        sha = sha_result.stdout.strip() if sha_result.returncode == 0 else None
+        dirty = run_cmd(["git", "-C", str(plugin_dir), "status", "--porcelain"])
+        if sha and dirty.stdout.strip():
+            sha += "-dirty"
+        return plugin_dir, sha, None
+    worktree = Path(out_dir) / "plugins" / name
+    result = run_cmd(
+        ["git", "-C", str(REPO_ROOT), "worktree", "add", "--detach", str(worktree), ref]
+    )
+    if result.returncode != 0:
+        sys.exit(f"arm {name}: cannot resolve {ref!r} as a directory or git ref:\n{result.stderr}")
+    sha = run_cmd(["git", "-C", str(worktree), "rev-parse", "HEAD"]).stdout.strip()
+    return worktree, sha, worktree
+
+
+def env_fingerprint():
+    """Record machine context that leaks into every agent session."""
+    global_claude_md = Path.home() / ".claude" / "CLAUDE.md"
+    version = run_cmd(["claude", "--version"])
+    return {
+        "global_claude_md": sha256_file(global_claude_md)[:16] if global_claude_md.exists() else None,
+        "claude_version": version.stdout.strip() if version.returncode == 0 else None,
+        "platform": sys.platform,
+        "python": sys.version.split()[0],
+    }
+
+
+# ---------------------------------------------------------------- commands
+
+
+def cmd_selfcheck(args):
+    venv_py = ensure_venv()
+    failures = []
+    for task in select_tasks(args.tasks):
+        for stage_index in range(len(task["stages"])):
+            stage = task["stages"][stage_index]
+            with tempfile.TemporaryDirectory(prefix=f"prism-oracle-{task['id']}-") as tmp:
+                ws = Path(tmp) / "ws"
+                ws.mkdir()
+                for oracle_file in sorted((task["dir"] / "oracle").iterdir()):
+                    target = ws / oracle_file.name
+                    if oracle_file.is_dir():
+                        shutil.copytree(oracle_file, target)
+                    else:
+                        shutil.copy2(oracle_file, target)
+                score = score_workspace(ws, task, stage_index, venv_py)
+            _, expected = cumulative_tests(task, stage_index)
+            ok = score["resolved"] and score["tests_collected"] == expected
+            status = "ok" if ok else "FAIL"
+            label = f"{task['id']}" + (
+                f"[stage {stage_index + 1}: {stage['name']}]" if len(task["stages"]) > 1 else ""
+            )
+            log(
+                f"[{status}] {label}: {score['tests_passed']}/{expected} passed, "
+                f"{score['tests_collected']} collected"
+            )
+            if not ok:
+                failures.append((label, score))
+    if failures:
+        for label, score in failures:
+            log(f"  {label}: {json.dumps(score)}")
+        sys.exit(1)
+    log("selfcheck passed: every oracle passes its hidden tests at every stage")
+
+
+def parse_arms(arm_args):
+    arms = []
+    for arm in arm_args:
+        if "=" not in arm:
+            sys.exit(f"bad --arm {arm!r}: expected name=ref (ref: path, git ref, or 'none')")
+        name, ref = arm.split("=", 1)
+        arms.append((name, ref))
+    return arms
+
+
+def run_stage_phases(args, plugin_dir, task, stage_index, wdir, log_dir):
+    """All agent sessions for one stage of one rep. Returns phase records."""
+    stage = task["stages"][stage_index]
+    prism_arm = plugin_dir is not None
+    slug = stage["name"]
+    stage_intro = STAGE_ZERO_INTRO if stage_index == 0 else STAGE_LATER_INTRO
+    spec_text = stage_spec_text(task, stage_index)
+    common = dict(
+        workspace=wdir,
+        model=args.model,
+        log_dir=log_dir,
+        spec_text=spec_text,
+        po_model=args.po_model,
+        max_exchanges=args.max_exchanges,
+    )
+    if not prism_arm:
+        return [
+            run_phase(
+                "solve",
+                BASELINE_PROMPT.format(stage_intro=stage_intro, rules=INTERACTION_RULES),
+                plugin_dir=None,
+                max_turns=stage["phases"]["implement"]["max_turns"],
+                timeout=stage["phases"]["implement"]["timeout_s"],
+                **common,
+            )
+        ]
+    phases = [
+        run_phase(
+            "design",
+            DESIGN_PROMPT.format(stage_intro=stage_intro, slug=slug, rules=INTERACTION_RULES),
+            plugin_dir=plugin_dir,
+            max_turns=stage["phases"]["design"]["max_turns"],
+            timeout=stage["phases"]["design"]["timeout_s"],
+            **common,
+        )
+    ]
+    phases.append(
+        run_phase(
+            "implement",
+            IMPLEMENT_PROMPT.format(slug=slug, rules=INTERACTION_RULES),
+            plugin_dir=plugin_dir,
+            max_turns=stage["phases"]["implement"]["max_turns"],
+            timeout=stage["phases"]["implement"]["timeout_s"],
+            **common,
+        )
+    )
+    return phases
+
+
+def cmd_run(args):
+    arms = parse_arms(args.arm)
+    tasks = select_tasks(args.tasks)
+    out_dir = Path(args.out) if args.out else BENCH_DIR / "results" / datetime.now(timezone.utc).strftime("run-%Y%m%d-%H%M%S")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    venv_py = ensure_venv()
+    worktrees = []
+    resolved = {}
+    plugin_dirs = {}
+    for name, ref in arms:
+        plugin_dir, sha, worktree = resolve_arm(name, ref, out_dir)
+        plugin_dirs[name] = plugin_dir
+        resolved[name] = {"ref": ref, "plugin_dir": redact(str(plugin_dir)) if plugin_dir else None, "sha": sha}
+        if worktree:
+            worktrees.append(worktree)
+    meta = {
+        "schema_version": SCHEMA_VERSION,
+        "started_at": utc_now(),
+        "model": args.model,
+        "po_model": args.po_model,
+        "max_exchanges": args.max_exchanges,
+        "reps": args.reps,
+        "mock": args.mock,
+        "arms": resolved,
+        "tasks": [t["id"] for t in tasks],
+        "env": env_fingerprint(),
+    }
+    (out_dir / "run.json").write_text(json.dumps(meta, indent=2) + "\n")
+    results_path = out_dir / "results.jsonl"
+    log(f"run output: {out_dir}")
+    try:
+        with results_path.open("a") as results_file:
+            for name, ref in arms:
+                arm_info = resolved[name]
+                prism_arm = plugin_dirs[name] is not None
+                for task in tasks:
+                    stages_to_run = task["stages"][: args.stages] if args.stages else task["stages"]
+                    for rep in range(1, args.reps + 1):
+                        wdir = out_dir / "work" / name / task["id"] / f"rep{rep}"
+                        make_workspace(wdir, task, with_config=prism_arm)
+                        for stage_index, stage in enumerate(stages_to_run):
+                            label = f"{name}/{task['id']}/rep{rep}/stage{stage_index + 1}:{stage['name']}"
+                            log(f"--- {label}")
+                            if stage_index > 0:
+                                write_stage_brief(wdir, task, stage_index)
+                            log_dir = out_dir / "logs" / name / task["id"] / f"rep{rep}" / f"stage{stage_index + 1}"
+                            if args.mock:
+                                phases = mock_solve(wdir, task, prism_arm)
+                            else:
+                                phases = run_stage_phases(args, plugin_dirs[name], task, stage_index, wdir, log_dir)
+                            score = score_workspace(wdir, task, stage_index, venv_py)
+                            record = {
+                                "schema_version": SCHEMA_VERSION,
+                                "timestamp": utc_now(),
+                                "arm": name,
+                                "arm_sha": arm_info["sha"],
+                                "task": task["id"],
+                                "stage_index": stage_index,
+                                "stage_name": stage["name"],
+                                "final_stage": stage_index == len(stages_to_run) - 1,
+                                "rep": rep,
+                                "model": args.model,
+                                "po_model": args.po_model,
+                                "mock": args.mock,
+                                "phases": phases,
+                                "phase_error": any(p.get("error") for p in phases),
+                                "score": score,
+                                "artifacts": artifact_checks(wdir) if prism_arm else None,
+                            }
+                            results_file.write(json.dumps(record) + "\n")
+                            results_file.flush()
+                            log(
+                                f"    passed {score['tests_passed']}/{score['tests_expected']}"
+                                + (" (resolved)" if score["resolved"] else "")
+                                + (
+                                    f" [phase error: {[p.get('error') for p in phases if p.get('error')]}]"
+                                    if record["phase_error"]
+                                    else ""
+                                )
+                            )
+                            snapshot_stage(wdir, stage["name"])
+                        if not args.keep_work:
+                            shutil.rmtree(wdir, ignore_errors=True)
+    finally:
+        for worktree in worktrees:
+            run_cmd(["git", "-C", str(REPO_ROOT), "worktree", "remove", "--force", str(worktree)])
+    log(f"done. report with:\n  python3 bench/harness/bench.py report {results_path}")
+
+
+def cmd_score(args):
+    venv_py = ensure_venv()
+    task = load_task(args.task)
+    upto = args.stage - 1 if args.stage else len(task["stages"]) - 1
+    score = score_workspace(args.workspace, task, upto, venv_py, keep_dir=args.keep_dir)
+    print(json.dumps(score, indent=2))
+    if not score["resolved"]:
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------- report
+
+
+def load_results(paths):
+    records = []
+    for raw in paths:
+        path = Path(raw)
+        if path.is_dir():
+            path = path / "results.jsonl"
+        if not path.exists():
+            sys.exit(f"no results file at {path}")
+        for line in path.read_text().splitlines():
+            if line.strip():
+                record = json.loads(line)
+                record.setdefault("stage_index", 0)
+                record.setdefault("stage_name", "build")
+                record.setdefault("final_stage", True)
+                records.append(record)
+    return records
+
+
+def mean(values):
+    values = list(values)
+    return sum(values) / len(values) if values else 0.0
+
+
+def paired_bootstrap(deltas, resamples=BOOTSTRAP_RESAMPLES, seed=0):
+    """Percentile CI for the mean of per-task deltas, resampling tasks."""
+    rng = random.Random(seed)
+    tasks = list(deltas)
+    means = []
+    for _ in range(resamples):
+        sample = [deltas[rng.choice(tasks)] for _ in tasks]
+        means.append(mean(sample))
+    means.sort()
+    low = means[int(0.025 * resamples)]
+    high = means[int(0.975 * resamples) - 1]
+    return mean(deltas.values()), low, high
+
+
+def cmd_report(args):
+    records = load_results(args.results)
+    if not records:
+        sys.exit("no records found")
+    arms = sorted({r["arm"] for r in records})
+    cells = sorted({(r["task"], r["stage_index"], r["stage_name"]) for r in records})
+    lines = []
+    out = lines.append
+    out("# prism benchmark report")
+    out("")
+    models = sorted({r.get("model") for r in records if r.get("model")})
+    out(f"- generated: {utc_now()}")
+    out(f"- records: {len(records)}, arms: {', '.join(arms)}")
+    out(f"- model(s): {', '.join(models) if models else 'unknown'}")
+    if any(r.get("mock") for r in records):
+        out("- **WARNING: this report contains mock records. Mock runs test the pipeline, not the workflow.**")
+    shas = {r["arm"]: r.get("arm_sha") for r in records}
+    for arm in arms:
+        out(f"- arm `{arm}` sha: `{shas.get(arm)}`")
+    out("")
+    out("## Hidden-test pass fraction per task stage (mean over reps)")
+    out("")
+    out("| task / stage | " + " | ".join(arms) + " |")
+    out("|------|" + "|".join(["------"] * len(arms)) + "|")
+    cell_means = {}
+    for task, stage_index, stage_name in cells:
+        row_label = task if stage_name == "build" else f"{task} / s{stage_index + 1} {stage_name}"
+        row = [row_label]
+        for arm in arms:
+            cell_records = [
+                r
+                for r in records
+                if r["arm"] == arm and r["task"] == task and r["stage_index"] == stage_index
+            ]
+            value = mean(r["score"]["pass_fraction"] for r in cell_records)
+            cell_means[(arm, task, stage_index)] = value
+            row.append(f"{value:.3f} (n={len(cell_records)})" if cell_records else "-")
+        out("| " + " | ".join(row) + " |")
+    out("")
+    final_cells = sorted({(r["task"], r["stage_index"]) for r in records if r["final_stage"]})
+    out("## Aggregates per arm (final stages only)")
+    out("")
+    out("| arm | macro pass fraction | resolved rate | phase-error rate | mean agent cost usd | mean po cost usd | mean turns | mean duration s |")
+    out("|-----|---------------------|---------------|------------------|---------------------|------------------|------------|-----------------|")
+    for arm in arms:
+        final_records = [r for r in records if r["arm"] == arm and r["final_stage"]]
+        arm_records = [r for r in records if r["arm"] == arm]
+        macro = mean(cell_means.get((arm, task, stage), 0.0) for task, stage in final_cells)
+        resolved = mean(1.0 if r["score"]["resolved"] else 0.0 for r in final_records)
+        errored = mean(1.0 if r.get("phase_error") else 0.0 for r in arm_records)
+        costs = [sum(p.get("total_cost_usd") or 0.0 for p in r["phases"]) for r in arm_records]
+        po_costs = [sum(p.get("po_cost_usd") or 0.0 for p in r["phases"]) for r in arm_records]
+        turns = [sum(p.get("num_turns") or 0 for p in r["phases"]) for r in arm_records]
+        durations = [sum(p.get("duration_s") or 0.0 for p in r["phases"]) for r in arm_records]
+        out(
+            f"| {arm} | {macro:.3f} | {resolved:.2f} | {errored:.2f} "
+            f"| {mean(costs):.2f} | {mean(po_costs):.2f} | {mean(turns):.0f} | {mean(durations):.0f} |"
+        )
+    out("")
+    staged_tasks = sorted({r["task"] for r in records if r["stage_index"] > 0})
+    if staged_tasks:
+        out("## Stage progression (mean pass fraction by stage index)")
+        out("")
+        stage_indexes = sorted({r["stage_index"] for r in records if r["task"] in staged_tasks})
+        out("| arm | " + " | ".join(f"stage {i + 1}" for i in stage_indexes) + " |")
+        out("|-----|" + "|".join(["------"] * len(stage_indexes)) + "|")
+        for arm in arms:
+            row = [arm]
+            for stage_index in stage_indexes:
+                values = [
+                    cell_means[(arm, task, stage_index)]
+                    for task in staged_tasks
+                    if (arm, task, stage_index) in cell_means
+                ]
+                row.append(f"{mean(values):.3f}" if values else "-")
+            out("| " + " | ".join(row) + " |")
+        out("")
+        out("A workflow that pays off should hold its pass fraction as stages accumulate, while the baseline decays.")
+        out("")
+    if len(arms) >= 2:
+        out("## Pairwise comparison on final stages (paired bootstrap over tasks)")
+        out("")
+        out(f"Resamples: {BOOTSTRAP_RESAMPLES}, seed 0, 95% percentile interval.")
+        out("A difference is supported only when the interval excludes zero.")
+        out("")
+        for i, arm_a in enumerate(arms):
+            for arm_b in arms[i + 1 :]:
+                deltas = {
+                    task: cell_means.get((arm_b, task, stage), 0.0) - cell_means.get((arm_a, task, stage), 0.0)
+                    for task, stage in final_cells
+                }
+                if not deltas:
+                    continue
+                delta, low, high = paired_bootstrap(deltas)
+                verdict = "supported" if (low > 0 or high < 0) else "not supported by this sample"
+                out(
+                    f"- `{arm_b}` minus `{arm_a}`: mean delta {delta:+.3f}, "
+                    f"95% CI [{low:+.3f}, {high:+.3f}] -> {verdict}"
+                )
+        out("")
+        if len(final_cells) < 5:
+            out(
+                f"Caution: only {len(final_cells)} task(s). "
+                "A task-level bootstrap needs more tasks before a small delta can reach significance."
+            )
+        out("")
+    prism_records = [r for r in records if r.get("artifacts") and r["final_stage"]]
+    if prism_records:
+        out("## Artifact discipline (prism arms, final stages, mean over runs)")
+        out("")
+        out("| arm | ADRs present | ADR accepted | feature files | user guide | agent test files |")
+        out("|-----|--------------|--------------|---------------|------------|------------------|")
+        for arm in arms:
+            arm_records = [r for r in prism_records if r["arm"] == arm]
+            if not arm_records:
+                continue
+            adr = mean(1.0 if r["artifacts"]["adr_count"] else 0.0 for r in arm_records)
+            accepted = mean(1.0 if r["artifacts"]["adr_accepted"] else 0.0 for r in arm_records)
+            features = mean(r["artifacts"]["feature_file_count"] for r in arm_records)
+            guide = mean(1.0 if r["artifacts"]["user_guide_present"] else 0.0 for r in arm_records)
+            agent_tests = mean(r["artifacts"]["agent_test_files"] for r in arm_records)
+            out(
+                f"| {arm} | {adr:.2f} | {accepted:.2f} | {features:.1f} | {guide:.2f} | {agent_tests:.1f} |"
+            )
+        out("")
+    report = "\n".join(lines)
+    if args.out:
+        Path(args.out).write_text(report + "\n")
+        log(f"wrote {args.out}")
+    else:
+        print(report)
+
+
+# ---------------------------------------------------------------- main
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_selfcheck = sub.add_parser("selfcheck", help="verify oracles against hidden tests, per stage")
+    p_selfcheck.add_argument("--tasks", default="all")
+    p_selfcheck.set_defaults(func=cmd_selfcheck)
+
+    p_run = sub.add_parser("run", help="run benchmark arms")
+    p_run.add_argument(
+        "--arm",
+        action="append",
+        required=True,
+        metavar="NAME=REF",
+        help="arm to run; REF is a plugin directory, a git ref of this repo, or 'none' for the no-plugin baseline",
+    )
+    p_run.add_argument("--tasks", default="all")
+    p_run.add_argument("--reps", type=int, default=3)
+    p_run.add_argument("--model", default="claude-sonnet-5")
+    p_run.add_argument("--po-model", default="claude-haiku-4-5-20251001", help="model that simulates the product owner")
+    p_run.add_argument("--max-exchanges", type=int, default=4, help="max product-owner replies per agent session")
+    p_run.add_argument("--stages", type=int, default=None, help="run only the first N stages of each task")
+    p_run.add_argument("--out", default=None)
+    p_run.add_argument("--mock", action="store_true", help="copy oracles instead of invoking agents (pipeline test)")
+    p_run.add_argument("--keep-work", action="store_true", help="keep workspace directories after scoring")
+    p_run.set_defaults(func=cmd_run)
+
+    p_score = sub.add_parser("score", help="score one workspace")
+    p_score.add_argument("task")
+    p_score.add_argument("workspace")
+    p_score.add_argument("--stage", type=int, default=None, help="1-based stage to score up to (default: all stages)")
+    p_score.add_argument("--keep-dir", default=None)
+    p_score.set_defaults(func=cmd_score)
+
+    p_report = sub.add_parser("report", help="aggregate results into Markdown")
+    p_report.add_argument("results", nargs="+", help="results.jsonl files or run directories")
+    p_report.add_argument("--out", default=None)
+    p_report.set_defaults(func=cmd_report)
+
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
