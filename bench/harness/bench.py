@@ -83,7 +83,7 @@ Rules:
 - When asked to accept or approve work and nothing in the message contradicts the reference, approve briefly.
 - If the message contains no question and no acceptance request, reply: "Acknowledged. Continue."
 - Be concise. Answer each numbered question directly, in the same numbering.
-{diff_rule}
+{reactive_rule}{diff_rule}
 === REFERENCE SPECIFICATION ===
 {spec}
 {diff_section}
@@ -500,6 +500,15 @@ def count_items(text):
     return len(_ENUM_ITEM.findall(text)) or 1
 
 
+CORRECTION_TAG = "CORRECTION:"
+REACTIVE_RULE = (
+    "- If the engineer's work or stated plan CONTRADICTS the reference "
+    f"specification, correct it. Start that part of your reply with {CORRECTION_TAG} "
+    "and quote the rule being broken.\n"
+    "- Correct only genuine contradictions with the reference. Never volunteer a "
+    "requirement the engineer did not ask about and has not broken: an engineer "
+    "who fails to elicit a requirement must still lose that ground."
+)
 DIFF_RULE = (
     "- The engineer's changes so far are shown below. Judge what the code does, "
     "not only what the message claims.\n"
@@ -529,7 +538,7 @@ def workspace_diff(workspace, limit=DIFF_LIMIT_CHARS):
     return text
 
 
-def ask_product_owner(spec_text, message, po_model, log_dir, tag, diff=""):
+def ask_product_owner(spec_text, message, po_model, log_dir, tag, diff="", reactive=False):
     """One product-owner reply, generated strictly from the reference spec.
 
     Also returns elicitation stats for the exchange. `unspecified` counts the
@@ -539,6 +548,7 @@ def ask_product_owner(spec_text, message, po_model, log_dir, tag, diff=""):
     prompt = PO_PROMPT.format(
         spec=spec_text,
         message=message,
+        reactive_rule=f"{REACTIVE_RULE}\n" if reactive else "",
         diff_rule=f"{DIFF_RULE}\n" if diff else "",
         diff_section=f"\n=== ENGINEER'S CHANGES SO FAR (diff) ===\n{diff}\n" if diff else "",
     )
@@ -561,6 +571,10 @@ def ask_product_owner(spec_text, message, po_model, log_dir, tag, diff=""):
         "asked": count_items(message),
         "answer_items": count_items(answer),
         "unspecified": 0 if error else answer.count(UNSPECIFIED_REPLY),
+        # The product owner's own count of times it had to correct work that
+        # contradicted the spec. Lower is better, and unlike pass fraction it
+        # is not pinned at a ceiling.
+        "corrections": 0 if error else answer.count(CORRECTION_TAG),
         "po_error": bool(error),
     }
     return answer, cost, duration, stats
@@ -579,6 +593,7 @@ def run_phase(
     po_model,
     max_exchanges,
     po_sees_diff=False,
+    po_reactive=False,
 ):
     """One agent session with a product-owner question loop."""
     log_dir = Path(log_dir)
@@ -605,6 +620,7 @@ def run_phase(
         "po_answered": 0,
         "po_unspecified": 0,
         "po_errors": 0,
+        "po_corrections": 0,
         "completed_marker": False,
         "is_error": None,
         "error": None,
@@ -642,10 +658,12 @@ def run_phase(
             log_dir,
             f"{phase}.{exchange}",
             diff=workspace_diff(workspace) if po_sees_diff else "",
+            reactive=po_reactive,
         )
         record["po_asked"] += po_stats["asked"]
         record["po_unspecified"] += po_stats["unspecified"]
         record["po_errors"] += 1 if po_stats["po_error"] else 0
+        record["po_corrections"] += po_stats["corrections"]
         record["po_answered"] += max(
             0, po_stats["answer_items"] - po_stats["unspecified"]
         )
@@ -800,6 +818,7 @@ def run_stage_phases(args, plugin_dir, task, stage_index, wdir, log_dir):
         po_model=args.po_model,
         max_exchanges=args.max_exchanges,
         po_sees_diff=args.po_sees_diff,
+        po_reactive=args.po_reactive,
     )
     if not prism_arm:
         return [
@@ -857,6 +876,7 @@ def cmd_run(args):
         "po_model": args.po_model,
         "max_exchanges": args.max_exchanges,
         "po_sees_diff": args.po_sees_diff,
+        "po_reactive": args.po_reactive,
         "reps": args.reps,
         "mock": args.mock,
         "arms": resolved,
@@ -1063,8 +1083,8 @@ def cmd_report(args):
     if any(p.get("po_asked") for r in records for p in r["phases"]):
         out("## Elicitation (all stages, mean per repetition)")
         out("")
-        out("| arm | items asked | answered from spec | not specified | yield | po errors |")
-        out("|-----|-------------|--------------------|---------------|-------|-----------|")
+        out("| arm | items asked | answered from spec | not specified | yield | corrections | po errors |")
+        out("|-----|-------------|--------------------|---------------|-------|-------------|-----------|")
         for arm in arms:
             arm_records = [r for r in records if r["arm"] == arm]
             def per_rep(field):
@@ -1073,11 +1093,13 @@ def cmd_report(args):
             answered = per_rep("po_answered")
             unspec = per_rep("po_unspecified")
             errors = per_rep("po_errors")
+            corrections = per_rep("po_corrections")
             total_items = sum(answered) + sum(unspec)
             yield_ = (sum(answered) / total_items) if total_items else 0.0
             out(
                 f"| {arm} | {mean(asked):.1f} | {mean(answered):.1f} "
-                f"| {mean(unspec):.1f} | {yield_:.2f} | {mean(errors):.1f} |"
+                f"| {mean(unspec):.1f} | {yield_:.2f} | {mean(corrections):.1f} "
+                f"| {mean(errors):.1f} |"
             )
         out("")
         out(
@@ -1087,6 +1109,10 @@ def cmd_report(args):
         out(
             "Read it with items asked, never alone. An arm that asks nothing scores no "
             "yield at all, and an arm that asks a lot off-spec scores low yield."
+        )
+        out(
+            "Corrections counts the times the product owner had to correct work that "
+            "contradicted the spec (--po-reactive only). Lower is better."
         )
         out("")
     staged_tasks = sorted({r["task"] for r in records if r["stage_index"] > 0})
@@ -1253,6 +1279,15 @@ def main():
     p_run.add_argument("--model", default="claude-sonnet-5")
     p_run.add_argument("--po-model", default="claude-haiku-4-5-20251001", help="model that simulates the product owner")
     p_run.add_argument("--max-exchanges", type=int, default=4, help="max product-owner replies per agent session")
+    p_run.add_argument(
+        "--po-reactive",
+        action="store_true",
+        help="let the product owner correct work that contradicts the reference spec, "
+             "tagged CORRECTION:, and count those corrections. It still never "
+             "volunteers a requirement that was not asked about, so elicitation stays "
+             "measurable. Changes the product owner's behavior, so results are NOT "
+             "comparable to runs made without it. Off by default.",
+    )
     p_run.add_argument(
         "--po-sees-diff",
         action="store_true",
