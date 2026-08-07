@@ -1,19 +1,19 @@
 ---
 name: write-user-docs
-description: "Write or update user-facing docs in the project's user guide (default /docs/user-guide/). Use when a change alters observable product behavior: commands, config, ports, defaults, capabilities."
+description: "Write or update user-facing docs in the project's user guide. Use when a change alters commands, configuration, ports, defaults, or capabilities."
 ---
 
 # Write user docs
 
-The user guide (default `/docs/user-guide/`) is the source-of-truth for how people **install, configure, and use** the product.
+The user guide (default `docs/user-guide/`) is the source-of-truth for how people **install, configure, and use** the product.
 It is written for someone running and using it, not for someone building it.
 Keeping it current is a continuous obligation: a change that alters observable behavior is not done until the user guide reflects it.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project's own CLAUDE.md conventions.
-The session map and lifecycle rules live in the `workflow` overview skill.
+If absent, use the defaults and the project instructions that apply to this task.
+The context map and lifecycle rules live in the `workflow` overview skill.
 
 Before writing, read:
 
@@ -22,7 +22,7 @@ Before writing, read:
    The index is expected to carry a maturity disclaimer: a user guide should state plainly how mature and complete the product is.
    If one is missing, add it.
 2. The specific pages you are changing, plus any sibling page they cross-link.
-3. The glossary (default `/docs/Glossary.md`): use terms exactly as defined there, and do not coin user-facing synonyms for established concepts.
+3. The glossary (default `docs/Glossary.md`): use defined terms and do not coin user-facing synonyms.
 
 ---
 
@@ -121,4 +121,4 @@ If a capability moves from **Planned** to **available**, remove the Planned mark
 Plain Markdown, one topic per file, under the user-guide directory.
 Start a page with a short blockquote status/scope note.
 Use tables for ports/defaults and cross-link related pages at the foot of each page.
-No build step and no website, just Markdown, unless the workflow-config says otherwise.
+Use Markdown without a build step or website unless the workflow configuration says otherwise.

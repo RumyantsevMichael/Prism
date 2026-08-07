@@ -1,29 +1,29 @@
 ---
 name: plan
-description: "Drive an initiative's planning session: decompose a settled ADR cluster into dependency-ordered tracks, de-risk with spikes, define the release subset. Produces the initiative plan that feeds /design + /implement per track."
+description: "Decompose an ADR cluster into dependency-ordered tracks, resolve ordering risks, and define release readiness. Use before per-track design and implementation."
 argument-hint: '[initiative]'
 ---
 
 # Plan an initiative
 
-This is the **plan**, one altitude above `/design` + `/implement`.
+This is the **plan**, one altitude above `design` and `implement`.
 It takes a body of work spanning several ADRs and decomposes it into **tracks**.
 Each track then becomes its own design → implement cycle.
-You run **inline with the user** and delegate the ADR and codebase reading to **subagents**, so your context stays lean.
+Run inline with the user and delegate ADR and codebase reading to child agents when available.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project's own CLAUDE.md conventions.
-The session map and lifecycle rules live in the `workflow` overview skill.
+If absent, use the defaults and the project instructions that apply to this task.
+The context map and lifecycle rules live in the `workflow` overview skill.
 
 Run this only when the work is genuinely multi-track.
 A single self-contained feature does not need a plan.
-Start it at its ADR with `/design`.
+Start it at its ADR with `design`.
 
-**One workflow skill per session** (the rule and its rationale live in the `workflow` overview skill).
-The nuance here: do not roll into `/design` or `/implement` once the plan is accepted.
-Each track's design starts in a fresh session.
+**One workflow skill per context** (the rule and its rationale live in the `workflow` overview skill).
+Do not run `design` or `implement` in this context after the plan is accepted.
+Each track design starts in a fresh context.
 
 The job is **build-ordering, not phasing.**
 The architecture is settled (or settling) in the ADRs.
@@ -31,23 +31,24 @@ This plan decides *what order to build it in so no work dead-ends*.
 It is **not** a v1/v2 rollout, because the architecture lands end-to-end.
 The ordering is *forced by dependency*, never *chosen by priority* (priority-ordering of whole initiatives is a roadmap, one rung up, and out of scope here).
 
-Read first: the glossary (default `/docs/Glossary.md`) and the ADR cluster this initiative implements (default `/docs/ADRs/`).
+Read first: the glossary (default `docs/Glossary.md`) and the ADR cluster this initiative implements (default `docs/ADRs/`).
 
 ## 1. Frame the initiative
 
 Settle these with the user: the scope, which ADRs it sequences, what it *serves*, and what "first release" means.
 For what it *serves*, cite both its roadmap node and the strategy pillar that node advances.
 If the project has no strategy document, say so explicitly rather than silently skipping the pillar.
-If this initiative has no roadmap node yet, add one (`/roadmap <initiative>`, Mode B) as part of framing.
+If this initiative has no roadmap node, use `roadmap` Mode B to add one during framing.
 ADRs and the plan **co-evolve**: if decomposition surfaces an undecided question, that is a missing ADR.
 Feed it back (load `write-adr`), and do not bury the decision in the plan.
 
 ## 2. Decompose into tracks
 
-Carve the work into tracks where **each track is one `/design` + `/implement` unit**.
+Carve the work into tracks where **each track is one `design` and `implement` unit**.
 Each track is coarse enough to be a coherent capability, and fine enough to be specifiable.
 A deliverable that is itself design-worthy is its own track.
-Delegate the ADR reading to subagents (pass paths, not contents) to *propose* a decomposition.
+Delegate ADR reading to child agents when available.
+Pass paths, not contents, and ask them to propose a decomposition.
 Integrate it inline, because this carving is the load-bearing judgment of the whole session.
 
 ## 3. Order by dependency
@@ -64,7 +65,8 @@ Two sections the per-track flow has no analog for, and this is where the altitud
 
 - **Ordering spikes.** Bounded (~1 day) investigations whose finding could change the track list or a DAG edge.
   Each names what must be learned and what its finding would change.
-  **You own these.** A spike that gates the ordering must resolve *before the plan gate*, so run it (delegate the legwork to a subagent) and fold its finding into the decomposition before presenting the plan.
+  **You own these.**
+  Resolve an ordering spike before the plan gate and delegate legwork to a child agent when available.
   Do not ship an ordering an unrun spike could invalidate.
   (A spike whose finding would reshape only *one* track's spec, not the ordering, is a **track-feasibility spike**: name it here for the affected track, but it is the **design session** that runs it, before that track's design gate.
   The Spikes section of the spine template below is the authoritative statement of this ownership split.)
@@ -79,7 +81,8 @@ For an initiative whose point is "what must we build to ship," this is the most 
 
 ## 6. Write the plan
 
-Author the folder `<plans dir>/<initiative>/` yourself (plans dir default `/docs/plans/`, and this is one coherent artifact, not parallelizable): the spine `plan.md` plus one `<track>.md` per track, using the templates below.
+Author `<plans dir>/<initiative>/` yourself, with `docs/plans/` as the default plans directory.
+Write the spine `plan.md` and one `<track>.md` file per track from the templates below.
 
 ---
 
@@ -87,7 +90,7 @@ Author the folder `<plans dir>/<initiative>/` yourself (plans dir default `/docs
 
 `<plans dir>/<initiative>/` is **scratch but long-lived**: status churns as tracks land.
 The whole folder is deleted only when the last track lands, behind the graduate-before-delete gate (rule in the `workflow` overview skill's "Cross-session lifecycles", mechanics in `implement`'s last-track gate).
-Each track's `/design` session nests its prep bundle inside as `<plans dir>/<initiative>/<track>/`.
+Each track's `design` task nests its prep bundle inside `<plans dir>/<initiative>/<track>/`.
 
 ### Spine: `plan.md`
 
@@ -143,7 +146,7 @@ and what is purely additive.
 One line: what exists when this track is done.
 
 **Deliverables.**
-The concrete units; each is `/design`-able.
+The concrete units, each suitable for one `design` task.
 
 **Dependencies.**
 Which tracks land first (the spine DAG is authoritative;
@@ -183,7 +186,8 @@ not-started / in-progress / blocked / deferred / done - kept in sync with the sp
 ## Gate
 
 Stop and present the plan.
-**Design no track yet.** Wait for the user to accept before any track enters `/design`.
+**Design no track yet.**
+Wait for the user to accept before any track enters `design`.
 Deliver that acceptance question, and any scoping fork the plan raises, per **"How to deliver the question"** in the `workflow` overview skill.
 On acceptance, flip this initiative's roadmap node `envisioned → planned` (gains its ADRs + the plan deep-link).
 This is a one-line edit per the roadmap's Mode B, with no separate gate.

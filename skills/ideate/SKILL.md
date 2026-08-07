@@ -1,37 +1,37 @@
 ---
 name: ideate
-description: "Shape a raw, shapeless idea into one or more Proposed ADRs: brainstorm it, challenge it, and fit it into the existing system, so a later /plan or /design session can take it up. Use when the user floats a shapeless idea."
+description: "Shape a raw idea into Proposed ADRs by challenging it and fitting it into the system. Use before plan or design."
 disable-model-invocation: true
 argument-hint: '[idea]'
 ---
 
 # Ideate on a fresh idea
 
-This is **ideation**: the origination step one rung *below* `/plan` and `/design`.
-It takes an idea that has **no concrete shape yet**, a feature or a whole initiative, and works it into one or more **Proposed ADRs**: the seed a later `/plan` or `/design` session picks up cold.
-You run **inline with the user** and delegate the read-heavy integration work to **subagents**, so your context stays lean.
+This is **ideation**: the origination step one rung below `plan` and `design`.
+It turns an idea with no concrete shape into Proposed ADRs that a later `plan` or `design` task reads cold.
+Run inline with the user and delegate read-heavy work to child agents when available.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project's own CLAUDE.md conventions.
-The session map and lifecycle rules live in the `workflow` overview skill.
+If absent, use the defaults and the project instructions that apply to this task.
+The context map and lifecycle rules live in the `workflow` overview skill.
 
 The job is **shaping and challenging, not specifying.** You decide *what the idea is, whether it should exist, and how it fits the system*, not how to build it.
 There is **no technical design, no contracts, no feature files, no build plan** here.
-Those belong to `/design`.
+Those belong to `design`.
 The single durable output is the ADR(s).
 
-`/ideate` is **optional**, the same way a self-contained feature skips `/plan`.
+`ideate` is **optional**, the same way a self-contained feature skips `plan`.
 Use it only when the idea is genuinely shapeless and needs brainstorming before it can be specced.
-If you already know the decision, skip straight to `/plan` (multi-ADR initiative) or `/design` (self-contained feature) and open the ADR there.
+If you already know the decision, use `plan` for a multi-ADR initiative or `design` for a self-contained feature.
 
-**One workflow skill per session** (the rule and its rationale live in the `workflow` overview skill).
-The nuance here: do not roll into `/plan` or `/design` once the user accepts the shaping.
-Reading the ADR cold in a fresh session is what keeps the shaping honest.
+**One workflow skill per context** (the rule and its rationale live in the `workflow` overview skill).
+Do not run `plan` or `design` in this context after the user accepts the shaping.
+Reading the ADR cold in a fresh context keeps the shaping honest.
 
-Read first: the glossary (default `/docs/Glossary.md`), the product strategy document if the project has one (the pillars an idea must serve), and the roadmap (default `/docs/roadmap.md`, what is already envisioned or shipped).
-Skim the ADR index (default `/docs/ADRs/`), because the idea must fit the existing decision chain, not reopen it.
+Read the glossary (default `docs/Glossary.md`), the product strategy document if present, and the roadmap (default `docs/roadmap.md`).
+Skim the ADR index (default `docs/ADRs/`) because the idea must fit the existing decision chain.
 
 ## 1. Frame the raw idea
 
@@ -42,10 +42,12 @@ Name the problem first.
 
 ## 2. Fit it into the existing system
 
-Delegate to subagents (pass paths, never inlined contents) to answer, in parallel:
+Delegate these checks to child agents when available.
+Pass paths, never inlined contents, and run them in parallel only when safe:
 
 - **Does it conflict with a settled (`Accepted`) ADR?** A conflict is a stop: the idea either yields to the invariant or becomes a deliberate supersession, which is a much bigger decision to surface to the user, not paper over.
-- **Does it duplicate or already live inside an existing ADR?** If so the idea needs no new decision: recommend it as an **amendment** to that ADR, taken up by `/design`.
+- **Does it duplicate or already live inside an existing ADR?**
+  If so, recommend an **amendment** that `design` can take up.
   You do **not** edit an `Accepted` ADR here.
 - **Which strategy pillar does it serve?** An idea that serves none is a flag, not necessarily a kill, so surface it.
   (If the project has no strategy document, weigh it against the product's stated purpose instead.)
@@ -57,7 +59,7 @@ This is the "fit it into what exists" half of the session and the reason it is r
 
 Apply adversarial pressure, inline, before committing anything to an ADR: why *not* build it, what the cheaper non-build alternative is, what it breaks or complicates, whether the problem is real or assumed.
 A **legitimate outcome is killing the idea**, or folding it into an existing decision.
-In that case the session produces **no new ADR**, and that is a successful `/ideate`.
+In that case the task produces **no new ADR**, and that is a successful `ideate` result.
 Do not manufacture an ADR to justify the session.
 
 ## 4. Shape into Proposed ADR(s)
@@ -66,18 +68,20 @@ If the idea survives, distill it into **one or more** ADRs (load `write-adr`, cr
 
 The judgment here:
 
-- **One decision → one ADR.** Smells like a self-contained feature → recommend `/design`.
-- **Several distinct decisions → several ADRs.** An idea that fragments into a cluster of decisions is an **initiative** → recommend `/plan` (which decomposes it into tracks and handles its roadmap node, which `/ideate` does not).
+- **One decision → one ADR.**
+  Recommend `design` for a self-contained feature.
+- **Several distinct decisions → several ADRs.**
+  Recommend `plan` for an initiative that needs track decomposition.
 
 Each ADR is a complete decision record (Problem, Goals, Non-Goals, Decision, Rationale, Consequences), with the alternatives you challenged in step 3 captured in its Rationale and Non-Goals.
-It stays `Proposed`: `/ideate` never settles a decision, and the implementation session is what eventually flips it `Accepted`.
+It stays `Proposed` because `ideate` never settles a decision.
 Stop at the decision.
 Do **not** drift into technical design or contracts.
 
 ## The artifact
 
-Proposed ADR(s) in the ADR directory (default `/docs/ADRs/`): **the only durable output**.
-`/ideate` writes **no scratch folder**: the conversation is the ideation, and the challenged alternatives distill into the ADR.
+Proposed ADRs in the ADR directory (default `docs/ADRs/`) are **the only durable output**.
+`ideate` writes **no scratch folder**.
 It **does not touch the roadmap**: it shapes *what* the idea is, and the roadmap decides *when*, downstream.
 Update the glossary if shaping the idea introduced a genuinely new term.
 
@@ -87,8 +91,8 @@ Stop and present the Proposed ADR(s), or the reasoned recommendation to **not** 
 **Open no plan, design no track, write no code.** Put the acceptance, and any build-or-kill fork you reached, to the user per **"How to deliver the question"** in the `workflow` overview skill.
 Wait for the user to accept the shaping, then **recommend the next step** and why:
 
-- **Self-contained feature** (one ADR) → `/design`.
-- **Initiative** (an ADR cluster) → `/plan`.
-  Note if it wants a `/roadmap` banding pass first to place it among the other initiatives.
+- **Self-contained feature** (one ADR) → `design`.
+- **Initiative** (an ADR cluster) → `plan`.
+  Note when `roadmap` should place it among other initiatives first.
 
 The recommended session starts fresh and reads the ADR cold.

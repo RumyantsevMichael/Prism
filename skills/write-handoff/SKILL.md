@@ -1,27 +1,29 @@
 ---
 name: write-handoff
-description: "Author a track's implementation handoff in the plans directory: authoritative inputs, locked constraints, model/effort. Use when wrapping up a design session."
+description: "Author a track's implementation handoff in the plans directory: authoritative inputs, locked constraints, and execution profile. Use when wrapping up a design task."
 argument-hint: '[initiative/track]'
 ---
 
 # Write handoff
 
 The handoff is the **prompt that starts implementation**.
-It hands a validated spec to a fresh implementation session that has none of the design session's context, so it must be self-contained: point at the authoritative artifacts, fix what must not drift, and say how to begin.
-One of three prep-bundle artifacts under the plans directory (default `/docs/plans/<initiative>/<track>/`).
+It hands a validated specification to a fresh implementation context with no design conversation history.
+It must identify the authoritative artifacts, locked constraints, and starting procedure.
+One of three prep-bundle artifacts under the plans directory (default `docs/plans/<initiative>/<track>/`).
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project's own CLAUDE.md conventions.
-The session map and lifecycle rules live in the `workflow` overview skill.
+If absent, use the defaults and the project instructions that apply to this task.
+The context map and lifecycle rules live in the `workflow` overview skill.
 
 Keep it **short**: it points at the ADR, contracts, build plan, the initiative spine, and feature files.
 It does not restate them.
 Its job is precedence, scope, and the non-negotiables, not a re-derivation of the design.
 
-The handoff is written at the **end of the design session**, before the user-acceptance gate.
-The fresh session's *first* act is to validate these same artifacts (`validate-artifacts`) and feed gaps back, so the handoff should make that easy by naming the inputs precisely.
+The handoff is written at the **end of the design task**, before the user-acceptance gate.
+The design validation loop has already validated these artifacts in isolated contexts.
+The fresh implementation context reads them cold and reports any remaining gap.
 
 ---
 
@@ -36,7 +38,7 @@ The fresh session's *first* act is to validate these same artifacts (`validate-a
 ```markdown
 # <Feature> - implementation handoff
 
-<One line: paste this to start the implementation session.>
+<One line: use this to start the fresh implementation context.>
 
 ## Authoritative inputs
 
@@ -88,13 +90,16 @@ build plan's order.
 
 <the surface design's validation loop determined: secrets, network,
 privilege/isolation, untrusted input, IPC, or `none` - this gates the
-implementation session's post-code security audit>
+implementation task's post-code security audit>
 
-## Model & effort
+## Execution profile
 
-The recommended model and effort level for implementation, and why; where to slow
-down. (Chosen here because this is a context boundary - see the `workflow`
-overview skill.)
+- Complexity: standard | high
+- Context: fresh
+- Parallelism: sequential | independent
+- Focus: <specific risk areas>
+
+Explain why this profile fits and where implementation must slow down.
 ```
 
 ---
@@ -103,7 +108,8 @@ overview skill.)
 
 - **State input precedence and the conflict rule up front.** This is the single most important thing the handoff does, and it prevents drift.
 - **Locked constraints are restated facts, each ADR-cited.** The implementer should not have to re-derive a settled decision, nor go looking for why.
-- **Recommend model + effort.** The handoff is a context boundary, so this is where that recommendation belongs (not at the start of the design session).
+- **Recommend an execution profile.**
+  The handoff is a context boundary, so record the complexity, isolation, parallelism, and focus here.
 - **The spec ships pre-validated.** Design looped `validate-artifacts` until a run reported no gaps.
   A gap the implementer still hits goes back to design, never self-resolved.
 - **State the security surface.** Design's validation loop determined it, and the implementer's post-code audit fires on it, so the handoff must carry it.
@@ -115,8 +121,8 @@ overview skill.)
 
 ## Quality checks before finishing
 
-- A fresh session with zero prior context could start from this alone.
+- A fresh context with zero design history could start from this alone.
 - Inputs are listed in precedence order with the conflict rule stated.
 - Every locked constraint cites an ADR, and none reference plan tracks.
-- A justified model + effort recommendation is present.
+- A justified execution profile is present.
 - It points at the artifacts rather than restating them.

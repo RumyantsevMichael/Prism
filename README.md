@@ -4,9 +4,10 @@
 
 # prism
 
-A spec-driven agentic engineering workflow for Claude Code — one beam of an idea in, an ordered spectrum of shippable tracks out.
+A spec-driven agentic engineering workflow for Claude Code and Codex.
 
-Changes big enough to need a spec move through dedicated sessions over a layered spec — ADR, technical design, contracts, build plan, Gherkin feature files — each session a deliberate context boundary.
+Changes big enough to need a specification move through fresh contexts over a layered specification.
+The layers are ADRs, technical design, contracts, a build plan, and Gherkin feature files.
 Small changes skip the flow entirely.
 
 ## The map
@@ -14,34 +15,54 @@ Small changes skip the flow entirely.
 | Rung | Skill | Job |
 |---|---|---|
 | Priority | `prism:roadmap` | Order whole initiatives Now/Next/Later |
-| Shaping *(optional)* | `prism:ideate` | Brainstorm a shapeless idea into Proposed ADR(s) — or kill it |
+| Shaping *(optional)* | `prism:ideate` | Brainstorm a shapeless idea into Proposed ADRs or reject it |
 | Build order | `prism:plan` | Decompose a multi-ADR initiative into dependency-ordered tracks |
 | Spec | `prism:design` | Per track: ADR ⇄ design → contracts + build plan + feature files → handoff |
-| Build | `prism:implement` | Fresh session: validate the spec, tests first, implement to green |
+| Build | `prism:implement` | Read the validated spec cold, write tests first, and implement to green |
 
-`prism:orchestrate` chains plan → design → implement across tracks via fresh subagent sessions.
-The `write-*` skills and `validate-artifacts` are sub-skills loaded inside sessions, never sessions of their own.
+`prism:orchestrate` chains plan → design → implement across tracks through fresh child-agent contexts.
+It uses parallel isolated workspaces when available and safe sequential execution otherwise.
+The `write-*` skills and `validate-artifacts` support those workflow tasks.
 Defect repair sits outside the flow: diagnose and report against the settled spec before any fix.
 
-Start with `prism:workflow` for the full picture — session discipline, cross-session lifecycles, and the durable-artifact rules.
+Start with `prism:workflow` for context discipline, artifact lifecycles, and host capability fallbacks.
 
 ## Install
 
-In Claude Code:
+### Claude Code
 
 ```
 /plugin marketplace add RumyantsevMichael/Prism
 /plugin install prism@prism
 ```
 
-Then, in each project, run `/prism:workflow-init` once — it inspects the project, interviews you, and writes `.claude/workflow-config.md` (doc paths, stack, verification, tracker, commit conventions).
-Every prism skill reads that file first.
+Run `/prism:workflow-init` once in each project.
+It inspects the project and writes `.prism/workflow.md`.
 
-Without a config, skills fall back to the default layout: `/docs/ADRs/`, `/docs/plans/`, `/docs/Features/`, `/docs/roadmap.md`, `/docs/Glossary.md`, `/docs/user-guide/`.
+### Codex
+
+Codex `0.147.0` or later can install Prism from its native package.
+
+```bash
+codex plugin marketplace add RumyantsevMichael/Prism
+codex plugin add prism@prism
+```
+
+Invoke `prism:workflow-init` through the Codex skill picker or an explicit skill mention.
+The skill writes the same `.prism/workflow.md` file used by Claude Code.
+
+All configured paths resolve from the project root.
+The default paths include `docs/ADRs/`, `docs/plans/`, `docs/Features/`, `docs/roadmap.md`, `docs/Glossary.md`, and `docs/user-guide/`.
+
+### Configuration migration
+
+Prism no longer reads `.claude/workflow-config.md` during normal workflow tasks.
+Run `workflow-init` to migrate that file into `.prism/workflow.md`.
+The migration preserves values, converts project-root paths to relative paths, and leaves the old file unchanged.
 
 ### For a whole team
 
-Commit this to a project's `.claude/settings.json` so collaborators get prism on clone:
+Claude Code teams can commit this to `.claude/settings.json`:
 
 ```json
 {
@@ -54,15 +75,23 @@ Commit this to a project's `.claude/settings.json` so collaborators get prism on
 
 ## Updating
 
+Claude Code:
+
 ```
 /plugin marketplace update prism
 /plugin update prism@prism
 ```
 
-To stay on a fixed release instead of tracking `main`, add the marketplace at a tag: `/plugin marketplace add RumyantsevMichael/Prism@v0.1.0`.
+Codex:
+
+```bash
+codex plugin marketplace upgrade prism
+```
+
+To stay on a fixed Claude release, add the marketplace at a release tag.
 
 Releases follow semantic versioning and are recorded in [CHANGELOG.md](CHANGELOG.md).
-A major bump means a skill was renamed or removed, or that artifacts written by an earlier version need migrating - the changelog says which.
+Before version 1.0, a minor bump can contain a breaking workflow or artifact migration.
 
 ## Contributing
 
@@ -71,4 +100,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for repository layout, local development,
 ## License
 
 [MIT](LICENSE)
-

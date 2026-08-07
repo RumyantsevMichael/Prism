@@ -1,0 +1,5 @@
+interface:
+  display_name: "Ideate"
+  short_description: "Shape a raw idea into ADRs"
+policy:
+  allow_implicit_invocation: false

@@ -1,34 +1,35 @@
 ---
 name: roadmap
-description: "Maintain the durable, priority-ordered roadmap of whole initiatives: the rung between product strategy and /plan. Survey and (re)prioritize into Now/Next/Later, or flip one initiative's state as plans land."
+description: "Maintain the priority-ordered roadmap of initiatives between strategy and plan. Use to reprioritize bands or update an initiative state."
 argument-hint: '[initiative]'
 ---
 
 # Maintain the roadmap
 
-This is the rung **one altitude above `/plan`**: it orders **whole initiatives** by **priority** (the one thing `/plan` is forbidden to do) and is the **only durable** planning surface.
-It answers "what do we do next, why this not that, and what blocks what", never "how do we build one initiative" (that is `/plan`).
+This is the rung **one altitude above `plan`**.
+It orders whole initiatives by priority, which `plan` does not do.
+It never defines how to build one initiative.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project's own CLAUDE.md conventions.
-The session map and lifecycle rules live in the `workflow` overview skill.
+If absent, use the defaults and the project instructions that apply to this task.
+The context map and lifecycle rules live in the `workflow` overview skill.
 
-The artifact is the roadmap file (default `/docs/roadmap.md`), a single **durable, living** file.
+The artifact is the roadmap file (default `docs/roadmap.md`), a single **durable, living** file.
 Unlike the one-shot skills, the roadmap is **not** authored once: it is revisited continuously as new information arrives.
 So this skill has **two modes**, and you state which you are in up front.
 
-Read first: the roadmap, the product strategy document if the project has one (the vision the roadmap serves), and the glossary (default `/docs/Glossary.md`).
+Read the roadmap, the product strategy document if present, and the glossary (default `docs/Glossary.md`).
 
-## Mode A: re-prioritization (a `/roadmap` session, gated)
+## Mode A: re-prioritization (a gated `roadmap` task)
 
 The judgment-heavy mode.
 Run **inline with the user**.
-Delegate the read-heavy "what exists / what shipped since last time" survey to a subagent (pass paths), and keep the prioritization call inline.
+Delegate the read-heavy survey to a child agent when available, and keep the prioritization call inline.
 
 1. **Orient.** Read the current roadmap and the strategy pillars it serves.
-   Confirm which initiatives are live, shipped, or newly envisioned since the last pass, and delegate this survey to a subagent.
+   Confirm which initiatives are live, shipped, or newly envisioned, and delegate this survey to a child agent when available.
 2. **Re-band.** Move initiatives between **Now / Next / Later** by priority *given* cross-initiative dependency.
    Band (priority) and arrow (dependency) are orthogonal.
    Keep both visible, and never collapse to one axis.
@@ -41,9 +42,9 @@ Delegate the read-heavy "what exists / what shipped since last time" survey to a
    Record it in the sequencing rationale.
    This is still priority, not a schedule and not phasing (see Conventions).
 4. **Add envisioned work.** New ideas enter as `envisioned` nodes (dashed, just name + intent + the pillar served).
-   A node is *usually* ADR-less until `/plan`-ned or `/design`-ned.
-   But an idea already shaped by `/ideate` MAY enter carrying its exploratory `Proposed` ADRs (cite them like any other node).
-   `/ideate` never writes the roadmap itself.
+   A node is usually ADR-less until `plan` or `design` starts it.
+   An idea shaped by `ideate` MAY enter with its exploratory `Proposed` ADRs.
+   The `ideate` skill never writes the roadmap itself.
    You attach those ADRs when you band the node.
 5. **Park, do not drop.** De-prioritized work moves to `parked` with a recorded reason.
    Shipped nodes stay (the roadmap is also the ledger of what got built).
@@ -60,12 +61,12 @@ A one-line color change bound to a lifecycle event that already passed its own g
 **No new gate.** Re-gating an event that already happened is ceremony.
 The flips:
 
-- `/plan` accepted, or a self-contained ADR created: envisioned → planned (add ADRs and the `click` plan link).
-- First track enters `/design`: planned → in-progress.
+- `plan` accepted, or a self-contained ADR created: envisioned → planned (add ADRs and the `click` plan link).
+- First track enters `design`: planned → in-progress.
 - Last track lands (plan folder deleted): in-progress → shipped (remove the `click` link).
 
 If the initiative is not yet a node (it was started without ever being roadmapped), **add it** in `Now`, since it is being worked.
-A self-contained feature (no `/plan`) is just an initiative of one track: a single node citing its one ADR.
+A self-contained feature without `plan` is an initiative of one track with a node that cites its ADR.
 
 ## Prioritization lenses
 

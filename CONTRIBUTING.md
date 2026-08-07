@@ -1,25 +1,31 @@
 # Contributing to prism
 
-prism is a Claude Code plugin whose content is almost entirely prompts.
-There is no build step and nothing to compile: a change is a change to Markdown that Claude reads at session time.
+prism is a Claude Code and Codex plugin whose content is almost entirely prompts.
+There is no build step and nothing to compile.
+A change to Markdown changes agent behavior at task time.
 
 ## Repository layout
 
 ```
 .claude-plugin/
-  plugin.json        # plugin manifest - identity, version, metadata
-  marketplace.json   # marketplace catalog listing this one plugin at "./"
+  plugin.json        # Claude plugin manifest
+  marketplace.json   # Claude marketplace
+.codex-plugin/
+  plugin.json        # Codex plugin manifest
+.agents/plugins/
+  marketplace.json   # Codex marketplace
 skills/
   <name>/SKILL.md    # one directory per skill; the directory name is the skill name
 ```
 
-Only the manifests live in `.claude-plugin/`.
-Everything Claude loads (`skills/`, and later `agents/`, `hooks/`, `.mcp.json`) sits at the repository root.
-Putting a component directory inside `.claude-plugin/` is the most common way to break a plugin, and validation will not always catch it.
+Only the Claude manifests live in `.claude-plugin/`.
+Only the Codex manifest lives in `.codex-plugin/`.
+Shared components such as `skills/`, `hooks/`, and assets stay at the repository root.
+Putting a shared component inside either manifest directory breaks one or both packages.
 
 ## Local development
 
-Load the working tree into a live session:
+Load the working tree into Claude Code:
 
 ```bash
 claude --plugin-dir path/to/prism
@@ -30,15 +36,26 @@ A `--plugin-dir` plugin shadows an installed one of the same name for that sessi
 
 After editing a skill, run `/reload-plugins` to pick it up without restarting.
 
+Load the native Codex package through the repository marketplace:
+
+```bash
+codex plugin marketplace add .
+codex plugin add prism@prism
+```
+
+Codex `0.147.0` or later is required.
+Restart Codex after package changes when the installed copy does not refresh.
+
 ## Validation
 
 ```bash
 claude plugin validate . --strict
 ```
 
-This checks both manifests against the published schema, and parses the YAML frontmatter of every skill.
+This checks the Claude manifests and parses every skill frontmatter block.
 `--strict` promotes unrecognized-field warnings to errors, which catches typos in field names.
-CI runs the same command on every push and pull request; run it locally before opening one.
+CI also installs the native Codex package from an isolated temporary marketplace.
+Run both checks before opening a pull request.
 
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.
@@ -48,11 +65,15 @@ To validate `plugin.json` in isolation, copy the plugin into a scratch directory
 - **Frontmatter `description` is the trigger.** It is what Claude matches against when deciding whether to load the skill, so it should say both what the skill does and when to use it.
   Prefer concrete trigger phrases over abstract summary.
 - **Add `disable-model-invocation: true`** for skills that should only ever run when the user explicitly asks, rather than being auto-selected mid-task.
+- **Add `agents/openai.yaml`** for the equivalent Codex invocation policy.
+  Set `policy.allow_implicit_invocation: false` for explicit-only skills.
 - **Use `argument-hint`** for skills that take a target, and quote the value in YAML when it starts with `[`.
-- **Sibling references resolve under the plugin namespace.** When a skill says "load `write-adr`", that means `prism:write-adr`.
-  Names outside the plugin's own set resolve to Claude Code built-ins or project-local skills, and the `workflow` skill documents which are which.
-  Keep that distinction intact when editing.
-- **Every session skill reads `.claude/workflow-config.md` first.** A new skill that touches project paths should follow the same convention and fall back to the documented defaults when the file is absent.
+- **Sibling references use portable names.**
+  Say "run `write-adr`" and let each host use its supported invocation mechanism.
+- **Do not name host tools in shared prompt behavior.**
+  Describe the required capability and its fallback.
+- **Every workflow skill reads `.prism/workflow.md` first.**
+  All configured paths resolve from the project root.
 
 ## Benchmarking a change
 
@@ -82,8 +103,10 @@ While the version is below `1.0.0`, those levels are shifted down one: a breakin
 This is release-please's `bump-minor-pre-major` setting, and it keeps the plugin in `0.x` while the workflow's shape is still moving.
 Reaching `1.0.0` should be a deliberate decision that the skill set and its artifacts are stable, not the automatic consequence of the first breaking change.
 
-`version` lives only in `.claude-plugin/plugin.json`.
-It is deliberately not mirrored into the marketplace entry: Claude Code pins the plugin if a version is set in either file, so two copies could drift and silently stop users from receiving updates.
+`version` lives in both native plugin manifests because both hosts require it.
+Release-please owns both values and updates them together.
+CI rejects version drift between the manifests.
+Do not put a version in either marketplace entry.
 
 Users only receive an update when that string changes, so a shipped fix needs a version bump to reach anyone.
 
@@ -101,7 +124,9 @@ Getting this wrong is silent: a behavior change committed as `docs:` produces no
 ## Cutting a release
 
 Releases are automated with [release-please](https://github.com/googleapis/release-please).
-On every push to `main` it opens or updates a release pull request that bumps `version` in `.claude-plugin/plugin.json`, writes the `CHANGELOG.md` section, and computes the next version from the commits since the last release.
+On each push to `main`, it opens or updates a release pull request.
+The pull request updates both native manifest versions and writes the `CHANGELOG.md` section.
+Release-please computes the next version from commits since the last release.
 
 `CHANGELOG.md` is generated from commit messages, so do not edit it by hand.
 Anything you want to appear there belongs in a commit subject.
@@ -122,9 +147,8 @@ If that secret is missing or expired, the workflow falls back to `GITHUB_TOKEN`.
 That fallback only works when **Allow GitHub Actions to create and approve pull requests** is enabled under Settings, Actions, General, Workflow permissions.
 With neither in place the job fails with `GitHub Actions is not permitted to create or approve pull requests`.
 
-Run `claude plugin validate . --strict` before merging a release pull request.
-CI runs it on every push, but the release pull request is the last point where a broken manifest can still be caught cheaply.
+Run the Claude validator and the Codex installation smoke test before merging a release pull request.
+CI runs both checks on every push.
 
 Users on the default install track `main` and pick up the change on their next marketplace update.
 Users who pinned a tag stay put until they re-add at the new one.
-

@@ -1,6 +1,6 @@
 ---
 name: validate-artifacts
-description: "Adversarial pre-code validation of a track's spec (ADR, build plan, contracts, feature files): try to implement contracts, break invariants, surface gaps. Use at the start of an implementation session, before coding."
+description: "Validate a track specification by testing contracts and invariants for gaps. Use during design validation or as a manual isolated task."
 argument-hint: '[initiative/track]'
 context: fork
 background: false
@@ -9,19 +9,15 @@ background: false
 # Validate artifacts
 
 This is the **adversarial pre-implementation check**: before a line of code, a fresh reader tries to *break* the spec on paper, where fixing a gap costs a sentence instead of a refactor.
-This skill declares `context: fork`, so it always runs as an **isolated subagent**: no conversation history, only what is on disk.
-That isolation is the point.
-You cannot be led by the authoring session's assumptions, so read everything you need from the files.
+Run this skill in an **isolated context** with no authoring conversation history.
+Host metadata can enforce isolation, but the caller must still guarantee an isolated context.
+Use an isolated child context or a separate fresh user-started task.
+Read everything you need from the files.
 
-It runs at two points, and the caller changes what happens to the findings:
-
-- **In the implementation session, as its first act**: the primary invocation.
-  Done cold, by someone who did not author the artifacts, which is exactly what makes it a fair test.
-  Gaps route back to the design session and you stop, per "What to produce" below.
-- **Inside the design session's validation loop**: design invokes this skill on the drafted bundle, fixes every finding, and invokes it again until a run reports no gaps.
-  Each run is a fresh, isolated reader.
-  The stop-and-wait-for-the-user-to-relay choreography below is for the implementation-session invocation, not this one.
-  Passing the design loop never waives the implementation session's own invocation.
+The design validation loop invokes this skill on the drafted bundle.
+Design fixes every finding and invokes this skill again until a run reports no gaps.
+Each run must use a fresh isolated reader.
+Implementation does not repeat this pass.
 
 It is not implementation, and it is not the post-code checks.
 Keep the three distinct:
@@ -30,13 +26,13 @@ Keep the three distinct:
 - **Acceptance tests** validate the *implementation* against the spec, after code.
 - **Live verification** validates the *running system*, after code, for what tests cannot capture.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project's own CLAUDE.md conventions.
-The session map and lifecycle rules live in the `workflow` overview skill.
+If absent, use the defaults and the project instructions that apply to this task.
+The context map and lifecycle rules live in the `workflow` overview skill.
 
-Read the handoff first (default `/docs/plans/<initiative>/<track>/handoff.md`).
+Read the handoff first (default `docs/plans/<initiative>/<track>/handoff.md`).
 It names the authoritative inputs and their precedence.
 Then read the **source request** the track answers: the track file, and any recorded product request or interview notes in the plan folder.
 The request is what the artifacts must satisfy, so it is part of your input, not optional background.
@@ -74,12 +70,13 @@ Your goal is to find the gap the design session is too close to see.
 ## What to produce
 
 A list of gaps, each tied to the artifact (or ADR) that owns it, with enough detail for the design session to act on, **plus a one-line statement of the track's security surface** (the threat-model lens's output, carried forward to gate the post-code audit).
-**Report it and stop.** Do not resolve the gaps yourself, recommend resolutions, or proceed past them.
-Clarifying the spec is the design session's responsibility: it updates the owning artifact (a wrong invariant feeds back to the ADR) **while its cache is still warm**.
-That is why this runs before tear-down, not after, and you resume only once the user relays the clarification back.
+**Report the findings and stop.**
+Do not resolve gaps, recommend resolutions, or proceed past them.
+Clarifying the specification is the design task's responsibility.
+The design task updates the owning artifact while its context is still available.
 Your job here is to find the gap, not to fill it.
 
-When the artifacts hold up, say so plainly and proceed to tests-first implementation.
+When the artifacts hold up, say so plainly and return the clean result to design.
 The point is a real attempt to break them, not a rubber stamp.
 But a spec that survives a genuine attempt is cleared to build.
 

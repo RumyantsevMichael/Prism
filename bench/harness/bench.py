@@ -45,7 +45,7 @@ INTERACTION_RULES = f"""
 You are running inside a benchmark harness, driven over a text channel.
 A product owner is available: when you need requirements, decisions, or acceptance, end your message with concise numbered questions, and the answers arrive as the next message.
 The product owner knows the intended behavior in detail but only answers what is asked. Elicit what you need instead of inventing unstated requirements.
-Never use the AskUserQuestion tool. Ask in plain text.
+Never use a structured user-input tool. Ask in plain text.
 Do not commit and do not push. The harness snapshots files directly.
 The deliverable interface named in BRIEF.md is a hard contract: do not rename or move it.
 When this session's work is finished, end your message with the exact line:
@@ -61,8 +61,8 @@ Write no implementation code in this session.
 
 IMPLEMENT_PROMPT = """This repository contains a spec that an earlier design session produced under docs/plans/{slug}/.
 Run the prism implementation workflow now: {invocation}.
-Follow the skill fully: validate the spec, write tests first, implement to green, verify, and audit.
-If validation finds spec gaps, report them as questions: the product owner will answer or delegate the decision to you.
+Follow the skill fully: read the validated spec cold, write tests first, implement to green, verify, and audit.
+If you find a spec gap, report it as a question: the product owner will answer or delegate the decision to you.
 Finish only when the deliverable in BRIEF.md is complete and your own tests pass.
 {rules}"""
 
@@ -102,12 +102,12 @@ WORKFLOW_CONFIG_TEMPLATE = """# Workflow config
 - One-line description: {summary}
 
 ## Paths
-- ADRs: /docs/ADRs/
-- Plans (scratch): /docs/plans/
-- Feature files: /docs/Features/
-- Roadmap: /docs/roadmap.md
-- Glossary: /docs/Glossary.md
-- User guide: /docs/user-guide/
+- ADRs: docs/ADRs/
+- Plans (scratch): docs/plans/
+- Feature files: docs/Features/
+- Roadmap: docs/roadmap.md
+- Glossary: docs/Glossary.md
+- User guide: docs/user-guide/
 - Product strategy: n/a
 
 ## Stack
@@ -134,7 +134,7 @@ WORKFLOW_CONFIG_TEMPLATE = """# Workflow config
 ## Constraints
 - This is a benchmark session driven over a text channel.
 - The user on the channel is the product owner. Deliver gates and questions as plain text and wait for the reply.
-- Do not use the AskUserQuestion tool.
+- Do not use a structured user-input tool.
 - Do not commit and do not push.
 """
 
@@ -421,9 +421,9 @@ def make_workspace(dest, task, with_config):
             sys.exit(f"seed_repo checkout failed for {task['id']}: {checkout.stderr.strip()}")
         shutil.rmtree(seed_path / ".git", ignore_errors=True)
     if with_config:
-        claude_dir = dest / ".claude"
-        claude_dir.mkdir(exist_ok=True)
-        (claude_dir / "workflow-config.md").write_text(
+        prism_dir = dest / ".prism"
+        prism_dir.mkdir(exist_ok=True)
+        (prism_dir / "workflow.md").write_text(
             WORKFLOW_CONFIG_TEMPLATE.format(
                 name=task["name"],
                 summary=task["summary"],
@@ -649,47 +649,15 @@ def claude_call(prompt, cwd, model, extra_args, timeout):
 
 
 def prepare_codex_marketplace(plugin_dir):
-    """Build a Codex-compatible copy without changing the Claude plugin."""
+    """Build a temporary marketplace from the shipped Codex package."""
     root = BENCH_DIR / ".cache" / "codex-marketplace"
     plugin = root / "plugin"
     if root.exists():
         shutil.rmtree(root)
     (root / ".agents" / "plugins").mkdir(parents=True)
-    (plugin / ".codex-plugin").mkdir(parents=True)
     shutil.copytree(Path(plugin_dir) / "skills", plugin / "skills")
-    for skill_file in (plugin / "skills").glob("*/SKILL.md"):
-        text = skill_file.read_text()
-        skill_file.write_text(
-            text.replace(
-                "disable-model-invocation: true", "disable-model-invocation: false"
-            )
-        )
-    claude_manifest = json.loads(
-        (Path(plugin_dir) / ".claude-plugin" / "plugin.json").read_text()
-    )
-    manifest = {
-        "name": "prism",
-        "version": claude_manifest["version"],
-        "description": claude_manifest["description"],
-        "skills": "./skills",
-        "author": claude_manifest["author"],
-        "interface": {
-            "displayName": "Prism",
-            "shortDescription": "Design and implement software from explicit specifications.",
-            "longDescription": "Prism separates product design from implementation and stores the approved specification as project artifacts.",
-            "developerName": claude_manifest["author"]["name"],
-            "category": "Engineering",
-            "capabilities": [
-                "Product design",
-                "Architecture decisions",
-                "Implementation planning",
-                "Test-driven implementation",
-            ],
-            "defaultPrompt": "Use Prism to design and implement this change.",
-        },
-    }
-    (plugin / ".codex-plugin" / "plugin.json").write_text(
-        json.dumps(manifest, indent=2) + "\n"
+    shutil.copytree(
+        Path(plugin_dir) / ".codex-plugin", plugin / ".codex-plugin"
     )
     marketplace = {
         "name": "prism",
@@ -1704,7 +1672,7 @@ def main():
     p_selfcheck.set_defaults(func=cmd_selfcheck)
 
     p_setup_codex = sub.add_parser(
-        "setup-codex", help="install the generated Codex adapter for benchmark runs"
+        "setup-codex", help="install the native Codex package for benchmark runs"
     )
     p_setup_codex.add_argument("--plugin", default=str(REPO_ROOT))
     p_setup_codex.set_defaults(func=cmd_setup_codex)

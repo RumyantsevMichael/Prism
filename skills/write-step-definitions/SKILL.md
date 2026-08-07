@@ -9,15 +9,15 @@ Step definitions are the translation layer between domain language in feature fi
 They are where implementation knowledge lives: class names, field paths, and internal identifiers.
 Feature files must remain clean of this knowledge, but step definitions embrace it.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project's own CLAUDE.md conventions.
-The session map and lifecycle rules live in the `workflow` overview skill.
+If absent, use the defaults and the project instructions that apply to this task.
+The context map and lifecycle rules live in the `workflow` overview skill.
 
 Before writing, read in order:
 1. The feature file being implemented: understand every step's domain meaning.
-2. The glossary (default `/docs/Glossary.md`): find the mechanical meaning of domain terms.
+2. The glossary (default `docs/Glossary.md`): find the mechanical meaning of domain terms.
 3. Relevant ADRs: understand what each domain concept means structurally.
 4. The project's existing test helpers (for example `tests/helpers/`): check what exists before writing new ones.
 
@@ -25,7 +25,7 @@ Before writing, read in order:
 
 ## Setup: what the harness must achieve
 
-The workflow-config names the BDD harness (cucumber-js, pytest-bdd, bun-test-cucumber, behave, …) and how acceptance tests run.
+The workflow configuration names the BDD harness and its acceptance-test command.
 Whatever the harness, setup must achieve the same things:
 
 - Feature files and step definitions are both discovered by the project's normal test command.
@@ -33,7 +33,7 @@ Whatever the harness, setup must achieve the same things:
 - Steps share **typed, per-scenario state**: initialized fresh before each scenario, mutated by steps, never leaked between scenarios.
 - The wiring (plugin registration, preload, conftest, hooks) is committed and idempotent, so any session can run the suite without ritual.
 
-If the harness is not yet wired in this project, wire it once, commit the configuration, and record the invocation in the workflow-config.
+If the project has no BDD harness, add it once and record its command in the workflow configuration.
 
 ---
 

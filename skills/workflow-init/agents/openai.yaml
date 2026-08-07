@@ -1,0 +1,5 @@
+interface:
+  display_name: "Workflow Init"
+  short_description: "Configure Prism for a project"
+policy:
+  allow_implicit_invocation: false

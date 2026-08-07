@@ -10,14 +10,14 @@ An `Accepted` ADR is settled: decided, not explored.
 Its invariants take precedence over behavioral invariants in feature files.
 A `Proposed` ADR is the decision *under design*, not yet settled (see the status lifecycle below).
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project's own CLAUDE.md conventions.
-The session map and lifecycle rules live in the `workflow` overview skill.
+If absent, use the defaults and the project instructions that apply to this task.
+The context map and lifecycle rules live in the `workflow` overview skill.
 
 Before writing, read:
-1. The glossary (default `/docs/Glossary.md`): use established terms exactly as defined there.
+1. The glossary (default `docs/Glossary.md`): use established terms exactly as defined there.
 2. Sibling ADRs in the same directory: understand the existing decision chain.
 
 ---
@@ -42,7 +42,7 @@ Here is what you act on while writing one:
 
 ## File location and naming
 
-ADRs live in the ADR directory (default `/docs/ADRs/<topic-slug>/`).
+ADRs live in the ADR directory (default `docs/ADRs/<topic-slug>/`).
 Each significant topic gets its own directory.
 Multiple related decisions on the same topic share a directory.
 

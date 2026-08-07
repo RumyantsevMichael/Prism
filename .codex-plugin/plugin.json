@@ -1,0 +1,40 @@
+{
+  "name": "prism",
+  "version": "0.2.0",
+  "description": "Spec-driven agentic engineering workflow: roadmap, ideate, plan, design, and implement with orchestration across tracks.",
+  "author": {
+    "name": "Michael Rumyantsev",
+    "url": "https://github.com/RumyantsevMichael"
+  },
+  "homepage": "https://github.com/RumyantsevMichael/Prism#readme",
+  "repository": "https://github.com/RumyantsevMichael/Prism",
+  "license": "MIT",
+  "keywords": [
+    "workflow",
+    "spec-driven",
+    "adr",
+    "bdd",
+    "gherkin",
+    "planning",
+    "architecture",
+    "tdd"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Prism",
+    "shortDescription": "Spec-driven engineering",
+    "longDescription": "Prism separates product design from implementation and stores the approved specification as project artifacts.",
+    "developerName": "Michael Rumyantsev",
+    "category": "Engineering",
+    "capabilities": [
+      "Product design",
+      "Architecture decisions",
+      "Implementation planning",
+      "Test-driven implementation"
+    ],
+    "defaultPrompt": [
+      "Use Prism to design this change.",
+      "Use Prism to implement this approved specification."
+    ]
+  }
+}

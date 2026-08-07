@@ -7,15 +7,15 @@ argument-hint: '[initiative/track]'
 # Write build plan
 
 A build plan is the **build order** for one track: how to get from a settled design to working code without surprises.
-It is one of three artifacts in a track's prep bundle (`build-plan.md`, the contracts file, `handoff.md`) under the plans directory (default `/docs/plans/<initiative>/<track>/`).
-("Plan" unqualified means the *initiative* plan one altitude up, `/docs/plans/<initiative>/plan.md`, a different artifact.
+It is one of three artifacts in a track's prep bundle under the plans directory (default `docs/plans/<initiative>/<track>/`).
+("Plan" unqualified means the initiative plan at `docs/plans/<initiative>/plan.md`, which is a different artifact.
 This skill authors the per-track **build plan**.)
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project's own CLAUDE.md conventions.
-The session map and lifecycle rules live in the `workflow` overview skill.
+If absent, use the defaults and the project instructions that apply to this task.
+The context map and lifecycle rules live in the `workflow` overview skill.
 
 The build plan and the contracts are **mutually validating** and authored in parallel.
 The contracts own *shapes*, and the build plan owns *sequence, reuse, and risk*.
@@ -76,10 +76,14 @@ One subsection per workstream. For each:
 Bounded risks and owed decisions with an owner - not design ambiguities (those
 were resolved above, or feed back to the ADR).
 
-## Recommended model & effort
+## Execution profile
 
-The model and effort level for the implementation session, and why. Note where to
-slow down (judgment-heavy workstreams) versus where mechanical mirroring is safe.
+- Complexity: standard | high
+- Context: fresh
+- Parallelism: sequential | independent
+- Focus: <specific risk areas>
+
+Explain where judgment is required and where mechanical mirroring is safe.
 
 ## Critical files
 
@@ -99,7 +103,7 @@ A short `file:symbol` callout list the implementer will touch first.
 - **Pin plug points with `file:symbol`.** Line numbers when precision matters, and full destination paths for new files.
 - **Tests live with their workstream**, as sub-bullets, so the implementer sees the test obligation next to the work.
 - **Concentrate judgment.** Flag which workstreams are mechanical (mirror existing code) and which need care.
-  This directs the implementer's and the model's effort.
+  This directs implementation attention.
 - State typing/naming conventions the project uses at boundaries (for example Result types for expected failures, schema validation at parse boundaries, domain aliases) once, up front, where they apply.
   Do not repeat per workstream.
 
@@ -111,5 +115,5 @@ A short `file:symbol` callout list the implementer will touch first.
 - Every workstream states reuse / mirror / new and its destination or plug point.
 - Every decision cites an ADR, and no rationale points at the build plan's own labels.
 - Each workstream lists the tests it owes.
-- A model + effort recommendation for implementation is present and justified.
+- A justified execution profile for implementation is present.
 - Shapes live in the contracts file, and the build plan links to them, not restates them.

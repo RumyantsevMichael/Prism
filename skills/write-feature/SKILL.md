@@ -1,22 +1,22 @@
 ---
 name: write-feature
-description: "Write or update a Gherkin feature file in the project's feature directory (default /docs/Features/). Use when specifying observable behavior (use cases, scenarios, or Rule blocks) as executable spec."
+description: "Write or update a Gherkin feature file in the project's feature directory. Use when specifying observable behavior as executable scenarios or Rule blocks."
 ---
 
 # Write Feature File
 
 Feature files are the single source of truth for behavioral requirements.
 They are simultaneously the specification a domain expert reads and verifies, and the acceptance tests that execute via the project's BDD harness.
-A feature file that cannot be executed is incomplete (unless the project's workflow-config marks feature files as spec-only).
+A feature file that cannot run is incomplete unless the workflow configuration marks feature files as specification-only.
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project's own CLAUDE.md conventions.
-The session map and lifecycle rules live in the `workflow` overview skill.
+If absent, use the defaults and the project instructions that apply to this task.
+The context map and lifecycle rules live in the `workflow` overview skill.
 
 Before writing, read in order:
-1. The glossary (default `/docs/Glossary.md`): use domain terms exactly as defined there.
+1. The glossary (default `docs/Glossary.md`): use domain terms exactly as defined there.
 2. Relevant ADRs: understand which architectural invariants apply to the behavior being specified.
    Rule blocks in feature files MUST NOT contradict ADR invariants.
 
@@ -24,7 +24,7 @@ Before writing, read in order:
 
 ## File location and naming
 
-Feature files live in the feature directory (default `/docs/Features/`).
+Feature files live in the feature directory (default `docs/Features/`).
 One file per feature.
 
 Naming: `F-<slug>.feature` where the slug describes the capability being specified.

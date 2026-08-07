@@ -1,52 +1,58 @@
 ---
 name: workflow
-description: "Overview of the spec-driven agentic engineering workflow: the session map (roadmap/ideate/plan/design/implement), cross-session lifecycles, and durable-artifact rules. Load when running any workflow skill, or to understand how the skills chain together."
+description: "Explain Prism's workflow map, context boundaries, artifact lifecycles, and durable rules. Use with workflow skills or to understand how they connect."
 ---
 
 # The agentic engineering workflow
 
 This is a spec-driven flow for changes big enough to need a spec.
-They move through at least **two sessions** over a layered spec: first an ADR, then technical design, build plan, contracts, and feature files.
+They move through at least **two fresh contexts** over a layered specification.
 A small change that needs no spec skips the flow entirely: make it directly under the project's baseline conventions.
 
-Project settings (paths, stack, tracker) live in `.claude/workflow-config.md` at the project root, created by the `workflow-init` skill.
+Project settings (paths, stack, tracker) live in `.prism/workflow.md` at the project root, created by the `workflow-init` skill.
 Read it if it exists.
 It overrides the default paths and stack assumptions below.
+All configured paths resolve from the project root.
 
 The workflow skills named here are siblings in this plugin: `roadmap`, `ideate`, `plan`, `design`, `implement`, `orchestrate`, `validate-artifacts`, and the `write-*` family.
-When one says "load `write-adr`" or "`/plan`", resolve it under the plugin's namespace (for example `prism:write-adr` or `/prism:plan`).
-Some skills named here are *not* in that list: `verify`, `run`, `security-review`, a commit skill, or a repair skill.
-These resolve outside the plugin, to a Claude Code built-in or a project-local skill of that name.
+When one says "load `write-adr`" or "run `plan`", use the host's supported skill invocation mechanism.
+A project may provide verification, security review, repair, or commit instructions outside Prism.
+Use those instructions when available, and use the inline Prism procedure otherwise.
 A project may also override any sibling with a local skill, and the local one wins.
 
 ## The map
 
-Each rung is a skill, and each runs as **its own session**:
+Each rung is a skill, and each runs in **its own fresh context**:
 
 - **Priority** (`roadmap`): order whole initiatives Now/Next/Later.
   This is the only priority call and the only durable planning surface.
 - **Shaping** (`ideate`, optional): brainstorm a shapeless idea into Proposed ADRs, or kill it.
 - **Build order** (`plan`): decompose a multi-ADR initiative into dependency-ordered tracks.
 - **Spec** (`design`): per track, ADR ⇄ technical design → contracts + build plan + feature files → handoff.
-- **Build** (`implement`): fresh session, validate the spec, tests first, implement to green, verify, audit.
+- **Build** (`implement`): read the validated specification cold, write tests first, implement to green, verify, and audit.
 
-`orchestrate` chains plan → design → implement across tracks through fresh subagent sessions.
-The `write-*` skills load inside the drafter forks that `design` spawns, and `validate-artifacts` always runs as an isolated forked subagent through its own `context: fork`.
-None of them is ever a session of its own.
+`orchestrate` chains plan → design → implement across tracks through fresh child-agent contexts.
+The `write-*` skills run inside the drafting work that `design` coordinates.
+The `validate-artifacts` skill always runs in an isolated context with only the on-disk artifacts.
+None of these supporting skills needs a user-started task when the host can create the required child-agent context.
 
 **Defect repair** sits outside the flow.
 A repair session restores code to the already-settled spec: reproduce it with a failing test, diagnose the root cause **without touching production code**, then stop and report the diagnosis for approval before any fix.
 Pull the code to the spec, never the spec to the code.
 A fix that would require changing an ADR, a feature file, or a contract is not a repair, so escalate it to a design session.
-Follow the project's own repair skill if it has one.
+Follow the project's repair instructions if they exist.
+Otherwise, use the reproduce, diagnose, report, approve, and fix procedure in this section.
 
-**One workflow skill per session.**
-`ideate`, `plan`, `design`, and `implement` are deliberate context boundaries: if one has already run in a session, the next starts in a **fresh** session, never chained.
-The cold read is the point, because it makes downstream validation honest.
-`orchestrate` is the sole exception: chaining the others through genuinely fresh subagent sessions is its entire job.
+**One workflow skill per context.**
+`ideate`, `plan`, `design`, and `implement` are deliberate context boundaries.
+If one has already run in the current context, run the next in a **fresh** context.
+The cold read exposes design assumptions before implementation starts.
+`orchestrate` is the sole exception because it chains the others through genuinely fresh child-agent contexts.
 
-The organizing principle across every session is to **protect the main session's context**.
-Push read-heavy and parallelizable work to subagents (pass them paths and a scoped task, never inlined contents), and use a fresh session when independence or a clean slate is what you need.
+The organizing principle across every run is to **protect the main context**.
+Push read-heavy and parallel work to child agents when the host provides them.
+Pass child agents paths and a scoped task, never inlined contents.
+Use a fresh context when independence or a clean slate is required.
 Keep inline the load-bearing reasoning and anything interactive with the user.
 
 **Ground conclusions in evidence, not assumption, and do not give up early.**
@@ -54,19 +60,37 @@ Before you declare something impossible, required, blocked, or "gated" (any nega
 A plausible inference is a hypothesis to test, not a conclusion.
 Research and verify **before you down-scope, defer, or call something a residual**.
 
-Recommend model and effort only (a) for a subagent you are about to spawn, and (b) for the next session at handoff.
+## Host capabilities
+
+Inspect the capabilities that the current host provides before delegating work.
+
+- **Child agents:** Use them for independent reading and drafting when available.
+- **Context isolation:** Use an isolated child context for adversarial validation.
+- **Context inheritance:** Use an inheriting child context when settled conversation decisions must carry forward.
+- **Workspace isolation:** Run concurrent writing tasks only when each task has an isolated workspace.
+- **Task resumption:** Resume a child task when supported, or start a replacement from the on-disk artifacts.
+- **Structured input:** Use it for real user choices when configured and available, or use plain text.
+
+When child agents are unavailable, do ordinary drafting sequentially in the current context.
+When isolated validation is unavailable, ask the user to run `validate-artifacts` in a separate fresh task and relay its findings.
+When workspace isolation is unavailable, run writing tasks sequentially without adding a new user gate.
+
+Recommend an execution profile only for a child agent you are about to start or for the next fresh context at handoff.
 Render the recommendation as:
 
-- Model: <model_name>
-- Effort: <effort_level>
+- Complexity: standard | high
+- Context: fresh
+- Parallelism: sequential | independent
+- Focus: <specific risk areas>
 
 ## Documentation hierarchy
 
-Read documentation in this order before any task (these are defaults, and workflow-config may relocate them):
+Read documentation in this order before any task.
+The workflow configuration can relocate these defaults.
 
-1. The glossary (default `/docs/Glossary.md`): term definitions and navigation.
-2. Relevant ADRs (default `/docs/ADRs/*/ADR.md`): architectural invariants and settled decisions, in RFC 2119 language.
-3. Relevant Gherkin feature files (default `/docs/Features/*.feature`): behavioral invariants, the executable specification for observable behavior.
+1. The glossary (default `docs/Glossary.md`): term definitions and navigation.
+2. Relevant ADRs (default `docs/ADRs/*/ADR.md`): architectural invariants and settled decisions, in RFC 2119 language.
+3. Relevant Gherkin feature files (default `docs/Features/*.feature`): behavioral invariants, the executable specification for observable behavior.
 
 The glossary only defines what terms mean, not behavioral rules.
 When an architectural invariant in an ADR conflicts with a behavioral invariant in a feature file, stop and report the conflict to the user.
@@ -92,7 +116,8 @@ The mechanics live in the named skill.
 
 ## Durable artifacts must not reference non-durable identifiers
 
-Everything under the plans directory (default `/docs/plans/`) is **scratch**, deleted once implemented: track names (`T4`), build "steps", section numbers (`§ 6.2`), "handoff", "spike", and "Locked decision N".
+Everything under the plans directory (default `docs/plans/`) is **scratch** and is deleted after implementation.
+Scratch identifiers include track names, build steps, section numbers, handoffs, spikes, and locked-decision labels.
 So **nothing durable may reference it**: not code or doc comments, READMEs, ADRs, commit messages, or test assertions.
 A future session has zero context for `T4 § 5` once that file is gone.
 
@@ -108,7 +133,7 @@ This applies as you write, not as a later cleanup pass.
 
 ## User-facing docs and runbooks
 
-The user-guide directory (default `/docs/user-guide/`) is the source-of-truth for install, configure, and use.
+The user-guide directory (default `docs/user-guide/`) is the source-of-truth for install, configure, and use.
 Any change to observable behavior MUST update it in the same change.
 Mark unshipped capabilities **Planned**.
 Link to ADRs and the glossary for rationale rather than duplicating it.
@@ -129,7 +154,8 @@ A repair session works from a defect issue, and its landing `fix(scope):` commit
 Graduate-before-delete turns a closing plan's loose ends into follow-up issues.
 Closing issues is user-initiated: prepare and propose, never close unasked.
 
-Label so the two read apart (these are defaults, and workflow-config may name the project's own vocabulary):
+Use different labels for the two types.
+The workflow configuration can name the project's vocabulary.
 
 - `type:bug`, `type:enhancement`, `type:docs`: what kind of work it is.
 - `area:<name>`: scope.
@@ -157,14 +183,14 @@ The rule above governs *framing*.
 This governs *delivery*.
 They are independent, and the framing never changes.
 
-**Default: a structured prompt.**
-Use Claude Code's `AskUserQuestion` tool at a gate or a decision fork.
-It renders the options as selectable choices, which keeps a long run legible and makes the decision points scannable afterwards.
+**Default: structured input when available.**
+If workflow config sets `Interaction style: structured`, use the host's structured input capability at a gate or decision fork.
+If the host lacks structured input, present the options as plain text.
 Put your recommendation first and mark it `(Recommended)`.
 Keep each option's label short and let its description carry the trade-off.
 
 **Opt-out: plain text.**
-If workflow-config sets `Interaction style: plain-text`, present the same options as a short numbered list in the message body and let the user answer in prose.
+If workflow config sets `Interaction style: plain-text`, present the same options as a short numbered list and let the user answer in prose.
 Same options, same order, and same recommendation, so only the delivery differs.
 
 **Either way, reserve it for real forks.**
@@ -191,4 +217,5 @@ No test counts or "tests green" noise.
 Never push.
 Committing is user-initiated.
 **Do not proactively propose a commit on your own, including at the end of a workflow session**, which is exactly the moment the pull to do so is strongest.
-Only when the user asks do you prepare and propose the message, following these conventions (or the project's own commit skill if it has one).
+Only when the user asks do you prepare and propose the message, following these conventions and any applicable project commit instructions.
+The `orchestrate` skill is an exception after the user explicitly sets its per-run commit dial.

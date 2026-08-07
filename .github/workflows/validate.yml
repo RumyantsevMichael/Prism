@@ -18,5 +18,25 @@ jobs:
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
 
+      - name: Install Codex
+        run: npm install -g @openai/codex@0.147.0
+
       - name: Validate manifests, skills, and hooks
         run: claude plugin validate . --strict
+
+      - name: Check manifest versions
+        run: |
+          node -e "const fs=require('fs'); const a=JSON.parse(fs.readFileSync('.claude-plugin/plugin.json')); const b=JSON.parse(fs.readFileSync('.codex-plugin/plugin.json')); if(a.version!==b.version) process.exit(1)"
+
+      - name: Check explicit-only skill policies
+        run: |
+          node -e "const fs=require('fs'); const expected=['ideate','orchestrate','workflow-init']; const actual=fs.readdirSync('skills').filter(s=>fs.existsSync('skills/'+s+'/agents/openai.yaml')).sort(); if(JSON.stringify(actual)!==JSON.stringify(expected)) process.exit(1); for(const s of expected){const skill=fs.readFileSync('skills/'+s+'/SKILL.md','utf8'); const policy=fs.readFileSync('skills/'+s+'/agents/openai.yaml','utf8'); if(!/^disable-model-invocation: true$/m.test(skill)||!/^\s*allow_implicit_invocation: false$/m.test(policy)) process.exit(1)}"
+
+      - name: Smoke-test Codex package installation
+        env:
+          CODEX_HOME: ${{ runner.temp }}/codex-home
+        run: |
+          mkdir -p "$CODEX_HOME"
+          codex plugin marketplace add .
+          codex plugin add prism@prism
+          codex plugin list

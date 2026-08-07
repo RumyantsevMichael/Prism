@@ -22,7 +22,7 @@ An arm is one plugin version, or the no-plugin baseline.
 
 For each arm, task, and repetition the harness:
 
-1. Creates a fresh workspace with `BRIEF.md` (the current stage's product request), an optional seed, and (for prism arms) a fixed `.claude/workflow-config.md`.
+1. Creates a fresh workspace with `BRIEF.md`, an optional seed, and a fixed `.prism/workflow.md` for Prism arms.
 2. Runs the selected agent headlessly with `claude -p` or `codex exec`.
    A prism arm runs two sessions per stage, `design` then `implement`, because the workflow itself mandates a fresh session per phase.
    The baseline arm runs one plain "implement this brief" session per stage.
@@ -60,7 +60,8 @@ After stage `n` the workspace is scored against the tests of stages 1 through `n
 - **Paired comparison.** All arms run the same tasks with the same pinned models, so task difficulty and model choice cancel out of the delta.
 - **Uncertainty is reported, not hidden.** The report gives a paired bootstrap 95% interval over tasks (10,000 resamples, fixed seed) on final-stage scores.
   A delta whose interval crosses zero is printed as "not supported by this sample".
-- **Everything is recorded.** `run.json` stores the models, the plugin git SHA per arm (with a `-dirty` marker), the claude CLI version, and a fingerprint of the machine's global `~/.claude/CLAUDE.md`.
+- **Everything is recorded.**
+  `run.json` stores the models, plugin commit, host versions, and relevant machine-context fingerprints.
 - **The pipeline is testable for free.** `--mock` copies the oracle instead of invoking an agent, so anyone can audit the scoring path without an API key.
   Mock records are flagged, and the report prints a warning when they are present.
 
@@ -78,14 +79,14 @@ Test the pipeline without model cost:
 python3 bench/harness/bench.py run --mock --arm current=. --arm baseline=none --reps 1
 ```
 
-Prepare Codex to load a benchmark-only adapter for the Claude plugin:
+Prepare Codex to load the native Prism package through a temporary marketplace:
 
 ```bash
 python3 bench/harness/bench.py setup-codex --plugin .
 ```
 
-The adapter copies prism into `bench/.cache` and changes Claude-only skill flags in that copy.
-The command does not change the released plugin files.
+The command copies the shipped Codex manifest and shared skills into `bench/.cache`.
+It does not rewrite skill metadata or change released plugin files.
 
 Run one brownfield task with a Codex subscription:
 
@@ -131,7 +132,8 @@ python3 bench/harness/bench.py report bench/results/<run-dir> --out bench/result
 - **Pin both models per run** (`--model`, `--po-model`).
   Never compare records that used different models.
 - **Repetitions**: agents are stochastic, so `--reps 3` is the floor for a real comparison.
-- **The config is seeded, not generated.** The harness writes the same `.claude/workflow-config.md` into every prism workspace, so `workflow-init` variance never contaminates the measurement.
+- **The config is seeded, not generated.**
+  The harness writes the same `.prism/workflow.md` into every Prism workspace.
 - **The completion marker.** Sessions signal completion with a `PHASE COMPLETE` line.
   Anything else routes to the product owner, up to the exchange budget, after which the session's state stands as-is.
 - **Sandboxing is your job.** Claude sessions skip permission checks, while Codex sessions use `workspace-write` with network access.

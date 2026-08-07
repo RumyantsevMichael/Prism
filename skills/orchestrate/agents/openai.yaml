@@ -1,0 +1,5 @@
+interface:
+  display_name: "Orchestrate"
+  short_description: "Run a multi-track initiative"
+policy:
+  allow_implicit_invocation: false

@@ -8,20 +8,21 @@ argument-hint: '[initiative/track]'
 
 Contracts are the **shapes** of a feature: the interfaces and types that cross module boundaries, written before any implementation.
 They are the structural half of the implementation handoff: contracts pin *structure*, feature files pin *behavior*.
-One of three prep-bundle artifacts under the plans directory (default `/docs/plans/<initiative>/<track>/`).
+One of three prep-bundle artifacts under the plans directory (default `docs/plans/<initiative>/<track>/`).
 
-Project settings for this workflow live in `.claude/workflow-config.md` at the project root (created by the `workflow-init` skill).
+Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project's own CLAUDE.md conventions.
-The session map and lifecycle rules live in the `workflow` overview skill.
+If absent, use the defaults and the project instructions that apply to this task.
+The context map and lifecycle rules live in the `workflow` overview skill.
 The config also names the project's language, which this skill depends on.
 
 Writing contracts is **itself a design check**: types force under-specification into the open.
 If a shape is hard to name or a field's meaning is unclear, the design is not settled, so feed that back to the ADR.
 This is why contracts may *lead* the build plan.
 
-The discipline applies to **any typed boundary**: the contracts file is written in the project's language (workflow-config names it: TypeScript, Rust, Python with type hints, Go, …).
+The discipline applies to **any typed boundary**.
+Write the contracts file in the project language that the workflow configuration names.
 The worked example below is TypeScript.
 Translate the conventions to the project's idioms (for example `Result<T>` → `Result<T, E>` in Rust, `Optional`/union types in Python).
 Contracts follow the project's code-style rules.
