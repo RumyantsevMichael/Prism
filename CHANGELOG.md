@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.0](https://github.com/RumyantsevMichael/Prism/compare/v0.2.0...v0.3.0) (2026-08-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* add native Codex support and portable workflow
+
+### Added
+
+* add native Codex support and portable workflow ([1509b17](https://github.com/RumyantsevMichael/Prism/commit/1509b177524eaabc577c53f595f5f9b656b6f304))
+* fork drafters, isolate validation, and loop design until the spec holds ([91f009b](https://github.com/RumyantsevMichael/Prism/commit/91f009b9274848d3924b0cae8c25d0dbe9b64d6e))
+* merge the fork-drafters validation loop into main ([5a49aec](https://github.com/RumyantsevMichael/Prism/commit/5a49aec26b520398fd078d34975c3526f6d88421))
+* single validation pass, unblocked ADR acceptance, recorded OPEN resolutions ([681c28b](https://github.com/RumyantsevMichael/Prism/commit/681c28b4482fd72781cc13d6dc0a24f9015a6bf2))
+
+
+### Fixed
+
+* normalize skill prose to one sentence per line and plain dashes ([8ea966a](https://github.com/RumyantsevMichael/Prism/commit/8ea966a4a4dfc6e2d879d776e549bd5c1c9f2cd0))
+* normalize skill prose to one sentence per line and plain dashes ([f919db6](https://github.com/RumyantsevMichael/Prism/commit/f919db6c6469002f4f54f10a6ef2995bfb671003))
+* omit local paths from benchmark records ([e6802e4](https://github.com/RumyantsevMichael/Prism/commit/e6802e45d4c12f6b28d3341ec7ad112b95d82ca0))
+
+
+### Documentation
+
+* point CONTRIBUTING at the benchmark ([753a15f](https://github.com/RumyantsevMichael/Prism/commit/753a15f400904a4614d83089083d3bf6c8debffb))
+* point CONTRIBUTING at the benchmark ([d0dc550](https://github.com/RumyantsevMichael/Prism/commit/d0dc550e8e9ea9bd503a8b27c131ca21541b6b8b))
+
 ## [0.2.0](https://github.com/RumyantsevMichael/Prism/compare/v0.1.0...v0.2.0) (2026-07-19)
 
 
