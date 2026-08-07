@@ -2,101 +2,144 @@
   <img src="assets/banner.png" alt="A prism refracting a beam of white light into a spectrum" width="640">
 </p>
 
-# prism
+# Prism
 
-A spec-driven agentic engineering workflow for Claude Code and Codex.
+Prism helps Claude Code and Codex plan complex changes before they write code.
+It records decisions as project files that each new agent context can review and challenge.
+Small changes do not need this workflow.
 
-Changes big enough to need a specification move through fresh contexts over a layered specification.
-The layers are ADRs, technical design, contracts, a build plan, and Gherkin feature files.
-Small changes skip the flow entirely.
-
-## The map
-
-| Rung | Skill | Job |
-|---|---|---|
-| Priority | `prism:roadmap` | Order whole initiatives Now/Next/Later |
-| Shaping *(optional)* | `prism:ideate` | Brainstorm a shapeless idea into Proposed ADRs or reject it |
-| Build order | `prism:plan` | Decompose a multi-ADR initiative into dependency-ordered tracks |
-| Spec | `prism:design` | Per track: ADR ⇄ design → contracts + build plan + feature files → handoff |
-| Build | `prism:implement` | Read the validated spec cold, write tests first, and implement to green |
-
-`prism:orchestrate` chains plan → design → implement across tracks through fresh child-agent contexts.
-It uses parallel isolated workspaces when available and safe sequential execution otherwise.
-The `write-*` skills and `validate-artifacts` support those workflow tasks.
-Defect repair sits outside the flow: diagnose and report against the settled spec before any fix.
-
-Start with `prism:workflow` for context discipline, artifact lifecycles, and host capability fallbacks.
+Use Prism when a change needs architecture decisions, defined behavior, several implementation tracks, or a clear handoff between planning and coding.
 
 ## Install
 
 ### Claude Code
 
-```
+Run these commands in Claude Code:
+
+```text
 /plugin marketplace add RumyantsevMichael/Prism
 /plugin install prism@prism
 ```
 
-Run `/prism:workflow-init` once in each project.
-It inspects the project and writes `.prism/workflow.md`.
-
 ### Codex
 
-Codex `0.147.0` or later can install Prism from its native package.
+Prism requires Codex 0.147.0 or later.
 
 ```bash
 codex plugin marketplace add RumyantsevMichael/Prism
 codex plugin add prism@prism
 ```
 
-Invoke `prism:workflow-init` through the Codex skill picker or an explicit skill mention.
-The skill writes the same `.prism/workflow.md` file used by Claude Code.
+## Start a project
 
+Initialize Prism once in each project.
+
+- In Claude Code, run `/prism:workflow-init`.
+- In Codex, select `prism:workflow-init` from the skill picker or mention it in your request.
+
+The skill inspects the project and asks about its documentation paths, stack, verification commands, issue tracker, and local rules.
+It then writes `.prism/workflow.md` and creates the configured documentation structure.
+
+Open a fresh task and start the workflow that fits your change.
+
+| Starting point | Skill | Use it when |
+|---|---|---|
+| An unformed idea | `prism:ideate` | You need to explore the problem and possible decisions |
+| A settled initiative | `prism:plan` | You need to split several decisions into ordered implementation tracks |
+| One defined feature | `prism:design` | You need a technical design and an implementation specification |
+| An approved specification | `prism:implement` | You are ready to write tests and code |
+| A full initiative | `prism:orchestrate` | You want Prism to coordinate planning, design, and implementation |
+
+Use `prism:workflow` when you need an explanation of the complete workflow.
+
+## How the workflow works
+
+Prism separates product decisions from implementation work.
+Each main stage uses a fresh context so the next stage must understand the saved specification without hidden conversation history.
+
+| Stage | Skill | Result |
+|---|---|---|
+| Prioritize | `prism:roadmap` | An ordered Now, Next, and Later roadmap |
+| Shape | `prism:ideate` | Proposed architecture decision records, or a decision to stop |
+| Plan | `prism:plan` | Dependency-ordered implementation tracks |
+| Design | `prism:design` | A technical design, contracts, feature files, build plan, and handoff |
+| Implement | `prism:implement` | Tested code that follows the approved specification |
+
+`prism:orchestrate` connects the Plan, Design, and Implement stages through fresh child-agent contexts.
+It can run independent tracks in parallel when the host provides isolated workspaces.
+Otherwise, it runs each track in sequence.
+
+The `write-*` skills create individual specification files.
+The `validate-artifacts` skill reviews a specification from an isolated context before implementation starts.
+
+Defect repair stays outside this workflow.
+First reproduce and diagnose a defect against the existing specification.
+Change the specification only when the required behavior must also change.
+
+## Project files
+
+Prism stores its configuration in `.prism/workflow.md`.
 All configured paths resolve from the project root.
-The default paths include `docs/ADRs/`, `docs/plans/`, `docs/Features/`, `docs/roadmap.md`, `docs/Glossary.md`, and `docs/user-guide/`.
 
-### Configuration migration
+The default paths are:
 
-Prism no longer reads `.claude/workflow-config.md` during normal workflow tasks.
-Run `workflow-init` to migrate that file into `.prism/workflow.md`.
-The migration preserves values, converts project-root paths to relative paths, and leaves the old file unchanged.
+| Content | Default path |
+|---|---|
+| Architecture decisions | `docs/ADRs/` |
+| Temporary plans and handoffs | `docs/plans/` |
+| Gherkin feature files | `docs/Features/` |
+| Roadmap | `docs/roadmap.md` |
+| Glossary | `docs/Glossary.md` |
+| User documentation | `docs/user-guide/` |
 
-### For a whole team
+### Migrate an older configuration
 
-Claude Code teams can commit this to `.claude/settings.json`:
+Prism no longer reads `.claude/workflow-config.md` during normal tasks.
+Run `prism:workflow-init` to migrate its values into `.prism/workflow.md`.
+The migration keeps the old file unchanged.
 
-```json
-{
-  "extraKnownMarketplaces": {
-    "prism": { "source": { "source": "github", "repo": "RumyantsevMichael/Prism" } }
-  },
-  "enabledPlugins": { "prism@prism": true }
-}
-```
+## Update
 
-## Updating
+### Claude Code
 
-Claude Code:
-
-```
+```text
 /plugin marketplace update prism
 /plugin update prism@prism
 ```
 
-Codex:
+### Codex
 
 ```bash
 codex plugin marketplace upgrade prism
 ```
 
-To stay on a fixed Claude release, add the marketplace at a release tag.
+Releases follow semantic versioning and appear in [CHANGELOG.md](CHANGELOG.md).
+Before version 1.0, a minor release can include a breaking workflow or artifact migration.
 
-Releases follow semantic versioning and are recorded in [CHANGELOG.md](CHANGELOG.md).
-Before version 1.0, a minor bump can contain a breaking workflow or artifact migration.
+## Configure Claude Code for a team
 
-## Contributing
+Commit this configuration to `.claude/settings.json` so Claude Code can discover and enable Prism for the project.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for repository layout, local development, validation, and the release process.
+```json
+{
+  "extraKnownMarketplaces": {
+    "prism": {
+      "source": {
+        "source": "github",
+        "repo": "RumyantsevMichael/Prism"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "prism@prism": true
+  }
+}
+```
+
+## Contribute
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the repository layout, local development process, validation steps, and release process.
 
 ## License
 
-[MIT](LICENSE)
+Prism uses the [MIT License](LICENSE).
