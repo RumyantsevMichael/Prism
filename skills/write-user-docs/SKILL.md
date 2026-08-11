@@ -37,7 +37,7 @@ Before writing, read:
 - what is planned
 
 **Does NOT belong here:** internal architecture, module boundaries, the reasons behind a design, invariants, test strategy, or implementation detail.
-Those live in the ADRs, feature files, glossary, and architecture docs.
+Those live in requirements, ADRs, feature files, the glossary, and architecture docs.
 Link to them, but do not copy them in.
 
 Diagnostic: if a sentence would only make sense to someone editing the codebase, it belongs in the developer docs, not here.
@@ -50,7 +50,8 @@ Diagnostic: if a sentence would only make sense to someone editing the codebase,
    Mark anything not yet shipped as **Planned**, and never document a feature as available before it ships.
    When unsure whether something works, verify against the implementing module in the source tree before claiming it.
 
-2. **One source of truth per fact.** Ports, defaults, and paths come from the authoritative config module or ADR.
+2. **One source of truth per fact.**
+   Product obligations come from requirements, and design decisions come from ADRs or authoritative configuration.
    Restate them only where a user needs them, and when they change, change them here too.
    Prefer linking the authoritative internal doc over duplicating rationale.
 
@@ -83,7 +84,8 @@ For any concept, cover three things:
 
 Explain a security or behavioral consequence in human terms, not mechanism ("a service showing up with a different key is, to your devices, indistinguishable from an impostor, so they refuse to talk to it until you re-pair").
 
-Keep the rigor available but **secondary**: cite the precise term, the glossary entry, or the ADR **after** the plain explanation, as the paper trail, never in place of it.
+Keep the rigor available but **secondary**.
+Cite the requirement, glossary entry, or ADR after the plain explanation as the paper trail.
 
 **Before / after:**
 

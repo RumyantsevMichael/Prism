@@ -42,13 +42,15 @@ Delegate the read-heavy survey to a child agent when available, and keep the pri
    Record it in the sequencing rationale.
    This is still priority, not a schedule and not phasing (see Conventions).
 4. **Add envisioned work.** New ideas enter as `envisioned` nodes (dashed, just name + intent + the pillar served).
-   A node is usually ADR-less until `plan` or `design` starts it.
-   An idea shaped by `ideate` MAY enter with its exploratory `Proposed` ADRs.
+   A node is usually requirement-free until `ideate` or `write-requirements` defines its product obligations.
+   An idea shaped by `ideate` MAY enter with its Approved requirement links.
    The `ideate` skill never writes the roadmap itself.
-   You attach those ADRs when you band the node.
+   You attach those requirements when you band the node.
 5. **Park, do not drop.** De-prioritized work moves to `parked` with a recorded reason.
    Shipped nodes stay (the roadmap is also the ledger of what got built).
-6. **Resolve open questions.** Each strategic question routes to a banding decision or a new ADR, never an indefinite parking lot.
+6. **Resolve open questions.**
+   Route each strategic question to a banding decision, requirement task, or ADR.
+   Never keep an indefinite parking lot.
 
 **Gate:** present the re-banded roadmap, and the user accepts before you write it.
 Deliver this gate, and any banding fork you cannot resolve from the lenses, per **"How to deliver the question"** in the `workflow` overview skill.
@@ -61,12 +63,12 @@ A one-line color change bound to a lifecycle event that already passed its own g
 **No new gate.** Re-gating an event that already happened is ceremony.
 The flips:
 
-- `plan` accepted, or a self-contained ADR created: envisioned → planned (add ADRs and the `click` plan link).
+- `plan` accepted: envisioned → planned (add requirements, ADRs, and the `click` plan link).
 - First track enters `design`: planned → in-progress.
 - Last track lands (plan folder deleted): in-progress → shipped (remove the `click` link).
 
 If the initiative is not yet a node (it was started without ever being roadmapped), **add it** in `Now`, since it is being worked.
-A self-contained feature without `plan` is an initiative of one track with a node that cites its ADR.
+A self-contained feature without `plan` is one track with a node that cites its requirements and any ADRs.
 
 ## Prioritization lenses
 
@@ -106,7 +108,7 @@ Keep the section list: header/`Serves`, the roadmap graph, initiative index, seq
   It is a finer priority call, not a schedule and not phasing.
   Favor initiatives that **unblock downstream nodes** so finishing one releases the most work.
   The within-band order lives in the sequencing-rationale prose, not as new bands or dates.
-- **Cite ADRs and names, never plan ids.** A node's durable identity is name + ADR set + pillar served, so it outlives every plan folder.
+- **Cite requirements, ADRs, and names, never plan IDs.** A node's durable identity includes its name, requirements, decisions, and strategy pillar.
   The `click` plan deep-link is the lone tolerated reference to scratch, dropped on ship.
 - **Sequencing initiatives ≠ phasing a design.** "No phased designs" governs the architecture *inside* one initiative (it lands whole).
   Ordering whole initiatives over time is this roadmap's entire job and does not violate that rule.

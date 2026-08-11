@@ -11,6 +11,7 @@ The output is `.prism/workflow.md`, the single file every workflow skill reads f
 
 If `.prism/workflow.md` already exists, read it and switch to update mode.
 Confirm each existing value instead of asking cold.
+Add the Requirements path when an older Prism configuration does not contain it.
 If only `.claude/workflow-config.md` exists, read it once as migration input and write the equivalent `.prism/workflow.md`.
 Convert project-root paths such as `/docs/ADRs/` to project-relative paths such as `docs/ADRs/`.
 Preserve every other value without reinterpretation.
@@ -21,7 +22,7 @@ Report that Prism no longer reads the legacy file and that the user may remove i
 
 Inspect the project first so the interview proposes rather than interrogates:
 
-- Existing docs layout: look for existing ADR/decision dirs, feature specs, a roadmap, a glossary, user docs.
+- Existing docs layout: look for requirements, ADR or decision directories, feature specs, a roadmap, a glossary, and user docs.
 - Stack: language(s), package manager, test runner, BDD harness if any (cucumber-js, bun-test-cucumber, pytest-bdd, …), lint/format/typecheck commands.
 - Repo shape: monorepo or single package, plus the project instruction files that apply to the task.
 - Tracker: GitHub remote (`gh` usable?) or something else.
@@ -31,8 +32,8 @@ Inspect the project first so the interview proposes rather than interrogates:
 Present findings as defaults and ask only what is genuinely open (plain-text options in the message body).
 Cover:
 
-1. **Doc paths**: ADRs, plans (scratch), feature files, roadmap, glossary, user-guide, and a product strategy document if one exists (`roadmap`/`ideate` consult it when present).
-   Defaults: `docs/ADRs/`, `docs/plans/`, `docs/Features/`, `docs/roadmap.md`, `docs/Glossary.md`, `docs/user-guide/`.
+1. **Doc paths**: requirements, ADRs, plans, feature files, roadmap, glossary, user guide, and an optional product strategy document.
+   Defaults: `docs/requirements/`, `docs/ADRs/`, `docs/plans/`, `docs/Features/`, `docs/roadmap.md`, `docs/Glossary.md`, `docs/user-guide/`.
    All configured paths resolve from the project root.
 2. **Stack facts**: test command, BDD harness (or "none, feature files are spec-only"), typecheck/lint commands, whether lint is destructive (write-mode).
 3. **Verification**: how to prove a change works on this project (dev server, CLI, test suite only).
@@ -57,6 +58,7 @@ Omit no section, and use "n/a" where a value is empty.
 - One-line description: <...>
 
 ## Paths
+- Requirements: docs/requirements/
 - ADRs: docs/ADRs/
 - Plans (scratch): docs/plans/
 - Feature files: docs/Features/
@@ -77,7 +79,7 @@ Omit no section, and use "n/a" where a value is empty.
 
 ## Tracker
 - System: GitHub issues
-- Labels: type:bug, type:enhancement, type:docs; area:<name>; needs-design
+- Labels: type:bug, type:enhancement, type:docs, area:<name>, needs-design
 
 ## Commits
 - Scopes: <vocabulary or "free-form">
@@ -102,7 +104,7 @@ Create any configured doc directories that do not exist, with a minimal seed:
 
 - Glossary: title + one-line purpose.
 - Roadmap: empty Now/Next/Later skeleton (see `roadmap` skill for format).
-- ADRs/Features/user-guide: directory with a short README stating what lives there.
+- Requirements/ADRs/Features/user-guide: directory with a short README stating what lives there.
 - Plans dir: directory only (scratch space).
 
 Do not scaffold over existing files.

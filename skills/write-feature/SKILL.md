@@ -5,8 +5,9 @@ description: "Write or update a Gherkin feature file in the project's feature di
 
 # Write Feature File
 
-Feature files are the single source of truth for behavioral requirements.
-They are simultaneously the specification a domain expert reads and verifies, and the acceptance tests that execute via the project's BDD harness.
+Approved requirement files are the durable source of product obligations.
+Feature files translate observable requirements into executable behavioral invariants and examples.
+A domain expert reads and verifies them, and the project's BDD harness executes them as acceptance tests.
 A feature file that cannot run is incomplete unless the workflow configuration marks feature files as specification-only.
 
 Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
@@ -17,7 +18,8 @@ The context map and lifecycle rules live in the `workflow` overview skill.
 
 Before writing, read in order:
 1. The glossary (default `docs/Glossary.md`): use domain terms exactly as defined there.
-2. Relevant ADRs: understand which architectural invariants apply to the behavior being specified.
+2. The Approved requirements: preserve each linked product obligation exactly.
+3. Relevant ADRs: understand which architectural invariants apply to the behavior being specified.
    Rule blocks in feature files MUST NOT contradict ADR invariants.
 
 ---
@@ -77,8 +79,8 @@ Feature: <Short description of the capability>
   Rule: <Invariant stated in plain language>
   # Rules express behavioral invariants - things that MUST always be true.
   # Each Rule MUST have at least two Examples: a happy path and a boundary case.
-  # Rules should be consistent with and traceable to an ADR decision where one exists.
-  # Reference the ADR inline as a comment if relevant.
+  # Every Rule links to the Approved requirement that it specifies.
+  # A Rule also links to its ADR when an architectural decision constrains it.
 
     Example: <Behavioral description - what happens, not how>
       Given <world state>
@@ -104,14 +106,16 @@ Each Rule:
 - States one invariant.
   Do not combine two constraints in one Rule.
 - Is followed by at least two Examples that together demonstrate the invariant holds in both the typical case and at least one boundary case.
-- Should reference the ADR decision it derives from as a Gherkin comment (`# ADR: Order Lifecycle, section X`) when a clear derivation exists.
+- References each requirement it specifies with a direct Markdown link in a Gherkin comment.
+- References an ADR with a direct link when an architectural decision constrains the Rule.
 
 **Good Rule:**
 ```gherkin
-Rule: An order MUST NOT be cancelled once it has shipped; cancellation
-      requests after shipment become return requests
+Rule: An order MUST NOT be cancelled once it has shipped.
+      Cancellation requests after shipment become return requests.
 
-  # ADR: Order Lifecycle - post-shipment cancellation decision
+  # Requirement: [order-cancellation.md§3](../requirements/order-cancellation.md#3)
+  # ADR: [Order lifecycle](../ADRs/order-lifecycle/cancellation.md)
 
   Example: Cancellation request before shipment cancels the order
     Given a paid order that has not shipped
@@ -166,17 +170,19 @@ Avoid:
 
 ---
 
-## Connecting to ADRs
+## Connecting to requirements and ADRs
 
-When a Rule derives directly from a settled ADR decision, note it:
+Every Rule must link to at least one Approved requirement:
 
 ```gherkin
 Rule: The system carries the customer's delivery preference into fulfillment
 
-  # Derives from: ADR Order Lifecycle, Decision - preference as handoff artifact
+  # Requirement: [delivery-preference.md§2](../requirements/delivery-preference.md#2)
+  # ADR: [Order lifecycle](../ADRs/order-lifecycle/preference-handoff.md)
 ```
 
-This creates a traceable link from behavioral specification back to the architectural decision without duplicating the decision text.
+The requirement link traces behavior to product intent.
+The optional ADR link traces the design constraint without duplicating its rationale.
 
 ---
 
@@ -192,9 +198,10 @@ Only split when the file genuinely covers distinct capabilities that can be unde
 ## Quality checks before finishing
 
 - Every Rule has at least two Examples
+- Every Rule links to at least one Approved requirement
 - No class names, field paths, method names, or internal IDs appear anywhere
 - Every domain term matches its definition in the glossary
 - Each Example name describes behavior, not a slot number
-- Rules that derive from ADR decisions have a comment reference
+- Rules constrained by ADR decisions have a direct comment link
 - The file is named `F-<slug>.feature` and lives in the feature directory
 - A non-engineer who understands the product could read every step and know whether it passed or failed without seeing the code

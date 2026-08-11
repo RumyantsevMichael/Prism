@@ -1,6 +1,6 @@
 ---
 name: design
-description: "Design a feature through ADR, contracts, build plan, feature files, validation, and handoff. Use when a feature needs the full specification workflow."
+description: "Design a feature from Approved requirements through ADRs, contracts, build plan, feature files, validation, and handoff. Use for a defined capability."
 argument-hint: '[initiative/track]'
 ---
 
@@ -21,10 +21,16 @@ Implementation must start in a fresh context to read the specification independe
 
 A feature is usually a **track** of an initiative plan created by `plan`.
 When the target is `<initiative>/<track>`, first read the initiative spine and named track file under `docs/plans/<initiative>/`.
-They carry the track's scope, dependencies, cited ADRs, and any spike findings.
+They carry the track's scope, dependencies, requirement links, cited ADRs, and spike findings.
 A standalone feature outside an initiative skips that and is its own slug.
 
-Read first: the glossary (default `docs/Glossary.md`), the initiative spine and track file (if any), and the cited ADRs and feature files.
+Read the glossary first, with `docs/Glossary.md` as the default path.
+Then read the initiative files when present, the Approved requirements, relevant ADRs, and feature files.
+Use `docs/requirements/`, `docs/ADRs/`, and `docs/Features/` as the default directories.
+
+Design consumes only Approved requirement files.
+If no Approved requirement defines the capability, stop and recommend `ideate` for a shapeless idea or `write-requirements` for settled intent.
+Do not create or approve product requirements inside a design context.
 
 ## 1. Start from the right artifact
 
@@ -32,17 +38,20 @@ Read first: the glossary (default `docs/Glossary.md`), the initiative spine and 
   Design starts when the track stops being not-started, so this is the board's `in-progress` transition.
   The implementation session owns the `→ done` flip at landing.
   If a dependency or undecided question actually blocks the track, set `blocked` or `deferred` with a one-line reason instead.
-  If this is the **first** track to enter design, also flip its roadmap node (default `docs/roadmap.md`) `planned → in-progress`.
+  If this is the **first** track to enter design, also flip its roadmap node to `in-progress`.
+  A planned initiative uses `planned → in-progress`.
+  A standalone Approved requirement can use `envisioned → in-progress` because it has no plan gate.
   (Standalone feature: no spine to update, but the roadmap flip still applies.
   A standalone feature is an initiative of one track, so flip its node `→ in-progress`, adding the node first if it was never roadmapped.
   Mode B covers both.)
 - **Track-feasibility spike first.** If the initiative plan named a feasibility spike against this track, run it now.
-  Its finding shapes the ADR, so it must resolve before the design settles.
+  Its finding shapes the design and any ADR, so it must resolve before the design settles.
   Record the finding in the track file's *Spike findings*.
-- **New feature or capability → open an ADR**, created `Proposed` (load `write-adr`).
+- **Start from the Approved requirements.** Preserve each obligation and direct link without changing its meaning.
+- **Open an ADR only for an architectural decision or invariant.** Create it as `Proposed` by loading `write-adr`.
+  Link every new ADR to the requirements it serves.
   It stays `Proposed` through this session, and the implementation session accepts it.
-  If the idea came through `ideate`, the `Proposed` ADR **already exists**.
-  Start from it and refine it as the design settles, do not open a second one.
+  Do not create an ADR only because a feature exists.
 - **Bug or unknown → investigate first.** Graduate to an ADR only if a real decision emerges.
 
 Delegate exploration to child agents when available so large file results stay out of your context.
@@ -50,7 +59,9 @@ You integrate their findings.
 
 ## 2. Settle the design with the user
 
-Iterate the ADR ⇄ technical design until the invariants hold.
+Iterate the technical design against the requirements and ADRs until every obligation and invariant holds.
+Do not change an Approved requirement's meaning in this context.
+If a requirement is wrong, missing, or ambiguous, stop and route it back to `write-requirements` for user approval.
 This is interactive, so do not rush to artifacts.
 Update the glossary as new terms appear.
 
@@ -66,21 +77,25 @@ If either capability is unavailable, draft the artifacts sequentially in the cur
   May lead the build plan.
 - **build plan** (`write-build-plan`): build order, reuse map, plug points, tests, risks.
 - **feature files** (`write-feature`): behavior against the contracts' structure.
+  Each Rule links to the Approved requirements that it specifies.
 
 An inheriting child context receives the user's request, the interview answers, and every settled decision.
 Pass artifact paths and the scoped drafting task.
 Do not inline file contents.
 
 Integrate and reconcile their output.
-A gap any artifact surfaces feeds back to the ADR, not patched locally.
+Route a product-obligation gap to the requirement file.
+Route an architectural gap to the ADR.
+Do not patch either gap only in a downstream artifact.
 
 ## 4. Validation loop
 
 Invoke `validate-artifacts` on the drafted bundle.
 Run it in an isolated child context with only the on-disk artifacts.
 If the host cannot create that context, ask the user to run `validate-artifacts` in a separate fresh task and relay its findings.
-Then alternate: fix every finding by updating the owning artifact, and invoke the skill again in a new isolated context.
-A wrong invariant feeds back to the ADR.
+Then alternate between fixing every finding in its owning artifact and starting a new isolated validation run.
+A wrong product obligation feeds back to `write-requirements` and user approval.
+A wrong architectural invariant feeds back to the ADR.
 The loop ends when a run reports no gaps.
 
 Keep the user in control of the loop.
@@ -103,7 +118,8 @@ State the execution profile for implementation and explain the risk areas.
 Load `write-handoff`.
 Prep the bundle (`build-plan.md`, the contracts file, and `handoff.md` under the track's plan folder) so the fresh session can read it.
 (A standalone feature uses its own plan folder under the plans directory.)
-The `Proposed` ADR (durable) and the prep bundle (scratch) are committed together when the user asks, and the implementation session reads both cold.
+The Approved requirements, any Proposed ADRs, and the prep bundle form the implementation input.
+The implementation session reads them cold.
 Do not propose that commit on your own.
 
 ## Hand future tracks what this session decided
@@ -130,5 +146,6 @@ Put the acceptance question, and any fork you could not resolve from the spec, t
 
 **Expect cold-read feedback.**
 The fresh implementation context reads the artifacts without the design conversation and can still surface a specification gap.
-When the user relays those gaps back, clarify them here (update the ADR, contracts, or feature files) while your context is still warm.
+When the user relays those gaps back, update the owning ADR, contracts, or feature files while this context remains available.
+Route a requirement gap back to `write-requirements` instead of changing product intent here.
 Resolving the gap is *your* responsibility, not the implementer's, and it resumes only once you have.

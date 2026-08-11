@@ -29,10 +29,12 @@ Do not resolve it silently.
 
 The spec arrives **pre-validated**: the design session looped `validate-artifacts` until a run reported no gaps, so do not repeat that pass here.
 Your job is to internalize it.
-Read the handoff, the ADR, the contracts, the build plan, and the feature files, in the precedence the handoff states.
+Read the handoff, Approved requirements, ADRs, contracts, build plan, and feature files in the order the handoff states.
 You must hold the whole spec to build it.
 If you still hit a real spec gap, while reading or mid-build, **report it and stop** rather than resolving it silently.
-Clarifying an under-specified spec or a wrong invariant is the design session's responsibility, not yours, and you resume only when the user relays that clarification back.
+Route a missing or wrong product obligation to `write-requirements` for user approval.
+Route a design gap or wrong architectural invariant to the design session.
+Resume only after the user relays the corrected durable artifact.
 (`// OPEN:` seams are the exception: those are decisions design deliberately delegated to you, so resolve them in step 3.)
 
 The handoff records the track's **security surface** (secrets, network, privilege/isolation, untrusted input, IPC, or `none`), determined by design's validation loop.
@@ -41,7 +43,8 @@ If the handoff does not state it, determine it yourself from the spec and record
 
 ## 2. Tests first
 
-Write the acceptance and integration tests from the feature files + contracts.
+Write the acceptance and integration tests from the feature files and contracts.
+Confirm that their requirement links cover every active requirement in this track.
 They start red.
 Do this **yourself by default**: the tests are your red bar and a second check on the feature files (an example you cannot transcribe into a clean test was under-specified, so feed that back).
 Load `write-step-definitions` for acceptance steps when that sibling skill is available.
@@ -96,7 +99,7 @@ A track whose surface was `none` skips this, but **say so explicitly**, and do n
 **Gated** means blocked on a *named external* gate (hardware, code-signing, a third party), and it is the residual the initiative already accepts.
 **Unfinished** means buildable now, just not built.
 *Gated* work may land: it is the honest residual a track ships with.
-*Unfinished* work may **not**: it blocks the landing commit, because accepting an ADR means its core invariant was *exercised* (run), not merely unit-green.
+*Unfinished* work may **not** land because each requirement and ADR invariant must be exercised, not only unit-green.
 "Ran out of context" and "the cross-process wiring isn't connected" are **unfinished**, never *gated*.
 Do not relabel one as the other to reach the gate.
 If unfinished work remains, **the track is not done**: report it and re-scope it into a follow-up track.
@@ -109,6 +112,7 @@ Ask for it, and put any residual-acceptance or re-scoping fork to the user, per 
 **On that confirmation, accept the implemented ADRs**: flip each from `Status: Proposed` to `Status: Accepted` immediately, as a file edit.
 Do not defer the flip to a commit, because a lifecycle transition that waits on an optional act drifts.
 The implementation task owns this transition because acceptance means the decision survived implementation and verification.
+Do not change Approved requirement status because the status records product approval, not delivery.
 Do not propose a commit on your own, because committing is user-initiated.
 When the user asks for one, prepare the message per the workflow Git conventions and applicable project commit instructions.
 
@@ -123,8 +127,10 @@ Two more steps when the track belongs to an initiative:
 
 2. **Last track? Graduate, then delete the initiative.** If this is the final track, run the graduate-before-delete gate.
    Confirm two things.
-   (a) Every cross-cutting concern and open question in the spine has graduated to a durable home (ADR / feature file / user guide) or been explicitly killed.
-   (b) The initiative's architectural through-line, meaning why this cluster of ADRs coheres, has a durable home (a lead/umbrella ADR or an architecture overview doc).
+   (a) Every cross-cutting concern and open question has graduated to a requirement, ADR, feature file, user guide, or tracker issue.
+   An explicitly killed item also satisfies this check.
+   (b) The initiative's product obligations remain linked from its Approved requirements.
+   Its architectural through-line has a durable home in an ADR or architecture overview document.
    Graduate it there, **never** as a frozen initiative-summary copy of the scratch plan.
    **Then** delete the whole initiative's plan folder in the same commit.
    Nothing scratch survives by being merely "noted".

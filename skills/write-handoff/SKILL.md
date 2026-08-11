@@ -17,7 +17,7 @@ It overrides the default paths and stack assumptions below.
 If absent, use the defaults and the project instructions that apply to this task.
 The context map and lifecycle rules live in the `workflow` overview skill.
 
-Keep it **short**: it points at the ADR, contracts, build plan, the initiative spine, and feature files.
+Keep it **short**: it points at the requirements, ADRs, contracts, build plan, initiative spine, and feature files.
 It does not restate them.
 Its job is precedence, scope, and the non-negotiables, not a re-derivation of the design.
 
@@ -42,15 +42,16 @@ The fresh implementation context reads them cold and reports any remaining gap.
 
 ## Authoritative inputs
 
-In precedence order; on any conflict, the higher source wins and you stop and
-report rather than resolving silently:
-1. `<adr-dir>/<...>` - the decision and invariants
-2. `<plans-dir>/<initiative>/<track>/contracts.<ext>` - the shapes
-3. `<plans-dir>/<initiative>/<track>/build-plan.md` - build order and reuse map
-4. `<features-dir>/<...>.feature` - behavior
-5. `<plans-dir>/<initiative>/plan.md` + `<track>.md` - the track's place in the
-   initiative (dependencies, release context); scratch, for orientation only
-6. The project glossary - vocabulary
+Requirements own product obligations, and ADRs own architectural decisions.
+Stop and report any conflict between them.
+Read the remaining inputs in this order:
+1. `<requirements-dir>/<...>.md` - Approved product obligations
+2. `<adr-dir>/<...>` - architectural decisions and invariants
+3. `<plans-dir>/<initiative>/<track>/contracts.<ext>` - the shapes
+4. `<plans-dir>/<initiative>/<track>/build-plan.md` - build order and reuse map
+5. `<features-dir>/<...>.feature` - executable behavior
+6. `<plans-dir>/<initiative>/plan.md` + `<track>.md` - the track's place in the initiative, as scratch orientation only
+7. The project glossary - vocabulary
 
 ## Scope
 
@@ -67,14 +68,17 @@ each citing its ADR. These prevent design drift mid-implementation.
   the file types being edited, so check whether they already apply before going
   looking for them.
 - Reuse / mirror existing patterns named in the build plan - do not reinvent.
-- The spec arrives pre-validated by the design session's validation loop; do not
-  repeat that pass. Report any gap you still hit and wait for clarification - do
-  not self-resolve a gap or proceed past it.
+- The spec arrives pre-validated by the design session's validation loop.
+  Do not repeat that pass.
+  Report any remaining gap and wait for clarification.
+  Do not self-resolve a gap or continue past it.
 - Tests first (acceptance + integration), then implement to green.
-- Cite ADRs, never plan tracks, in durable artifacts.
-- Do not resolve an ADR/feature conflict yourself - stop and report.
-- Do not commit, push, or propose a commit on your own; only when the user asks,
-  prepare the message per the Git conventions in the `workflow` overview skill.
+- Cite requirements for obligations and ADRs for decisions.
+- Never cite plan tracks in durable artifacts.
+- Do not resolve a requirements, ADR, or feature conflict yourself.
+- Stop and report the conflict.
+- Do not commit, push, or propose a commit on your own.
+  When the user asks, prepare the message per the Git conventions in the `workflow` overview skill.
   The user's confirmation of correctness flips the ADR(s) to Accepted (a file
   edit, not a commit). The landing commit - with the user's approval - deletes
   the prep bundle.
@@ -107,7 +111,7 @@ Explain why this profile fits and where implementation must slow down.
 ## Conventions
 
 - **State input precedence and the conflict rule up front.** This is the single most important thing the handoff does, and it prevents drift.
-- **Locked constraints are restated facts, each ADR-cited.** The implementer should not have to re-derive a settled decision, nor go looking for why.
+- **Locked constraints are restated facts.** Link each product obligation to a requirement and each design constraint to an ADR.
 - **Recommend an execution profile.**
   The handoff is a context boundary, so record the complexity, isolation, parallelism, and focus here.
 - **The spec ships pre-validated.** Design looped `validate-artifacts` until a run reported no gaps.
@@ -123,6 +127,8 @@ Explain why this profile fits and where implementation must slow down.
 
 - A fresh context with zero design history could start from this alone.
 - Inputs are listed in precedence order with the conflict rule stated.
-- Every locked constraint cites an ADR, and none reference plan tracks.
+- Every locked product obligation links to a requirement.
+- Every locked design constraint cites an ADR.
+- No locked constraint references a plan track.
 - A justified execution profile is present.
 - It points at the artifacts rather than restating them.

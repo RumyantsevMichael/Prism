@@ -24,9 +24,10 @@ If you find yourself pasting interfaces in, move them to the contracts file and 
 
 The build plan is **scratch**, deleted in the commit that lands the track's implementation.
 So it may name internal labels (workstream IDs, "steps") freely *within itself*, but nothing durable may reference those labels (see the durable-artifacts rule in the `workflow` overview skill).
-Cite ADRs, not the build plan's own labels, for rationale.
+Cite requirements for obligations and ADRs for rationale.
+Do not use the build plan's own labels as durable references.
 
-Before writing, read the project glossary (use its terms), the governing ADR(s), and the contracts you are pairing with.
+Before writing, read the project glossary, Approved requirements, governing ADRs, and paired contracts.
 
 ---
 
@@ -69,7 +70,7 @@ One subsection per workstream. For each:
   points into existing code.
 - **Tests**: the unit / integration / acceptance tests this workstream owes, as a
   sub-bullet here - not deferred to a separate section.
-- ADR citation for any decision (`ADR 30 §Section-name`).
+- Requirement links for product obligations and ADR citations for decisions.
 
 ## Risks & open questions
 
@@ -94,7 +95,7 @@ A short `file:symbol` callout list the implementer will touch first.
 
 ## Conventions
 
-- **Cite ADRs, not labels, for rationale.** `ADR 30 §Capability resolution`, never "as decided in step 4".
+- **Cite requirements for obligations and ADRs for decisions.** Never cite a build-plan label as durable rationale.
   The build plan's own labels stay inside it.
 - **Express build order as a Mermaid DAG.** Make parallelism and the critical path explicit.
   A flat numbered list hides what can overlap.
@@ -113,7 +114,9 @@ A short `file:symbol` callout list the implementer will touch first.
 
 - Build order shows parallelism and the critical path, not just a sequence.
 - Every workstream states reuse / mirror / new and its destination or plug point.
-- Every decision cites an ADR, and no rationale points at the build plan's own labels.
+- Every obligation links to an Approved requirement.
+- Every architectural decision cites an ADR.
+- No rationale points at the build plan's own labels.
 - Each workstream lists the tests it owes.
 - A justified execution profile for implementation is present.
 - Shapes live in the contracts file, and the build plan links to them, not restates them.

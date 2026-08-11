@@ -5,7 +5,7 @@
 # Prism
 
 Prism helps Claude Code and Codex plan complex changes before they write code.
-It records decisions as project files that each new agent context can review and challenge.
+It records requirements, decisions, and specifications as project files that each new agent context can review and challenge.
 Small changes do not need this workflow.
 
 Use Prism when a change needs architecture decisions, defined behavior, several implementation tracks, or a clear handoff between planning and coding.
@@ -44,9 +44,10 @@ Open a fresh task and start the workflow that fits your change.
 
 | Starting point | Skill | Use it when |
 |---|---|---|
-| An unformed idea | `prism:ideate` | You need to explore the problem and possible decisions |
-| A settled initiative | `prism:plan` | You need to split several decisions into ordered implementation tracks |
-| One defined feature | `prism:design` | You need a technical design and an implementation specification |
+| An unformed idea | `prism:ideate` | You need to explore the problem and define product requirements |
+| A defined capability | `prism:write-requirements` | You need to record and approve EARS requirements without broad ideation |
+| Approved multi-track requirements | `prism:plan` | You need to split several capabilities into ordered implementation tracks |
+| One Approved requirement set | `prism:design` | You need a technical design and an implementation specification |
 | An approved specification | `prism:implement` | You are ready to write tests and code |
 | A full initiative | `prism:orchestrate` | You want Prism to coordinate planning, design, and implementation |
 
@@ -60,7 +61,7 @@ Each main stage uses a fresh context so the next stage must understand the saved
 | Stage | Skill | Result |
 |---|---|---|
 | Prioritize | `prism:roadmap` | An ordered Now, Next, and Later roadmap |
-| Shape | `prism:ideate` | Proposed architecture decision records, or a decision to stop |
+| Shape | `prism:ideate` | Approved EARS requirement files, or a decision to stop |
 | Plan | `prism:plan` | Dependency-ordered implementation tracks |
 | Design | `prism:design` | A technical design, contracts, feature files, build plan, and handoff |
 | Implement | `prism:implement` | Tested code that follows the approved specification |
@@ -69,7 +70,7 @@ Each main stage uses a fresh context so the next stage must understand the saved
 It can run independent tracks in parallel when the host provides isolated workspaces.
 Otherwise, it runs each track in sequence.
 
-The `write-*` skills create individual specification files.
+The `write-*` skills create individual requirement and specification files.
 The `validate-artifacts` skill reviews a specification from an isolated context before implementation starts.
 
 Defect repair stays outside this workflow.
@@ -85,6 +86,7 @@ The default paths are:
 
 | Content | Default path |
 |---|---|
+| EARS requirements | `docs/requirements/` |
 | Architecture decisions | `docs/ADRs/` |
 | Temporary plans and handoffs | `docs/plans/` |
 | Gherkin feature files | `docs/Features/` |

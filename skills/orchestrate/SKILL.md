@@ -43,10 +43,11 @@ Before touching the initiative, ask the user to set the three dials below **for 
 This is a per-run opt-in and does not change defaults for another task.
 
 - **Decision autonomy**: how much a `plan` or `design` child agent may resolve without escalating:
-  - **Conservative** (default): resolve only what is answerable from existing ADRs, the glossary, the product strategy document (if any), or the initiative's own settled artifacts, citing the source.
+  - **Conservative** (default): resolve only what Approved requirements, existing ADRs, the glossary, strategy, or settled initiative artifacts answer.
+    Cite the source.
     Escalate any new tradeoff, scope cut, or conflict between settled docs (the `workflow` overview skill's conflict rule).
   - **Broad**: also resolve a tradeoff or scope call itself when confident it fits the initiative's already-settled direction, and report what it decided (and why) instead of blocking on it.
-    Still hard-escalates anything that would itself need to become a new ADR, anything reaching outside its own track, and any doc conflict.
+    Still hard-escalates anything that needs a requirement change or new ADR, anything outside its track, and any durable-document conflict.
 
 Neither level touches the terminal **Gates**: `plan` acceptance, `design`'s right-size check, and `implement`'s correctness confirmation always stop and wait for the user.
 This dial governs in-flight judgment calls only, never those structural checkpoints.
@@ -95,11 +96,12 @@ In manual mode, present the same instruction and artifact paths as a fresh-task 
 There is no upstream recommendation to inherit here.
 Instruct it explicitly, at the decision-autonomy level set in step 1:
 
-> Resolve anything answerable from existing ADRs, the glossary, the product strategy document, or this initiative's own settled artifacts yourself.
+> Resolve anything answerable from Approved requirements, existing ADRs, the glossary, the product strategy document, or settled initiative artifacts yourself.
 > Cite what you used and keep going, because that is applying settled context, not making a new decision.
 > [Conservative: stop and return anything beyond that.]
 > [Broad: also resolve a tradeoff or scope call yourself when you are confident it fits the initiative's already-settled direction, and report what you decided and why instead of blocking.]
-> Stop and return only what is genuinely undecided anywhere, with the context needed to answer it: a new tradeoff (conservative), or anything that would itself need to become a new ADR, anything reaching outside this initiative, or a conflict between settled docs (both levels).
+> Stop and return only what is genuinely undecided, with the context needed to answer it.
+> This includes a new tradeoff at conservative autonomy, a requirement change, a new ADR, work outside the initiative, or a durable-document conflict.
 > Do not guess past those.
 
 Run the **phase loop** below until the phase reports reaching its Gate.
@@ -168,8 +170,9 @@ Instruct it to run `implement` for the same track with the handoff's execution p
 In manual mode, present the same instruction and handoff path for a fresh user-started task.
 Same autonomy-scoped stop-and-return instruction for `// OPEN:` seam confirmations and anything else `implement` calls out as needing the user.
 
-**Specification gaps route back to design, never to you or implementation itself.**
-If implementation reports a specification gap, resume `design-<track>` with the gap.
+**Specification gaps route to their owning workflow, never to you or implementation itself.**
+If implementation reports a requirement gap, route it to `write-requirements` for user approval.
+If implementation reports a design gap, resume `design-<track>` with the gap.
 Once design confirms the fix, resume `implement-<track>`.
 If either child task cannot resume, start a replacement from the on-disk artifacts.
 The artifacts on disk are the authority either way, so a cold read recovers the same context.
@@ -237,8 +240,8 @@ In manual mode, replace each child-agent action with this result path:
   Do not let a child agent or track silently use another level.
   If the work seems to call for more or less autonomy mid-run, ask the user to change the dial rather than deciding it yourself.
 - **Resolve from documentation, escalate per the chosen level.**
-  Even at *broad*, a child agent never creates an ADR-level decision itself.
-  Those always escalate.
+  Even at *broad*, a child agent never changes an Approved requirement or creates an ADR-level decision itself.
+  Those actions always escalate.
   You relay what crosses that line and never resolve it yourself, even when the answer seems obvious to you.
   You do not have the child agent's depth of reading on this track.
 - **Every hard gate from `plan`/`design`/`implement` still applies at each autonomy level.**

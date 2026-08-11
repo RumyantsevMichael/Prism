@@ -1,7 +1,7 @@
 {
   "name": "prism",
   "version": "0.3.0",
-  "description": "Spec-driven agentic engineering workflow: roadmap, ideate, plan, design, and implement with orchestration across tracks.",
+  "description": "Spec-driven engineering workflow with EARS requirements, ADRs, design artifacts, implementation, and orchestration across tracks.",
   "author": {
     "name": "Michael Rumyantsev",
     "url": "https://github.com/RumyantsevMichael"
@@ -12,6 +12,8 @@
   "keywords": [
     "workflow",
     "spec-driven",
+    "requirements",
+    "ears",
     "adr",
     "bdd",
     "gherkin",
@@ -27,6 +29,7 @@
     "developerName": "Michael Rumyantsev",
     "category": "Engineering",
     "capabilities": [
+      "Requirements authoring",
       "Product design",
       "Architecture decisions",
       "Implementation planning",

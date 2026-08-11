@@ -7,7 +7,7 @@ description: "Write or update an Architectural Decision Record in the project's 
 
 ADRs document architectural decisions with their rationale.
 An `Accepted` ADR is settled: decided, not explored.
-Its invariants take precedence over behavioral invariants in feature files.
+Its invariants constrain feature files and contracts without overriding Approved requirements.
 A `Proposed` ADR is the decision *under design*, not yet settled (see the status lifecycle below).
 
 Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
@@ -18,7 +18,11 @@ The context map and lifecycle rules live in the `workflow` overview skill.
 
 Before writing, read:
 1. The glossary (default `docs/Glossary.md`): use established terms exactly as defined there.
-2. Sibling ADRs in the same directory: understand the existing decision chain.
+2. The Approved requirements that the decision serves.
+3. Sibling ADRs in the same directory: understand the existing decision chain.
+
+Stop if the proposed decision contradicts an Approved requirement or Accepted ADR.
+Do not change product intent inside an ADR.
 
 ---
 
@@ -28,7 +32,7 @@ An ADR moves `Proposed` → `Accepted`, and each transition is owned across sess
 The authoritative rule lives in the `workflow` overview skill ("Cross-session lifecycles").
 Here is what you act on while writing one:
 
-- **Create it `Proposed`.** Every new ADR starts `Proposed`, whether opened by an ideation, planning, or design session.
+- **Create it `Proposed`.** Every new ADR starts `Proposed`, whether opened by a planning or design session.
   It is a proposal, not a settled record.
 - **Edit the body in place while `Proposed`.** The body is the working draft, so refine the decision directly.
   Do **not** add Decision Log entries to a `Proposed` ADR, because there is no settled record to amend against yet (see below).
@@ -82,6 +86,10 @@ Do not delete old ADRs, because the history of decisions is intentionally preser
 
 Status: <Proposed | Accepted | Superseded by X>   # new ADRs start Proposed
 Created: <YYYY-MM-DD>
+
+## Requirements
+
+Direct Markdown links to the Approved requirements that this decision serves.
 
 ## Problem Statement
 
@@ -183,6 +191,8 @@ New understanding goes in the log, not silently into the original text.
 ## Quality checks before finishing
 
 - Every invariant uses RFC 2119 vocabulary
+- Every ADR links to the Approved requirements that it serves
+- No decision contradicts an Approved requirement
 - No class names, file paths, or method names in Problem Statement, Decision, or Rationale sections
 - Every alternative considered has an explicit rejection reason
 - Non-Goals section exists and is non-empty

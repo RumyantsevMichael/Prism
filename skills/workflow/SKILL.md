@@ -15,7 +15,7 @@ It overrides the default paths and stack assumptions below.
 All configured paths resolve from the project root.
 
 The workflow skills named here are siblings in this plugin: `roadmap`, `ideate`, `plan`, `design`, `implement`, `orchestrate`, `validate-artifacts`, and the `write-*` family.
-When one says "load `write-adr`" or "run `plan`", use the host's supported skill invocation mechanism.
+When one says "load `write-requirements`" or "run `plan`", use the host's supported skill invocation mechanism.
 A project may provide verification, security review, repair, or commit instructions outside Prism.
 Use those instructions when available, and use the inline Prism procedure otherwise.
 A project may also override any sibling with a local skill, and the local one wins.
@@ -26,9 +26,9 @@ Each rung is a skill, and each runs in **its own fresh context**:
 
 - **Priority** (`roadmap`): order whole initiatives Now/Next/Later.
   This is the only priority call and the only durable planning surface.
-- **Shaping** (`ideate`, optional): brainstorm a shapeless idea into Proposed ADRs, or kill it.
-- **Build order** (`plan`): decompose a multi-ADR initiative into dependency-ordered tracks.
-- **Spec** (`design`): per track, ADR ⇄ technical design → contracts + build plan + feature files → handoff.
+- **Shaping** (`ideate`, optional): brainstorm a shapeless idea into Approved EARS requirements, or kill it.
+- **Build order** (`plan`): decompose a multi-track requirement set into dependency-ordered tracks.
+- **Spec** (`design`): per track, requirements + ADRs + technical design → contracts + build plan + feature files → handoff.
 - **Build** (`implement`): read the validated specification cold, write tests first, implement to green, verify, and audit.
 
 `orchestrate` chains plan → design → implement across tracks through fresh child-agent contexts.
@@ -39,7 +39,8 @@ None of these supporting skills needs a user-started task when the host can crea
 **Defect repair** sits outside the flow.
 A repair session restores code to the already-settled spec: reproduce it with a failing test, diagnose the root cause **without touching production code**, then stop and report the diagnosis for approval before any fix.
 Pull the code to the spec, never the spec to the code.
-A fix that would require changing an ADR, a feature file, or a contract is not a repair, so escalate it to a design session.
+A fix that would require changing a requirement, ADR, feature file, or contract is not a repair.
+Escalate it to the artifact's owning workflow.
 Follow the project's repair instructions if they exist.
 Otherwise, use the reproduce, diagnose, report, approve, and fix procedure in this section.
 
@@ -89,11 +90,14 @@ Read documentation in this order before any task.
 The workflow configuration can relocate these defaults.
 
 1. The glossary (default `docs/Glossary.md`): term definitions and navigation.
-2. Relevant ADRs (default `docs/ADRs/*/ADR.md`): architectural invariants and settled decisions, in RFC 2119 language.
-3. Relevant Gherkin feature files (default `docs/Features/*.feature`): behavioral invariants, the executable specification for observable behavior.
+2. Approved requirements (default `docs/requirements/*.md`): durable product and system obligations in EARS form.
+3. Relevant ADRs (default `docs/ADRs/`): architectural invariants and settled decisions in RFC 2119 language.
+4. Relevant Gherkin feature files (default `docs/Features/*.feature`): executable behavioral invariants derived from requirements.
 
 The glossary only defines what terms mean, not behavioral rules.
-When an architectural invariant in an ADR conflicts with a behavioral invariant in a feature file, stop and report the conflict to the user.
+Requirements own product obligations, and ADRs own architectural decisions.
+Feature files specify executable behavior from requirements.
+When requirements, ADRs, or feature files conflict, stop and report the conflict to the user.
 Do not resolve it yourself.
 
 ## Cross-session lifecycles
@@ -103,7 +107,12 @@ The mechanics live in the named skill.
 
 - **Roadmap state** (envisioned → planned → in-progress → shipped): `roadmap`.
   Status flips fire inside whichever session triggers them, standalone features included.
-- **ADR status** (Proposed → Accepted): created `Proposed` by an ideation, planning, or design session.
+- **Requirement file status** (Draft → Approved → Superseded or Withdrawn): `ideate` or `write-requirements` creates Draft files.
+  The user approves product intent before `plan` or `design` consumes it.
+  A semantic change creates a new flat requirement number and supersedes the old section.
+  Requirements do not gain an implementation status.
+  Mechanics live in `write-requirements`.
+- **ADR status** (Proposed → Accepted): created `Proposed` by a planning or design session.
   **Only the implementation session** flips it `Accepted`, at the user's confirmation of correctness.
   The flip is a file edit and does not wait for a commit.
   Acceptance means the decision survived being built.
@@ -111,20 +120,24 @@ The mechanics live in the named skill.
 - **Track status** (not-started → in-progress → done, or blocked/deferred): `design` flips a track `in-progress` at its start, and `implement` flips it `done` at landing, in both the spine DAG and the track file.
   Mechanics in `plan`, `design`, and `implement`.
 - **Plan folders** are scratch with a gated end of life: created by `plan`, deleted only when the last track lands.
-  Deletion sits behind the **graduate-before-delete** gate (every open question and cross-cutting concern either graduates to a durable home, such as an ADR, feature file, user docs, or tracker issue, or is explicitly killed) and the **anti-rot** rule (a plan folder MUST NOT be deleted before its roadmap node is `shipped`).
+  Deletion sits behind the **graduate-before-delete** gate.
+  Every open question and cross-cutting concern must graduate to a requirement, ADR, feature file, user doc, or tracker issue.
+  An explicitly killed item also satisfies the gate.
+  The anti-rot rule prohibits deletion before the roadmap node is `shipped`.
   Mechanics in `implement`'s last-track gate.
 
 ## Durable artifacts must not reference non-durable identifiers
 
 Everything under the plans directory (default `docs/plans/`) is **scratch** and is deleted after implementation.
 Scratch identifiers include track names, build steps, section numbers, handoffs, spikes, and locked-decision labels.
-So **nothing durable may reference it**: not code or doc comments, READMEs, ADRs, commit messages, or test assertions.
+So **nothing durable may reference it**: not code, comments, requirements, READMEs, ADRs, commit messages, or test assertions.
 A future session has zero context for `T4 § 5` once that file is gone.
 
-- **State the rationale, cite the ADR**, not the plan section that scheduled the work.
-  If it is not yet in an ADR, put it there.
+- **State the obligation and cite the requirement.** State the rationale and cite the ADR.
+  Do not cite the plan section that scheduled the work.
+  Put missing architectural rationale in an ADR.
 - **Describe deferred work by what it is**: "Planned", never "T9".
-- **Allowed durable references:** ADRs, the glossary, feature files, and named project rules.
+- **Allowed durable references:** requirements, ADRs, the glossary, feature files, and named project rules.
   Plan tracks, steps, and sections are not.
 - **The roadmap's one exception:** an *in-flight* roadmap node may carry a deep-link to its live plan folder.
   This is a navigation convenience, removed when the node ships.
@@ -136,7 +149,7 @@ This applies as you write, not as a later cleanup pass.
 The user-guide directory (default `docs/user-guide/`) is the source-of-truth for install, configure, and use.
 Any change to observable behavior MUST update it in the same change.
 Mark unshipped capabilities **Planned**.
-Link to ADRs and the glossary for rationale rather than duplicating it.
+Link to requirements for obligations and ADRs or the glossary for rationale and terms.
 
 An **operational capability** (build, sign, publish, host, rotate, migrate) MUST ship with an operator runbook living with the tooling it documents.
 It MUST be accurate to the real commands, never guesswork.
@@ -148,6 +161,7 @@ The procedure is numbered and copy-pasteable, with exact commands or a UI click-
 
 The project's issue tracker (default: GitHub issues) is the durable record for **all work below initiative level**: defects and small buildable follow-ups.
 The roadmap stays initiative-level.
+Requirements stay product-obligation level.
 ADRs stay decisions.
 Issues are the sub-initiative backlog.
 A repair session works from a defect issue, and its landing `fix(scope):` commit references it.
@@ -170,7 +184,7 @@ The issue stays the record.
 
 When a session surfaces a decision that is the user's to make (at a gate, or any choice you cannot resolve from the spec), state it **in plain language first**: the situation in everyday terms, the concrete choice, and your recommendation.
 Lead with that framing.
-Cite the ADR, track, or section *after*, as the paper trail, never as the explanation.
+Cite the requirement, ADR, track, or section after the explanation as the paper trail.
 
 The user reviews as an informed engineer, not as a co-author of the spec's vocabulary.
 So "the session cache is wiped on restart, so signing out one device would silently sign out the others" lands where "the `SessionRegistry` isn't persisted" does not.
@@ -210,7 +224,7 @@ Types, with their boundaries:
 - `refactor`: production code restructuring only, **never** dev tooling.
 - `chore`: anything that neither adds features nor fixes bugs in production code.
 
-Cite an ADR for rationale where one applies.
+Cite a requirement for the obligation and an ADR for rationale where they apply.
 Never cite a plan.
 No test counts or "tests green" noise.
 

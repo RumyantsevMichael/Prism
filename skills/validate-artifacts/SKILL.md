@@ -34,8 +34,9 @@ The context map and lifecycle rules live in the `workflow` overview skill.
 
 Read the handoff first (default `docs/plans/<initiative>/<track>/handoff.md`).
 It names the authoritative inputs and their precedence.
-Then read the **source request** the track answers: the track file, and any recorded product request or interview notes in the plan folder.
-The request is what the artifacts must satisfy, so it is part of your input, not optional background.
+Then read the Approved requirement files that the track cites.
+They are the source obligations that every downstream artifact must satisfy.
+Read the track file and recorded plan notes for scope and orientation only.
 
 ---
 
@@ -48,13 +49,20 @@ Your goal is to find the gap the design session is too close to see.
    Does the installer receive what it needs to place its payload?
    Does the filter get the input it filters on?
    A contract you cannot satisfy is under-specified.
-2. **Try to break each invariant.** Take each ADR MUST/MUST NOT and look for a path, an input, or an ordering that violates it.
+2. **Try to falsify each requirement and break each invariant.**
+   Use each active requirement to find a missing state, actor, boundary, failure, or measurable condition.
+   Take each ADR MUST/MUST NOT and look for a path, input, or ordering that violates it.
    If you find one, either the invariant is wrong (feed back to the ADR) or the design admits a hole.
-3. **Check the artifacts against the source request.** Compare the spec with what was actually asked: the track file, the recorded product request, and any interview answers captured in the plan folder.
-   Every requirement in the request must appear in an artifact, unchanged.
+3. **Check the artifacts against the Approved requirements.**
+   Trace every active requirement to an ADR, contract, feature Rule, build-plan obligation, or justified non-executable check.
+   Preserve each requirement's meaning without adding or removing an obligation.
    Verify concrete surface details letter-for-letter: names, keywords, formats, commands, and error strings.
    A renamed keyword or an invented capability is a real defect, not a style choice.
-4. **Check the artifacts agree.** Do the contracts satisfy the ADR?
+   Reject a Draft requirement file as an authoritative input.
+   Check every requirement link and explicit anchor.
+4. **Check the artifacts agree.**
+   Do the ADRs serve the requirements without contradicting them?
+   Do the contracts satisfy the ADRs and requirements?
    Do the feature files describe behavior the contracts can actually express?
    Does the build plan build what the contracts declare?
    Disagreement between artifacts is a real defect, including two artifacts that name the same thing differently.
@@ -63,13 +71,15 @@ Your goal is to find the gap the design session is too close to see.
 6. **Threat-model the spec.** Read it as an attacker, not a builder.
    What is the track's **security surface**, meaning does it touch secrets, the network, privilege or isolation boundaries, untrusted input, or IPC?
    For each surface, look for the hole the spec leaves open: a secret with no defined at-rest path, a trust boundary the contracts do not enforce, an input no invariant constrains, a capability granted wider than the feature needs.
-   A security gap is a spec gap: it feeds back to the ADR like any other.
+   A security gap is a spec gap.
+   Route a missing product obligation to the requirement file and an architectural invariant to the ADR.
    **Name the surface explicitly** (`security surface: none` is a valid finding).
    The implementation session's post-code security audit fires only when it is non-empty, so this determination is load-bearing.
 
 ## What to produce
 
-A list of gaps, each tied to the artifact (or ADR) that owns it, with enough detail for the design session to act on, **plus a one-line statement of the track's security surface** (the threat-model lens's output, carried forward to gate the post-code audit).
+A list of gaps, each tied to its owning requirement, ADR, or specification artifact, with enough detail for the design session to act on.
+Also provide one line that states the track's security surface for the post-code audit gate.
 **Report the findings and stop.**
 Do not resolve gaps, recommend resolutions, or proceed past them.
 Clarifying the specification is the design task's responsibility.
@@ -85,9 +95,12 @@ But a spec that survives a genuine attempt is cleared to build.
 ## Quality checks before finishing
 
 - Every contract was checked for "can I implement this with what's given?"
+- Every active requirement was checked for a way to falsify it.
 - Every ADR invariant was checked for a way to violate it.
-- The artifacts were checked against the source request, letter-for-letter on names, keywords, and formats, with no requirement dropped and no capability invented.
-- Cross-artifact agreement (ADR ↔ contracts ↔ feature files ↔ build plan) was verified.
+- Every Approved requirement was traced without a dropped obligation or invented capability.
+- Every requirement link and explicit anchor was checked.
+- Cross-artifact agreement between requirements, ADRs, contracts, feature files, and build plans was verified.
 - Each `// OPEN:` is confirmed as implementer's-choice, and unmarked gaps were hunted.
 - The spec was threat-modeled and the track's security surface stated in one line (`none` is valid), the post-code audit's trigger.
-- Gaps are reported against the owning artifact, routed to the ADR when an invariant is wrong, not silently worked around, self-resolved, or proceeded past.
+- Gaps are reported against the owning artifact.
+- Wrong product obligations route to `write-requirements`, and wrong architectural invariants route to the ADR.

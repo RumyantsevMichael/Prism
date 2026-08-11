@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "prism",
   "displayName": "Prism",
-  "description": "Spec-driven agentic engineering workflow: roadmap → ideate → plan → design → implement, with orchestration across tracks. ADRs, Gherkin feature files, and dependency-ordered track plans as the spec layer.",
+  "description": "Prism uses EARS requirements, ADRs, Gherkin feature files, and dependency-ordered plans for a spec-driven engineering workflow.",
   "version": "0.3.0",
   "author": {
     "name": "Michael Rumyantsev",
@@ -14,6 +14,8 @@
   "keywords": [
     "workflow",
     "spec-driven",
+    "requirements",
+    "ears",
     "adr",
     "bdd",
     "gherkin",

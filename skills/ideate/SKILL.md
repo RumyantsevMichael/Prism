@@ -1,98 +1,122 @@
 ---
 name: ideate
-description: "Shape a raw idea into Proposed ADRs by challenging it and fitting it into the system. Use before plan or design."
+description: "Shape a raw idea into Approved EARS requirements by challenging it and fitting it into the product. Use before plan or design."
 disable-model-invocation: true
 argument-hint: '[idea]'
 ---
 
 # Ideate on a fresh idea
 
-This is **ideation**: the origination step one rung below `plan` and `design`.
-It turns an idea with no concrete shape into Proposed ADRs that a later `plan` or `design` task reads cold.
+This is ideation, one rung before `plan` and `design`.
+It turns a shapeless idea into Approved EARS requirement files that a later task reads cold.
 Run inline with the user and delegate read-heavy work to child agents when available.
 
-Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
-Read it first if it exists.
+Project settings for this workflow live in `.prism/workflow.md` at the project root.
+Read that file first if it exists.
 It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project instructions that apply to this task.
+If it is absent, use the defaults and the project instructions that apply to this task.
 The context map and lifecycle rules live in the `workflow` overview skill.
 
-The job is **shaping and challenging, not specifying.** You decide *what the idea is, whether it should exist, and how it fits the system*, not how to build it.
-There is **no technical design, no contracts, no feature files, no build plan** here.
-Those belong to `design`.
-The single durable output is the ADR(s).
+The job is challenging and defining product intent, not technical design.
+Decide what problem exists, who has it, and what the system must do differently.
+Do not choose architecture, contracts, feature scenarios, or build order.
+The durable output is one or more Approved requirement files.
 
-`ideate` is **optional**, the same way a self-contained feature skips `plan`.
-Use it only when the idea is genuinely shapeless and needs brainstorming before it can be specced.
-If you already know the decision, use `plan` for a multi-ADR initiative or `design` for a self-contained feature.
+`ideate` is optional.
+Use it only when the idea is genuinely shapeless and needs interactive exploration.
+Use `write-requirements` directly when the capability and obligations are already clear.
 
-**One workflow skill per context** (the rule and its rationale live in the `workflow` overview skill).
-Do not run `plan` or `design` in this context after the user accepts the shaping.
-Reading the ADR cold in a fresh context keeps the shaping honest.
+Use one workflow skill per context, as defined in the `workflow` overview skill.
+Do not run `plan` or `design` in this context after the user accepts the requirements.
+The next task must read the Approved requirements without this conversation history.
 
-Read the glossary (default `docs/Glossary.md`), the product strategy document if present, and the roadmap (default `docs/roadmap.md`).
-Skim the ADR index (default `docs/ADRs/`) because the idea must fit the existing decision chain.
+Read the glossary, product strategy document when present, and roadmap.
+Use `docs/Glossary.md`, `docs/roadmap.md`, and `docs/requirements/` as the default paths.
+Read related requirement files and skim relevant Accepted ADRs and feature files.
 
 ## 1. Frame the raw idea
 
-Settle with the user, inline: what itch or problem this scratches, who it is for, and what would observably change if it existed.
-Keep it loose, because this is the one place in the workflow where the shape is still open.
-Do not jump to a solution.
-Name the problem first.
+Settle the problem, affected users or systems, and the observable change with the user.
+Keep the shape open until the problem is clear.
+Do not start from a preferred solution.
 
-## 2. Fit it into the existing system
+Ask what happens if the team does nothing.
+Ask what users or operators do today.
+Separate direct evidence from assumptions.
+
+## 2. Fit the idea into the product
 
 Delegate these checks to child agents when available.
-Pass paths, never inlined contents, and run them in parallel only when safe:
+Pass paths instead of file contents.
 
-- **Does it conflict with a settled (`Accepted`) ADR?** A conflict is a stop: the idea either yields to the invariant or becomes a deliberate supersession, which is a much bigger decision to surface to the user, not paper over.
-- **Does it duplicate or already live inside an existing ADR?**
-  If so, recommend an **amendment** that `design` can take up.
-  You do **not** edit an `Accepted` ADR here.
-- **Which strategy pillar does it serve?** An idea that serves none is a flag, not necessarily a kill, so surface it.
-  (If the project has no strategy document, weigh it against the product's stated purpose instead.)
+- Check whether an Approved requirement already covers the need.
+- Check whether the idea conflicts with an Approved requirement.
+- Check whether the idea conflicts with an Accepted ADR or behavioral invariant.
+- Check which strategy pillar the idea serves.
+- Check whether the idea belongs inside an existing requirement file.
 
-Integrate their findings inline.
-This is the "fit it into what exists" half of the session and the reason it is read-heavy.
+Stop on a conflict between durable artifacts.
+Present the conflict to the user instead of changing either artifact silently.
 
-## 3. Challenge it
+Recommend an amendment when an existing requirement already owns the capability.
+Do not change an Approved requirement's meaning in place.
+Use the supersession rules in `write-requirements` for a semantic change.
 
-Apply adversarial pressure, inline, before committing anything to an ADR: why *not* build it, what the cheaper non-build alternative is, what it breaks or complicates, whether the problem is real or assumed.
-A **legitimate outcome is killing the idea**, or folding it into an existing decision.
-In that case the task produces **no new ADR**, and that is a successful `ideate` result.
-Do not manufacture an ADR to justify the session.
+## 3. Challenge the idea
 
-## 4. Shape into Proposed ADR(s)
+Apply adversarial pressure before you author a requirement file.
+Ask why the team should not build it.
+Find the cheaper process, policy, documentation, or removal alternative.
+Identify what the idea complicates or makes impossible.
+Test whether the problem is real, frequent, and important enough to require system behavior.
 
-If the idea survives, distill it into **one or more** ADRs (load `write-adr`, create each `Proposed`).
+Killing the idea or folding it into an existing requirement is a successful result.
+Do not create requirements to justify the session.
 
-The judgment here:
+## 4. Group the requirements
 
-- **One decision → one ADR.**
-  Recommend `design` for a self-contained feature.
-- **Several distinct decisions → several ADRs.**
-  Recommend `plan` for an initiative that needs track decomposition.
+Group surviving obligations by coherent product capability.
+One idea can produce several requirement files.
+Do not group by technical component, team ownership, or expected implementation track.
 
-Each ADR is a complete decision record (Problem, Goals, Non-Goals, Decision, Rationale, Consequences), with the alternatives you challenged in step 3 captured in its Rationale and Non-Goals.
-It stays `Proposed` because `ideate` never settles a decision.
-Stop at the decision.
-Do **not** drift into technical design or contracts.
+Use one file when a reader can understand the capability as one product obligation set.
+Use several files when the capabilities can change, ship, or be superseded independently.
+Link related requirements across files with direct Markdown links.
+
+## 5. Author and review the files
+
+Load `write-requirements` and follow its EARS reference.
+Create each file as `Draft` in the requirements directory, with `docs/requirements/` as the default.
+Use flat requirement numbers and explicit anchors.
+
+Record unresolved architectural choices only as design questions.
+Do not answer them or turn them into requirement constraints.
+An external platform, law, contract, or operating environment can impose a valid constraint requirement.
+
+Review wanted behavior first and unwanted behavior second.
+Review the complete set for missing actors, states, failures, and measurable boundaries.
 
 ## The artifact
 
-Proposed ADRs in the ADR directory (default `docs/ADRs/`) are **the only durable output**.
-`ideate` writes **no scratch folder**.
-It **does not touch the roadmap**: it shapes *what* the idea is, and the roadmap decides *when*, downstream.
-Update the glossary if shaping the idea introduced a genuinely new term.
+Requirement files in the requirements directory are the only durable output.
+`ideate` writes no scratch folder and does not author ADRs.
+It does not change roadmap priority or initiative state.
+Update the glossary only when the idea introduces a necessary new term.
 
 ## Gate
 
-Stop and present the Proposed ADR(s), or the reasoned recommendation to **not** build, with no ADR.
-**Open no plan, design no track, write no code.** Put the acceptance, and any build-or-kill fork you reached, to the user per **"How to deliver the question"** in the `workflow` overview skill.
-Wait for the user to accept the shaping, then **recommend the next step** and why:
+Present every Draft file or the reasoned recommendation to stop.
+Do not open a plan, design a track, or write code.
+Ask the user to approve, revise, or reject the requirement files.
+Use the delivery rules in the `workflow` overview skill.
 
-- **Self-contained feature** (one ADR) → `design`.
-- **Initiative** (an ADR cluster) → `plan`.
-  Note when `roadmap` should place it among other initiatives first.
+After explicit approval, change each accepted file to `Status: Approved` and record the approval date.
+Leave any unaccepted file as `Draft`.
 
-The recommended session starts fresh and reads the ADR cold.
+Recommend the next fresh task after approval:
+
+- Recommend `design` for one self-contained capability.
+- Recommend `plan` for an initiative that needs several dependency-ordered tracks.
+- Recommend `roadmap` first when priority among initiatives remains unsettled.
+
+The next task starts fresh and reads the Approved requirements cold.

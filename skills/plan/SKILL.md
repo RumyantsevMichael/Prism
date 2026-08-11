@@ -1,15 +1,15 @@
 ---
 name: plan
-description: "Decompose an ADR cluster into dependency-ordered tracks, resolve ordering risks, and define release readiness. Use before per-track design and implementation."
+description: "Decompose Approved requirement sets into dependency-ordered tracks, resolve ordering risks, and define release readiness. Use before per-track design and implementation."
 argument-hint: '[initiative]'
 ---
 
 # Plan an initiative
 
 This is the **plan**, one altitude above `design` and `implement`.
-It takes a body of work spanning several ADRs and decomposes it into **tracks**.
+It takes a body of work spanning several Approved requirement files and decomposes it into **tracks**.
 Each track then becomes its own design → implement cycle.
-Run inline with the user and delegate ADR and codebase reading to child agents when available.
+Run inline with the user and delegate requirement, ADR, and codebase reading to child agents when available.
 
 Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
 Read it first if it exists.
@@ -19,35 +19,40 @@ The context map and lifecycle rules live in the `workflow` overview skill.
 
 Run this only when the work is genuinely multi-track.
 A single self-contained feature does not need a plan.
-Start it at its ADR with `design`.
+Start it at its Approved requirement file with `design`.
 
 **One workflow skill per context** (the rule and its rationale live in the `workflow` overview skill).
 Do not run `design` or `implement` in this context after the plan is accepted.
 Each track design starts in a fresh context.
 
 The job is **build-ordering, not phasing.**
-The architecture is settled (or settling) in the ADRs.
+The product obligations are settled in Approved requirements.
+Accepted ADRs constrain the available design space.
 This plan decides *what order to build it in so no work dead-ends*.
 It is **not** a v1/v2 rollout, because the architecture lands end-to-end.
 The ordering is *forced by dependency*, never *chosen by priority* (priority-ordering of whole initiatives is a roadmap, one rung up, and out of scope here).
 
-Read first: the glossary (default `docs/Glossary.md`) and the ADR cluster this initiative implements (default `docs/ADRs/`).
+Read the glossary first, with `docs/Glossary.md` as the default path.
+Then read the Approved requirement files and relevant ADRs, with `docs/requirements/` and `docs/ADRs/` as the default directories.
 
 ## 1. Frame the initiative
 
-Settle these with the user: the scope, which ADRs it sequences, what it *serves*, and what "first release" means.
+Settle the scope, the Approved requirements, what the initiative serves, and what "first release" means.
 For what it *serves*, cite both its roadmap node and the strategy pillar that node advances.
 If the project has no strategy document, say so explicitly rather than silently skipping the pillar.
 If this initiative has no roadmap node, use `roadmap` Mode B to add one during framing.
-ADRs and the plan **co-evolve**: if decomposition surfaces an undecided question, that is a missing ADR.
-Feed it back (load `write-adr`), and do not bury the decision in the plan.
+Do not change requirements in this context when decomposition exposes a missing product obligation.
+Route a missing or wrong obligation back to `write-requirements` and user approval.
+If decomposition requires a cross-track architectural decision, load `write-adr` and create a Proposed ADR.
+Do not bury a product obligation or architectural decision in the plan.
 
 ## 2. Decompose into tracks
 
 Carve the work into tracks where **each track is one `design` and `implement` unit**.
 Each track is coarse enough to be a coherent capability, and fine enough to be specifiable.
 A deliverable that is itself design-worthy is its own track.
-Delegate ADR reading to child agents when available.
+Each track must cite the Approved requirements that define its product obligations.
+Delegate requirement and ADR reading to child agents when available.
 Pass paths, not contents, and ask them to propose a decomposition.
 Integrate it inline, because this carving is the load-bearing judgment of the whole session.
 
@@ -97,10 +102,12 @@ Each track's `design` task nests its prep bundle inside `<plans dir>/<initiative
 ````markdown
 # <Initiative> - plan
 
-Serves: <its roadmap node> → <the strategy pillar it advances; if the project has no strategy document, write "no strategy document" rather than omitting this>.
-Sequences ADRs <list> into dependency-ordered tracks.
-This is a build-order plan, **not** a phased rollout - the architecture lands end-to-end;
-the order exists only to avoid dead-end work.
+Serves: <its roadmap node> → <the strategy pillar it advances>.
+If the project has no strategy document, write "no strategy document" instead of omitting this line.
+Sequences Approved requirements <links> into dependency-ordered tracks.
+Architectural constraints: <relevant ADR links, or "none">.
+This is a build-order plan, **not** a phased rollout because the architecture lands end-to-end.
+The order exists only to avoid dead-end work.
 
 ## Tracks
 
@@ -113,7 +120,8 @@ Track index: one line each, linking `<track>.md`.
 
 ## Open questions
 
-Each resolves to a track, an ADR, or explicitly out-of-scope - with status. Never an indefinite parking lot.
+Each resolves to a requirement, track, ADR, or explicitly out-of-scope item with status.
+Never keep an indefinite parking lot.
 
 ## Operational pre-work
 
@@ -123,18 +131,20 @@ Each with what it gates.
 ## Spikes
 
 Bounded (~1 day) investigations that de-risk a decision before its gate.
-Each: what we must learn, what its finding would change, and **who runs it** - an *ordering* spike (could change the track list or a DAG edge) resolves here, before the plan gate;
-a *track-feasibility* spike (reshapes one track's spec only) is named against its track and run by that track's design session.
+Each states what we must learn, what its finding would change, and **who runs it**.
+An *ordering* spike can change the track list or a DAG edge and resolves before the plan gate.
+A *track-feasibility* spike reshapes one track and runs in that track's design session.
 
 ## Cross-cutting concerns
 
 Items spanning tracks.
-Each MUST resolve to a track, an ADR, or explicitly out-of-scope **before the plan is deleted** - nothing here survives by being "noted".
+Each MUST resolve to a requirement, track, ADR, or explicitly out-of-scope item before the plan is deleted.
+Nothing survives by being only noted here.
 
 ## Release readiness
 
-The minimum track subset for a first ship, as a checklist;
-and what is purely additive.
+The minimum track subset for a first ship, as a checklist.
+State what is purely additive.
 ````
 
 ### Track file: `<track>.md`
@@ -145,24 +155,30 @@ and what is purely additive.
 **Goal.**
 One line: what exists when this track is done.
 
+**Requirements.**
+Direct links to every Approved requirement this track serves.
+
 **Deliverables.**
 The concrete units, each suitable for one `design` task.
 
 **Dependencies.**
-Which tracks land first (the spine DAG is authoritative;
-this is prose for the reader).
+Which tracks land first.
+The spine DAG is authoritative, and this field is prose for the reader.
 
 **Risk.**
 Each risk names a **failure mode AND its detector** - a spike or a test.
 A risk without "what could go wrong + what catches it" is a vibe, not a risk.
 
 **Spike findings.**
-What this track's spikes surfaced that reshaped these deliverables - an ordering spike's finding is filled by the planning session before the plan gate;
-a track-feasibility spike's by the design session before the design gate.
+State what the track's spikes surfaced that changed these deliverables.
+The planning session records an ordering spike before the plan gate.
+The design session records a track-feasibility spike before the design gate.
 
 **Status.**
 not-started / in-progress / blocked / deferred / done - kept in sync with the spine's Mermaid node.
-*Design* flips it `→ in-progress` when it starts the track; *implementation* flips it `→ done` at landing; either sets `blocked`/`deferred` (with a reason) when a dependency or decision actually stalls it.
+*Design* flips it `→ in-progress` when it starts the track.
+*Implementation* flips it `→ done` at landing.
+Either session sets `blocked` or `deferred` with a reason when a dependency or decision stalls it.
 ```
 
 ---
@@ -173,15 +189,17 @@ not-started / in-progress / blocked / deferred / done - kept in sync with the sp
 - **Size is provisional, and integration is a track.** You hold the decisions, not their realization cost.
   A track's size is a best guess, corrected downstream: `design`'s right-size check splits an over-sized track before implementation, and `implement`'s gate re-scopes unfinished work into a follow-up track.
   Do not over-invest in precision you cannot have.
-  But two things you *can* get right from the ADRs.
+  But two things you can get right from the requirements and ADRs.
   First, give foreseeable **cross-process / cross-surface integration its own track** (never fold a net-new cross-cutting capability into a feature track just because that is where its consumer lives).
   Second, never let the **terminal track become the catch-all**: a loose end too big to finish in one session is itself a track, not a footnote on the last one.
   "In scope because it's the last track" is the smell that you have done exactly that.
 - **Mermaid, not ASCII**: it renders and diffs.
   The DAG is also the status board.
 - **Every risk has a detector.** No bare "Risk: medium".
-- **Parking lots must resolve.** Open questions and cross-cutting concerns each route to a track, an ADR, or explicit out-of-scope, because the plan gets deleted, and anything not graduated is lost.
-- **Cite ADRs, not track labels, in anything durable.** Track IDs (`T7`) are scratch.
+- **Parking lots must resolve.** Open questions and cross-cutting concerns each route to a requirement, track, ADR, or explicit out-of-scope item.
+  The plan gets deleted, so anything not graduated is lost.
+- **Cite requirements for obligations and ADRs for decisions.** Never cite a track label from a durable artifact.
+  Track IDs such as `T7` are scratch.
 
 ## Gate
 
@@ -189,5 +207,5 @@ Stop and present the plan.
 **Design no track yet.**
 Wait for the user to accept before any track enters `design`.
 Deliver that acceptance question, and any scoping fork the plan raises, per **"How to deliver the question"** in the `workflow` overview skill.
-On acceptance, flip this initiative's roadmap node `envisioned → planned` (gains its ADRs + the plan deep-link).
+On acceptance, flip this initiative's roadmap node `envisioned → planned` and add its requirements, ADRs, and plan link.
 This is a one-line edit per the roadmap's Mode B, with no separate gate.

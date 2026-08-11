@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "prism",
-  "description": "Home of the prism plugin — a spec-driven agentic engineering workflow for Claude Code.",
+  "description": "Home of the Prism plugin, a spec-driven agentic engineering workflow for Claude Code.",
   "owner": {
     "name": "Michael Rumyantsev"
   },
@@ -10,7 +10,7 @@
       "name": "prism",
       "source": "./",
       "displayName": "Prism",
-      "description": "Spec-driven agentic engineering workflow: roadmap → ideate → plan → design → implement, with orchestration across tracks.",
+      "description": "Spec-driven workflow with EARS requirements, architecture decisions, design, implementation, and orchestration across tracks.",
       "author": {
         "name": "Michael Rumyantsev"
       },
@@ -21,6 +21,8 @@
       "tags": [
         "workflow",
         "spec-driven",
+        "requirements",
+        "ears",
         "adr",
         "bdd",
         "gherkin",

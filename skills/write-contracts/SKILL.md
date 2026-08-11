@@ -1,6 +1,6 @@
 ---
 name: write-contracts
-description: "Author or update a track's contracts in the plans directory: boundary interfaces/types, no implementations, ADR-cited. Use when pinning a track's shapes before implementation."
+description: "Author or update track contracts from requirements and ADRs: boundary interfaces and types without implementations. Use before implementation."
 argument-hint: '[initiative/track]'
 ---
 
@@ -30,7 +30,7 @@ They are **boundary types only**: interfaces, type aliases, discriminated unions
 **No implementations**: no function bodies, no classes with logic, no runtime validation schemas.
 Where a value will be validated, a doc-comment says so, but it does not contain the validator.
 
-Before writing, read the project glossary, the governing ADR(s), and the feature files you are pairing with.
+Before writing, read the project glossary, Approved requirements, governing ADRs, and paired feature files.
 
 ---
 
@@ -48,7 +48,8 @@ So it may redeclare existing repo types locally (see below) without colliding wi
 /**
  * <Feature> - contracts.
  *
- * Source-of-truth precedence: ADR > this file > build plan > feature files.
+ * Requirements own obligations, and ADRs own architectural decisions.
+ * This file defines the boundary shapes that serve both durable sources.
  * Conventions: boundary interfaces (not classes), `Result<T>` for expected
  * failures, domain aliases over primitives, `readonly` on contract shapes. Where
  * a type is validated at a boundary, a doc-comment says so.
@@ -76,9 +77,10 @@ The section header tells the implementer where the shape lands.
 - **`readonly` / `ReadonlyArray`** (or the language's immutability idiom) on immutable contract shapes.
 - **`Result<T>` for expected failures**, never `throw`, at the boundary.
 - **Named, exported types**: no inline anonymous object types at the boundary.
-- **Doc-comment every type with its ADR section** (`ADR 30 §Artifact manifest`), never a plan track.
+- **Doc-comment every type with its requirement link and applicable ADR section.** Never cite a plan track.
   Explain wire semantics and any cross-field invariant ("MUST match the enclosing directory name, checked at install").
-- **Flag deferred shape decisions with `// OPEN:`**: where the ADR leaves a wire shape unspecified, name the gap and leave it for the implementer to resolve and confirm, rather than guessing.
+- **Flag deferred shape decisions with `// OPEN:`.** Name a wire shape that the requirements and ADRs leave unspecified.
+  Leave it for the implementer to resolve and confirm instead of guessing.
 - **Call out defined seams** ("a DEFINED SEAM", "RESERVED - not implemented here") so the reader knows what is an injection point versus future work.
 
 (Where the project has its own authoritative code-style rules, apply them here too.)
@@ -89,7 +91,8 @@ The section header tells the implementer where the shape lands.
 
 - No implementations leak in: no function bodies, logic-bearing classes, or runtime validation schemas.
 - Every section has a `// → path` destination header.
-- Every type carries an ADR-cited doc-comment, and no plan-track references.
+- Every type carries a requirement link and an ADR citation when applicable.
+- No type references a plan track.
 - `T | null` vs optional is used deliberately, not interchangeably.
 - Under-specified shapes are marked `// OPEN:`, not silently invented.
 - The file type-checks in isolation (local re-declarations cover repo types).

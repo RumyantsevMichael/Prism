@@ -17,9 +17,10 @@ The context map and lifecycle rules live in the `workflow` overview skill.
 
 Before writing, read in order:
 1. The feature file being implemented: understand every step's domain meaning.
-2. The glossary (default `docs/Glossary.md`): find the mechanical meaning of domain terms.
-3. Relevant ADRs: understand what each domain concept means structurally.
-4. The project's existing test helpers (for example `tests/helpers/`): check what exists before writing new ones.
+2. The linked Approved requirements: preserve the product obligation behind each Rule.
+3. The glossary (default `docs/Glossary.md`): find the mechanical meaning of domain terms.
+4. Relevant ADRs: understand what each domain concept means structurally.
+5. The project's existing test helpers (for example `tests/helpers/`): check what exists before writing new ones.
 
 ---
 
@@ -94,14 +95,16 @@ Steps receive and mutate the same state object.
 
 ## Translating domain language to mechanics
 
-Read the Gherkin step, find its domain meaning in the glossary, then find its mechanical meaning in the ADRs:
+Read the Gherkin step and its linked requirement first.
+Find its domain meaning in the glossary and its mechanical meaning in the ADRs:
 
 - "a paid order that has not shipped" → an order record exists with payment captured and no shipment record.
 - "the order is marked as shipped" → the order status transitions to the shipped state and a shipment record exists.
 - "the customer is notified that the order shipped" → the notification spy recorded a shipment notice for the order's customer.
 - "a return request is opened" → the returns store contains a new open request referencing the order.
 
-Always derive the mechanical meaning from the ADR and glossary, not from reading existing test code directly.
+Derive the obligation from the requirement and feature file.
+Derive the mechanical meaning from the ADR and glossary instead of existing test code alone.
 Existing tests may not reflect the settled design.
 
 ---
