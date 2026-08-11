@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/RumyantsevMichael/Prism/compare/v0.3.0...v0.4.0) (2026-08-11)
+
+
+### Added
+
+* replace ideation ADRs with EARS requirements ([b081658](https://github.com/RumyantsevMichael/Prism/commit/b0816585f845258c0eb01ca924bd4ec19107a168))
+
+
+### Documentation
+
+* rewrite README for Codex support ([c3ab537](https://github.com/RumyantsevMichael/Prism/commit/c3ab53749d68c2c0dc322786d7555ad7be0fb54d))
+
 ## [0.3.0](https://github.com/RumyantsevMichael/Prism/compare/v0.2.0...v0.3.0) (2026-08-07)
 
 
