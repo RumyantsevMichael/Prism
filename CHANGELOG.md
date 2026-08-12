@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/RumyantsevMichael/Prism/compare/v0.4.0...v0.5.0) (2026-08-12)
+
+
+### Added
+
+* add PlantUML artifact review workflow ([22ec0b0](https://github.com/RumyantsevMichael/Prism/commit/22ec0b0819a00b9e8666f6effed7c4b3d7c2364d))
+* polish artifact review interface ([c54515f](https://github.com/RumyantsevMichael/Prism/commit/c54515f310a3cd503f8e8a223334f0c5ee3392fb))
+
 ## [0.4.0](https://github.com/RumyantsevMichael/Prism/compare/v0.3.0...v0.4.0) (2026-08-11)
 
 
