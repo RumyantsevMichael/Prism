@@ -1,6 +1,6 @@
 {
   "name": "prism",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Spec-driven engineering workflow with EARS requirements, ADRs, design artifacts, implementation, and orchestration across tracks.",
   "author": {
     "name": "Michael Rumyantsev",
