@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/RumyantsevMichael/Prism/compare/v0.5.0...v0.5.1) (2026-08-12)
+
+
+### Fixed
+
+* use consumer root for review server ([43e0c61](https://github.com/RumyantsevMichael/Prism/commit/43e0c610ae3d37483e74e35dd0df8e2b6faa9fc4))
+
 ## [0.5.0](https://github.com/RumyantsevMichael/Prism/compare/v0.4.0...v0.5.0) (2026-08-12)
 
 
