@@ -1,8 +1,7 @@
 {
   "mcpServers": {
     "prism-review": {
-      "command": "./bin/prism-mcp",
-      "cwd": "."
+      "command": "./bin/prism-mcp"
     }
   }
 }

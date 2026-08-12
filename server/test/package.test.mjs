@@ -19,7 +19,6 @@ test("uses host-specific portable MCP launch paths", async () => {
   });
   assert.equal(codexManifest.mcpServers, "./.codex-mcp.json");
   assert.deepEqual(codexMcp.mcpServers["prism-review"], {
-    command: "./bin/prism-mcp",
-    cwd: "."
+    command: "./bin/prism-mcp"
   });
 });

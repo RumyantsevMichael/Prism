@@ -6,7 +6,7 @@ let reviewServer;
 const pluginManifest = JSON.parse(await readFile(new URL("../.codex-plugin/plugin.json", import.meta.url), "utf8"));
 
 async function server() {
-  reviewServer ??= await startReviewServer();
+  reviewServer ??= await startReviewServer({ projectRoot: process.env.CLAUDE_PROJECT_DIR ?? process.cwd() });
   return reviewServer;
 }
 
