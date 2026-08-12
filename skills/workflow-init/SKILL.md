@@ -103,7 +103,7 @@ It changes delivery only, and the framing rule in the `workflow` overview skill 
 Create any configured doc directories that do not exist, with a minimal seed:
 
 - Glossary: title + one-line purpose.
-- Roadmap: empty Now/Next/Later skeleton (see `roadmap` skill for format).
+- Roadmap: empty roadmap prose and a sibling `roadmap.puml` dependency graph (see `roadmap` skill for format).
 - Requirements/ADRs/Features/user-guide: directory with a short README stating what lives there.
 - Plans dir: directory only (scratch space).
 

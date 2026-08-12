@@ -34,7 +34,7 @@ Do not create or approve product requirements inside a design context.
 
 ## 1. Start from the right artifact
 
-- **Mark the track started.** Flip this track `not-started → in-progress` in both places: its node class in the spine's Mermaid DAG (`plan.md`) and the `Status` in its `<track>.md`.
+- **Mark the track started.** Flip this track `not-started → in-progress` in both places: its stereotype in `tracks.puml` and the `Status` in its `<track>.md`.
   Design starts when the track stops being not-started, so this is the board's `in-progress` transition.
   The implementation session owns the `→ done` flip at landing.
   If a dependency or undecided question actually blocks the track, set `blocked` or `deferred` with a one-line reason instead.
@@ -138,6 +138,7 @@ Like the status flips in step 1, these are one-line plan edits, not a second des
 ## Gate
 
 Stop and present the artifacts.
+When `present_review` is available, open the handoff review page before the acceptance question.
 **Write no implementation code.**
 Confirm the **right-size check** passed: the track as specified fits one fresh implementation session.
 If it did not, present the **split** (a separate integration track and an updated DAG), not a single over-sized spec.

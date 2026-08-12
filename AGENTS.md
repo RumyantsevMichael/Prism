@@ -1,8 +1,8 @@
 # prism
 
 prism is an agent workflow plugin distributed through its own marketplace.
-Its content is prompts, not code: every skill is a Markdown file that an agent reads at session time.
-There is no build, no test suite, and no runtime.
+Its workflow behavior comes from Markdown prompts that an agent reads at session time.
+It also includes a local MCP review server that renders PlantUML source in the human's browser.
 The consequence is that wording *is* behavior, and an edit that reads like a harmless rephrase can change what the plugin does.
 
 ## Read this first

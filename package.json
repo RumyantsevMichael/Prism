@@ -1,0 +1,11 @@
+{
+  "name": "prism-workflow-plugin",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "prism": "./bin/prism"
+  },
+  "scripts": {
+    "test": "node --test server/test/*.test.mjs"
+  }
+}

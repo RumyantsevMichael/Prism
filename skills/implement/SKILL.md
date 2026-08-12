@@ -120,7 +120,7 @@ That same landing commit **MAY delete this track's prep bundle** (the track's pl
 
 Two more steps when the track belongs to an initiative:
 
-1. **Update the track's status.** Set `Status` in the track's `<track>.md` to `done` and flip that track's node class in the spine's Mermaid DAG (`plan.md`).
+1. **Update the track's status.** Set `Status` in the track's `<track>.md` to `done` and flip that track's stereotype in `tracks.puml`.
    The plan is the live status board.
    (Design already flipped this track to `in-progress` at its start, and this is the `→ done` transition.
    If implementation stalls on a dependency, set `blocked` with a reason rather than leaving a stale `in-progress`.)

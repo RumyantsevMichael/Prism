@@ -111,7 +111,8 @@ The settled answer. State it plainly in one paragraph before expanding.
 Use RFC 2119 language for invariants (see below).
 
 ## Mechanism
-Mechanism diagrams. Mermaid, never hand-authored SVG (diffable, renderer-native).
+Link each related PlantUML source file.
+Use C4 for a complex architecture context and a state diagram for a lifecycle.
 
 ## Rationale
 
@@ -158,12 +159,21 @@ Those belong in code comments or module docs, not ADRs.
 
 ## Diagrams
 
-When the decision involves a non-trivial cross-component flow, sequence, topology, or lifecycle, include a Mermaid diagram in a ## Mechanism section (or a sibling diagrams.md when large).
-Use sequenceDiagram for an interaction, flowchart for topology, and stateDiagram-v2 for a lifecycle.
-Mermaid, never hand-authored SVG (diffable, renderer-native, like the roadmap/plan DAGs).
-Illustrative, not authoritative: the RFC-2119 prose and feature files remain the source of truth.
-Keep the diagram in sync, and on conflict the prose wins.
-Label the steps that carry an invariant ("verified independently here", "approval prompt fires") so the picture teaches the boundary, not just call order.
+Store each PlantUML source file beside the ADR and link it from `## Mechanism`.
+Use a descriptive name such as `context.puml`, `containers.puml`, or `lifecycle.puml`.
+Never create or commit a rendered image.
+
+Use a C4 Context or Container diagram only when architecture relationships need visual review.
+Small contexts below about 15 relationships need a specific reviewability reason because C4 usually costs more tokens there.
+The C4 diagram complements the decision and does not replace its rationale or consequences.
+
+Use a PlantUML state diagram when the ADR defines a lifecycle or state invariant.
+The state diagram replaces the prose transition list and owns the allowed transition set.
+Keep RFC 2119 prose for guards, prohibitions, and invariants that the transition labels cannot state precisely.
+
+Do not diagram the decision, alternatives, rationale, or consequences.
+These sections stay as prose.
+Read the `.puml` source during agent review and never read a rendered image.
 
 ## Decision log entries
 
@@ -198,3 +208,6 @@ New understanding goes in the log, not silently into the original text.
 - Non-Goals section exists and is non-empty
 - All terms match definitions in the project glossary
 - If superseding a prior ADR, the old ADR's Status field is updated
+- Each diagram is a linked sibling `.puml` source file
+- Each lifecycle uses a state diagram instead of a prose transition list
+- No rendered diagram image is present

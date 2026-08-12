@@ -57,17 +57,25 @@ decision on. Put this first so the reader sees the solid ground before the detai
 
 ## Build order
 
-The workstreams as a dependency DAG - show what can run in parallel and what is on
-the critical path, in prose plus a small **Mermaid** diagram (`graph TD`). Call out
-which workstreams are mechanical mirrors of existing code and which carry real
-judgment, so effort lands where it matters.
+Link `[Build order](build-order.puml)` to a PlantUML activity diagram.
+The diagram owns workstream order, branches, gates, parallel work, and the critical path.
+Use one or two prose sentences for the load-bearing sequence constraint and its risks.
+
+## Reuse map
+
+Link `[Reuse map](reuse-map.puml)` to a PlantUML component diagram.
+The diagram owns dependency direction and each workstream's reuse, mirror, or new classification.
+Use `<<reuse>>`, `<<mirror>>`, and `<<new>>` stereotypes.
+Show the existing component or pattern that supports reuse or mirroring.
+
+Use standard PlantUML activity and component syntax.
+Keep labels short and put paths or `file:symbol` plug points in notes when labels become hard to scan.
 
 ## Workstreams
 
 One subsection per workstream. For each:
-- **What & where**: the change, and whether it reuses, mirrors, or is new - with
-  destination paths for new files and `file:symbol` (or `file:line`) for plug
-  points into existing code.
+- **What & where**: the change with destination paths for new files and
+  `file:symbol` or `file:line` for plug points into existing code.
 - **Tests**: the unit / integration / acceptance tests this workstream owes, as a
   sub-bullet here - not deferred to a separate section.
 - Requirement links for product obligations and ADR citations for decisions.
@@ -97,10 +105,8 @@ A short `file:symbol` callout list the implementer will touch first.
 
 - **Cite requirements for obligations and ADRs for decisions.** Never cite a build-plan label as durable rationale.
   The build plan's own labels stay inside it.
-- **Express build order as a Mermaid DAG.** Make parallelism and the critical path explicit.
-  A flat numbered list hides what can overlap.
-- **Map reuse-vs-mirror-vs-new explicitly.** For every workstream say whether it reuses code as-is, mirrors a proven pattern, or is genuinely new.
-  This is the single most useful thing the plan tells the implementer.
+- **Express build order as a PlantUML activity diagram.** Do not repeat its sequence as a numbered list.
+- **Express the reuse map as a PlantUML component diagram.** Do not repeat its relations as a prose list.
 - **Pin plug points with `file:symbol`.** Line numbers when precision matters, and full destination paths for new files.
 - **Tests live with their workstream**, as sub-bullets, so the implementer sees the test obligation next to the work.
 - **Concentrate judgment.** Flag which workstreams are mechanical (mirror existing code) and which need care.
@@ -113,10 +119,14 @@ A short `file:symbol` callout list the implementer will touch first.
 ## Quality checks before finishing
 
 - Build order shows parallelism and the critical path, not just a sequence.
-- Every workstream states reuse / mirror / new and its destination or plug point.
+- The activity diagram owns the build order.
+- The component diagram owns each reuse, mirror, or new classification.
+- Every workstream has a destination or plug point.
 - Every obligation links to an Approved requirement.
 - Every architectural decision cites an ADR.
 - No rationale points at the build plan's own labels.
 - Each workstream lists the tests it owes.
 - A justified execution profile for implementation is present.
 - Shapes live in the contracts file, and the build plan links to them, not restates them.
+- `build-order.puml` and `reuse-map.puml` are linked from the build plan.
+- No rendered diagram image is present.

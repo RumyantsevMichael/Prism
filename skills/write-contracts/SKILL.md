@@ -40,6 +40,10 @@ Before writing, read the project glossary, Approved requirements, governing ADRs
 It is **scratch**: the durable version is the real interfaces the implementer writes into the codebase.
 So it may redeclare existing repo types locally (see below) without colliding with anything shipped.
 
+Optional PlantUML sources live beside the contracts file.
+Use `contracts.puml` for a class diagram and `contract-example.puml` for a rare object diagram.
+The real interface file remains authoritative for names, fields, methods, parameters, return types, generics, and error types.
+
 ---
 
 ## Structure (worked example: TypeScript)
@@ -66,6 +70,20 @@ export interface NotificationRouter { ... }
 
 Group types into sections, each headed by a `// → destination/path.ts` comment plus a one-line role description.
 The section header tells the implementer where the shape lands.
+
+## Relationship diagrams
+
+Add a class diagram when contracts span files or when ownership, cardinality, implementation, or dependency direction affects correctness.
+Hide fields and methods by default because the real interface file already owns those details.
+The class diagram owns only cross-contract relationships and cardinalities.
+Link it from the handoff or build plan with `[Contract relationships](contracts.puml)`.
+
+Add an object diagram only when one concrete object graph resolves ambiguity about runtime identity, sharing, nesting, or variant selection.
+Do not add it when a Gherkin example already communicates the same fact.
+Link it with `[Contract example](contract-example.puml)`.
+
+Read diagram source directly and never read a rendered image.
+Never create or commit a rendered diagram image.
 
 ---
 
@@ -96,3 +114,7 @@ The section header tells the implementer where the shape lands.
 - `T | null` vs optional is used deliberately, not interchangeably.
 - Under-specified shapes are marked `// OPEN:`, not silently invented.
 - The file type-checks in isolation (local re-declarations cover repo types).
+- A class diagram exists when cross-contract relationships affect correctness.
+- An object diagram exists only when a concrete object graph adds distinct value.
+- Diagrams do not duplicate interface members.
+- No rendered diagram image is present.

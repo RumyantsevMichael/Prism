@@ -82,7 +82,7 @@ Resume orchestration when the user returns with that task's result.
 ## 2. Resolve the initiative
 
 - `<plans dir>/<initiative>/plan.md` exists (plans dir default `docs/plans/`) → multi-track.
-  Read the spine's Mermaid DAG for track order and status.
+  Read the spine's linked `tracks.puml` DAG for track order and status.
   Go to step 4.
 - No plan, and the work is genuinely multi-track → go to step 3.
 - No plan, single self-contained feature → it is its own one-track chain.

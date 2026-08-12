@@ -22,5 +22,6 @@
     "planning",
     "architecture",
     "tdd"
-  ]
+  ],
+  "mcpServers": "./.mcp.json"
 }

@@ -73,6 +73,26 @@ Otherwise, it runs each track in sequence.
 The `write-*` skills create individual requirement and specification files.
 The `validate-artifacts` skill reviews a specification from an isolated context before implementation starts.
 
+## Review artifacts visually
+
+Prism stores diagrams as PlantUML `.puml` source files beside their Markdown artifacts.
+Agents read the PlantUML source and never read rendered images.
+The bundled review server renders diagrams in the human's browser without creating image files.
+
+The roadmap, plan, and design skills open the relevant review page at their user-acceptance gates when the server is available.
+Ask the agent to open the Prism review page at any other time during an active harness session.
+
+Start a standalone review from a Prism checkout when no harness session is active:
+
+```bash
+./bin/prism review
+./bin/prism review docs/roadmap.md
+```
+
+The server binds to `127.0.0.1`, selects an available port, and uses an unguessable session URL.
+It renders entirely in the browser and does not send project sources to a remote renderer.
+Stop the command with `Ctrl-C` when the review ends.
+
 Defect repair stays outside this workflow.
 First reproduce and diagnose a defect against the existing specification.
 Change the specification only when the required behavior must also change.
@@ -145,3 +165,5 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for the repository layout, local develop
 ## License
 
 Prism uses the [MIT License](LICENSE).
+Prism includes the MIT build of PlantUML for local browser rendering.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for its version and source.

@@ -90,6 +90,13 @@ not self-resolve → propose your build sequence and your `// OPEN:` resolutions
 confirm with the user → record the resolutions in the contracts → implement in the
 build plan's order.
 
+## Critical flow
+
+Link `[Critical flow](critical-flow.puml)` only when call order across a plug point affects correctness.
+The PlantUML sequence diagram owns the shown call order.
+The prose still owns scope, constraints, and the reason for the flow.
+Omit this section when contracts and the build plan already make the interaction clear.
+
 ## Security surface
 
 <the surface design's validation loop determined: secrets, network,
@@ -118,6 +125,7 @@ Explain why this profile fits and where implementation must slow down.
   A gap the implementer still hits goes back to design, never self-resolved.
 - **State the security surface.** Design's validation loop determined it, and the implementer's post-code audit fires on it, so the handoff must carry it.
 - **Include a collaborative gate.** Have the implementer propose the build order and `// OPEN:` resolutions and confirm *before* coding.
+- **Show a critical plug-point flow when needed.** Use a linked PlantUML sequence diagram without a duplicate prose call list.
 - **Keep it compact.** Point, do not restate.
   If you are copying design rationale in, it belongs in the ADR.
 
@@ -132,3 +140,5 @@ Explain why this profile fits and where implementation must slow down.
 - No locked constraint references a plan track.
 - A justified execution profile is present.
 - It points at the artifacts rather than restating them.
+- A critical plug-point flow has a linked sequence diagram when call order affects correctness.
+- No rendered diagram image is present.

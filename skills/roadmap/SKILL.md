@@ -93,8 +93,30 @@ Until then a score only launders guesses into false confidence.
 ## Writing the artifact
 
 Update the roadmap file in place.
-The central Mermaid `graph` (Now/Next/Later bands as `subgraph`s, initiatives as nodes, cross-initiative dependency arrows, state by `classDef`) is the single source of truth for both priority and dependency.
-Keep the section list: header/`Serves`, the roadmap graph, initiative index, sequencing rationale, cross-initiative dependencies, parked & superseded, open strategic questions, lifecycle.
+Store the central PlantUML dependency graph in `roadmap.puml` beside the roadmap file.
+Link it from the roadmap with `[Roadmap diagram](roadmap.puml)`.
+The graph is the single source of truth for priority bands, initiative states, and cross-initiative dependency edges.
+Use packages for Now, Next, Later, Parked, and Shipped when those groups contain nodes.
+Use stereotypes for `envisioned`, `planned`, `in-progress`, `shipped`, and `superseded` states.
+Label each dependency arrow with `requires` or `unblocks` so its direction is clear.
+Do not keep a separate cross-initiative dependency table.
+Keep the section list: header and `Serves`, roadmap diagram link, initiative index, sequencing rationale, parked and superseded context, open strategic questions, and lifecycle.
+The prose owns strategy alignment, rationale, overload risks, and open questions.
+
+Use this shape as the starting point:
+
+```plantuml
+@startuml
+left to right direction
+package "Now" {
+  component "Initiative A" as A <<in-progress>>
+}
+package "Next" {
+  component "Initiative B" as B <<planned>>
+}
+A --> B : unblocks
+@enduml
+```
 
 ## Conventions
 
@@ -114,9 +136,12 @@ Keep the section list: header/`Serves`, the roadmap graph, initiative index, seq
   Ordering whole initiatives over time is this roadmap's entire job and does not violate that rule.
 - **Anti-rot gate.** A plan folder may not be deleted until its roadmap node is `shipped` (rule in the `workflow` overview skill's "Cross-session lifecycles", enforced by `implement`'s last-track gate).
   The state column is therefore mechanically incapable of lying.
-- **Mermaid, not ASCII**: it renders and diffs, the same idiom as the plan DAG.
+- **PlantUML source, not ASCII or images.** Read and update `roadmap.puml` directly.
+- **No Gantt without real schedule data.** Never invent dates or durations for a diagram.
+- **No EBNF for roadmap content.** EBNF describes a file grammar and does not show current initiatives.
 
 ## Gate
 
 Mode A: stop and present the re-banded roadmap, and wait for the user to accept before writing.
+When `present_review` is available, open the roadmap review page before the acceptance question.
 Mode B: no gate, because the flip is bound to an event that already cleared one.

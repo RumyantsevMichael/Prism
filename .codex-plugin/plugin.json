@@ -22,6 +22,7 @@
     "tdd"
   ],
   "skills": "./skills/",
+  "mcpServers": "./.codex-mcp.json",
   "interface": {
     "displayName": "Prism",
     "shortDescription": "Spec-driven engineering",
@@ -33,6 +34,7 @@
       "Product design",
       "Architecture decisions",
       "Implementation planning",
+      "Visual artifact review",
       "Test-driven implementation"
     ],
     "defaultPrompt": [

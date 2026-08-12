@@ -1,7 +1,7 @@
 # Contributing to prism
 
-prism is a Claude Code and Codex plugin whose content is almost entirely prompts.
-There is no build step and nothing to compile.
+prism is a Claude Code and Codex plugin whose workflow behavior is almost entirely prompts.
+It also includes a Node.js MCP review server and a vendored browser renderer.
 A change to Markdown changes agent behavior at task time.
 
 ## Repository layout
@@ -16,6 +16,11 @@ A change to Markdown changes agent behavior at task time.
   marketplace.json   # Codex marketplace
 skills/
   <name>/SKILL.md    # one directory per skill; the directory name is the skill name
+server/              # MCP server, review UI, and tests
+vendor/plantuml/     # pinned MIT PlantUML browser runtime
+bin/                 # MCP and standalone review launchers
+.mcp.json            # bundled MCP server definition
+.codex-mcp.json      # native Codex MCP server definition
 ```
 
 Only the Claude manifests live in `.claude-plugin/`.
@@ -56,6 +61,18 @@ This checks the Claude manifests and parses every skill frontmatter block.
 `--strict` promotes unrecognized-field warnings to errors, which catches typos in field names.
 CI also installs the native Codex package from an isolated temporary marketplace.
 Run both checks before opening a pull request.
+
+Run the review-server tests after a server or UI change:
+
+```bash
+npm test
+```
+
+Run a local human review from the repository root:
+
+```bash
+./bin/prism review
+```
 
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.

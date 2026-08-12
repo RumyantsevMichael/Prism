@@ -58,9 +58,9 @@ Integrate it inline, because this carving is the load-bearing judgment of the wh
 
 ## 3. Order by dependency
 
-Build the dependency DAG as **Mermaid** (`graph TD`) in the spine.
+Build the dependency DAG as PlantUML in `tracks.puml` beside the spine.
 This is the load-bearing artifact: it answers "what must exist before what."
-It is also the **live status board**: style nodes by status with `classDef`, and the implementer flips a node's class as each track lands.
+It is also the **live status board**: give each component a status stereotype, and the implementer updates it as each track lands.
 Keep the edges authoritative *here only*.
 Track files describe their dependencies in prose for the reader, not as a second source of truth.
 
@@ -111,10 +111,11 @@ The order exists only to avoid dead-end work.
 
 ## Tracks
 
-```mermaid
-graph TD T1[T1 <name>]:::done --> T2[T2 <name>]:::inprogress T2 --> T3[T3 <name>] classDef done fill:#cfc classDef inprogress fill:#ffc classDef blocked fill:#fcc classDef deferred fill:#eee
-```
-The DAG is the single source of truth for both dependency edges and live status - flip a node's class as it lands (unstyled = not started).
+[Track dependency and status diagram](tracks.puml)
+
+The PlantUML DAG is the single source of truth for dependency edges and live status.
+Use one component per track and a status stereotype on every component.
+Use `not-started`, `in-progress`, `blocked`, `deferred`, or `done`.
 
 Track index: one line each, linking `<track>.md`.
 
@@ -175,7 +176,7 @@ The planning session records an ordering spike before the plan gate.
 The design session records a track-feasibility spike before the design gate.
 
 **Status.**
-not-started / in-progress / blocked / deferred / done - kept in sync with the spine's Mermaid node.
+not-started / in-progress / blocked / deferred / done - kept in sync with the spine's PlantUML component stereotype.
 *Design* flips it `→ in-progress` when it starts the track.
 *Implementation* flips it `→ done` at landing.
 Either session sets `blocked` or `deferred` with a reason when a dependency or decision stalls it.
@@ -193,8 +194,21 @@ Either session sets `blocked` or `deferred` with a reason when a dependency or d
   First, give foreseeable **cross-process / cross-surface integration its own track** (never fold a net-new cross-cutting capability into a feature track just because that is where its consumer lives).
   Second, never let the **terminal track become the catch-all**: a loose end too big to finish in one session is itself a track, not a footnote on the last one.
   "In scope because it's the last track" is the smell that you have done exactly that.
-- **Mermaid, not ASCII**: it renders and diffs.
-  The DAG is also the status board.
+- **PlantUML source, not ASCII or images.** Store the DAG in `tracks.puml` and link it from the spine.
+The DAG is also the status board.
+
+Use this shape for `tracks.puml`:
+
+```plantuml
+@startuml
+left to right direction
+component "T1 - Foundation" as T1 <<done>>
+component "T2 - Integration" as T2 <<in-progress>>
+component "T3 - Delivery" as T3 <<not-started>>
+T1 --> T2 : unblocks
+T2 --> T3 : unblocks
+@enduml
+```
 - **Every risk has a detector.** No bare "Risk: medium".
 - **Parking lots must resolve.** Open questions and cross-cutting concerns each route to a requirement, track, ADR, or explicit out-of-scope item.
   The plan gets deleted, so anything not graduated is lost.
@@ -204,6 +218,7 @@ Either session sets `blocked` or `deferred` with a reason when a dependency or d
 ## Gate
 
 Stop and present the plan.
+When `present_review` is available, open the spine review page before the acceptance question.
 **Design no track yet.**
 Wait for the user to accept before any track enters `design`.
 Deliver that acceptance question, and any scoping fork the plan raises, per **"How to deliver the question"** in the `workflow` overview skill.

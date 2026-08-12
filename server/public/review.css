@@ -1,0 +1,96 @@
+:root {
+  color-scheme: light dark;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+  background: Canvas;
+  color: CanvasText;
+}
+
+header {
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  padding: 1rem 1.5rem;
+}
+
+header h1,
+header p {
+  margin: 0;
+}
+
+main {
+  display: grid;
+  grid-template-columns: minmax(14rem, 22rem) minmax(0, 1fr);
+  min-height: calc(100vh - 5rem);
+}
+
+nav {
+  border-right: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  overflow: auto;
+  padding: 1rem;
+}
+
+nav ol {
+  list-style: none;
+  padding: 0;
+}
+
+nav a {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 0.35rem 0;
+}
+
+article {
+  max-width: 90rem;
+  padding: 1.5rem 2rem 4rem;
+}
+
+pre {
+  background: color-mix(in srgb, CanvasText 8%, Canvas);
+  border-radius: 0.4rem;
+  overflow: auto;
+  padding: 1rem;
+  white-space: pre-wrap;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.diagram {
+  border-top: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  margin-top: 2rem;
+  padding-top: 1rem;
+}
+
+.diagram-output {
+  overflow: auto;
+}
+
+.error {
+  color: #b42318;
+  font-weight: 700;
+}
+
+@media (max-width: 800px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+
+  nav {
+    border-bottom: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+    border-right: 0;
+  }
+}

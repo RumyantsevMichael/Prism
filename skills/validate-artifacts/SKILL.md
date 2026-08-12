@@ -66,6 +66,9 @@ Your goal is to find the gap the design session is too close to see.
    Do the feature files describe behavior the contracts can actually express?
    Does the build plan build what the contracts declare?
    Disagreement between artifacts is a real defect, including two artifacts that name the same thing differently.
+   Read each linked `.puml` source and check it against its owning prose or interface artifact.
+   Never inspect a rendered image.
+   Confirm that no prose table or list duplicates diagram-owned relationships, transitions, or order.
 5. **Hunt under-specification.** Every `// OPEN:` in the contracts is a known gap, so confirm each is genuinely the implementer's call and not a missing decision.
    Then look for the *unmarked* gaps: a field whose meaning is ambiguous, a failure mode no artifact addresses, or a feature example that cannot be turned into a clean test.
 6. **Threat-model the spec.** Read it as an attacker, not a builder.
@@ -100,6 +103,8 @@ But a spec that survives a genuine attempt is cleared to build.
 - Every Approved requirement was traced without a dropped obligation or invented capability.
 - Every requirement link and explicit anchor was checked.
 - Cross-artifact agreement between requirements, ADRs, contracts, feature files, and build plans was verified.
+- Every linked PlantUML source was checked without reading a rendered image.
+- No rendered diagram image or duplicate graph enumeration was found.
 - Each `// OPEN:` is confirmed as implementer's-choice, and unmarked gaps were hunted.
 - The spec was threat-modeled and the track's security surface stated in one line (`none` is valid), the post-code audit's trigger.
 - Gaps are reported against the owning artifact.

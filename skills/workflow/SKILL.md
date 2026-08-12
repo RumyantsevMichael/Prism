@@ -100,6 +100,41 @@ Feature files specify executable behavior from requirements.
 When requirements, ADRs, or feature files conflict, stop and report the conflict to the user.
 Do not resolve it yourself.
 
+## Diagram artifacts
+
+PlantUML source files use the `.puml` extension and live beside the artifact that they support.
+Agents MUST read the `.puml` source and MUST NOT read rendered images.
+Rendered images are temporary human-review output and MUST NOT enter version control.
+Markdown artifacts link to each related `.puml` file with a relative Markdown link.
+The local Prism review server discovers diagrams from these links and renders them in the human review page.
+
+A replacement diagram owns only its graph-shaped enumeration.
+The surrounding prose still owns rationale, consequences, risks, conditions, and open questions.
+Do not repeat diagram-owned edges, transitions, or order as a prose list or table.
+If prose and a diagram conflict, stop and reconcile both sources.
+
+Use these diagram rules:
+
+- Use a C4 Context or Container diagram to complement an ADR only when relationship count or review risk justifies it.
+- Use a state diagram to replace an ADR lifecycle transition list.
+- Use a dependency graph for roadmap initiatives and initiative-plan tracks.
+- Use an activity diagram for build order.
+- Use a component diagram for a build-plan reuse map.
+- Use a class diagram to complement real contract interfaces when type relationships need visual review.
+- Use an object diagram only when one concrete object graph resolves an important ambiguity.
+- Use a sequence diagram to complement a handoff when call order across a plug point affects correctness.
+- Do not add diagrams to requirements or Gherkin feature files.
+
+Use the Prism review server for human review when its tools are available.
+Call `present_review` at a visual-review gate and pass the project-relative artifact path.
+The tool is for the human and returns no rendered image to the agent.
+If the tool is unavailable, present the source artifacts and continue with the normal gate.
+
+Existing projects can contain inline Mermaid diagrams from older Prism versions.
+Convert a Mermaid diagram when its owning workflow next edits that artifact.
+Verify every node, edge, label, and state before removing the Mermaid block.
+Do not migrate unrelated artifacts without an explicit request.
+
 ## Cross-session lifecycles
 
 The **rule** is fixed here.
