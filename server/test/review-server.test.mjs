@@ -57,7 +57,15 @@ test("serves the browser runtime without an image endpoint", async (context) => 
   try {
     const page = await fetch(review.reviewUrl("docs/roadmap.md"));
     assert.match(page.headers.get("content-security-policy"), /wasm-unsafe-eval/);
-    assert.match(await page.text(), /viz-global\.js/);
+    const pageSource = await page.text();
+    assert.match(pageSource, /viz-global\.js/);
+    assert.match(pageSource, /id="artifact-filter"/);
+    assert.match(pageSource, /aria-live="polite"/);
+    const stylesheet = await (await fetch(`${review.baseUrl}/review.css`)).text();
+    assert.match(stylesheet, /prefers-reduced-motion/);
+    const client = await (await fetch(`${review.baseUrl}/review.js`)).text();
+    assert.match(client, /data-action="zoom-in"/);
+    assert.match(client, /PlantUML source copied/);
     const c4 = await fetch(`${review.baseUrl}/vendor/c4.min.js`);
     assert.equal(c4.status, 200);
     const image = await fetch(`${review.baseUrl}/render/svg?source=docs%2Froadmap.puml`);
