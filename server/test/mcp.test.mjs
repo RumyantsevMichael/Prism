@@ -72,18 +72,38 @@ async function initialize(mcp, capabilities = {}) {
   assert.equal(response.id, 1);
 }
 
+async function callTool(mcp, id, name, argumentsValue, threadId) {
+  const params = { name, arguments: argumentsValue };
+  if (threadId) {
+    params._meta = { "x-codex-turn-metadata": { thread_id: threadId } };
+  }
+  mcp.send({ id, method: "tools/call", params });
+  return mcp.next();
+}
+
+test("declares the project root and read-only artifact tools", async (context) => {
+  const pluginRoot = await projectFixture(context, "plugin-schema", "plugin-only.md");
+  const mcp = mcpProcess(context, pluginRoot);
+
+  await initialize(mcp);
+  mcp.send({ id: 2, method: "tools/list" });
+  const response = await mcp.next();
+  const tools = Object.fromEntries(response.result.tools.map((tool) => [tool.name, tool]));
+  assert.deepEqual(tools.list_reviewable_artifacts.inputSchema.required, ["projectRoot"]);
+  assert.equal(tools.list_reviewable_artifacts.annotations.readOnlyHint, true);
+  assert.equal(tools.get_review_url.annotations.readOnlyHint, true);
+});
+
 test("uses the consumer root provided by Claude Code", async (context) => {
   const pluginRoot = await projectFixture(context, "plugin", "plugin-only.md");
   const consumerRoot = await projectFixture(context, "consumer", "consumer-only.md");
   const mcp = mcpProcess(context, pluginRoot, consumerRoot);
 
   await initialize(mcp);
-  mcp.send({ id: 2, method: "tools/call", params: { name: "list_reviewable_artifacts", arguments: {} } });
-  const artifacts = await mcp.next();
+  const artifacts = await callTool(mcp, 2, "list_reviewable_artifacts", {});
   assert.deepEqual(artifacts.result.structuredContent.artifacts, ["docs/consumer-only.md"]);
 
-  mcp.send({ id: 3, method: "tools/call", params: { name: "get_review_url", arguments: { artifact: "docs/consumer-only.md" } } });
-  const review = await mcp.next();
+  const review = await callTool(mcp, 3, "get_review_url", { artifact: "docs/consumer-only.md" });
   const reviewUrl = new URL(review.result.structuredContent.url);
   const indexUrl = new URL(reviewUrl);
   indexUrl.pathname = indexUrl.pathname.replace(/\/review$/, "/api/index");
@@ -96,14 +116,37 @@ test("uses the consumer root provided by Claude Code", async (context) => {
   outsideUrl.pathname = outsideUrl.pathname.replace(/\/api\/index$/, "/api/artifact");
   outsideUrl.searchParams.set("path", "../outside.md");
   assert.equal((await fetch(outsideUrl)).status, 400);
+
+  const mismatched = await callTool(mcp, 4, "list_reviewable_artifacts", { projectRoot: pluginRoot });
+  assert.match(mismatched.error.message, /does not match the host project root/);
 });
 
-test("uses the Codex MCP process directory as the consumer root", async (context) => {
-  const consumerRoot = await projectFixture(context, "codex-consumer", "codex-only.md");
-  const mcp = mcpProcess(context, consumerRoot);
+test("keeps Codex tasks bound to separate consumer roots", async (context) => {
+  const pluginRoot = await projectFixture(context, "codex-plugin", "plugin-only.md");
+  const firstRoot = await projectFixture(context, "first-consumer", "first-only.md");
+  const secondRoot = await projectFixture(context, "second-consumer", "second-only.md");
+  const mcp = mcpProcess(context, pluginRoot);
 
   await initialize(mcp);
-  mcp.send({ id: 2, method: "tools/call", params: { name: "list_reviewable_artifacts", arguments: {} } });
-  const artifacts = await mcp.next();
-  assert.deepEqual(artifacts.result.structuredContent.artifacts, ["docs/codex-only.md"]);
+  const first = await callTool(mcp, 2, "list_reviewable_artifacts", { projectRoot: firstRoot }, "first-task");
+  assert.deepEqual(first.result.structuredContent.artifacts, ["docs/first-only.md"]);
+
+  const second = await callTool(mcp, 3, "list_reviewable_artifacts", { projectRoot: secondRoot }, "second-task");
+  assert.deepEqual(second.result.structuredContent.artifacts, ["docs/second-only.md"]);
+
+  const changed = await callTool(mcp, 4, "list_reviewable_artifacts", { projectRoot: secondRoot }, "first-task");
+  assert.equal(changed.error.code, -32603);
+  assert.match(changed.error.message, /already bound to project root/);
+});
+
+test("requires an absolute project root without a host root", async (context) => {
+  const pluginRoot = await projectFixture(context, "missing-root-plugin", "plugin-only.md");
+  const mcp = mcpProcess(context, pluginRoot);
+
+  await initialize(mcp);
+  const missing = await callTool(mcp, 2, "list_reviewable_artifacts", {}, "missing-root-task");
+  assert.match(missing.error.message, /projectRoot argument is required/);
+
+  const relative = await callTool(mcp, 3, "list_reviewable_artifacts", { projectRoot: "relative/project" }, "relative-root-task");
+  assert.match(relative.error.message, /must be an absolute path/);
 });
