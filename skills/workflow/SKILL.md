@@ -127,8 +127,9 @@ Use these diagram rules:
 
 Use the Prism review server for human review when its tools are available.
 Call `present_review` at a visual-review gate and pass the project-relative artifact path.
-The tool is for the human and returns no rendered image to the agent.
-If the tool is unavailable, present the source artifacts and continue with the normal gate.
+Open the returned URL in the host internal browser and make the page visible to the user.
+Inspect the rendered artifact before you continue.
+If the tool or browser is unavailable, present the source artifacts and continue with the normal gate.
 
 Existing projects can contain inline Mermaid diagrams from older Prism versions.
 Convert a Mermaid diagram when its owning workflow next edits that artifact.

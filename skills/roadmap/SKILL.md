@@ -143,5 +143,5 @@ A --> B : unblocks
 ## Gate
 
 Mode A: stop and present the re-banded roadmap, and wait for the user to accept before writing.
-When `present_review` is available, open the roadmap review page before the acceptance question.
+When `present_review` is available, open the returned URL in the host internal browser and inspect the roadmap page before asking for acceptance.
 Mode B: no gate, because the flip is bound to an event that already cleared one.

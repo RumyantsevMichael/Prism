@@ -24,9 +24,11 @@
 }
 
 body {
+  height: 100vh;
   margin: 0;
   background: var(--bg);
   color: var(--ink);
+  overflow: hidden;
 }
 
 button,
@@ -143,7 +145,8 @@ a {
 .app-shell {
   display: grid;
   grid-template-columns: 18.5rem minmax(0, 1fr);
-  min-height: calc(100vh - 4.25rem);
+  height: calc(100vh - 4.25rem);
+  min-height: 0;
 }
 
 .sidebar {
@@ -152,6 +155,7 @@ a {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   padding: 1.4rem 1rem 0.85rem;
 }
 
@@ -256,7 +260,8 @@ kbd {
   overflow: auto;
 }
 
-.artifact-list {
+.artifact-tree,
+.tree-children {
   display: grid;
   gap: 0.22rem;
   list-style: none;
@@ -264,26 +269,100 @@ kbd {
   padding: 0;
 }
 
-.artifact-list a {
+.tree-children {
+  border-left: 1px solid var(--line);
+  margin-left: 0.7rem;
+  padding-left: 0.55rem;
+}
+
+.tree-children[hidden] {
+  display: none;
+}
+
+.tree-folder,
+.tree-file {
+  min-width: 0;
+}
+
+.tree-folder-button,
+.tree-file a {
   align-items: center;
+  background: transparent;
+  border: 0;
   border-radius: 0.6rem;
   color: var(--ink-muted);
+  cursor: pointer;
   display: grid;
-  gap: 0.55rem;
+  gap: 0.45rem;
   grid-template-columns: auto minmax(0, 1fr) auto;
   padding: 0.62rem 0.65rem;
   text-decoration: none;
+  text-align: left;
   transition: background 120ms ease, color 120ms ease;
+  width: 100%;
 }
 
-.artifact-list a:hover {
+.tree-folder-button {
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+}
+
+.tree-folder-button:hover,
+.tree-file a:hover {
   background: var(--surface-soft);
   color: var(--ink);
 }
 
-.artifact-list a[aria-current="page"] {
+.tree-file a[aria-current="page"] {
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+
+.tree-chevron {
+  border-bottom: 0.28rem solid transparent;
+  border-left: 0.34rem solid var(--ink-muted);
+  border-top: 0.28rem solid transparent;
+  height: 0;
+  transition: transform 120ms ease;
+  width: 0;
+}
+
+.tree-folder[aria-expanded="true"] > .tree-folder-button .tree-chevron {
+  transform: rotate(90deg);
+}
+
+.folder-icon {
+  background: color-mix(in srgb, var(--mint) 18%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--mint) 35%, var(--line));
+  border-radius: 0.25rem;
+  height: 1.1rem;
+  position: relative;
+  width: 1.3rem;
+}
+
+.folder-icon::before {
+  background: inherit;
+  border: inherit;
+  border-bottom: 0;
+  border-radius: 0.2rem 0.2rem 0 0;
+  content: "";
+  height: 0.24rem;
+  left: 0.1rem;
+  position: absolute;
+  top: -0.28rem;
+  width: 0.52rem;
+}
+
+.tree-folder-name {
+  font-size: 0.78rem;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-folder-count {
+  color: var(--ink-muted);
+  font-size: 0.62rem;
 }
 
 .file-icon {
@@ -319,7 +398,7 @@ kbd {
   text-transform: uppercase;
 }
 
-.artifact-list a[aria-current="page"] .type-badge {
+.tree-file a[aria-current="page"] .type-badge {
   background: color-mix(in srgb, var(--accent) 14%, var(--surface));
   color: var(--accent-strong);
 }
@@ -355,6 +434,7 @@ kbd {
 }
 
 .workspace {
+  min-height: 0;
   min-width: 0;
   overflow: auto;
   padding: 2rem clamp(1.2rem, 3vw, 3.5rem) 4rem;
@@ -604,7 +684,8 @@ th {
 }
 
 .tool-button:focus-visible,
-.artifact-list a:focus-visible {
+.tree-folder-button:focus-visible,
+.tree-file a:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent);
   outline-offset: 2px;
 }
@@ -711,13 +792,14 @@ th {
   }
 
   .app-shell {
-    display: block;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 18rem) minmax(0, 1fr);
   }
 
   .sidebar {
     border-bottom: 1px solid var(--line);
     border-right: 0;
-    max-height: 18rem;
   }
 
   .sidebar-footer {

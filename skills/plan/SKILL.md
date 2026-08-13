@@ -218,7 +218,7 @@ T2 --> T3 : unblocks
 ## Gate
 
 Stop and present the plan.
-When `present_review` is available, open the spine review page before the acceptance question.
+When `present_review` is available, open the returned URL in the host internal browser and inspect `plan.md` and its dependency diagram before asking for acceptance.
 **Design no track yet.**
 Wait for the user to accept before any track enters `design`.
 Deliver that acceptance question, and any scoping fork the plan raises, per **"How to deliver the question"** in the `workflow` overview skill.

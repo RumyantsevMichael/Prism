@@ -10,6 +10,8 @@ const toast = document.getElementById("toast");
 let selectedPath = new URLSearchParams(location.search).get("artifact");
 let lastSnapshot = "";
 let toastTimer;
+let expandedFolders = new Set();
+const folderElements = new Map();
 
 function escapeHtml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -142,8 +144,11 @@ function configureDiagram(section, source) {
       setDiagramScale(section, 1);
     } else if (action === "source") {
       const sourcePanel = section.querySelector(".source-panel");
+      const sourceButton = event.target.closest("button");
       sourcePanel.hidden = !sourcePanel.hidden;
-      event.target.closest("button").setAttribute("aria-expanded", String(!sourcePanel.hidden));
+      sourceButton.setAttribute("aria-expanded", String(!sourcePanel.hidden));
+      sourceButton.setAttribute("aria-label", sourcePanel.hidden ? "Show source" : "Hide source");
+      sourceButton.textContent = sourcePanel.hidden ? "Show source" : "Hide source";
     } else if (action === "copy") {
       try {
         await navigator.clipboard.writeText(source);
@@ -185,7 +190,7 @@ function diagramCard(diagram) {
         <button class="tool-button" data-action="zoom-out" type="button" aria-label="Zoom out">−</button>
         <button class="tool-button" data-action="reset" data-scale-label type="button" aria-label="Reset zoom">100%</button>
         <button class="tool-button" data-action="zoom-in" type="button" aria-label="Zoom in">+</button>
-        <button class="tool-button" data-action="source" type="button" aria-label="Toggle source" aria-expanded="false">Source</button>
+        <button class="tool-button" data-action="source" type="button" aria-label="Show source" aria-expanded="false">Show source</button>
         <button class="tool-button" data-action="copy" type="button" aria-label="Copy PlantUML source">Copy</button>
       </div>
     </header>
@@ -202,14 +207,144 @@ function fileType(path) {
   return path.split(".").pop().toUpperCase();
 }
 
+function treeNode(name, path = "") {
+  return { name, path, folders: new Map(), files: [] };
+}
+
+function buildArtifactTree(paths) {
+  const root = treeNode("");
+  for (const path of paths) {
+    const parts = path.split("/");
+    let current = root;
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      const name = parts[index];
+      const folderPath = parts.slice(0, index + 1).join("/");
+      if (!current.folders.has(name)) {
+        current.folders.set(name, treeNode(name, folderPath));
+      }
+      current = current.folders.get(name);
+    }
+    current.files.push(path);
+  }
+  return root;
+}
+
+function countTreeArtifacts(node) {
+  return node.files.length + [...node.folders.values()].reduce((total, folder) => total + countTreeArtifacts(folder), 0);
+}
+
+function treeEntries(node) {
+  const folders = [...node.folders.values()].sort((left, right) => left.name.localeCompare(right.name));
+  const files = [...node.files].sort((left, right) => fileName(left).localeCompare(fileName(right)));
+  return { folders, files };
+}
+
+function folderItem(node) {
+  const item = document.createElement("li");
+  item.className = "tree-folder";
+  item.dataset.folderPath = node.path;
+  item.setAttribute("role", "treeitem");
+  item.setAttribute("aria-expanded", "false");
+
+  const button = document.createElement("button");
+  button.className = "tree-folder-button";
+  button.type = "button";
+  button.setAttribute("aria-expanded", "false");
+  button.setAttribute("aria-label", `Expand ${node.path}`);
+  button.innerHTML = `<span class="tree-chevron" aria-hidden="true"></span><span class="folder-icon" aria-hidden="true"></span><span class="tree-folder-name">${escapeHtml(node.name)}</span><span class="tree-folder-count">${countTreeArtifacts(node)}</span>`;
+  button.addEventListener("click", () => {
+    if (expandedFolders.has(node.path)) {
+      expandedFolders.delete(node.path);
+    } else {
+      expandedFolders.add(node.path);
+    }
+    updateTreeState();
+  });
+
+  const children = document.createElement("ul");
+  children.className = "tree-children";
+  children.setAttribute("role", "group");
+  renderTreeNode(node, children);
+  item.append(button, children);
+  folderElements.set(node.path, item);
+  return item;
+}
+
+function fileItem(path) {
+  const item = document.createElement("li");
+  item.className = "tree-file";
+  item.dataset.artifactPath = path;
+  item.setAttribute("role", "treeitem");
+
+  const link = document.createElement("a");
+  link.href = `./review?artifact=${encodeURIComponent(path)}`;
+  link.dataset.path = path;
+  link.title = path;
+  link.innerHTML = `<span class="file-icon" aria-hidden="true"></span><span class="file-name">${escapeHtml(fileName(path))}</span><span class="type-badge">${escapeHtml(fileType(path))}</span>`;
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    selectedPath = path;
+    history.replaceState(null, "", link.href);
+    lastSnapshot = "";
+    showArtifact(path);
+  });
+  item.appendChild(link);
+  return item;
+}
+
+function renderTreeNode(node, target) {
+  const { folders, files } = treeEntries(node);
+  for (const folder of folders) {
+    target.appendChild(folderItem(folder));
+  }
+  for (const path of files) {
+    target.appendChild(fileItem(path));
+  }
+}
+
+function expandArtifactParents(path) {
+  const parts = path.split("/");
+  for (let index = 1; index < parts.length; index += 1) {
+    expandedFolders.add(parts.slice(0, index).join("/"));
+  }
+}
+
+function updateTreeState() {
+  const query = artifactFilter.value.trim().toLowerCase();
+  let visible = 0;
+  for (const item of artifacts.querySelectorAll("[data-artifact-path]")) {
+    const matches = item.dataset.artifactPath.toLowerCase().includes(query);
+    item.hidden = !matches;
+    visible += matches ? 1 : 0;
+  }
+
+  const folders = [...folderElements.entries()].reverse();
+  for (const [path, item] of folders) {
+    const hasVisibleArtifact = [...item.querySelectorAll("[data-artifact-path]")].some((file) => !file.hidden);
+    const expanded = query ? hasVisibleArtifact : expandedFolders.has(path);
+    const button = item.querySelector(":scope > .tree-folder-button");
+    const children = item.querySelector(":scope > .tree-children");
+    item.hidden = query ? !hasVisibleArtifact : false;
+    item.setAttribute("aria-expanded", String(expanded));
+    button.setAttribute("aria-expanded", String(expanded));
+    button.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${path}`);
+    children.hidden = !expanded;
+  }
+
+  artifactCount.textContent = String(visible);
+  emptyFilter.hidden = visible !== 0;
+}
+
 function selectNavigation(path) {
-  for (const link of artifacts.querySelectorAll("a")) {
+  expandArtifactParents(path);
+  for (const link of artifacts.querySelectorAll("a[data-path]")) {
     if (link.dataset.path === path) {
       link.setAttribute("aria-current", "page");
     } else {
       link.removeAttribute("aria-current");
     }
   }
+  updateTreeState();
 }
 
 async function showArtifact(path) {
@@ -227,6 +362,9 @@ async function showArtifact(path) {
   selectNavigation(path);
   const diagramLabel = `${data.diagrams.length} diagram${data.diagrams.length === 1 ? "" : "s"}`;
   const refreshed = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const documentCard = data.path.toLowerCase().endsWith(".puml")
+    ? ""
+    : `<section class="document-card"><div class="document-content">${renderText(data.path, data.content)}</div></section>`;
   artifact.innerHTML = `
     <header class="artifact-header">
       <div>
@@ -240,7 +378,7 @@ async function showArtifact(path) {
         <span class="meta-pill live" title="Last refreshed at ${refreshed}">Live</span>
       </div>
     </header>
-    <section class="document-card"><div class="document-content">${renderText(data.path, data.content)}</div></section>`;
+    ${documentCard}`;
   for (const diagram of data.diagrams) {
     const section = diagramCard(diagram);
     artifact.appendChild(section);
@@ -248,34 +386,8 @@ async function showArtifact(path) {
   }
 }
 
-function addArtifactLink(path) {
-  const item = document.createElement("li");
-  const link = document.createElement("a");
-  link.href = `./review?artifact=${encodeURIComponent(path)}`;
-  link.dataset.path = path;
-  link.title = path;
-  link.innerHTML = `<span class="file-icon" aria-hidden="true"></span><span class="file-name">${escapeHtml(fileName(path))}</span><span class="type-badge">${escapeHtml(fileType(path))}</span>`;
-  link.addEventListener("click", (event) => {
-    event.preventDefault();
-    selectedPath = path;
-    history.replaceState(null, "", link.href);
-    lastSnapshot = "";
-    showArtifact(path);
-  });
-  item.appendChild(link);
-  artifacts.appendChild(item);
-}
-
 function filterArtifacts() {
-  const query = artifactFilter.value.trim().toLowerCase();
-  let visible = 0;
-  for (const item of artifacts.children) {
-    const matches = item.querySelector("a").dataset.path.toLowerCase().includes(query);
-    item.hidden = !matches;
-    visible += matches ? 1 : 0;
-  }
-  artifactCount.textContent = String(visible);
-  emptyFilter.hidden = visible !== 0;
+  updateTreeState();
 }
 
 async function initialize() {
@@ -286,7 +398,12 @@ async function initialize() {
   const data = await response.json();
   project.textContent = data.projectRoot;
   artifactCount.textContent = String(data.artifacts.length);
-  data.artifacts.forEach(addArtifactLink);
+  const tree = buildArtifactTree(data.artifacts);
+  expandedFolders = new Set([...tree.folders.values()].map((folder) => folder.path));
+  folderElements.clear();
+  artifacts.replaceChildren();
+  renderTreeNode(tree, artifacts);
+  updateTreeState();
   artifactFilter.addEventListener("input", filterArtifacts);
   document.addEventListener("keydown", (event) => {
     if (event.key === "/" && document.activeElement !== artifactFilter) {
