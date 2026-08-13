@@ -1,6 +1,6 @@
 ---
 name: write-user-docs
-description: "Write or update user-facing docs in the project's user guide. Use when a change alters commands, configuration, ports, defaults, or capabilities."
+description: "Update user guidance when commands, configuration, defaults, or capabilities change."
 ---
 
 # Write user docs

@@ -1,6 +1,6 @@
 ---
 name: workflow
-description: "Explain Prism's workflow map, context boundaries, artifact lifecycles, and durable rules. Use with workflow skills or to understand how they connect."
+description: "Explain Prism workflow stages, context boundaries, artifact lifecycles, and rules."
 ---
 
 # The agentic engineering workflow
@@ -27,9 +27,9 @@ Each rung is a skill, and each runs in **its own fresh context**:
 - **Priority** (`roadmap`): order whole initiatives Now/Next/Later.
   This is the only priority call and the only durable planning surface.
 - **Shaping** (`ideate`, optional): brainstorm a shapeless idea into Approved EARS requirements, or kill it.
-- **Build order** (`plan`): decompose a multi-track requirement set into dependency-ordered tracks.
-- **Spec** (`design`): per track, requirements + ADRs + technical design → contracts + build plan + feature files → handoff.
-- **Build** (`implement`): read the validated specification cold, write tests first, implement to green, verify, and audit.
+- **Build order** (`plan`): decompose a multi-track requirement set into dependency-ordered design tracks.
+- **Spec** (`design`): per track, requirements + ADRs + technical design → contracts + implementation-task graph + feature files → handoff.
+- **Build** (`implement`): control the validated task graph, build each task through a fresh worker, verify the complete track, and audit it.
 
 `orchestrate` chains plan → design → implement across tracks through fresh child-agent contexts.
 The `write-*` skills run inside the drafting work that `design` coordinates.
@@ -55,6 +55,19 @@ Push read-heavy and parallel work to child agents when the host provides them.
 Pass child agents paths and a scoped task, never inlined contents.
 Use a fresh context when independence or a clean slate is required.
 Keep inline the load-bearing reasoning and anything interactive with the user.
+
+## Three decomposition levels
+
+Decompose work at the level where the necessary information exists.
+
+- `ideate` separates product capabilities that can change, ship, or be superseded independently.
+- `plan` separates coherent technical design units and orders them by dependency.
+- `design` separates one validated design into dependency-ordered implementation tasks.
+
+A track is one coherent design unit, not one implementation session.
+Implementation size alone never creates a new track.
+Split a track only when technical analysis finds independent design capabilities or incompatible architectural boundaries.
+The build plan can contain many implementation tasks and many worker contexts while the track remains one lifecycle unit.
 
 **Ground conclusions in evidence, not assumption, and do not give up early.**
 Before you declare something impossible, required, blocked, or "gated" (any negative or limiting claim), prove it: reproduce it, or cite the authoritative doc that says so.
@@ -149,11 +162,11 @@ The mechanics live in the named skill.
   Requirements do not gain an implementation status.
   Mechanics live in `write-requirements`.
 - **ADR status** (Proposed → Accepted): created `Proposed` by a planning or design session.
-  **Only the implementation session** flips it `Accepted`, at the user's confirmation of correctness.
+  **Only the implementation controller** flips it `Accepted`, at the user's confirmation of track correctness.
   The flip is a file edit and does not wait for a commit.
   Acceptance means the decision survived being built.
   Mechanics in `write-adr`.
-- **Track status** (not-started → in-progress → done, or blocked/deferred): `design` flips a track `in-progress` at its start, and `implement` flips it `done` at landing, in both the spine DAG and the track file.
+- **Track status** (not-started → in-progress → done, or blocked/deferred): `design` sets `in-progress`, and the controller sets `done` after final review.
   Mechanics in `plan`, `design`, and `implement`.
 - **Plan folders** are scratch with a gated end of life: created by `plan`, deleted only when the last track lands.
   Deletion sits behind the **graduate-before-delete** gate.

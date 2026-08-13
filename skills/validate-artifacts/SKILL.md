@@ -1,6 +1,6 @@
 ---
 name: validate-artifacts
-description: "Validate a track specification by testing contracts and invariants for gaps. Use during design validation or as a manual isolated task."
+description: "Validate one specification lane during an isolated design review."
 argument-hint: '[initiative/track]'
 context: fork
 background: false
@@ -14,12 +14,12 @@ Host metadata can enforce isolation, but the caller must still guarantee an isol
 Use an isolated child context or a separate fresh user-started task.
 Read everything you need from the files.
 
-The design validation loop invokes this skill on the drafted bundle.
-Design fixes every finding and invokes this skill again until a run reports no gaps.
-Each run must use a fresh isolated reader.
+The design validation wave invokes this skill once per focused lane against one unchanged bundle.
+Each lane must use a fresh isolated reader.
+The design session combines all lane reports before it edits any artifact.
 Implementation does not repeat this pass.
 
-It is not implementation, and it is not the post-code checks.
+It is not implementation, and it is not the final code review.
 Keep the three distinct:
 
 - **This pass** validates the *spec*, before code.
@@ -38,58 +38,81 @@ Then read the Approved requirement files that the track cites.
 They are the source obligations that every downstream artifact must satisfy.
 Read the track file and recorded plan notes for scope and orientation only.
 
+## Select one validation lane
+
+The caller assigns exactly one lane:
+
+1. **Obligations and contracts** checks requirements, behavior, links, names, and contract implementability.
+2. **Architecture and cutover** checks ADR consistency, migration order, public surfaces, and replacement boundaries.
+3. **Security and containment** checks trust boundaries, attacker paths, failure behavior, privilege, and isolation.
+4. **Delivery feasibility** checks integration dependencies, UI obligations, operations, task dependencies, write surfaces, and independently testable completion.
+
+Read every authoritative artifact needed for the assigned lane.
+Do not claim that the other lanes passed.
+Report a cross-lane dependency when your finding also affects another lane.
+
 ---
 
 ## What to do
 
-Work through the artifacts adversarially, not approvingly.
+Work through the assigned lane adversarially, not approvingly.
 Your goal is to find the gap the design session is too close to see.
 
-1. **Implement each contract on paper.** For every interface and seam in the contracts file, ask: could I actually build this with what the spec gives me?
-   Does the installer receive what it needs to place its payload?
-   Does the filter get the input it filters on?
-   A contract you cannot satisfy is under-specified.
-2. **Try to falsify each requirement and break each invariant.**
-   Use each active requirement to find a missing state, actor, boundary, failure, or measurable condition.
-   Take each ADR MUST/MUST NOT and look for a path, input, or ordering that violates it.
-   If you find one, either the invariant is wrong (feed back to the ADR) or the design admits a hole.
-3. **Check the artifacts against the Approved requirements.**
-   Trace every active requirement to an ADR, contract, feature Rule, build-plan obligation, or justified non-executable check.
-   Preserve each requirement's meaning without adding or removing an obligation.
-   Verify concrete surface details letter-for-letter: names, keywords, formats, commands, and error strings.
-   A renamed keyword or an invented capability is a real defect, not a style choice.
-   Reject a Draft requirement file as an authoritative input.
-   Check every requirement link and explicit anchor.
-4. **Check the artifacts agree.**
-   Do the ADRs serve the requirements without contradicting them?
-   Do the contracts satisfy the ADRs and requirements?
-   Do the feature files describe behavior the contracts can actually express?
-   Does the build plan build what the contracts declare?
-   Disagreement between artifacts is a real defect, including two artifacts that name the same thing differently.
-   Read each linked `.puml` source and check it against its owning prose or interface artifact.
-   Never inspect a rendered image.
-   Confirm that no prose table or list duplicates diagram-owned relationships, transitions, or order.
-5. **Hunt under-specification.** Every `// OPEN:` in the contracts is a known gap, so confirm each is genuinely the implementer's call and not a missing decision.
-   Then look for the *unmarked* gaps: a field whose meaning is ambiguous, a failure mode no artifact addresses, or a feature example that cannot be turned into a clean test.
-6. **Threat-model the spec.** Read it as an attacker, not a builder.
-   What is the track's **security surface**, meaning does it touch secrets, the network, privilege or isolation boundaries, untrusted input, or IPC?
-   For each surface, look for the hole the spec leaves open: a secret with no defined at-rest path, a trust boundary the contracts do not enforce, an input no invariant constrains, a capability granted wider than the feature needs.
-   A security gap is a spec gap.
-   Route a missing product obligation to the requirement file and an architectural invariant to the ADR.
-   **Name the surface explicitly** (`security surface: none` is a valid finding).
-   The implementation session's post-code security audit fires only when it is non-empty, so this determination is load-bearing.
+For the **obligations and contracts** lane:
+
+1. Implement each interface and seam on paper.
+2. Trace every active requirement to its contract, feature Rule, task obligation, or justified non-executable check.
+3. Try to falsify each requirement through a missing state, actor, boundary, failure, or measurable condition.
+4. Check names, keywords, formats, commands, error strings, requirement links, and explicit anchors exactly.
+5. Reject Draft requirements and invented capabilities as authoritative inputs.
+6. Confirm that each `// OPEN:` seam is a local implementation choice.
+7. Find unmarked shape gaps and feature examples that cannot become clear tests.
+
+For the **architecture and cutover** lane:
+
+1. Try to violate each ADR invariant through a path, input, or order.
+2. Check that contracts and feature behavior preserve every applicable invariant.
+3. Check migration order, compatibility periods, public cutover, rollback, and removal boundaries.
+4. Check that all artifacts use one name for each public surface.
+5. Read each needed `.puml` source and compare it with its owning artifact.
+6. Never inspect a rendered diagram.
+7. Reject a prose table or list that duplicates diagram-owned relationships or order.
+
+For the **security and containment** lane:
+
+1. Identify secrets, network access, privilege, isolation, untrusted input, and IPC.
+2. Trace attacker-controlled data to each sensitive sink.
+3. Check authorization, least privilege, failure containment, cleanup, and recovery behavior.
+4. Find trust rules that contracts or invariants do not enforce.
+5. Route a missing product obligation to its requirement file.
+6. Route a missing architectural invariant to its ADR.
+7. State the security surface explicitly, including `security surface: none`.
+
+For the **delivery feasibility** lane:
+
+1. Check every integration dependency, UI obligation, operational prerequisite, generated output, and migration.
+2. Check that each task has one independently testable deliverable and an exact completion condition.
+3. Check every task dependency, consumed interface, produced interface, write surface, test, and verification command.
+4. Confirm that the task graph covers the complete design without changing the specification.
+5. Reject an eligible parallel frontier when tasks share files, interfaces, generated outputs, migrations, or lock files.
+6. Report an implementation-size problem as a task split, not a track split.
 
 ## What to produce
 
-A list of gaps, each tied to its owning requirement, ADR, or specification artifact, with enough detail for the design session to act on.
-Also provide one line that states the track's security surface for the post-code audit gate.
+Name the assigned lane first.
+List each gap against its owning requirement, ADR, or specification artifact.
+Give the design session enough detail to act on each gap.
+Classify each gap as `editorial`, `actionable`, or `structural`.
+Use `structural` only for an independent design capability, an incompatible architectural boundary, a missing prerequisite, or an impossible task graph.
+State each affected adjacent lane.
+The security lane also states the track's security surface for the final code review.
 **Report the findings and stop.**
 Do not resolve gaps, recommend resolutions, or proceed past them.
 Clarifying the specification is the design task's responsibility.
 The design task updates the owning artifact while its context is still available.
 Your job here is to find the gap, not to fill it.
 
-When the artifacts hold up, say so plainly and return the clean result to design.
+When the assigned lane holds up, say so plainly and return the clean lane result to design.
 The point is a real attempt to break them, not a rubber stamp.
 But a spec that survives a genuine attempt is cleared to build.
 
@@ -97,15 +120,9 @@ But a spec that survives a genuine attempt is cleared to build.
 
 ## Quality checks before finishing
 
-- Every contract was checked for "can I implement this with what's given?"
-- Every active requirement was checked for a way to falsify it.
-- Every ADR invariant was checked for a way to violate it.
-- Every Approved requirement was traced without a dropped obligation or invented capability.
-- Every requirement link and explicit anchor was checked.
-- Cross-artifact agreement between requirements, ADRs, contracts, feature files, and build plans was verified.
-- Every linked PlantUML source was checked without reading a rendered image.
-- No rendered diagram image or duplicate graph enumeration was found.
-- Each `// OPEN:` is confirmed as implementer's-choice, and unmarked gaps were hunted.
-- The spec was threat-modeled and the track's security surface stated in one line (`none` is valid), the post-code audit's trigger.
-- Gaps are reported against the owning artifact.
+- Every check that belongs to the assigned lane was completed.
+- Every gap names its owner, classification, and adjacent lanes.
+- Every linked PlantUML source needed for the lane was checked without reading a rendered image.
+- No conclusion claims coverage from an unassigned lane.
+- The security lane states the security surface in one line, and `none` is valid.
 - Wrong product obligations route to `write-requirements`, and wrong architectural invariants route to the ADR.

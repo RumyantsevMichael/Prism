@@ -1,6 +1,6 @@
 ---
 name: ideate
-description: "Shape a raw idea into Approved EARS requirements by challenging it and fitting it into the product. Use before plan or design."
+description: "Shape a raw idea into Approved EARS requirements before planning or design."
 disable-model-invocation: true
 argument-hint: '[idea]'
 ---
@@ -82,6 +82,7 @@ Do not group by technical component, team ownership, or expected implementation 
 Use one file when a reader can understand the capability as one product obligation set.
 Use several files when the capabilities can change, ship, or be superseded independently.
 Link related requirements across files with direct Markdown links.
+Leave technical subsystem and implementation-task boundaries to `plan` and `design`.
 
 ## 5. Author and review the files
 

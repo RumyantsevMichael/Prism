@@ -1,6 +1,6 @@
 ---
 name: write-contracts
-description: "Author or update track contracts from requirements and ADRs: boundary interfaces and types without implementations. Use before implementation."
+description: "Define implementation-free boundary contracts from requirements and ADRs."
 argument-hint: '[initiative/track]'
 ---
 

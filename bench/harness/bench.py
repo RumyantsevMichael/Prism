@@ -54,14 +54,14 @@ When this session's work is finished, end your message with the exact line:
 
 DESIGN_PROMPT = """Read BRIEF.md at the repository root. It is the product request for {stage_intro}.
 Run the prism design workflow for it now: {invocation}.
-Produce the full spec: ADR, contracts, build plan, feature files, and the handoff under the plans directory.
+Produce the full spec: ADR, contracts, a dependency-ordered implementation-task graph, feature files, and the controller handoff under the plans directory.
 The product owner is available throughout: interview them about requirements the request leaves open, and present the finished artifacts for acceptance.
 Write no implementation code in this session.
 {rules}"""
 
 IMPLEMENT_PROMPT = """This repository contains a spec that an earlier design session produced under docs/plans/{slug}/.
-Run the prism implementation workflow now: {invocation}.
-Follow the skill fully: read the validated spec cold, write tests first, implement to green, verify, and audit.
+Run the prism implementation controller now: {invocation}.
+Follow the skill fully: read the validated spec cold, execute every task, integrate to green, verify, and run the final review.
 If you find a spec gap, report it as a question: the product owner will answer or delegate the decision to you.
 Finish only when the deliverable in BRIEF.md is complete and your own tests pass.
 {rules}"""

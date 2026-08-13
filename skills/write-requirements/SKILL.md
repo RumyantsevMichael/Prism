@@ -1,6 +1,6 @@
 ---
 name: write-requirements
-description: "Write, review, or revise durable EARS requirement files. Use when capturing product intent in the requirements directory before planning or design."
+description: "Create or revise EARS requirements for product intent before planning or design."
 ---
 
 # Write requirements

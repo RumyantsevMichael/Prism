@@ -1,13 +1,13 @@
 ---
 name: write-handoff
-description: "Author a track's implementation handoff in the plans directory: authoritative inputs, locked constraints, and execution profile. Use when wrapping up a design task."
+description: "Prepare a validated track for its implementation controller."
 argument-hint: '[initiative/track]'
 ---
 
 # Write handoff
 
-The handoff is the **prompt that starts implementation**.
-It hands a validated specification to a fresh implementation context with no design conversation history.
+The handoff is the **prompt that starts the implementation controller**.
+It hands a validated specification and task graph to a fresh controller with no design conversation history.
 It must identify the authoritative artifacts, locked constraints, and starting procedure.
 One of three prep-bundle artifacts under the plans directory (default `docs/plans/<initiative>/<track>/`).
 
@@ -22,8 +22,8 @@ It does not restate them.
 Its job is precedence, scope, and the non-negotiables, not a re-derivation of the design.
 
 The handoff is written at the **end of the design task**, before the user-acceptance gate.
-The design validation loop has already validated these artifacts in isolated contexts.
-The fresh implementation context reads them cold and reports any remaining gap.
+The focused validation waves already checked these artifacts in isolated contexts.
+The fresh implementation controller reads them cold and reports any remaining gap.
 
 ---
 
@@ -48,7 +48,7 @@ Read the remaining inputs in this order:
 1. `<requirements-dir>/<...>.md` - Approved product obligations
 2. `<adr-dir>/<...>` - architectural decisions and invariants
 3. `<plans-dir>/<initiative>/<track>/contracts.<ext>` - the shapes
-4. `<plans-dir>/<initiative>/<track>/build-plan.md` - build order and reuse map
+4. `<plans-dir>/<initiative>/<track>/build-plan.md` - task graph and reuse map
 5. `<features-dir>/<...>.feature` - executable behavior
 6. `<plans-dir>/<initiative>/plan.md` + `<track>.md` - the track's place in the initiative, as scratch orientation only
 7. The project glossary - vocabulary
@@ -59,7 +59,7 @@ What is in, and explicitly what is out (deferred / reserved seams).
 
 ## Locked design constraints
 
-The immutable facts the implementer must not re-derive - each a single bullet,
+The immutable facts the controller and workers must not re-derive - each a single bullet,
 each citing its ADR. These prevent design drift mid-implementation.
 
 ## Process
@@ -68,11 +68,14 @@ each citing its ADR. These prevent design drift mid-implementation.
   the file types being edited, so check whether they already apply before going
   looking for them.
 - Reuse / mirror existing patterns named in the build plan - do not reinvent.
-- The spec arrives pre-validated by the design session's validation loop.
+- The spec arrives pre-validated by the design session's focused validation waves.
   Do not repeat that pass.
   Report any remaining gap and wait for clarification.
   Do not self-resolve a gap or continue past it.
-- Tests first (acceptance + integration), then implement to green.
+- Create or resume `execution-ledger.md` beside this handoff.
+- Compute task frontiers from the build plan and dispatch fresh workers.
+- Use isolated workspaces for safe parallel tasks and sequential execution otherwise.
+- Tests first inside each task, then implement to green.
 - Cite requirements for obligations and ADRs for decisions.
 - Never cite plan tracks in durable artifacts.
 - Do not resolve a requirements, ADR, or feature conflict yourself.
@@ -85,10 +88,12 @@ each citing its ADR. These prevent design drift mid-implementation.
 
 ## Suggested order
 
-Read the inputs cold → report any spec gap you hit and wait for clarification, do
-not self-resolve → propose your build sequence and your `// OPEN:` resolutions,
-confirm with the user → record the resolutions in the contracts → implement in the
-build plan's order.
+1. Read the inputs cold.
+2. Report any specification gap.
+3. Create or resume the execution ledger.
+4. Compute the eligible task frontier.
+5. Run and review each task.
+6. Run the whole-track review and verification.
 
 ## Critical flow
 
@@ -99,11 +104,11 @@ Omit this section when contracts and the build plan already make the interaction
 
 ## Security surface
 
-<the surface design's validation loop determined: secrets, network,
+<the surface design's validation waves determined: secrets, network,
 privilege/isolation, untrusted input, IPC, or `none` - this gates the
-implementation task's post-code security audit>
+controller's final security audit>
 
-## Execution profile
+## Controller execution profile
 
 - Complexity: standard | high
 - Context: fresh
@@ -111,6 +116,7 @@ implementation task's post-code security audit>
 - Focus: <specific risk areas>
 
 Explain why this profile fits and where implementation must slow down.
+State which task frontiers can run concurrently and which shared surfaces force sequential work.
 ```
 
 ---
@@ -119,12 +125,12 @@ Explain why this profile fits and where implementation must slow down.
 
 - **State input precedence and the conflict rule up front.** This is the single most important thing the handoff does, and it prevents drift.
 - **Locked constraints are restated facts.** Link each product obligation to a requirement and each design constraint to an ADR.
-- **Recommend an execution profile.**
+- **Recommend a controller execution profile.**
   The handoff is a context boundary, so record the complexity, isolation, parallelism, and focus here.
-- **The spec ships pre-validated.** Design looped `validate-artifacts` until a run reported no gaps.
+- **The spec ships pre-validated.** Design completed its focused validation waves and reached a clean final verification.
   A gap the implementer still hits goes back to design, never self-resolved.
-- **State the security surface.** Design's validation loop determined it, and the implementer's post-code audit fires on it, so the handoff must carry it.
-- **Include a collaborative gate.** Have the implementer propose the build order and `// OPEN:` resolutions and confirm *before* coding.
+- **State the security surface.** The focused validation waves determine it, and the controller uses it in the final review.
+- **Do not add task gates.** The controller resolves local `// OPEN:` choices within locked constraints and records them in the owning contract.
 - **Show a critical plug-point flow when needed.** Use a linked PlantUML sequence diagram without a duplicate prose call list.
 - **Keep it compact.** Point, do not restate.
   If you are copying design rationale in, it belongs in the ADR.
@@ -138,7 +144,9 @@ Explain why this profile fits and where implementation must slow down.
 - Every locked product obligation links to a requirement.
 - Every locked design constraint cites an ADR.
 - No locked constraint references a plan track.
-- A justified execution profile is present.
+- A justified controller execution profile is present.
+- The handoff starts one controller for the complete task graph.
+- The handoff names the execution ledger and its recovery purpose.
 - It points at the artifacts rather than restating them.
 - A critical plug-point flow has a linked sequence diagram when call order affects correctness.
 - No rendered diagram image is present.

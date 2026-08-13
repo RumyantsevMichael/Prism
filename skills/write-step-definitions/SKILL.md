@@ -1,6 +1,6 @@
 ---
 name: write-step-definitions
-description: "Write or update BDD acceptance step definitions wiring Gherkin feature files to executable assertions. Use when implementing a feature file or connecting Gherkin steps to test code."
+description: "Connect Gherkin feature steps to executable assertions during implementation."
 ---
 
 # Write Step Definitions

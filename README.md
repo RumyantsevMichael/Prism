@@ -62,16 +62,22 @@ Each main stage uses a fresh context so the next stage must understand the saved
 |---|---|---|
 | Prioritize | `prism:roadmap` | An ordered Now, Next, and Later roadmap |
 | Shape | `prism:ideate` | Approved EARS requirement files, or a decision to stop |
-| Plan | `prism:plan` | Dependency-ordered implementation tracks |
-| Design | `prism:design` | A technical design, contracts, feature files, build plan, and handoff |
-| Implement | `prism:implement` | Tested code that follows the approved specification |
+| Plan | `prism:plan` | Dependency-ordered design tracks |
+| Design | `prism:design` | A validated design and dependency-ordered implementation-task graph |
+| Implement | `prism:implement` | A controller that builds, integrates, verifies, and reviews every track task |
 
 `prism:orchestrate` connects the Plan, Design, and Implement stages through fresh child-agent contexts.
 It can run independent tracks in parallel when the host provides isolated workspaces.
 Otherwise, it runs each track in sequence.
 
+One track is one coherent technical design unit.
+A track can contain many independently testable implementation tasks.
+The implementation controller runs safe task frontiers concurrently in isolated workspaces.
+It keeps overlapping task work sequential and uses one correctness gate for the complete track.
+
 The `write-*` skills create individual requirement and specification files.
-The `validate-artifacts` skill reviews a specification from an isolated context before implementation starts.
+The `validate-artifacts` skill reviews one focused specification lane from an isolated context.
+Design combines four lanes through at most three validation waves before implementation starts.
 
 ## Review artifacts visually
 

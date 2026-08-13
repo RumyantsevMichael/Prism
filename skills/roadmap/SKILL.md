@@ -1,6 +1,6 @@
 ---
 name: roadmap
-description: "Maintain the priority-ordered roadmap of initiatives between strategy and plan. Use to reprioritize bands or update an initiative state."
+description: "Prioritize initiatives and update their roadmap states."
 argument-hint: '[initiative]'
 ---
 

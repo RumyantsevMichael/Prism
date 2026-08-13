@@ -1,6 +1,6 @@
 ---
 name: write-feature
-description: "Write or update a Gherkin feature file in the project's feature directory. Use when specifying observable behavior as executable scenarios or Rule blocks."
+description: "Specify observable behavior as Gherkin scenarios and Rule blocks."
 ---
 
 # Write Feature File

@@ -1,6 +1,6 @@
 ---
 name: workflow-init
-description: "Initialize Prism, migrate legacy configuration, and scaffold documentation paths. Use once in a project before other workflow skills."
+description: "Initialize Prism configuration and documentation paths for a project."
 disable-model-invocation: true
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Run an initiative through plan, design, and implementation in fresh child-agent contexts. Use for multi-track work with all human gates active."
+description: "Run a multi-track initiative through Prism with all user gates active."
 disable-model-invocation: true
 argument-hint: '[initiative]'
 ---
@@ -49,7 +49,7 @@ This is a per-run opt-in and does not change defaults for another task.
   - **Broad**: also resolve a tradeoff or scope call itself when confident it fits the initiative's already-settled direction, and report what it decided (and why) instead of blocking on it.
     Still hard-escalates anything that needs a requirement change or new ADR, anything outside its track, and any durable-document conflict.
 
-Neither level touches the terminal **Gates**: `plan` acceptance, `design`'s right-size check, and `implement`'s correctness confirmation always stop and wait for the user.
+Neither level touches the terminal **Gates**: `plan` acceptance, `design`'s coherence check, and `implement`'s track correctness confirmation always stop and wait for the user.
 This dial governs in-flight judgment calls only, never those structural checkpoints.
 
 - **Commit / push**: two orthogonal dials, both **off** by default:
@@ -155,9 +155,9 @@ Within-skill parallelism already happens inside `design` and `plan` when the hos
 Start a child agent named `design-<track>` and instruct it to run `design` for `<initiative>/<track>`.
 Give it the decision-autonomy instruction and an execution profile.
 In manual mode, present the same instruction and artifact paths as a fresh-task handoff instead.
-Run the phase loop until it reaches its Gate with artifacts presented and the right-size check stated.
+Run the phase loop until it reaches its Gate with artifacts presented and the design-coherence check stated.
 
-Present the artifacts and the right-size check to the user yourself.
+Present the artifacts and the design-coherence check to the user yourself.
 **Wait for explicit acceptance.**
 `design`'s gate is not yours to wave through at any autonomy level.
 Note the execution profile that its handoff recommends for implementation.
@@ -166,9 +166,10 @@ Carry it forward verbatim in 4b rather than guessing fresh.
 ### 4b. Implement
 
 On acceptance, start a **new** child agent named `implement-<track>` with no design conversation history.
-Instruct it to run `implement` for the same track with the handoff's execution profile.
+Instruct it to run the implementation controller for the same track with the handoff's controller execution profile.
 In manual mode, present the same instruction and handoff path for a fresh user-started task.
-Same autonomy-scoped stop-and-return instruction for `// OPEN:` seam confirmations and anything else `implement` calls out as needing the user.
+The controller resolves local implementation choices without a user gate and records them in its execution ledger.
+It escalates only requirement, ADR, observable behavior, scope, or track-boundary decisions.
 
 **Specification gaps route to their owning workflow, never to you or implementation itself.**
 If implementation reports a requirement gap, route it to `write-requirements` for user approval.
@@ -181,12 +182,14 @@ Run the phase loop until `implement` reaches its Gate.
 
 ### 4c. Track gate
 
-Relay the gate's **gated vs. unfinished** classification exactly as the child agent stated it.
+Relay the controller's **gated vs. unfinished** classification exactly as it stated it.
 Do not soften, relabel, or decide a re-scope yourself, at any autonomy level.
-Sizing and scope calls belong to the user here exactly as in a manual session.
+Scope changes belong to the user here exactly as in a manual session.
+The controller handles task sizing inside the accepted track specification.
 
 - **Unfinished work remains** → stop the chain for this track.
-  Surface it plainly and wait, and do not auto-respawn or auto-rescope.
+  Surface it plainly and wait.
+  Do not turn implementation size into a follow-up track.
 - **Track lands clean** → get the user's explicit correctness confirmation, which always happens, regardless of the commit dial.
   Then:
   - **Commit off** (default) → prepare the commit message and propose it, but never run it.
@@ -246,7 +249,7 @@ In manual mode, replace each child-agent action with this result path:
   You do not have the child agent's depth of reading on this track.
 - **Every hard gate from `plan`/`design`/`implement` still applies at each autonomy level.**
   This skill adds an orchestrator and an optional commit or push actor.
-  It never bypasses plan acceptance, the design size check, or implementation correctness confirmation.
+  It never bypasses plan acceptance, the design-coherence check, or track correctness confirmation.
 - **Spikes need no separate handling.**
   Ordering spikes belong to `plan`, and track-feasibility spikes belong to `design`.
   Each already runs its own inline, exactly as their skills specify.
@@ -256,6 +259,9 @@ In manual mode, replace each child-agent action with this result path:
   In sequential mode, run one eligible track at a time and continue without a new prompt.
   Only `plan` and a track's own design-then-implement order stay strictly sequential.
   In parallel mode, run work concurrently when the DAG permits it.
+- **Implementation owns its internal task frontier.**
+  The track controller runs independent task workers concurrently only with isolated workspaces and disjoint declared write surfaces.
+  The orchestrator treats the controller as one phase and never adds per-task user gates.
 - **Commit and push only run at the levels that step 1 sets.**
   Issue filing is never autonomous.
   No dial controls filing or closing tracker issues.

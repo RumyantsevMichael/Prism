@@ -1,6 +1,6 @@
 ---
 name: plan
-description: "Decompose Approved requirement sets into dependency-ordered tracks, resolve ordering risks, and define release readiness. Use before per-track design and implementation."
+description: "Decompose Approved requirements into dependency-ordered design tracks and release readiness."
 argument-hint: '[initiative]'
 ---
 
@@ -8,7 +8,7 @@ argument-hint: '[initiative]'
 
 This is the **plan**, one altitude above `design` and `implement`.
 It takes a body of work spanning several Approved requirement files and decomposes it into **tracks**.
-Each track then becomes its own design → implement cycle.
+Each track then becomes its own design → controlled implementation cycle.
 Run inline with the user and delegate requirement, ADR, and codebase reading to child agents when available.
 
 Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
@@ -48,9 +48,10 @@ Do not bury a product obligation or architectural decision in the plan.
 
 ## 2. Decompose into tracks
 
-Carve the work into tracks where **each track is one `design` and `implement` unit**.
-Each track is coarse enough to be a coherent capability, and fine enough to be specifiable.
-A deliverable that is itself design-worthy is its own track.
+Carve the work into tracks where **each track is one coherent technical design unit**.
+Each track is coarse enough to hold one architectural argument and fine enough to specify without independent design branches.
+A capability that can change its architecture independently is its own track.
+Do not split a track only because implementation will need several tasks, workers, or contexts.
 Each track must cite the Approved requirements that define its product obligations.
 Delegate requirement and ADR reading to child agents when available.
 Pass paths, not contents, and ask them to propose a decomposition.
@@ -70,6 +71,7 @@ Two sections the per-track flow has no analog for, and this is where the altitud
 
 - **Ordering spikes.** Bounded (~1 day) investigations whose finding could change the track list or a DAG edge.
   Each names what must be learned and what its finding would change.
+  Use a spike for an uncertain dependency, not as a substitute for detailed design.
   **You own these.**
   Resolve an ordering spike before the plan gate and delegate legwork to a child agent when available.
   Do not ship an ordering an unrun spike could invalidate.
@@ -159,8 +161,8 @@ One line: what exists when this track is done.
 **Requirements.**
 Direct links to every Approved requirement this track serves.
 
-**Deliverables.**
-The concrete units, each suitable for one `design` task.
+**Design boundary.**
+The coherent capability and the architectural boundary that this design owns.
 
 **Dependencies.**
 Which tracks land first.
@@ -178,7 +180,7 @@ The design session records a track-feasibility spike before the design gate.
 **Status.**
 not-started / in-progress / blocked / deferred / done - kept in sync with the spine's PlantUML component stereotype.
 *Design* flips it `→ in-progress` when it starts the track.
-*Implementation* flips it `→ done` at landing.
+The implementation controller flips it `→ done` after track correctness confirmation.
 Either session sets `blocked` or `deferred` with a reason when a dependency or decision stalls it.
 ```
 
@@ -187,13 +189,14 @@ Either session sets `blocked` or `deferred` with a reason when a dependency or d
 ## Conventions
 
 - **Order by dependency, never priority.** If you catch yourself sequencing by "what's most valuable," that is a roadmap decision, not a plan one.
-- **Size is provisional, and integration is a track.** You hold the decisions, not their realization cost.
-  A track's size is a best guess, corrected downstream: `design`'s right-size check splits an over-sized track before implementation, and `implement`'s gate re-scopes unfinished work into a follow-up track.
-  Do not over-invest in precision you cannot have.
-  But two things you can get right from the requirements and ADRs.
-  First, give foreseeable **cross-process / cross-surface integration its own track** (never fold a net-new cross-cutting capability into a feature track just because that is where its consumer lives).
-  Second, never let the **terminal track become the catch-all**: a loose end too big to finish in one session is itself a track, not a footnote on the last one.
-  "In scope because it's the last track" is the smell that you have done exactly that.
+- **Design boundaries are provisional, but implementation size is not a track boundary.** You hold the decisions, not their realization cost.
+  `design` can split a track when technical analysis finds independent design capabilities or incompatible architectural boundaries.
+  `design` expresses implementation size as a dependency-ordered task graph inside the track.
+  Do not predict detailed implementation effort before the technical design exists.
+  Two structural checks still belong here.
+  First, expose each cross-process or cross-surface dependency and test whether it creates an incompatible architectural boundary.
+  Second, never let the terminal track become a catch-all for independent design capabilities.
+  Move an item only when it needs its own architectural argument, not because it needs more implementation tasks.
 - **PlantUML source, not ASCII or images.** Store the DAG in `tracks.puml` and link it from the spine.
 The DAG is also the status board.
 
