@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/RumyantsevMichael/Prism/compare/v0.5.2...v0.6.0) (2026-08-13)
+
+
+### Added
+
+* decouple design tracks from implementation tasks ([b7be329](https://github.com/RumyantsevMichael/Prism/commit/b7be3291c6c6b7f3cfd22eacbc404dba257a65e4))
+
+
+### Fixed
+
+* improve artifact review navigation and gates ([d240c12](https://github.com/RumyantsevMichael/Prism/commit/d240c122f6178fb04da377edc1860addbe83057c))
+
 ## [0.5.2](https://github.com/RumyantsevMichael/Prism/compare/v0.5.1...v0.5.2) (2026-08-12)
 
 
