@@ -1,284 +1,193 @@
 ---
 name: workflow
-description: "Explain Prism workflow stages, context boundaries, artifact lifecycles, and rules."
+description: "Explain Prism stages, outcome slices, context boundaries, artifact lifecycles, and shared workflow rules."
 ---
 
-# The agentic engineering workflow
+# The code-centered engineering workflow
 
-This is a spec-driven flow for changes big enough to need a spec.
-They move through at least **two fresh contexts** over a layered specification.
-A small change that needs no spec skips the flow entirely: make it directly under the project's baseline conventions.
+Use Prism for changes that need approved intent, architectural judgment, or durable behavioral documentation.
+Make a small change directly when the project conventions provide enough guidance.
 
-Project settings (paths, stack, tracker) live in `.prism/workflow.md` at the project root, created by the `workflow-init` skill.
-Read it if it exists.
-It overrides the default paths and stack assumptions below.
-All configured paths resolve from the project root.
+Read `.prism/workflow.md` when it exists.
+It defines project paths, stack assumptions, verification, interaction, and review settings.
 
-The workflow skills named here are siblings in this plugin: `roadmap`, `ideate`, `plan`, `design`, `implement`, `orchestrate`, `validate-artifacts`, and the `write-*` family.
-When one says "load `write-requirements`" or "run `plan`", use the host's supported skill invocation mechanism.
-A project may provide verification, security review, repair, or commit instructions outside Prism.
-Use those instructions when available, and use the inline Prism procedure otherwise.
-A project may also override any sibling with a local skill, and the local one wins.
+The sibling workflow skills are `roadmap`, `ideate`, `plan`, `design`, `implement`, `review`, `orchestrate`, and the remaining `write-*` skills.
+Use the host invocation mechanism for a sibling skill.
+Use a project procedure before the Prism fallback.
 
-## The map
+## The workflow
 
-Each rung is a skill, and each runs in **its own fresh context**:
+- **Prioritize** with `roadmap`.
+- **Shape intent** with `ideate` or `write-requirements`.
+- **Plan slices** with `plan` when the initiative needs several dependency-ordered outcomes.
+- **Explore and confirm fit** with `design`.
+- **Test and implement** with `implement` in the same delivery context.
+- **Review completed code** with `review` in a fresh context.
+- **Coordinate the chain** with `orchestrate`.
 
-- **Priority** (`roadmap`): order whole initiatives Now/Next/Later.
-  This is the only priority call and the only durable planning surface.
-- **Shaping** (`ideate`, optional): brainstorm a shapeless idea into Approved EARS requirements, or kill it.
-- **Build order** (`plan`): decompose a multi-track requirement set into dependency-ordered design tracks.
-- **Spec** (`design`): per track, requirements + ADRs + technical design → contracts + implementation-task graph + feature files → handoff.
-- **Build** (`implement`): control the validated task graph, build each task through a fresh worker, verify the complete track, and audit it.
+A phase skill does not choose its own context boundary.
+Keep one delivery context for a slice from exploration through verified code.
+Do not reuse that delivery context for another slice.
+Use a fresh context for independent review.
 
-`orchestrate` chains plan → design → implement across tracks through fresh child-agent contexts.
-The `write-*` skills run inside the drafting work that `design` coordinates.
-The `validate-artifacts` skill always runs in an isolated context with only the on-disk artifacts.
-None of these supporting skills needs a user-started task when the host can create the required child-agent context.
+## Artifact model
 
-**Defect repair** sits outside the flow.
-A repair session restores code to the already-settled spec: reproduce it with a failing test, diagnose the root cause **without touching production code**, then stop and report the diagnosis for approval before any fix.
-Pull the code to the spec, never the spec to the code.
-A fix that would require changing a requirement, ADR, feature file, or contract is not a repair.
-Escalate it to the artifact's owning workflow.
-Follow the project's repair instructions if they exist.
-Otherwise, use the reproduce, diagnose, report, approve, and fix procedure in this section.
+Artifacts preserve information that code cannot preserve.
 
-**One workflow skill per context.**
-`ideate`, `plan`, `design`, and `implement` are deliberate context boundaries.
-If one has already run in the current context, run the next in a **fresh** context.
-The cold read exposes design assumptions before implementation starts.
-`orchestrate` is the sole exception because it chains the others through genuinely fresh child-agent contexts.
+- Requirements preserve intent.
+- ADRs preserve consequential decisions and invariants.
+- Tests and feature files preserve behavior.
+- Diagrams explain the implemented structure.
+- Code explains implementation.
 
-The organizing principle across every run is to **protect the main context**.
-Push read-heavy and parallel work to child agents when the host provides them.
-Pass child agents paths and a scoped task, never inlined contents.
-Use a fresh context when independence or a clean slate is required.
-Keep inline the load-bearing reasoning and anything interactive with the user.
+Do not create an implementation handoff.
+Do not create a mandatory build plan or execution ledger.
+Create an executable contract only when code or verification consumes it.
+Keep coordination state inside the initiative plan only when several slices, workspaces, owners, or migration states require it.
 
-## Three decomposition levels
+## Outcome slices
 
-Decompose work at the level where the necessary information exists.
+A slice is one observable outcome across every required layer.
+Tests, code, documentation, and executable contracts travel together.
+Do not split by frontend, backend, tests, contracts, or documentation.
 
-- `ideate` separates product capabilities that can change, ship, or be superseded independently.
-- `plan` separates coherent technical design units and orders them by dependency.
-- `design` separates one validated design into dependency-ordered implementation tasks.
+The planner predicts whether a slice fits one delivery context.
+The `Develop <slice>` task confirms fit after bounded code exploration.
+When a slice does not fit, it returns proposed child slices to `orchestrate`.
+Completed code becomes the implementation context for later slices.
 
-A track is one coherent design unit, not one implementation session.
-Implementation size alone never creates a new track.
-Split a track only when technical analysis finds independent design capabilities or incompatible architectural boundaries.
-The build plan can contain many implementation tasks and many worker contexts while the track remains one lifecycle unit.
+## Delegation
 
-**Ground conclusions in evidence, not assumption, and do not give up early.**
-Before you declare something impossible, required, blocked, or "gated" (any negative or limiting claim), prove it: reproduce it, or cite the authoritative doc that says so.
-A plausible inference is a hypothesis to test, not a conclusion.
-Research and verify **before you down-scope, defer, or call something a residual**.
+Inspect callable host actions before delegation.
 
-## Host capabilities
+Child-agent capability exists only when a child-start action is callable.
+A wait or status action alone is not child-agent capability.
+Use native child agents when the current context has a callable child-start action.
+Otherwise, return a broker request to the nearest parent with child-agent capability.
 
-Inspect the capabilities that the current host provides before delegating work.
+Use this exact broker request:
 
-- **Child agents:** Use them for independent reading and drafting when available.
-- **Context isolation:** Use an isolated child context for adversarial validation.
-- **Context inheritance:** Use an inheriting child context when settled conversation decisions must carry forward.
-- **Workspace isolation:** Run concurrent writing tasks only when each task has an isolated workspace.
-- **Task resumption:** Resume a child task when supported, or start a replacement from the on-disk artifacts.
-- **Structured input:** Use it for real user choices when configured and available, or use plain text.
+```text
+Kind: explore | task | review
+Scope: <slice, investigation, or review lane>
+Inputs: <artifact and code paths>
+Output: <scratch report path or workspace>
+Profile: <execution profile>
+```
 
-When child agents are unavailable, do ordinary drafting sequentially in the current context.
-When isolated validation is unavailable, ask the user to run `validate-artifacts` in a separate fresh task and relay its findings.
-When workspace isolation is unavailable, run writing tasks sequentially without adding a new user gate.
+Put large read-only findings in the supplied scratch path.
+Use the owning initiative plan for scratch output when it exists.
+Otherwise, use task-scoped temporary scratch and delete it after the phase.
+Return only paths and short status records through the broker.
 
-Recommend an execution profile only for a child agent you are about to start or for the next fresh context at handoff.
-Render the recommendation as:
+Do not invoke a Codex, Claude, or other agent CLI to create a child agent.
+Do not replace a required delegated capability with prohibited direct exploration.
+When no parent can delegate, use the project fallback or work inline when permitted.
+When no context can provide a fresh reviewer, ask the user to run `review` in a separate task.
+
+Render an execution profile as:
 
 - Complexity: standard | high
-- Context: fresh
+- Context: fresh | resume
 - Parallelism: sequential | independent
-- Focus: <specific risk areas>
+- Focus: <specific risks>
+
+## Child-agent supervision
+
+The orchestrator owns user interaction, routing, and lifecycle gates.
+The active `Develop <slice>` task owns design and implementation for one slice.
+Never wait without at least one active child identifier.
+An empty receiver set or empty agent state is a positive routing failure.
+Route that failure through the broker or the documented fallback.
+
+A wait timeout means only that no final result arrived.
+Interrupt only after a positive failure signal, a user request, or an explicit agent blocker.
+Continue waiting when an active child exists and no failure signal exists.
+Do not narrate unchanged waits.
+Record the last progress, active command when reported, and recovery reason.
+Do not count waits or replacements as correction rounds.
+Resume the same agent when possible.
+Start a replacement only from recorded recovery state and the current code.
 
 ## Documentation hierarchy
 
-Read documentation in this order before any task.
-The workflow configuration can relocate these defaults.
+Read durable documentation in this order:
 
-1. The glossary (default `docs/Glossary.md`): term definitions and navigation.
-2. Approved requirements (default `docs/requirements/*.md`): durable product and system obligations in EARS form.
-3. Relevant ADRs (default `docs/ADRs/`): architectural invariants and settled decisions in RFC 2119 language.
-4. Relevant Gherkin feature files (default `docs/Features/*.feature`): executable behavioral invariants derived from requirements.
+1. The glossary defines terms and navigation.
+2. Approved requirements define product and system obligations.
+3. Relevant ADRs define architectural decisions and invariants.
+4. Relevant feature files describe verified behavioral expectations.
 
-The glossary only defines what terms mean, not behavioral rules.
-Requirements own product obligations, and ADRs own architectural decisions.
-Feature files specify executable behavior from requirements.
-When requirements, ADRs, or feature files conflict, stop and report the conflict to the user.
-Do not resolve it yourself.
+Stop when these sources conflict.
+Do not resolve a durable conflict without the user.
+Use code and tests to learn implementation details.
 
-## Diagram artifacts
+## Diagrams
 
-PlantUML source files use the `.puml` extension and live beside the artifact that they support.
-Agents MUST read the `.puml` source and MUST NOT read rendered images.
-Rendered images are temporary human-review output and MUST NOT enter version control.
-Markdown artifacts link to each related `.puml` file with a relative Markdown link.
-The local Prism review server discovers diagrams from these links and renders them in the human review page.
+Write PlantUML source beside the durable artifact or code area that it explains.
+Read the source and do not read rendered images as implementation input.
+Do not commit rendered images.
 
-A replacement diagram owns only its graph-shaped enumeration.
-The surrounding prose still owns rationale, consequences, risks, conditions, and open questions.
-Do not repeat diagram-owned edges, transitions, or order as a prose list or table.
-If prose and a diagram conflict, stop and reconcile both sources.
+Create an ADR decision diagram during design when relationships, lifecycle, or call order are part of the decision.
+Create or update an implemented-structure diagram after code establishes the structure.
+Derive implemented structural relationships from code or CodeGraph when available.
+Add only information that materially improves human understanding.
+Do not use a diagram to instruct another agent how to implement the slice.
 
-Use these diagram rules:
+Use a dependency graph for roadmap initiatives and initiative slices.
+Use a C4, component, class, state, or sequence diagram only when it materially improves understanding.
+Do not add diagrams to requirements or feature files.
 
-- Use a C4 Context or Container diagram to complement an ADR only when relationship count or review risk justifies it.
-- Use a state diagram to replace an ADR lifecycle transition list.
-- Use a dependency graph for roadmap initiatives and initiative-plan tracks.
-- Use an activity diagram for build order.
-- Use a component diagram for a build-plan reuse map.
-- Use a class diagram to complement real contract interfaces when type relationships need visual review.
-- Use an object diagram only when one concrete object graph resolves an important ambiguity.
-- Use a sequence diagram to complement a handoff when call order across a plug point affects correctness.
-- Do not add diagrams to requirements or Gherkin feature files.
+## Visual review
 
-Use the Prism review server for human review when its tools are available.
-Call `present_review` at a visual-review gate and pass the project-relative artifact path.
-Open the returned URL in the host internal browser and make the page visible to the user.
-Inspect the rendered artifact before you continue.
-If the tool or browser is unavailable, present the source artifacts and continue with the normal gate.
+Use the Prism review server for human artifact review when its tools are available.
+Missing `Review browser` defaults to `internal`.
+For `internal`, request the review URL and open it through the host internal browser.
+For `external`, use `present_review` to open the system browser.
+Inspect the rendered artifact before the related user gate.
+If the host lacks an internal browser, present the URL and source artifacts.
+If no review tool exists, present the source artifacts.
 
-Existing projects can contain inline Mermaid diagrams from older Prism versions.
-Convert a Mermaid diagram when its owning workflow next edits that artifact.
-Verify every node, edge, label, and state before removing the Mermaid block.
-Do not migrate unrelated artifacts without an explicit request.
+## Lifecycles
 
-## Cross-session lifecycles
+- `roadmap` owns initiative priority and the `envisioned`, `planned`, `in-progress`, and `shipped` states.
+- `write-requirements` owns requirement status.
+- `write-adr` creates Proposed ADRs.
+- `orchestrate` marks a slice `in-progress` before design starts.
+- `orchestrate` marks a confirmed slice `done`.
+- `orchestrate` accepts an implemented Proposed ADR after slice confirmation.
+- `orchestrate` sets the initiative to `shipped` and deletes its completed plan.
 
-The **rule** is fixed here.
-The mechanics live in the named skill.
+An initiative plan is scratch coordination state.
+Delete it only after every slice is done and all open information moves to a durable artifact or issue.
+Set the roadmap initiative to `shipped` before deletion.
 
-- **Roadmap state** (envisioned → planned → in-progress → shipped): `roadmap`.
-  Status flips fire inside whichever session triggers them, standalone features included.
-- **Requirement file status** (Draft → Approved → Superseded or Withdrawn): `ideate` or `write-requirements` creates Draft files.
-  The user approves product intent before `plan` or `design` consumes it.
-  A semantic change creates a new flat requirement number and supersedes the old section.
-  Requirements do not gain an implementation status.
-  Mechanics live in `write-requirements`.
-- **ADR status** (Proposed → Accepted): created `Proposed` by a planning or design session.
-  **Only the implementation controller** flips it `Accepted`, at the user's confirmation of track correctness.
-  The flip is a file edit and does not wait for a commit.
-  Acceptance means the decision survived being built.
-  Mechanics in `write-adr`.
-- **Track status** (not-started → in-progress → done, or blocked/deferred): `design` sets `in-progress`, and the controller sets `done` after final review.
-  Mechanics in `plan`, `design`, and `implement`.
-- **Plan folders** are scratch with a gated end of life: created by `plan`, deleted only when the last track lands.
-  Deletion sits behind the **graduate-before-delete** gate.
-  Every open question and cross-cutting concern must graduate to a requirement, ADR, feature file, user doc, or tracker issue.
-  An explicitly killed item also satisfies the gate.
-  The anti-rot rule prohibits deletion before the roadmap node is `shipped`.
-  Mechanics in `implement`'s last-track gate.
+## Durable references
 
-## Durable artifacts must not reference non-durable identifiers
+Durable artifacts must not reference slice names, plan sections, scratch paths, or temporary status identifiers.
+Cite a requirement for an obligation.
+Cite an ADR for rationale.
+Describe the implemented behavior directly.
 
-Everything under the plans directory (default `docs/plans/`) is **scratch** and is deleted after implementation.
-Scratch identifiers include track names, build steps, section numbers, handoffs, spikes, and locked-decision labels.
-So **nothing durable may reference it**: not code, comments, requirements, READMEs, ADRs, commit messages, or test assertions.
-A future session has zero context for `T4 § 5` once that file is gone.
+## User documentation
 
-- **State the obligation and cite the requirement.** State the rationale and cite the ADR.
-  Do not cite the plan section that scheduled the work.
-  Put missing architectural rationale in an ADR.
-- **Describe deferred work by what it is**: "Planned", never "T9".
-- **Allowed durable references:** requirements, ADRs, the glossary, feature files, and named project rules.
-  Plan tracks, steps, and sections are not.
-- **The roadmap's one exception:** an *in-flight* roadmap node may carry a deep-link to its live plan folder.
-  This is a navigation convenience, removed when the node ships.
+Update the configured user-guide path when observable behavior changes.
+Ship an operator runbook with an operational capability.
+Use exact verified commands or UI steps.
+Mark an unsettled operational decision as `TBD`.
 
-This applies as you write, not as a later cleanup pass.
+## User decisions
 
-## User-facing docs and runbooks
-
-The user-guide directory (default `docs/user-guide/`) is the source-of-truth for install, configure, and use.
-Any change to observable behavior MUST update it in the same change.
-Mark unshipped capabilities **Planned**.
-Link to requirements for obligations and ADRs or the glossary for rationale and terms.
-
-An **operational capability** (build, sign, publish, host, rotate, migrate) MUST ship with an operator runbook living with the tooling it documents.
-It MUST be accurate to the real commands, never guesswork.
-**Needing to read source to learn a capability is a missing-runbook signal.**
-It MUST surface the guarantees a consumer relies on, flag genuinely-unsettled decisions (key custody, hosting, certificates) as **TBD** rather than papering over them, and give the operator's *procedure*.
-The procedure is numbered and copy-pasteable, with exact commands or a UI click-path, not just the pipeline's shape.
-
-## Backlog
-
-The project's issue tracker (default: GitHub issues) is the durable record for **all work below initiative level**: defects and small buildable follow-ups.
-The roadmap stays initiative-level.
-Requirements stay product-obligation level.
-ADRs stay decisions.
-Issues are the sub-initiative backlog.
-A repair session works from a defect issue, and its landing `fix(scope):` commit references it.
-Graduate-before-delete turns a closing plan's loose ends into follow-up issues.
-Closing issues is user-initiated: prepare and propose, never close unasked.
-
-Use different labels for the two types.
-The workflow configuration can name the project's vocabulary.
-
-- `type:bug`, `type:enhancement`, `type:docs`: what kind of work it is.
-- `area:<name>`: scope.
-  Check the existing area labels before inventing one.
-- `needs-design`: a **routing rule**, not a description.
-  An enhancement carrying it must go through a design pass before it can be built.
-
-Only an item that genuinely **blocks the launch** additionally surfaces as a roadmap launch-readiness gate, which merely links to the issue.
-The issue stays the record.
-
-## Presenting decisions to the user
-
-When a session surfaces a decision that is the user's to make (at a gate, or any choice you cannot resolve from the spec), state it **in plain language first**: the situation in everyday terms, the concrete choice, and your recommendation.
-Lead with that framing.
-Cite the requirement, ADR, track, or section after the explanation as the paper trail.
-
-The user reviews as an informed engineer, not as a co-author of the spec's vocabulary.
-So "the session cache is wiped on restart, so signing out one device would silently sign out the others" lands where "the `SessionRegistry` isn't persisted" does not.
-Keep the rigor in the artifacts, and keep the conversation in plain language.
-This governs the *wording*, never the delivery mechanism (see below).
-
-### How to deliver the question
-
-The rule above governs *framing*.
-This governs *delivery*.
-They are independent, and the framing never changes.
-
-**Default: structured input when available.**
-If workflow config sets `Interaction style: structured`, use the host's structured input capability at a gate or decision fork.
-If the host lacks structured input, present the options as plain text.
-Put your recommendation first and mark it `(Recommended)`.
-Keep each option's label short and let its description carry the trade-off.
-
-**Opt-out: plain text.**
-If workflow config sets `Interaction style: plain-text`, present the same options as a short numbered list and let the user answer in prose.
-Same options, same order, and same recommendation, so only the delivery differs.
-
-**Either way, reserve it for real forks.**
-A gate, a trade-off you cannot resolve from the spec, or a choice that changes what gets built.
-Never use it for routine motion, progress narration, or "shall I continue?".
-Asking permission for mechanics is the anti-pattern the autonomy dials in `orchestrate` exist to prevent.
-A question the spec already answers is a question you should not be asking.
+State a decision in plain language before its artifact reference.
+Use structured input when configured and available.
+Otherwise, provide the same short options in plain text.
+Put the recommendation first.
+Ask only at a real gate or unresolved choice.
 
 ## Git
 
-Conventional commits: `type(scope): header`, imperative, ≤72 chars, with a body explaining what and **why**.
-
-Types, with their boundaries:
-
-- `feat`, `fix`: production behavior added or repaired.
-- `docs`: any pass that changes documentation only.
-- `refactor`: production code restructuring only, **never** dev tooling.
-- `chore`: anything that neither adds features nor fixes bugs in production code.
-
-Cite a requirement for the obligation and an ADR for rationale where they apply.
-Never cite a plan.
-No test counts or "tests green" noise.
-
-Never push.
-Committing is user-initiated.
-**Do not proactively propose a commit on your own, including at the end of a workflow session**, which is exactly the moment the pull to do so is strongest.
-Only when the user asks do you prepare and propose the message, following these conventions and any applicable project commit instructions.
-The `orchestrate` skill is an exception after the user explicitly sets its per-run commit dial.
+Use `type(scope): header` for Conventional Commits.
+Cite requirements and ADRs where they apply.
+Never cite an initiative plan.
+Never push without explicit permission.
+Do not propose a commit unless the user asks or `orchestrate` has an enabled commit dial.

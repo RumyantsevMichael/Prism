@@ -10,7 +10,7 @@
       "name": "prism",
       "source": "./",
       "displayName": "Prism",
-      "description": "Spec-driven workflow with EARS requirements, architecture decisions, design, implementation, and orchestration across tracks.",
+      "description": "Code-centered workflow with EARS requirements, architecture decisions, outcome slices, implementation, and independent review.",
       "author": {
         "name": "Michael Rumyantsev"
       },

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -19,8 +19,8 @@ async function projectFixture(context, name, artifact) {
   return root;
 }
 
-function mcpProcess(context, cwd, projectRoot) {
-  const env = { ...process.env };
+function mcpProcess(context, cwd, projectRoot, environment = {}) {
+  const env = { ...process.env, ...environment };
   if (projectRoot) {
     env.CLAUDE_PROJECT_DIR = projectRoot;
   } else {
@@ -66,6 +66,50 @@ function mcpProcess(context, cwd, projectRoot) {
   };
 }
 
+async function browserStub(context) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "prism-browser-stub-"));
+  const marker = path.join(directory, "opened");
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const stub = "#!/bin/sh\nprintf opened > \"$PRISM_BROWSER_MARKER\"\n";
+  for (const command of ["open", "xdg-open"]) {
+    await writeFile(path.join(directory, command), stub);
+    await chmod(path.join(directory, command), 0o755);
+  }
+  return {
+    marker,
+    environment: {
+      PATH: `${directory}${path.delimiter}${process.env.PATH}`,
+      PRISM_BROWSER_MARKER: marker
+    }
+  };
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForMarker(marker) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const contents = await markerContents(marker);
+    if (contents) {
+      return contents;
+    }
+    await delay(20);
+  }
+  return markerContents(marker);
+}
+
+async function markerContents(marker) {
+  try {
+    return await readFile(marker, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return "";
+    }
+    throw error;
+  }
+}
+
 async function initialize(mcp, capabilities = {}) {
   mcp.send({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities } });
   const response = await mcp.next();
@@ -92,6 +136,9 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.deepEqual(tools.list_reviewable_artifacts.inputSchema.required, ["projectRoot"]);
   assert.equal(tools.list_reviewable_artifacts.annotations.readOnlyHint, true);
   assert.equal(tools.get_review_url.annotations.readOnlyHint, true);
+  assert.match(tools.get_review_url.description, /URL only/);
+  assert.match(tools.get_review_url.description, /does not open a browser/);
+  assert.match(tools.present_review.description, /system browser/);
 });
 
 test("uses the consumer root provided by Claude Code", async (context) => {
@@ -149,4 +196,30 @@ test("requires an absolute project root without a host root", async (context) =>
 
   const relative = await callTool(mcp, 3, "list_reviewable_artifacts", { projectRoot: "relative/project" }, "relative-root-task");
   assert.match(relative.error.message, /must be an absolute path/);
+});
+
+test("returns a review URL without opening a system browser", async (context) => {
+  const root = await projectFixture(context, "url-without-browser", "artifact.md");
+  const browser = await browserStub(context);
+  const mcp = mcpProcess(context, root, undefined, browser.environment);
+
+  await initialize(mcp);
+  const review = await callTool(mcp, 2, "get_review_url", { projectRoot: root, artifact: "docs/artifact.md" });
+
+  assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
+  await delay(100);
+  assert.equal(await markerContents(browser.marker), "");
+});
+
+test("opens the system browser when it presents a review", async (context) => {
+  const root = await projectFixture(context, "present-with-browser", "artifact.md");
+  const browser = await browserStub(context);
+  const mcp = mcpProcess(context, root, undefined, browser.environment);
+
+  await initialize(mcp);
+  const review = await callTool(mcp, 2, "present_review", { projectRoot: root, artifact: "docs/artifact.md" });
+
+  assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
+  assert.equal(review.result.structuredContent.opened, true);
+  assert.equal(await waitForMarker(browser.marker), "opened");
 });

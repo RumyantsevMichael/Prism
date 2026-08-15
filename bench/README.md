@@ -11,7 +11,7 @@ Two properties separate it from a plain coding benchmark, because they target wh
    The full behavior lives in a hidden reference spec, and a simulated product owner answers the agent's questions strictly from it.
    An agent that interviews well extracts a better spec.
 2. **Tasks evolve across stages.**
-   A staged task is a sequence of product requests implemented in fresh sessions over one persistent workspace.
+   A staged task is a sequence of product requests implemented in delivery contexts over one persistent workspace.
    Later stages punish weak architecture and lost knowledge, which is exactly where durable artifacts should pay off.
    The divergence between arms across stages is the headline metric for the workflow's value.
 
@@ -24,7 +24,9 @@ For each arm, task, and repetition the harness:
 
 1. Creates a fresh workspace with `BRIEF.md`, an optional seed, and a fixed `.prism/workflow.md` for Prism arms.
 2. Runs the selected agent headlessly with `claude -p` or `codex exec`.
-   A prism arm runs two sessions per stage, `design` then `implement`, because the workflow itself mandates a fresh session per phase.
+   A prism arm uses one continuous delivery context per stage by default.
+   The context explores, checks slice fit, writes failing tests, implements, and updates durable artifacts.
+   A separate-context run remains available as a legacy comparison mode.
    The baseline arm runs one plain "implement this brief" session per stage.
 3. Relays questions: when a session ends without the completion marker, the harness sends the agent's message to the **product owner**, a pinned model prompted to answer only from the stage's hidden reference spec, and resumes the session with the reply (`--resume`).
    This repeats up to `--max-exchanges` times per session.
@@ -42,7 +44,8 @@ After stage `n` the workspace is scored against the tests of stages 1 through `n
 
 - **Stage progression**: mean pass fraction by stage index per arm.
   A workflow that pays off holds its level while the baseline decays.
-- **Artifact discipline**: mechanical checks that the workflow's promised durable artifacts exist (ADR present and flipped to `Accepted`, feature files, user guide, agent-written tests).
+- **Artifact observations**: mechanical counts for ADRs, feature files, user guides, and agent-written tests.
+  An ADR or user guide is conditional and its absence is not a failure.
 - **Cost**: agent cost, product-owner cost, token usage, turns, exchanges, and wall time from the agent JSON output.
 - Codex subscription runs report token usage but report zero API cost.
 - **Phase errors**: timeouts, turn-limit hits, and crashed sessions.
@@ -93,7 +96,7 @@ Run one brownfield task with a Codex subscription:
 ```bash
 python3 bench/harness/bench.py run \
   --agent codex --po-agent codex \
-  --model gpt-5.4 --po-model gpt-5.4 \
+  --model gpt-5.6-terra --po-model gpt-5.6-luna \
   --arm baseline=none --arm prism=. \
   --tasks entire-cli-transcript-refactor --reps 1
 ```
@@ -110,7 +113,27 @@ python3 bench/harness/bench.py run --arm v020=v0.2.0 --arm candidate=. --tasks m
 
 An arm ref is a plugin directory, a git ref of this repository (resolved through a temporary worktree), or `none` for the no-plugin baseline.
 Useful knobs: `--model` (agent), `--po-model` (product owner), `--max-exchanges`, `--stages N` (run only the first N stages), `--keep-work` (keep workspaces for inspection).
+Use `--delivery-context continuous` to run design and implementation in one resumed agent session.
+Use `--delivery-context separate` only for a legacy comparison with the previous handoff boundary.
 Use `--agent codex --po-agent codex` for Codex subscription runs.
+
+## Codex model policy
+
+Use this role matrix for manual orchestration tests and Codex benchmark sessions.
+
+| Role | Model |
+|---|---|
+| Orchestrator | `gpt-5.6-luna` |
+| Product owner | `gpt-5.6-luna` |
+| Plan and design agents | `gpt-5.6-terra` |
+| Implementation controllers and workers | `gpt-5.6-terra` |
+| Non-security reviewers | `gpt-5.6-terra` |
+| Security validation and review | `gpt-5.6-sol` |
+
+Use Sol only when the declared security surface is non-empty.
+Use the same role matrix and reasoning settings for each benchmark arm.
+Do not silently substitute a model in one arm.
+If Sol is unavailable, use Terra for that role in both arms and disclose the substitution.
 
 Aggregate one or more runs:
 
@@ -176,8 +199,8 @@ Read these before quoting a number.
 
 ## Seeded brownfield tasks
 
-A greenfield task builds a small deliverable, so a fresh session can read the whole workspace and rebuild the design from the code.
-That makes durable artifacts redundant and hides the effect the workflow claims.
+A greenfield task builds a small deliverable, so one delivery context can read the whole workspace and infer its structure from code.
+That makes extra specification artifacts redundant and hides the value of durable intent and behavior records.
 A seeded task starts from a large existing codebase instead, where reading everything is not a substitute for a written design.
 
 Two optional `task.json` fields support this:

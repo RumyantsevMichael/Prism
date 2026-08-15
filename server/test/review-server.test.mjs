@@ -74,3 +74,21 @@ test("serves the browser runtime without an image endpoint", async (context) => 
     await review.close();
   }
 });
+
+test("uses an injected browser opener when it presents a review", async (context) => {
+  const openedUrls = [];
+  const review = await startReviewServer({
+    projectRoot: await fixture(context),
+    openBrowser(url) {
+      openedUrls.push(url);
+      return true;
+    }
+  });
+  try {
+    const presented = review.open("docs/roadmap.md");
+    assert.equal(presented.opened, true);
+    assert.deepEqual(openedUrls, [presented.url]);
+  } finally {
+    await review.close();
+  }
+});

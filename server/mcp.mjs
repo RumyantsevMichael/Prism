@@ -84,7 +84,7 @@ function failure(id, code, message) {
 const tools = [
   {
     name: "get_review_url",
-    description: "Start the local Prism review server and return a human review URL. The tool returns no rendered image data.",
+    description: "Start the local Prism review server and return a human review URL only. This tool does not open a browser or return rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
@@ -98,7 +98,7 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open the local Prism review page for the human. The tool returns no rendered image data.",
+    description: "Open the local Prism review page in the system browser for the human. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {

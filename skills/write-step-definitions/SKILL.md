@@ -1,235 +1,39 @@
 ---
 name: write-step-definitions
-description: "Connect Gherkin feature steps to executable assertions during implementation."
+description: "Connect verified Gherkin feature steps to executable assertions."
 ---
 
-# Write Step Definitions
+# Write step definitions
 
-Step definitions are the translation layer between domain language in feature files and the mechanical test infrastructure.
-They are where implementation knowledge lives: class names, field paths, and internal identifiers.
-Feature files must remain clean of this knowledge, but step definitions embrace it.
+Use this skill after verified code and a feature file exist.
+Step definitions connect durable domain language to the existing executable acceptance suite.
 
-Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
-Read it first if it exists.
-It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project instructions that apply to this task.
-The context map and lifecycle rules live in the `workflow` overview skill.
+Read `.prism/workflow.md` first when it exists.
+Read the feature file, linked requirements, executable tests, completed code, and existing test helpers.
+Use the configured BDD harness.
+Do not add a BDD harness when the workflow marks feature files as specification-only.
 
-Before writing, read in order:
-1. The feature file being implemented: understand every step's domain meaning.
-2. The linked Approved requirements: preserve the product obligation behind each Rule.
-3. The glossary (default `docs/Glossary.md`): find the mechanical meaning of domain terms.
-4. Relevant ADRs: understand what each domain concept means structurally.
-5. The project's existing test helpers (for example `tests/helpers/`): check what exists before writing new ones.
+## Bind the steps
 
----
+Reuse an existing step definition when its domain meaning is identical.
+Use implementation details only inside step definitions and test helpers.
+Keep feature files free of those details.
 
-## Setup: what the harness must achieve
+Use one typed state object for each scenario.
+Initialize it before each scenario.
+Do not use mutable module-level state.
 
-The workflow configuration names the BDD harness and its acceptance-test command.
-Whatever the harness, setup must achieve the same things:
+Bind `Given` steps to setup through a product interface or an existing test fixture.
+Bind the single `When` step to the user or system action.
+Bind each `Then` step to the minimum assertion that proves its observable claim.
+Do not add assertions that the Gherkin step does not imply.
 
-- Feature files and step definitions are both discovered by the project's normal test command.
-  Running acceptance tests should not need a separate, undocumented invocation.
-- Steps share **typed, per-scenario state**: initialized fresh before each scenario, mutated by steps, never leaked between scenarios.
-- The wiring (plugin registration, preload, conftest, hooks) is committed and idempotent, so any session can run the suite without ritual.
+Put reusable drivers, fakes, and spies in the existing shared test-helper location.
+Do not duplicate a helper in a feature-specific file.
+Let unexpected errors fail the scenario.
 
-If the project has no BDD harness, add it once and record its command in the workflow configuration.
+## Verify
 
----
-
-## State between steps: typed state object
-
-Whatever the harness's mechanism (a World class, a fixture, a generic state parameter), model scenario state as one explicitly-typed object: define the state type per step file, initialize every field in a before-scenario hook, and have steps read and mutate that object.
-Never use module-level mutable globals.
-
-### Example stack: Bun + @aboviq/bun-test-cucumber
-
-*One worked example.*
-*The same discipline applies unchanged under cucumber-js's World, pytest-bdd fixtures, or any other harness.*
-
-`@aboviq/bun-test-cucumber` integrates Cucumber with Bun's native test runner, so tests run with `bun test`.
-Setup installs the package, registers a test plugin file, and adds a `[test] preload` entry to `bunfig.toml`.
-It does not use the `this` World pattern: state is a plain typed object passed through generics:
-
-```typescript
-import { given, when, then, before } from '@aboviq/bun-test-cucumber';
-import { expect } from 'bun:test';
-import { OrderService } from '../../src/orders/order-service.ts';
-import { InMemoryOrderStore } from '../helpers/in-memory-order-store.ts';
-import type { ShipmentNotice } from '../../src/orders/types.ts';
-
-// State shared across steps within one scenario
-type OrderState = {
-  service: OrderService;
-  store: InMemoryOrderStore;
-  currentOrderId: string | null;
-  shipmentNotice: ShipmentNotice | null;
-};
-
-// Initialize clean state before each scenario
-before<OrderState>(() => ({
-  service: new OrderService(new InMemoryOrderStore()),
-  store: new InMemoryOrderStore(),
-  currentOrderId: null,
-  shipmentNotice: null,
-}));
-
-given<OrderState>('a paid order that has not shipped', (state) => {
-  state.currentOrderId = state.service.createPaidOrder();
-});
-
-when<OrderState>('the customer requests cancellation', async (state) => {
-  await state.service.requestCancellation(state.currentOrderId!);
-});
-
-then<OrderState>('the order is cancelled', (state) => {
-  expect(state.service.status(state.currentOrderId!)).toBe('cancelled');
-});
-```
-
-The `before` hook initializes state once per scenario.
-Steps receive and mutate the same state object.
-
----
-
-## Translating domain language to mechanics
-
-Read the Gherkin step and its linked requirement first.
-Find its domain meaning in the glossary and its mechanical meaning in the ADRs:
-
-- "a paid order that has not shipped" → an order record exists with payment captured and no shipment record.
-- "the order is marked as shipped" → the order status transitions to the shipped state and a shipment record exists.
-- "the customer is notified that the order shipped" → the notification spy recorded a shipment notice for the order's customer.
-- "a return request is opened" → the returns store contains a new open request referencing the order.
-
-Derive the obligation from the requirement and feature file.
-Derive the mechanical meaning from the ADR and glossary instead of existing test code alone.
-Existing tests may not reflect the settled design.
-
----
-
-## Driving the system under test
-
-Many When steps require driving the system: running a loop, processing a queue, or advancing a workflow.
-Put that drive logic in shared helpers (for example `tests/helpers/`), not inline in step definitions.
-
-### Terminating a continuously-running system: the sentinel throw
-
-A system under test that runs continuously (an iteration loop, a queue worker, an event pump, a workflow engine) never returns on its own, so a test that starts it would hang.
-The technique: give the test a way to **throw a sentinel error from inside a lifecycle hook or callback the system invokes**, and have the shared drive helper **catch that sentinel at the driver boundary** and stop the loop cleanly.
-Any other error propagates and fails the scenario, so a real bug is never swallowed.
-
-The sentinel type must be defined **once** in a shared helper and imported everywhere.
-An identity check (`instanceof`, `isinstance`, type matching) depends on reference equality of the class, so a per-file redefinition silently stops matching and the loop runs forever.
-
-*One worked example.*
-*The same shape applies in any language with typed exceptions.*
-
-```typescript
-// tests/helpers/loop-break.ts - defined once, imported everywhere
-export class LoopBreak extends Error {
-  constructor() { super('loop break'); }
-}
-```
-
-```typescript
-// In a step: throw from inside a hook the system calls
-given<State>('the system stops after the first iteration', (state) => {
-  state.hooks.onIterationComplete = () => { throw new LoopBreak(); };
-});
-```
-
-```typescript
-// In the shared drive helper: catch at the driver boundary
-export async function driveUntilLoopBreak(config: Config): Promise<void> {
-  try {
-    await runSystem(config);
-  } catch (err) {
-    if (!(err instanceof LoopBreak)) throw err;
-  }
-}
-```
-
-### Drive-helper shapes
-
-Provide named helpers for the two recurring patterns, each taking the scenario's config/state as its argument:
-
-```typescript
-// Drive until a predicate holds - the condition the scenario cares about
-await driveUntilHandoff(config);
-await driveUntilLoopBreak(config);
-
-// Drive for exactly N iterations
-await driveForIterations(config, 2);
-```
-
-If a needed helper does not exist, add it to the shared helpers module.
-Do not inline loop-running logic in step definitions.
-
----
-
-## Spy helpers
-
-Step definitions need to observe internal events described in domain language.
-Use spy factories that record what they observe without changing behavior: thin wrappers around the real component that capture calls into scenario state:
-
-```typescript
-export function createSpyNotifier(opts: {
-  onShipmentNotice?: (notice: ShipmentNotice) => void;
-}): Notifier {
-  // ... thin wrapper around the real notifier
-}
-```
-
-Keep spy factories in the shared helpers directory, one per component type, reused across all step files.
-
----
-
-## Then step discipline
-
-Then steps assert observable outcomes.
-Keep them focused:
-
-- Assert the minimum that proves the step's domain claim
-- Do not assert internal field paths unless they are directly implied by the domain step wording
-- One logical assertion per Then step
-
-**Appropriate:**
-```typescript
-then<OrderState>('the order is marked as shipped', (state) => {
-  expect(state.service.status(state.currentOrderId!)).toBe('shipped');
-});
-```
-
-**Over-specified:**
-```typescript
-then<OrderState>('the order is marked as shipped', (state) => {
-  expect(state.store.get(state.currentOrderId!)?.fulfillment.state).toBe('shipped');
-  expect(state.store.get(state.currentOrderId!)?.fulfillment.carrier).toBe('default');
-  expect(state.store.get(state.currentOrderId!)?.version).toBe(1);
-});
-```
-
----
-
-## Step reuse across feature files
-
-Define steps that apply broadly in a shared steps module (for example `tests/acceptance/shared/common.steps.ts`).
-Import from there in feature-specific step files.
-
-Do not copy-paste step definitions between files.
-If a step appears in two files, it belongs in shared.
-
----
-
-## Quality checks before finishing
-
-- Every step in the feature file has a matching step definition
-- No domain-language steps directly assert internal field paths
-- State type is defined and initialized in a before-scenario hook
-- Spy helpers live in the shared helpers directory, not inlined in step files
-- System-drive logic uses shared helpers, not inline wiring
-- Shared steps live in the shared steps module, not duplicated
-- The step file is named to match its feature file (for example `F-<slug>.steps.ts`)
-- The BDD harness is wired so the project's normal test command runs the acceptance suite
+Run the configured acceptance command.
+Record only the command, exit status, and a short failure summary when it fails.
+Finish only when every feature step is bound and the acceptance suite passes.

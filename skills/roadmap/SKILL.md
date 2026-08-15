@@ -26,15 +26,16 @@ Read the roadmap, the product strategy document if present, and the glossary (de
 
 The judgment-heavy mode.
 Run **inline with the user**.
-Delegate the read-heavy survey to a child agent when available, and keep the prioritization call inline.
+Route the bounded read-only survey through the delegation procedure in `workflow`.
+Keep the prioritization call inline.
 
 1. **Orient.** Read the current roadmap and the strategy pillars it serves.
-   Confirm which initiatives are live, shipped, or newly envisioned, and delegate this survey to a child agent when available.
+   Confirm which initiatives are live, shipped, or newly envisioned through that routed survey.
 2. **Re-band.** Move initiatives between **Now / Next / Later** by priority *given* cross-initiative dependency.
    Band (priority) and arrow (dependency) are orthogonal.
    Keep both visible, and never collapse to one axis.
    Sequencing whole initiatives is **not** phasing a design (see Conventions).
-3. **Check band load, sub-order if overloaded.** A band, especially **Now**, feeds a finite delivery lane (tracks are built one per session, so the lane clears only as fast as that cadence allows).
+3. **Check band load, sub-order if overloaded.** A band, especially **Now**, feeds a finite delivery lane with one context for each slice.
    When a band holds more concurrent initiatives than that lane can actually advance, breadth *is* the risk: everything inches and nothing ships.
    Surface the overload explicitly, then add an explicit **within-band order**.
    This is a finer priority call than the band itself, answering "finish which before starting which."
@@ -42,7 +43,7 @@ Delegate the read-heavy survey to a child agent when available, and keep the pri
    Record it in the sequencing rationale.
    This is still priority, not a schedule and not phasing (see Conventions).
 4. **Add envisioned work.** New ideas enter as `envisioned` nodes (dashed, just name + intent + the pillar served).
-   A node is usually requirement-free until `ideate` or `write-requirements` defines its product obligations.
+   A node is usually requirement-free until `ideate` or `write-requirements` defines its required behavior.
    An idea shaped by `ideate` MAY enter with its Approved requirement links.
    The `ideate` skill never writes the roadmap itself.
    You attach those requirements when you band the node.
@@ -57,18 +58,18 @@ Deliver this gate, and any banding fork you cannot resolve from the lenses, per 
 This applies to Mode A only.
 Mode B is ungated and asks the user nothing.
 
-## Mode B: state flip (fired inside another session, no gate)
+## Mode B: orchestrated state change
 
-A one-line color change bound to a lifecycle event that already passed its own gate.
+A one-line state change requested by `orchestrate` after the related gate passes.
 **No new gate.** Re-gating an event that already happened is ceremony.
 The flips:
 
 - `plan` accepted: envisioned → planned (add requirements, ADRs, and the `click` plan link).
-- First track enters `design`: planned → in-progress.
-- Last track lands (plan folder deleted): in-progress → shipped (remove the `click` link).
+- First slice enters `design`: planned → in-progress.
+- Last slice lands: in-progress → shipped (remove the `click` plan link).
 
 If the initiative is not yet a node (it was started without ever being roadmapped), **add it** in `Now`, since it is being worked.
-A self-contained feature without `plan` is one track with a node that cites its requirements and any ADRs.
+A self-contained outcome without `plan` is one slice with a node that cites its requirements and any ADRs.
 
 ## Prioritization lenses
 
@@ -134,7 +135,7 @@ A --> B : unblocks
   The `click` plan deep-link is the lone tolerated reference to scratch, dropped on ship.
 - **Sequencing initiatives ≠ phasing a design.** "No phased designs" governs the architecture *inside* one initiative (it lands whole).
   Ordering whole initiatives over time is this roadmap's entire job and does not violate that rule.
-- **Anti-rot gate.** A plan folder may not be deleted until its roadmap node is `shipped` (rule in the `workflow` overview skill's "Cross-session lifecycles", enforced by `implement`'s last-track gate).
+- **Anti-rot gate.** Do not delete the plan folder before its roadmap node is `shipped`.
   The state column is therefore mechanically incapable of lying.
 - **PlantUML source, not ASCII or images.** Read and update `roadmap.puml` directly.
 - **No Gantt without real schedule data.** Never invent dates or durations for a diagram.
@@ -143,5 +144,5 @@ A --> B : unblocks
 ## Gate
 
 Mode A: stop and present the re-banded roadmap, and wait for the user to accept before writing.
-When `present_review` is available, open the returned URL in the host internal browser and inspect the roadmap page before asking for acceptance.
-Mode B: no gate, because the flip is bound to an event that already cleared one.
+Use the visual-review procedure in the `workflow` overview skill before asking for acceptance.
+Mode B: make only the state change that `orchestrate` requests.

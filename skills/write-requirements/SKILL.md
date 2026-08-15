@@ -31,7 +31,7 @@ Report the conflict to the user instead of choosing which durable artifact wins.
 
 Write one file for one coherent capability.
 One idea can produce several requirement files when it contains several logical capabilities.
-Do not use technical components or implementation tracks as the grouping rule.
+Do not use technical components or delivery slices as the grouping rule.
 
 Store each file directly in the requirements directory.
 Use a short human-readable slug such as `validation-engine.md`.
@@ -113,7 +113,7 @@ Set `Approved` to the approval date at the same time.
 
 Planning and design consume only Approved requirement files.
 Implementation does not change a requirement file to another delivery status.
-The roadmap and track files already record delivery progress.
+The roadmap and slice plan already record delivery progress.
 
 Do not change the meaning of an Approved requirement in place.
 Add a new numbered requirement when its obligation changes.
@@ -127,7 +127,7 @@ Preserve superseded and withdrawn content because durable links and history depe
 ## Authoring procedure
 
 1. Frame the problem, affected users or systems, goals, and non-goals.
-2. Separate product obligations from architectural decisions and implementation tasks.
+2. Separate product requirements from architectural decisions and implementation tasks.
 3. Group the obligations into coherent capability files.
 4. Draft the wanted behavior before the unwanted behavior.
 5. Select the correct EARS pattern for each obligation.
@@ -145,7 +145,7 @@ If not, it is probably a design decision rather than a requirement.
 ## Links and traceability
 
 Requirement files link to related, superseded, and replacement requirements.
-Plans, ADRs, feature files, contracts, and handoffs link back to the requirements they serve.
+Slice plans, ADRs, feature files, executable contracts, and diagrams link back to the requirements they serve.
 Do not maintain a central backlink index because concurrent edits make it a merge-conflict hotspot.
 Use repository search on the exact Markdown link or `filename.md#anchor` for reverse traceability.
 
@@ -154,7 +154,7 @@ Use repository search on the exact Markdown link or `filename.md#anchor` for rev
 Present the Draft requirement files and the recommendation to continue, revise, or stop.
 Do not approve a file without explicit user acceptance.
 Do not open a plan or start design in this context.
-After approval, recommend `design` for one self-contained capability or `plan` for a multi-track initiative.
+After approval, recommend `design` for one self-contained outcome or `plan` for a multi-slice initiative.
 
 ## Quality checks
 

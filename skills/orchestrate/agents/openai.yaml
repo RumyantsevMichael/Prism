@@ -1,5 +1,5 @@
 interface:
   display_name: "Orchestrate"
-  short_description: "Run a multi-track initiative"
+  short_description: "Run a multi-slice initiative"
 policy:
   allow_implicit_invocation: false

@@ -1,120 +1,44 @@
 ---
 name: write-contracts
-description: "Define implementation-free boundary contracts from requirements and ADRs."
-argument-hint: '[initiative/track]'
+description: "Create or update an executable boundary contract only when production code, generated code, or verification consumes it."
+argument-hint: '[boundary]'
 ---
 
-# Write contracts
+# Write an executable contract
 
-Contracts are the **shapes** of a feature: the interfaces and types that cross module boundaries, written before any implementation.
-They are the structural half of the implementation handoff: contracts pin *structure*, feature files pin *behavior*.
-One of three prep-bundle artifacts under the plans directory (default `docs/plans/<initiative>/<track>/`).
+Create a contract only when code or verification consumes it.
+Do not create a prose contract.
+Do not create a second representation of an implementation detail.
 
-Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
-Read it first if it exists.
-It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project instructions that apply to this task.
-The context map and lifecycle rules live in the `workflow` overview skill.
-The config also names the project's language, which this skill depends on.
+Read `.prism/workflow.md`, Approved requirements, relevant ADRs, and the consuming code and tests.
 
-Writing contracts is **itself a design check**: types force under-specification into the open.
-If a shape is hard to name or a field's meaning is unclear, the design is not settled, so feed that back to the ADR.
-This is why contracts may *lead* the build plan.
+## 1. Prove that a contract is necessary
 
-The discipline applies to **any typed boundary**.
-Write the contracts file in the project language that the workflow configuration names.
-The worked example below is TypeScript.
-Translate the conventions to the project's idioms (for example `Result<T>` → `Result<T, E>` in Rust, `Optional`/union types in Python).
-Contracts follow the project's code-style rules.
-They are **boundary types only**: interfaces, type aliases, discriminated unions, signatures.
-**No implementations**: no function bodies, no classes with logic, no runtime validation schemas.
-Where a value will be validated, a doc-comment says so, but it does not contain the validator.
+Use a contract for an externally consumed or compatibility-sensitive boundary.
+Valid forms include:
 
-Before writing, read the project glossary, Approved requirements, governing ADRs, and paired feature files.
+- an OpenAPI document.
+- a JSON Schema.
+- a protocol or database schema.
+- an importable interface or type definition.
+- a test double imported by implementation tests.
+- a compatibility test that governs an otherwise implicit boundary.
 
----
+Do not create a separate contract when an existing production type or schema already governs the boundary.
 
-## Where it lives
+## 2. Put it where consumers use it
 
-`<plans-dir>/<initiative>/<track>/contracts.<ext>` (extension per the project's language), alongside `build-plan.md` and `handoff.md`.
-It is **scratch**: the durable version is the real interfaces the implementer writes into the codebase.
-So it may redeclare existing repo types locally (see below) without colliding with anything shipped.
+Use the project's canonical source, API, schema, or test path.
+Follow existing generation and ownership conventions.
+Link requirements for obligations and ADRs for consequential decisions when the format supports comments or metadata.
 
-Optional PlantUML sources live beside the contracts file.
-Use `contracts.puml` for a class diagram and `contract-example.puml` for a rare object diagram.
-The real interface file remains authoritative for names, fields, methods, parameters, return types, generics, and error types.
+## 3. Bind consumption
 
----
+Add or update the production import, generator, validator, or compatibility test that consumes the contract.
+Run the exact verification command.
+Remove the contract when no executable consumer remains.
 
-## Structure (worked example: TypeScript)
+## Result
 
-```typescript
-/**
- * <Feature> - contracts.
- *
- * Requirements own obligations, and ADRs own architectural decisions.
- * This file defines the boundary shapes that serve both durable sources.
- * Conventions: boundary interfaces (not classes), `Result<T>` for expected
- * failures, domain aliases over primitives, `readonly` on contract shapes. Where
- * a type is validated at a boundary, a doc-comment says so.
- */
-
-// Local re-declarations of existing repo types, so this file type-checks in
-// isolation. These are NOT new types - they mirror what already exists.
-type Result<T> = ...
-
-// → src/<dest>/<file>.ts
-// <One line on this section's role.>
-export interface NotificationRouter { ... }
-```
-
-Group types into sections, each headed by a `// → destination/path.ts` comment plus a one-line role description.
-The section header tells the implementer where the shape lands.
-
-## Relationship diagrams
-
-Add a class diagram when contracts span files or when ownership, cardinality, implementation, or dependency direction affects correctness.
-Hide fields and methods by default because the real interface file already owns those details.
-The class diagram owns only cross-contract relationships and cardinalities.
-Link it from the handoff or build plan with `[Contract relationships](contracts.puml)`.
-
-Add an object diagram only when one concrete object graph resolves ambiguity about runtime identity, sharing, nesting, or variant selection.
-Do not add it when a Gherkin example already communicates the same fact.
-Link it with `[Contract example](contract-example.puml)`.
-
-Read diagram source directly and never read a rendered image.
-Never create or commit a rendered diagram image.
-
----
-
-## Conventions
-
-- **Interface at the boundary, not a concrete class.** Inject behind an interface, and the implementation is the module's business.
-- **Domain aliases over primitives** (`type ChannelId = string`), never `enum`.
-- **`T | null` for deliberately-unknown, `field?:` for may-be-absent.** They mean different things, so use them deliberately and consistently.
-- **`readonly` / `ReadonlyArray`** (or the language's immutability idiom) on immutable contract shapes.
-- **`Result<T>` for expected failures**, never `throw`, at the boundary.
-- **Named, exported types**: no inline anonymous object types at the boundary.
-- **Doc-comment every type with its requirement link and applicable ADR section.** Never cite a plan track.
-  Explain wire semantics and any cross-field invariant ("MUST match the enclosing directory name, checked at install").
-- **Flag deferred shape decisions with `// OPEN:`.** Name a wire shape that the requirements and ADRs leave unspecified.
-  Leave it for the implementer to resolve and confirm instead of guessing.
-- **Call out defined seams** ("a DEFINED SEAM", "RESERVED - not implemented here") so the reader knows what is an injection point versus future work.
-
-(Where the project has its own authoritative code-style rules, apply them here too.)
-
----
-
-## Quality checks before finishing
-
-- No implementations leak in: no function bodies, logic-bearing classes, or runtime validation schemas.
-- Every section has a `// → path` destination header.
-- Every type carries a requirement link and an ADR citation when applicable.
-- No type references a plan track.
-- `T | null` vs optional is used deliberately, not interchangeably.
-- Under-specified shapes are marked `// OPEN:`, not silently invented.
-- The file type-checks in isolation (local re-declarations cover repo types).
-- A class diagram exists when cross-contract relationships affect correctness.
-- An object diagram exists only when a concrete object graph adds distinct value.
-- Diagrams do not duplicate interface members.
-- No rendered diagram image is present.
+Report the contract path, every consumer, and the verification command.
+If no executable contract is necessary, return `NO CONTRACT NEEDED` and continue implementation.

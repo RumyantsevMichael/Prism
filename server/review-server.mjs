@@ -163,6 +163,7 @@ function openBrowser(url) {
 }
 
 export async function startReviewServer(options = {}) {
+  const browserOpener = options.openBrowser ?? openBrowser;
   const projectRoot = await realpath(path.resolve(options.projectRoot ?? process.cwd()));
   const token = randomBytes(24).toString("base64url");
   const prefix = `/session/${token}`;
@@ -212,7 +213,7 @@ export async function startReviewServer(options = {}) {
     },
     open(artifactPath) {
       const url = this.reviewUrl(artifactPath);
-      return { url, opened: openBrowser(url) };
+      return { url, opened: browserOpener(url) };
     },
     close() {
       return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

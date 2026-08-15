@@ -1,15 +1,13 @@
 ---
 name: ideate
 description: "Shape a raw idea into Approved EARS requirements before planning or design."
-disable-model-invocation: true
 argument-hint: '[idea]'
 ---
 
 # Ideate on a fresh idea
 
-This is ideation, one rung before `plan` and `design`.
-It turns a shapeless idea into Approved EARS requirement files that a later task reads cold.
-Run inline with the user and delegate read-heavy work to child agents when available.
+Ideation turns a shapeless idea into Approved EARS requirement files that a later delivery task reads.
+Use the delegation procedure in `workflow` for bounded read-only checks.
 
 Project settings for this workflow live in `.prism/workflow.md` at the project root.
 Read that file first if it exists.
@@ -22,13 +20,8 @@ Decide what problem exists, who has it, and what the system must do differently.
 Do not choose architecture, contracts, feature scenarios, or build order.
 The durable output is one or more Approved requirement files.
 
-`ideate` is optional.
-Use it only when the idea is genuinely shapeless and needs interactive exploration.
-Use `write-requirements` directly when the capability and obligations are already clear.
-
-Use one workflow skill per context, as defined in the `workflow` overview skill.
-Do not run `plan` or `design` in this context after the user accepts the requirements.
-The next task must read the Approved requirements without this conversation history.
+Stop after the user accepts the requirements.
+The orchestrator can then start planning or delivery without requiring a fresh user task.
 
 Read the glossary, product strategy document when present, and roadmap.
 Use `docs/Glossary.md`, `docs/roadmap.md`, and `docs/requirements/` as the default paths.
@@ -46,7 +39,7 @@ Separate direct evidence from assumptions.
 
 ## 2. Fit the idea into the product
 
-Delegate these checks to child agents when available.
+Route these checks through the delegation procedure in `workflow`.
 Pass paths instead of file contents.
 
 - Check whether an Approved requirement already covers the need.
@@ -77,12 +70,12 @@ Do not create requirements to justify the session.
 
 Group surviving obligations by coherent product capability.
 One idea can produce several requirement files.
-Do not group by technical component, team ownership, or expected implementation track.
+Do not group by a technical component, team, or expected delivery slice.
 
-Use one file when a reader can understand the capability as one product obligation set.
+Use one file when a reader can understand the capability as one requirement set.
 Use several files when the capabilities can change, ship, or be superseded independently.
 Link related requirements across files with direct Markdown links.
-Leave technical subsystem and implementation-task boundaries to `plan` and `design`.
+Leave outcome-slice boundaries to `plan` and the design fit checkpoint.
 
 ## 5. Author and review the files
 
@@ -107,17 +100,11 @@ Update the glossary only when the idea introduces a necessary new term.
 ## Gate
 
 Present every Draft file or the reasoned recommendation to stop.
-Do not open a plan, design a track, or write code.
+Do not open a plan, design a slice, or write code.
 Ask the user to approve, revise, or reject the requirement files.
 Use the delivery rules in the `workflow` overview skill.
 
 After explicit approval, change each accepted file to `Status: Approved` and record the approval date.
 Leave any unaccepted file as `Draft`.
 
-Recommend the next fresh task after approval:
-
-- Recommend `design` for one self-contained capability.
-- Recommend `plan` for an initiative that needs several dependency-ordered tracks.
-- Recommend `roadmap` first when priority among initiatives remains unsettled.
-
-The next task starts fresh and reads the Approved requirements cold.
+The next delivery context reads the Approved requirements.

@@ -20,28 +20,34 @@ Report that Prism no longer reads the legacy file and that the user may remove i
 
 ## 1. Discover before asking
 
-Inspect the project first so the interview proposes rather than interrogates:
+Inspect only common project metadata and documentation paths before the interview:
 
 - Existing docs layout: look for requirements, ADR or decision directories, feature specs, a roadmap, a glossary, and user docs.
 - Stack: language(s), package manager, test runner, BDD harness if any (cucumber-js, bun-test-cucumber, pytest-bdd, …), lint/format/typecheck commands.
 - Repo shape: monorepo or single package, plus the project instruction files that apply to the task.
 - Tracker: GitHub remote (`gh` usable?) or something else.
 
+Use targeted file-name searches and package manifests.
+Do not read application source during initialization.
+Stop after you can propose paths and commands for each interview topic.
+
 ## 2. Interview
 
 Present findings as defaults and ask only what is genuinely open (plain-text options in the message body).
 Cover:
 
-1. **Doc paths**: requirements, ADRs, plans, feature files, roadmap, glossary, user guide, and an optional product strategy document.
+1. **Doc paths**: requirements, ADRs, coordination scratch, feature files, roadmap, glossary, user guide, and an optional product strategy document.
    Defaults: `docs/requirements/`, `docs/ADRs/`, `docs/plans/`, `docs/Features/`, `docs/roadmap.md`, `docs/Glossary.md`, `docs/user-guide/`.
    All configured paths resolve from the project root.
 2. **Stack facts**: test command, BDD harness (or "none, feature files are spec-only"), typecheck/lint commands, whether lint is destructive (write-mode).
 3. **Verification**: how to prove a change works on this project (dev server, CLI, test suite only).
 4. **Tracker**: issue tracker and label conventions (defaults: GitHub, `type:bug`/`type:enhancement`, `area:*` scopes, `needs-design`).
 5. **Commit conventions**: scopes vocabulary, anything beyond the standard conventional-commit rules.
-6. **Interaction style**: how gates and decision forks should reach the user, `structured` or `plain-text`.
+6. **Interaction**: how gates reach the user and where review pages open.
+   Choose `structured` or `plain-text`, and `internal` or `external` for `Review browser`.
    `structured` uses the host's structured input capability when available and falls back to plain text.
-   Ask only if the user has a preference, otherwise take the default.
+   `internal` (the default) uses the host internal browser when available.
+   Ask only if the user has a preference, otherwise take the defaults.
 7. **Constraints**: anything the skills must never do here (for example never touch generated dirs, no pushes, sign-off requirements).
 
 ## 3. Write the config
@@ -60,7 +66,7 @@ Omit no section, and use "n/a" where a value is empty.
 ## Paths
 - Requirements: docs/requirements/
 - ADRs: docs/ADRs/
-- Plans (scratch): docs/plans/
+- Plans (coordination scratch): docs/plans/
 - Feature files: docs/Features/
 - Roadmap: docs/roadmap.md
 - Glossary: docs/Glossary.md
@@ -87,6 +93,7 @@ Omit no section, and use "n/a" where a value is empty.
 
 ## Interaction
 - Interaction style: structured | plain-text
+- Review browser: internal | external
 
 ## Constraints
 - <project-specific MUST NOTs>
@@ -97,6 +104,9 @@ Omit no section, and use "n/a" where a value is empty.
 If that capability is unavailable, use the plain-text form.
 `plain-text` presents the same options as a numbered list in the message body, answered in prose.
 It changes delivery only, and the framing rule in the `workflow` overview skill applies either way.
+`Review browser` selects the visual-review procedure in the `workflow` overview skill.
+`internal` is the default when the configuration does not set `Review browser`.
+`external` opens the system browser.
 
 ## 4. Scaffold
 
@@ -105,7 +115,7 @@ Create any configured doc directories that do not exist, with a minimal seed:
 - Glossary: title + one-line purpose.
 - Roadmap: empty roadmap prose and a sibling `roadmap.puml` dependency graph (see `roadmap` skill for format).
 - Requirements/ADRs/Features/user-guide: directory with a short README stating what lives there.
-- Plans dir: directory only (scratch space).
+- Plans directory: directory only for multi-slice coordination and recovery records.
 
 Do not scaffold over existing files.
 Integrate with what is there.

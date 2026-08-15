@@ -53,17 +53,26 @@ When this session's work is finished, end your message with the exact line:
 """.strip()
 
 DESIGN_PROMPT = """Read BRIEF.md at the repository root. It is the product request for {stage_intro}.
-Run the prism design workflow for it now: {invocation}.
-Produce the full spec: ADR, contracts, a dependency-ordered implementation-task graph, feature files, and the controller handoff under the plans directory.
-The product owner is available throughout: interview them about requirements the request leaves open, and present the finished artifacts for acceptance.
-Write no implementation code in this session.
+Run the legacy separate-context prism design workflow for it now: {invocation}.
+Explore the code, test whether the requested outcome fits one delivery context, and record only consequential decisions.
+The product owner is available throughout: interview them about requirements the request leaves open, and present the slice decision for acceptance.
+Write no implementation code in this legacy comparison session.
 {rules}"""
 
-IMPLEMENT_PROMPT = """This repository contains a spec that an earlier design session produced under docs/plans/{slug}/.
+IMPLEMENT_PROMPT = """Read BRIEF.md, the current code, and any accepted slice record under docs/plans/{slug}/.
 Run the prism implementation controller now: {invocation}.
-Follow the skill fully: read the validated spec cold, execute every task, integrate to green, verify, and run the final review.
-If you find a spec gap, report it as a question: the product owner will answer or delegate the decision to you.
+Follow the skill fully: bind executable tests, prove the red checkpoint, implement the outcome, verify it, and run the final review.
+If you find a lost design decision, report it as a question: the product owner will answer or delegate the decision to you.
 Finish only when the deliverable in BRIEF.md is complete and your own tests pass.
+{rules}"""
+
+CONTINUOUS_DELIVERY_PROMPT = """Read BRIEF.md at the repository root. It is the product request for {stage_intro}.
+Run the prism design workflow in delivery mode now: {design_invocation}.
+Explore the code and run the early fit checkpoint before you create artifacts or edit production code.
+After a FIT result, continue in this same context with the prism implementation workflow: {implement_invocation}.
+Write failing executable tests, implement the outcome, verify it, and update durable behavior and structure artifacts after the code works.
+Use a fresh context only for the independent code review.
+Finish only after implementation, verification, fresh review, and the final correctness gate.
 {rules}"""
 
 BASELINE_PROMPT = """Read BRIEF.md at the repository root. It is the product request for {stage_intro}.
@@ -102,8 +111,9 @@ WORKFLOW_CONFIG_TEMPLATE = """# Workflow config
 - One-line description: {summary}
 
 ## Paths
+- Requirements: docs/requirements/
 - ADRs: docs/ADRs/
-- Plans (scratch): docs/plans/
+- Plans (coordination scratch): docs/plans/
 - Feature files: docs/Features/
 - Roadmap: docs/roadmap.md
 - Glossary: docs/Glossary.md
@@ -130,6 +140,7 @@ WORKFLOW_CONFIG_TEMPLATE = """# Workflow config
 
 ## Interaction
 - Interaction style: plain-text
+- Review browser: internal
 
 ## Constraints
 - This is a benchmark session driven over a text channel.
@@ -346,7 +357,7 @@ def score_workspace(workspace, task, upto_stage, venv_py, keep_dir=None):
 
 
 def artifact_checks(workspace):
-    """Mechanical checks on the durable artifacts the workflow promises."""
+    """Record mechanical observations about code-centered durable artifacts."""
     ws = Path(workspace)
     adr_files = list((ws / "docs" / "ADRs").rglob("*.md")) if (ws / "docs" / "ADRs").exists() else []
     adr_files = [p for p in adr_files if p.name.lower() != "readme.md"]
@@ -1149,6 +1160,28 @@ def run_stage_phases(args, plugin_dir, task, stage_index, wdir, log_dir):
         ]
     design_invocation = skill_invocation(args.agent, "design", slug)
     implement_invocation = skill_invocation(args.agent, "implement", slug)
+    if args.delivery_context == "continuous":
+        return [
+            run_phase(
+                "delivery",
+                CONTINUOUS_DELIVERY_PROMPT.format(
+                    stage_intro=stage_intro,
+                    design_invocation=design_invocation,
+                    implement_invocation=implement_invocation,
+                    rules=INTERACTION_RULES,
+                ),
+                plugin_dir=plugin_dir,
+                max_turns=(
+                    stage["phases"]["design"]["max_turns"]
+                    + stage["phases"]["implement"]["max_turns"]
+                ),
+                timeout=max(
+                    stage["phases"]["design"]["timeout_s"],
+                    stage["phases"]["implement"]["timeout_s"],
+                ),
+                **common,
+            )
+        ]
     phases = [
         run_phase(
             "design",
@@ -1211,6 +1244,7 @@ def cmd_run(args):
         "max_exchanges": args.max_exchanges,
         "po_sees_diff": args.po_sees_diff,
         "po_reactive": args.po_reactive,
+        "delivery_context": args.delivery_context,
         "reps": args.reps,
         "mock": args.mock,
         "arms": resolved,
@@ -1502,7 +1536,7 @@ def cmd_report(args):
         out("")
     prism_records = [r for r in records if r.get("artifacts") and r["final_stage"]]
     if prism_records:
-        out("## Artifact discipline (prism arms, final stages, mean over runs)")
+        out("## Artifact observations (prism arms, final stages, mean over runs)")
         out("")
         out("| arm | ADRs present | ADR accepted | feature files | user guide | agent test files |")
         out("|-----|--------------|--------------|---------------|------------|------------------|")
@@ -1693,6 +1727,12 @@ def main():
     p_run.add_argument("--po-model", default=None, help="model that simulates the product owner")
     p_run.add_argument("--max-exchanges", type=int, default=4, help="max product-owner replies per agent session")
     p_run.add_argument(
+        "--delivery-context",
+        choices=["separate", "continuous"],
+        default="continuous",
+        help="use one continuous delivery session or the legacy separate design and implementation sessions",
+    )
+    p_run.add_argument(
         "--po-reactive",
         action="store_true",
         help="let the product owner correct work that contradicts the reference spec, "
@@ -1747,16 +1787,14 @@ def main():
     if getattr(args, "po_agent", None) is None:
         args.po_agent = getattr(args, "agent", "claude")
     if hasattr(args, "model") and args.model is None:
-        args.model = "gpt-5.4" if args.agent == "codex" else "claude-sonnet-5"
+        args.model = "gpt-5.6-terra" if args.agent == "codex" else "claude-sonnet-5"
     if hasattr(args, "po_model") and args.po_model is None:
-        if args.po_agent == args.agent:
+        if args.po_agent == "codex":
+            args.po_model = "gpt-5.6-luna"
+        elif args.po_agent == args.agent:
             args.po_model = args.model
         else:
-            args.po_model = (
-                "gpt-5.4"
-                if args.po_agent == "codex"
-                else "claude-haiku-4-5-20251001"
-            )
+            args.po_model = "claude-haiku-4-5-20251001"
     args.func(args)
 
 

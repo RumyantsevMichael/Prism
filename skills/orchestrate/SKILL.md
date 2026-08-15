@@ -1,278 +1,141 @@
 ---
 name: orchestrate
-description: "Run a multi-track initiative through Prism with all user gates active."
+description: "Run a multi-slice Prism initiative through planning, continuous delivery contexts, fresh review, and user gates."
 disable-model-invocation: true
 argument-hint: '[initiative]'
 ---
 
 # Orchestrate an initiative
 
-This is **orchestration**: the same `plan` → `design` → `implement` flow the `workflow` overview skill defines.
-You run it as a chain of **child-agent contexts** when the host provides them.
+Coordinate `plan` → (`design` → `implement` → `review`) for every outcome slice.
+Do not author phase content in this context.
+Keep only routing state, active child identifiers, gates, and recovery status here.
 
-Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
-Read it first if it exists.
-It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project instructions that apply to this task.
-The context map and lifecycle rules live in the `workflow` overview skill.
+Read `.prism/workflow.md` and the delegation procedure in `workflow` first.
 
-It is the **one exception** to "one workflow skill per context" because it chains the other skills.
-It never authors an ADR, plan, contract, or line of code itself.
-Every artifact still comes from a `plan`, `design`, or `implement` worker running that skill in its own genuinely fresh context.
-Orchestration replaces manual context switching only.
-It does not relax a single gate, validation pass, or freshness requirement those skills already impose.
+## 1. Set the run contract
 
-Run this **inline with the user**.
-You are the orchestrator, not a worker, and you never resolve a *content* question on the user's behalf yourself.
-The child agents resolve content where it is theirs to do, within the limits step 1 sets.
-Delegate reading, drafting, and building to child agents when the host provides them.
-Your own context stays just the loop state (which track, which phase, the autonomy contract, and what is pending on the user).
+Ask once for these run settings:
 
-**"Orchestrator, not worker" is about decisions, not motion.**
-Starting or resuming a child agent needs no permission when no decision is open.
-The whole point of this skill is to remove manual context switching.
-Re-introducing a "may I continue?" prompt at every step recreates the toil it exists to remove.
-The only stops are an escalated question, a required terminal Gate, or an unfinished track.
-Outside those three, keep moving without asking.
-When one stop occurs, deliver it per **"How to deliver the question"** in the `workflow` overview skill.
-That delivery is for real forks only, never for the motion above.
+- **Decision autonomy:** conservative or broad.
+- **Commit:** off or on.
+- **Push:** off or on.
+- **Slice continuation:** auto or stepwise.
 
-## 1. Set this run's autonomy contract
+Use conservative, commit off, push off, and auto by default.
+No autonomy level can change an Approved requirement, create an unsanctioned ADR, bypass plan acceptance, accept a slice split, or confirm correctness.
 
-Before touching the initiative, ask the user to set the three dials below **for this run only**.
-This is a per-run opt-in and does not change defaults for another task.
+Detect the execution mode from callable capabilities:
 
-- **Decision autonomy**: how much a `plan` or `design` child agent may resolve without escalating:
-  - **Conservative** (default): resolve only what Approved requirements, existing ADRs, the glossary, strategy, or settled initiative artifacts answer.
-    Cite the source.
-    Escalate any new tradeoff, scope cut, or conflict between settled docs (the `workflow` overview skill's conflict rule).
-  - **Broad**: also resolve a tradeoff or scope call itself when confident it fits the initiative's already-settled direction, and report what it decided (and why) instead of blocking on it.
-    Still hard-escalates anything that needs a requirement change or new ADR, anything outside its track, and any durable-document conflict.
+- **Parallel:** child-start and isolated-workspace actions exist.
+- **Sequential:** child-start exists without isolated workspaces.
+- **Manual:** no child-start action exists.
 
-Neither level touches the terminal **Gates**: `plan` acceptance, `design`'s coherence check, and `implement`'s track correctness confirmation always stop and wait for the user.
-This dial governs in-flight judgment calls only, never those structural checkpoints.
-
-- **Commit / push**: two orthogonal dials, both **off** by default:
-  - **Commit**: if on, once a track lands clean *and* the user has confirmed correctness at `implement`'s gate (step 4c), you may run the commit yourself instead of only proposing the message.
-    It shortens the "should I commit" round-trip.
-    It never moves the correctness confirmation itself, which still always happens.
-  - **Push**: if on, you may push after committing.
-    Stays off even when commit is on unless the user separately grants it.
-    A push is visible to others and harder to reverse than a local commit, so it earns its own opt-in.
-
-- **Track continuation**: how many chains run at once:
-  - **Auto** (default): run every eligible track concurrently only when the host provides isolated workspaces.
-    Without isolated workspaces, run eligible tracks sequentially and start each next eligible track without another prompt.
-  - **Stepwise**: run one chain at a time and ask before starting the next, even when the DAG would allow more.
-    Pick this only when the user wants tighter checkpointing than the dials above already give them.
-
-State the levels and detected execution mode before starting work.
-Carry the levels through every child agent this run.
-If the user changes a dial mid-run, it applies from that point forward, not retroactively.
-
-Detect one execution mode from the host capabilities:
-
-- **Parallel mode:** child agents and isolated workspaces are available.
-- **Sequential mode:** child agents are available, but isolated workspaces are not.
-- **Manual mode:** child agents are unavailable.
-
-In manual mode, present the next skill target and artifact paths as a handoff for a fresh user-started task.
-Resume orchestration when the user returns with that task's result.
+A wait action alone does not enable parallel or sequential mode.
 
 ## 2. Resolve the initiative
 
-- `<plans dir>/<initiative>/plan.md` exists (plans dir default `docs/plans/`) → multi-track.
-  Read the spine's linked `tracks.puml` DAG for track order and status.
-  Go to step 4.
-- No plan, and the work is genuinely multi-track → go to step 3.
-- No plan, single self-contained feature → it is its own one-track chain.
-  Go to step 4 treating the feature itself as the only "track" (no plan phase, no DAG, and `design` and `implement` both already handle a standalone feature this way).
+When an accepted initiative plan exists, read `plan.md` and `slices.puml`.
+When the work needs several outcomes and has no plan, start a fresh `Plan <initiative>` agent.
+Present its slice graph for user acceptance.
 
-## 3. Plan phase (only when no plan exists)
+Treat a self-contained capability as one standalone slice without creating a plan.
 
-Start a child agent named `plan-<initiative>` and instruct it to run `plan` for this initiative.
-Give it an execution profile in the format that the `workflow` overview skill defines.
-In manual mode, present the same instruction and artifact paths as a fresh-task handoff instead.
-There is no upstream recommendation to inherit here.
-Instruct it explicitly, at the decision-autonomy level set in step 1:
+## 3. Select the frontier
 
-> Resolve anything answerable from Approved requirements, existing ADRs, the glossary, the product strategy document, or settled initiative artifacts yourself.
-> Cite what you used and keep going, because that is applying settled context, not making a new decision.
-> [Conservative: stop and return anything beyond that.]
-> [Broad: also resolve a tradeoff or scope call yourself when you are confident it fits the initiative's already-settled direction, and report what you decided and why instead of blocking.]
-> Stop and return only what is genuinely undecided, with the context needed to answer it.
-> This includes a new tradeoff at conservative autonomy, a requirement change, a new ADR, work outside the initiative, or a durable-document conflict.
-> Do not guess past those.
+The frontier contains each not-started slice whose dependencies are done.
+Run frontier slices concurrently only in isolated workspaces.
+Otherwise, run them sequentially.
+Recompute the frontier after every confirmed slice.
 
-Run the **phase loop** below until the phase reports reaching its Gate.
-Present the plan (tracks, DAG, release-readiness checklist) to the user yourself, plainly.
-This is `plan`'s own hard gate, not yours to wave through.
-Proceed only once they accept.
+Keep one workspace and one `Develop <slice>` task per active slice.
+Never reuse a `Develop <slice>` task for another slice.
 
-## 4. Track chains, run frontier-parallel
+## 4. Deliver a slice
 
-The **frontier** is every not-yet-`done` track whose dependencies are all `done`, read straight off the spine's DAG and status classes.
-The DAG can branch, so the frontier often holds more than one track at once: exploit that parallelism, never by preference (ordering within a dependency chain is still `plan`'s own rule, unchanged here, and only tracks with **no** dependency edge between them run concurrently).
+### Explore and fit
 
-In parallel mode with **Track continuation: Auto**, run every frontier track concurrently through its own named child-agent chain.
-In sequential mode, run one frontier track at a time and start the next eligible track without asking.
-The moment any track reaches `done`, recompute the frontier because its dependents may now be eligible.
-In parallel mode, start those chains without waiting for unrelated active chains.
-In sequential mode, add them to the eligible queue.
-At **Stepwise**, run one chain at a time and ask before starting the next, even if the frontier holds more than one track.
+Start one child agent named `Develop <slice>` and instruct it to run `design` in embedded mode.
+Give it the requirements, any slice record, code workspace, autonomy level, and execution profile.
+Before it starts, mark the slice `in-progress`.
+When this is the initiative's first active slice, mark the roadmap initiative `in-progress`.
 
-In parallel mode, you will often hold several child agents open at once.
-The orchestrator loop does not change.
-Broker whichever child agent returns a question or reaches a gate next.
-Never block one track's chain on another unless the DAG forces it.
+Handle its compact result:
 
-**Two correctness hazards parallel chains introduce, both yours to manage:**
+- `FIT` → continue without a user gate when no consequential decision remains.
+- `SPLIT` → present the child slices and wait for explicit acceptance.
+- `BLOCKED` → present the unresolved requirement, decision, or dependency.
 
-- **Workspace isolation.**
-  When multiple chains are active, give each design and implementation child agent an isolated workspace.
-  Concurrent chains writing to the same working tree (code, contracts, even two `<track>.md` files at once) will otherwise collide.
-  A single chain running alone needs no isolation.
-  Isolation cuts collisions but also **visibility**, so you own integration at each boundary.
-  When the user accepts `design-<track>`'s gate, integrate its workspace into the main workspace before starting `implement-<track>`.
-  The implementation child agent reads the prep bundle from the main tree, never from a sibling workspace.
-  Integrate a track's implementation at the 4c gate after the user's correctness confirmation.
-  Use the host's isolated-workspace integration capability.
-  A host adapter can implement this capability with Git worktrees.
-  Integrate one track at a time.
-  If integration conflicts with landed work, reapply mechanical changes and show the remaining conflicts to the user.
-  Never silently drop either side.
-- **The spine `plan.md` is shared state every concurrent chain wants to edit** (each track's own status flip: `design` marks itself started, `implement` marks itself done).
-  Two child agents can race when they update different nodes in the shared spine.
-  After any child agent reports a status change, re-read the live spine and confirm its node matches the report.
-  If a concurrent write clobbered it, reapply the missing one-line edit yourself immediately.
-  This is a mechanical repair, not a new judgment call.
-  Derive a track status only from that track's child-agent report.
+After an accepted split, resume the same `Develop <slice>` agent with the first accepted child slice.
+Update the slice DAG for the remaining child slices.
 
-Within-skill parallelism already happens inside `design` and `plan` when the host supports it.
+### Implement
 
-### 4a. Design
+After `FIT`, resume the same `Develop <slice>` agent and instruct it to run `implement`.
+Do not repeat design reasoning or file contents.
+Pass only the user decision when one occurred.
 
-Start a child agent named `design-<track>` and instruct it to run `design` for `<initiative>/<track>`.
-Give it the decision-autonomy instruction and an execution profile.
-In manual mode, present the same instruction and artifact paths as a fresh-task handoff instead.
-Run the phase loop until it reaches its Gate with artifacts presented and the design-coherence check stated.
+When the agent returns `READY FOR REVIEW`, record its diff base, verification status, paths, and security surface.
+Do not accept a claim of independent review from `Develop <slice>`.
 
-Present the artifacts and the design-coherence check to the user yourself.
-**Wait for explicit acceptance.**
-`design`'s gate is not yours to wave through at any autonomy level.
-Note the execution profile that its handoff recommends for implementation.
-Carry it forward verbatim in 4b rather than guessing fresh.
+### Review
 
-### 4b. Implement
+Start a fresh `Review <slice>` agent with `review` and the recorded paths.
+The reviewer receives no delivery conversation.
 
-On acceptance, start a **new** child agent named `implement-<track>` with no design conversation history.
-Instruct it to run the implementation controller for the same track with the handoff's controller execution profile.
-In manual mode, present the same instruction and handoff path for a fresh user-started task.
-The controller resolves local implementation choices without a user gate and records them in its execution ledger.
-It escalates only requirement, ADR, observable behavior, scope, or track-boundary decisions.
+On `CLEAN`, continue to the slice gate.
+On findings, resume `Develop <slice>` with the complete finding list.
+After the fix batch, start one fresh scoped re-review.
+Stop when actionable findings remain after that re-review.
 
-**Specification gaps route to their owning workflow, never to you or implementation itself.**
-If implementation reports a requirement gap, route it to `write-requirements` for user approval.
-If implementation reports a design gap, resume `design-<track>` with the gap.
-Once design confirms the fix, resume `implement-<track>`.
-If either child task cannot resume, start a replacement from the on-disk artifacts.
-The artifacts on disk are the authority either way, so a cold read recovers the same context.
+## 5. Confirm the slice
 
-Run the phase loop until `implement` reaches its Gate.
+Present verification, review, security results, and unfinished work.
+Ask the user for one correctness confirmation.
 
-### 4c. Track gate
+After confirmation:
 
-Relay the controller's **gated vs. unfinished** classification exactly as it stated it.
-Do not soften, relabel, or decide a re-scope yourself, at any autonomy level.
-Scope changes belong to the user here exactly as in a manual session.
-The controller handles task sizing inside the accepted track specification.
+1. Mark the slice `done`.
+2. Accept implemented Proposed ADRs.
+3. Integrate its isolated workspace.
+4. Apply the commit and push settings.
+5. Recompute the frontier.
 
-- **Unfinished work remains** → stop the chain for this track.
-  Surface it plainly and wait.
-  Do not turn implementation size into a follow-up track.
-- **Track lands clean** → get the user's explicit correctness confirmation, which always happens, regardless of the commit dial.
-  Then:
-  - **Commit off** (default) → prepare the commit message and propose it, but never run it.
-  - **Commit on** → prepare the message and run the commit yourself.
-    If **push** is also on, push it.
-    Otherwise stop after the local commit and say so.
+At auto continuation, start every eligible slice allowed by workspace safety.
+At stepwise continuation, ask before the next slice.
 
-Then apply the **track continuation** dial from step 1.
-**Auto** → recompute the frontier without a prompt.
-In parallel mode, start every eligible chain.
-In sequential mode, start the next eligible chain.
-**Stepwise** → ask before starting the next one.
-Either way, say plainly what landed and what is next so the user can interrupt at will.
-Silence is not the goal, and asking permission for routine motion is what to avoid.
+When every slice is done, graduate open information, set the roadmap initiative to `shipped`, and delete its scratch plan.
 
-Continue until the DAG is exhausted (every track `done`) or the user stops you.
+## Broker handling
 
-Update the roadmap as the initiative's status changes.
+When a child returns a broker request, start the requested child only when this context has a callable child-start action.
+Give it only the request scope, paths, scratch destination, and profile.
+Return its result path and short status to the requester.
+When this context cannot start it, return the broker request to the nearest capable parent.
+Use manual mode only when no parent can delegate.
 
----
+## Supervision loop
 
-## The phase loop
+Track every active child identifier.
+Never wait with an empty identifier set.
+Treat empty receiver or agent state as a routing failure and use broker or manual recovery.
 
-Use this loop for every child-agent phase:
+For each active child:
 
-1. Start or resume the child agent with the relevant skill and autonomy-scoped instruction from step 1.
-2. Read what it returns.
-   - **A question for the user** → relay it in plain language, not the child agent's internal vocabulary.
-     Get their answer.
-     Resume or message the child agent with that answer through the host's supported mechanism.
-     Go to 2.
-   - **It reached its skill's Gate** → stop looping.
-     That gate's acceptance is the user's call, handled in the calling step above.
+1. Start or resume it with the current phase instruction.
+2. Relay a real user question and resume the same child with the answer.
+3. Continue waiting after a timeout when no positive failure signal exists.
+4. Record recovery state only after failure, blocker, or user interruption.
+5. Resume the same child when possible.
+6. Start a replacement in the same workspace from current code and recorded recovery state.
 
-In manual mode, replace each child-agent action with this result path:
+Do not narrate unchanged waits.
+Do not use waits or replacements as correction rounds.
 
-1. Present the skill, execution profile, and artifact paths as a fresh-task handoff.
-2. Wait for the user to relay the fresh task's result.
-3. If the result contains a question, broker the answer and issue a new fresh-task handoff with that answer.
-4. If the result reports a specification gap, issue a new handoff to the owning design phase.
-5. After design updates the artifacts, issue a new implementation handoff from the on-disk artifacts.
-6. Stop only when the relayed result reaches the phase Gate or reports unfinished work.
-
-## Conventions
-
-- **Default to motion.**
-  Outside the three named stop conditions, do not pause to check in.
-  Start the next child agent, resume one with an answer, and start every track the frontier just made eligible.
-  If you notice yourself about to ask "should I proceed?" with no real decision attached, that is the failure mode this skill exists to avoid.
-- **The autonomy contract is set once and applies uniformly.**
-  Do not let a child agent or track silently use another level.
-  If the work seems to call for more or less autonomy mid-run, ask the user to change the dial rather than deciding it yourself.
-- **Resolve from documentation, escalate per the chosen level.**
-  Even at *broad*, a child agent never changes an Approved requirement or creates an ADR-level decision itself.
-  Those actions always escalate.
-  You relay what crosses that line and never resolve it yourself, even when the answer seems obvious to you.
-  You do not have the child agent's depth of reading on this track.
-- **Every hard gate from `plan`/`design`/`implement` still applies at each autonomy level.**
-  This skill adds an orchestrator and an optional commit or push actor.
-  It never bypasses plan acceptance, the design-coherence check, or track correctness confirmation.
-- **Spikes need no separate handling.**
-  Ordering spikes belong to `plan`, and track-feasibility spikes belong to `design`.
-  Each already runs its own inline, exactly as their skills specify.
-  Do not lift spike-running into this skill.
-- **Use the safest available concurrency.**
-  Run the frontier concurrently only in parallel mode.
-  In sequential mode, run one eligible track at a time and continue without a new prompt.
-  Only `plan` and a track's own design-then-implement order stay strictly sequential.
-  In parallel mode, run work concurrently when the DAG permits it.
-- **Implementation owns its internal task frontier.**
-  The track controller runs independent task workers concurrently only with isolated workspaces and disjoint declared write surfaces.
-  The orchestrator treats the controller as one phase and never adds per-task user gates.
-- **Commit and push only run at the levels that step 1 sets.**
-  Issue filing is never autonomous.
-  No dial controls filing or closing tracker issues.
-  Always prepare and propose those, regardless of the commit/push dials.
-- **A child agent's "fresh" requirement is real, not ceremonial.**
-  Never reuse an implementation context across tracks.
-  Never let a design conversation leak into its track's implementation context.
-  That independence makes the implementation cold read a fair check.
+In manual mode, tell the user to keep one delivery task open through `design` and `implement`.
+Ask the user to start a separate `review` task after implementation.
 
 ## Gate
 
-This skill has no gate of its own.
-It ends when the DAG is exhausted (all tracks `done`, initiative graduated and `shipped` per `implement`'s last-track gate) or when the user stops the chain.
-Every gate inside it belongs to the phase that defines it, unaffected by the autonomy contract.
+This skill has no additional gate.
+It ends when every slice is confirmed and the initiative is shipped, or when the user stops it.

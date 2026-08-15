@@ -1,126 +1,53 @@
 ---
 name: write-user-docs
-description: "Update user guidance when commands, configuration, defaults, or capabilities change."
+description: "Update user guidance after verified commands, configuration, defaults, interfaces, or capabilities change."
 ---
 
-# Write user docs
+# Write user documentation
 
-The user guide (default `docs/user-guide/`) is the source-of-truth for how people **install, configure, and use** the product.
-It is written for someone running and using it, not for someone building it.
-Keeping it current is a continuous obligation: a change that alters observable behavior is not done until the user guide reflects it.
+Use this skill after implementation verification confirms an observable change.
+Write for people who install, configure, operate, or use the product.
+Do not document unverified behavior as available.
 
-Project settings for this workflow live in `.prism/workflow.md` at the project root (created by the `workflow-init` skill).
-Read it first if it exists.
-It overrides the default paths and stack assumptions below.
-If absent, use the defaults and the project instructions that apply to this task.
-The context map and lifecycle rules live in the `workflow` overview skill.
+Read `.prism/workflow.md` when it exists.
+Read only the affected guide pages, their index entries, the verified interface, and linked requirements or ADRs.
+Use the configured user-guide directory, with `docs/user-guide/` as the default.
 
-Before writing, read:
+## Select the required update
 
-1. The user guide's `README.md`: the index, the maturity disclaimer, and the page map.
-   Match its structure and tone.
-   The index is expected to carry a maturity disclaimer: a user guide should state plainly how mature and complete the product is.
-   If one is missing, add it.
-2. The specific pages you are changing, plus any sibling page they cross-link.
-3. The glossary (default `docs/Glossary.md`): use defined terms and do not coin user-facing synonyms.
+Update documentation when the change affects:
 
----
+- installation or startup.
+- commands, APIs, or user interfaces.
+- configuration keys, defaults, ports, secrets, or file locations.
+- user-visible capabilities or failure behavior.
+- operator procedures, migrations, or recovery.
 
-## What belongs here (and what does not)
+Do not add internal module structure, test strategy, or implementation detail.
+Link an ADR for rationale instead of copying it.
+Link a requirement when the user needs the governing obligation.
 
-**Belongs in the user guide** (things a user observes or sets):
+## Write verified guidance
 
-- how to install and run the product
-- what each interface is and how to reach it
-- configuration keys, defaults, ports, and file locations
-- what capabilities exist
-- what is planned
+Use exact commands, names, defaults, and paths from the verified implementation.
+State prerequisites before the related procedure.
+Use numbered steps for a procedure.
+State the expected result after each verification command.
+Mark an unavailable capability as `Planned` only when the project already tracks it.
+Do not infer behavior from an old page.
 
-**Does NOT belong here:** internal architecture, module boundaries, the reasons behind a design, invariants, test strategy, or implementation detail.
-Those live in requirements, ADRs, feature files, the glossary, and architecture docs.
-Link to them, but do not copy them in.
+Update the guide index and cross-links when a page is added, renamed, or removed.
+Remove stale guidance that the change replaces.
+Use the established project voice and terms.
 
-Diagnostic: if a sentence would only make sense to someone editing the codebase, it belongs in the developer docs, not here.
+## Operator runbooks
 
----
+Add or update a runbook when operators must build, deploy, migrate, rotate, recover, or diagnose the capability.
+Include prerequisites, exact steps, verification, failure handling, and rollback when available.
+Mark an unresolved operational decision as `TBD`.
 
-## Core rules
+## Result
 
-1. **Honesty about maturity is non-negotiable.** Describe what *runs today* plainly.
-   Mark anything not yet shipped as **Planned**, and never document a feature as available before it ships.
-   When unsure whether something works, verify against the implementing module in the source tree before claiming it.
-
-2. **One source of truth per fact.**
-   Product obligations come from requirements, and design decisions come from ADRs or authoritative configuration.
-   Restate them only where a user needs them, and when they change, change them here too.
-   Prefer linking the authoritative internal doc over duplicating rationale.
-
-3. **Keep it rough-but-correct.** This guide is a seed that evolves.
-   A short, accurate page beats a long, speculative one.
-   Do not invent workflows that do not exist to fill a section.
-   Leave a brief **Planned** note instead.
-
-4. **Update cross-links and the index.** When adding or renaming a page, update `README.md`'s page map and any in-text links between pages.
-
-5. **Match the established voice.** Second person ("you run", "the product remembers"), present tense for what exists, plain language, minimal jargon.
-   Lead each page with a one-line status/scope note when it helps the reader.
-
----
-
-## Voice & style
-
-Write for a reader who is smart but not inside the system.
-Lead with a plain, everyday framing, and reach for an analogy.
-Only **then** name the precise term.
-Jargon first is the failure mode.
-The term should land *after* the reader already understands the thing.
-
-For any concept, cover three things:
-
-1. **What it is**: in plain words, ideally via an analogy ("the service's identity is its *passport*").
-2. **Why it matters to you**: the consequence the reader actually cares about.
-3. **How often it changes**: for anything stateful, say it explicitly, and **distinguish the long-lived thing from the per-event thing** when both exist.
-   Conflating a stable identity with a fresh-each-time proof is the usual confusion, so separate them on purpose ("the identity should change essentially never, and the proof is regenerated every connection by design").
-
-Explain a security or behavioral consequence in human terms, not mechanism ("a service showing up with a different key is, to your devices, indistinguishable from an impostor, so they refuse to talk to it until you re-pair").
-
-Keep the rigor available but **secondary**.
-Cite the requirement, glossary entry, or ADR after the plain explanation as the paper trail.
-
-**Before / after:**
-
-> ✗ The service presents its long-lived ed25519 identity key plus a per-connection signature over the channel-binding nonce.
-
-> ✓ Each service has a permanent identity: think of it as a passport that should essentially never change.
-> On top of that, every time a device connects, the service produces a fresh signature, like signing a one-time note to prove it's really holding the passport.
-> Your devices remember the passport, and a service showing up with a different one looks like an impostor, so they refuse it until you re-pair.
-> (Identity and per-connection proof, see the relevant ADR.)
-
-Existing pages migrate to this voice as they are touched.
-This is not a call to rewrite the guide in one pass.
-
----
-
-## When a code change triggers a doc update
-
-If a change adds or alters an observable surface, update the matching page in the same change.
-An observable surface is an interface, a command or subcommand, a port, a config key or default, a secret or file location, or a user-visible capability.
-Map the change to the guide's own page structure.
-A typical layout:
-
-- How the product is installed or started → `getting-started.md`.
-- A config key, default, port, or file/secret location → `configuration.md`.
-- A UI, API, or CLI surface → `interfaces.md`.
-- A new or removed capability → the relevant capability/concepts page.
-- Something moving from planned to available → `roadmap.md` (plus the relevant page).
-
-If a capability moves from **Planned** to **available**, remove the Planned marker on the relevant page and the entry from any "Planned" list in the same change.
-
----
-
-## File format
-
-Plain Markdown, one topic per file, under the user-guide directory.
-Start a page with a short blockquote status/scope note.
-Use tables for ports/defaults and cross-link related pages at the foot of each page.
-Use Markdown without a build step or website unless the workflow configuration says otherwise.
+Run each documented command when practical.
+Report the changed pages and any command that could not be verified.
+Finish only when the documentation matches the verified product behavior.

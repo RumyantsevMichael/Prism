@@ -4,11 +4,12 @@
 
 # Prism
 
-Prism helps Claude Code and Codex plan complex changes before they write code.
-It records requirements, decisions, and specifications as project files that each new agent context can review and challenge.
+Prism helps Claude Code and Codex deliver complex changes as small outcome slices.
+It keeps one capability context from code exploration through implementation.
+Fresh contexts review completed code.
 Small changes do not need this workflow.
 
-Use Prism when a change needs architecture decisions, defined behavior, several implementation tracks, or a clear handoff between planning and coding.
+Use Prism when a change needs clear intent, architecture decisions, durable behavior records, or several dependency-ordered slices.
 
 ## Install
 
@@ -40,44 +41,46 @@ Initialize Prism once in each project.
 The skill inspects the project and asks about its documentation paths, stack, verification commands, issue tracker, and local rules.
 It then writes `.prism/workflow.md` and creates the configured documentation structure.
 
-Open a fresh task and start the workflow that fits your change.
+Start the workflow that fits your change.
 
 | Starting point | Skill | Use it when |
 |---|---|---|
 | An unformed idea | `prism:ideate` | You need to explore the problem and define product requirements |
 | A defined capability | `prism:write-requirements` | You need to record and approve EARS requirements without broad ideation |
-| Approved multi-track requirements | `prism:plan` | You need to split several capabilities into ordered implementation tracks |
-| One Approved requirement set | `prism:design` | You need a technical design and an implementation specification |
-| An approved specification | `prism:implement` | You are ready to write tests and code |
+| Approved requirements with several outcomes | `prism:plan` | You need dependency-ordered outcome slices |
+| One Approved outcome | `prism:design` | You need to explore the code and confirm that the outcome fits one context |
+| A fitted outcome | `prism:implement` | The same capability context is ready to write tests and code |
 | A full initiative | `prism:orchestrate` | You want Prism to coordinate planning, design, and implementation |
 
 Use `prism:workflow` when you need an explanation of the complete workflow.
 
 ## How the workflow works
 
-Prism separates product decisions from implementation work.
-Each main stage uses a fresh context so the next stage must understand the saved specification without hidden conversation history.
+Prism separates durable product intent from code delivery.
+The orchestrator keeps one capability context from design through implementation.
+Only the final review requires a fresh context.
 
 | Stage | Skill | Result |
 |---|---|---|
 | Prioritize | `prism:roadmap` | An ordered Now, Next, and Later roadmap |
 | Shape | `prism:ideate` | Approved EARS requirement files, or a decision to stop |
-| Plan | `prism:plan` | Dependency-ordered design tracks |
-| Design | `prism:design` | A validated design and dependency-ordered implementation-task graph |
-| Implement | `prism:implement` | A controller that builds, integrates, verifies, and reviews every track task |
+| Plan | `prism:plan` | Dependency-ordered outcome slices |
+| Design | `prism:design` | A fit decision and any consequential ADR proposal |
+| Implement | `prism:implement` | Failing tests, working code, durable behavior records, and verification |
+| Review | `prism:review` | Independent findings against the completed code and intent |
 
-`prism:orchestrate` connects the Plan, Design, and Implement stages through fresh child-agent contexts.
-It can run independent tracks in parallel when the host provides isolated workspaces.
-Otherwise, it runs each track in sequence.
+`prism:orchestrate` connects Plan, Design, Implement, and Review through resumable child-agent contexts.
+It resumes the same capability agent from design through implementation.
+It starts a fresh reviewer after the code works.
 
-One track is one coherent technical design unit.
-A track can contain many independently testable implementation tasks.
-The implementation controller runs safe task frontiers concurrently in isolated workspaces.
-It keeps overlapping task work sequential and uses one correctness gate for the complete track.
+One slice contains one observable outcome, one dominant path, one acceptance suite, and one reviewable diff.
+The capability agent splits the slice after exploration when it cannot safely finish the outcome in one context.
 
-The `write-*` skills create individual requirement and specification files.
-The `validate-artifacts` skill reviews one focused specification lane from an isolated context.
-Design combines four lanes through at most three validation waves before implementation starts.
+Prism keeps requirements for intent and ADRs for consequential decisions.
+It keeps tests and feature files for behavior.
+It keeps diagrams for the implemented structure.
+Code specifies implementation details.
+Executable contracts exist only when code or verification consumes them.
 
 ## Review artifacts visually
 
@@ -88,12 +91,19 @@ The bundled review server renders diagrams in the human's browser without creati
 The roadmap, plan, and design skills open the relevant review page at their user-acceptance gates when the server is available.
 Ask the agent to open the Prism review page at any other time during an active harness session.
 
+`Review browser` defaults to `internal` in `.prism/workflow.md`.
+Internal review opens the URL in the host browser when that browser is available.
+If the host has no internal browser, Prism presents the URL and source artifacts.
+Set `Review browser: external` to open review pages in the system browser.
+
 Start a standalone review from a Prism checkout when no harness session is active:
 
 ```bash
 ./bin/prism review
 ./bin/prism review docs/roadmap.md
 ```
+
+The standalone `prism review` command always opens the system browser.
 
 The server binds to `127.0.0.1`, selects an available port, and uses an unguessable session URL.
 It renders entirely in the browser and does not send project sources to a remote renderer.
@@ -114,7 +124,7 @@ The default paths are:
 |---|---|
 | EARS requirements | `docs/requirements/` |
 | Architecture decisions | `docs/ADRs/` |
-| Temporary plans and handoffs | `docs/plans/` |
+| Temporary slice plans and recovery records | `docs/plans/` |
 | Gherkin feature files | `docs/Features/` |
 | Roadmap | `docs/roadmap.md` |
 | Glossary | `docs/Glossary.md` |
