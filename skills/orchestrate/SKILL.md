@@ -21,8 +21,24 @@ Ask once for these run settings:
 - **Commit:** off (default) or on.
 - **Push:** off (default) or on.
 - **Slice continuation:** auto (default) or stepwise.
+- **Model policy:** default (recommended) or manual.
 
 No autonomy level can change an Approved requirement, create an unsanctioned ADR, bypass plan acceptance, accept a slice split, or confirm correctness.
+
+Ask the user to choose whether to apply the default judgement or set models manually before spawning any child.
+When the policy is `default`, apply this judgement:
+
+- **Planning model:** host default.
+- **Delivery model:** host default.
+- **Design audit model:** host reviewer model when available, otherwise host default.
+- **Review model:** host reviewer model when available, otherwise host default.
+- **High-risk review model:** host security model when available, then host reviewer model, then host default.
+
+When the policy is `manual`, ask for model assignments for planning, delivery, design audit, review, and high-risk review before spawning any child.
+A manual assignment can name a model ID or `host default`.
+Pass the selected model when the child-start capability accepts model selection.
+When the capability does not accept model selection, report the limitation and use `host default`.
+Record the selected model role and resolved model for every child.
 
 Detect the execution mode from callable capabilities:
 
@@ -36,6 +52,11 @@ A wait action alone does not enable parallel or sequential mode.
 
 When an accepted initiative plan exists, read `plan.md` and `slices.puml`.
 When the work needs several outcomes and has no plan, start a fresh `Plan <initiative>` agent.
+Use this model assignment:
+
+- Model role: `planning`
+- Model: <resolved model or host default>
+
 Present its slice graph for user acceptance.
 
 Treat a self-contained capability as one standalone slice without creating a plan.
@@ -56,6 +77,11 @@ Never reuse a `Develop <slice>` task for another slice.
 
 Start one child agent named `Develop <slice>` and instruct it to run `design` in embedded mode.
 Give it the requirements, any slice record, code workspace, autonomy level, and execution profile.
+Use this model assignment:
+
+- Model role: `delivery`
+- Model: <resolved model or host default>
+
 Before it starts, mark the slice `in-progress`.
 When this is the initiative's first active slice, mark the roadmap initiative `in-progress`.
 
@@ -72,6 +98,10 @@ Update the slice DAG for the remaining child slices.
 
 Start a fresh `Audit <slice>` agent with `design-audit` and the recorded design paths.
 The auditor receives no delivery conversation.
+Use this model assignment:
+
+- Model role: `design-audit`
+- Model: <resolved model or host default>
 
 On findings, resume `Develop <slice>` with the complete finding list.
 After each design correction batch, start one fresh scoped design audit.
@@ -96,6 +126,16 @@ Use one exhaustive `Review <slice>` agent for a normal slice.
 Use independent review lanes for a high-risk slice with lifecycle, concurrency, replay, security, IPC, migration, or public-boundary concerns.
 Start a fresh `Review <slice>` agent, or one fresh agent per review lane, with `review` and the recorded paths.
 The reviewer receives no delivery conversation.
+For a normal slice, use:
+
+- Model role: `review`
+- Model: <resolved model or host default>
+
+For each high-risk review lane, use:
+
+- Model role: `security-review`
+- Model: <resolved model or host default>
+
 Keep one active review wave per slice.
 Consolidate all lane findings before sending one correction batch.
 
@@ -129,7 +169,7 @@ When every slice is done, graduate open information, set the roadmap initiative 
 ## Broker handling
 
 When a child returns a broker request, start the requested child only when this context has a callable child-start action.
-Give it only the request scope, paths, scratch destination, and profile.
+Give it only the request scope, paths, scratch destination, profile, model role, and resolved model.
 Return its result path and short status to the requester.
 When this context cannot start it, return the broker request to the nearest capable parent.
 Use manual mode only when no parent can delegate.
@@ -148,6 +188,7 @@ For each active child:
 4. Record recovery state only after failure, blocker, or user interruption.
 5. Resume the same child when possible.
 6. Start a replacement in the same workspace from current code and recorded recovery state.
+Keep the same model role and resolved model for a replacement unless the manual policy explicitly changes them.
 
 Do not narrate unchanged waits.
 Do not use waits, replacements, or child-agent failures as correction rounds.

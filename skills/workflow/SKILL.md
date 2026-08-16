@@ -15,6 +15,11 @@ The sibling workflow skills are `roadmap`, `ideate`, `plan`, `design`, `design-a
 Use the host invocation mechanism for a sibling skill.
 Use a project procedure before the Prism fallback.
 
+The orchestrator resolves a run-level model policy before it starts a child.
+The default policy uses host judgement for planning and delivery, the host reviewer model for design audit and normal review, and the host security model for high-risk review when available.
+The manual policy asks the user to assign a model ID or `host default` to each role.
+Keep these role names stable across hosts, and let the host map each role to a model ID.
+
 ## The workflow
 
 - **Prioritize** with `roadmap`.
@@ -69,6 +74,7 @@ Child-agent capability exists only when a child-start action is callable.
 A wait or status action alone is not child-agent capability.
 Use native child agents when the current context has a callable child-start action.
 Otherwise, return a broker request to the nearest parent with child-agent capability.
+Pass the model role and resolved model through every child start and broker request.
 
 Use this exact broker request:
 
@@ -78,6 +84,8 @@ Scope: <slice, investigation, or review lane>
 Inputs: <artifact and code paths>
 Output: <scratch report path or workspace>
 Profile: <execution profile>
+Model role: <role>
+Model: <resolved model or host default>
 ```
 
 Put large read-only findings in the supplied scratch path.
@@ -96,6 +104,8 @@ Render an execution profile as:
 - Context: fresh | resume
 - Parallelism: sequential | independent
 - Focus: <specific risks>
+- Model role: planning | delivery | design-audit | review | security-review
+- Model: <resolved model or host default>
 
 ## Child-agent supervision
 

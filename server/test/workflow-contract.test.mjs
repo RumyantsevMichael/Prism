@@ -178,6 +178,30 @@ test("reviews completed code in a fresh context", async () => {
   assert.match(orchestrate, /one active review wave/);
 });
 
+test("declares model policy and child model roles", async () => {
+  const orchestrate = await skill("orchestrate");
+  const workflow = await skill("workflow");
+
+  assert.match(orchestrate, /\*\*Model policy:\*\* default \(recommended\) or manual/);
+  assert.match(orchestrate, /choose whether to apply the default judgement or set models manually before spawning any child/);
+  assert.match(orchestrate, /\*\*Planning model:\*\* host default/);
+  assert.match(orchestrate, /\*\*Delivery model:\*\* host default/);
+  assert.match(orchestrate, /\*\*Design audit model:\*\* host reviewer model when available/);
+  assert.match(orchestrate, /\*\*High-risk review model:\*\* host security model when available/);
+  assert.match(orchestrate, /ask for model assignments for planning, delivery, design audit, review, and high-risk review/);
+  assert.match(orchestrate, /Model role: `planning`/);
+  assert.match(orchestrate, /Model role: `delivery`/);
+  assert.match(orchestrate, /Model role: `design-audit`/);
+  assert.match(orchestrate, /Model role: `security-review`/);
+  assert.match(orchestrate, /Record the selected model role and resolved model/);
+  assert.match(orchestrate, /same model role and resolved model/);
+  assert.match(orchestrate, /Give it only the request scope, paths, scratch destination, profile, model role, and resolved model/);
+  assert.match(workflow, /Model role: <role>/);
+  assert.match(workflow, /Model: <resolved model or host default>/);
+  assert.match(workflow, /Pass the model role and resolved model through every child start and broker request/);
+  assert.match(workflow, /planning \| delivery \| design-audit \| review \| security-review/);
+});
+
 test("detects delegation from a callable child-start capability", async () => {
   const workflow = await skill("workflow");
 
