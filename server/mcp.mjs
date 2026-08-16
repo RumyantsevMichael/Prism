@@ -98,7 +98,7 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open the local Prism review page in the system browser for the human. The tool returns no rendered image data.",
+    description: "Open one local Prism review page in the system browser for the human. Omit artifact to show the complete artifact tree. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {

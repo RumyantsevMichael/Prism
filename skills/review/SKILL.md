@@ -18,6 +18,8 @@ Read a diagram when the diff changes the structure that it describes.
 Read `references/review-output.md` before reporting.
 When a lane focus is supplied, review the supplied focus exhaustively and do not repeat another lane's focus.
 Use code as the source for implementation detail.
+Inspect the implementer's verification status, test paths, and exact commands.
+Do not rerun the full test suite or configured verification commands.
 
 ## Review order
 
@@ -38,7 +40,8 @@ Do not stop after the first finding or after one category of finding.
 When the security surface is non-empty, inspect secrets, untrusted inputs, authorization, privilege, network access, storage, and IPC as applicable.
 When the security surface is `none`, verify that classification and record that the security audit was skipped.
 
-Run focused verification when it can confirm or reject a suspected defect.
+Run a focused probe only when it can confirm or reject a suspected defect.
+Do not run tests only to repeat implementation verification.
 Do not report a hypothetical problem without an affected path and failure condition.
 Do not report a contract without its canonical path, consumer, and exact verification command.
 Do not accept `NO CONTRACT NEEDED` without a specific reason.

@@ -139,6 +139,7 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.match(tools.get_review_url.description, /URL only/);
   assert.match(tools.get_review_url.description, /does not open a browser/);
   assert.match(tools.present_review.description, /system browser/);
+  assert.match(tools.present_review.description, /Omit artifact to show the complete artifact tree/);
 });
 
 test("uses the consumer root provided by Claude Code", async (context) => {
@@ -220,6 +221,20 @@ test("opens the system browser when it presents a review", async (context) => {
   const review = await callTool(mcp, 2, "present_review", { projectRoot: root, artifact: "docs/artifact.md" });
 
   assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
+  assert.equal(review.result.structuredContent.opened, true);
+  assert.equal(await waitForMarker(browser.marker), "opened");
+});
+
+test("opens one review page for the complete artifact tree when no artifact is selected", async (context) => {
+  const root = await projectFixture(context, "present-all-artifacts", "artifact.md");
+  const browser = await browserStub(context);
+  const mcp = mcpProcess(context, root, undefined, browser.environment);
+
+  await initialize(mcp);
+  const review = await callTool(mcp, 2, "present_review", { projectRoot: root });
+
+  assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
+  assert.doesNotMatch(review.result.structuredContent.url, /artifact=/);
   assert.equal(review.result.structuredContent.opened, true);
   assert.equal(await waitForMarker(browser.marker), "opened");
 });

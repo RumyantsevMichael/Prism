@@ -25,6 +25,11 @@ Ask once for these run settings:
 
 No autonomy level can change an Approved requirement, create an unsanctioned ADR, bypass plan acceptance, accept a slice split, or confirm correctness.
 
+Conservative autonomy requires a user approval after a clean design audit and visual review.
+Broad autonomy may continue automatically after a clean design audit and visual review when no consequential decision remains.
+Slice continuation controls only the transition after a confirmed slice.
+It does not skip design, design audit, visual review, review, or correctness gates.
+
 Ask the user to choose whether to apply the default judgement or set models manually before spawning any child.
 When the policy is `default`, apply this judgement:
 
@@ -87,7 +92,7 @@ When this is the initiative's first active slice, mark the roadmap initiative `i
 
 Handle its compact result:
 
-- `FIT` → continue without a user gate when no consequential decision remains.
+- `FIT` → run the design audit.
 - `SPLIT` → present the child slices and wait for explicit acceptance.
 - `BLOCKED` → present the unresolved requirement, decision, or dependency.
 
@@ -106,9 +111,21 @@ Use this model assignment:
 On findings, resume `Develop <slice>` with the complete finding list.
 After each design correction batch, start one fresh scoped design audit.
 Continue the design audit loop until `CLEAN`, a user stop, or a real blocker.
-On `CLEAN`, open the recorded design artifacts and diagrams in the Prism artifact viewer through the configured `Review browser`.
+On `CLEAN`, open one Prism artifact viewer session for all recorded design artifacts and diagrams through the configured `Review browser`.
+Use the complete artifact tree instead of opening one viewer session per path.
 When no browser capability exists, present the review URL and source artifacts.
-After visual review, continue to implementation.
+After visual review, present:
+
+```text
+Design: <one-sentence outcome>
+Artifacts: <recorded design artifact and diagram paths>
+Audit: CLEAN
+Contracts: <contract paths or NO CONTRACT NEEDED reasons>
+Verification: <exact command>
+```
+
+When autonomy is conservative, ask whether to proceed to implementation.
+When autonomy is broad and no consequential decision remains, continue to implementation.
 
 ### Implement
 
@@ -119,6 +136,9 @@ Pass only the user decision when one occurred.
 When the agent returns `READY FOR REVIEW`, record its diff base, verification status, paths, and security surface.
 Record every contract declaration with its canonical path, consumers, and verification command, or its specific `NO CONTRACT NEEDED` reason.
 Do not accept a claim of independent review from `Develop <slice>`.
+Pass the implementer's verification status and test paths to reviewers.
+Do not assign the full test suite or configured verification commands to reviewers.
+Allow a reviewer to run only a focused probe that can confirm or reject a suspected defect.
 
 ### Review
 
@@ -167,7 +187,8 @@ Repeat the same review matrix after every implementation correction.
 Continue the review loop until `CLEAN`, a user stop, or a real blocker.
 Do not stop after one re-review while findings remain.
 Distinguish review findings from child-agent failures, timeouts, and recovery replacements.
-On `CLEAN`, open changed artifacts and diagrams in the Prism artifact viewer through the configured `Review browser` before the final correctness gate.
+On `CLEAN`, open one Prism artifact viewer session for all changed artifacts and diagrams through the configured `Review browser` before the final correctness gate.
+Use the complete artifact tree instead of opening one viewer session per path.
 When no browser capability exists, present the review URL and source artifacts.
 Then continue to the slice gate.
 

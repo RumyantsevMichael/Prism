@@ -151,11 +151,21 @@ test("orders design audit before implementation", async () => {
   const implement = orchestrate.indexOf("### Implement");
   assert.ok(audit >= 0 && audit < implement);
   assert.match(orchestrate, /Start a fresh `Audit <slice>` agent with `design-audit`/);
-  assert.match(orchestrate, /On `CLEAN`, open the recorded design artifacts/);
+  assert.match(orchestrate, /On `CLEAN`, open one Prism artifact viewer session for all recorded design artifacts/);
   assert.match(orchestrate, /continue to implementation/);
   assert.match(orchestrate, /resume `Develop <slice>` with the complete finding list/);
   assert.match(orchestrate, /After each design correction batch, start one fresh scoped design audit/);
   assert.doesNotMatch(orchestrate, /review-design/);
+});
+
+test("scopes autonomy and slice continuation at the design handoff", async () => {
+  const orchestrate = await skill("orchestrate");
+
+  assert.match(orchestrate, /Conservative autonomy requires a user approval after a clean design audit and visual review/);
+  assert.match(orchestrate, /Broad autonomy may continue automatically after a clean design audit and visual review/);
+  assert.match(orchestrate, /Slice continuation controls only the transition after a confirmed slice/);
+  assert.match(orchestrate, /does not skip design, design audit, visual review, review, or correctness gates/);
+  assert.match(orchestrate, /Design: <one-sentence outcome>/);
 });
 
 test("reviews completed code in a fresh context", async () => {
@@ -176,6 +186,9 @@ test("reviews completed code in a fresh context", async () => {
   assert.match(orchestrate, /Consolidate all lane findings before sending one correction batch/);
   assert.match(orchestrate, /Do not stop after one re-review while findings remain/);
   assert.match(orchestrate, /one active review wave/);
+  assert.match(orchestrate, /Pass the implementer's verification status and test paths to reviewers/);
+  assert.match(orchestrate, /Do not assign the full test suite or configured verification commands to reviewers/);
+  assert.match(orchestrate, /focused probe that can confirm or reject a suspected defect/);
 });
 
 test("defines focused review lanes and compact review output", async () => {
@@ -195,6 +208,9 @@ test("defines focused review lanes and compact review output", async () => {
   assert.doesNotMatch(workflow, /Coverage: <paths or checks>/);
   assert.match(review, /references\/review-output\.md/);
   assert.match(review, /review the supplied focus exhaustively/);
+  assert.match(review, /Inspect the implementer's verification status, test paths, and exact commands/);
+  assert.match(review, /Do not rerun the full test suite or configured verification commands/);
+  assert.match(review, /Run a focused probe only when it can confirm or reject a suspected defect/);
   assert.match(output, /Lane: lifecycle/);
   assert.match(review, /Use `blocker`, `high`, `medium`, or `low` for severity/);
   assert.match(output, /Severity: high/);
@@ -269,8 +285,9 @@ test("keeps visual review selection and procedure in workflow", async () => {
   assert.match(workflow, /For `internal`, use the internal browser/);
   assert.match(workflow, /For `external`, use the system browser/);
   assert.match(workflow, /Explicit `internal` and `external` values override `auto`/);
-  assert.match(workflow, /Open the recorded design artifacts and diagrams in the Prism artifact viewer after a clean design audit/);
-  assert.match(workflow, /Open changed artifacts and diagrams in the Prism artifact viewer before the final correctness gate/);
+  assert.match(workflow, /Open one Prism artifact viewer session for all recorded design artifacts and diagrams after a clean design audit/);
+  assert.match(workflow, /Use the viewer's complete artifact tree instead of opening one viewer session per artifact/);
+  assert.match(workflow, /Open one Prism artifact viewer session for all changed artifacts and diagrams before the final correctness gate/);
   assert.match(workflow, /present the URL and source artifacts/);
   assert.doesNotMatch(phaseSkills.join("\n"), /present_review/);
 });

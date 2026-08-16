@@ -93,7 +93,8 @@ Prism stores diagrams as PlantUML `.puml` source files beside their Markdown art
 Agents read the PlantUML source and never read rendered images.
 The bundled review server renders diagrams in the human's browser without creating image files.
 
-The orchestrator opens the recorded design artifacts after a clean design audit and changed artifacts before the final correctness gate.
+The orchestrator opens one Prism artifact viewer session for all recorded design artifacts after a clean design audit and for all changed artifacts before the final correctness gate.
+The viewer's artifact tree contains the complete set, so the orchestrator does not open one viewer session per artifact.
 Ask the agent to open the Prism review page at any other time during an active harness session.
 
 `Review browser` defaults to `auto` in `.prism/workflow.md`.

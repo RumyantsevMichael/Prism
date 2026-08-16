@@ -156,8 +156,10 @@ For `auto`, use the internal browser in desktop sessions and the system browser 
 For `internal`, use the internal browser.
 For `external`, use the system browser.
 Explicit `internal` and `external` values override `auto`.
-Open the recorded design artifacts and diagrams in the Prism artifact viewer after a clean design audit and before implementation.
-Open changed artifacts and diagrams in the Prism artifact viewer before the final correctness gate.
+Open one Prism artifact viewer session for all recorded design artifacts and diagrams after a clean design audit and before implementation.
+Use the viewer's complete artifact tree instead of opening one viewer session per artifact.
+Open one Prism artifact viewer session for all changed artifacts and diagrams before the final correctness gate.
+Use the viewer's complete artifact tree instead of opening one viewer session per artifact.
 Inspect the rendered artifact before the related user gate.
 If the selected browser capability does not exist, present the URL and source artifacts.
 If no review server exists, present the source artifacts.
