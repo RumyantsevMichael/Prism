@@ -126,21 +126,44 @@ Use one exhaustive `Review <slice>` agent for a normal slice.
 Use independent review lanes for a high-risk slice with lifecycle, concurrency, replay, security, IPC, migration, or public-boundary concerns.
 Start a fresh `Review <slice>` agent, or one fresh agent per review lane, with `review` and the recorded paths.
 The reviewer receives no delivery conversation.
+Define a review matrix before spawning high-risk lanes.
+Do not send identical review instructions to all lanes.
+Use one fresh agent for each matrix row.
+Use this example:
+
+```text
+Lane: security
+Review focus: grants, identity, replay, confinement
+Coverage: authorization, untrusted input, protocol results
+
+Lane: lifecycle
+Review focus: authority loss, cancellation, deadlines, cleanup
+Coverage: state transitions, races, ownership, terminal outcomes
+
+Lane: integration
+Review focus: requirements, contracts, compatibility, artifacts
+Coverage: requirements, features, ADRs, diagrams, verification
+```
+
+Give each lane its matrix row, the common diff paths, and the review output reference.
+Require each lane to report its lane, focus, coverage, status, and findings.
 For a normal slice, use:
 
 - Model role: `review`
 - Model: <resolved model or host default>
 
-For each high-risk review lane, use:
+For each high-risk review lane, use the matrix row as the lane scope and the execution profile `Focus`.
 
 - Model role: `security-review`
 - Model: <resolved model or host default>
 
 Keep one active review wave per slice.
 Consolidate all lane findings before sending one correction batch.
+Consolidate duplicate findings and check uncovered coverage.
 
 On findings, resume `Develop <slice>` with the complete finding list.
 After every implementation correction, start a fresh review or review wave.
+Repeat the same review matrix after every implementation correction.
 Continue the review loop until `CLEAN`, a user stop, or a real blocker.
 Do not stop after one re-review while findings remain.
 Distinguish review findings from child-agent failures, timeouts, and recovery replacements.

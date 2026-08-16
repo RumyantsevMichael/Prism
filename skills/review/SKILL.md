@@ -15,6 +15,8 @@ Read every declared executable contract.
 Verify every declared contract has a real consumer.
 Read an executable contract at its canonical path when the diff changes the boundary that consumes it.
 Read a diagram when the diff changes the structure that it describes.
+Read `references/review-output.md` before reporting.
+When a lane focus is supplied, review the supplied focus exhaustively and do not repeat another lane's focus.
 Use code as the source for implementation detail.
 
 ## Review order
@@ -48,6 +50,9 @@ Do not accept a final contract stored in a slice directory.
 ## Result
 
 Report only actionable findings.
+Include the lane, focus, coverage, and status in the result.
+Use `references/review-output.md` for the compact result shape.
+Use `blocker`, `high`, `medium`, or `low` for severity.
 For each finding, give severity, evidence, affected path, and the condition that closes it.
 Return `CLEAN` when no actionable finding remains.
 

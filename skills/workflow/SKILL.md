@@ -1,6 +1,6 @@
 ---
 name: workflow
-description: "Explain Prism stages, outcome slices, context boundaries, artifact lifecycles, and shared workflow rules."
+description: "Explain Prism shared workflow rules."
 ---
 
 # The code-centered engineering workflow
@@ -14,11 +14,6 @@ It defines project paths, stack assumptions, verification, interaction, and revi
 The sibling workflow skills are `roadmap`, `ideate`, `plan`, `design`, `design-audit`, `implement`, `review`, `orchestrate`, and the remaining `write-*` skills.
 Use the host invocation mechanism for a sibling skill.
 Use a project procedure before the Prism fallback.
-
-The orchestrator resolves a run-level model policy before it starts a child.
-The default policy uses host judgement for planning and delivery, the host reviewer model for design audit and normal review, and the host security model for high-risk review when available.
-The manual policy asks the user to assign a model ID or `host default` to each role.
-Keep these role names stable across hosts, and let the host map each role to a model ID.
 
 ## The workflow
 

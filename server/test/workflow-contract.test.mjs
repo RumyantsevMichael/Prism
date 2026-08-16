@@ -178,6 +178,29 @@ test("reviews completed code in a fresh context", async () => {
   assert.match(orchestrate, /one active review wave/);
 });
 
+test("defines focused review lanes and compact review output", async () => {
+  const review = await skill("review");
+  const orchestrate = await skill("orchestrate");
+  const workflow = await skill("workflow");
+  const output = await readFile(new URL("../../skills/review/references/review-output.md", import.meta.url), "utf8");
+
+  assert.match(orchestrate, /Define a review matrix before spawning high-risk lanes/);
+  assert.match(orchestrate, /Lane: security/);
+  assert.match(orchestrate, /Lane: lifecycle/);
+  assert.match(orchestrate, /Lane: integration/);
+  assert.match(orchestrate, /Do not send identical review instructions to all lanes/);
+  assert.match(orchestrate, /Consolidate duplicate findings and check uncovered coverage/);
+  assert.match(workflow, /Focus: <specific risks>/);
+  assert.doesNotMatch(workflow, /Review focus: <specific review lens>/);
+  assert.doesNotMatch(workflow, /Coverage: <paths or checks>/);
+  assert.match(review, /references\/review-output\.md/);
+  assert.match(review, /review the supplied focus exhaustively/);
+  assert.match(output, /Lane: lifecycle/);
+  assert.match(review, /Use `blocker`, `high`, `medium`, or `low` for severity/);
+  assert.match(output, /Severity: high/);
+  assert.match(output, /Status: CLEAN/);
+});
+
 test("declares model policy and child model roles", async () => {
   const orchestrate = await skill("orchestrate");
   const workflow = await skill("workflow");
@@ -200,6 +223,7 @@ test("declares model policy and child model roles", async () => {
   assert.match(workflow, /Model: <resolved model or host default>/);
   assert.match(workflow, /Pass the model role and resolved model through every child start and broker request/);
   assert.match(workflow, /planning \| delivery \| design-audit \| review \| security-review/);
+  assert.doesNotMatch(workflow, /run-level model policy|host reviewer model|host security model/);
 });
 
 test("detects delegation from a callable child-start capability", async () => {
