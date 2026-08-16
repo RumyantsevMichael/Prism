@@ -23,3 +23,13 @@ test("uses host-specific portable MCP launch paths", async () => {
     cwd: "."
   });
 });
+
+test("describes the shared design audit in both host manifests", async () => {
+  const claudeManifest = await json(".claude-plugin/plugin.json");
+  const codexManifest = await json(".codex-plugin/plugin.json");
+
+  assert.match(claudeManifest.description, /design audits/);
+  assert.match(codexManifest.description, /design audits/);
+  assert.ok(codexManifest.interface.capabilities.includes("Design audits"));
+  assert.ok(codexManifest.interface.defaultPrompt.some((prompt) => /audit the design before implementation/i.test(prompt)));
+});

@@ -1,13 +1,13 @@
 ---
 name: orchestrate
-description: "Run a multi-slice Prism initiative through planning, continuous delivery contexts, fresh review, and user gates."
+description: "Run a multi-slice Prism initiative through planning, design audit, continuous delivery contexts, exhaustive review, and user gates."
 disable-model-invocation: true
 argument-hint: '[initiative]'
 ---
 
 # Orchestrate an initiative
 
-Coordinate `plan` → (`design` → `implement` → `review`) for every outcome slice.
+Coordinate `plan` → (`design` → `design-audit` → `implement` → `review`) for every outcome slice.
 Do not author phase content in this context.
 Keep only routing state, active child identifiers, gates, and recovery status here.
 
@@ -17,12 +17,11 @@ Read `.prism/workflow.md` and the delegation procedure in `workflow` first.
 
 Ask once for these run settings:
 
-- **Decision autonomy:** conservative or broad.
-- **Commit:** off or on.
-- **Push:** off or on.
-- **Slice continuation:** auto or stepwise.
+- **Decision autonomy:** conservative (default) or broad.
+- **Commit:** off (default) or on.
+- **Push:** off (default) or on.
+- **Slice continuation:** auto (default) or stepwise.
 
-Use conservative, commit off, push off, and auto by default.
 No autonomy level can change an Approved requirement, create an unsanctioned ADR, bypass plan acceptance, accept a slice split, or confirm correctness.
 
 Detect the execution mode from callable capabilities:
@@ -69,24 +68,45 @@ Handle its compact result:
 After an accepted split, resume the same `Develop <slice>` agent with the first accepted child slice.
 Update the slice DAG for the remaining child slices.
 
+### Design audit
+
+Start a fresh `Audit <slice>` agent with `design-audit` and the recorded design paths.
+The auditor receives no delivery conversation.
+
+On findings, resume `Develop <slice>` with the complete finding list.
+After each design correction batch, start one fresh scoped design audit.
+Continue the design audit loop until `CLEAN`, a user stop, or a real blocker.
+On `CLEAN`, open the recorded design artifacts and diagrams in the Prism artifact viewer through the configured `Review browser`.
+When no browser capability exists, present the review URL and source artifacts.
+After visual review, continue to implementation.
+
 ### Implement
 
-After `FIT`, resume the same `Develop <slice>` agent and instruct it to run `implement`.
+After a clean design audit and visual artifact review, resume the same `Develop <slice>` agent and instruct it to run `implement`.
 Do not repeat design reasoning or file contents.
 Pass only the user decision when one occurred.
 
 When the agent returns `READY FOR REVIEW`, record its diff base, verification status, paths, and security surface.
+Record every contract declaration with its canonical path, consumers, and verification command, or its specific `NO CONTRACT NEEDED` reason.
 Do not accept a claim of independent review from `Develop <slice>`.
 
 ### Review
 
-Start a fresh `Review <slice>` agent with `review` and the recorded paths.
+Use one exhaustive `Review <slice>` agent for a normal slice.
+Use independent review lanes for a high-risk slice with lifecycle, concurrency, replay, security, IPC, migration, or public-boundary concerns.
+Start a fresh `Review <slice>` agent, or one fresh agent per review lane, with `review` and the recorded paths.
 The reviewer receives no delivery conversation.
+Keep one active review wave per slice.
+Consolidate all lane findings before sending one correction batch.
 
-On `CLEAN`, continue to the slice gate.
 On findings, resume `Develop <slice>` with the complete finding list.
-After the fix batch, start one fresh scoped re-review.
-Stop when actionable findings remain after that re-review.
+After every implementation correction, start a fresh review or review wave.
+Continue the review loop until `CLEAN`, a user stop, or a real blocker.
+Do not stop after one re-review while findings remain.
+Distinguish review findings from child-agent failures, timeouts, and recovery replacements.
+On `CLEAN`, open changed artifacts and diagrams in the Prism artifact viewer through the configured `Review browser` before the final correctness gate.
+When no browser capability exists, present the review URL and source artifacts.
+Then continue to the slice gate.
 
 ## 5. Confirm the slice
 
@@ -130,9 +150,12 @@ For each active child:
 6. Start a replacement in the same workspace from current code and recorded recovery state.
 
 Do not narrate unchanged waits.
-Do not use waits or replacements as correction rounds.
+Do not use waits, replacements, or child-agent failures as correction rounds.
+Do not treat review findings as child-agent failures.
+Keep one active review wave per slice.
 
 In manual mode, tell the user to keep one delivery task open through `design` and `implement`.
+Ask the user to run `design-audit` in a fresh task after `FIT` and before implementation.
 Ask the user to start a separate `review` task after implementation.
 
 ## Gate

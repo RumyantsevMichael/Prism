@@ -64,6 +64,8 @@ test("keeps one delivery task through tests and code", async () => {
   assert.match(implement, /Do not delegate implementation to a fresh worker/);
   assert.match(implement, /Record only the command, exit status, and expected failure reason/);
   assert.match(implement, /Update feature files from verified behavior after implementation/);
+  assert.match(implement, /Follow the contract decision recorded by `design`/);
+  assert.doesNotMatch(implement, /Use `write-contracts`/);
   assert.doesNotMatch(implement, /Dispatch task workers/);
   assert.doesNotMatch(implement, /execution-ledger\.md/);
 });
@@ -105,6 +107,10 @@ test("creates decision diagrams with ADRs and structure diagrams after code", as
 });
 
 test("uses executable contracts only", async () => {
+  const design = await skill("design");
+  const implement = await skill("implement");
+  const review = await skill("review");
+  const audit = await skill("design-audit");
   const contracts = await skill("write-contracts");
 
   assert.match(contracts, /Create a contract only when code or verification consumes it/);
@@ -112,13 +118,44 @@ test("uses executable contracts only", async () => {
   assert.match(contracts, /importable interface/);
   assert.match(contracts, /compatibility test/);
   assert.match(contracts, /Do not create a prose contract/);
+  assert.match(contracts, /Contract: NO CONTRACT NEEDED/);
+  assert.match(contracts, /Reason: <specific reason>/);
   assert.doesNotMatch(contracts, /plans directory/);
+  assert.match(design, /Contract: <canonical path>/);
+  assert.match(design, /Contract: NO CONTRACT NEEDED/);
+  assert.match(design, /recorded design artifact and diagram paths/);
+  assert.match(implement, /Consumers: <production code or verification>/);
+  assert.match(implement, /Verification: <exact command>/);
+  assert.match(review, /every declared contract has a real consumer/);
+  assert.match(audit, /every declared contract has a real consumer/);
+  assert.match(review, /canonical path and consumer/);
+  assert.match(audit, /canonical path and consumer/);
+  assert.match(await skill("workflow"), /not in slice directories/);
 });
 
-test("removes handoff and build-plan production skills", async () => {
+test("uses the design audit skill instead of the old artifact validator", async () => {
+  const audit = await skill("design-audit");
+
+  assert.match(audit, /Do not edit requirements, ADRs, design artifacts, code, or tests/);
+  assert.match(audit, /Artifacts: <recorded design artifact and diagram paths>/);
+  assert.match(audit, /Return `CLEAN` only when the audit finds no actionable finding/);
   await assert.rejects(skill("write-handoff"), /ENOENT/);
   await assert.rejects(skill("write-build-plan"), /ENOENT/);
   await assert.rejects(skill("validate-artifacts"), /ENOENT/);
+});
+
+test("orders design audit before implementation", async () => {
+  const orchestrate = await skill("orchestrate");
+
+  const audit = orchestrate.indexOf("### Design audit");
+  const implement = orchestrate.indexOf("### Implement");
+  assert.ok(audit >= 0 && audit < implement);
+  assert.match(orchestrate, /Start a fresh `Audit <slice>` agent with `design-audit`/);
+  assert.match(orchestrate, /On `CLEAN`, open the recorded design artifacts/);
+  assert.match(orchestrate, /continue to implementation/);
+  assert.match(orchestrate, /resume `Develop <slice>` with the complete finding list/);
+  assert.match(orchestrate, /After each design correction batch, start one fresh scoped design audit/);
+  assert.doesNotMatch(orchestrate, /review-design/);
 });
 
 test("reviews completed code in a fresh context", async () => {
@@ -127,11 +164,18 @@ test("reviews completed code in a fresh context", async () => {
 
   assert.match(review, /Read the completed diff, requirements, tests, feature files, and relevant ADRs/);
   assert.match(review, /Do not inherit the authoring task's conversation/);
+  assert.match(review, /Review every applicable requirement, lifecycle path, boundary, and security condition/);
+  assert.match(review, /Continue the review until you have exhausted actionable findings/);
   assert.match(review, /Report only actionable findings/);
   assert.match(orchestrate, /Start one child agent named `Develop <slice>`/);
   assert.match(orchestrate, /resume the same `Develop <slice>` agent/);
   assert.match(orchestrate, /Start a fresh `Review <slice>` agent/);
   assert.match(orchestrate, /resume `Develop <slice>` with the complete finding list/);
+  assert.match(orchestrate, /After every implementation correction, start a fresh review/);
+  assert.match(orchestrate, /Continue the review loop until `CLEAN`, a user stop, or a real blocker/);
+  assert.match(orchestrate, /Consolidate all lane findings before sending one correction batch/);
+  assert.match(orchestrate, /Do not stop after one re-review while findings remain/);
+  assert.match(orchestrate, /one active review wave/);
 });
 
 test("detects delegation from a callable child-start capability", async () => {
@@ -162,6 +206,8 @@ test("supports a continuous delivery benchmark phase", async () => {
   assert.match(benchHarness, /--delivery-context/);
   assert.match(benchHarness, /choices=\["separate", "continuous"\]/);
   assert.match(benchHarness, /CONTINUOUS_DELIVERY_PROMPT/);
+  assert.match(benchHarness, /run a fresh `design-audit` pass before implementation/);
+  assert.match(benchHarness, /complete findings to the same delivery context/);
   assert.match(benchHarness, /if args\.delivery_context == "continuous"/);
   assert.doesNotMatch(benchHarness, /Produce the full spec: ADR, contracts, a dependency-ordered implementation-task graph/);
 });
@@ -170,20 +216,24 @@ test("keeps visual review selection and procedure in workflow", async () => {
   const workflow = await skill("workflow");
   const phaseSkills = await Promise.all(["plan", "design", "roadmap"].map(skill));
 
-  assert.match(workflow, /Missing `Review browser` defaults to `internal`/);
-  assert.match(workflow, /For `internal`, request the review URL and open it through the host internal browser/);
-  assert.match(workflow, /For `external`, use `present_review` to open the system browser/);
-  assert.match(workflow, /If the host lacks an internal browser, present the URL and source artifacts/);
+  assert.match(workflow, /Missing `Review browser` defaults to `auto`/);
+  assert.match(workflow, /For `auto`, use the internal browser in desktop sessions and the system browser in CLI sessions/);
+  assert.match(workflow, /For `internal`, use the internal browser/);
+  assert.match(workflow, /For `external`, use the system browser/);
+  assert.match(workflow, /Explicit `internal` and `external` values override `auto`/);
+  assert.match(workflow, /Open the recorded design artifacts and diagrams in the Prism artifact viewer after a clean design audit/);
+  assert.match(workflow, /Open changed artifacts and diagrams in the Prism artifact viewer before the final correctness gate/);
+  assert.match(workflow, /present the URL and source artifacts/);
   assert.doesNotMatch(phaseSkills.join("\n"), /present_review/);
 });
 
-test("writes review browser configuration with an internal default", async () => {
+test("writes review browser configuration with an adaptive default", async () => {
   const workflowInit = await skill("workflow-init");
   const benchHarness = await readFile(new URL("../../bench/harness/bench.py", import.meta.url), "utf8");
 
-  assert.match(workflowInit, /- Review browser: internal \| external/);
-  assert.match(workflowInit, /`internal` \(the default\)/);
-  assert.match(benchHarness, /- Review browser: internal/);
+  assert.match(workflowInit, /- Review browser: auto \| internal \| external/);
+  assert.match(workflowInit, /`auto` \(the default\)/);
+  assert.match(benchHarness, /- Review browser: auto/);
 });
 
 test("uses the Codex benchmark model policy", async () => {

@@ -5,8 +5,8 @@
 # Prism
 
 Prism helps Claude Code and Codex deliver complex changes as small outcome slices.
-It keeps one capability context from code exploration through implementation.
-Fresh contexts review completed code.
+It keeps one delivery context from code exploration through implementation.
+Fresh contexts audit the design and review completed code.
 Small changes do not need this workflow.
 
 Use Prism when a change needs clear intent, architecture decisions, durable behavior records, or several dependency-ordered slices.
@@ -49,16 +49,17 @@ Start the workflow that fits your change.
 | A defined capability | `prism:write-requirements` | You need to record and approve EARS requirements without broad ideation |
 | Approved requirements with several outcomes | `prism:plan` | You need dependency-ordered outcome slices |
 | One Approved outcome | `prism:design` | You need to explore the code and confirm that the outcome fits one context |
-| A fitted outcome | `prism:implement` | The same capability context is ready to write tests and code |
-| A full initiative | `prism:orchestrate` | You want Prism to coordinate planning, design, and implementation |
+| A fitted outcome | `prism:design-audit` | You need to audit the design before implementation |
+| An audited outcome | `prism:implement` | The same delivery context is ready to write tests and code |
+| A full initiative | `prism:orchestrate` | You want Prism to coordinate planning, design audit, implementation, and review |
 
 Use `prism:workflow` when you need an explanation of the complete workflow.
 
 ## How the workflow works
 
 Prism separates durable product intent from code delivery.
-The orchestrator keeps one capability context from design through implementation.
-Only the final review requires a fresh context.
+The orchestrator keeps one delivery context from design through implementation.
+The design audit and final review require fresh contexts.
 
 | Stage | Skill | Result |
 |---|---|---|
@@ -66,12 +67,14 @@ Only the final review requires a fresh context.
 | Shape | `prism:ideate` | Approved EARS requirement files, or a decision to stop |
 | Plan | `prism:plan` | Dependency-ordered outcome slices |
 | Design | `prism:design` | A fit decision and any consequential ADR proposal |
+| Design audit | `prism:design-audit` | Complete requirements, boundary, contract, security, and verification findings |
 | Implement | `prism:implement` | Failing tests, working code, durable behavior records, and verification |
-| Review | `prism:review` | Independent findings against the completed code and intent |
+| Review | `prism:review` | Exhaustive independent findings against the completed code and intent until `CLEAN` |
 
-`prism:orchestrate` connects Plan, Design, Implement, and Review through resumable child-agent contexts.
-It resumes the same capability agent from design through implementation.
-It starts a fresh reviewer after the code works.
+`prism:orchestrate` connects Plan, Design, Design audit, Implement, and Review through resumable child-agent contexts.
+It resumes the same delivery agent from design through implementation.
+It starts a fresh design auditor after `FIT` and a fresh reviewer after the code works.
+It repeats each audit or review after corrections until the result is `CLEAN`, the user stops, or a real blocker occurs.
 
 One slice contains one observable outcome, one dominant path, one acceptance suite, and one reviewable diff.
 The capability agent splits the slice after exploration when it cannot safely finish the outcome in one context.
@@ -81,6 +84,8 @@ It keeps tests and feature files for behavior.
 It keeps diagrams for the implemented structure.
 Code specifies implementation details.
 Executable contracts exist only when code or verification consumes them.
+Each declared contract records its canonical path, consumers, and exact verification command.
+Each `NO CONTRACT NEEDED` result records a specific reason.
 
 ## Review artifacts visually
 
@@ -88,12 +93,14 @@ Prism stores diagrams as PlantUML `.puml` source files beside their Markdown art
 Agents read the PlantUML source and never read rendered images.
 The bundled review server renders diagrams in the human's browser without creating image files.
 
-The roadmap, plan, and design skills open the relevant review page at their user-acceptance gates when the server is available.
+The orchestrator opens the recorded design artifacts after a clean design audit and changed artifacts before the final correctness gate.
 Ask the agent to open the Prism review page at any other time during an active harness session.
 
-`Review browser` defaults to `internal` in `.prism/workflow.md`.
-Internal review opens the URL in the host browser when that browser is available.
-If the host has no internal browser, Prism presents the URL and source artifacts.
+`Review browser` defaults to `auto` in `.prism/workflow.md`.
+Auto review uses the internal browser in desktop sessions and the system browser in CLI sessions.
+Internal review opens the URL in the internal browser when that browser is available.
+Explicit `internal` and `external` values override `auto`.
+If the selected browser is not available, Prism presents the URL and source artifacts.
 Set `Review browser: external` to open review pages in the system browser.
 
 Start a standalone review from a Prism checkout when no harness session is active:

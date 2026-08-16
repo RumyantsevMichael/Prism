@@ -44,9 +44,9 @@ Cover:
 4. **Tracker**: issue tracker and label conventions (defaults: GitHub, `type:bug`/`type:enhancement`, `area:*` scopes, `needs-design`).
 5. **Commit conventions**: scopes vocabulary, anything beyond the standard conventional-commit rules.
 6. **Interaction**: how gates reach the user and where review pages open.
-   Choose `structured` or `plain-text`, and `internal` or `external` for `Review browser`.
+   Choose `structured` or `plain-text`, and `auto`, `internal`, or `external` for `Review browser`.
    `structured` uses the host's structured input capability when available and falls back to plain text.
-   `internal` (the default) uses the host internal browser when available.
+   `auto` (the default) uses the internal browser in desktop sessions and the system browser in CLI sessions.
    Ask only if the user has a preference, otherwise take the defaults.
 7. **Constraints**: anything the skills must never do here (for example never touch generated dirs, no pushes, sign-off requirements).
 
@@ -93,7 +93,7 @@ Omit no section, and use "n/a" where a value is empty.
 
 ## Interaction
 - Interaction style: structured | plain-text
-- Review browser: internal | external
+- Review browser: auto | internal | external
 
 ## Constraints
 - <project-specific MUST NOTs>
@@ -105,7 +105,9 @@ If that capability is unavailable, use the plain-text form.
 `plain-text` presents the same options as a numbered list in the message body, answered in prose.
 It changes delivery only, and the framing rule in the `workflow` overview skill applies either way.
 `Review browser` selects the visual-review procedure in the `workflow` overview skill.
-`internal` is the default when the configuration does not set `Review browser`.
+`auto` is the default when the configuration does not set `Review browser`.
+`auto` uses the internal browser in desktop sessions and the system browser in CLI sessions.
+`internal` uses the internal browser.
 `external` opens the system browser.
 
 ## 4. Scaffold

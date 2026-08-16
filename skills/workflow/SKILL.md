@@ -11,7 +11,7 @@ Make a small change directly when the project conventions provide enough guidanc
 Read `.prism/workflow.md` when it exists.
 It defines project paths, stack assumptions, verification, interaction, and review settings.
 
-The sibling workflow skills are `roadmap`, `ideate`, `plan`, `design`, `implement`, `review`, `orchestrate`, and the remaining `write-*` skills.
+The sibling workflow skills are `roadmap`, `ideate`, `plan`, `design`, `design-audit`, `implement`, `review`, `orchestrate`, and the remaining `write-*` skills.
 Use the host invocation mechanism for a sibling skill.
 Use a project procedure before the Prism fallback.
 
@@ -21,8 +21,9 @@ Use a project procedure before the Prism fallback.
 - **Shape intent** with `ideate` or `write-requirements`.
 - **Plan slices** with `plan` when the initiative needs several dependency-ordered outcomes.
 - **Explore and confirm fit** with `design`.
+- **Audit the design** with `design-audit` in a fresh context before implementation.
 - **Test and implement** with `implement` in the same delivery context.
-- **Review completed code** with `review` in a fresh context.
+- **Review completed code** with `review` in a fresh context until `CLEAN`.
 - **Coordinate the chain** with `orchestrate`.
 
 A phase skill does not choose its own context boundary.
@@ -43,6 +44,10 @@ Artifacts preserve information that code cannot preserve.
 Do not create an implementation handoff.
 Do not create a mandatory build plan or execution ledger.
 Create an executable contract only when code or verification consumes it.
+Record one canonical contract path, its consumers, and its exact verification command for every declared contract.
+Record a specific reason for every `NO CONTRACT NEEDED` decision.
+Review and design audit must verify that every declared contract has a real consumer.
+Keep final contracts at their canonical boundary paths, not in slice directories.
 Keep coordination state inside the initiative plan only when several slices, workspaces, owners, or migration states require it.
 
 ## Outcome slices
@@ -141,12 +146,16 @@ Do not add diagrams to requirements or feature files.
 ## Visual review
 
 Use the Prism review server for human artifact review when its tools are available.
-Missing `Review browser` defaults to `internal`.
-For `internal`, request the review URL and open it through the host internal browser.
-For `external`, use `present_review` to open the system browser.
+Missing `Review browser` defaults to `auto`.
+For `auto`, use the internal browser in desktop sessions and the system browser in CLI sessions.
+For `internal`, use the internal browser.
+For `external`, use the system browser.
+Explicit `internal` and `external` values override `auto`.
+Open the recorded design artifacts and diagrams in the Prism artifact viewer after a clean design audit and before implementation.
+Open changed artifacts and diagrams in the Prism artifact viewer before the final correctness gate.
 Inspect the rendered artifact before the related user gate.
-If the host lacks an internal browser, present the URL and source artifacts.
-If no review tool exists, present the source artifacts.
+If the selected browser capability does not exist, present the URL and source artifacts.
+If no review server exists, present the source artifacts.
 
 ## Lifecycles
 

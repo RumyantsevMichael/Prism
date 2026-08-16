@@ -29,6 +29,7 @@ Do not create a separate contract when an existing production type or schema alr
 ## 2. Put it where consumers use it
 
 Use the project's canonical source, API, schema, or test path.
+Do not store the final contract in a slice directory.
 Follow existing generation and ownership conventions.
 Link requirements for obligations and ADRs for consequential decisions when the format supports comments or metadata.
 
@@ -40,5 +41,19 @@ Remove the contract when no executable consumer remains.
 
 ## Result
 
-Report the contract path, every consumer, and the verification command.
-If no executable contract is necessary, return `NO CONTRACT NEEDED` and continue implementation.
+For an executable contract, report exactly:
+
+```text
+Contract: <canonical path>
+Consumers: <production code or verification>
+Verification: <exact command>
+```
+
+When no executable contract is necessary, report exactly:
+
+```text
+Contract: NO CONTRACT NEEDED
+Reason: <specific reason>
+```
+
+Continue implementation after the result.

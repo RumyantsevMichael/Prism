@@ -6,6 +6,7 @@
 - One-line description: A spec-driven engineering workflow plugin for Claude Code and Codex.
 
 ## Paths
+- Requirements: docs/requirements/
 - ADRs: docs/ADRs/
 - Plans (scratch): docs/plans/
 - Feature files: docs/Features/
@@ -34,6 +35,7 @@
 
 ## Interaction
 - Interaction style: structured
+- Review browser: auto
 
 ## Constraints
 - Keep one sentence per line in Markdown files.

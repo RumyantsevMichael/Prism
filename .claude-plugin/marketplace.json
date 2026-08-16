@@ -10,7 +10,7 @@
       "name": "prism",
       "source": "./",
       "displayName": "Prism",
-      "description": "Code-centered workflow with EARS requirements, architecture decisions, outcome slices, implementation, and independent review.",
+      "description": "Code-centered workflow with EARS requirements, architecture decisions, outcome slices, design audits, implementation, and independent review.",
       "author": {
         "name": "Michael Rumyantsev"
       },

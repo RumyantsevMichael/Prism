@@ -35,6 +35,9 @@ Map each applicable Approved requirement statement to the code or boundary that 
 Choose where the behavior starts, which component owns it, how data moves, and how state changes.
 Define failure, recovery, compatibility, migration, security, and operational behavior when they apply.
 Identify each machine-readable contract that code or tests must consume.
+For each changed boundary, decide whether an existing executable contract governs it or whether a new executable contract has a consumer.
+Do not create a new contract when an existing production type or schema governs the boundary.
+Do not create a contract when no production code, generated code, or verification consumes it.
 Identify where the executable acceptance test will drive and observe the behavior.
 Prefer existing architecture and extension points when they satisfy the requirements.
 
@@ -72,7 +75,7 @@ When that decision is not settled, return `BLOCKED` with the exact user question
 Leave private helper names, local data structures, and other code-level choices to implementation.
 Do not create a separate artifact for these code-level choices.
 
-The implementation skill creates or updates a machine-readable contract before production code when code or tests consume it.
+Implementation follows the recorded contract decision and binds the canonical contract to its production or verification consumer.
 Add a decision diagram with an ADR when relationships, lifecycle, or call order are part of the decision.
 The implementation skill updates feature files and implemented-structure diagrams after the code passes verification.
 Do not create a prose contract or feature file during design.
@@ -86,6 +89,22 @@ Return one compact status:
 - `FIT`: the proposed architecture fits one delivery context.
 - `SPLIT`: include the proposed child slice records for orchestration and user acceptance.
 - `BLOCKED`: name the unresolved requirement, decision, or dependency.
+
+For each `FIT` contract decision, use exactly one of these forms:
+
+```text
+Contract: <canonical path>
+Consumers: <production code or verification>
+Verification: <exact command>
+```
+
+```text
+Contract: NO CONTRACT NEEDED
+Reason: <specific reason>
+```
+
+After `FIT`, return `Artifacts: <recorded design artifact and diagram paths>`.
+Return one contract decision block for every changed boundary.
 
 Do not repeat the explored code or reasoning in the status.
 The orchestrator owns plan changes, lifecycle changes, and the transition to implementation.

@@ -19,7 +19,10 @@ Delete that recovery record after the slice completes.
 
 Choose the smallest executable test that starts through the surface selected during design and proves the observable outcome.
 Reuse the project test structure and fixtures.
-Use `write-contracts` only when implementation or verification will consume an executable boundary artifact.
+Follow the contract decision recorded by `design`.
+When the decision names a canonical contract, bind that contract to its production or verification consumer before the consumer changes.
+When the decision says `NO CONTRACT NEEDED`, do not create a contract.
+Do not create a new contract when an existing production type or schema governs the boundary.
 
 ## 2. Prove the red checkpoint
 
@@ -75,10 +78,26 @@ Do not add a durable reference to the initiative plan or slice name.
 Prepare the diff base, code paths, requirements, tests, feature files, relevant ADRs, and security surface.
 Do not create a prose design summary for the reviewer.
 
-Return `READY FOR REVIEW` with paths and the verification status.
+Return `READY FOR REVIEW` with changed artifact and diagram paths, the verification status, and one contract decision for every changed boundary.
+Repeat each contract path with its consumers and exact verification command, or repeat the specific `NO CONTRACT NEEDED` reason.
+Use this exact form for each executable contract:
+
+```text
+Contract: <canonical path>
+Consumers: <production code or verification>
+Verification: <exact command>
+```
+
+Use this exact form when no executable contract is needed:
+
+```text
+Contract: NO CONTRACT NEEDED
+Reason: <specific reason>
+```
+
 The orchestrator starts the fresh reviewer and returns its complete finding list to this task.
 When this task receives findings, fix them in one batch and rerun affected verification.
-Return `READY FOR RE-REVIEW` after the fix batch.
+Return `READY FOR RE-REVIEW` after the fix batch with the same contract declarations.
 
 Do not change slice status, roadmap status, ADR status, or plan lifecycle.
 Do not propose a commit.

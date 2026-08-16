@@ -32,6 +32,7 @@
     "capabilities": [
       "Requirements authoring",
       "Product design",
+      "Design audits",
       "Architecture decisions",
       "Implementation planning",
       "Visual artifact review",
@@ -39,6 +40,7 @@
     ],
     "defaultPrompt": [
       "Use Prism to design this change.",
+      "Use Prism to audit the design before implementation.",
       "Use Prism to implement this approved specification."
     ]
   }

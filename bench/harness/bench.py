@@ -69,10 +69,12 @@ Finish only when the deliverable in BRIEF.md is complete and your own tests pass
 CONTINUOUS_DELIVERY_PROMPT = """Read BRIEF.md at the repository root. It is the product request for {stage_intro}.
 Run the prism design workflow in delivery mode now: {design_invocation}.
 Explore the code and run the early fit checkpoint before you create artifacts or edit production code.
-After a FIT result, continue in this same context with the prism implementation workflow: {implement_invocation}.
+After a FIT result, run a fresh `design-audit` pass before implementation.
+Send its complete findings to the same delivery context and correct the design until the audit is clean.
+After a clean design audit, continue in this same context with the prism implementation workflow: {implement_invocation}.
 Write failing executable tests, implement the outcome, verify it, and update durable behavior and structure artifacts after the code works.
-Use a fresh context only for the independent code review.
-Finish only after implementation, verification, fresh review, and the final correctness gate.
+Use a fresh context for the design audit and the independent code review.
+Finish only after a clean design audit, implementation, verification, fresh review, and the final correctness gate.
 {rules}"""
 
 BASELINE_PROMPT = """Read BRIEF.md at the repository root. It is the product request for {stage_intro}.
@@ -140,7 +142,7 @@ WORKFLOW_CONFIG_TEMPLATE = """# Workflow config
 
 ## Interaction
 - Interaction style: plain-text
-- Review browser: internal
+- Review browser: auto
 
 ## Constraints
 - This is a benchmark session driven over a text channel.
