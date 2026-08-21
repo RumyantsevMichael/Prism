@@ -49,7 +49,7 @@ Start the workflow that fits your change.
 | A defined capability | `prism:write-requirements` | You need to record and approve EARS requirements without broad ideation |
 | Approved requirements with several outcomes | `prism:plan` | You need dependency-ordered outcome slices |
 | One Approved outcome | `prism:design` | You need to explore the code and confirm that the outcome fits one context |
-| A fitted outcome | `prism:design-audit` | You need to audit the design before implementation |
+| A fitted outcome | `prism:review` in `design-audit` mode | You need to audit the design before implementation |
 | An audited outcome | `prism:implement` | The same delivery context is ready to write tests and code |
 | A full initiative | `prism:orchestrate` | You want Prism to coordinate planning, design audit, implementation, and review |
 
@@ -67,14 +67,17 @@ The design audit and final review require fresh contexts.
 | Shape | `prism:ideate` | Approved EARS requirement files, or a decision to stop |
 | Plan | `prism:plan` | Dependency-ordered outcome slices |
 | Design | `prism:design` | A fit decision and any consequential ADR proposal |
-| Design audit | `prism:design-audit` | Complete requirements, boundary, contract, security, and verification findings |
+| Design audit | `prism:review` in `design-audit` mode | Complete requirements, boundary, contract, security, and verification findings |
 | Implement | `prism:implement` | Failing tests, working code, durable behavior records, and verification |
-| Review | `prism:review` | Exhaustive independent findings against the completed code and intent until `CLEAN` |
+| Review | `prism:review` in `implementation-review` mode | Exhaustive independent findings against the completed code and intent until `CLEAN` |
 
 `prism:orchestrate` connects Plan, Design, Design audit, Implement, and Review through resumable child-agent contexts.
 It resumes the same delivery agent from design through implementation.
-It starts a fresh design auditor after `FIT` and a fresh reviewer after the code works.
+It starts a fresh design review after `FIT` and a fresh implementation review after the code works.
 It repeats each audit or review after corrections until the result is `CLEAN`, the user stops, or a real blocker occurs.
+It can replace a delivery context from the current code and findings when a review reopens a defect.
+The initiative plan stores a current `state.md` snapshot so a later orchestrator can resume after a phase boundary.
+Each slice stores all design-audit and implementation-review findings in one `findings.md` file with correction and verification statuses.
 
 One slice contains one observable outcome, one dominant path, one acceptance suite, and one reviewable diff.
 The capability agent splits the slice after exploration when it cannot safely finish the outcome in one context.
@@ -95,6 +98,8 @@ The bundled review server renders diagrams in the human's browser without creati
 
 The orchestrator opens one Prism artifact viewer session for all recorded design artifacts after a clean design audit and for all changed artifacts before the final correctness gate.
 The viewer's artifact tree contains the complete set, so the orchestrator does not open one viewer session per artifact.
+The orchestrator must call a browser-opening capability for the selected browser.
+Showing a URL without opening the viewer is only a fallback when no browser capability exists.
 Ask the agent to open the Prism review page at any other time during an active harness session.
 
 `Review browser` defaults to `auto` in `.prism/workflow.md`.
@@ -132,7 +137,7 @@ The default paths are:
 |---|---|
 | EARS requirements | `docs/requirements/` |
 | Architecture decisions | `docs/ADRs/` |
-| Temporary slice plans and recovery records | `docs/plans/` |
+| Initiative plans, state, slice findings, and recovery records | `docs/plans/` |
 | Gherkin feature files | `docs/Features/` |
 | Roadmap | `docs/roadmap.md` |
 | Glossary | `docs/Glossary.md` |

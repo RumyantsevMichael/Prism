@@ -7,7 +7,9 @@ argument-hint: '[initiative/slice]'
 # Design and confirm a slice
 
 Read `.prism/workflow.md`, the glossary, relevant approved requirements, relevant ADRs, relevant feature files, and the slice record when present.
-Use the delegation procedure in `workflow` when project rules require delegated exploration.
+Use [delegation.md](../workflow/references/delegation.md) when project rules require delegated exploration.
+When orchestration provides a slice findings path, read that file before design work and keep its unresolved entries in scope.
+When no path is supplied, use `<configured plans>/<initiative>/<slice>/findings.md` when the slice has a plan.
 
 This skill transforms requirements into the architecture for one slice.
 The same task keeps this design context for implementation unless orchestration replaces it after a failure.
@@ -42,6 +44,15 @@ Identify where the executable acceptance test will drive and observe the behavio
 Prefer existing architecture and extension points when they satisfy the requirements.
 
 Do not write a prose design summary, task graph, or handoff.
+
+### Run the author preflight
+
+Before `FIT`, trace every Approved requirement to a planned behavior, affected boundary, executable test, and verification command.
+Challenge normal, failure, recovery, lifecycle, compatibility, security, and operational behavior for every changed path.
+Confirm that the design has no unresolved consequential decision and that the slice has one complete end-to-end verification path.
+When the findings file contains `OPEN` or `REOPENED` design findings, address them before `FIT`.
+Mark an addressed finding `IN PROGRESS` before the correction and `FIXED` with evidence after the correction.
+Do not mark a finding `VERIFIED` from the delivery context.
 
 ### Confirm fit
 
@@ -104,6 +115,7 @@ Reason: <specific reason>
 ```
 
 After `FIT`, return `Artifacts: <recorded design artifact and diagram paths>`.
+When orchestration provides a findings path, return `Findings: <slice findings path>`.
 Return one contract decision block for every changed boundary.
 
 Do not repeat the explored code or reasoning in the status.

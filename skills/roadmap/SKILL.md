@@ -26,7 +26,7 @@ Read the roadmap, the product strategy document if present, and the glossary (de
 
 The judgment-heavy mode.
 Run **inline with the user**.
-Route the bounded read-only survey through the delegation procedure in `workflow`.
+Route the bounded read-only survey through [delegation.md](../workflow/references/delegation.md).
 Keep the prioritization call inline.
 
 1. **Orient.** Read the current roadmap and the strategy pillars it serves.

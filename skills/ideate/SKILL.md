@@ -7,7 +7,7 @@ argument-hint: '[idea]'
 # Ideate on a fresh idea
 
 Ideation turns a shapeless idea into Approved EARS requirement files that a later delivery task reads.
-Use the delegation procedure in `workflow` for bounded read-only checks.
+Use [delegation.md](../workflow/references/delegation.md) for bounded read-only checks.
 
 Project settings for this workflow live in `.prism/workflow.md` at the project root.
 Read that file first if it exists.
@@ -39,7 +39,7 @@ Separate direct evidence from assumptions.
 
 ## 2. Fit the idea into the product
 
-Route these checks through the delegation procedure in `workflow`.
+Route these checks through [delegation.md](../workflow/references/delegation.md).
 Pass paths instead of file contents.
 
 - Check whether an Approved requirement already covers the need.

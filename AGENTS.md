@@ -40,6 +40,11 @@ A sibling reference such as `write-adr` resolves under the plugin namespace as `
 An external name resolves to a built-in or project-local skill.
 The `workflow` skill documents which names fall on which side.
 Keep that distinction intact.
+For any skill, prefer a concrete example or maintained reference over repeated prose when it can express the rule.
+Keep each skill lean and use only the minimum prose that preserves meaning.
+Link each supporting reference from `SKILL.md` with a Markdown link.
+Resolve a supporting reference path relative to the directory that contains its `SKILL.md`.
+Use a cross-skill link such as `[review-format.md](../review/references/review-format.md)` when the reference lives under another skill.
 
 ## Verifying bulk edits
 

@@ -104,7 +104,7 @@ Omit no section, and use "n/a" where a value is empty.
 If that capability is unavailable, use the plain-text form.
 `plain-text` presents the same options as a numbered list in the message body, answered in prose.
 It changes delivery only, and the framing rule in the `workflow` overview skill applies either way.
-`Review browser` selects the visual-review procedure in the `workflow` overview skill.
+`Review browser` selects the [visual-review.md](../workflow/references/visual-review.md) procedure.
 `auto` is the default when the configuration does not set `Review browser`.
 `auto` uses the internal browser in desktop sessions and the system browser in CLI sessions.
 `internal` uses the internal browser.
@@ -117,7 +117,7 @@ Create any configured doc directories that do not exist, with a minimal seed:
 - Glossary: title + one-line purpose.
 - Roadmap: empty roadmap prose and a sibling `roadmap.puml` dependency graph (see `roadmap` skill for format).
 - Requirements/ADRs/Features/user-guide: directory with a short README stating what lives there.
-- Plans directory: directory only for multi-slice coordination and recovery records.
+- Plans directory: directory only for initiative plans, coordination snapshots, slice findings, and recovery records.
 
 Do not scaffold over existing files.
 Integrate with what is there.

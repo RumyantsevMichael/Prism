@@ -11,6 +11,10 @@ Do not delegate implementation to a fresh worker.
 Read `.prism/workflow.md` and applicable project instructions.
 Use the accepted requirements, relevant ADRs, tests, design context, and compact slice record when present.
 Inspect only files required for the accepted design and verification.
+When orchestration provides a slice findings path, read the complete file before implementation and before every correction.
+When no path is supplied, use `<configured plans>/<initiative>/<slice>/findings.md` when the slice has a plan.
+Read [the review format](../review/references/review-format.md) before changing finding statuses.
+Edit only finding status and implementer evidence in that file.
 
 Create `recovery.md` in the initiative plan only when the context must pause or be replaced.
 Delete that recovery record after the slice completes.
@@ -48,6 +52,8 @@ Do not edit requirements without explicit user approval.
 When implementation requires a new consequential architectural decision, return `BLOCKED` with the exact decision needed.
 Do not create or revise an ADR without the user or orchestrator response.
 When exploration proves that the slice does not fit, return to the `design` fit checkpoint before more edits.
+When a finding has status `OPEN` or `REOPENED`, mark it `IN PROGRESS` before the correction and `FIXED` with evidence after the correction.
+Do not mark a finding `VERIFIED` from the delivery context.
 
 ## 4. Verify the code
 
@@ -59,7 +65,15 @@ Remove generated caches and temporary files from the change.
 Treat an unavailable required verification path as unfinished work.
 Do not replace cross-process or cross-surface proof with an in-process test.
 
-## 5. Update durable artifacts
+## 5. Run the author preflight
+
+Before `READY FOR REVIEW`, trace every Approved requirement to changed behavior, executable tests, and verification evidence.
+Check normal, failure, recovery, lifecycle, compatibility, security, and operational behavior for every changed path.
+Read every `OPEN`, `IN PROGRESS`, and `REOPENED` finding in the slice findings file.
+Do not return for review while an addressed finding lacks `FIXED` status and closure evidence.
+Do not erase, rewrite, or duplicate earlier finding history.
+
+## 6. Update durable artifacts
 
 Update feature files from verified behavior after implementation.
 Link each new or changed Rule to its Approved requirement.
@@ -73,12 +87,12 @@ Make the diagram explain the implemented system rather than prescribe implementa
 Do not duplicate code structure in prose.
 Do not add a durable reference to the initiative plan or slice name.
 
-## 6. Prepare fresh review
+## 7. Prepare fresh review
 
 Prepare the diff base, code paths, requirements, tests, feature files, relevant ADRs, and security surface.
 Do not create a prose design summary for the reviewer.
 
-Return `READY FOR REVIEW` with changed artifact and diagram paths, the verification status, and one contract decision for every changed boundary.
+Return `READY FOR REVIEW` with changed artifact and diagram paths, the findings path, the verification status, and one contract decision for every changed boundary.
 Repeat each contract path with its consumers and exact verification command, or repeat the specific `NO CONTRACT NEEDED` reason.
 Use this exact form for each executable contract:
 
@@ -95,9 +109,9 @@ Contract: NO CONTRACT NEEDED
 Reason: <specific reason>
 ```
 
-The orchestrator starts the fresh reviewer and returns its complete finding list to this task.
-When this task receives findings, fix them in one batch and rerun affected verification.
-Return `READY FOR RE-REVIEW` after the fix batch with the same contract declarations.
+The orchestrator starts the fresh reviewer with the findings path and returns the updated finding IDs to this task.
+When this task receives findings, read the complete file, fix all unresolved entries in one batch, and rerun affected verification.
+Return `READY FOR RE-REVIEW` after the fix batch with the same contract declarations and updated finding evidence.
 
 Do not change slice status, roadmap status, ADR status, or plan lifecycle.
 Do not propose a commit.

@@ -10,7 +10,7 @@ Create the smallest useful initiative plan.
 
 Read `.prism/workflow.md`, the glossary, Approved requirements, and relevant ADRs.
 Inspect only project structure and likely user-visible or system surfaces needed to estimate slices.
-Use the delegation procedure in `workflow` when project rules require delegated exploration.
+Use [delegation.md](../workflow/references/delegation.md) when project rules require delegated exploration.
 Leave detailed architecture and code-path exploration to `design`.
 
 ## 1. Identify observable outcomes
@@ -62,6 +62,7 @@ Use `not-started`, `in-progress`, `done`, `blocked`, or `deferred` stereotypes.
 
 Write one `plan.md` under the configured plans directory.
 Link `slices.puml` from the plan.
+The orchestrator creates `state.md` after plan acceptance and creates one `findings.md` file under each slice before its first audit.
 Give each slice exactly these implementation-free fields:
 
 ```markdown
@@ -75,6 +76,7 @@ Give each slice exactly these implementation-free fields:
 ```
 
 Do not add architecture, interfaces, task lists, implementation instructions, estimates, or handoff prose.
+Do not add coordination state or review findings to the slice record.
 Link a Proposed ADR only when a consequential cross-slice decision already exists.
 
 ## 5. Check the plan
@@ -84,7 +86,7 @@ Confirm every dependency edge is necessary.
 Confirm each slice can ship without unfinished behavior in its changed path.
 Confirm the first frontier contains at least one executable slice.
 
-Use the visual-review procedure in `workflow` when the review server is available.
+Use [visual-review.md](../workflow/references/visual-review.md) when the review server is available.
 
 ## Gate
 

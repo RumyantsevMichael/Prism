@@ -7,11 +7,40 @@ argument-hint: '[initiative]'
 
 # Orchestrate an initiative
 
-Coordinate `plan` → (`design` → `design-audit` → `implement` → `review`) for every outcome slice.
-Do not author phase content in this context.
-Keep only routing state, active child identifiers, gates, and recovery status here.
+Coordinate `plan` → (`design` → `review` in `design-audit` mode → `implement` → `review` in `implementation-review` mode) for every outcome slice.
+Act as the initiative control plane.
+Keep routing state in the initiative `state.md` snapshot instead of relying only on this session.
+Keep active child identifiers in the session while active and record them in `state.md` at every transition.
 
-Read `.prism/workflow.md` and the delegation procedure in `workflow` first.
+Read `.prism/workflow.md` and [delegation.md](../workflow/references/delegation.md) first.
+Read [visual-review.md](../workflow/references/visual-review.md) before a visual gate.
+
+At the start of every orchestrator context, read `state.md`, `plan.md`, `slices.puml`, and the active slice `findings.md` before routing work.
+After context compaction, treat the context as fresh and repeat that read before taking an action.
+State the restored role, phase, gate, active slice, and next action in a short checkpoint.
+Do not implement, design, or review phase content from this control-plane context.
+Allow a new orchestrator to take over only after a phase boundary or an explicit interruption.
+Do not run parallel orchestrators for one initiative.
+
+Use this coordination snapshot under each initiative plan:
+
+```text
+Status: active | awaiting-user | paused | blocked | shipped
+Active slice: <slice slug or none>
+Phase: plan | design | design-audit | visual-design | implement | review | visual-final | correctness
+Gate: <gate name or none>
+Next action: <one action>
+Child: <identifier and status or none>
+Last result: <short status and artifact path>
+Findings: <slice findings path or none>
+Verification: <status and exact command>
+Handoff: active | ready | recovery
+Recovery: <reason and next recovery action or none>
+Updated: <timestamp>
+```
+
+Update `state.md` before and after every child transition and before a phase-boundary handoff.
+Do not delete `state.md` or `findings.md` until the initiative is shipped and its scratch plan is deleted.
 
 ## 1. Set the run contract
 
@@ -35,11 +64,10 @@ When the policy is `default`, apply this judgement:
 
 - **Planning model:** host default.
 - **Delivery model:** host default.
-- **Design audit model:** host reviewer model when available, otherwise host default.
 - **Review model:** host reviewer model when available, otherwise host default.
 - **High-risk review model:** host security model when available, then host reviewer model, then host default.
 
-When the policy is `manual`, ask for model assignments for planning, delivery, design audit, review, and high-risk review before spawning any child.
+When the policy is `manual`, ask for model assignments for planning, delivery, review, and high-risk review before spawning any child.
 A manual assignment can name a model ID or `host default`.
 Pass the selected model when the child-start capability accepts model selection.
 When the capability does not accept model selection, report the limitation and use `host default`.
@@ -56,6 +84,7 @@ A wait action alone does not enable parallel or sequential mode.
 ## 2. Resolve the initiative
 
 When an accepted initiative plan exists, read `plan.md` and `slices.puml`.
+When an accepted initiative plan exists, read its `state.md` and create it when it does not exist.
 When the work needs several outcomes and has no plan, start a fresh `Plan <initiative>` agent.
 Use this model assignment:
 
@@ -63,8 +92,12 @@ Use this model assignment:
 - Model: <resolved model or host default>
 
 Present its slice graph for user acceptance.
+When a new plan returns `PLAN READY`, open one Prism artifact viewer session for the plan and slice graph before presenting them for acceptance.
+Use a browser-opening capability for the selected browser and present the URL and source artifacts only when no opener exists.
 
-Treat a self-contained capability as one standalone slice without creating a plan.
+Treat a self-contained capability as one standalone slice without creating a dependency plan.
+Create its `state.md` and slice `findings.md` coordination files before the first phase.
+Create `state.md` after the initiative plan receives acceptance.
 
 ## 3. Select the frontier
 
@@ -82,12 +115,14 @@ Never reuse a `Develop <slice>` task for another slice.
 
 Start one child agent named `Develop <slice>` and instruct it to run `design` in embedded mode.
 Give it the requirements, any slice record, code workspace, autonomy level, and execution profile.
+Give it the initiative `state.md` path and the slice `findings.md` path.
 Use this model assignment:
 
 - Model role: `delivery`
 - Model: <resolved model or host default>
 
 Before it starts, mark the slice `in-progress`.
+Create or update `docs/plans/<initiative>/<slice>/findings.md` before the first audit.
 When this is the initiative's first active slice, mark the roadmap initiative `in-progress`.
 
 Handle its compact result:
@@ -101,27 +136,30 @@ Update the slice DAG for the remaining child slices.
 
 ### Design audit
 
-Start a fresh `Audit <slice>` agent with `design-audit` and the recorded design paths.
+Start a fresh `Review <slice>` agent with `review` in `design-audit` mode, the recorded design paths, and the slice `findings.md` path.
 The auditor receives no delivery conversation.
 Use this model assignment:
 
-- Model role: `design-audit`
+- Model role: `review`
 - Model: <resolved model or host default>
 
-On findings, resume `Develop <slice>` with the complete finding list.
-After each design correction batch, start one fresh scoped design audit.
+On findings, read the slice `findings.md` and resume `Develop <slice>` with its path and all unresolved finding IDs.
+After each design correction batch, start one fresh scoped `review` in `design-audit` mode.
 Continue the design audit loop until `CLEAN`, a user stop, or a real blocker.
-On `CLEAN`, open one Prism artifact viewer session for all recorded design artifacts and diagrams through the configured `Review browser`.
-Use the complete artifact tree instead of opening one viewer session per path.
-When no browser capability exists, present the review URL and source artifacts.
-After visual review, present:
+On `CLEAN`, open one Prism artifact viewer session for all recorded design artifacts and diagrams before the implementation gate.
+After visual review, present `Design: <one-sentence outcome>` and the compact result:
 
 ```text
-Design: <one-sentence outcome>
+Mode: design-audit
+Lane: none
+Review focus: requirements, design, boundaries, contracts, security
+Coverage: requirements, lifecycle, tests, artifacts, verification
+Findings: docs/plans/<initiative>/<slice>/findings.md
+Finding IDs: NONE
 Artifacts: <recorded design artifact and diagram paths>
-Audit: CLEAN
 Contracts: <contract paths or NO CONTRACT NEEDED reasons>
 Verification: <exact command>
+Status: CLEAN
 ```
 
 When autonomy is conservative, ask whether to proceed to implementation.
@@ -132,6 +170,7 @@ When autonomy is broad and no consequential decision remains, continue to implem
 After a clean design audit and visual artifact review, resume the same `Develop <slice>` agent and instruct it to run `implement`.
 Do not repeat design reasoning or file contents.
 Pass only the user decision when one occurred.
+Pass the slice `findings.md` path and unresolved finding IDs when correction work exists.
 
 When the agent returns `READY FOR REVIEW`, record its diff base, verification status, paths, and security surface.
 Record every contract declaration with its canonical path, consumers, and verification command, or its specific `NO CONTRACT NEEDED` reason.
@@ -144,7 +183,7 @@ Allow a reviewer to run only a focused probe that can confirm or reject a suspec
 
 Use one exhaustive `Review <slice>` agent for a normal slice.
 Use independent review lanes for a high-risk slice with lifecycle, concurrency, replay, security, IPC, migration, or public-boundary concerns.
-Start a fresh `Review <slice>` agent, or one fresh agent per review lane, with `review` and the recorded paths.
+Start a fresh `Review <slice>` agent, or one fresh agent per review lane, with `review` in `implementation-review` mode and the recorded paths.
 The reviewer receives no delivery conversation.
 Define a review matrix before spawning high-risk lanes.
 Do not send identical review instructions to all lanes.
@@ -165,7 +204,9 @@ Review focus: requirements, contracts, compatibility, artifacts
 Coverage: requirements, features, ADRs, diagrams, verification
 ```
 
-Give each lane its matrix row, the common diff paths, and the review output reference.
+Give each lane its matrix row, the common diff paths, and the [review-format.md](../review/references/review-format.md) reference.
+Give each lane the slice `findings.md` path and require it to update that file.
+Run lanes sequentially when they share one findings file, or serialize their file updates before the next lane starts.
 Require each lane to report its lane, focus, coverage, status, and findings.
 For a normal slice, use:
 
@@ -181,15 +222,15 @@ Keep one active review wave per slice.
 Consolidate all lane findings before sending one correction batch.
 Consolidate duplicate findings and check uncovered coverage.
 
-On findings, resume `Develop <slice>` with the complete finding list.
-After every implementation correction, start a fresh review or review wave.
-Repeat the same review matrix after every implementation correction.
+Use `findings.md` as the source of truth instead of passing a transient finding list.
+When a finding has status `REOPENED` after a correction batch, start a fresh `Develop <slice>` context in the same workspace from current code and the findings file.
+When the same finding reopens after that replacement, start a fresh scoped `review` in `design-audit` mode.
+If the fresh audit cannot resolve the finding, return `BLOCKED` with the exact consequential decision needed.
+After every implementation correction, start a fresh review wave with the same matrix.
 Continue the review loop until `CLEAN`, a user stop, or a real blocker.
 Do not stop after one re-review while findings remain.
 Distinguish review findings from child-agent failures, timeouts, and recovery replacements.
-On `CLEAN`, open one Prism artifact viewer session for all changed artifacts and diagrams through the configured `Review browser` before the final correctness gate.
-Use the complete artifact tree instead of opening one viewer session per path.
-When no browser capability exists, present the review URL and source artifacts.
+On `CLEAN`, open one Prism artifact viewer session for all changed artifacts and diagrams before the final correctness gate.
 Then continue to the slice gate.
 
 ## 5. Confirm the slice
@@ -204,6 +245,9 @@ After confirmation:
 3. Integrate its isolated workspace.
 4. Apply the commit and push settings.
 5. Recompute the frontier.
+
+Set the handoff status to `ready` before the current orchestrator ends.
+When a new orchestrator finds `active` or `recovery` state, inspect the recorded child and recovery status before starting work.
 
 At auto continuation, start every eligible slice allowed by workspace safety.
 At stepwise continuation, ask before the next slice.
@@ -223,25 +267,26 @@ Use manual mode only when no parent can delegate.
 Track every active child identifier.
 Never wait with an empty identifier set.
 Treat empty receiver or agent state as a routing failure and use broker or manual recovery.
+Interrupt only after a positive failure signal, a user request, or an explicit agent blocker.
 
 For each active child:
 
 1. Start or resume it with the current phase instruction.
-2. Relay a real user question and resume the same child with the answer.
-3. Continue waiting after a timeout when no positive failure signal exists.
-4. Record recovery state only after failure, blocker, or user interruption.
+  2. Relay a real user question and resume the same child with the answer.
+  3. Continue waiting after a timeout when no positive failure signal exists.
+  A wait timeout means only that no final result arrived.
+  4. Record recovery state only after failure, blocker, or user interruption.
 5. Resume the same child when possible.
-6. Start a replacement in the same workspace from current code and recorded recovery state.
+6. After a failure, start a replacement in the same workspace from current code and recorded recovery state.
 Keep the same model role and resolved model for a replacement unless the manual policy explicitly changes them.
+Write the recovery reason, last progress, next action, and child status to `state.md` before a replacement starts.
 
 Do not narrate unchanged waits.
 Do not use waits, replacements, or child-agent failures as correction rounds.
 Do not treat review findings as child-agent failures.
-Keep one active review wave per slice.
-
 In manual mode, tell the user to keep one delivery task open through `design` and `implement`.
-Ask the user to run `design-audit` in a fresh task after `FIT` and before implementation.
-Ask the user to start a separate `review` task after implementation.
+Ask the user to run `review` in `design-audit` mode in a fresh task after `FIT` and before implementation.
+Ask the user to run `review` in `implementation-review` mode in a separate task after implementation.
 
 ## Gate
 

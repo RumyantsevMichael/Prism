@@ -1,4 +1,0 @@
-interface:
-  display_name: "Design audit"
-  short_description: "Audit a fitted Prism slice before implementation"
-  default_prompt: "Use $design-audit to audit the fitted slice before implementation."
