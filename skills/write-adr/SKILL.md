@@ -1,10 +1,11 @@
 ---
 name: write-adr
-description: "Create or revise an ADR for a consequential architectural decision or invariant."
+description: "Create or revise an ADR for an architectural decision or invariant."
 ---
 
 # Write an ADR
 
+When called from `design`, use this skill only after the slice fit checkpoint passes.
 Use an ADR only for a decision that constrains future changes or explains a lasting system boundary.
 Do not use an ADR for a private helper, local data structure, task sequence, or other code-level choice.
 
@@ -20,7 +21,7 @@ Create a superseding ADR when the decision contradicts an Accepted ADR.
 Append a decision-log entry when an Accepted ADR needs a clarification that preserves its meaning.
 Edit a Proposed ADR directly because it is not settled.
 
-Do not create an ADR when code, an executable schema, or an existing ADR already records the decision sufficiently.
+Do not create a duplicate ADR when an existing ADR already records the decision sufficiently.
 
 ## Status
 

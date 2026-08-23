@@ -14,7 +14,7 @@ Read [review-format.md](references/review-format.md) before creating the finding
 Use the findings section for `findings.md` and the result section for the compact response.
 Leave the findings section empty when no findings exist.
 Read or create the complete slice `findings.md` file before the review.
-Read the requirements, relevant ADRs, tests, feature files, diagrams, declared contracts, and mode-specific paths.
+Read the requirements, relevant ADRs, executable slice tests, feature files, diagrams, declared contracts, and mode-specific paths.
 Use code as the source for implementation detail.
 
 Use the findings file as the source of truth.
@@ -54,7 +54,7 @@ Return `CLEAN` only when no actionable finding remains.
 
 ## Design-audit mode
 
-Read the accepted slice record, recorded design artifacts, diagrams, bounded code surfaces, and planned verification paths.
+Read the accepted slice record, bounded code surfaces, and planned verification paths.
 
 Check every applicable item:
 
@@ -64,10 +64,11 @@ Check every applicable item:
 4. Check concurrency, ordering, replay identity, quotas, and atomicity when applicable.
 5. Check changed boundaries, contract decisions, consumers, and verification commands.
 6. Check security boundaries and planned normal, failure, recovery, compatibility, and security tests.
-7. Check that artifacts and diagrams preserve the decisions implementation must follow.
+7. Check that feature files cover planned observable behavior, link to requirements, and contain no implementation details.
+8. Check that ADRs preserve architectural decisions and executable tests and contracts enforce the selected boundaries.
 
 Require every contract decision to pass the consumer check before returning `CLEAN`.
-Include the findings path, design artifact paths, contract decisions, and verification command in the compact result.
+Include the findings path, ADR paths, executable test paths, feature file paths, contract decisions, diagram paths, and verification command in the compact result.
 
 ## Implementation-review mode
 
@@ -79,7 +80,7 @@ Check every applicable item:
 
 1. Check every requirement without added product behavior.
 2. Check tests through the user-visible or system surface.
-3. Check feature files against verified behavior and requirement intent.
+3. Check feature files against requirement intent and verified behavior.
 4. Check correctness, errors, state transitions, compatibility, migration, and integration.
 5. Check lifecycle, concurrency, ordering, replay, quotas, atomicity, and idempotency.
 6. Check public, process, network, storage, IPC, hosted-execution, and security boundaries.

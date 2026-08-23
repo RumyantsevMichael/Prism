@@ -30,7 +30,12 @@ Review focus: <specific risks>
 Coverage: <paths or checks>
 Findings: docs/plans/<initiative>/<slice>/findings.md
 Finding IDs: F-001, F-002
-Artifacts: <paths or NONE>
+ADRs: <paths or NONE>
+Executable tests: <paths or NONE>
+Feature files: <paths or NONE>
+Other artifacts: <paths or NONE>
 Contracts: <paths or NO CONTRACT NEEDED reasons>
+Diagrams: <paths or NONE>
+Red checkpoint: <exact command and expected failure reason or NONE>
 Verification: <exact command or NONE>
 Status: CLEAN | FINDINGS

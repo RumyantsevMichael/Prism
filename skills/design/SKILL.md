@@ -13,7 +13,7 @@ When no path is supplied, use `<configured plans>/<initiative>/<slice>/findings.
 
 This skill transforms requirements into the architecture for one slice.
 The same task keeps this design context for implementation unless orchestration replaces it after a failure.
-Do not write an implementation specification for another agent.
+After context compaction or replacement, re-read the requirements, ADRs, executable tests, contracts, and findings before continuing.
 
 ## 1. Explore the slice
 
@@ -36,20 +36,21 @@ Pass paths and focused questions through delegated exploration instead of return
 Map each applicable Approved requirement statement to the code or boundary that will satisfy it.
 Choose where the behavior starts, which component owns it, how data moves, and how state changes.
 Define failure, recovery, compatibility, migration, security, and operational behavior when they apply.
-Identify each machine-readable contract that code or tests must consume.
-For each changed boundary, decide whether an existing executable contract governs it or whether a new executable contract has a consumer.
-Do not create a new contract when an existing production type or schema governs the boundary.
-Do not create a contract when no production code, generated code, or verification consumes it.
-Identify where the executable acceptance test will drive and observe the behavior.
+Identify each machine-readable contract that code or verification must consume.
+For each changed boundary, plan whether an existing production type or schema governs it or whether a new executable contract is needed and who consumes it.
+Identify the smallest executable slice test through the selected starting surface and the result or failure it must observe.
+Identify the Gherkin feature path through `write-feature` and its requirement-linked scenarios.
+Decide whether a shape-only scaffold is required when the selected surface does not yet exist.
 Prefer existing architecture and extension points when they satisfy the requirements.
 
-Do not write a prose design summary, task graph, or handoff.
+Do not create a prose design summary, slice-named design file, task graph, or handoff.
+Before the fit checkpoint, keep slice-scoped ADRs, feature files, executable tests, contracts, diagrams, and scaffolds in the working design rather than writing them.
 
 ### Run the author preflight
 
-Before `FIT`, trace every Approved requirement to a planned behavior, affected boundary, executable test, and verification command.
+Before `FIT`, trace every Approved requirement to a planned behavior, affected boundary, planned feature scenario, planned executable test, and verification command.
 Challenge normal, failure, recovery, lifecycle, compatibility, security, and operational behavior for every changed path.
-Confirm that the design has no unresolved consequential decision and that the slice has one complete end-to-end verification path.
+Confirm that every consequential decision is settled in the working design and that the slice has one complete end-to-end verification path.
 When the findings file contains `OPEN` or `REOPENED` design findings, address them before `FIT`.
 Mark an addressed finding `IN PROGRESS` before the correction and `FIXED` with evidence after the correction.
 Do not mark a finding `VERIFIED` from the delivery context.
@@ -62,7 +63,7 @@ The slice fits only when it has:
 1. one observable outcome.
 2. one connected set of changes from the initiating input to that outcome.
 3. identified boundaries and compatibility effects.
-4. at most one unresolved consequential architectural decision.
+4. no unresolved consequential architectural decision.
 5. one end-to-end verification path.
 6. a safe complete state for every changed path.
 7. available dependencies.
@@ -71,25 +72,34 @@ Continue when the slice fits the remaining context and risk budget.
 
 When it does not fit, divide it into smaller vertical outcomes.
 Return proposed child slices with only the five fields that `plan` defines.
+Return `SPLIT` or `BLOCKED` without authoring slice-scoped artifacts.
 Do not add architecture, contracts, task lists, or implementation instructions.
 Do not edit the accepted plan or `slices.puml`.
 The orchestrator presents the split, records the accepted plan change, and resumes the delivery task.
 
-## 3. Settle consequential decisions
+## 3. Record decisions and author the fitted slice
 
-Resolve an answer from Approved requirements, existing ADRs, project rules, and code when possible.
+### Record settled decisions
+
 When a requirement is missing or must change, return `BLOCKED` with the exact question for the user.
 Do not edit a requirement or invoke `write-requirements` without explicit user approval.
-When a consequential architectural decision is already settled, record it as a Proposed ADR with `write-adr`.
-When that decision is not settled, return `BLOCKED` with the exact user question before you create the ADR.
+Only after the fit checkpoint passes, record every settled architectural decision that constrains future changes or explains a lasting boundary as a Proposed ADR with `write-adr`.
+If a decision is no longer settled, return `BLOCKED` before writing the remaining slice artifacts.
 
 Leave private helper names, local data structures, and other code-level choices to implementation.
 Do not create a separate artifact for these code-level choices.
 
-Implementation follows the recorded contract decision and binds the canonical contract to its production or verification consumer.
+### Author the fitted artifacts
+
+Author the slice-scoped artifacts.
+For each boundary that needs a new executable contract, use `write-contracts` to create it in the canonical project-owned path and bind its production or verification consumer before implementation.
+Create or update the smallest executable slice test through the selected starting surface.
+Create or update the Gherkin feature file for the slice through `write-feature`.
+Run each design-created executable slice test before implementation and record its expected failure reason.
+Create only a shape-only scaffold when the selected surface does not yet exist.
+Do not add production behavior or a concrete stub that makes the design test pass.
 Add a decision diagram with an ADR when relationships, lifecycle, or call order are part of the decision.
-The implementation skill updates feature files and implemented-structure diagrams after the code passes verification.
-Do not create a prose contract or feature file during design.
+Do not create step definitions during design.
 
 Identify the security surface as `none` or a short list of trust boundaries for reviewer routing.
 
@@ -101,7 +111,7 @@ Return one compact status:
 - `SPLIT`: include the proposed child slice records for orchestration and user acceptance.
 - `BLOCKED`: name the unresolved requirement, decision, or dependency.
 
-For each `FIT` contract decision, use exactly one of these forms:
+For each contract decision, use exactly one of these forms:
 
 ```text
 Contract: <canonical path>
@@ -114,9 +124,14 @@ Contract: NO CONTRACT NEEDED
 Reason: <specific reason>
 ```
 
-After `FIT`, return `Artifacts: <recorded design artifact and diagram paths>`.
+For `FIT`, return `ADRs: <Proposed ADR paths or NONE>`.
+Return `Executable tests: <canonical test paths or NONE>`.
+Return `Feature files: <canonical feature paths or NONE>`.
+Return `Diagrams: <ADR diagram paths or NONE>`.
+Return `Red checkpoint: <exact command and expected failure reason or NONE>`.
 When orchestration provides a findings path, return `Findings: <slice findings path>`.
 Return one contract decision block for every changed boundary.
+For `SPLIT` or `BLOCKED`, return no slice-scoped artifact paths.
 
 Do not repeat the explored code or reasoning in the status.
 The orchestrator owns plan changes, lifecycle changes, and the transition to implementation.

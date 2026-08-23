@@ -10,7 +10,7 @@ Create a contract only when code or verification consumes it.
 Do not create a prose contract.
 Do not create a second representation of an implementation detail.
 
-Read `.prism/workflow.md`, Approved requirements, relevant ADRs, and the consuming code and tests.
+Read `.prism/workflow.md`, Approved requirements, relevant ADRs, and the intended consuming code and tests.
 
 ## 1. Prove that a contract is necessary
 
@@ -36,6 +36,7 @@ Link requirements for obligations and ADRs for consequential decisions when the 
 ## 3. Bind consumption
 
 Add or update the production import, generator, validator, or compatibility test that consumes the contract.
+Do not add production behavior only to create a contract.
 Run the exact verification command.
 Remove the contract when no executable consumer remains.
 
@@ -56,4 +57,4 @@ Contract: NO CONTRACT NEEDED
 Reason: <specific reason>
 ```
 
-Continue implementation after the result.
+Return to the calling phase after the result.

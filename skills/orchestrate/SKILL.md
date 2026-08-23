@@ -138,12 +138,13 @@ Handle its compact result:
 - `SPLIT` → present the child slices and wait for explicit acceptance.
 - `BLOCKED` → present the unresolved requirement, decision, or dependency.
 
+Accept slice-scoped artifact paths only with `FIT`; a `SPLIT` or `BLOCKED` result must not leave such artifacts attached to the rejected slice.
 After an accepted split, resume the same `Develop <slice>` agent with the first accepted child slice.
 Update the slice DAG for the remaining child slices.
 
 ### Design audit
 
-Start a fresh `Review <slice>` agent with `review` in `design-audit` mode, the recorded design paths, and the slice `findings.md` path.
+Start a fresh `Review <slice>` agent with `review` in `design-audit` mode, the design output paths, and the slice `findings.md` path.
 The auditor receives no delivery conversation.
 Use this model assignment:
 
@@ -153,7 +154,7 @@ Use this model assignment:
 On findings, read the slice `findings.md` and resume `Develop <slice>` with its path and all unresolved finding IDs.
 After each design correction batch, start one fresh scoped `review` in `design-audit` mode.
 Continue the design audit loop until `CLEAN`, a user stop, or a real blocker.
-On `CLEAN`, open one Prism artifact viewer session for all recorded design artifacts and diagrams before the implementation gate.
+On `CLEAN`, open one Prism artifact viewer session for all recorded ADRs and diagrams before the implementation gate.
 After visual review, present `Design: <one-sentence outcome>` and the compact result:
 
 ```text
@@ -163,7 +164,11 @@ Review focus: requirements, design, boundaries, contracts, security
 Coverage: requirements, lifecycle, tests, artifacts, verification
 Findings: docs/plans/<initiative>/<slice>/findings.md
 Finding IDs: NONE
-Artifacts: <recorded design artifact and diagram paths>
+ADRs: <Proposed ADR paths or NONE>
+Executable tests: <canonical test paths or NONE>
+Feature files: <canonical feature paths or NONE>
+Diagrams: <ADR diagram paths or NONE>
+Red checkpoint: <exact command and expected failure reason or NONE>
 Contracts: <contract paths or NO CONTRACT NEEDED reasons>
 Verification: <exact command>
 Status: CLEAN

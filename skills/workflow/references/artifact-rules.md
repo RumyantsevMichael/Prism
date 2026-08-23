@@ -2,11 +2,15 @@
 
 Read this reference when a phase creates or reviews diagrams, durable documentation, or user guidance.
 
+Do not create a prose design record or a slice-named design file.
+
+Create or update slice-scoped artifacts only after the design fit checkpoint passes.
+
 Write PlantUML source beside the durable artifact or code area that it explains.
 Read the source and do not read rendered images as implementation input.
 Do not commit rendered images.
 
-Create an ADR decision diagram during design when relationships, lifecycle, or call order are part of the decision.
+Create an ADR decision diagram during design after the fit checkpoint passes when relationships, lifecycle, or call order are part of the decision.
 Create or update an implemented-structure diagram after code establishes the structure.
 Derive implemented structural relationships from code or CodeGraph when available.
 Add only information that materially improves human understanding.
@@ -18,7 +22,7 @@ Do not add diagrams to requirements or feature files.
 Durable artifacts must not reference slice names, plan sections, scratch paths, or temporary status identifiers.
 Cite a requirement for an obligation.
 Cite an ADR for rationale.
-Describe the implemented behavior directly.
+Describe each artifact's owned information directly.
 
 Update the configured user-guide path when observable behavior changes.
 Ship an operator runbook with an operational capability.

@@ -66,11 +66,12 @@ The design audit and final review require fresh contexts.
 | Prioritize | `prism:roadmap` | An ordered Now, Next, and Later roadmap |
 | Shape | `prism:ideate` | Approved EARS requirement files, or a decision to stop |
 | Plan | `prism:plan` | Dependency-ordered outcome slices |
-| Design | `prism:design` | A fit decision and any consequential ADR proposal |
+| Design | `prism:design` | A fit decision, Gherkin acceptance scenarios, architectural ADRs, and executable boundary artifacts when needed |
 | Design audit | `prism:review` in `design-audit` mode | Complete requirements, boundary, contract, security, and verification findings |
-| Implement | `prism:implement` | Failing tests, working code, durable behavior records, and verification |
+| Implement | `prism:implement` | Failing tests, working code, step definitions, and verification |
 | Review | `prism:review` in `implementation-review` mode | Exhaustive independent findings against the completed code and intent until `CLEAN` |
 
+Design authors slice-scoped artifacts only after the fit checkpoint passes, and a `SPLIT` or `BLOCKED` result leaves those artifacts unwritten.
 `prism:orchestrate` connects Plan, Design, Design audit, Implement, and Review through resumable child-agent contexts.
 It resumes the same delivery agent from design through implementation.
 It starts a fresh design review after `FIT` and a fresh implementation review after the code works.
@@ -82,8 +83,9 @@ Each slice stores all design-audit and implementation-review findings in one `fi
 One slice contains one observable outcome, one dominant path, one acceptance suite, and one reviewable diff.
 The capability agent splits the slice after exploration when it cannot safely finish the outcome in one context.
 
-Prism keeps requirements for intent and ADRs for consequential decisions.
-It keeps tests and feature files for behavior.
+Prism keeps requirements for intent and ADRs for architectural decisions.
+It keeps executable tests and contracts for enforceable boundary behavior.
+It keeps feature files for acceptance behavior and examples in domain language.
 It keeps diagrams for the implemented structure.
 Code specifies implementation details.
 Executable contracts exist only when code or verification consumes them.
@@ -96,7 +98,7 @@ Prism stores diagrams as PlantUML `.puml` source files beside their Markdown art
 Agents read the PlantUML source and never read rendered images.
 The bundled review server renders diagrams in the human's browser without creating image files.
 
-The orchestrator opens one Prism artifact viewer session for all recorded design artifacts after a clean design audit and for all changed artifacts before the final correctness gate.
+The orchestrator opens one Prism artifact viewer session for all recorded ADRs and diagrams after a clean design audit and for all changed artifacts before the final correctness gate.
 The viewer's artifact tree contains the complete set, so the orchestrator does not open one viewer session per artifact.
 The orchestrator must call a browser-opening capability for the selected browser.
 Showing a URL without opening the viewer is only a fallback when no browser capability exists.

@@ -21,7 +21,10 @@ Delete that recovery record after the slice completes.
 
 ## 1. Bind acceptance to executable tests
 
-Choose the smallest executable test that starts through the surface selected during design and proves the observable outcome.
+Use the executable slice test selected during design when one exists.
+Create one only when design did not create one.
+Use the feature file created during design when one exists.
+Do not create a replacement feature file from verified code.
 Reuse the project test structure and fixtures.
 Follow the contract decision recorded by `design`.
 When the decision names a canonical contract, bind that contract to its production or verification consumer before the consumer changes.
@@ -30,7 +33,9 @@ Do not create a new contract when an existing production type or schema governs 
 
 ## 2. Prove the red checkpoint
 
-Add or bind the executable acceptance test before production behavior changes.
+Bind the design-created feature steps through `write-step-definitions` when a BDD harness exists.
+Run the design-created executable slice test or the bound feature before production behavior changes when the harness supports a red checkpoint.
+Do not weaken or replace a design-created test without returning to the `design` fit checkpoint.
 Run the exact test command.
 Confirm that it fails because the required behavior is absent.
 Stop and repair the test when it fails for setup, syntax, or an unrelated defect.
@@ -45,6 +50,8 @@ Implement the complete observable outcome across every required layer.
 Keep the changed path safe and complete.
 Do not defer a necessary layer to another slice.
 Do not broaden the accepted outcome.
+
+Replace any shape-only scaffold created during design with complete behavior before verification.
 
 Make private helper, local data-structure, and similar code-level choices in code and tests.
 When a requirement is missing or must change, return `BLOCKED` with the exact user question.
@@ -75,9 +82,10 @@ Do not erase, rewrite, or duplicate earlier finding history.
 
 ## 6. Update durable artifacts
 
-Update feature files from verified behavior after implementation.
-Link each new or changed Rule to its Approved requirement.
-When a BDD harness exists, use `write-step-definitions` to bind the feature to executable assertions.
+Preserve the design-created feature files as the acceptance specification.
+Do not rewrite feature scenarios to match implementation.
+When a BDD harness exists, keep `write-step-definitions` bound to the feature's observable assertions and run the acceptance command.
+Return to `design` when verified behavior conflicts with a feature scenario or intended behavior changes.
 
 Update user guidance when observable behavior changed.
 Update an operator runbook when operations changed.

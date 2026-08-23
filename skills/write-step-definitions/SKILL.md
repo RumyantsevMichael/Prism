@@ -1,15 +1,15 @@
 ---
 name: write-step-definitions
-description: "Connect verified Gherkin feature steps to executable assertions."
+description: "Connect design-authored Gherkin feature steps to executable assertions during implementation."
 ---
 
 # Write step definitions
 
-Use this skill after verified code and a feature file exist.
+Use this skill during implementation after a design-authored feature file exists.
 Step definitions connect durable domain language to the existing executable acceptance suite.
 
 Read `.prism/workflow.md` first when it exists.
-Read the feature file, linked requirements, executable tests, completed code, and existing test helpers.
+Read the feature file, linked requirements, executable tests, the selected production surface, and existing test helpers.
 Use the configured BDD harness.
 Do not add a BDD harness when the workflow marks feature files as specification-only.
 
@@ -36,4 +36,5 @@ Let unexpected errors fail the scenario.
 
 Run the configured acceptance command.
 Record only the command, exit status, and a short failure summary when it fails.
-Finish only when every feature step is bound and the acceptance suite passes.
+During implementation, a red result is expected before production behavior exists and must name the expected failure.
+After production behavior is implemented, finish only when every feature step is bound and the acceptance suite passes.

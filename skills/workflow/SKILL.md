@@ -31,37 +31,47 @@ The orchestrator owns routing, coordination state, and user gates.
 
 ## Common terms
 
-- **Initiative:** a set of related approved outcomes.
-- **Initiative plan:** scratch coordination for an initiative.
+- **Initiative:** a set of related Approved outcomes.
+- **Initiative plan:** scratch coordination for an initiative's dependency-ordered slices.
 - **Slice:** one observable vertical outcome across every required layer.
+- **Starting surface:** the command, route, public function, event, job, or user action where a slice enters the system.
+- **Acceptance suite:** feature scenarios plus any executable bindings or tests that prove one slice's observable outcome.
 - **Approved requirement:** an accepted product or system obligation.
-- **Delivery context:** one task that designs and implements one slice.
+- **Delivery context:** one `Develop <slice>` task that designs and implements one slice.
 - **Orchestrator:** the control plane that routes phases, records state, and owns user gates.
-- **Reviewer:** a fresh context that audits design or implementation.
+- **Reviewer:** a fresh `Review <slice>` context that audits design or implementation.
 - **Fresh context:** an independent context without the authoring conversation.
-- **Design audit:** an independent review before implementation.
-- **Implementation review:** an independent review after implementation verification.
+- **Design audit:** an independent review of requirements, design artifacts, boundaries, security, and verification before implementation.
+- **Implementation review:** an independent review of completed code and verified behavior after implementation.
 - **Gate:** a user decision or correctness confirmation that controls progress.
-- **FIT:** the slice fits one delivery context.
-- **SPLIT:** the slice needs accepted child slices.
+- **Fit checkpoint:** the design gate that determines whether one proposed slice fits one delivery context before slice-scoped artifacts are authored.
+- **FIT:** the slice fits one delivery context and may proceed to author slice-scoped design artifacts.
+- **SPLIT:** the slice needs accepted child slices before slice-scoped artifacts are authored.
 - **BLOCKED:** an unresolved requirement, decision, or dependency stops progress.
 - **CLEAN:** a review found no actionable finding.
-- **Proposed ADR:** an architectural decision recorded for later acceptance.
+- **Proposed ADR:** an architectural decision recorded for acceptance by orchestration after implementation and verification.
+- **Contract decision:** the canonical contract and consumers to use, or a specific reason no contract is needed.
+- **Executable slice test:** a test authored after the fit checkpoint through the selected starting surface that observes the required result or failure instead of a private helper.
 - **Executable contract:** a machine-readable boundary consumed by production code, generated code, or verification.
+- **Feature file:** Gherkin acceptance scenarios in domain language, authored during design after the fit checkpoint passes and bound to assertions during implementation when a BDD harness exists.
+- **Step definition:** an implementation-owned binding from a feature step to setup, action, or observable assertion.
+- **Shape-only scaffold:** a non-behavioral seam authored after the fit checkpoint when the selected surface does not yet exist and replaced with complete behavior before verification.
+- **Red checkpoint:** the exact test command and expected failure recorded before production behavior changes.
+- **Security surface:** the declared trust boundaries and sensitive capabilities that determine security review scope.
+- **Review wave:** one coordinated pass of fresh review contexts against one slice.
+- **Decision autonomy:** an orchestration setting that controls automatic phase continuation without overriding requirements, ADR, or correctness gates.
+- **Slice continuation:** an orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input.
 - **`state.md`:** the current initiative coordination snapshot.
 - **`findings.md`:** the durable review record for one slice.
+- **`recovery.md`:** a temporary record that lets a delivery context resume after a pause or replacement.
 
 ## Artifacts
 
-Artifacts preserve information that code cannot preserve.
-
-- Requirements preserve intent.
-- ADRs preserve consequential decisions and invariants.
-- Tests and feature files preserve behavior.
-- Diagrams explain the implemented structure.
-- Code explains implementation.
+Durable sources preserve intent, architectural decisions, boundary behavior, acceptance examples, and implemented structure across the workflow.
+Code remains the implementation source.
 
 Artifacts for one slice travel together across every required layer.
+Create slice-scoped artifacts only after the design fit checkpoint passes.
 Do not create an implementation handoff, mandatory build plan, or execution ledger.
 Create an executable contract only when a real consumer needs it.
 
@@ -72,7 +82,7 @@ Read durable documentation in this order:
 1. The glossary defines terms and navigation.
 2. Approved requirements define product and system obligations.
 3. Relevant ADRs define architectural decisions and invariants.
-4. Relevant feature files describe verified behavioral expectations.
+4. Relevant feature files describe intended acceptance behavior and examples.
 
 Stop when durable sources conflict.
 Do not resolve a durable conflict without the user.
