@@ -13,6 +13,7 @@ Keep routing state in the initiative `state.md` snapshot instead of relying only
 Keep active child identifiers in the session while active and record them in `state.md` at every transition.
 
 Read `.prism/workflow.md` and [delegation.md](../workflow/references/delegation.md) first.
+Read [operations-format.md](references/operations-format.md) when recording per-slice operations.
 Read [visual-review.md](../workflow/references/visual-review.md) before a visual gate.
 
 At the start of every orchestrator context, read `state.md`, `plan.md`, `slices.puml`, and the active slice `findings.md` before routing work.
@@ -31,6 +32,7 @@ Phase: plan | design | design-audit | visual-design | implement | review | visua
 Gate: <gate name or none>
 Next action: <one action>
 Child: <identifier and status or none>
+Wait: <phase observation interval, last check, and recovery stage or none>
 Last result: <short status and artifact path>
 Findings: <slice findings path or none>
 Verification: <status and exact command>
@@ -38,6 +40,11 @@ Handoff: active | ready | recovery
 Recovery: <reason and next recovery action or none>
 Updated: <timestamp>
 ```
+
+Keep one operations block per slice in `state.md`.
+Count a fresh review context as a review wave, not as a child restart.
+Update the operations block at child and phase transitions, not after every wait.
+Link to `findings.md` for detailed review evidence instead of duplicating it in the operations block.
 
 Update `state.md` before and after every child transition and before a phase-boundary handoff.
 Do not delete `state.md` or `findings.md` until the initiative is shipped and its scratch plan is deleted.
@@ -268,18 +275,29 @@ Track every active child identifier.
 Never wait with an empty identifier set.
 Treat empty receiver or agent state as a routing failure and use broker or manual recovery.
 Interrupt only after a positive failure signal, a user request, or an explicit agent blocker.
+Set an observation interval for each child before its first wait and record it in `state.md`.
+Use 15 minutes as the starting interval for planning, design, and review children.
+Use 30 minutes as the starting interval for implementation children.
+Increase the interval when the child reports a known long-running verification or when the execution profile has higher risk.
+Treat the interval as a check-in schedule, not a deadline or execution limit.
 
 For each active child:
 
-1. Start or resume it with the current phase instruction.
-  2. Relay a real user question and resume the same child with the answer.
-  3. Continue waiting after a timeout when no positive failure signal exists.
-  A wait timeout means only that no final result arrived.
-  4. Record recovery state only after failure, blocker, or user interruption.
-5. Resume the same child when possible.
-6. After a failure, start a replacement in the same workspace from current code and recorded recovery state.
-Keep the same model role and resolved model for a replacement unless the manual policy explicitly changes them.
-Write the recovery reason, last progress, next action, and child status to `state.md` before a replacement starts.
+1. Start or resume it with the current phase instruction and record the observation interval in `state.md`.
+2. Wait for the recorded observation interval while the child remains active.
+3. If the interval expires without a final result, inspect the child status and latest progress when the host exposes them.
+4. If no positive failure signal exists, send one concise status request to the same child when the host supports non-destructive input.
+5. Wait through up to three 5-minute follow-up intervals after that request.
+6. If the child reports progress, record it and return to the normal observation interval.
+7. If the child reports a blocker, record recovery state and route the blocker without replacing the child.
+8. If the child remains silent after the follow-up intervals, record `unresponsive`, preserve its workspace, and request a user or parent recovery decision.
+9. A wait timeout means only that no final result arrived.
+It is not evidence that the child is stuck.
+10. Record recovery state only after failure, blocker, user interruption, or an unresponsive escalation.
+11. Resume the same child when possible.
+12. After a confirmed failure or an approved recovery decision, start a replacement in the same workspace from current code and recorded recovery state.
+13. Keep the same model role and resolved model for a replacement unless the manual policy explicitly changes them.
+14. Write the recovery reason, last progress, next action, and child status to `state.md` before a replacement starts.
 
 Do not narrate unchanged waits.
 Do not use waits, replacements, or child-agent failures as correction rounds.

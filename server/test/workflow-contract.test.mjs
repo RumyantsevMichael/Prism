@@ -101,13 +101,22 @@ test("keeps lifecycle changes in orchestration", async () => {
 test("persists orchestration state across sequential sessions", async () => {
   const workflow = await skill("workflow");
   const orchestrate = await skill("orchestrate");
+  const operations = await reference("orchestrate", "operations-format.md");
 
-  for (const field of ["Status", "Active slice", "Phase", "Gate", "Next action", "Child", "Findings", "Handoff", "Recovery", "Updated"]) {
+  for (const field of ["Status", "Active slice", "Phase", "Gate", "Next action", "Child", "Wait", "Findings", "Handoff", "Recovery", "Updated"]) {
     assert.match(orchestrate, new RegExp(`${field}:`));
   }
   assert.match(workflow, /The orchestrator owns routing, coordination state, and user gates/);
+  assert.match(orchestrate, /\[operations-format\.md\]\(references\/operations-format\.md\)/);
+  assert.match(operations, /## Operations: <slice>/);
+  assert.match(operations, /Context lineage: D1 -> D2/);
+  assert.match(operations, /Review waves: 2/);
+  assert.match(operations, /Count a fresh review context as a review wave, not as a child restart/);
   assert.match(orchestrate, /After context compaction, treat the context as fresh/);
   assert.match(orchestrate, /Allow a new orchestrator to take over only after a phase boundary or an explicit interruption/);
+  assert.match(orchestrate, /Count a fresh review context as a review wave, not as a child restart/);
+  assert.match(orchestrate, /Update the operations block at child and phase transitions, not after every wait/);
+  assert.match(orchestrate, /Link to `findings\.md` for detailed review evidence instead of duplicating it in the operations block/);
   assert.match(orchestrate, /Create `state\.md` after the initiative plan receives acceptance/);
   assert.match(orchestrate, /Update `state\.md` before and after every child transition/);
   assert.match(orchestrate, /Set the handoff status to `ready`/);
@@ -300,7 +309,14 @@ test("supervises only active child agents", async () => {
   const orchestrate = await skill("orchestrate");
 
   assert.match(orchestrate, /Never wait with an empty identifier set/);
+  assert.match(orchestrate, /Set an observation interval for each child before its first wait/);
+  assert.match(orchestrate, /15 minutes as the starting interval for planning, design, and review children/);
+  assert.match(orchestrate, /30 minutes as the starting interval for implementation children/);
+  assert.match(orchestrate, /Treat the interval as a check-in schedule, not a deadline or execution limit/);
   assert.match(orchestrate, /A wait timeout means only that no final result arrived/);
+  assert.match(orchestrate, /up to three 5-minute follow-up intervals/);
+  assert.match(orchestrate, /record `unresponsive`, preserve its workspace, and request a user or parent recovery decision/);
+  assert.match(orchestrate, /not evidence that the child is stuck/);
   assert.match(orchestrate, /Interrupt only after a positive failure signal, a user request, or an explicit agent blocker/);
   assert.match(orchestrate, /Do not narrate unchanged waits/);
   assert.match(orchestrate, /Resume the same child when possible/);
