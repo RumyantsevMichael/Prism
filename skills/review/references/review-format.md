@@ -17,6 +17,7 @@ Last updated: <ISO 8601 timestamp>
 - Affected path: <file, symbol, artifact, or boundary>
 - Evidence: <specific evidence and failure condition>
 - Condition to close: <specific condition that a reviewer can verify>
+- Review probe: <path, command, expected failure, or NONE>
 - Implementer evidence: none
 - Status history:
   - <wave or date>: OPEN | IN PROGRESS | FIXED | VERIFIED | REOPENED
@@ -32,6 +33,7 @@ Findings: docs/plans/<initiative>/<slice>/findings.md
 Finding IDs: F-001, F-002
 ADRs: <paths or NONE>
 Executable tests: <paths or NONE>
+Review probes: <paths or NONE>
 Feature files: <paths or NONE>
 Other artifacts: <paths or NONE>
 Contracts: <paths or NO CONTRACT NEEDED reasons>

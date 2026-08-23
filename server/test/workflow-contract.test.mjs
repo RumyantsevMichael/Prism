@@ -33,6 +33,7 @@ test("keeps common workflow terms aligned with the artifact model", async () => 
     "**Red checkpoint:**",
     "**Security surface:**",
     "**Review wave:**",
+    "**Review probe:**",
     "**Decision autonomy:**",
     "**Slice continuation:**",
     "**`recovery.md`:**"
@@ -42,6 +43,7 @@ test("keeps common workflow terms aligned with the artifact model", async () => 
   assert.match(workflow, /Feature file:.*authored during design after the fit checkpoint passes and bound to assertions during implementation/);
   assert.match(workflow, /Executable slice test:.*authored after the fit checkpoint/);
   assert.match(workflow, /Shape-only scaffold:.*authored after the fit checkpoint/);
+  assert.match(workflow, /Review probe:.*minimal failing regression test/);
   assert.match(workflow, /Step definition:.*implementation-owned binding/);
   assert.match(workflow, /Red checkpoint:.*expected failure recorded before production behavior changes/);
 });
@@ -84,7 +86,6 @@ test("forms bounded slice architecture before fit and authors artifacts only aft
   assert.match(design, /Return `SPLIT` or `BLOCKED` without authoring slice-scoped artifacts/);
   assert.match(design, /Confirm that every consequential decision is settled in the working design/);
   assert.match(design, /no unresolved consequential architectural decision/);
-  assert.match(design, /Only after the fit checkpoint passes, author the slice-scoped artifacts/);
   assert.match(design, /For each boundary that needs a new executable contract, use `write-contracts`/);
   assert.match(design, /Create or update the smallest executable slice test through the selected starting surface/);
   assert.match(design, /Create or update the Gherkin feature file for the slice through `write-feature`/);
@@ -134,8 +135,10 @@ test("keeps one delivery task through tests and code", async () => {
   assert.match(implement, /Follow the contract decision recorded by `design`/);
   assert.match(implement, /Use the executable slice test selected during design when one exists/);
   assert.match(implement, /Run the design-created executable slice test or the bound feature before production behavior changes/);
+  assert.match(implement, /Run any review probe attached to an unresolved finding before correcting it/);
   assert.match(implement, /Do not weaken or replace a design-created test without returning to the `design` fit checkpoint/);
   assert.match(implement, /Replace any shape-only scaffold created during design with complete behavior before verification/);
+  assert.match(implement, /Preserve the asserted behavior of any review probe while fixing its finding/);
   assert.doesNotMatch(implement, /Use `write-contracts`/);
   assert.doesNotMatch(implement, /Dispatch task workers/);
   assert.doesNotMatch(implement, /execution-ledger\.md/);
@@ -228,7 +231,6 @@ test("uses executable contracts only", async () => {
   const contracts = await skill("write-contracts");
 
   assert.match(contracts, /Create a contract only when code or verification consumes it/);
-  assert.match(contracts, /When called from `design`, use this skill only after the slice fit checkpoint passes/);
   assert.match(contracts, /OpenAPI|JSON Schema/);
   assert.match(contracts, /importable interface/);
   assert.match(contracts, /compatibility test/);
@@ -261,6 +263,8 @@ test("uses one review skill for both review modes", async () => {
   assert.match(review, /Use the mode supplied by orchestration/);
   assert.match(review, /`design-audit` before implementation/);
   assert.match(review, /`implementation-review` after verification/);
+  assert.match(review, /Only `implementation-review` may add a minimal finding-scoped regression test/);
+  assert.match(review, /`design-audit` remains read-only apart from `findings\.md`/);
   assert.match(review, /## Design-audit mode/);
   assert.match(review, /## Implementation-review mode/);
   assert.match(review, /Read \[review-format\.md\]\(references\/review-format\.md\)/);
@@ -321,7 +325,9 @@ test("reviews completed code in a fresh context", async () => {
   assert.match(orchestrate, /one active review wave/);
   assert.match(orchestrate, /Pass the implementer's verification status and test paths to reviewers/);
   assert.match(orchestrate, /Do not assign the full test suite or configured verification commands to reviewers/);
-  assert.match(orchestrate, /focused probe that can confirm or reject a suspected defect/);
+  assert.match(orchestrate, /Allow implementation reviewers to add a minimal finding-scoped regression test through the public or system surface/);
+  assert.match(orchestrate, /Pass any review probe path and expected failure with its unresolved finding/);
+  assert.match(orchestrate, /discard or re-evaluate any unaccepted review probe/);
 });
 
 test("defines focused review lanes and one review format", async () => {
@@ -345,7 +351,9 @@ test("defines focused review lanes and one review format", async () => {
   assert.match(review, /When a lane focus is supplied, review it exhaustively/);
   assert.match(review, /Read the completed diff, verification status, test paths, and exact commands/);
   assert.match(review, /Do not rerun the full test suite or configured verification commands/);
-  assert.match(review, /Run a focused probe only when it can confirm or reject a suspected defect/);
+  assert.match(review, /When a concrete finding needs executable proof, add one minimal review probe through the public or system surface/);
+  assert.match(review, /record its path, command, and expected failure in the finding/);
+  assert.match(review, /Put it in the canonical test location and use existing fixtures or local setup/);
   assert.match(format, /# Slice review/);
   assert.match(format, /## Findings/);
   assert.match(format, /## Result/);
@@ -354,6 +362,8 @@ test("defines focused review lanes and one review format", async () => {
   assert.match(format, /Finding IDs: F-001, F-002/);
   assert.match(format, /Red checkpoint: <exact command and expected failure reason or NONE>/);
   assert.match(format, /Feature files: <paths or NONE>/);
+  assert.match(format, /Review probes: <paths or NONE>/);
+  assert.match(format, /Review probe: <path, command, expected failure, or NONE>/);
   assert.match(format, /Status: CLEAN \| FINDINGS/);
   assert.doesNotMatch(format, /Use this reference|Copy this structure|Add one entry|Return one result block/);
   for (const status of ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"]) {

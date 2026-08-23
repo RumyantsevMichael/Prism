@@ -7,7 +7,8 @@ description: "Audit a Prism slice before implementation or review completed code
 
 Run in a fresh context that does not inherit the authoring context.
 Use the mode supplied by orchestration: `design-audit` before implementation or `implementation-review` after verification.
-Do not edit code or artifacts except the supplied slice `findings.md` file.
+Do not edit production code, existing tests, requirements, ADRs, feature files, fixtures, helpers, harness configuration, or dependencies.
+Only `implementation-review` may add a minimal finding-scoped regression test; `design-audit` remains read-only apart from `findings.md`.
 
 Read `.prism/workflow.md` and project instructions.
 Read [review-format.md](references/review-format.md) before creating the findings file or reporting.
@@ -68,7 +69,7 @@ Check every applicable item:
 8. Check that ADRs preserve architectural decisions and executable tests and contracts enforce the selected boundaries.
 
 Require every contract decision to pass the consumer check before returning `CLEAN`.
-Include the findings path, ADR paths, executable test paths, feature file paths, contract decisions, diagram paths, and verification command in the compact result.
+Include the findings path, ADR paths, executable test paths, review probe paths, feature file paths, contract decisions, diagram paths, and verification command in the compact result.
 
 ## Implementation-review mode
 
@@ -88,8 +89,11 @@ Check every applicable item:
 
 When the security surface is non-empty, inspect secrets, untrusted inputs, authorization, privilege, network access, storage, and IPC as applicable.
 When the security surface is `none`, verify that classification and record that the security audit was skipped.
-Run a focused probe only when it can confirm or reject a suspected defect.
-Include the lane, focus, coverage, findings path, finding IDs, and status in the compact result.
+When a concrete finding needs executable proof, add one minimal review probe through the public or system surface.
+Base it on approved intent, an ADR, a feature, a contract, or verified behavior, and record its path, command, and expected failure in the finding.
+Put it in the canonical test location and use existing fixtures or local setup.
+Leave the finding `OPEN`; implementation owns the fix and preserves or promotes the probe after verification.
+Include the lane, focus, coverage, findings path, finding IDs, review probe paths, and status in the compact result.
 
 Do not restate the implementation.
 Do not praise successful work.

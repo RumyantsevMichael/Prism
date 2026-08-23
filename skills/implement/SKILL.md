@@ -35,6 +35,7 @@ Do not create a new contract when an existing production type or schema governs 
 
 Bind the design-created feature steps through `write-step-definitions` when a BDD harness exists.
 Run the design-created executable slice test or the bound feature before production behavior changes when the harness supports a red checkpoint.
+Run any review probe attached to an unresolved finding before correcting it.
 Do not weaken or replace a design-created test without returning to the `design` fit checkpoint.
 Run the exact test command.
 Confirm that it fails because the required behavior is absent.
@@ -60,6 +61,7 @@ When implementation requires a new consequential architectural decision, return 
 Do not create or revise an ADR without the user or orchestrator response.
 When exploration proves that the slice does not fit, return to the `design` fit checkpoint before more edits.
 When a finding has status `OPEN` or `REOPENED`, mark it `IN PROGRESS` before the correction and `FIXED` with evidence after the correction.
+Preserve the asserted behavior of any review probe while fixing its finding.
 Do not mark a finding `VERIFIED` from the delivery context.
 
 ## 4. Verify the code

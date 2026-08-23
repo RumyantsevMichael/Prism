@@ -189,7 +189,7 @@ Record every contract declaration with its canonical path, consumers, and verifi
 Do not accept a claim of independent review from `Develop <slice>`.
 Pass the implementer's verification status and test paths to reviewers.
 Do not assign the full test suite or configured verification commands to reviewers.
-Allow a reviewer to run only a focused probe that can confirm or reject a suspected defect.
+Allow implementation reviewers to add a minimal finding-scoped regression test through the public or system surface when it can confirm or reject a suspected defect.
 
 ### Review
 
@@ -235,6 +235,8 @@ Consolidate all lane findings before sending one correction batch.
 Consolidate duplicate findings and check uncovered coverage.
 
 Use `findings.md` as the source of truth instead of passing a transient finding list.
+Pass any review probe path and expected failure with its unresolved finding.
+If the slice returns to design or splits, discard or re-evaluate any unaccepted review probe.
 When a finding has status `REOPENED` after a correction batch, start a fresh `Develop <slice>` context in the same workspace from current code and the findings file.
 When the same finding reopens after that replacement, start a fresh scoped `review` in `design-audit` mode.
 If the fresh audit cannot resolve the finding, return `BLOCKED` with the exact consequential decision needed.
