@@ -60,6 +60,7 @@ The orchestrator owns routing, coordination state, and user gates.
 - **Security surface:** the declared trust boundaries and sensitive capabilities that determine security review scope.
 - **Review wave:** one coordinated pass of fresh review contexts against one slice.
 - **Review probe:** a minimal failing regression test authored by implementation review to prove a concrete finding through a public or system surface.
+- **Design checkpoint:** the commit after a clean design audit and visual review that becomes the implementation diff base.
 - **Decision autonomy:** an orchestration setting that controls automatic phase continuation without overriding requirements, ADR, or correctness gates.
 - **Slice continuation:** an orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input.
 - **`state.md`:** the current initiative coordination snapshot.

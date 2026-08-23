@@ -18,6 +18,7 @@ Current context: <child ID>
 - Restart count: 1
 - Restart reason: D1 was unresponsive after liveness probes.
 - Design phase: FIT
+- Design checkpoint: <commit hash or none>
 - Implementation phase: READY FOR REVIEW
 
 ### Design review

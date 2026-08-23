@@ -36,6 +36,7 @@ Wait: <phase observation interval, last check, and recovery stage or none>
 Last result: <short status and artifact path>
 Findings: <slice findings path or none>
 Verification: <status and exact command>
+Design checkpoint: <commit hash or none>
 Handoff: active | ready | recovery
 Recovery: <reason and next recovery action or none>
 Updated: <timestamp>
@@ -58,6 +59,9 @@ Ask once for these run settings:
 - **Push:** off (default) or on.
 - **Slice continuation:** auto (default) or stepwise.
 - **Model policy:** default (recommended) or manual.
+
+When Commit is on, create exactly two checkpoint commits per slice: one after design audit and one after implementation review.
+Do not create intermediate workflow commits during correction waves.
 
 No autonomy level can change an Approved requirement, create an unsanctioned ADR, bypass plan acceptance, accept a slice split, or confirm correctness.
 
@@ -177,6 +181,11 @@ Status: CLEAN
 When autonomy is conservative, ask whether to proceed to implementation.
 When autonomy is broad and no consequential decision remains, continue to implementation.
 
+When Commit is on and implementation is authorized, create the design checkpoint from slice-owned design and coordination changes.
+Record its hash in `state.md` and use it as the implementation diff base.
+Keep delivery and review contexts uncommitted; only the orchestrator creates the two checkpoint commits.
+Preserve unrelated working-tree changes.
+
 ### Implement
 
 After a clean design audit and visual artifact review, resume the same `Develop <slice>` agent and instruct it to run `implement`.
@@ -184,7 +193,7 @@ Do not repeat design reasoning or file contents.
 Pass only the user decision when one occurred.
 Pass the slice `findings.md` path and unresolved finding IDs when correction work exists.
 
-When the agent returns `READY FOR REVIEW`, record its diff base, verification status, paths, and security surface.
+When the agent returns `READY FOR REVIEW`, record the design checkpoint hash, verification status, paths, and security surface.
 Record every contract declaration with its canonical path, consumers, and verification command, or its specific `NO CONTRACT NEEDED` reason.
 Do not accept a claim of independent review from `Develop <slice>`.
 Pass the implementer's verification status and test paths to reviewers.
@@ -197,6 +206,7 @@ Use one exhaustive `Review <slice>` agent for a normal slice.
 Use independent review lanes for a high-risk slice with lifecycle, concurrency, replay, security, IPC, migration, or public-boundary concerns.
 Start a fresh `Review <slice>` agent, or one fresh agent per review lane, with `review` in `implementation-review` mode and the recorded paths.
 The reviewer receives no delivery conversation.
+Pass the design checkpoint hash as the diff base and require reviewers to inspect changes from that commit.
 Define a review matrix before spawning high-risk lanes.
 Do not send identical review instructions to all lanes.
 Use one fresh agent for each matrix row.
@@ -257,8 +267,9 @@ After confirmation:
 1. Mark the slice `done`.
 2. Accept implemented Proposed ADRs.
 3. Integrate its isolated workspace.
-4. Apply the commit and push settings.
-5. Recompute the frontier.
+4. When Commit is on, create the final checkpoint commit from the remaining slice-owned changes.
+5. Apply the push setting.
+6. Recompute the frontier.
 
 Set the handoff status to `ready` before the current orchestrator ends.
 When a new orchestrator finds `active` or `recovery` state, inspect the recorded child and recovery status before starting work.

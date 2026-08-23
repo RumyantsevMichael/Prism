@@ -34,6 +34,7 @@ test("keeps common workflow terms aligned with the artifact model", async () => 
     "**Security surface:**",
     "**Review wave:**",
     "**Review probe:**",
+    "**Design checkpoint:**",
     "**Decision autonomy:**",
     "**Slice continuation:**",
     "**`recovery.md`:**"
@@ -44,6 +45,7 @@ test("keeps common workflow terms aligned with the artifact model", async () => 
   assert.match(workflow, /Executable slice test:.*authored after the fit checkpoint/);
   assert.match(workflow, /Shape-only scaffold:.*authored after the fit checkpoint/);
   assert.match(workflow, /Review probe:.*minimal failing regression test/);
+  assert.match(workflow, /Design checkpoint:.*commit after a clean design audit and visual review/);
   assert.match(workflow, /Step definition:.*implementation-owned binding/);
   assert.match(workflow, /Red checkpoint:.*expected failure recorded before production behavior changes/);
 });
@@ -295,6 +297,12 @@ test("scopes autonomy and slice continuation at the design handoff", async () =>
 
   assert.match(orchestrate, /Conservative autonomy requires a user approval after a clean design audit and visual review/);
   assert.match(orchestrate, /Broad autonomy may continue automatically after a clean design audit and visual review/);
+  assert.match(orchestrate, /create exactly two checkpoint commits per slice/);
+  assert.match(orchestrate, /create the design checkpoint from slice-owned design and coordination changes/);
+  assert.match(orchestrate, /Record its hash in `state\.md` and use it as the implementation diff base/);
+  assert.match(orchestrate, /Pass the design checkpoint hash as the diff base/);
+  assert.match(orchestrate, /create the final checkpoint commit from the remaining slice-owned changes/);
+  assert.match(orchestrate, /Do not create intermediate workflow commits during correction waves/);
   assert.match(orchestrate, /Slice continuation controls only the transition after a confirmed slice/);
   assert.match(orchestrate, /does not skip design, design audit, visual review, review, or correctness gates/);
   assert.match(orchestrate, /Design: <one-sentence outcome>/);
