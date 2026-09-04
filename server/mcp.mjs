@@ -77,6 +77,23 @@ function result(id, value) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result: value })}\n`);
 }
 
+function requestedTabs(argumentsValue) {
+  const hasArtifact = Object.hasOwn(argumentsValue, "artifact");
+  const hasArtifacts = Object.hasOwn(argumentsValue, "artifacts");
+  if (hasArtifact && hasArtifacts) {
+    throw new Error("Use either artifact or artifacts, not both.");
+  }
+  if (hasArtifacts) {
+    return argumentsValue.artifacts;
+  }
+  return hasArtifact ? argumentsValue.artifact : undefined;
+}
+
+function reviewContent(url, review) {
+  const trustInstructions = review.trustInstructions ? `\n${review.trustInstructions}` : "";
+  return `Human review URL: ${url}${trustInstructions}`;
+}
+
 function failure(id, code, message) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } })}\n`);
 }
@@ -84,12 +101,13 @@ function failure(id, code, message) {
 const tools = [
   {
     name: "get_review_url",
-    description: "Start the local Prism review server and return a human review URL only. This tool does not open a browser or return rendered image data.",
+    description: "Start or update the local Prism HTTPS review server and return a human review URL only. Use artifacts to select the persistent tabs. This tool does not open a browser or return rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        artifact: { type: "string", description: "A project-relative artifact path." }
+        artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to open as persistent tabs. An empty array closes all tabs." }
       },
       required: ["projectRoot"],
       additionalProperties: false
@@ -98,12 +116,13 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open one local Prism review page in the system browser for the human. Omit artifact to show the complete artifact tree. The tool returns no rendered image data.",
+    description: "Open or update one local Prism HTTPS review page in the system browser for the human. Use artifacts to select the persistent tabs. Omit artifact to show the complete artifact tree when artifacts is also omitted. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        artifact: { type: "string", description: "A project-relative artifact path." }
+        artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to open as persistent tabs. An empty array closes all tabs." }
       },
       required: ["projectRoot"],
       additionalProperties: false
@@ -126,12 +145,16 @@ const tools = [
 async function callTool(name, argumentsValue = {}, metadata) {
   const review = await server(argumentsValue, metadata);
   if (name === "get_review_url") {
-    const url = review.reviewUrl(argumentsValue.artifact);
-    return { content: [{ type: "text", text: `Human review URL: ${url}` }], structuredContent: { url } };
+    const tabs = requestedTabs(argumentsValue);
+    if (tabs !== undefined) {
+      await review.setOpenTabs(tabs);
+    }
+    const url = review.reviewUrl(tabs);
+    return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, openTabs: review.getOpenTabs(), certificatePath: review.certificatePath, trustInstructions: review.trustInstructions } };
   }
   if (name === "present_review") {
-    const opened = review.open(argumentsValue.artifact);
-    return { content: [{ type: "text", text: `Human review URL: ${opened.url}` }], structuredContent: opened };
+    const opened = await review.open(requestedTabs(argumentsValue));
+    return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, certificatePath: review.certificatePath, trustInstructions: review.trustInstructions } };
   }
   if (name === "list_reviewable_artifacts") {
     const artifacts = await listArtifacts(review.projectRoot);

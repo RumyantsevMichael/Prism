@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -20,7 +21,7 @@ async function projectFixture(context, name, artifact) {
 }
 
 function mcpProcess(context, cwd, projectRoot, environment = {}) {
-  const env = { ...process.env, ...environment };
+  const env = { ...process.env, PRISM_REVIEW_CERT_DIR: path.join(cwd, ".prism-review-cert"), ...environment };
   if (projectRoot) {
     env.CLAUDE_PROJECT_DIR = projectRoot;
   } else {
@@ -64,6 +65,20 @@ function mcpProcess(context, cwd, projectRoot, environment = {}) {
       });
     }
   };
+}
+
+function fetchReview(url) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { rejectUnauthorized: false }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        resolve({ status: response.statusCode, json: async () => JSON.parse(body) });
+      });
+    });
+    request.once("error", reject);
+  });
 }
 
 async function browserStub(context) {
@@ -140,6 +155,8 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.match(tools.get_review_url.description, /does not open a browser/);
   assert.match(tools.present_review.description, /system browser/);
   assert.match(tools.present_review.description, /Omit artifact to show the complete artifact tree/);
+  assert.deepEqual(tools.get_review_url.inputSchema.properties.artifacts.items, { type: "string" });
+  assert.deepEqual(tools.present_review.inputSchema.properties.artifacts.items, { type: "string" });
 });
 
 test("uses the consumer root provided by Claude Code", async (context) => {
@@ -156,14 +173,14 @@ test("uses the consumer root provided by Claude Code", async (context) => {
   const indexUrl = new URL(reviewUrl);
   indexUrl.pathname = indexUrl.pathname.replace(/\/review$/, "/api/index");
   indexUrl.search = "";
-  const index = await (await fetch(indexUrl)).json();
+  const index = await (await fetchReview(indexUrl)).json();
   assert.equal(index.projectRoot, await realpath(consumerRoot));
   assert.deepEqual(index.artifacts, ["docs/consumer-only.md"]);
 
   const outsideUrl = new URL(indexUrl);
   outsideUrl.pathname = outsideUrl.pathname.replace(/\/api\/index$/, "/api/artifact");
   outsideUrl.searchParams.set("path", "../outside.md");
-  assert.equal((await fetch(outsideUrl)).status, 400);
+  assert.equal((await fetchReview(outsideUrl)).status, 400);
 
   const mismatched = await callTool(mcp, 4, "list_reviewable_artifacts", { projectRoot: pluginRoot });
   assert.match(mismatched.error.message, /does not match the host project root/);
@@ -207,7 +224,28 @@ test("returns a review URL without opening a system browser", async (context) =>
   await initialize(mcp);
   const review = await callTool(mcp, 2, "get_review_url", { projectRoot: root, artifact: "docs/artifact.md" });
 
-  assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
+  assert.match(review.result.structuredContent.url, /^https:\/\/127\.0\.0\.1:/);
+  await delay(100);
+  assert.equal(await markerContents(browser.marker), "");
+});
+
+test("selects and updates persistent artifact tabs without opening a browser", async (context) => {
+  const root = await projectFixture(context, "tab-selection", "first.md");
+  await writeFile(path.join(root, "docs", "second.md"), "# second\n");
+  const browser = await browserStub(context);
+  const mcp = mcpProcess(context, root, undefined, browser.environment);
+
+  await initialize(mcp);
+  const selected = await callTool(mcp, 2, "get_review_url", {
+    projectRoot: root,
+    artifacts: ["docs/first.md", "docs/second.md"]
+  });
+  assert.match(selected.result.structuredContent.url, /^https:\/\/127\.0\.0\.1:/);
+  assert.deepEqual(selected.result.structuredContent.openTabs, ["docs/first.md", "docs/second.md"]);
+  assert.match(selected.result.content[0].text, /Trust the Prism local development authority once/);
+
+  const updated = await callTool(mcp, 3, "get_review_url", { projectRoot: root, artifacts: ["docs/second.md"] });
+  assert.deepEqual(updated.result.structuredContent.openTabs, ["docs/second.md"]);
   await delay(100);
   assert.equal(await markerContents(browser.marker), "");
 });
@@ -220,7 +258,7 @@ test("opens the system browser when it presents a review", async (context) => {
   await initialize(mcp);
   const review = await callTool(mcp, 2, "present_review", { projectRoot: root, artifact: "docs/artifact.md" });
 
-  assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
+  assert.match(review.result.structuredContent.url, /^https:\/\/127\.0\.0\.1:/);
   assert.equal(review.result.structuredContent.opened, true);
   assert.equal(await waitForMarker(browser.marker), "opened");
 });
@@ -233,7 +271,7 @@ test("opens one review page for the complete artifact tree when no artifact is s
   await initialize(mcp);
   const review = await callTool(mcp, 2, "present_review", { projectRoot: root });
 
-  assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
+  assert.match(review.result.structuredContent.url, /^https:\/\/127\.0\.0\.1:/);
   assert.doesNotMatch(review.result.structuredContent.url, /artifact=/);
   assert.equal(review.result.structuredContent.opened, true);
   assert.equal(await waitForMarker(browser.marker), "opened");

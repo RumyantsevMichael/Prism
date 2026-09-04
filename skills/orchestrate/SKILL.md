@@ -10,15 +10,17 @@ sdm: "0.3"
 
 The orchestrator coordinates every outcome slice through `plan`, `design`, design audit, `implement`, implementation review, and user gates.
 The orchestrator is the initiative control plane.
-The initiative `state.md` snapshot is the durable routing record.
+The initiative `state.json` file is the validated durable routing record.
+The `map.puml` file is a human-readable projection of that state.
 The session holds active child identifiers while each child is active.
 
 - Read `.prism/workflow.md` and [delegation.md](../workflow/references/delegation.md) first.
+- Read [state-schema.md](references/state-schema.md) before creating, changing, or recovering initiative state.
 - Before recording per-slice operations, read [operations-format.md](references/operations-format.md).
 - Before a visual gate, read [visual-review.md](../workflow/references/visual-review.md).
 
 - At the start of every orchestrator context:
-  1. Read `state.md`, `plan.md`, `slices.puml`, and the active slice `findings.md`.
+  1. Read and validate `state.json`, `plan.md`, `map.puml`, and the active slice canonical `findings.md`.
   2. State the restored role, phase, gate, active slice, and next action in a short checkpoint.
 
 After context compaction, the context is fresh.
@@ -26,7 +28,8 @@ After context compaction, the context is fresh.
 - Before taking an action after context compaction, repeat the context-start procedure.
 
 - Do
-  - Record active child identifiers in `state.md` at every transition.
+  - Record active child identifiers through validated patches to `state.json` at every transition.
+  - Regenerate `map.puml` after each accepted state patch.
   - Allow a new orchestrator to take over only after a phase boundary or explicit interruption.
 - Don't
   - Implement, design, or review phase content from the control-plane context.
@@ -34,35 +37,20 @@ After context compaction, the context is fresh.
 
 ## Coordination state
 
-- Use this coordination snapshot under each initiative plan:
+The state schema defines the required `state.json` fields and validation rules.
+Each worker returns an atomic state patch with its result.
+The orchestrator validates the complete candidate state before it persists a patch.
+The validator checks schema version, lifecycle transitions, dependency acyclicity, slice ownership, lane paths, and active-worker rules.
+The orchestrator rejects an invalid patch without changing unrelated state.
+The orchestrator records every accepted or rejected patch in the state audit trail.
+The orchestrator records a fresh review context as a review wave, not a child restart.
+The canonical slice `findings.md` file holds consolidated review evidence.
 
-```text
-Status: active | awaiting-user | paused | blocked | shipped
-Active slice: <slice slug or none>
-Phase: plan | design | design-audit | visual-design | implement | review | visual-final | correctness
-Gate: <gate name or none>
-Next action: <one action>
-Child: <identifier and status or none>
-Wait: <phase observation interval, last check, and recovery stage or none>
-Last result: <short status and artifact path>
-Findings: <slice findings path or none>
-Verification: <status and exact command>
-Design checkpoint: <commit hash or none>
-Handoff: active | ready | recovery
-Recovery: <reason and next recovery action or none>
-Updated: <timestamp>
-```
-
-The `state.md` file contains one operations block for each slice.
-A fresh review context counts as a review wave, not a child restart.
-The slice `findings.md` file contains detailed review evidence.
-
-- Update the operations block at child and phase transitions.
-- Update `state.md` before and after every child transition.
-- Update `state.md` before a phase-boundary handoff.
-- Link to `findings.md` instead of copying detailed evidence into the operations block.
-- Do not update the operations block after every wait.
-- Do not delete `state.md` or `findings.md` until the initiative is shipped and its scratch plan is deleted.
+- Update state before and after every child transition.
+- Update state before a phase-boundary handoff.
+- Record only current routing data and compact audit records in `state.json`.
+- Do not update state after an unchanged wait.
+- Do not delete `state.json`, `map.puml`, or canonical findings until the initiative is shipped and its scratch plan is deleted.
 
 ## Initiative phases
 
@@ -123,8 +111,10 @@ A wait action alone does not enable parallel or sequential mode.
 ### 2. Resolve the initiative
 
 - When an accepted initiative plan exists:
-  1. Read `plan.md` and `slices.puml`.
-  2. Read `state.md`, or create it when it does not exist.
+  1. When `map.puml` is absent and legacy `slices.puml` exists, move its unchanged content to `map.puml`, update plan links, and record the migration in the state audit trail.
+  2. Read `plan.md` and `map.puml`.
+  3. Read and validate `state.json`.
+  4. When only a legacy `state.md` exists, create `state.json` from its current routing data and preserve the legacy file as an audit artifact.
 - When work needs several outcomes and has no plan:
   1. Start a fresh `Plan <initiative>` agent.
   2. Assign it the `planning` model role and its resolved model or host default.
@@ -134,10 +124,11 @@ A wait action alone does not enable parallel or sequential mode.
   3. Use a browser-opening capability for the selected browser.
   4. When no opener exists, present the URL and source artifacts.
   5. Present the slice graph for user acceptance.
-  6. After the initiative plan receives acceptance, create its `state.md`.
+  6. After the initiative plan receives acceptance, create and validate its `state.json`.
+  7. Generate `map.puml` from the saved state.
 - When the capability is self-contained:
   1. Treat it as one standalone slice without creating a dependency plan.
-  2. Create its `state.md` and slice `findings.md` files before the first phase.
+  2. Create its `state.json`, `map.puml`, and canonical slice `findings.md` files before the first phase.
 
 ### 3. Select the frontier
 
@@ -145,7 +136,9 @@ The frontier contains every not-started slice whose dependencies are done.
 
 - Run frontier slices concurrently only in isolated workspaces.
 - Otherwise, run frontier slices sequentially.
-- Recompute the frontier after every confirmed slice.
+- Recompute the frontier from validated state after every accepted patch.
+- Exclude parent slices from the executable frontier.
+- Start a leaf slice only when all required dependencies are `done`.
 - Keep one workspace and one `Develop <slice>` task for each active slice.
 - Never reuse a `Develop <slice>` task for another slice.
 
@@ -153,45 +146,51 @@ The frontier contains every not-started slice whose dependencies are done.
 
 #### 1. Explore and fit
 
-1. Mark the slice `in-progress` before starting the child.
+1. Validate an atomic patch that marks the leaf slice `in-progress` before starting the child.
 2. Create or update `<configured plans>/<initiative>/<slice>/findings.md` before the first audit.
 3. When this is the initiative's first active slice, mark the roadmap initiative `in-progress`.
 4. Start one child named `Develop <slice>` and instruct it to run `design` in embedded mode.
 5. Give it the requirements, code workspace, autonomy level, and execution profile.
 6. Give it the slice record when present.
-7. Give it the initiative `state.md` path and slice `findings.md` path.
+7. Give it the initiative `state.json` path and slice canonical `findings.md` path.
 8. Assign the `delivery` model role and its resolved model or host default.
 
 - Route the compact result as follows:
   - On `FIT`, run the design audit.
-  - On `SPLIT`, present the child slices and wait for explicit acceptance.
+  - On `SPLIT`, validate the proposed child records and present them for explicit acceptance.
   - On `BLOCKED`, present the unresolved requirement, decision, or dependency.
 
 Slice-scoped artifact paths are valid only with `FIT`.
 A `SPLIT` or `BLOCKED` result must not leave slice-scoped artifacts attached to the rejected slice.
 
-- After an accepted split, resume the same `Develop <slice>` agent with the first accepted child slice.
-- Update the slice DAG for the remaining child slices.
+- After an accepted split, atomically mark the parent `split`, add its child slices, replace its executable work, and recompute the frontier.
+- Generate nested parent-child states, dependency edges, and live statuses in `map.puml` from the accepted patch.
+- Never schedule the parent as an executable slice after a split.
+- A child can return `SPLIT` and repeat this acceptance process.
+- Start an accepted child only after its required dependencies are `done`.
 
 #### 2. Audit the design
 
 1. Start a fresh `Review <slice>` agent with `review` in `design-audit` mode.
-2. Give it the design output paths and slice `findings.md` path.
-3. Do not give it the delivery conversation.
-4. Assign the `review` model role and its resolved model or host default.
-5. On findings, read `findings.md` and resume `Develop <slice>` with the path and all unresolved finding IDs.
-6. After each design correction batch, start a fresh scoped design audit.
-7. Continue until `CLEAN`, a user stop, or a real blocker.
-8. On `CLEAN`, open one Prism artifact viewer session for all recorded ADRs and diagrams.
-9. Complete the visual review before the implementation gate.
-10. Present `Design: <one-sentence outcome>` and this compact result:
+2. Assign it the `design-audit` lane and its exact lane findings path.
+3. Give it the design output paths, initiative, reporting slice, lane, lane findings path, and canonical findings path.
+4. Do not give it the delivery conversation.
+5. Assign the `review` model role and its resolved model or host default.
+6. Consolidate the lane findings into canonical `findings.md` before resuming delivery.
+7. On findings, read canonical `findings.md` and resume `Develop <slice>` with the path and all unresolved finding IDs.
+8. After each design correction batch, start a fresh scoped design audit.
+9. Continue until `CLEAN`, a user stop, or a real blocker.
+10. On `CLEAN`, open one Prism artifact viewer session for all recorded ADRs and diagrams.
+11. Complete the visual review before the implementation gate.
+12. Present `Design: <one-sentence outcome>` and this compact result:
 
 ```text
 Mode: design-audit
-Lane: none
+Lane: design-audit
 Review focus: requirements, design, boundaries, contracts, security
 Coverage: requirements, lifecycle, tests, artifacts, verification
-Findings: <configured plans>/<initiative>/<slice>/findings.md
+Findings: <exact design-audit lane findings path>
+Canonical findings: <configured plans>/<initiative>/<slice>/findings.md
 Finding IDs: NONE
 ADRs: <Proposed ADR paths or NONE>
 Executable tests: <canonical test paths or NONE>
@@ -208,7 +207,7 @@ Status: CLEAN
 
 - When Commit is on and implementation is authorized, create the design checkpoint.
   1. Include only slice-owned design and coordination changes.
-  2. Record its hash in `state.md` and use it as the implementation diff base.
+  2. Record its hash through a validated state patch and use it as the implementation diff base.
 - Keep delivery and review contexts uncommitted.
 - Preserve unrelated working-tree changes.
 
@@ -257,36 +256,44 @@ Coverage: requirements, features, ADRs, diagrams, verification
 
 - For a normal slice:
   1. Prepare `review` in `implementation-review` mode with the recorded paths.
-  2. Do not include the delivery conversation.
-  3. Pass the design checkpoint hash as the diff base.
-  4. Require inspection of changes from that commit.
-  5. Assign the `review` model role and its resolved model or host default.
-  6. Start one fresh `Review <slice>` agent with the prepared instructions.
+  2. Assign the `implementation` lane and its exact lane findings path.
+  3. Do not include the delivery conversation.
+  4. Pass the design checkpoint hash as the diff base.
+  5. Require inspection of changes from that commit.
+  6. Assign the `review` model role and its resolved model or host default.
+  7. Start one fresh `Review <slice>` agent with the prepared instructions.
 
 Each high-risk lane uses the `security-review` model role with its resolved model or host default.
 
 - For a high-risk slice:
   1. Define a review matrix before starting high-risk review lanes.
-  2. Assign each lane its distinct focus and coverage.
-  3. Assign each lane the matrix row as its scope and the `Focus` execution profile.
-  4. Prepare `review` in `implementation-review` mode with the recorded paths for each lane.
-  5. Do not include the delivery conversation.
-  6. Pass the design checkpoint hash as the diff base.
-  7. Require inspection of changes from that commit.
-  8. Do not send identical review instructions to all lanes.
-  9. Start one fresh agent for each matrix row with its prepared instructions.
+  2. Add every lane, its reporting slice, and its lane findings path to state.
+  3. Assign each lane its distinct focus and coverage.
+  4. Assign each lane the matrix row as its scope and the `Focus` execution profile.
+  5. Prepare `review` in `implementation-review` mode with the recorded paths for each lane.
+  6. Do not include the delivery conversation.
+  7. Pass the design checkpoint hash as the diff base.
+  8. Require inspection of changes from that commit.
+  9. Do not send identical review instructions to all lanes.
+  10. Start one fresh agent for each matrix row with its prepared instructions.
 
 - For each lane:
   - Give it its matrix row, common diff paths, and [review-format.md](../review/references/review-format.md).
-  - Give it the slice `findings.md` path and require it to update that file.
-  - Run lanes sequentially when they share one findings file.
-  - Otherwise, serialize findings-file updates before the next lane starts.
+  - Give it the initiative, reporting slice, lane name, exact lane findings path, and canonical findings path.
+  - Require it to write only to its assigned lane findings path.
   - Require the lane, focus, coverage, status, and findings in its report.
 
 - Keep one active review wave for each slice.
-- Consolidate all lane findings before sending one correction batch.
-- Consolidate duplicate findings and check uncovered coverage.
-- Use `findings.md` as the source of truth instead of passing a transient finding list.
+- Start independent lanes in parallel when isolated workspaces are available.
+- Wait for every lane result before consolidation.
+- Consolidate all lane findings into canonical `findings.md` before sending one correction batch.
+- Preserve each finding's stable identifier, lane, evidence, and status history during consolidation.
+- Deduplicate equivalent findings without deleting their reporting-lane evidence.
+- Check uncovered coverage and route each escalation target from its reporting slice.
+- Route an escalation to its affected slice when that slice can own the correction.
+- Route an escalation to a user gate when it needs an initiative or requirement decision.
+- Do not move the original evidence out of the reporting slice.
+- Use canonical `findings.md` as the source of truth instead of passing a transient finding list.
 - Pass each review probe path and expected failure with its unresolved finding.
 - If the slice returns to design or splits, discard or re-evaluate unaccepted review probes.
 
@@ -337,40 +344,35 @@ Each high-risk lane uses the `security-review` model role with its resolved mode
 
 ## Supervise children
 
-An observation interval is a check-in schedule, not a deadline or execution limit.
+An observation interval is a fallback check-in schedule, not a deadline or execution limit.
 
-- Track every active child identifier.
+- Track every active child identifier in `state.json`.
 - Never wait with an empty identifier set.
 - Treat an empty receiver or agent state as a routing failure and use broker or manual recovery.
 - Interrupt only after a positive failure signal, a user request, or an explicit child blocker.
-- Set an observation interval before each child's first wait and record it in `state.md`.
-- Use 15 minutes for planning, design, and review children.
-- Use 30 minutes for implementation children.
-- Increase the interval for known long verification or a higher-risk execution profile.
+- Before child start, estimate its expected execution time from its phase and execution profile.
+- Record the expected completion time, next observation time, and five-minute fallback interval in state.
+- Wait for completion, failure, blocker, progress, or replacement events before status observation.
 
 - For each active child:
   1. Start or resume it with the current phase instruction.
-  2. Record the observation interval in `state.md`.
-  3. Wait for that interval while the child remains active.
-  4. If the interval expires without a final result, inspect available status and progress.
-  5. If no positive failure signal exists, check for non-destructive input.
-  6. When non-destructive input is available:
-     1. Send one concise status request.
-     2. If the status request was sent:
-        1. Wait through at most three five-minute follow-up intervals.
-        2. If the child reports progress, record it and return to the normal observation interval.
-        3. If the child reports a blocker, record recovery state and route the blocker without replacement.
-        4. If the child stays silent after the follow-up intervals, record `unresponsive` and preserve its workspace.
-        5. If the child stays silent after the follow-up intervals, request a user or parent recovery decision.
-  7. Record recovery state only after failure, blocker, user interruption, or unresponsive escalation.
-  8. Resume the same child when possible.
-  9. After confirmed failure or an approved recovery decision, start a replacement in the same workspace.
-  10. Give the replacement the current code and recorded recovery state.
-  11. Keep the same model role and resolved model unless the manual policy changes them.
-  12. Before replacement, record the reason, last progress, next action, and child status in `state.md`.
+  2. Record its expected completion time and initial five-minute fallback interval.
+  3. Wait for host events until the expected completion time.
+  4. When a meaningful event arrives, apply its state patch and reset the fallback interval to five minutes.
+  5. When no event arrives by the expected completion time, wait five minutes before the first fallback observation.
+  6. When the fallback interval expires, inspect available status and progress.
+  7. When no terminal or meaningful progress event exists, set the next fallback interval to one minute longer.
+  8. When non-destructive input is available, send one concise status request after the fallback observation.
+  9. When a child reports progress, blocker, failure, or replacement, reset the fallback interval to five minutes and route the event.
+  10. Record recovery state only after failure, blocker, user interruption, or unresponsive escalation.
+  11. Resume the same child when possible.
+  12. After confirmed failure or an approved recovery decision, start a replacement in the same workspace.
+  13. Give the replacement the current code and recorded recovery state.
+  14. Keep the same model role and resolved model unless the manual policy changes them.
 
-A wait timeout means only that no final result arrived.
+A fallback observation means only that no event arrived.
 It is not evidence that the child is stuck.
+- Do not poll silently running children at ten-second intervals.
 - Do not narrate unchanged waits.
 - Do not use waits, replacements, or child failures as correction rounds.
 - Do not treat review findings as child failures.

@@ -94,7 +94,7 @@ The slice fits only when all these properties are true:
 
 - Don't
   - Add architecture, contracts, task lists, or implementation instructions to child slice records.
-  - Edit the accepted plan or `slices.puml`.
+  - Edit the accepted plan, `state.json`, or `map.puml`.
 
 The orchestrator presents the split, records an accepted plan change, and resumes the delivery task.
 
@@ -173,6 +173,17 @@ Reason: <specific reason>
 ```
 
 - When orchestration supplies a findings path, return `Findings: <slice findings path>` for every status.
+- For `SPLIT`, return one proposed child record for each replacement slice in this exact form:
+
+```text
+Child: <slice slug>
+Outcome: <one observable result>
+Dependencies: <child or existing slice slugs>
+Starting surface: <command, route, public function, event, job, or user action>
+Done signal: <one executable command or end-to-end observation>
+```
+
+- For `SPLIT`, state that the current slice is a proposed parent and is not executable.
 - For `SPLIT` or `BLOCKED`, do not return slice-scoped design artifact paths.
 
 - Don't

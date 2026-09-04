@@ -77,7 +77,7 @@ It resumes the same delivery agent from design through implementation.
 It starts a fresh design review after `FIT` and a fresh implementation review after the code works.
 It repeats each audit or review after corrections until the result is `CLEAN`, the user stops, or a real blocker occurs.
 It can replace a delivery context from the current code and findings when a review reopens a defect.
-The initiative plan stores a current `state.md` snapshot so a later orchestrator can resume after a phase boundary.
+The initiative plan stores a validated `state.json` file so a later orchestrator can resume after a phase boundary.
 Each slice stores all design-audit and implementation-review findings in one `findings.md` file with correction and verification statuses.
 
 One slice contains one observable outcome, one dominant path, one acceptance suite, and one reviewable diff.
@@ -118,6 +118,10 @@ Start a standalone review from a Prism checkout when no harness session is activ
 ./bin/prism review docs/roadmap.md
 ```
 
+The review server creates a local Prism certificate authority and a separate server certificate.
+Trust the authority once in your login keychain when Prism prints its command, then restart the browser.
+Prism does not install the authority automatically or change the system keychain.
+
 The standalone `prism review` command always opens the system browser.
 
 The server binds to `127.0.0.1`, selects an available port, and uses an unguessable session URL.
@@ -144,6 +148,15 @@ The default paths are:
 | Roadmap | `docs/roadmap.md` |
 | Glossary | `docs/Glossary.md` |
 | User documentation | `docs/user-guide/` |
+
+Each initiative plan has a `map.puml` file beside `plan.md`.
+The map shows the slice hierarchy, dependencies, and live status.
+
+### Migrate an older initiative plan
+
+When Prism resumes a plan with `slices.puml`, it moves the unchanged graph content to `map.puml`.
+It updates links in the plan and records the migration in the initiative state audit trail.
+Do not create a new `slices.puml` file after the migration.
 
 ### Migrate an older configuration
 
@@ -192,6 +205,7 @@ Commit this configuration to `.claude/settings.json` so Claude Code can discover
 ## Contribute
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for the repository layout, local development process, validation steps, and release process.
+Read the [Skill Definition Markdown authoring standard](docs/skill-language.md) and its [validation behavior](docs/skill-language-validation.md) before you edit a skill.
 
 ## License
 

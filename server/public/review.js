@@ -3,15 +3,122 @@ import { renderToString } from "./vendor/plantuml.js";
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
 const artifact = document.getElementById("artifact");
+const tabs = document.getElementById("tabs");
 const artifactCount = document.getElementById("artifact-count");
 const artifactFilter = document.getElementById("artifact-filter");
 const emptyFilter = document.getElementById("empty-filter");
 const toast = document.getElementById("toast");
 let selectedPath = new URLSearchParams(location.search).get("artifact");
+let openTabs = [];
 let lastSnapshot = "";
 let toastTimer;
 let expandedFolders = new Set();
 const folderElements = new Map();
+
+function samePaths(left, right) {
+  return left.length === right.length && left.every((path, index) => path === right[index]);
+}
+
+function welcome() {
+  artifact.innerHTML = `<div class="welcome-card">
+    <span class="welcome-mark" aria-hidden="true"></span>
+    <p class="eyebrow">Human review</p>
+    <h1>Select an artifact</h1>
+    <p>Choose a source artifact to review its prose and diagrams together.</p>
+  </div>`;
+}
+
+function updateLocation(path) {
+  const url = new URL(location.href);
+  if (path) {
+    url.searchParams.set("artifact", path);
+  } else {
+    url.searchParams.delete("artifact");
+  }
+  history.replaceState(null, "", `${url.pathname}${url.search}`);
+}
+
+function renderTabs() {
+  tabs.replaceChildren();
+  for (const path of openTabs) {
+    const tab = document.createElement("div");
+    tab.className = "artifact-tab";
+    tab.setAttribute("role", "presentation");
+    const select = document.createElement("button");
+    select.className = "artifact-tab-select";
+    select.type = "button";
+    select.setAttribute("role", "tab");
+    select.setAttribute("aria-selected", String(path === selectedPath));
+    select.title = path;
+    select.textContent = fileName(path);
+    select.addEventListener("click", () => selectTab(path));
+    const close = document.createElement("button");
+    close.className = "artifact-tab-close";
+    close.type = "button";
+    close.setAttribute("aria-label", `Close ${path}`);
+    close.textContent = "×";
+    close.addEventListener("click", () => closeTab(path));
+    tab.append(select, close);
+    tabs.appendChild(tab);
+  }
+}
+
+async function saveTabs() {
+  const response = await fetch("./api/session", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ openTabs })
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+function selectTab(path) {
+  if (!openTabs.includes(path)) {
+    openTabs.push(path);
+    void saveTabs().catch((error) => showToast(error.message));
+  }
+  selectedPath = path;
+  lastSnapshot = "";
+  updateLocation(path);
+  renderTabs();
+  void showArtifact(path);
+}
+
+function closeTab(path) {
+  openTabs = openTabs.filter((tab) => tab !== path);
+  if (selectedPath === path) {
+    selectedPath = openTabs[openTabs.length - 1] ?? null;
+    lastSnapshot = "";
+    updateLocation(selectedPath);
+  }
+  renderTabs();
+  if (selectedPath) {
+    void showArtifact(selectedPath);
+  } else {
+    welcome();
+  }
+  void saveTabs().catch((error) => showToast(error.message));
+}
+
+function synchronizeTabs(serverTabs) {
+  if (samePaths(openTabs, serverTabs)) {
+    return;
+  }
+  openTabs = serverTabs;
+  if (!openTabs.includes(selectedPath)) {
+    selectedPath = openTabs[0] ?? null;
+    lastSnapshot = "";
+    updateLocation(selectedPath);
+  }
+  renderTabs();
+  if (selectedPath) {
+    void showArtifact(selectedPath);
+  } else {
+    welcome();
+  }
+}
 
 function escapeHtml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -283,10 +390,7 @@ function fileItem(path) {
   link.innerHTML = `<span class="file-icon" aria-hidden="true"></span><span class="file-name">${escapeHtml(fileName(path))}</span><span class="type-badge">${escapeHtml(fileType(path))}</span>`;
   link.addEventListener("click", (event) => {
     event.preventDefault();
-    selectedPath = path;
-    history.replaceState(null, "", link.href);
-    lastSnapshot = "";
-    showArtifact(path);
+    selectTab(path);
   });
   item.appendChild(link);
   return item;
@@ -396,6 +500,14 @@ async function initialize() {
     throw new Error(await response.text());
   }
   const data = await response.json();
+  openTabs = data.openTabs;
+  if (selectedPath && !openTabs.includes(selectedPath)) {
+    openTabs.push(selectedPath);
+    await saveTabs();
+  }
+  if (!selectedPath) {
+    selectedPath = openTabs[0] ?? null;
+  }
   project.textContent = data.projectRoot;
   artifactCount.textContent = String(data.artifacts.length);
   const tree = buildArtifactTree(data.artifacts);
@@ -404,6 +516,7 @@ async function initialize() {
   artifacts.replaceChildren();
   renderTreeNode(tree, artifacts);
   updateTreeState();
+  renderTabs();
   artifactFilter.addEventListener("input", filterArtifacts);
   document.addEventListener("keydown", (event) => {
     if (event.key === "/" && document.activeElement !== artifactFilter) {
@@ -418,7 +531,18 @@ async function initialize() {
   if (selectedPath) {
     await showArtifact(selectedPath);
   }
-  setInterval(() => selectedPath && showArtifact(selectedPath), 1500);
+  setInterval(async () => {
+    try {
+      const refreshed = await fetch("./api/index", { cache: "no-store" });
+      if (refreshed.ok) {
+        synchronizeTabs((await refreshed.json()).openTabs);
+      }
+      if (selectedPath) {
+        await showArtifact(selectedPath);
+      }
+    } catch {
+    }
+  }, 1500);
 }
 
 initialize().catch((error) => {

@@ -79,7 +79,9 @@ test("plans dependency-ordered vertical outcome slices", async () => {
   assert.match(plan, /At most one consequential architectural decision remains unresolved/);
   assert.match(plan, /one end-to-end verification path/);
   assert.match(plan, /largest coherent outcome that one `Develop <slice>` task can complete safely/);
-  assert.match(plan, /creates `state\.md` after plan acceptance/);
+  assert.match(plan, /creates validated `state\.json` after plan acceptance/);
+  assert.match(plan, /Link `map\.puml` from the plan/);
+  assert.doesNotMatch(plan, /slices\.puml/);
   assert.match(plan, /one `findings\.md` file under each slice/);
   assert.doesNotMatch(plan, /implementation-task graph/);
 });
@@ -118,7 +120,7 @@ test("forms bounded slice architecture before fit and authors artifacts only aft
   assertProhibited(design, "Create a prose design summary, slice-named design file, task graph, or handoff.");
   assertProhibited(design, "Scan the repository or read complete directories for general understanding.");
   assert.match(design, /Stop after identifying the changed components, affected boundaries, test location, and end-to-end verification command/);
-  assertProhibited(design, "Edit the accepted plan or `slices.puml`.");
+  assertProhibited(design, "Edit the accepted plan, `state.json`, or `map.puml`.");
   assert.match(design, /The orchestrator owns plan changes, lifecycle changes, and the transition to implementation/);
   assertProhibited(design, "Edit a requirement or invoke `write-requirements` without explicit user approval.");
   assert.match(design, /Feature files: <canonical feature paths or NONE>/);
@@ -192,7 +194,7 @@ test("keeps lifecycle changes in orchestration", async () => {
 
   assert.match(design, /orchestrator owns plan changes, lifecycle changes, and the transition to implementation/i);
   assertProhibited(implement, "Change slice status, roadmap status, ADR status, or plan lifecycle.");
-  assert.match(orchestrate, /Mark the slice `in-progress`/);
+  assert.match(orchestrate, /marks the leaf slice `in-progress`/);
   assert.match(orchestrate, /Mark the slice `done`/);
   assert.match(orchestrate, /Accept implemented Proposed ADRs/);
   assert.match(orchestrate, /Slice-scoped artifact paths are valid only with `FIT`/);
@@ -206,24 +208,27 @@ test("persists orchestration state across sequential sessions", async () => {
   const workflow = await skill("workflow");
   const orchestrate = await skill("orchestrate");
   const operations = await reference("orchestrate", "operations-format.md");
+  const schema = await reference("orchestrate", "state-schema.md");
 
-  for (const field of ["Status", "Active slice", "Phase", "Gate", "Next action", "Child", "Wait", "Findings", "Handoff", "Recovery", "Updated"]) {
-    assert.match(orchestrate, new RegExp(`${field}:`));
-  }
   assert.match(workflow, /The orchestrator owns routing, coordination state, and user gates/);
   assert.match(orchestrate, /\[operations-format\.md\]\(references\/operations-format\.md\)/);
-  assert.match(operations, /## Operations: <slice>/);
-  assert.match(operations, /Context lineage: D1 -> D2/);
-  assert.match(operations, /Review waves: 2/);
-  assert.match(operations, /Count a fresh review context as a review wave, not as a child restart/);
+  assert.match(orchestrate, /\[state-schema\.md\]\(references\/state-schema\.md\)/);
+  assert.match(schema, /The initiative `state\.json` file is the runtime source of truth/);
+  assert.match(schema, /"schemaVersion": 1/);
+  assert.match(schema, /"reviewLanes"/);
+  assert.match(schema, /dependency cycle/);
+  assert.match(schema, /running parent slice/);
+  assert.match(schema, /findings path outside the reporting slice directory/);
+  assert.match(schema, /Do not reconstruct current state from task transcripts, `map\.puml`, or a worker report/);
+  assert.match(operations, /Use `state\.json` as the current initiative state and audit record/);
+  assert.match(operations, /"fallbackMinutes": 5/);
+  assert.match(operations, /"kind": "patch-accepted"/);
   assert.match(orchestrate, /After context compaction, the context is fresh/);
   assert.match(orchestrate, /Allow a new orchestrator to take over only after a phase boundary or explicit interruption/);
-  assert.match(orchestrate, /A fresh review context counts as a review wave, not a child restart/);
-  assert.match(orchestrate, /Update the operations block at child and phase transitions/);
-  assert.match(orchestrate, /Do not update the operations block after every wait/);
-  assert.match(orchestrate, /Link to `findings\.md` instead of copying detailed evidence into the operations block/);
-  assert.match(orchestrate, /After the initiative plan receives acceptance, create its `state\.md`/);
-  assert.match(orchestrate, /Update `state\.md` before and after every child transition/);
+  assert.match(orchestrate, /records a fresh review context as a review wave, not a child restart/);
+  assert.match(orchestrate, /After the initiative plan receives acceptance, create and validate its `state\.json`/);
+  assert.match(orchestrate, /Regenerate `map\.puml` after each accepted state patch/);
+  assert.match(orchestrate, /rejects an invalid patch without changing unrelated state/i);
   assert.match(orchestrate, /Set the handoff status to `ready`/);
   assert.match(orchestrate, /Open one Prism artifact viewer session before presenting the plan for acceptance/);
   assert.match(orchestrate, /Include the plan and slice graph in that session/);
@@ -313,7 +318,7 @@ test("orders design audit before implementation", async () => {
   assert.match(orchestrate, /On `CLEAN`, open one Prism artifact viewer session for all recorded ADRs and diagrams/);
   assert.match(orchestrate, /continue to implementation/);
   assert.match(orchestrate, /resume `Develop <slice>` with the path and all unresolved finding IDs/);
-  assert.match(orchestrate, /Use `findings\.md` as the source of truth/);
+  assert.match(orchestrate, /canonical `findings\.md` as the source of truth/);
   assert.match(orchestrate, /After each design correction batch, start a fresh scoped design audit/);
   assert.doesNotMatch(orchestrate, /review-design/);
 });
@@ -326,7 +331,7 @@ test("scopes autonomy and slice continuation at the design handoff", async () =>
   assert.match(orchestrate, /create exactly two checkpoint commits for each slice/);
   assert.match(orchestrate, /create the design checkpoint/);
   assert.match(orchestrate, /Include only slice-owned design and coordination changes/);
-  assert.match(orchestrate, /Record its hash in `state\.md` and use it as the implementation diff base/);
+  assert.match(orchestrate, /Record its hash through a validated state patch and use it as the implementation diff base/);
   assert.match(orchestrate, /Pass the design checkpoint hash as the diff base/);
   assert.match(orchestrate, /create the final checkpoint commit from the remaining slice-owned changes/);
   assert.match(orchestrate, /Do not create intermediate workflow commits during correction waves/);
@@ -348,15 +353,15 @@ test("reviews completed code in a fresh context", async () => {
   assert.match(review, /Mark an implementer's `FIXED` finding `VERIFIED`/);
   assert.match(review, /`REOPENED` when its closing condition fails/);
   assert.match(orchestrate, /Start one child named `Develop <slice>`/);
-  assert.match(orchestrate, /resume the same `Develop <slice>` agent/);
+  assert.match(orchestrate, /atomically mark the parent `split`, add its child slices/);
   assert.match(orchestrate, /Start a fresh `Review <slice>` agent/);
-  assert.match(orchestrate, /Use `findings\.md` as the source of truth instead of passing a transient finding list/);
+  assert.match(orchestrate, /Use canonical `findings\.md` as the source of truth instead of passing a transient finding list/);
   assert.match(orchestrate, /When a finding becomes `REOPENED` after correction/);
   assert.match(orchestrate, /When the same finding reopens after replacement/);
-  assert.match(orchestrate, /Run lanes sequentially when they share one findings file/);
+  assert.match(orchestrate, /Start independent lanes in parallel when isolated workspaces are available/);
   assert.match(orchestrate, /After every implementation correction, start a fresh review/);
   assert.match(orchestrate, /Continue until `CLEAN`, a user stop, or a real blocker/);
-  assert.match(orchestrate, /Consolidate all lane findings before sending one correction batch/);
+  assert.match(orchestrate, /Consolidate all lane findings into canonical `findings\.md` before sending one correction batch/);
   assert.match(orchestrate, /Do not stop after one re-review while findings remain/);
   assert.match(orchestrate, /one active review wave/);
   assert.match(orchestrate, /Pass the implementer's verification status and test paths to reviewers/);
@@ -378,7 +383,10 @@ test("defines focused review lanes and one review format", async () => {
   assert.match(orchestrate, /Lane: lifecycle/);
   assert.match(orchestrate, /Lane: integration/);
   assert.match(orchestrate, /Do not send identical review instructions to all lanes/);
-  assert.match(orchestrate, /Consolidate duplicate findings and check uncovered coverage/);
+  assert.match(orchestrate, /Deduplicate equivalent findings without deleting their reporting-lane evidence/);
+  assert.match(orchestrate, /Check uncovered coverage and route each escalation target from its reporting slice/);
+  assert.match(orchestrate, /exact lane findings path/);
+  assert.match(review, /Write only to the exact lane findings path supplied by orchestration/);
   assert.match(delegation, /Focus: <specific risks>/);
   assert.doesNotMatch(workflow, /Review focus: <specific review lens>/);
   assert.doesNotMatch(workflow, /Coverage: <paths or checks>/);
@@ -396,6 +404,8 @@ test("defines focused review lanes and one review format", async () => {
   assert.match(format, /## Result/);
   assert.match(format, /### F-001: <short finding title>/);
   assert.match(format, /Mode: design-audit \| implementation-review/);
+  assert.match(format, /Writable findings: docs\/plans\/<initiative>\/<slice>\/lanes\/<lane>\/findings\.md/);
+  assert.match(format, /Escalation target:/);
   assert.match(format, /Finding IDs: F-001, F-002/);
   assert.match(format, /Red checkpoint: <exact command and expected failure reason or NONE>/);
   assert.match(format, /Feature files: <paths or NONE>/);
@@ -445,16 +455,16 @@ test("supervises only active child agents", async () => {
   const orchestrate = await skill("orchestrate");
 
   assert.match(orchestrate, /Never wait with an empty identifier set/);
-  assert.match(orchestrate, /Set an observation interval before each child's first wait/);
-  assert.match(orchestrate, /Use 15 minutes for planning, design, and review children/);
-  assert.match(orchestrate, /Use 30 minutes for implementation children/);
-  assert.match(orchestrate, /observation interval is a check-in schedule, not a deadline or execution limit/i);
-  assert.match(orchestrate, /A wait timeout means only that no final result arrived/);
-  assert.match(orchestrate, /at most three five-minute follow-up intervals/);
-  assert.match(orchestrate, /record `unresponsive` and preserve its workspace/);
-  assert.match(orchestrate, /request a user or parent recovery decision/i);
+  assert.match(orchestrate, /estimate its expected execution time from its phase and execution profile/);
+  assert.match(orchestrate, /Wait for completion, failure, blocker, progress, or replacement events before status observation/);
+  assert.match(orchestrate, /wait five minutes before the first fallback observation/);
+  assert.match(orchestrate, /next fallback interval to one minute longer/);
+  assert.match(orchestrate, /reset the fallback interval to five minutes/);
+  assert.match(orchestrate, /fallback check-in schedule, not a deadline or execution limit/i);
+  assert.match(orchestrate, /A fallback observation means only that no event arrived/);
   assert.match(orchestrate, /not evidence that the child is stuck/);
   assert.match(orchestrate, /Interrupt only after a positive failure signal, a user request, or an explicit child blocker/);
+  assert.match(orchestrate, /Do not poll silently running children at ten-second intervals/);
   assert.match(orchestrate, /Do not narrate unchanged waits/);
   assert.match(orchestrate, /Resume the same child when possible/);
   assert.match(orchestrate, /start a replacement in the same workspace/);

@@ -434,15 +434,87 @@ kbd {
 }
 
 .workspace {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   min-width: 0;
   overflow: auto;
-  padding: 2rem clamp(1.2rem, 3vw, 3.5rem) 4rem;
+}
+
+.artifact-tabs {
+  align-items: flex-end;
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.2rem;
+  min-height: 2.9rem;
+  overflow-x: auto;
+  padding: 0.35rem clamp(1.2rem, 3vw, 3.5rem) 0;
+}
+
+.artifact-tabs:empty {
+  display: none;
+}
+
+.artifact-tab {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 0.55rem 0.55rem 0 0;
+  display: flex;
+  flex: 0 0 auto;
+  max-width: 16rem;
+}
+
+.artifact-tab-select,
+.artifact-tab-close {
+  background: transparent;
+  border: 0;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.artifact-tab-select {
+  font-size: 0.76rem;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0.58rem 0.35rem 0.58rem 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-tab-select[aria-selected="true"] {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.artifact-tab-close {
+  border-radius: 0.3rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  margin-right: 0.3rem;
+  padding: 0.15rem 0.35rem;
+}
+
+.artifact-tab-close:hover,
+.artifact-tab-close:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.artifact-tab-select:focus-visible,
+.artifact-tab-close:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  outline-offset: -1px;
 }
 
 .artifact-view {
   margin: 0 auto;
   max-width: 92rem;
+  padding: 2rem clamp(1.2rem, 3vw, 3.5rem) 4rem;
+  width: 100%;
 }
 
 .welcome-card {

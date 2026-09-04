@@ -6,6 +6,7 @@
     "prism": "./bin/prism"
   },
   "scripts": {
-    "test": "node --test server/test/*.test.mjs"
+    "test": "node --test server/test/*.test.mjs",
+    "validate:sdm": "node scripts/validate-sdm.mjs"
   }
 }

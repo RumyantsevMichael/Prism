@@ -20,14 +20,15 @@ sdm: "0.3"
 
 1. Read `.prism/workflow.md` and project instructions.
 2. Read [review-format.md](references/review-format.md) before creating the findings file or reporting.
-3. Read or create the complete slice `findings.md` before the review.
-4. Use its findings section for `findings.md` and its result section for the compact response.
-5. Read the requirements, relevant ADRs, executable slice tests, feature files, diagrams, declared contracts, and mode-specific paths.
-6. Use code as the source for implementation detail.
+3. Read the assigned initiative, reporting slice, lane, writable lane findings path, and canonical findings path.
+4. Read or create the complete assigned lane findings file before the review.
+5. Use its findings section for the lane findings file and its result section for the compact response.
+6. Read the requirements, relevant ADRs, executable slice tests, feature files, diagrams, declared contracts, and mode-specific paths.
+7. Use code as the source for implementation detail.
 
 ## Findings
 
-The findings file is the source of truth.
+The assigned lane findings file is the source of truth during this review.
 The delivery context may set `IN PROGRESS` and `FIXED`.
 The review context may set `OPEN`, `VERIFIED`, and `REOPENED`.
 `OPEN` means that a reviewer found a defect without a complete correction.
@@ -37,6 +38,10 @@ The review context may set `OPEN`, `VERIFIED`, and `REOPENED`.
 `REOPENED` means that a reviewer found that the closing condition still fails.
 
 - Assign a stable ID to each new root defect.
+- Record the assigned reporting slice and lane on every finding.
+- Write only to the exact lane findings path supplied by orchestration.
+- When a finding affects another slice or the initiative, keep its evidence in this lane file and set its escalation target.
+- Do not move cross-slice evidence to the affected slice.
 - Reuse the ID when the same defect returns.
 - Write new findings with status `OPEN`.
 - Append evidence and review history without deleting earlier history.

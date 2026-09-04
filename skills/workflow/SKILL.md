@@ -70,12 +70,17 @@ The orchestrator owns routing, coordination state, and user gates.
 | Red checkpoint | The exact test command and expected failure recorded before production behavior changes. |
 | Security surface | The declared trust boundaries and sensitive capabilities that determine security review scope. |
 | Review wave | One coordinated pass of fresh review contexts against one slice. |
+| Review lane | One independently scoped review in a review wave. |
+| Reporting slice | The slice that owns a finding's original evidence and lane findings file. |
+| Escalation target | The affected slice or user gate named by a finding that exceeds its reporting slice. |
 | Review probe | A minimal failing regression test authored by implementation review through a public or system surface that proves a concrete finding. |
 | Design checkpoint | The commit after a clean design audit and visual review that becomes the implementation diff base. |
 | Decision autonomy | An orchestration setting that controls automatic phase continuation without overriding requirements, ADR, or correctness gates. |
 | Slice continuation | An orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input. |
-| `state.md` | The current initiative coordination snapshot. |
-| `findings.md` | The durable review record for one slice. |
+| `state.json` | The validated machine-readable initiative state and current routing record. |
+| `map.puml` | The human-readable PlantUML projection of the initiative state. |
+| `findings.md` | The canonical consolidated review record for one slice. |
+| Lane findings file | The only writable findings file for one reporting slice and review lane. |
 | `recovery.md` | A temporary record that lets a delivery context resume after a pause or replacement. |
 
 ## Artifacts

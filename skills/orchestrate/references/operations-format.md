@@ -1,46 +1,44 @@
 # Slice operations
 
-Use one operations block for each slice in the initiative `state.md` file.
-Record the delivery context lineage, real restart reason, review waves, correction loops, findings references, current result, and recovery actions.
-Count a fresh review context as a review wave, not as a child restart.
-Update the block at child and phase transitions, not after every wait.
-Link to the slice `findings.md` file for detailed review evidence.
+Use `state.json` as the current initiative state and audit record.
+Read [state-schema.md](state-schema.md) before creating or changing an operations record.
+The state record keeps delivery lineage, review waves, lanes, findings paths, supervision, recovery, and user gates.
+The orchestrator appends an audit entry at each accepted or rejected patch.
+The orchestrator does not add an audit entry after an unchanged wait.
 
-```markdown
-## Operations: <slice>
-
-Status: <active | clean | blocked | stopped>
-Current context: <child ID>
-
-### Delivery
-
-- Context lineage: D1 -> D2
-- Restart count: 1
-- Restart reason: D1 was unresponsive after liveness probes.
-- Design phase: FIT
-- Design checkpoint: <commit hash or none>
-- Implementation phase: READY FOR REVIEW
-
-### Design review
-
-- Contexts: R1, R2
-- Review waves: 2
-- Correction loops: 1
-- Findings: F1, F2, F3
-- Result: CLEAN
-
-### Review after implementation
-
-- Contexts: R3, R4
-- Review waves: 2
-- Correction loops: 1
-- Findings: F4
-- Result: CLEAN
-
-### Recovery
-
-- Context: D1
-- Signal: unresponsive after follow-up probes.
-- Action: preserved the workspace and resumed as D2.
-- Result: resolved.
+```json
+{
+  "slices": {
+    "slice-slug": {
+      "status": "in-progress",
+      "worker": {
+        "id": "D1",
+        "role": "delivery",
+        "lineage": ["D1", "D2"],
+        "restartReason": null
+      },
+      "reviewLanes": [
+        {
+          "name": "security",
+          "status": "complete",
+          "findingsPath": "docs/plans/initiative/slice-slug/lanes/security/findings.md"
+        }
+      ],
+      "findingsPath": "docs/plans/initiative/slice-slug/findings.md",
+      "supervision": {
+        "expectedAt": "2026-01-01T00:15:00Z",
+        "nextObservationAt": "2026-01-01T00:20:00Z",
+        "fallbackMinutes": 5,
+        "lastMeaningfulEvent": "2026-01-01T00:00:00Z"
+      }
+    }
+  },
+  "audit": [
+    {
+      "at": "2026-01-01T00:00:00Z",
+      "kind": "patch-accepted",
+      "summary": "Started delivery for slice-slug"
+    }
+  ]
+}
 ```

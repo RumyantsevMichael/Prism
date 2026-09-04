@@ -3,6 +3,10 @@
 Mode: design-audit | implementation-review
 Initiative: <initiative name>
 Slice: <slice name>
+Lane: <review lane or design-audit>
+Reporting slice: <slice name>
+Writable findings: docs/plans/<initiative>/<slice>/lanes/<lane>/findings.md
+Canonical findings: docs/plans/<initiative>/<slice>/findings.md
 Last updated: <ISO 8601 timestamp>
 
 ## Findings
@@ -13,6 +17,8 @@ Last updated: <ISO 8601 timestamp>
 - Severity: blocker | high | medium | low
 - Source: design-audit | implementation-review
 - Lane: <review lane or design-audit>
+- Reporting slice: <slice slug>
+- Escalation target: <slice slug | initiative | user gate | NONE>
 - First reported: <review wave or date>
 - Affected path: <file, symbol, artifact, or boundary>
 - Evidence: <specific evidence and failure condition>
@@ -27,9 +33,11 @@ Last updated: <ISO 8601 timestamp>
 ## Result
 
 Lane: <lane or none>
+Reporting slice: <slice slug>
 Review focus: <specific risks>
 Coverage: <paths or checks>
-Findings: docs/plans/<initiative>/<slice>/findings.md
+Findings: <exact lane-specific writable findings path>
+Canonical findings: docs/plans/<initiative>/<slice>/findings.md
 Finding IDs: F-001, F-002
 ADRs: <paths or NONE>
 Executable tests: <paths or NONE>

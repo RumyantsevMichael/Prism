@@ -65,7 +65,7 @@ Every intermediate state must be buildable, verifiable, and safe.
 
 1. Create a dependency DAG.
 2. Add an edge only when one slice needs code or behavior from another slice.
-3. Use `slices.puml` for the DAG and live status.
+3. Use `map.puml` as the human-readable projection of the accepted slice graph and live status.
 4. Use `not-started`, `in-progress`, `done`, `blocked`, or `deferred` stereotypes.
 
 - Don't
@@ -74,7 +74,7 @@ Every intermediate state must be buildable, verifiable, and safe.
 ## 5. Write compact slice records
 
 1. Write one `plan.md` under the configured plans directory.
-2. Link `slices.puml` from the plan.
+2. Link `map.puml` from the plan.
 3. Give each slice exactly these implementation-free fields:
 
 ```markdown
@@ -87,8 +87,10 @@ Every intermediate state must be buildable, verifiable, and safe.
 **Done signal:** <one executable command or end-to-end observation>
 ```
 
-The orchestrator creates `state.md` after plan acceptance.
+The orchestrator creates validated `state.json` after plan acceptance.
 The orchestrator creates one `findings.md` file under each slice before its first audit.
+The orchestrator creates lane findings files only when it assigns review lanes.
+The orchestrator generates `map.puml` from the accepted state.
 
 - Do
   - Link a Proposed ADR only when a consequential cross-slice decision already exists.
