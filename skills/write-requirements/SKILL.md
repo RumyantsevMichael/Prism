@@ -1,46 +1,49 @@
 ---
 name: write-requirements
 description: "Create or revise EARS requirements for product intent before planning or design."
+sdm: "0.3"
 ---
 
 # Write requirements
 
-Requirements state what the system must do without choosing how to build it.
-They are durable product intent that planning, design, feature files, and tests cite directly.
-ADRs remain the durable record for architectural decisions and rationale.
+Requirements state what the system must do without selecting an implementation.
+They preserve product intent for planning, design, feature files, and tests.
+ADRs preserve architectural decisions and rationale.
 
-Project settings for this workflow live in `.prism/workflow.md` at the project root.
-Read that file first if it exists.
-It overrides the default paths below.
-If it is absent, use the defaults and the project instructions that apply to this task.
-The context map and lifecycle rules live in the `workflow` overview skill.
+## 1. Prepare
 
-Read [the EARS authoring reference](references/ears-authoring.md) completely before you author or review a requirement file.
+Project settings live in `.prism/workflow.md` at the project root.
+These settings override the default paths in this skill.
+The `workflow` skill defines the context map and lifecycle rules.
 
-Before writing, read these artifacts in order:
+1. If `.prism/workflow.md` exists, read it.
+2. If `.prism/workflow.md` is absent, use the default paths and applicable project instructions.
+3. Read [the EARS authoring reference](references/ears-authoring.md) completely.
+4. Read the glossary, with `docs/Glossary.md` as the default path.
+5. Read related requirement files, with `docs/requirements/` as the default directory.
+6. Read relevant Accepted ADRs and feature files.
+7. When the workflow names a product strategy document, read it.
+8. If the proposal conflicts with an Approved requirement or Accepted ADR:
+   1. Report the conflict to the user.
+   2. Stop.
 
-1. Read the glossary, with `docs/Glossary.md` as the default path.
-2. Read related requirement files, with `docs/requirements/` as the default directory.
-3. Read relevant Accepted ADRs and feature files.
-4. Read the product strategy document when the workflow configuration names one.
+- Don't
+  - Choose which durable artifact wins when durable sources conflict.
 
-Stop if the proposed requirement conflicts with an Approved requirement or an Accepted ADR.
-Report the conflict to the user instead of choosing which durable artifact wins.
+## 2. File boundary
 
-## File boundary
+Each file covers one coherent capability.
+One idea can require multiple files when it contains multiple logical capabilities.
+Technical components and delivery slices do not define the file boundary.
 
-Write one file for one coherent capability.
-One idea can produce several requirement files when it contains several logical capabilities.
-Do not use technical components or delivery slices as the grouping rule.
+- Store each file directly in the requirements directory.
+- Use a short human-readable slug such as `validation-engine.md`.
+- Search the directory before selecting a slug.
+- Treat a concurrent duplicate slug as a content conflict that needs review.
 
-Store each file directly in the requirements directory.
-Use a short human-readable slug such as `validation-engine.md`.
-Search the directory before you select a slug.
-If another branch creates the same slug, treat the merge conflict as a content conflict that needs review.
+## 3. Artifact structure
 
-## Artifact structure
-
-Use this structure:
+- Use this structure.
 
 ```markdown
 # <Capability name>
@@ -81,89 +84,100 @@ Related: <Markdown links to related requirements, or `n/a`>
 ```
 
 Each requirement is a top-level numbered section.
-Use flat positive integers such as `1`, `2`, and `3`.
-Do not use identifiers such as `1.1` or `2.3`.
-Place an explicit HTML anchor immediately before each numbered heading.
+Identifiers such as `1.1` and `2.3` are invalid.
+An explicit HTML anchor appears immediately before each numbered heading.
 
-Use the file slug and anchor as the durable requirement identity.
-A normal citation looks like `[validation-engine.md§1](validation-engine.md#1)`.
-Use the correct relative path from the citing artifact.
+- Use flat positive integers such as `1`, `2`, and `3`.
 
-## Numbering rules
+The file slug and anchor form the durable requirement identity.
+A normal citation is `[validation-engine.md§1](validation-engine.md#1)`.
+The citation path is relative to the citing artifact.
+
+## 4. Numbering
 
 - Start a new file at `1`.
-- Add each new requirement with the next unused integer.
-- Never rename an Approved requirement file.
-- Never renumber an Approved requirement.
+- Give each new requirement the next unused integer.
+- Preserve the name of every Approved requirement file.
+- Preserve the number of every Approved requirement.
 - Never reuse a removed or superseded number.
 - Permit gaps in the sequence.
 - Reject duplicate anchors before approval.
+- After integration, scan for duplicate anchors and reconcile their meaning before approval.
+- Never renumber an Approved requirement to resolve a conflict.
 
 Concurrent authors can select the same next number on separate branches.
-After integration, scan the file for duplicate anchors and reconcile the meaning before approval.
-Do not silently renumber an Approved requirement to resolve a conflict.
 
-## Status lifecycle
+## 5. Lifecycle
 
-A requirement file moves through `Draft`, `Approved`, `Superseded by <link>`, or `Withdrawn`.
-Create every file as `Draft`.
-Edit Draft requirements in place while the user reviews them.
-Change the file to `Approved` only after the user accepts every requirement in the file.
-Set `Approved` to the approval date at the same time.
-
+A requirement file has one of these statuses: `Draft`, `Approved`, `Superseded by <link>`, or `Withdrawn`.
+Every new file starts as `Draft`.
 Planning and design consume only Approved requirement files.
-Implementation does not change a requirement file to another delivery status.
-The roadmap and slice plan already record delivery progress.
+The roadmap and slice plan record delivery progress.
 
-Do not change the meaning of an Approved requirement in place.
-Add a new numbered requirement when its obligation changes.
-Set the old section to `Disposition: Superseded by <link>` and link the new section back with `Supersedes: <link>`.
-Set a section to `Disposition: Withdrawn` when its obligation no longer applies and no replacement exists.
+- While the user reviews a Draft file, edit its Draft requirements in place.
+- After the user accepts every requirement in a file, update its approval metadata in one edit:
+  1. Set `Status` to `Approved`.
+  2. Set `Approved` to the approval date.
+- When an Approved obligation changes:
+  1. Add a new numbered requirement.
+  2. Mark the old section as `Disposition: Superseded by <link>`.
+  3. Link the replacement back with `Supersedes: <link>`.
+- When an obligation ends without replacement, mark its section as `Disposition: Withdrawn`.
+- Use file-level `Superseded by <link>` only when another file replaces the complete capability.
+- Use file-level `Withdrawn` only when the file has no active requirement.
+- Preserve superseded and withdrawn content because durable links and history depend on it.
 
-Use file-level `Superseded by <link>` only when another file replaces the complete capability.
-Use file-level `Withdrawn` only when no active requirement remains in the file.
-Preserve superseded and withdrawn content because durable links and history depend on it.
+- Don't
+  - Change the meaning of an Approved requirement in place.
+  - Use implementation status as a requirement status.
 
-## Authoring procedure
+## 6. Author requirements
 
 1. Frame the problem, affected users or systems, goals, and non-goals.
 2. Separate product requirements from architectural decisions and implementation tasks.
-3. Group the obligations into coherent capability files.
-4. Draft the wanted behavior before the unwanted behavior.
+3. Group obligations into coherent capability files.
+4. Draft wanted behavior before unwanted behavior.
 5. Select the correct EARS pattern for each obligation.
 6. Write one primary obligation in each numbered section.
-7. Add rationale and related requirement links outside the EARS statement.
+7. Add rationale and related links outside the EARS statement.
 8. Review the complete set for omissions, conflicts, duplication, and unnecessary design constraints.
 9. Present every Draft file to the user for approval.
-10. Change only accepted files to `Approved` and record the date.
+10. For each accepted file, apply the [Lifecycle approval sequence](#5-lifecycle).
 
 An external platform, law, contract, or operating environment can impose a valid constraint requirement.
-An internal technology choice is an architectural decision and belongs in an ADR.
-Ask whether the statement would remain true after a complete implementation redesign.
-If not, it is probably a design decision rather than a requirement.
+An internal technology choice belongs in an ADR.
+A statement that does not remain true after a complete implementation redesign is probably an architectural decision.
 
-## Links and traceability
+- Ask whether the statement remains true after a complete implementation redesign.
+
+## 7. Traceability
 
 Requirement files link to related, superseded, and replacement requirements.
-Slice plans, ADRs, feature files, executable contracts, and diagrams link back to the requirements they serve.
-Do not maintain a central backlink index because concurrent edits make it a merge-conflict hotspot.
-Use repository search on the exact Markdown link or `filename.md#anchor` for reverse traceability.
+Slice plans, ADRs, feature files, executable contracts, and diagrams link to the requirements they serve.
 
-## Gate
+- For reverse traceability, search the repository for exact Markdown links or `filename.md#anchor` values.
+- Don't
+  - Maintain a central backlink index because concurrent edits create merge conflicts.
 
-Present the Draft requirement files and the recommendation to continue, revise, or stop.
-Do not approve a file without explicit user acceptance.
-Do not open a plan or start design in this context.
-After approval, recommend `design` for one self-contained outcome or `plan` for a multi-slice initiative.
+## 8. Gate
 
-## Quality checks
+- Present the Draft files and recommend continuing, revising, or stopping.
+- Require explicit user acceptance before approving a file.
+- After approval, recommend `design` for one self-contained outcome.
+- After approval, recommend `plan` for a multi-slice initiative.
 
-- Every numbered section contains one EARS requirement.
-- Every EARS statement names the system and uses `shall`.
-- Every trigger, state, and response is observable or measurable.
-- No requirement silently chooses an internal implementation.
-- Every number and explicit anchor is unique within its file.
-- Approved requirement numbers remain unchanged.
-- All Markdown links resolve to existing files and anchors.
-- Goals, non-goals, rationale, and design questions remain outside the EARS statements.
-- The file contains no copied third-party prose, examples, diagrams, or tables.
+- Don't
+  - Open a plan in this context.
+  - Start design in this context.
+
+## 9. Quality checks
+
+- Confirm that every numbered section contains one EARS requirement.
+- Confirm that every EARS statement names the system and uses `shall`.
+- Confirm that every trigger, state, and response is observable or measurable.
+- Confirm that no requirement silently selects an internal implementation.
+- Confirm that each number and anchor is unique within its file.
+- Confirm that Approved requirement numbers remain unchanged.
+- Confirm that all Markdown links resolve to existing files and anchors.
+- Keep goals, non-goals, rationale, and design questions outside EARS statements.
+- Exclude copied third-party prose, examples, diagrams, and tables.

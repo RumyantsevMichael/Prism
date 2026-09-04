@@ -2,68 +2,80 @@
 name: plan
 description: "Decompose Approved requirements into dependency-ordered vertical outcome slices when one delivery context cannot safely complete the initiative."
 argument-hint: '[initiative]'
+sdm: "0.3"
 ---
 
 # Plan outcome slices
 
-Create the smallest useful initiative plan.
+The result is the smallest useful initiative plan.
 
-Read `.prism/workflow.md`, the glossary, Approved requirements, and relevant ADRs.
-Inspect only project structure and likely user-visible or system surfaces needed to estimate slices.
-Use [delegation.md](../workflow/references/delegation.md) when project rules require delegated exploration.
-Leave detailed architecture and code-path exploration to `design`.
+## 1. Prepare
 
-## 1. Identify observable outcomes
+1. Read `.prism/workflow.md`.
+2. Use the definitions for [initiative](../workflow/SKILL.md#common-terms), [initiative plan](../workflow/SKILL.md#common-terms), [Approved requirement](../workflow/SKILL.md#common-terms), [slice](../workflow/SKILL.md#common-terms), and [delivery context](../workflow/SKILL.md#common-terms).
+3. Use the definitions for [starting surface](../workflow/SKILL.md#common-terms), [frontier](../workflow/SKILL.md#common-terms), [Proposed ADR](../workflow/SKILL.md#common-terms), and [orchestrator](../workflow/SKILL.md#common-terms).
+4. Read the glossary, Approved requirements, and relevant ADRs.
+5. When project rules require delegated exploration, read [delegation.md](../workflow/references/delegation.md) before delegating exploration.
+6. Inspect only the project structure and likely user-visible or system surfaces needed to estimate slices.
 
-Split the initiative into vertical outcomes.
-Each slice must include every required layer for one observable result.
-Do not split by component, team, frontend, backend, tests, contracts, or documentation.
+- Don't
+  - Perform the detailed architecture and code-path exploration owned by `design`.
 
-Target the largest coherent outcome that one `Develop <slice>` task can complete safely.
-Avoid a slice that changes no independently observable behavior.
-Avoid a slice whose verification depends on unfinished later work.
+## 2. Identify observable outcomes
 
-## 2. Apply the admission test
+- Split the initiative into vertical outcomes.
+- Include every required layer for one observable result in each slice.
+- Target the largest coherent outcome that one `Develop <slice>` task can complete safely.
+- Avoid slices that change no independently observable behavior.
+- Avoid slices whose verification depends on unfinished later work.
 
-A slice probably fits one delivery context when it has:
+- Don't
+  - Split by component, team, frontend, backend, tests, contracts, or documentation.
 
-1. one observable outcome.
-2. one connected set of changes from an initiating input to that outcome.
-3. identifiable boundaries and compatibility effects.
-4. at most one unresolved consequential architectural decision.
-5. one end-to-end verification path.
-6. a safe complete state for every changed path.
-7. only existing dependencies or dependencies from earlier slices.
+## 3. Apply the admission test
 
-Split or add a bounded investigation when the slice has several starting surfaces, migrations, integrations, security boundaries, or architectural questions.
-Also split when many unrelated consumers change or no single verification scenario exists.
+A slice probably fits one delivery context when all these properties are true:
 
-Prefer these split patterns:
+| Property | Probable fit |
+| --- | --- |
+| Outcome | The slice has one observable outcome. |
+| Change path | The changes form one connected path from an initiating input to that outcome. |
+| Boundaries | The boundaries and compatibility effects are identifiable. |
+| Decisions | At most one consequential architectural decision remains unresolved. |
+| Verification | The slice has one end-to-end verification path. |
+| Safety | Every changed path has a safe complete state. |
+| Dependencies | The slice uses only existing dependencies or dependencies from earlier slices. |
 
-- Build a walking skeleton before additional behavior.
-- Separate migration states that leave the repository valid and reversible.
-- Introduce a boundary with one representative consumer before other consumer groups.
-- Prove the highest risk with code and tests before ordinary behavior.
-- Separate independent happy-path, authorization, validation, recovery, concurrency, or durability outcomes.
+- Split the slice or add a bounded investigation when it has several starting surfaces, migrations, integrations, security boundaries, or architectural questions.
+- Split the slice when many unrelated consumers change.
+- Split the slice when no single verification scenario exists.
+- When applicable, choose one or more of these split patterns:
+  - Build a walking skeleton before adding more behavior.
+  - Separate migration states that keep the repository valid and reversible.
+  - Introduce a boundary with one representative consumer before other consumer groups.
+  - Prove the highest risk with code and tests before ordinary behavior.
+  - Separate independent happy-path, authorization, validation, recovery, concurrency, or durability outcomes.
 
-Do not create a prose spike when executable proof is possible.
+- Don't
+  - Create a prose spike when executable proof is possible.
 
-## 3. Order the slices
+## 4. Order the slices
 
-Create a dependency DAG.
-Add an edge only when one slice needs code or behavior from another slice.
-Do not use priority to invent a dependency.
-Every intermediate state must build, verify, and remain safe.
+Every intermediate state must be buildable, verifiable, and safe.
 
-Use `slices.puml` for the DAG and live status.
-Use `not-started`, `in-progress`, `done`, `blocked`, or `deferred` stereotypes.
+1. Create a dependency DAG.
+2. Add an edge only when one slice needs code or behavior from another slice.
+3. Use `slices.puml` for the DAG and live status.
+4. Use `not-started`, `in-progress`, `done`, `blocked`, or `deferred` stereotypes.
 
-## 4. Write compact slice records
+- Don't
+  - Use priority to invent a dependency.
 
-Write one `plan.md` under the configured plans directory.
-Link `slices.puml` from the plan.
-The orchestrator creates `state.md` after plan acceptance and creates one `findings.md` file under each slice before its first audit.
-Give each slice exactly these implementation-free fields:
+## 5. Write compact slice records
+
+1. Write one `plan.md` under the configured plans directory.
+2. Link `slices.puml` from the plan.
+3. Give each slice exactly these implementation-free fields:
 
 ```markdown
 ## <slice slug>
@@ -75,22 +87,29 @@ Give each slice exactly these implementation-free fields:
 **Done signal:** <one executable command or end-to-end observation>
 ```
 
-Do not add architecture, interfaces, task lists, implementation instructions, estimates, or handoff prose.
-Do not add coordination state or review findings to the slice record.
-Link a Proposed ADR only when a consequential cross-slice decision already exists.
+The orchestrator creates `state.md` after plan acceptance.
+The orchestrator creates one `findings.md` file under each slice before its first audit.
 
-## 5. Check the plan
+- Do
+  - Link a Proposed ADR only when a consequential cross-slice decision already exists.
+- Don't
+  - Add architecture, interfaces, task lists, implementation instructions, estimates, or handoff prose.
+  - Add coordination state or review findings to a slice record.
 
-Confirm every applicable Approved requirement statement belongs to at least one slice.
-Confirm every dependency edge is necessary.
-Confirm each slice can ship without unfinished behavior in its changed path.
-Confirm the first frontier contains at least one executable slice.
+## 6. Check the plan
 
-Use [visual-review.md](../workflow/references/visual-review.md) when the review server is available.
+- Confirm that every applicable Approved requirement statement belongs to at least one slice.
+- Confirm that every dependency edge is necessary.
+- Confirm that each slice can ship without unfinished behavior in its changed path.
+- Confirm that the first frontier contains at least one executable slice.
+- When the review server is available, use [visual-review.md](../workflow/references/visual-review.md).
 
-## Gate
+## 7. Gate
 
-Return `PLAN READY` with the plan paths and first frontier.
+- Return `PLAN READY` with the plan paths and first frontier.
+- In standalone use, present the same plan directly to the user.
+
 The orchestrator presents the plan and records explicit acceptance.
-In standalone use, present the same plan directly to the user.
-Do not design or implement a slice in this phase.
+
+- Don't
+  - Design or implement a slice during planning.

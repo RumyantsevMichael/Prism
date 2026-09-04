@@ -2,47 +2,61 @@
 name: write-contracts
 description: "Create or update an executable boundary contract only when production code, generated code, or verification consumes it."
 argument-hint: '[boundary]'
+sdm: "0.3"
 ---
 
 # Write an executable contract
 
-Create a contract only when code or verification consumes it.
-Do not create a prose contract.
-Do not create a second representation of an implementation detail.
+An [executable contract](../workflow/SKILL.md#common-terms) must have a consumer in production code, generated code, or verification.
+The contract must govern an externally consumed or compatibility-sensitive boundary.
+The contract must not be prose or a second representation of an implementation detail.
 
-Read `.prism/workflow.md`, Approved requirements, relevant ADRs, and the intended consuming code and tests.
+## 1. Prepare
 
-## 1. Prove that a contract is necessary
+1. If `.prism/workflow.md` exists, read it first.
+2. If `.prism/workflow.md` is absent, use the default behavior in this skill and applicable project instructions.
+3. Read the applicable Approved requirements.
+4. Read the relevant ADRs.
+5. Read the intended consuming code and tests.
 
-Use a contract for an externally consumed or compatibility-sensitive boundary.
-Valid forms include:
+## 2. Prove that a contract is necessary
 
-- an OpenAPI document.
-- a JSON Schema.
-- a protocol or database schema.
-- an importable interface or type definition.
-- a test double imported by implementation tests.
-- a compatibility test that governs an otherwise implicit boundary.
+The following artifacts are valid contract forms.
 
-Do not create a separate contract when an existing production type or schema already governs the boundary.
+| Form | Valid artifact |
+| --- | --- |
+| API | An OpenAPI document |
+| Data | A JSON Schema |
+| Protocol or database | A protocol or database schema |
+| Code | An importable interface or type definition |
+| Test | A test double imported by implementation tests |
+| Compatibility | A compatibility test that governs an otherwise implicit boundary |
 
-## 2. Put it where consumers use it
+When an existing production type or schema governs the boundary, a separate contract must not duplicate it.
 
-Use the project's canonical source, API, schema, or test path.
-Do not store the final contract in a slice directory.
-Follow existing generation and ownership conventions.
-Link requirements for obligations and ADRs for consequential decisions when the format supports comments or metadata.
+## 3. Put it where consumers use it
 
-## 3. Bind consumption
+The contract must use the project's canonical source, API, schema, or test path.
+The final contract must not use a slice directory.
 
-Add or update the production import, generator, validator, or compatibility test that consumes the contract.
-Do not add production behavior only to create a contract.
-Run the exact verification command.
-Remove the contract when no executable consumer remains.
+- Follow existing generation and ownership conventions.
+- When the format supports comments or metadata, link requirements for obligations.
+- When the format supports comments or metadata, link ADRs for consequential decisions.
 
-## Result
+## 4. Bind consumption
 
-For an executable contract, report exactly:
+1. When no executable consumer remains:
+   1. Remove the contract.
+2. Otherwise:
+   1. Add or update the production import, generator, validator, or compatibility test that consumes the contract.
+3. Run the exact verification command.
+
+- Don't
+  - Add production behavior only to create a contract.
+
+## 5. Result
+
+- For an executable contract, report exactly this block.
 
 ```text
 Contract: <canonical path>
@@ -50,11 +64,11 @@ Consumers: <production code or verification>
 Verification: <exact command>
 ```
 
-When no executable contract is necessary, report exactly:
+- When no executable contract is necessary, report exactly this block.
 
 ```text
 Contract: NO CONTRACT NEEDED
 Reason: <specific reason>
 ```
 
-Return to the calling phase after the result.
+- Return to the calling phase after the result.

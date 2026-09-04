@@ -2,116 +2,164 @@
 name: design
 description: "Transform one Approved outcome slice into a bounded architecture, confirm that it fits one delivery context, and settle consequential decisions before implementation."
 argument-hint: '[initiative/slice]'
+sdm: "0.3"
 ---
 
 # Design and confirm a slice
 
-Read `.prism/workflow.md`, the glossary, relevant approved requirements, relevant ADRs, relevant feature files, and the slice record when present.
-Use [delegation.md](../workflow/references/delegation.md) when project rules require delegated exploration.
-When orchestration provides a slice findings path, read that file before design work and keep its unresolved entries in scope.
-When no path is supplied, use `<configured plans>/<initiative>/<slice>/findings.md` when the slice has a plan.
+This skill transforms Approved requirements into the architecture for one outcome slice.
+The same delivery task keeps the design context for implementation unless orchestration replaces it after a failure.
 
-This skill transforms requirements into the architecture for one slice.
-The same task keeps this design context for implementation unless orchestration replaces it after a failure.
-After context compaction or replacement, re-read the requirements, ADRs, executable tests, contracts, and findings before continuing.
+## 1. Prepare
 
-## 1. Explore the slice
+1. Read `.prism/workflow.md`.
+2. Use the definitions for [Approved requirement](../workflow/SKILL.md#common-terms), [slice](../workflow/SKILL.md#common-terms), [delivery context](../workflow/SKILL.md#common-terms), [starting surface](../workflow/SKILL.md#common-terms), [fit checkpoint](../workflow/SKILL.md#common-terms), and [orchestrator](../workflow/SKILL.md#common-terms).
+3. Use the definitions for [Proposed ADR](../workflow/SKILL.md#common-terms), [executable contract](../workflow/SKILL.md#common-terms), [executable slice test](../workflow/SKILL.md#common-terms), [feature file](../workflow/SKILL.md#common-terms), [shape-only scaffold](../workflow/SKILL.md#common-terms), [red checkpoint](../workflow/SKILL.md#common-terms), and [security surface](../workflow/SKILL.md#common-terms).
+4. Read the glossary, relevant Approved requirements, relevant ADRs, relevant feature files, and the slice record when present.
+5. When orchestration supplies a findings path, use that path.
+6. When no findings path is supplied and the slice has a plan, use `<configured plans>/<initiative>/<slice>/findings.md`.
+7. When the slice has a findings path, read the file and keep all unresolved entries in scope.
+8. When project rules require delegated exploration, read [delegation.md](../workflow/references/delegation.md) before delegating exploration.
+9. After context compaction or replacement, re-read the requirements, ADRs, executable tests, contracts, and findings before continuing.
 
-Find where the required behavior enters the system.
-This location can be a command, route, public function, event handler, scheduled job, or user action.
-Inspect the code that receives the input, changes relevant state, crosses an affected boundary, and produces the required observable result.
-Inspect tests for those components and direct consumers whose behavior or compatibility can change.
-Identify existing extension points, invariants, verification commands, and security boundaries in this code.
-Test an uncertain technical claim with a bounded executable investigation when practical.
+## 2. Explore the slice
 
-Stop exploration after you can name the changed components, affected boundaries, test location, and end-to-end verification command.
-Expand the search only when an unresolved architecture question requires more evidence.
-Do not scan the repository or read complete directories for general understanding.
-Pass paths and focused questions through delegated exploration instead of returning large source excerpts.
+- Find the command, route, public function, event handler, scheduled job, or user action where the required behavior starts.
+- Inspect the code that receives input, changes relevant state, crosses affected boundaries, and produces the observable result.
+- Inspect tests for changed components and direct consumers whose behavior or compatibility can change.
+- Identify existing extension points, invariants, verification commands, and security boundaries.
+- When practical, test an uncertain technical claim with a bounded executable investigation.
+- Stop after identifying the changed components, affected boundaries, test location, and end-to-end verification command.
+- Expand the search only when an unresolved architecture question needs more evidence.
+- Pass paths and focused questions through delegated exploration instead of returning large source excerpts.
 
-## 2. Run the fit checkpoint
+- Don't
+  - Scan the repository or read complete directories for general understanding.
 
-### Form the slice architecture
+## 3. Run the fit checkpoint
 
-Map each applicable Approved requirement statement to the code or boundary that will satisfy it.
-Choose where the behavior starts, which component owns it, how data moves, and how state changes.
-Define failure, recovery, compatibility, migration, security, and operational behavior when they apply.
-Identify each machine-readable contract that code or verification must consume.
-For each changed boundary, plan whether an existing production type or schema governs it or whether a new executable contract is needed and who consumes it.
-Identify the smallest executable slice test through the selected starting surface and the result or failure it must observe.
-Identify the Gherkin feature path through `write-feature` and its requirement-linked scenarios.
-Decide whether a shape-only scaffold is required when the selected surface does not yet exist.
-Prefer existing architecture and extension points when they satisfy the requirements.
+### 3.1. Form the slice architecture
 
-Do not create a prose design summary, slice-named design file, task graph, or handoff.
-Before the fit checkpoint, keep slice-scoped ADRs, feature files, executable tests, contracts, diagrams, and scaffolds in the working design rather than writing them.
+- Map each applicable Approved requirement statement to the code or boundary that will satisfy it.
+- Choose the starting surface, owning component, data flow, and state changes.
+- Define applicable failure, recovery, compatibility, migration, security, and operational behavior.
+- Identify each machine-readable contract that production code or verification must consume.
+- For each changed boundary, choose an existing governing type or schema or plan a new executable contract and its consumers.
+- Identify the smallest executable slice test through the starting surface and the result or failure it must observe.
+- Identify the Gherkin feature path through `write-feature` and its requirement-linked scenarios.
+- When the starting surface does not exist, decide whether a shape-only scaffold is required.
+- Prefer existing architecture and extension points when they satisfy the requirements.
 
-### Run the author preflight
+Before the fit checkpoint, slice-scoped artifacts remain in the working design and are not written.
+These artifacts include ADRs, feature files, executable tests, contracts, diagrams, and scaffolds.
 
-Before `FIT`, trace every Approved requirement to a planned behavior, affected boundary, planned feature scenario, planned executable test, and verification command.
-Challenge normal, failure, recovery, lifecycle, compatibility, security, and operational behavior for every changed path.
-Confirm that every consequential decision is settled in the working design and that the slice has one complete end-to-end verification path.
-When the findings file contains `OPEN` or `REOPENED` design findings, address them before `FIT`.
-Mark an addressed finding `IN PROGRESS` before the correction and `FIXED` with evidence after the correction.
-Do not mark a finding `VERIFIED` from the delivery context.
+- Don't
+  - Create a prose design summary, slice-named design file, task graph, or handoff.
 
-### Confirm fit
+### 3.2. Run the author preflight
 
-Confirm the proposed slice architecture against actual code evidence.
-The slice fits only when it has:
+- Trace every Approved requirement to a planned behavior, affected boundary, feature scenario, executable test, and verification command.
+- Challenge normal, failure, recovery, lifecycle, compatibility, security, and operational behavior for every changed path.
+- Confirm that every consequential decision is settled.
+- Confirm that the slice has one complete end-to-end verification path.
+- When a design finding is `OPEN` or `REOPENED`, complete this lifecycle before returning `FIT`:
+  1. Mark the finding `IN PROGRESS`.
+  2. Correct the finding.
+  3. Mark the finding `FIXED` and add evidence.
 
-1. one observable outcome.
-2. one connected set of changes from the initiating input to that outcome.
-3. identified boundaries and compatibility effects.
-4. no unresolved consequential architectural decision.
-5. one end-to-end verification path.
-6. a safe complete state for every changed path.
-7. available dependencies.
+- Don't
+  - Mark a finding `VERIFIED` from the delivery context.
 
-Continue when the slice fits the remaining context and risk budget.
+### 3.3. Confirm fit
 
-When it does not fit, divide it into smaller vertical outcomes.
-Return proposed child slices with only the five fields that `plan` defines.
-Return `SPLIT` or `BLOCKED` without authoring slice-scoped artifacts.
-Do not add architecture, contracts, task lists, or implementation instructions.
-Do not edit the accepted plan or `slices.puml`.
-The orchestrator presents the split, records the accepted plan change, and resumes the delivery task.
+- Confirm the proposed architecture against actual code evidence.
 
-## 3. Record decisions and author the fitted slice
+The slice fits only when all these properties are true:
 
-### Record settled decisions
+| Property | Required fit |
+| --- | --- |
+| Outcome | The slice has one observable outcome. |
+| Change path | The changes form one connected path from the initiating input to that outcome. |
+| Boundaries | The boundaries and compatibility effects are identified. |
+| Decisions | No consequential architectural decision remains unresolved. |
+| Verification | The slice has one end-to-end verification path. |
+| Safety | Every changed path has a safe complete state. |
+| Dependencies | All dependencies are available. |
+| Delivery | The slice fits the remaining context and risk budget. |
 
-When a requirement is missing or must change, return `BLOCKED` with the exact question for the user.
-Do not edit a requirement or invoke `write-requirements` without explicit user approval.
-Only after the fit checkpoint passes, record every settled architectural decision that constrains future changes or explains a lasting boundary as a Proposed ADR with `write-adr`.
-If a decision is no longer settled, return `BLOCKED` before writing the remaining slice artifacts.
+- When the slice does not fit:
+  1. Divide it into smaller vertical outcomes.
+  2. Return proposed child slices with only the five fields defined by `plan`.
+  3. Return `SPLIT` or `BLOCKED` without authoring slice-scoped artifacts.
 
-Leave private helper names, local data structures, and other code-level choices to implementation.
-Do not create a separate artifact for these code-level choices.
+- Don't
+  - Add architecture, contracts, task lists, or implementation instructions to child slice records.
+  - Edit the accepted plan or `slices.puml`.
 
-### Author the fitted artifacts
+The orchestrator presents the split, records an accepted plan change, and resumes the delivery task.
 
-Author the slice-scoped artifacts.
-For each boundary that needs a new executable contract, use `write-contracts` to create it in the canonical project-owned path and bind its production or verification consumer before implementation.
-Create or update the smallest executable slice test through the selected starting surface.
-Create or update the Gherkin feature file for the slice through `write-feature`.
-Run each design-created executable slice test before implementation and record its expected failure reason.
-Create only a shape-only scaffold when the selected surface does not yet exist.
-Do not add production behavior or a concrete stub that makes the design test pass.
-Add a decision diagram with an ADR when relationships, lifecycle, or call order are part of the decision.
-Do not create step definitions during design.
+## 4. Record decisions and author the fitted slice
 
-Identify the security surface as `none` or a short list of trust boundaries for reviewer routing.
+### 4.1. Record settled decisions
 
-## Result
+- When a requirement is missing or must change, return `BLOCKED` with the exact question for the user.
+- When the fit checkpoint passes:
+  1. Use `write-adr` to record each settled decision that constrains future changes or explains a lasting boundary.
+  2. Record each such decision as a Proposed ADR.
+- When a consequential decision becomes unsettled, return `BLOCKED` before writing the remaining slice artifacts.
+- Leave private helper names, local data structures, and other code-level choices to implementation.
 
-Return one compact status:
+- Don't
+  - Edit a requirement or invoke `write-requirements` without explicit user approval.
+  - Create a separate artifact for code-level choices.
 
-- `FIT`: the proposed architecture fits one delivery context.
-- `SPLIT`: include the proposed child slice records for orchestration and user acceptance.
-- `BLOCKED`: name the unresolved requirement, decision, or dependency.
+### 4.2. Author the fitted artifacts
 
-For each contract decision, use exactly one of these forms:
+1. Author slice-scoped artifacts only after fit passes.
+2. For each boundary needing a new executable contract, use `write-contracts` to create it in the canonical project-owned path.
+3. Bind each new contract to its production or verification consumer before implementation.
+4. When the selected starting surface exists:
+   1. Create or update the smallest executable slice test through the selected starting surface.
+   2. Create or update the slice Gherkin feature file through `write-feature`.
+   3. Run each design-created executable slice test before implementation.
+   4. Record the exact command and expected failure reason for each red checkpoint.
+5. When the selected starting surface does not exist:
+   1. Create only a shape-only scaffold for the selected starting surface.
+   2. Create or update the smallest executable slice test through the new starting surface.
+   3. Create or update the slice Gherkin feature file through `write-feature`.
+   4. Run each design-created executable slice test before implementation.
+   5. Record the exact command and expected failure reason for each red checkpoint.
+6. When relationships, lifecycle, or call order are part of the decision, add an ADR decision diagram.
+7. Identify the security surface as `none` or a short list of trust boundaries for reviewer routing.
+
+- Don't
+  - Add production behavior during design.
+  - Add a concrete stub that makes the design test pass.
+  - Create step definitions during design.
+
+## 5. Result
+
+Each result has exactly one status with this meaning:
+
+| Status | Meaning |
+| --- | --- |
+| `FIT` | The proposed architecture fits one delivery context. |
+| `SPLIT` | The result includes proposed child slice records for orchestration and user acceptance. |
+| `BLOCKED` | The result identifies the unresolved requirement, decision, or dependency. |
+
+- Return one compact result that starts with exactly one status.
+
+- For `FIT`, return every field in this block:
+
+```text
+ADRs: <Proposed ADR paths or NONE>
+Executable tests: <canonical test paths or NONE>
+Feature files: <canonical feature paths or NONE>
+Diagrams: <ADR diagram paths or NONE>
+Red checkpoint: <exact command and expected failure reason or NONE>
+```
+
+- For `FIT`, also return exactly one contract decision block for each changed boundary in one of these forms:
 
 ```text
 Contract: <canonical path>
@@ -124,14 +172,10 @@ Contract: NO CONTRACT NEEDED
 Reason: <specific reason>
 ```
 
-For `FIT`, return `ADRs: <Proposed ADR paths or NONE>`.
-Return `Executable tests: <canonical test paths or NONE>`.
-Return `Feature files: <canonical feature paths or NONE>`.
-Return `Diagrams: <ADR diagram paths or NONE>`.
-Return `Red checkpoint: <exact command and expected failure reason or NONE>`.
-When orchestration provides a findings path, return `Findings: <slice findings path>`.
-Return one contract decision block for every changed boundary.
-For `SPLIT` or `BLOCKED`, return no slice-scoped artifact paths.
+- When orchestration supplies a findings path, return `Findings: <slice findings path>` for every status.
+- For `SPLIT` or `BLOCKED`, do not return slice-scoped design artifact paths.
 
-Do not repeat the explored code or reasoning in the status.
+- Don't
+  - Repeat the explored code or reasoning in the status.
+
 The orchestrator owns plan changes, lifecycle changes, and the transition to implementation.

@@ -2,58 +2,99 @@
 name: workflow-init
 description: "Initialize Prism configuration and documentation paths for a project."
 disable-model-invocation: true
+sdm: "0.3"
 ---
 
-# Initialize the workflow in this project
+# Initialize the workflow
 
-Set up a project to use the workflow skills (see the `workflow` overview skill for what the flow is).
-The output is `.prism/workflow.md`, the single file every workflow skill reads first, plus the scaffolded docs directories.
+Every workflow skill reads this configuration first.
 
-If `.prism/workflow.md` already exists, read it and switch to update mode.
-Confirm each existing value instead of asking cold.
-Add the Requirements path when an older Prism configuration does not contain it.
-If only `.claude/workflow-config.md` exists, read it once as migration input and write the equivalent `.prism/workflow.md`.
-Convert project-root paths such as `/docs/ADRs/` to project-relative paths such as `docs/ADRs/`.
-Preserve every other value without reinterpretation.
-Do not delete or edit the legacy file.
-Report that Prism no longer reads the legacy file and that the user may remove it after review.
+## 1. Select the mode
 
-## 1. Discover before asking
+- When `.prism/workflow.md` exists:
+  1. Read it.
+  2. Switch to update mode.
+  3. Confirm each existing value instead of asking without context.
+- When only `.claude/workflow-config.md` exists:
+  1. Read it once as migration input.
+  2. Switch to migration mode.
+  3. Convert project-root paths such as `/docs/ADRs/` to paths such as `docs/ADRs/`.
+  4. Preserve every other value without reinterpretation.
+  5. Do not edit or delete the legacy file.
+- When neither configuration file exists, switch to initialization mode.
 
-Inspect only common project metadata and documentation paths before the interview:
+## 2. Discover the project
 
-- Existing docs layout: look for requirements, ADR or decision directories, feature specs, a roadmap, a glossary, and user docs.
-- Stack: language(s), package manager, test runner, BDD harness if any (cucumber-js, bun-test-cucumber, pytest-bdd, …), lint/format/typecheck commands.
-- Repo shape: monorepo or single package, plus the project instruction files that apply to the task.
-- Tracker: GitHub remote (`gh` usable?) or something else.
+1. Inspect only common project metadata and documentation paths before the interview.
+   - Find existing requirements, decisions, feature specifications, roadmap, glossary, and user documentation.
+   - Identify languages, package managers, test runners, and BDD harnesses.
+   - Identify lint, format, and typecheck commands.
+   - Identify whether formatting or linting commands write changes.
+   - Identify whether the repository is a monorepo or a single package.
+   - Read the project instruction files that apply to this task.
+   - Identify the issue tracker and whether a GitHub remote and `gh` are available.
+   - Use targeted file-name searches and package manifests.
+2. Stop after you can propose paths and commands for each interview topic.
 
-Use targeted file-name searches and package manifests.
-Do not read application source during initialization.
-Stop after you can propose paths and commands for each interview topic.
+- Don't
+  - Read application source during initialization.
 
-## 2. Interview
+## 3. Interview the user
 
-Present findings as defaults and ask only what is genuinely open (plain-text options in the message body).
-Cover:
+The default path values are declarative configuration values.
 
-1. **Doc paths**: requirements, ADRs, coordination scratch, feature files, roadmap, glossary, user guide, and an optional product strategy document.
-   Defaults: `docs/requirements/`, `docs/ADRs/`, `docs/plans/`, `docs/Features/`, `docs/roadmap.md`, `docs/Glossary.md`, `docs/user-guide/`.
-   All configured paths resolve from the project root.
-2. **Stack facts**: test command, BDD harness (or "none, feature files are spec-only"), typecheck/lint commands, whether lint is destructive (write-mode).
-3. **Verification**: how to prove a change works on this project (dev server, CLI, test suite only).
-4. **Tracker**: issue tracker and label conventions (defaults: GitHub, `type:bug`/`type:enhancement`, `area:*` scopes, `needs-design`).
-5. **Commit conventions**: scopes vocabulary, anything beyond the standard conventional-commit rules.
-6. **Interaction**: how gates reach the user and where review pages open.
-   Choose `structured` or `plain-text`, and `auto`, `internal`, or `external` for `Review browser`.
-   `structured` uses the host's structured input capability when available and falls back to plain text.
-   `auto` (the default) uses the internal browser in desktop sessions and the system browser in CLI sessions.
-   Ask only if the user has a preference, otherwise take the defaults.
-7. **Constraints**: anything the skills must never do here (for example never touch generated dirs, no pushes, sign-off requirements).
+| Path | Default value |
+| --- | --- |
+| Requirements | `docs/requirements/` |
+| ADRs | `docs/ADRs/` |
+| Plans | `docs/plans/` |
+| Feature files | `docs/Features/` |
+| Roadmap | `docs/roadmap.md` |
+| Glossary | `docs/Glossary.md` |
+| User guide | `docs/user-guide/` |
+| Product strategy | `n/a` |
 
-## 3. Write the config
+All configured paths resolve from the project root.
 
-Write `.prism/workflow.md` with exactly these sections.
-Omit no section, and use "n/a" where a value is empty.
+- When no BDD harness exists:
+  1. Record `none`.
+  2. State that feature files are specification-only.
+
+The default tracker is GitHub.
+The default labels are `type:bug`, `type:enhancement`, `type:docs`, `area:<name>`, and `needs-design`.
+
+`Interaction style` is `structured` or `plain-text`.
+The default is `structured`.
+Structured interaction uses the host's structured input capability when available and otherwise uses plain text.
+Plain-text interaction presents the same options as a numbered list that the user answers in prose.
+The interaction style changes delivery only.
+The framing rule in `workflow` applies to both styles.
+
+`Review browser` is `auto`, `internal`, or `external`.
+The default is `auto`.
+The `auto` value uses the internal browser in desktop sessions and the system browser in CLI sessions.
+The `internal` value uses the internal browser.
+The `external` value uses the system browser.
+
+- Read [visual-review.md](../workflow/references/visual-review.md) for the review procedure.
+
+1. Present discovered values and applicable configuration defaults.
+2. Ask only about values that remain open.
+   1. Confirm requirements, ADR, plan, feature, roadmap, glossary, user-guide, and optional product-strategy paths.
+   2. Confirm the test command, BDD harness, typecheck command, lint command, and destructive command behavior.
+   3. Confirm how to prove a change through a development server, CLI, or test suite.
+   4. Confirm the tracker and label conventions.
+   5. Confirm commit scopes and conventions beyond standard Conventional Commits.
+   6. Confirm gate delivery and review-browser preferences only when the user has a preference.
+   7. Confirm project-specific prohibitions and sign-off requirements.
+3. Put plain-text options in the message body.
+
+## 4. Write the configuration
+
+1. Write `.prism/workflow.md` with exactly these sections and use equivalent migration values when migration mode applies.
+2. When update mode lacks the Requirements path, add it with the confirmed value.
+3. Do not omit a section.
+4. Use `n/a` for an empty value.
 
 ```markdown
 # Workflow config
@@ -99,30 +140,27 @@ Omit no section, and use "n/a" where a value is empty.
 - <project-specific MUST NOTs>
 ```
 
-`Interaction style` picks how gates and decision forks reach the user.
-`structured` (the default) uses the host's structured input capability when available.
-If that capability is unavailable, use the plain-text form.
-`plain-text` presents the same options as a numbered list in the message body, answered in prose.
-It changes delivery only, and the framing rule in the `workflow` overview skill applies either way.
-`Review browser` selects the [visual-review.md](../workflow/references/visual-review.md) procedure.
-`auto` is the default when the configuration does not set `Review browser`.
-`auto` uses the internal browser in desktop sessions and the system browser in CLI sessions.
-`internal` uses the internal browser.
-`external` opens the system browser.
+## 5. Scaffold documentation
 
-## 4. Scaffold
+1. Identify the configured documentation directories and files that already exist.
+2. Create all configured documentation directories that do not exist.
+3. Leave the plans directory without a seed file.
+4. Reserve plans for initiative plans, coordination snapshots, slice findings, and recovery records.
+5. Integrate with existing documentation.
+6. When the glossary does not exist, create it with a title and one-line purpose.
+7. When the roadmap does not exist, create it with empty roadmap prose.
+8. Follow the `roadmap` skill for the roadmap format.
+9. When `roadmap.puml` does not exist, create the sibling dependency graph.
+10. Add a short README to each new requirements, ADR, feature, and user-guide directory.
+11. State what belongs in each README's directory.
 
-Create any configured doc directories that do not exist, with a minimal seed:
+- Don't
+  - Overwrite an existing file.
 
-- Glossary: title + one-line purpose.
-- Roadmap: empty roadmap prose and a sibling `roadmap.puml` dependency graph (see `roadmap` skill for format).
-- Requirements/ADRs/Features/user-guide: directory with a short README stating what lives there.
-- Plans directory: directory only for initiative plans, coordination snapshots, slice findings, and recovery records.
+## 6. Close
 
-Do not scaffold over existing files.
-Integrate with what is there.
-
-## 5. Close
-
-Summarize what was written and where, and point the user at the `workflow` skill for the map.
-Do not commit, because committing is user-initiated.
+- When migration mode applies, report that Prism no longer reads the legacy file.
+- When migration mode applies, tell the user that they may remove the legacy file after review.
+- Summarize what changed and where.
+- Point the user to the `workflow` skill for the workflow map.
+- Do not commit because commits are user-initiated.

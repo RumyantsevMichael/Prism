@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+const productiveSkills = [
+  "design", "ideate", "implement", "orchestrate", "plan", "review", "roadmap",
+  "workflow-init", "workflow", "write-adr", "write-contracts", "write-feature",
+  "write-requirements", "write-step-definitions", "write-user-docs"
+];
+
 async function skill(name) {
   return readFile(new URL(`../../skills/${name}/SKILL.md`, import.meta.url), "utf8");
 }
@@ -9,6 +15,17 @@ async function skill(name) {
 async function reference(skillName, name) {
   return readFile(new URL(`../../skills/${skillName}/references/${name}`, import.meta.url), "utf8");
 }
+
+function assertProhibited(document, statement) {
+  const prohibitions = [...document.matchAll(/^- Don't\n((?:  - .+\n?)+)/gm)].map((match) => match[1]);
+  assert.ok(prohibitions.some((block) => block.includes(statement)), `prohibited: ${statement}`);
+}
+
+test("declares the productive skill SDM version", async () => {
+  for (const name of productiveSkills) {
+    assert.match(await skill(name), /^---\n[\s\S]*?^sdm: "0\.3"$[\s\S]*?^---$/m, name);
+  }
+});
 
 test("uses code as the implementation specification", async () => {
   const workflow = await skill("workflow");
@@ -22,32 +39,32 @@ test("keeps common workflow terms aligned with the artifact model", async () => 
   const workflow = await skill("workflow");
 
   for (const term of [
-    "**Starting surface:**",
-    "**Acceptance suite:**",
-    "**Fit checkpoint:**",
-    "**Executable slice test:**",
-    "**Executable contract:**",
-    "**Feature file:**",
-    "**Step definition:**",
-    "**Shape-only scaffold:**",
-    "**Red checkpoint:**",
-    "**Security surface:**",
-    "**Review wave:**",
-    "**Review probe:**",
-    "**Design checkpoint:**",
-    "**Decision autonomy:**",
-    "**Slice continuation:**",
-    "**`recovery.md`:**"
+    "| Starting surface |",
+    "| Acceptance suite |",
+    "| Fit checkpoint |",
+    "| Executable slice test |",
+    "| Executable contract |",
+    "| Feature file |",
+    "| Step definition |",
+    "| Shape-only scaffold |",
+    "| Red checkpoint |",
+    "| Security surface |",
+    "| Review wave |",
+    "| Review probe |",
+    "| Design checkpoint |",
+    "| Decision autonomy |",
+    "| Slice continuation |",
+    "| `recovery.md` |"
   ]) {
     assert.ok(workflow.includes(term), term);
   }
-  assert.match(workflow, /Feature file:.*authored during design after the fit checkpoint passes and bound to assertions during implementation/);
-  assert.match(workflow, /Executable slice test:.*authored after the fit checkpoint/);
-  assert.match(workflow, /Shape-only scaffold:.*authored after the fit checkpoint/);
-  assert.match(workflow, /Review probe:.*minimal failing regression test/);
-  assert.match(workflow, /Design checkpoint:.*commit after a clean design audit and visual review/);
-  assert.match(workflow, /Step definition:.*implementation-owned binding/);
-  assert.match(workflow, /Red checkpoint:.*expected failure recorded before production behavior changes/);
+  assert.match(workflow, /\| Feature file \|.*authored during design after the fit checkpoint passes and bound to assertions during implementation/);
+  assert.match(workflow, /\| Executable slice test \|.*authored after the fit checkpoint/);
+  assert.match(workflow, /\| Shape-only scaffold \|.*authored after the fit checkpoint/);
+  assert.match(workflow, /\| Review probe \|.*minimal failing regression test/);
+  assert.match(workflow, /\| Design checkpoint \|.*commit after a clean design audit and visual review/);
+  assert.match(workflow, /\| Step definition \|.*implementation-owned binding/);
+  assert.match(workflow, /\| Red checkpoint \|.*expected failure recorded before production behavior changes/);
 });
 
 test("plans dependency-ordered vertical outcome slices", async () => {
@@ -57,9 +74,9 @@ test("plans dependency-ordered vertical outcome slices", async () => {
     assert.match(plan, new RegExp(`\\*\\*${field}:\\*\\*`));
   }
   assert.match(plan, /one observable outcome/);
-  assert.match(plan, /one connected set of changes from an initiating input to that outcome/);
-  assert.match(plan, /identifiable boundaries and compatibility effects/);
-  assert.match(plan, /at most one unresolved consequential architectural decision/);
+  assert.match(plan, /one connected path from an initiating input to that outcome/);
+  assert.match(plan, /boundaries and compatibility effects are identifiable/i);
+  assert.match(plan, /At most one consequential architectural decision remains unresolved/);
   assert.match(plan, /one end-to-end verification path/);
   assert.match(plan, /largest coherent outcome that one `Develop <slice>` task can complete safely/);
   assert.match(plan, /creates `state\.md` after plan acceptance/);
@@ -70,46 +87,49 @@ test("plans dependency-ordered vertical outcome slices", async () => {
 test("forms bounded slice architecture before fit and authors artifacts only after fit", async () => {
   const design = await skill("design");
 
-  const explore = design.indexOf("## 1. Explore the slice");
-  const fit = design.indexOf("## 2. Run the fit checkpoint");
-  const form = design.indexOf("### Form the slice architecture");
-  const preflight = design.indexOf("### Run the author preflight");
-  const confirm = design.indexOf("### Confirm fit");
-  const decisions = design.indexOf("### Record settled decisions");
-  const author = design.indexOf("### Author the fitted artifacts");
+  const explore = design.indexOf("## 2. Explore the slice");
+  const fit = design.indexOf("## 3. Run the fit checkpoint");
+  const form = design.indexOf("### 3.1. Form the slice architecture");
+  const preflight = design.indexOf("### 3.2. Run the author preflight");
+  const confirm = design.indexOf("### 3.3. Confirm fit");
+  const decisions = design.indexOf("### 4.1. Record settled decisions");
+  const author = design.indexOf("### 4.2. Author the fitted artifacts");
   assert.ok(explore >= 0 && explore < fit && form < preflight && preflight < confirm && confirm < decisions && decisions < author);
-  assert.match(design, /Find where the required behavior enters the system/);
+  assert.match(design, /Find the command, route, public function, event handler, scheduled job, or user action where the required behavior starts/);
   assert.match(design, /Map each applicable Approved requirement statement to the code or boundary that will satisfy it/);
-  assert.match(design, /Choose where the behavior starts, which component owns it, how data moves, and how state changes/);
-  assert.match(design, /Define failure, recovery, compatibility, migration, security, and operational behavior/);
-  assert.match(design, /Identify the smallest executable slice test through the selected starting surface and the result or failure it must observe/);
+  assert.match(design, /Choose the starting surface, owning component, data flow, and state changes/);
+  assert.match(design, /Define applicable failure, recovery, compatibility, migration, security, and operational behavior/);
+  assert.match(design, /Identify the smallest executable slice test through the starting surface and the result or failure it must observe/);
   assert.match(design, /Identify the Gherkin feature path through `write-feature`/);
-  assert.match(design, /Before the fit checkpoint, keep slice-scoped ADRs, feature files, executable tests, contracts, diagrams, and scaffolds in the working design rather than writing them/);
+  assert.match(design, /Before the fit checkpoint, slice-scoped artifacts remain in the working design and are not written/);
+  assert.match(design, /These artifacts include ADRs, feature files, executable tests, contracts, diagrams, and scaffolds/);
   assert.match(design, /Return `SPLIT` or `BLOCKED` without authoring slice-scoped artifacts/);
-  assert.match(design, /Confirm that every consequential decision is settled in the working design/);
-  assert.match(design, /no unresolved consequential architectural decision/);
-  assert.match(design, /For each boundary that needs a new executable contract, use `write-contracts`/);
+  assert.match(design, /Confirm that every consequential decision is settled/);
+  assert.match(design, /No consequential architectural decision remains unresolved/);
+  assert.match(design, /For each boundary needing a new executable contract, use `write-contracts`/);
   assert.match(design, /Create or update the smallest executable slice test through the selected starting surface/);
-  assert.match(design, /Create or update the Gherkin feature file for the slice through `write-feature`/);
-  assert.match(design, /Run each design-created executable slice test before implementation and record its expected failure reason/);
-  assert.match(design, /Create only a shape-only scaffold when the selected surface does not yet exist/);
-  assert.match(design, /Do not add production behavior or a concrete stub that makes the design test pass/);
-  assert.match(design, /Do not create step definitions during design/);
-  assert.match(design, /Do not create a prose design summary, slice-named design file, task graph, or handoff/);
-  assert.match(design, /Do not scan the repository or read complete directories for general understanding/);
-  assert.match(design, /Stop exploration after you can name the changed components, affected boundaries, test location, and end-to-end verification command/);
-  assert.match(design, /Do not edit the accepted plan or `slices\.puml`/);
+  assert.match(design, /Create or update the slice Gherkin feature file through `write-feature`/);
+  assert.match(design, /Run each design-created executable slice test before implementation/);
+  assert.match(design, /Record the exact command and expected failure reason for each red checkpoint/);
+  assert.match(design, /When the selected starting surface does not exist:/);
+  assertProhibited(design, "Add production behavior during design.");
+  assertProhibited(design, "Add a concrete stub that makes the design test pass.");
+  assertProhibited(design, "Create step definitions during design.");
+  assertProhibited(design, "Create a prose design summary, slice-named design file, task graph, or handoff.");
+  assertProhibited(design, "Scan the repository or read complete directories for general understanding.");
+  assert.match(design, /Stop after identifying the changed components, affected boundaries, test location, and end-to-end verification command/);
+  assertProhibited(design, "Edit the accepted plan or `slices.puml`.");
   assert.match(design, /The orchestrator owns plan changes, lifecycle changes, and the transition to implementation/);
-  assert.match(design, /Do not edit a requirement or invoke `write-requirements` without explicit user approval/);
+  assertProhibited(design, "Edit a requirement or invoke `write-requirements` without explicit user approval.");
   assert.match(design, /Feature files: <canonical feature paths or NONE>/);
   assert.match(design, /Run the author preflight/);
-  assert.match(design, /trace every Approved requirement to a planned behavior, affected boundary, planned feature scenario, planned executable test, and verification command/);
+  assert.match(design, /Trace every Approved requirement to a planned behavior, affected boundary, feature scenario, executable test, and verification command/);
   assert.match(design, /Findings: <slice findings path>/);
-  assert.match(design, /After context compaction or replacement, re-read the requirements, ADRs, executable tests, contracts, and findings before continuing/);
+  assert.match(design, /After context compaction or replacement, re-read the requirements, ADRs, executable tests, contracts, and findings/);
   assert.ok(design.indexOf("Create or update the smallest executable slice test through the selected starting surface") > author);
-  assert.ok(design.indexOf("Create or update the Gherkin feature file for the slice through `write-feature`") > author);
-  assert.ok(design.indexOf("Create only a shape-only scaffold when the selected surface does not yet exist") > author);
-  assert.ok(design.indexOf("Only after the fit checkpoint passes, record every settled architectural decision that constrains future changes or explains a lasting boundary as a Proposed ADR with `write-adr`") > decisions);
+  assert.ok(design.indexOf("Create or update the slice Gherkin feature file through `write-feature`") > author);
+  assert.ok(design.indexOf("When the selected starting surface does not exist:") > author);
+  assert.ok(design.indexOf("When the fit checkpoint passes:") > decisions);
   assert.doesNotMatch(design, /Implementation binds the design-created feature file/);
   assert.doesNotMatch(design, /Do not edit feature scenarios to fit implementation/);
   assert.doesNotMatch(design, /focused validation waves/i);
@@ -123,24 +143,24 @@ test("keeps one delivery task through tests and code", async () => {
   const code = implement.indexOf("## 3. Implement the slice");
   const durable = implement.indexOf("## 6. Update durable artifacts");
   assert.ok(red >= 0 && red < code && code < durable);
-  assert.match(implement, /Do not delegate implementation to a fresh worker/);
+  assert.match(implement, /delivery context owns implementation and does not delegate it to a fresh worker/i);
   assert.match(implement, /Record only the command, exit status, and expected failure reason/);
   assert.match(implement, /Use the feature file created during design when one exists/);
-  assert.match(implement, /Do not create a replacement feature file from verified code/);
-  assert.match(implement, /Bind the design-created feature steps through `write-step-definitions` when a BDD harness exists/);
+  assertProhibited(implement, "Create a replacement feature file from verified code.");
+  assert.match(implement, /When a BDD harness exists, bind the design-created feature steps through `write-step-definitions`/);
   assert.match(implement, /Preserve the design-created feature files as the acceptance specification/);
-  assert.match(implement, /Do not rewrite feature scenarios to match implementation/);
+  assertProhibited(implement, "Rewrite feature scenarios to match implementation.");
   assert.match(implement, /Run the author preflight/);
   assert.match(implement, /Read every `OPEN`, `IN PROGRESS`, and `REOPENED` finding/);
   assert.match(implement, /\[the review format\]\(\.\.\/review\/references\/review-format\.md\)/);
-  assert.match(implement, /Return `READY FOR REVIEW` with changed artifact and diagram paths, the findings path/);
+  assert.match(implement, /Return `READY FOR REVIEW` with changed artifact paths, diagram paths, the findings path/);
   assert.match(implement, /Follow the contract decision recorded by `design`/);
   assert.match(implement, /Use the executable slice test selected during design when one exists/);
-  assert.match(implement, /Run the design-created executable slice test or the bound feature before production behavior changes/);
-  assert.match(implement, /Run any review probe attached to an unresolved finding before correcting it/);
-  assert.match(implement, /Do not weaken or replace a design-created test without returning to the `design` fit checkpoint/);
-  assert.match(implement, /Replace any shape-only scaffold created during design with complete behavior before verification/);
-  assert.match(implement, /Preserve the asserted behavior of any review probe while fixing its finding/);
+  assert.match(implement, /run the design-created test or bound feature before production behavior changes/i);
+  assert.match(implement, /Before correcting an unresolved finding with a review probe, run that probe/);
+  assertProhibited(implement, "Weaken or replace a design-created test without returning to the `design` fit checkpoint.");
+  assert.match(implement, /Before verification, replace every shape-only scaffold with complete behavior/);
+  assert.match(implement, /Preserve the asserted behavior of its review probe/);
   assert.doesNotMatch(implement, /Use `write-contracts`/);
   assert.doesNotMatch(implement, /Dispatch task workers/);
   assert.doesNotMatch(implement, /execution-ledger\.md/);
@@ -152,12 +172,14 @@ test("authors Gherkin during design and binds steps during implementation", asyn
   const implement = await skill("implement");
   const steps = await skill("write-step-definitions");
 
-  assert.match(design, /Create or update the Gherkin feature file for the slice through `write-feature`/);
-  assert.match(feature, /Use this skill during design after the slice fit checkpoint passes and the slice architecture is settled, and before implementation/);
-  assert.match(feature, /They are not prose design summaries or implementation handoffs/);
-  assert.match(feature, /Do not create step definitions with this skill/);
-  assert.match(steps, /Use this skill during implementation after a design-authored feature file exists/);
-  assert.match(implement, /Bind the design-created feature steps through `write-step-definitions` when a BDD harness exists/);
+  assert.match(design, /Create or update the slice Gherkin feature file through `write-feature`/);
+  assert.match(feature, /fit checkpoint.*must pass before this skill creates or updates a feature file/);
+  assert.match(feature, /slice architecture must be settled before this skill creates or updates a feature file/);
+  assert.match(feature, /Implementation must not have started before this skill creates or updates a feature file/);
+  assert.match(feature, /must not be a prose design summary or implementation handoff/);
+  assert.match(feature, /Create step definitions with this skill/);
+  assert.match(steps, /This skill applies during implementation after a design-authored feature file exists/);
+  assert.match(implement, /When a BDD harness exists, bind the design-created feature steps through `write-step-definitions`/);
   assert.doesNotMatch(design, /Do not create .*feature file during design/);
   assert.doesNotMatch(feature, /after implementation verification passes/);
 });
@@ -169,12 +191,14 @@ test("keeps lifecycle changes in orchestration", async () => {
   const workflow = await skill("workflow");
 
   assert.match(design, /orchestrator owns plan changes, lifecycle changes, and the transition to implementation/i);
-  assert.match(implement, /Do not change slice status, roadmap status, ADR status, or plan lifecycle/);
-  assert.match(orchestrate, /mark the slice `in-progress`/);
+  assertProhibited(implement, "Change slice status, roadmap status, ADR status, or plan lifecycle.");
+  assert.match(orchestrate, /Mark the slice `in-progress`/);
   assert.match(orchestrate, /Mark the slice `done`/);
   assert.match(orchestrate, /Accept implemented Proposed ADRs/);
-  assert.match(orchestrate, /Accept slice-scoped artifact paths only with `FIT`; a `SPLIT` or `BLOCKED` result must not leave such artifacts attached to the rejected slice/);
-  assert.match(orchestrate, /set the roadmap initiative to `shipped`, and delete its scratch plan/);
+  assert.match(orchestrate, /Slice-scoped artifact paths are valid only with `FIT`/);
+  assert.match(orchestrate, /A `SPLIT` or `BLOCKED` result must not leave slice-scoped artifacts attached to the rejected slice/);
+  assert.match(orchestrate, /Set the roadmap initiative to `shipped`/);
+  assert.match(orchestrate, /Delete its scratch plan/);
   assert.match(workflow, /The orchestrator owns routing, coordination state, and user gates/);
 });
 
@@ -192,15 +216,17 @@ test("persists orchestration state across sequential sessions", async () => {
   assert.match(operations, /Context lineage: D1 -> D2/);
   assert.match(operations, /Review waves: 2/);
   assert.match(operations, /Count a fresh review context as a review wave, not as a child restart/);
-  assert.match(orchestrate, /After context compaction, treat the context as fresh/);
-  assert.match(orchestrate, /Allow a new orchestrator to take over only after a phase boundary or an explicit interruption/);
-  assert.match(orchestrate, /Count a fresh review context as a review wave, not as a child restart/);
-  assert.match(orchestrate, /Update the operations block at child and phase transitions, not after every wait/);
-  assert.match(orchestrate, /Link to `findings\.md` for detailed review evidence instead of duplicating it in the operations block/);
-  assert.match(orchestrate, /Create `state\.md` after the initiative plan receives acceptance/);
+  assert.match(orchestrate, /After context compaction, the context is fresh/);
+  assert.match(orchestrate, /Allow a new orchestrator to take over only after a phase boundary or explicit interruption/);
+  assert.match(orchestrate, /A fresh review context counts as a review wave, not a child restart/);
+  assert.match(orchestrate, /Update the operations block at child and phase transitions/);
+  assert.match(orchestrate, /Do not update the operations block after every wait/);
+  assert.match(orchestrate, /Link to `findings\.md` instead of copying detailed evidence into the operations block/);
+  assert.match(orchestrate, /After the initiative plan receives acceptance, create its `state\.md`/);
   assert.match(orchestrate, /Update `state\.md` before and after every child transition/);
   assert.match(orchestrate, /Set the handoff status to `ready`/);
-  assert.match(orchestrate, /open one Prism artifact viewer session for the plan and slice graph before presenting them for acceptance/);
+  assert.match(orchestrate, /Open one Prism artifact viewer session before presenting the plan for acceptance/);
+  assert.match(orchestrate, /Include the plan and slice graph in that session/);
 });
 
 test("uses concrete task and exploration terms", async () => {
@@ -218,12 +244,12 @@ test("creates decision diagrams with ADRs and structure diagrams after code", as
   const implement = await skill("implement");
   const adr = await skill("write-adr");
 
-  assert.match(design, /Add a decision diagram with an ADR when relationships, lifecycle, or call order are part of the decision/);
+  assert.match(design, /When relationships, lifecycle, or call order are part of the decision, add an ADR decision diagram/);
   assert.match(implement, /Preserve the design-created feature files as the acceptance specification/);
-  assert.match(await skill("write-step-definitions"), /Use this skill during implementation after a design-authored feature file exists/);
-  assert.match(implement, /Create or update a diagram only after code establishes the structure/);
-  assert.match(adr, /When called from `design`, use this skill only after the slice fit checkpoint passes/);
-  assert.match(adr, /Create a PlantUML decision diagram when relationships, lifecycle, or call order are material to the ADR/);
+  assert.match(await skill("write-step-definitions"), /This skill applies during implementation after a design-authored feature file exists/);
+  assert.match(implement, /After code establishes the structure, create or update a diagram when needed/);
+  assert.match(adr, /When `design` calls this skill, the .*fit checkpoint.* must have passed/);
+  assert.match(adr, /When relationships, lifecycle, or call order are material, create a PlantUML decision diagram/);
 });
 
 test("uses executable contracts only", async () => {
@@ -232,11 +258,11 @@ test("uses executable contracts only", async () => {
   const review = await skill("review");
   const contracts = await skill("write-contracts");
 
-  assert.match(contracts, /Create a contract only when code or verification consumes it/);
+  assert.match(contracts, /executable contract.*must have a consumer in production code, generated code, or verification/i);
   assert.match(contracts, /OpenAPI|JSON Schema/);
   assert.match(contracts, /importable interface/);
   assert.match(contracts, /compatibility test/);
-  assert.match(contracts, /Do not create a prose contract/);
+  assert.match(contracts, /contract must not be prose/);
   assert.match(contracts, /Contract: NO CONTRACT NEEDED/);
   assert.match(contracts, /Reason: <specific reason>/);
   assert.match(contracts, /Return to the calling phase after the result/);
@@ -252,10 +278,10 @@ test("uses executable contracts only", async () => {
   assert.match(implement, /Verification: <exact command>/);
   assert.match(review, /every declared contract has a real consumer/);
   assert.match(review, /canonical path and consumer/);
-  assert.match(review, /Do not store a final contract in a slice directory/);
+  assertProhibited(review, "Store a final contract in a slice directory.");
   assert.match(review, /ADRs preserve architectural decisions/);
-  assert.match(review, /executable tests and contracts enforce the selected boundaries/);
-  assert.match(review, /feature files cover planned observable behavior/);
+  assert.match(review, /executable tests and contracts enforce selected boundaries/);
+  assert.match(review, /feature files cover planned behavior/);
   assert.match(await skill("write-adr"), /description: "Create or revise an ADR for an architectural decision or invariant\."/);
 });
 
@@ -265,8 +291,8 @@ test("uses one review skill for both review modes", async () => {
   assert.match(review, /Use the mode supplied by orchestration/);
   assert.match(review, /`design-audit` before implementation/);
   assert.match(review, /`implementation-review` after verification/);
-  assert.match(review, /Only `implementation-review` may add a minimal finding-scoped regression test/);
-  assert.match(review, /`design-audit` remains read-only apart from `findings\.md`/);
+  assert.match(review, /During `implementation-review`, add a minimal finding-scoped regression test only when a concrete finding needs executable proof/);
+  assert.match(review, /During `design-audit`, edit only `findings\.md`/);
   assert.match(review, /## Design-audit mode/);
   assert.match(review, /## Implementation-review mode/);
   assert.match(review, /Read \[review-format\.md\]\(references\/review-format\.md\)/);
@@ -280,25 +306,26 @@ test("uses one review skill for both review modes", async () => {
 test("orders design audit before implementation", async () => {
   const orchestrate = await skill("orchestrate");
 
-  const audit = orchestrate.indexOf("### Design audit");
-  const implement = orchestrate.indexOf("### Implement");
+  const audit = orchestrate.indexOf("#### 2. Audit the design");
+  const implement = orchestrate.indexOf("#### 3. Implement");
   assert.ok(audit >= 0 && audit < implement);
   assert.match(orchestrate, /Start a fresh `Review <slice>` agent with `review` in `design-audit` mode/);
   assert.match(orchestrate, /On `CLEAN`, open one Prism artifact viewer session for all recorded ADRs and diagrams/);
   assert.match(orchestrate, /continue to implementation/);
-  assert.match(orchestrate, /resume `Develop <slice>` with its path and all unresolved finding IDs/);
+  assert.match(orchestrate, /resume `Develop <slice>` with the path and all unresolved finding IDs/);
   assert.match(orchestrate, /Use `findings\.md` as the source of truth/);
-  assert.match(orchestrate, /After each design correction batch, start one fresh scoped `review` in `design-audit` mode/);
+  assert.match(orchestrate, /After each design correction batch, start a fresh scoped design audit/);
   assert.doesNotMatch(orchestrate, /review-design/);
 });
 
 test("scopes autonomy and slice continuation at the design handoff", async () => {
   const orchestrate = await skill("orchestrate");
 
-  assert.match(orchestrate, /Conservative autonomy requires a user approval after a clean design audit and visual review/);
-  assert.match(orchestrate, /Broad autonomy may continue automatically after a clean design audit and visual review/);
-  assert.match(orchestrate, /create exactly two checkpoint commits per slice/);
-  assert.match(orchestrate, /create the design checkpoint from slice-owned design and coordination changes/);
+  assert.match(orchestrate, /Conservative autonomy requires user approval after a clean design audit and visual review/);
+  assert.match(orchestrate, /Broad autonomy can continue after a clean design audit and visual review/);
+  assert.match(orchestrate, /create exactly two checkpoint commits for each slice/);
+  assert.match(orchestrate, /create the design checkpoint/);
+  assert.match(orchestrate, /Include only slice-owned design and coordination changes/);
   assert.match(orchestrate, /Record its hash in `state\.md` and use it as the implementation diff base/);
   assert.match(orchestrate, /Pass the design checkpoint hash as the diff base/);
   assert.match(orchestrate, /create the final checkpoint commit from the remaining slice-owned changes/);
@@ -314,28 +341,29 @@ test("reviews completed code in a fresh context", async () => {
 
   assert.match(review, /Read the requirements, relevant ADRs, executable slice tests, feature files, diagrams, declared contracts, and mode-specific paths/);
   assert.match(review, /fresh context that does not inherit the authoring context/);
-  assert.match(review, /Check every applicable item/);
-  assert.match(review, /Use the findings file as the source of truth/);
+  assert.match(review, /Map each requirement to one planned behavior and one observable verification path/);
+  assert.match(review, /Check every requirement without accepting added product behavior/);
+  assert.match(review, /findings file is the source of truth/i);
   assert.match(review, /Assign a stable ID to each new root defect/);
   assert.match(review, /Mark an implementer's `FIXED` finding `VERIFIED`/);
-  assert.match(review, /`REOPENED` when it fails/);
-  assert.match(orchestrate, /Start one child agent named `Develop <slice>`/);
+  assert.match(review, /`REOPENED` when its closing condition fails/);
+  assert.match(orchestrate, /Start one child named `Develop <slice>`/);
   assert.match(orchestrate, /resume the same `Develop <slice>` agent/);
   assert.match(orchestrate, /Start a fresh `Review <slice>` agent/);
   assert.match(orchestrate, /Use `findings\.md` as the source of truth instead of passing a transient finding list/);
-  assert.match(orchestrate, /When a finding has status `REOPENED` after a correction batch/);
-  assert.match(orchestrate, /When the same finding reopens after that replacement/);
+  assert.match(orchestrate, /When a finding becomes `REOPENED` after correction/);
+  assert.match(orchestrate, /When the same finding reopens after replacement/);
   assert.match(orchestrate, /Run lanes sequentially when they share one findings file/);
   assert.match(orchestrate, /After every implementation correction, start a fresh review/);
-  assert.match(orchestrate, /Continue the review loop until `CLEAN`, a user stop, or a real blocker/);
+  assert.match(orchestrate, /Continue until `CLEAN`, a user stop, or a real blocker/);
   assert.match(orchestrate, /Consolidate all lane findings before sending one correction batch/);
   assert.match(orchestrate, /Do not stop after one re-review while findings remain/);
   assert.match(orchestrate, /one active review wave/);
   assert.match(orchestrate, /Pass the implementer's verification status and test paths to reviewers/);
   assert.match(orchestrate, /Do not assign the full test suite or configured verification commands to reviewers/);
-  assert.match(orchestrate, /Allow implementation reviewers to add a minimal finding-scoped regression test through the public or system surface/);
-  assert.match(orchestrate, /Pass any review probe path and expected failure with its unresolved finding/);
-  assert.match(orchestrate, /discard or re-evaluate any unaccepted review probe/);
+  assert.match(orchestrate, /Allow reviewers to add a minimal finding-scoped regression test through a public or system surface/);
+  assert.match(orchestrate, /Pass each review probe path and expected failure with its unresolved finding/);
+  assert.match(orchestrate, /discard or re-evaluate unaccepted review probes/);
 });
 
 test("defines focused review lanes and one review format", async () => {
@@ -345,7 +373,7 @@ test("defines focused review lanes and one review format", async () => {
   const delegation = await reference("workflow", "delegation.md");
   const format = await readFile(new URL("../../skills/review/references/review-format.md", import.meta.url), "utf8");
 
-  assert.match(orchestrate, /Define a review matrix before spawning high-risk lanes/);
+  assert.match(orchestrate, /Define a review matrix before starting high-risk review lanes/);
   assert.match(orchestrate, /Lane: security/);
   assert.match(orchestrate, /Lane: lifecycle/);
   assert.match(orchestrate, /Lane: integration/);
@@ -355,13 +383,14 @@ test("defines focused review lanes and one review format", async () => {
   assert.doesNotMatch(workflow, /Review focus: <specific review lens>/);
   assert.doesNotMatch(workflow, /Coverage: <paths or checks>/);
   assert.match(review, /references\/review-format\.md/);
-  assert.match(orchestrate, /\[review-format\.md\]\(\.\.\/review\/references\/review-format\.md\) reference/);
-  assert.match(review, /When a lane focus is supplied, review it exhaustively/);
+  assert.match(orchestrate, /\[review-format\.md\]\(\.\.\/review\/references\/review-format\.md\)/);
+  assert.match(review, /When orchestration supplies a lane focus, review it exhaustively/);
   assert.match(review, /Read the completed diff, verification status, test paths, and exact commands/);
-  assert.match(review, /Do not rerun the full test suite or configured verification commands/);
-  assert.match(review, /When a concrete finding needs executable proof, add one minimal review probe through the public or system surface/);
-  assert.match(review, /record its path, command, and expected failure in the finding/);
-  assert.match(review, /Put it in the canonical test location and use existing fixtures or local setup/);
+  assert.match(review, /does not rerun the full test suite or configured verification commands/);
+  assert.match(review, /When a concrete finding needs executable proof:[\s\S]*Add one minimal review probe through the public or system surface/);
+  assert.match(review, /Record the probe path, command, and expected failure in the finding/);
+  assert.match(review, /Put the probe in the canonical test location/);
+  assert.match(review, /Use existing fixtures or local setup/);
   assert.match(format, /# Slice review/);
   assert.match(format, /## Findings/);
   assert.match(format, /## Result/);
@@ -385,18 +414,18 @@ test("declares model policy and child model roles", async () => {
   const orchestrate = await skill("orchestrate");
   const delegation = await reference("workflow", "delegation.md");
 
-  assert.match(orchestrate, /\*\*Model policy:\*\* default \(recommended\) or manual/);
-  assert.match(orchestrate, /choose whether to apply the default judgement or set models manually before spawning any child/);
-  assert.match(orchestrate, /\*\*Planning model:\*\* host default/);
-  assert.match(orchestrate, /\*\*Delivery model:\*\* host default/);
-  assert.match(orchestrate, /\*\*High-risk review model:\*\* host security model when available/);
-  assert.match(orchestrate, /ask for model assignments for planning, delivery, review, and high-risk review/);
-  assert.match(orchestrate, /Model role: `planning`/);
-  assert.match(orchestrate, /Model role: `delivery`/);
-  assert.match(orchestrate, /Model role: `security-review`/);
-  assert.match(orchestrate, /Record the selected model role and resolved model/);
+  assert.match(orchestrate, /\| Model policy \| `default` or `manual` \| `default` \(recommended\) \|/);
+  assert.match(orchestrate, /apply the default judgment or set models manually/);
+  assert.match(orchestrate, /\| Planning \| Host default \|/);
+  assert.match(orchestrate, /\| Delivery \| Host default \|/);
+  assert.match(orchestrate, /\| High-risk review \| Host security model when available/);
+  assert.match(orchestrate, /ask for planning, delivery, review, and high-risk review assignments/);
+  assert.match(orchestrate, /Assign it the `planning` model role/);
+  assert.match(orchestrate, /Assign the `delivery` model role/);
+  assert.match(orchestrate, /uses the `security-review` model role/);
+  assert.match(orchestrate, /Record the model role and resolved model/);
   assert.match(orchestrate, /same model role and resolved model/);
-  assert.match(orchestrate, /Give it only the request scope, paths, scratch destination, profile, model role, and resolved model/);
+  assert.match(orchestrate, /Give the child only the request scope, paths, scratch destination, profile, model role, and resolved model/);
   assert.match(delegation, /Model role: <role>/);
   assert.match(delegation, /Model: <resolved model or host default>/);
   assert.match(delegation, /Pass the model role and resolved model through every child start and broker request/);
@@ -416,18 +445,20 @@ test("supervises only active child agents", async () => {
   const orchestrate = await skill("orchestrate");
 
   assert.match(orchestrate, /Never wait with an empty identifier set/);
-  assert.match(orchestrate, /Set an observation interval for each child before its first wait/);
-  assert.match(orchestrate, /15 minutes as the starting interval for planning, design, and review children/);
-  assert.match(orchestrate, /30 minutes as the starting interval for implementation children/);
-  assert.match(orchestrate, /Treat the interval as a check-in schedule, not a deadline or execution limit/);
+  assert.match(orchestrate, /Set an observation interval before each child's first wait/);
+  assert.match(orchestrate, /Use 15 minutes for planning, design, and review children/);
+  assert.match(orchestrate, /Use 30 minutes for implementation children/);
+  assert.match(orchestrate, /observation interval is a check-in schedule, not a deadline or execution limit/i);
   assert.match(orchestrate, /A wait timeout means only that no final result arrived/);
-  assert.match(orchestrate, /up to three 5-minute follow-up intervals/);
-  assert.match(orchestrate, /record `unresponsive`, preserve its workspace, and request a user or parent recovery decision/);
+  assert.match(orchestrate, /at most three five-minute follow-up intervals/);
+  assert.match(orchestrate, /record `unresponsive` and preserve its workspace/);
+  assert.match(orchestrate, /request a user or parent recovery decision/i);
   assert.match(orchestrate, /not evidence that the child is stuck/);
-  assert.match(orchestrate, /Interrupt only after a positive failure signal, a user request, or an explicit agent blocker/);
+  assert.match(orchestrate, /Interrupt only after a positive failure signal, a user request, or an explicit child blocker/);
   assert.match(orchestrate, /Do not narrate unchanged waits/);
   assert.match(orchestrate, /Resume the same child when possible/);
-  assert.match(orchestrate, /start a replacement in the same workspace from current code and recorded recovery state/);
+  assert.match(orchestrate, /start a replacement in the same workspace/);
+  assert.match(orchestrate, /Give the replacement the current code and recorded recovery state/);
 });
 
 test("supports a continuous delivery benchmark phase", async () => {
@@ -467,7 +498,7 @@ test("writes review browser configuration with an adaptive default", async () =>
   const benchHarness = await readFile(new URL("../../bench/harness/bench.py", import.meta.url), "utf8");
 
   assert.match(workflowInit, /- Review browser: auto \| internal \| external/);
-  assert.match(workflowInit, /`auto` \(the default\)/);
+  assert.match(workflowInit, /The default is `auto`/);
   assert.match(benchHarness, /- Review browser: auto/);
 });
 

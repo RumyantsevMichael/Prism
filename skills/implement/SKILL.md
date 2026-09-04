@@ -2,109 +2,125 @@
 name: implement
 description: "Implement one fitted outcome slice through failing tests, working code, durable artifacts, fresh review, and final correctness confirmation."
 argument-hint: '[initiative/slice]'
+sdm: "0.3"
 ---
 
 # Implement a fitted slice
 
-Do not delegate implementation to a fresh worker.
+The delivery context owns implementation and does not delegate it to a fresh worker.
 
-Read `.prism/workflow.md` and applicable project instructions.
-Use the accepted requirements, relevant ADRs, tests, design context, and compact slice record when present.
-Inspect only files required for the accepted design and verification.
-When orchestration provides a slice findings path, read the complete file before implementation and before every correction.
-When no path is supplied, use `<configured plans>/<initiative>/<slice>/findings.md` when the slice has a plan.
-Read [the review format](../review/references/review-format.md) before changing finding statuses.
-Edit only finding status and implementer evidence in that file.
+1. Read `.prism/workflow.md` and applicable project instructions.
+2. Use the accepted requirements, relevant ADRs, tests, design context, and compact slice record when present.
+3. Inspect only files required for the accepted design and verification.
+4. When orchestration supplies a findings path, read the complete file before implementation and every correction.
+5. When no path is supplied and the slice has a plan, use `<configured plans>/<initiative>/<slice>/findings.md`.
+6. Read [the review format](../review/references/review-format.md) before changing finding statuses.
 
-Create `recovery.md` in the initiative plan only when the context must pause or be replaced.
-Delete that recovery record after the slice completes.
+- Do
+  - Edit only finding status and implementer evidence in the findings file.
+  - When the context must pause or be replaced:
+    1. Create `recovery.md` in the initiative plan.
+    2. After the slice completes, delete that recovery record.
 
 ## 1. Bind acceptance to executable tests
 
-Use the executable slice test selected during design when one exists.
-Create one only when design did not create one.
-Use the feature file created during design when one exists.
-Do not create a replacement feature file from verified code.
-Reuse the project test structure and fixtures.
-Follow the contract decision recorded by `design`.
-When the decision names a canonical contract, bind that contract to its production or verification consumer before the consumer changes.
-When the decision says `NO CONTRACT NEEDED`, do not create a contract.
-Do not create a new contract when an existing production type or schema governs the boundary.
+1. Use the executable slice test selected during design when one exists.
+2. Create an executable slice test only when design did not create one.
+3. Use the feature file created during design when one exists.
+4. Reuse the project test structure and fixtures.
+5. Follow the contract decision recorded by `design`.
+6. When the decision names a canonical contract, bind it to its production or verification consumer before that consumer changes.
+
+- Don't
+  - Create a replacement feature file from verified code.
+  - Create a contract when the decision says `NO CONTRACT NEEDED`.
+  - Create a new contract when an existing production type or schema governs the boundary.
 
 ## 2. Prove the red checkpoint
 
-Bind the design-created feature steps through `write-step-definitions` when a BDD harness exists.
-Run the design-created executable slice test or the bound feature before production behavior changes when the harness supports a red checkpoint.
-Run any review probe attached to an unresolved finding before correcting it.
-Do not weaken or replace a design-created test without returning to the `design` fit checkpoint.
-Run the exact test command.
-Confirm that it fails because the required behavior is absent.
-Stop and repair the test when it fails for setup, syntax, or an unrelated defect.
+1. When a BDD harness exists, bind the design-created feature steps through `write-step-definitions`.
+2. When the harness supports a red checkpoint, run the design-created test or bound feature before production behavior changes.
+3. Before correcting an unresolved finding with a review probe, run that probe.
+4. Run the exact test command.
+5. Confirm that the test fails because the required behavior is absent.
+6. When the test fails from setup, syntax, or an unrelated defect, stop and repair the test.
+7. Record only the command, exit status, and expected failure reason.
 
-Record only the command, exit status, and expected failure reason.
-Do not store full test output unless a separate log is necessary for recovery.
-Exempt a documentation-only slice and state the reason.
+- Do
+  - For a documentation-only slice, exempt the red checkpoint and state the reason.
+- Don't
+  - Weaken or replace a design-created test without returning to the `design` fit checkpoint.
+  - Store full test output unless a separate recovery log is necessary.
 
 ## 3. Implement the slice
 
-Implement the complete observable outcome across every required layer.
-Keep the changed path safe and complete.
-Do not defer a necessary layer to another slice.
-Do not broaden the accepted outcome.
+The implementation provides the complete observable outcome across every required layer.
+The changed path remains safe and complete.
+The implementation does not defer a necessary layer or broaden the accepted outcome.
 
-Replace any shape-only scaffold created during design with complete behavior before verification.
+1. Implement the complete observable outcome across every required layer.
+2. Before verification, replace every shape-only scaffold with complete behavior.
+3. Make private helper, local data structure, and similar code-level choices in code and tests.
 
-Make private helper, local data-structure, and similar code-level choices in code and tests.
-When a requirement is missing or must change, return `BLOCKED` with the exact user question.
-Do not edit requirements without explicit user approval.
-When implementation requires a new consequential architectural decision, return `BLOCKED` with the exact decision needed.
-Do not create or revise an ADR without the user or orchestrator response.
-When exploration proves that the slice does not fit, return to the `design` fit checkpoint before more edits.
-When a finding has status `OPEN` or `REOPENED`, mark it `IN PROGRESS` before the correction and `FIXED` with evidence after the correction.
-Preserve the asserted behavior of any review probe while fixing its finding.
-Do not mark a finding `VERIFIED` from the delivery context.
+- When a requirement is missing or must change, return `BLOCKED` with the exact user question.
+- When implementation needs a new consequential architectural decision, return `BLOCKED` with the exact decision needed.
+- When exploration proves that the slice does not fit, return to the `design` fit checkpoint before more edits.
+- For each `OPEN` or `REOPENED` finding:
+  1. Mark the finding `IN PROGRESS`.
+  2. Preserve the asserted behavior of its review probe.
+  3. Correct the finding.
+  4. Mark the finding `FIXED` and add evidence.
+
+- Don't
+  - Edit requirements without explicit user approval.
+  - Create or revise an ADR without the user or orchestrator response.
+  - Mark a finding `VERIFIED` from the delivery context.
 
 ## 4. Verify the code
 
-Run the focused test, affected integration tests, and configured verification commands.
-Run one exact end-to-end scenario through the surface selected during design.
-Inspect the complete diff for unrelated edits, generated files, debug output, and missing documentation.
-Remove generated caches and temporary files from the change.
+An unavailable required verification path is unfinished work.
+An in-process test cannot replace cross-process or cross-surface proof.
 
-Treat an unavailable required verification path as unfinished work.
-Do not replace cross-process or cross-surface proof with an in-process test.
+1. Run the focused test, affected integration tests, and configured verification commands.
+2. Run one exact end-to-end scenario through the surface selected during design.
+3. Inspect the complete diff for unrelated edits, generated files, debug output, and missing documentation.
+4. Remove generated caches and temporary files from the change.
 
 ## 5. Run the author preflight
 
-Before `READY FOR REVIEW`, trace every Approved requirement to changed behavior, executable tests, and verification evidence.
-Check normal, failure, recovery, lifecycle, compatibility, security, and operational behavior for every changed path.
-Read every `OPEN`, `IN PROGRESS`, and `REOPENED` finding in the slice findings file.
-Do not return for review while an addressed finding lacks `FIXED` status and closure evidence.
-Do not erase, rewrite, or duplicate earlier finding history.
+1. Before `READY FOR REVIEW`, trace every Approved requirement to changed behavior, executable tests, and verification evidence.
+2. Check normal, failure, recovery, lifecycle, compatibility, security, and operational behavior for every changed path.
+3. Read every `OPEN`, `IN PROGRESS`, and `REOPENED` finding in the findings file.
+4. Confirm that every addressed finding has `FIXED` status and closure evidence before review.
+
+- Don't
+  - Return for review while an addressed finding lacks `FIXED` status and closure evidence.
+  - Erase, rewrite, or duplicate earlier finding history.
 
 ## 6. Update durable artifacts
 
-Preserve the design-created feature files as the acceptance specification.
-Do not rewrite feature scenarios to match implementation.
-When a BDD harness exists, keep `write-step-definitions` bound to the feature's observable assertions and run the acceptance command.
-Return to `design` when verified behavior conflicts with a feature scenario or intended behavior changes.
+Design-created feature files remain the acceptance specification.
+Diagrams explain the implemented system and do not prescribe implementation.
 
-Update user guidance when observable behavior changed.
-Update an operator runbook when operations changed.
-Create or update a diagram only after code establishes the structure.
-Make the diagram explain the implemented system rather than prescribe implementation.
+1. Preserve the design-created feature files as the acceptance specification.
+2. When a BDD harness exists, keep `write-step-definitions` bound to the feature's observable assertions.
+3. When a BDD harness exists, run the acceptance command.
+4. When verified behavior conflicts with a feature scenario or intended behavior changes, return to `design`.
+5. When observable behavior changed, update user guidance.
+6. When operations changed, update an operator runbook.
+7. After code establishes the structure, create or update a diagram when needed.
+8. Make each diagram explain the implemented system.
 
-Do not duplicate code structure in prose.
-Do not add a durable reference to the initiative plan or slice name.
+- Don't
+  - Rewrite feature scenarios to match implementation.
+  - Duplicate code structure in prose.
+  - Add a durable reference to the initiative plan or slice name.
 
 ## 7. Prepare fresh review
 
-Prepare the diff base, code paths, requirements, tests, feature files, relevant ADRs, and security surface.
-Do not create a prose design summary for the reviewer.
-
-Return `READY FOR REVIEW` with changed artifact and diagram paths, the findings path, the verification status, and one contract decision for every changed boundary.
-Repeat each contract path with its consumers and exact verification command, or repeat the specific `NO CONTRACT NEEDED` reason.
-Use this exact form for each executable contract:
+1. Prepare the diff base, code paths, requirements, tests, feature files, relevant ADRs, and security surface.
+2. Include one contract decision for every changed boundary.
+3. For each executable contract, repeat its path, consumers, and exact verification command in this exact form.
 
 ```text
 Contract: <canonical path>
@@ -112,16 +128,23 @@ Consumers: <production code or verification>
 Verification: <exact command>
 ```
 
-Use this exact form when no executable contract is needed:
+4. When no executable contract is needed, repeat the specific reason in this exact form.
 
 ```text
 Contract: NO CONTRACT NEEDED
 Reason: <specific reason>
 ```
 
-The orchestrator starts the fresh reviewer with the findings path and returns the updated finding IDs to this task.
-When this task receives findings, read the complete file, fix all unresolved entries in one batch, and rerun affected verification.
-Return `READY FOR RE-REVIEW` after the fix batch with the same contract declarations and updated finding evidence.
+5. Return `READY FOR REVIEW` with changed artifact paths, diagram paths, the findings path, and verification status.
 
-Do not change slice status, roadmap status, ADR status, or plan lifecycle.
-Do not propose a commit.
+The orchestrator starts the fresh reviewer with the findings path and returns updated finding IDs to this task.
+
+6. When this task receives findings, read the complete findings file.
+7. Fix all unresolved entries in one batch.
+8. Rerun affected verification.
+9. Return `READY FOR RE-REVIEW` with the same contract declarations and updated finding evidence.
+
+- Don't
+  - Create a prose design summary for the reviewer.
+  - Change slice status, roadmap status, ADR status, or plan lifecycle.
+  - Propose a commit.
