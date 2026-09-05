@@ -11,7 +11,6 @@ sdm: "0.3"
 - Use `design-audit` before implementation or `implementation-review` after verification.
 
 - Don't
-  - During `design-audit`, edit any file other than `findings.md`.
   - Edit production code, existing tests, requirements, ADRs, feature files, fixtures, helpers, harness configuration, or dependencies.
   - Add tests during `design-audit`.
 - Do
@@ -29,6 +28,7 @@ sdm: "0.3"
 ## Findings
 
 The assigned lane findings file is the source of truth during this review.
+Canonical findings contain the latest correction evidence from delivery.
 The delivery context may set `IN PROGRESS` and `FIXED`.
 The review context may set `OPEN`, `VERIFIED`, and `REOPENED`.
 `OPEN` means that a reviewer found a defect without a complete correction.
@@ -38,6 +38,8 @@ The review context may set `OPEN`, `VERIFIED`, and `REOPENED`.
 `REOPENED` means that a reviewer found that the closing condition still fails.
 
 - Assign a stable ID to each new root defect.
+- Read canonical correction evidence before checking earlier findings.
+- If the assigned code or evidence is outdated, request the current result before deciding closure.
 - Record the assigned reporting slice and lane on every finding.
 - Write only to the exact lane findings path supplied by orchestration.
 - When a finding affects another slice or the initiative, keep its evidence in this lane file and set its escalation target.
@@ -96,23 +98,8 @@ Reason: <specific reason>
 
 1. Require every contract decision to pass the consumer check before returning `CLEAN`.
 2. Include the findings path, ADR paths, executable test paths, review probe paths, feature file paths, and diagram paths in the compact result.
-3. Include every contract decision in the compact result.
-4. For each executable contract, use this exact form in the compact result.
-
-```text
-Contract: <canonical path>
-Consumers: <production code or verification>
-Verification: <exact command>
-```
-
-5. When no executable contract is needed, use this exact form in the compact result.
-
-```text
-Contract: NO CONTRACT NEEDED
-Reason: <specific reason>
-```
-
-6. Include the verification command in the compact result.
+3. Include every contract decision using the forms in [Contracts](#contracts).
+4. Include the verification command in the compact result.
 
 ## Implementation-review mode
 

@@ -46,3 +46,18 @@ test("ignores structural examples inside fenced code blocks", async () => {
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.warnings, []);
 });
+
+test("requires SDM guidance before skill edits", async () => {
+  const [agents, contributing, validationGuide] = await Promise.all([
+    readFile(new URL("../../AGENTS.md", import.meta.url), "utf8"),
+    readFile(new URL("../../CONTRIBUTING.md", import.meta.url), "utf8"),
+    readFile(new URL("../../docs/skill-language-validation.md", import.meta.url), "utf8")
+  ]);
+
+  for (const document of [agents, contributing]) {
+    assert.match(document, /docs\/skill-language\.md/);
+    assert.match(document, /docs\/skill-language-validation\.md/);
+    assert.match(document, /npm run validate:sdm/);
+  }
+  assert.match(validationGuide, /does not prove that the skill follows every SDM writing rule/);
+});

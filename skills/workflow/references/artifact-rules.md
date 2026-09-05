@@ -19,7 +19,7 @@ Use a dependency graph for roadmap initiatives and initiative slices.
 Use a C4, component, class, state, or sequence diagram only when it materially improves understanding.
 Do not add diagrams to requirements or feature files.
 
-Durable artifacts must not reference slice names, plan sections, scratch paths, or temporary status identifiers.
+Durable artifacts must not reference slice names, coordination records, scratch paths, or temporary status identifiers.
 Cite a requirement for an obligation.
 Cite an ADR for rationale.
 Describe each artifact's owned information directly.

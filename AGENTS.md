@@ -32,6 +32,9 @@ This applies to subagents as well: if you are dispatched to work on a file here,
 
 ## Editing skills
 
+Before editing a file under `skills/`, read [the Skill Definition Markdown standard](docs/skill-language.md) and [its validation behavior](docs/skill-language-validation.md).
+After editing a file under `skills/`, run `npm run validate:sdm` and resolve every reported warning before validation or review.
+
 A skill's frontmatter `description` is its trigger, not a summary: it decides whether an agent loads the skill at all.
 Preserve both halves of it, what the skill does and when to use it, when editing.
 

@@ -17,7 +17,7 @@ The same delivery task keeps the design context for implementation unless orches
 3. Use the definitions for [Proposed ADR](../workflow/SKILL.md#common-terms), [executable contract](../workflow/SKILL.md#common-terms), [executable slice test](../workflow/SKILL.md#common-terms), [feature file](../workflow/SKILL.md#common-terms), [shape-only scaffold](../workflow/SKILL.md#common-terms), [red checkpoint](../workflow/SKILL.md#common-terms), and [security surface](../workflow/SKILL.md#common-terms).
 4. Read the glossary, relevant Approved requirements, relevant ADRs, relevant feature files, and the slice record when present.
 5. When orchestration supplies a findings path, use that path.
-6. When no findings path is supplied and the slice has a plan, use `<configured plans>/<initiative>/<slice>/findings.md`.
+6. When no findings path is supplied and the slice has initiative state, use `<configured plans>/<initiative>/<slice>/findings.md`.
 7. When the slice has a findings path, read the file and keep all unresolved entries in scope.
 8. When project rules require delegated exploration, read [delegation.md](../workflow/references/delegation.md) before delegating exploration.
 9. After context compaction or replacement, re-read the requirements, ADRs, executable tests, contracts, and findings before continuing.
@@ -28,6 +28,8 @@ The same delivery task keeps the design context for implementation unless orches
 - Inspect the code that receives input, changes relevant state, crosses affected boundaries, and produces the observable result.
 - Inspect tests for changed components and direct consumers whose behavior or compatibility can change.
 - Identify existing extension points, invariants, verification commands, and security boundaries.
+- When dependencies are incomplete, inspect their accepted outcomes and available design evidence before deciding whether discovery can continue.
+- When missing dependency evidence prevents a sound fit decision, return `BLOCKED` with the exact missing evidence.
 - When practical, test an uncertain technical claim with a bounded executable investigation.
 - Stop after identifying the changed components, affected boundaries, test location, and end-to-end verification command.
 - Expand the search only when an unresolved architecture question needs more evidence.
@@ -41,6 +43,7 @@ The same delivery task keeps the design context for implementation unless orches
 ### 3.1. Form the slice architecture
 
 - Map each applicable Approved requirement statement to the code or boundary that will satisfy it.
+- Give the slice a concise human-readable title that names its observable capability.
 - Choose the starting surface, owning component, data flow, and state changes.
 - Define applicable failure, recovery, compatibility, migration, security, and operational behavior.
 - Identify each machine-readable contract that production code or verification must consume.
@@ -50,8 +53,9 @@ The same delivery task keeps the design context for implementation unless orches
 - When the starting surface does not exist, decide whether a shape-only scaffold is required.
 - Prefer existing architecture and extension points when they satisfy the requirements.
 
-Before the fit checkpoint, slice-scoped artifacts remain in the working design and are not written.
+Before the fit checkpoint, new slice-scoped artifacts remain in the working design and are not written.
 These artifacts include ADRs, feature files, executable tests, contracts, diagrams, and scaffolds.
+Existing artifacts from an earlier fitted design remain preserved when the slice returns to design.
 
 - Don't
   - Create a prose design summary, slice-named design file, task graph, or handoff.
@@ -73,6 +77,9 @@ These artifacts include ADRs, feature files, executable tests, contracts, diagra
 ### 3.3. Confirm fit
 
 - Confirm the proposed architecture against actual code evidence.
+- When discovery changes a leaf's dependencies, propose a dependency amendment with previous dependencies, replacement dependencies, and evidence for each change.
+- Return the amendment with `FIT` when the outcome still fits without child slices.
+- Pause implementation until orchestration accepts the amendment and repeats the required gates.
 
 The slice fits only when all these properties are true:
 
@@ -84,19 +91,23 @@ The slice fits only when all these properties are true:
 | Decisions | No consequential architectural decision remains unresolved. |
 | Verification | The slice has one end-to-end verification path. |
 | Safety | Every changed path has a safe complete state. |
-| Dependencies | All dependencies are available. |
+| Dependencies | Dependency behavior is sufficiently defined for design, with implementation availability checked by orchestration. |
 | Delivery | The slice fits the remaining context and risk budget. |
 
 - When the slice does not fit:
   1. Divide it into smaller vertical outcomes.
-  2. Return proposed child slices with only the five fields defined by `plan`.
+  2. Return proposed child slices with only the seven fields below.
   3. Return `SPLIT` or `BLOCKED` without authoring slice-scoped artifacts.
 
 - Don't
   - Add architecture, contracts, task lists, or implementation instructions to child slice records.
-  - Edit the accepted plan, `state.json`, or `map.puml`.
+  - Edit `state.json` or `map.puml`.
 
-The orchestrator presents the split, records an accepted plan change, and resumes the delivery task.
+The orchestrator routes the split under the run autonomy setting, records acceptance, and runs `write-map` to apply the exact proposal.
+
+- When work already exists, assign its code, artifacts, and unresolved findings to the proposed children.
+- Identify shared artifacts and their writer so child work does not conflict.
+- Preserve existing work and evidence until orchestration accepts its disposition.
 
 ## 4. Record decisions and author the fitted slice
 
@@ -118,19 +129,13 @@ The orchestrator presents the split, records an accepted plan change, and resume
 1. Author slice-scoped artifacts only after fit passes.
 2. For each boundary needing a new executable contract, use `write-contracts` to create it in the canonical project-owned path.
 3. Bind each new contract to its production or verification consumer before implementation.
-4. When the selected starting surface exists:
-   1. Create or update the smallest executable slice test through the selected starting surface.
-   2. Create or update the slice Gherkin feature file through `write-feature`.
-   3. Run each design-created executable slice test before implementation.
-   4. Record the exact command and expected failure reason for each red checkpoint.
-5. When the selected starting surface does not exist:
-   1. Create only a shape-only scaffold for the selected starting surface.
-   2. Create or update the smallest executable slice test through the new starting surface.
-   3. Create or update the slice Gherkin feature file through `write-feature`.
-   4. Run each design-created executable slice test before implementation.
-   5. Record the exact command and expected failure reason for each red checkpoint.
-6. When relationships, lifecycle, or call order are part of the decision, add an ADR decision diagram.
-7. Identify the security surface as `none` or a short list of trust boundaries for reviewer routing.
+4. When the selected starting surface does not exist, create only a shape-only scaffold for it.
+5. Create or update the smallest executable slice test through the selected starting surface.
+6. Create or update the slice Gherkin feature file through `write-feature`.
+7. Run each design-created executable slice test before implementation.
+8. Record the exact command and expected failure reason for each red checkpoint.
+9. When relationships, lifecycle, or call order are part of the decision, add an ADR decision diagram.
+10. Identify the security surface as `none` or a short list of trust boundaries for reviewer routing.
 
 - Don't
   - Add production behavior during design.
@@ -144,7 +149,7 @@ Each result has exactly one status with this meaning:
 | Status | Meaning |
 | --- | --- |
 | `FIT` | The proposed architecture fits one delivery context. |
-| `SPLIT` | The result includes proposed child slice records for orchestration and user acceptance. |
+| `SPLIT` | The result includes proposed child slice records for acceptance and orchestration. |
 | `BLOCKED` | The result identifies the unresolved requirement, decision, or dependency. |
 
 - Return one compact result that starts with exactly one status.
@@ -152,6 +157,10 @@ Each result has exactly one status with this meaning:
 - For `FIT`, return every field in this block:
 
 ```text
+Title: <concise observable capability>
+Starting surface: <command, route, public function, event, job, or user action>
+Done signal: <one executable command or end-to-end observation>
+Dependency amendment: <leaf, previous dependencies, replacement dependencies, evidence, or NONE>
 ADRs: <Proposed ADR paths or NONE>
 Executable tests: <canonical test paths or NONE>
 Feature files: <canonical feature paths or NONE>
@@ -177,16 +186,22 @@ Reason: <specific reason>
 
 ```text
 Child: <slice slug>
+Title: <concise observable capability>
 Outcome: <one observable result>
+Requirements: <Approved requirement statement references assigned to this child>
 Dependencies: <child or existing slice slugs>
 Starting surface: <command, route, public function, event, job, or user action>
 Done signal: <one executable command or end-to-end observation>
 ```
 
-- For `SPLIT`, state that the current slice is a proposed parent and is not executable.
-- For `SPLIT` or `BLOCKED`, do not return slice-scoped design artifact paths.
+- For `SPLIT`, state that the current slice becomes a non-executable parent when the split is accepted.
+- Assign every parent requirement to at least one child without adding requirements outside the parent assignment.
+- For an initial `SPLIT` or `BLOCKED`, do not return new slice-scoped design artifact paths.
+- For a late `SPLIT`, include the existing work paths and proposed child ownership separately from the child records.
+- Preserve the parent's accepted title when proposing a split.
 
 - Don't
   - Repeat the explored code or reasoning in the status.
 
-The orchestrator owns plan changes, lifecycle changes, and the transition to implementation.
+The design context owns the fit judgment and child proposal.
+The orchestrator owns acceptance, lifecycle changes, and the transition to implementation.

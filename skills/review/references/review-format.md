@@ -8,6 +8,7 @@ Reporting slice: <slice name>
 Writable findings: docs/plans/<initiative>/<slice>/lanes/<lane>/findings.md
 Canonical findings: docs/plans/<initiative>/<slice>/findings.md
 Last updated: <ISO 8601 timestamp>
+Review wave: <wave identifier>
 
 ## Findings
 
@@ -20,6 +21,7 @@ Last updated: <ISO 8601 timestamp>
 - Reporting slice: <slice slug>
 - Escalation target: <slice slug | initiative | user gate | NONE>
 - First reported: <review wave or date>
+- Aliases: <reporting slice, lane, local finding ID, or NONE>
 - Affected path: <file, symbol, artifact, or boundary>
 - Evidence: <specific evidence and failure condition>
 - Condition to close: <specific condition that a reviewer can verify>

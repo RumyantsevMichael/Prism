@@ -81,7 +81,7 @@ One idea can produce several requirement files.
 - Use one file when a reader can understand the capability as one requirement set.
 - Use several files when the capabilities can change, ship, or be superseded independently.
 - Link related requirements across files with direct Markdown links.
-- Leave outcome-slice boundaries to `plan` and the design fit checkpoint.
+- Leave outcome-slice boundaries to the design fit checkpoint.
 - Don't
   - Group requirements by a technical component.
   - Group requirements by a team.
@@ -122,7 +122,7 @@ It does not change roadmap priority or initiative state.
 
 - Use the delivery rules in the `workflow` overview skill.
 - Don't
-  - Open a plan.
+  - Start initiative orchestration.
   - Design a slice.
   - Write code.
 

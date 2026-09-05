@@ -125,7 +125,7 @@ Use this role matrix for manual orchestration tests and Codex benchmark sessions
 |---|---|
 | Orchestrator | `gpt-5.6-luna` |
 | Product owner | `gpt-5.6-luna` |
-| Plan and design agents | `gpt-5.6-terra` |
+| Design agents | `gpt-5.6-terra` |
 | Implementation controllers and workers | `gpt-5.6-terra` |
 | Non-security reviewers | `gpt-5.6-terra` |
 | Security validation and review | `gpt-5.6-sol` |

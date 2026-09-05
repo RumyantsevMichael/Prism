@@ -23,7 +23,7 @@ Model: <resolved model or host default>
 ```
 
 Put large read-only findings in the supplied scratch path.
-Use the owning initiative plan for scratch output when it exists.
+Use the owning initiative coordination directory for scratch output when it exists.
 Otherwise, use task-scoped temporary scratch and delete it after the phase.
 Return only paths and short status records through the broker.
 
@@ -37,5 +37,5 @@ Render an execution profile as:
 - Context: fresh | resume
 - Parallelism: sequential | independent
 - Focus: <specific risks>
-- Model role: planning | delivery | review | security-review
+- Model role: delivery | review | security-review
 - Model: <resolved model or host default>

@@ -1,37 +1,73 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { parseMap } from "../../skills/write-map/scripts/validate-map.mjs";
 
-const skillNames = [
-  "design", "ideate", "implement", "orchestrate", "plan", "review", "roadmap",
-  "workflow-init", "workflow", "write-adr", "write-contracts", "write-feature",
-  "write-requirements", "write-step-definitions", "write-user-docs"
-];
+const format = await readFile(new URL("../../skills/write-map/references/map-format.md", import.meta.url), "utf8");
+const example = format.match(/```puml\n([\s\S]*?)\n```/)[1];
+const alias = (slug) => "s_" + Buffer.from(slug).toString("hex");
+const fixture = (states, assignments, edges = []) => [
+  "@startuml", "title Initiative: fixture", "hide empty description",
+  ...states, ...assignments.map(([slug, req]) => alias(slug) + ' : requires "req.md#' + req + '"'),
+  ...edges.map(([from, to]) => alias(from) + " --> " + alias(to) + " : depends on"), "@enduml"
+].join("\n");
+const state = (slug, status, open = false) => 'state "Meaningful capability" as ' + alias(slug) + " <<" + status + ">>" + (open ? " {" : "");
 
-async function skill(name) {
-  return readFile(new URL(`../../skills/${name}/SKILL.md`, import.meta.url), "utf8");
-}
-
-test("uses map.puml for newly created initiative maps", async () => {
-  const plan = await skill("plan");
-  const design = await skill("design");
-  const workflow = await skill("workflow");
-
-  assert.match(plan, /Link `map\.puml` from the plan/);
-  assert.match(design, /Edit the accepted plan, `state\.json`, or `map\.puml`/);
-  assert.match(workflow, /\| `map\.puml` \|/);
+test("parses the documented map and derives topology without cursor duplication", () => {
+  const map = parseMap(example);
+  assert.equal(map.slices.download.title, "Download signed reports");
+  assert.equal(map.slices.download.parent, "reports");
+  assert.deepEqual(map.effectiveDependencies.download, ["auth"]);
+  assert.deepEqual(map.designCandidates, ["download"]);
+  assert.equal(map.complete.reports, false);
+  assert.equal(map.complete.auth, true);
+  assert.equal(map.dependenciesComplete.includes("download"), true);
+  assert.equal(parseMap(example.replace("<<not-started>>", "<<done>>")).complete.reports, true);
 });
 
-test("migrates a legacy initiative map only when a current map is absent", async () => {
-  const orchestrate = await skill("orchestrate");
-
-  assert.match(orchestrate, /When `map\.puml` is absent and legacy `slices\.puml` exists, move its unchanged content to `map\.puml`, update plan links, and record the migration in the state audit trail/);
+test("preserves distinct aliases including natural suffixes and object property names", () => {
+  const slugs = ["a-b", "a_b", "a_b_2", "__proto__", "constructor"];
+  const source = fixture(
+    [state("root", "split", true), ...slugs.map((slug) => state(slug, "not-started")), "}"],
+    [["root", "R1"], ...slugs.map((slug) => [slug, "R1"])]
+  );
+  const map = parseMap(source);
+  assert.equal(Object.keys(map.slices).length, 6);
+  for (const slug of slugs) assert.equal(map.slices[slug].parent, "root");
 });
 
-test("does not direct active skills to create slices.puml", async () => {
-  const documents = await Promise.all(skillNames.map(skill));
-  const legacyReferences = documents
-    .flatMap((document, index) => [...document.matchAll(/slices\.puml/g)].map(() => skillNames[index]));
+test("expands inherited dependencies and parent completion while allowing early design", () => {
+  const source = fixture([
+    state("root", "split", true),
+    state("group", "split", true), state("child", "not-started"), "}",
+    state("prerequisite", "split", true), state("first", "done"), state("second", "blocked"), "}", "}"
+  ], ["root", "group", "child", "prerequisite", "first", "second"].map((slug) => [slug, "R1"]), [["group", "prerequisite"]]);
+  const map = parseMap(source);
+  assert.deepEqual(map.effectiveDependencies.child, ["first", "second"]);
+  assert.deepEqual(map.designCandidates, ["child"]);
+  assert.equal(map.dependenciesComplete.includes("child"), false);
+  assert.equal(map.complete.prerequisite, false);
+});
 
-  assert.deepEqual(legacyReferences, ["orchestrate"]);
+test("rejects ambiguous syntax, missing coverage, invalid aliases, and dependency cycles", () => {
+  const bad = [
+    [example.replace("hide empty description", "!include secret"), /Unsupported|Missing/],
+    [example.replace('state "Download signed reports"', 'state ""'), /Invalid slice title/],
+    [example.replace("s_646f776e6c6f6164", "s_0"), /Invalid slice alias/],
+    [example.replace("<<split>>", "<<done>>"), /Split status/],
+    [example.replace('s_646f776e6c6f6164 : requires "docs/requirements/reports.md#REQ-1"', ""), /Missing requirement|Incomplete child coverage/],
+    [example.replace("reports.md#REQ-2", "reports.md#REQ-3"), /Incomplete child coverage/],
+    [example.replace("@enduml", "s_61757468 --> s_646f776e6c6f6164 : depends on\n@enduml"), /cycle/],
+    [example.replace("@enduml", "s_646f776e6c6f6164 --> s_7265706f727473 : depends on\n@enduml"), /self-dependency/],
+    [example.replace("@enduml", "s_646f776e6c6f6164 --> s_78 : depends on\n@enduml"), /Unknown dependency/],
+    [example.replace("@enduml", 'state "Other root" as s_78 <<done>>\n@enduml'), /one root/]
+  ];
+  for (const [source, error] of bad) assert.throws(() => parseMap(source), error);
+});
+
+test("migration preserves legacy evidence and blocks missing facts", async () => {
+  const orchestrate = await readFile(new URL("../../skills/orchestrate/SKILL.md", import.meta.url), "utf8");
+  assert.match(orchestrate, /Preserve older coordination files before replacing their format/);
+  assert.match(orchestrate, /If records disagree, inspect the actual artifacts/);
+  assert.match(orchestrate, /Do not infer approval or completion from a missing record/);
 });

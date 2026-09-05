@@ -41,56 +41,45 @@ Initialize Prism once in each project.
 The skill inspects the project and asks about its documentation paths, stack, verification commands, issue tracker, and local rules.
 It then writes `.prism/workflow.md` and creates the configured documentation structure.
 
-Start the workflow that fits your change.
-
-| Starting point | Skill | Use it when |
-|---|---|---|
-| An unformed idea | `prism:ideate` | You need to explore the problem and define product requirements |
-| A defined capability | `prism:write-requirements` | You need to record and approve EARS requirements without broad ideation |
-| Approved requirements with several outcomes | `prism:plan` | You need dependency-ordered outcome slices |
-| One Approved outcome | `prism:design` | You need to explore the code and confirm that the outcome fits one context |
-| A fitted outcome | `prism:review` in `design-audit` mode | You need to audit the design before implementation |
-| An audited outcome | `prism:implement` | The same delivery context is ready to write tests and code |
-| A full initiative | `prism:orchestrate` | You want Prism to coordinate planning, design audit, implementation, and review |
-
-Use `prism:workflow` when you need an explanation of the complete workflow.
+Start with `prism:ideate` to shape an idea, or `prism:orchestrate` for a roadmap initiative with Approved requirement links.
+Use `prism:design` directly for one Approved outcome.
+Use `prism:workflow` for workflow guidance.
 
 ## How the workflow works
-
-Prism separates durable product intent from code delivery.
-The orchestrator keeps one delivery context from design through implementation.
-The design audit and final review require fresh contexts.
 
 | Stage | Skill | Result |
 |---|---|---|
 | Prioritize | `prism:roadmap` | An ordered Now, Next, and Later roadmap |
 | Shape | `prism:ideate` | Approved EARS requirement files, or a decision to stop |
-| Plan | `prism:plan` | Dependency-ordered outcome slices |
+| Start an initiative | `prism:orchestrate` | One provisional root slice and a short resume note |
 | Design | `prism:design` | A fit decision, Gherkin acceptance scenarios, architectural ADRs, and executable boundary artifacts when needed |
+| Map accepted state | `prism:write-map` | An authoritative `map.puml` with accepted topology and structural statuses |
 | Design audit | `prism:review` in `design-audit` mode | Complete requirements, boundary, contract, security, and verification findings |
 | Implement | `prism:implement` | Failing tests, working code, step definitions, and verification |
 | Review | `prism:review` in `implementation-review` mode | Exhaustive independent findings against the completed code and intent until `CLEAN` |
 
-Design authors slice-scoped artifacts only after the fit checkpoint passes, and a `SPLIT` or `BLOCKED` result leaves those artifacts unwritten.
-`prism:orchestrate` connects Plan, Design, Design audit, Implement, and Review through resumable child-agent contexts.
-It resumes the same delivery agent from design through implementation.
-It starts a fresh design review after `FIT` and a fresh implementation review after the code works.
-It repeats each audit or review after corrections until the result is `CLEAN`, the user stops, or a real blocker occurs.
-It can replace a delivery context from the current code and findings when a review reopens a defect.
-The initiative plan stores a validated `state.json` file so a later orchestrator can resume after a phase boundary.
-Each slice stores all design-audit and implementation-review findings in one `findings.md` file with correction and verification statuses.
+The roadmap owns the initiative name, intent, priority, and Approved requirement links.
+The orchestrator creates one provisional root slice after those inputs exist.
+Design explores documents and focused code paths, then returns `FIT`, `SPLIT`, or `BLOCKED`.
+On `SPLIT`, design proposes child slices and dependencies while preserving requirement coverage.
+The orchestrator applies the accepted proposal and runs `write-map`, then repeats design for each child.
+It routes decisions while design owns boundaries, dependencies, and architecture.
 
-One slice contains one observable outcome, one dominant path, one acceptance suite, and one reviewable diff.
-The capability agent splits the slice after exploration when it cannot safely finish the outcome in one context.
+Each fitted leaf proceeds through design audit, implementation, review, and user correctness confirmation.
+Design discovery can precede dependency implementation, but implementation requires completed dependencies and a fresh fit check.
+Review repeats after corrections until `CLEAN`, a user stop, or a real blocker.
+After integration, delivery verifies the result, with fresh review and confirmation when behavior changes or equivalence is uncertain.
 
-Prism keeps requirements for intent and ADRs for architectural decisions.
-It keeps executable tests and contracts for enforceable boundary behavior.
-It keeps feature files for acceptance behavior and examples in domain language.
-It keeps diagrams for the implemented structure.
-Code specifies implementation details.
-Executable contracts exist only when code or verification consumes them.
-Each declared contract records its canonical path, consumers, and exact verification command.
-Each `NO CONTRACT NEEDED` result records a specific reason.
+The [resume note](skills/orchestrate/SKILL.md#6-resume-note) records settings, active work, pending decisions, next actions, and evidence paths.
+The authoritative [map](skills/write-map/references/map-format.md) records slice topology, titles, requirement assignments, dependencies, and structural status.
+A bundled validator checks the constrained map grammar, coverage, and expanded dependency graph.
+Slice files retain findings and evidence needed to resume work.
+Agents reason about the next step within the workflow's ownership rules and human gates.
+
+Design creates new artifacts only after fit passes.
+Requirements preserve intent, ADRs preserve decisions, and feature files preserve acceptance examples.
+Tests and consumed contracts enforce behavior, diagrams explain structure, and code supplies implementation details.
+The focused `write-requirements` and `write-map` skills support file authoring and accepted map changes.
 
 ## Review artifacts visually
 
@@ -98,18 +87,13 @@ Prism stores diagrams as PlantUML `.puml` source files beside their Markdown art
 Agents read the PlantUML source and never read rendered images.
 The bundled review server renders diagrams in the human's browser without creating image files.
 
-The orchestrator opens one Prism artifact viewer session for all recorded ADRs and diagrams after a clean design audit and for all changed artifacts before the final correctness gate.
-The viewer's artifact tree contains the complete set, so the orchestrator does not open one viewer session per artifact.
-The orchestrator must call a browser-opening capability for the selected browser.
-Showing a URL without opening the viewer is only a fallback when no browser capability exists.
-Ask the agent to open the Prism review page at any other time during an active harness session.
+Prism opens one viewer session after design audit and before final correctness confirmation.
+The artifact tree shows all files, and tabs retain open artifacts.
+Ask the agent to open the viewer at any time during an active session.
 
-`Review browser` defaults to `auto` in `.prism/workflow.md`.
-Auto review uses the internal browser in desktop sessions and the system browser in CLI sessions.
-Internal review opens the URL in the internal browser when that browser is available.
-Explicit `internal` and `external` values override `auto`.
-If the selected browser is not available, Prism presents the URL and source artifacts.
-Set `Review browser: external` to open review pages in the system browser.
+`Review browser: auto` uses the internal browser in desktop sessions and the system browser in CLI sessions.
+Set `internal` or `external` in `.prism/workflow.md` to override this choice.
+When the selected browser is unavailable, Prism presents the URL and source artifacts.
 
 Start a standalone review from a Prism checkout when no harness session is active:
 
@@ -149,14 +133,16 @@ The default paths are:
 | Glossary | `docs/Glossary.md` |
 | User documentation | `docs/user-guide/` |
 
-Each initiative plan has a `map.puml` file beside `plan.md`.
-The map shows the slice hierarchy, dependencies, and live status.
+Each initiative coordination directory has a `map.puml` file beside `state.json`.
+The `write-map` skill applies accepted design proposals and structural lifecycle changes to the map.
+The map shows meaningful slice titles, nested parent-child slices, dependency edges, and live status.
+Design supplies titles such as `Download signed reports`, while stable slugs identify slices and artifact paths.
 
-### Migrate an older initiative plan
+### Migrate an older initiative map
 
-When Prism resumes a plan with `slices.puml`, it moves the unchanged graph content to `map.puml`.
-It updates links in the plan and records the migration in the initiative state audit trail.
-Do not create a new `slices.puml` file after the migration.
+On resume, Prism preserves legacy coordination files before converting their explicit topology to the constrained map format.
+It keeps needed evidence and records current work in the short `state.json` resume note.
+Missing or conflicting facts require recovery before scheduling.
 
 ### Migrate an older configuration
 

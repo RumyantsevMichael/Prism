@@ -7,7 +7,7 @@ sdm: "0.3"
 
 # Maintain the roadmap
 
-This skill works one level above `plan`.
+This skill works one level above delivery.
 It prioritizes whole initiatives without defining their implementation.
 
 The roadmap is one durable, living file at the configured path.
@@ -72,7 +72,7 @@ This section applies only in re-prioritization mode and follows the prioritizati
 11. Do not keep an indefinite question list.
 12. Prepare the proposed roadmap and diagram without updating either durable file.
 
-An `envisioned` node usually has no requirements until `ideate` or `write-requirements` defines them.
+An `envisioned` node usually has no requirements until `ideate` defines them.
 The `ideate` skill does not write the roadmap.
 Within-band order is priority, not a schedule or a phased design.
 
@@ -84,13 +84,13 @@ This mode changes no other roadmap lifecycle state.
 The procedure applies exactly one requested state transition.
 
 1. Skip all re-prioritization actions, including prioritization lenses, visual review, and user acceptance.
-2. When the initiative has no node, add it to `Now` in the source state for the requested transition.
-3. For a self-contained outcome without `plan`, make the node cite its requirements and any ADRs.
-4. When a plan is accepted, change `envisioned` to `planned`.
-5. When a plan is accepted, add requirements, ADRs, and the `click` plan link.
+2. When the initiative has no node, return `BLOCKED` because only re-prioritization creates an initiative.
+3. When orchestration creates initial initiative state, make the node cite its requirements and any ADRs.
+4. When orchestration creates initial initiative state, change `envisioned` to `planned`.
+5. When orchestration creates initial initiative state, add the `click` map link.
 6. When the first slice enters `design`, change `planned` to `in-progress`.
 7. When the last slice lands, change `in-progress` to `shipped`.
-8. When the last slice lands, remove the `click` plan link.
+8. When the last slice lands, remove the `click` map link.
 9. Update only the files required for the requested transition and its listed link or node changes.
 
 ## 5. Review, accept, and write the re-prioritization
@@ -132,7 +132,7 @@ A --> B : unblocks
   - Add a within-band order when a band exceeds delivery capacity.
   - When a band exceeds delivery capacity, put the within-band order in the sequencing rationale.
   - Keep requirements, ADRs, names, and strategy pillars as durable node identity.
-  - Keep the `click` plan link only until the initiative ships.
+  - Keep the `click` map link only until the initiative ships.
   - Sequence whole initiatives independently from architecture inside an initiative.
   - Read and update PlantUML source directly.
 - Don't
@@ -141,6 +141,6 @@ A --> B : unblocks
   - Collapse priority and dependency into one axis.
   - Represent within-band order as new bands or dates.
   - Keep a separate cross-initiative dependency table.
-  - Cite plan IDs as durable node identity.
-  - Delete a plan folder before its roadmap node is `shipped`.
+  - Cite coordination-state IDs as durable node identity.
+  - Delete an initiative coordination directory before its roadmap node is `shipped`.
   - Use ASCII art, rendered images, or EBNF for roadmap content.

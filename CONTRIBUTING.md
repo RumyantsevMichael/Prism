@@ -55,10 +55,12 @@ Restart Codex after package changes when the installed copy does not refresh.
 
 ```bash
 claude plugin validate . --strict
+npm run validate:sdm
 ```
 
-This checks the Claude manifests and parses every skill frontmatter block.
+The Claude validator checks the manifests and parses every skill frontmatter block.
 `--strict` promotes unrecognized-field warnings to errors, which catches typos in field names.
+The SDM validator checks the supported version and selected structural conventions.
 CI also installs the native Codex package from an isolated temporary marketplace.
 Run both checks before opening a pull request.
 
@@ -79,6 +81,8 @@ To validate `plugin.json` in isolation, copy the plugin into a scratch directory
 
 ## Writing skills
 
+- **Read the SDM documents first.** Before editing a skill, read [the Skill Definition Markdown standard](docs/skill-language.md) and [its validation behavior](docs/skill-language-validation.md).
+- **Run SDM validation after each skill edit.** Run `npm run validate:sdm` and resolve every reported warning.
 - **Frontmatter `description` is the trigger.** It is what Claude matches against when deciding whether to load the skill, so it should say both what the skill does and when to use it.
   Prefer concrete trigger phrases over abstract summary.
 - **Add `disable-model-invocation: true`** for skills that should only ever run when the user explicitly asks, rather than being auto-selected mid-task.

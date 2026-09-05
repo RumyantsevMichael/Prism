@@ -1,6 +1,6 @@
 ---
 name: write-requirements
-description: "Create or revise EARS requirements for product intent before planning or design."
+description: "Define the EARS requirement-file format and lifecycle when ideate creates a file or an Approved requirement needs a focused revision."
 sdm: "0.3"
 ---
 
@@ -111,8 +111,8 @@ Concurrent authors can select the same next number on separate branches.
 
 A requirement file has one of these statuses: `Draft`, `Approved`, `Superseded by <link>`, or `Withdrawn`.
 Every new file starts as `Draft`.
-Planning and design consume only Approved requirement files.
-The roadmap and slice plan record delivery progress.
+Design consumes only Approved requirement files.
+The roadmap and initiative state record delivery progress.
 
 - While the user reviews a Draft file, edit its Draft requirements in place.
 - After the user accepts every requirement in a file, update its approval metadata in one edit:
@@ -153,7 +153,7 @@ A statement that does not remain true after a complete implementation redesign i
 ## 7. Traceability
 
 Requirement files link to related, superseded, and replacement requirements.
-Slice plans, ADRs, feature files, executable contracts, and diagrams link to the requirements they serve.
+Slice records, ADRs, feature files, executable contracts, and diagrams link to the requirements they serve.
 
 - For reverse traceability, search the repository for exact Markdown links or `filename.md#anchor` values.
 - Don't
@@ -164,10 +164,10 @@ Slice plans, ADRs, feature files, executable contracts, and diagrams link to the
 - Present the Draft files and recommend continuing, revising, or stopping.
 - Require explicit user acceptance before approving a file.
 - After approval, recommend `design` for one self-contained outcome.
-- After approval, recommend `plan` for a multi-slice initiative.
+- After approval, recommend `roadmap` and then `orchestrate` for a multi-slice initiative.
 
 - Don't
-  - Open a plan in this context.
+  - Start initiative orchestration in this context.
   - Start design in this context.
 
 ## 9. Quality checks

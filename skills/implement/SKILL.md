@@ -13,14 +13,15 @@ The delivery context owns implementation and does not delegate it to a fresh wor
 2. Use the accepted requirements, relevant ADRs, tests, design context, and compact slice record when present.
 3. Inspect only files required for the accepted design and verification.
 4. When orchestration supplies a findings path, read the complete file before implementation and every correction.
-5. When no path is supplied and the slice has a plan, use `<configured plans>/<initiative>/<slice>/findings.md`.
+5. When no path is supplied and the slice has initiative state, use `<configured plans>/<initiative>/<slice>/findings.md`.
 6. Read [the review format](../review/references/review-format.md) before changing finding statuses.
 
 - Do
   - Edit only finding status and implementer evidence in the findings file.
   - When the context must pause or be replaced:
-    1. Create `recovery.md` in the initiative plan.
-    2. After the slice completes, delete that recovery record.
+    1. Create `<configured plans>/<initiative>/<slice>/recovery.md` with the current phase, workspace, evidence, unfinished work, and next action.
+    2. Return its exact path for orchestration to reference from the active context.
+    3. After the slice completes, delete only that recovery record through orchestration.
 
 ## 1. Bind acceptance to executable tests
 
@@ -54,7 +55,6 @@ The delivery context owns implementation and does not delegate it to a fresh wor
 
 ## 3. Implement the slice
 
-The implementation provides the complete observable outcome across every required layer.
 The changed path remains safe and complete.
 The implementation does not defer a necessary layer or broaden the accepted outcome.
 
@@ -65,6 +65,9 @@ The implementation does not defer a necessary layer or broaden the accepted outc
 - When a requirement is missing or must change, return `BLOCKED` with the exact user question.
 - When implementation needs a new consequential architectural decision, return `BLOCKED` with the exact decision needed.
 - When exploration proves that the slice does not fit, return to the `design` fit checkpoint before more edits.
+- Before that return, preserve existing work and identify its code, artifacts, and unresolved findings for design.
+- When orchestration requests integration verification, compare the preserved reviewed result with the integrated tree and run affected verification.
+- Report changed behavior, uncertain equivalence, conflict resolutions, and verification results for fresh review routing.
 - For each `OPEN` or `REOPENED` finding:
   1. Mark the finding `IN PROGRESS`.
   2. Preserve the asserted behavior of its review probe.
@@ -99,7 +102,6 @@ An in-process test cannot replace cross-process or cross-surface proof.
 
 ## 6. Update durable artifacts
 
-Design-created feature files remain the acceptance specification.
 Diagrams explain the implemented system and do not prescribe implementation.
 
 1. Preserve the design-created feature files as the acceptance specification.
@@ -114,7 +116,7 @@ Diagrams explain the implemented system and do not prescribe implementation.
 - Don't
   - Rewrite feature scenarios to match implementation.
   - Duplicate code structure in prose.
-  - Add a durable reference to the initiative plan or slice name.
+  - Add a durable reference to the initiative coordination record or slice name.
 
 ## 7. Prepare fresh review
 
@@ -146,5 +148,5 @@ The orchestrator starts the fresh reviewer with the findings path and returns up
 
 - Don't
   - Create a prose design summary for the reviewer.
-  - Change slice status, roadmap status, ADR status, or plan lifecycle.
+  - Change slice status, roadmap status, ADR status, or initiative lifecycle.
   - Propose a commit.
