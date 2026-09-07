@@ -7,140 +7,63 @@ sdm: "0.3"
 
 # Maintain the roadmap
 
-This skill works one level above delivery.
-It prioritizes whole initiatives without defining their implementation.
-
-The roadmap is one durable, living file at the configured path.
-The default roadmap path is `docs/roadmap.md`.
+The roadmap prioritizes whole initiatives, without designing their slices.
+Its sibling `roadmap.puml` owns priority bands, lifecycle states, and cross-initiative dependencies.
 
 ## 1. Prepare
 
-1. Read `.prism/workflow.md` when it exists.
-2. When `.prism/workflow.md` exists, use its paths and stack assumptions instead of the defaults.
-3. When `.prism/workflow.md` does not exist, use the defaults and applicable project instructions.
-4. Read the `workflow` skill for lifecycle rules and the context map.
-5. Read the roadmap, the glossary, and the product strategy document when present.
-6. When `orchestrate` requests a listed state transition after its related gate, select orchestrated state-change mode.
-7. Otherwise, select re-prioritization mode.
-8. State the selected mode before continuing.
-9. Follow only that mode's actions.
+1. If `.prism/workflow.md` exists, read it first.
+2. Read the [workflow](../workflow/SKILL.md), roadmap, glossary, and product strategy when present.
+3. Select orchestrated state-change mode only for a transition requested by `orchestrate` after its gate.
+4. Otherwise, select re-prioritization mode.
+5. State the selected mode.
 
-The default glossary path is `docs/Glossary.md`.
+Configured paths override `docs/roadmap.md` and `docs/Glossary.md`.
 
-## 2. Prepare and apply the prioritization lenses
+## 2. Apply the selected mode
 
-Re-prioritization is a judgment-heavy, gated task that runs inline with the user.
-Re-prioritization and orchestrated state-change mode are mutually exclusive.
-This section applies only in re-prioritization mode.
+- For re-prioritization:
+  1. Conduct a bounded survey of initiative status, strategy alignment, and dependencies through [delegation.md](../workflow/references/delegation.md).
+  2. Propose `Now`, `Next`, and `Later` bands locally, first favoring prerequisites that unblock the most initiatives.
+  3. For overloaded bands, retain `Must` initiatives required for band success and defer `Should` and `Could` when capacity requires.
+  4. Move `Won't, this cycle` and de-prioritized initiatives to `Parked` with reasons.
+  5. When adding work to a full band, demote other work to preserve capacity.
+  6. Within each band, favor near-complete, low-effort, high-value initiatives and identify high-effort, low-value parking candidates.
+  7. When a band exceeds capacity, record the overload and within-band order in the sequencing rationale.
+  8. Add new initiatives as dashed `envisioned` nodes with a name, intent, served pillar, and Approved requirement links when available.
+  9. Retain shipped initiatives as history.
+  10. Resolve strategic questions into banding decisions, requirement tasks, or ADR questions.
+  11. Prepare the proposed prose and diagram under the [artifact rules](#3-artifact-rules), without replacing current files.
+  12. Inspect the candidate through [visual-review.md](../workflow/references/visual-review.md).
+  13. Present the proposed changes through the workflow gate rules.
+  14. After user acceptance, save the roadmap and sibling `roadmap.puml`.
+- For an orchestrated state change:
+  1. If the initiative node is missing, return `BLOCKED` because only re-prioritization creates initiatives.
+  2. Apply exactly the requested transition and associated links from the table below.
+  3. Check the candidate against the [artifact rules](#3-artifact-rules), preserving other initiatives, priority bands, and dependencies.
+  4. Save the required changes without questions, approval, or visual review.
 
-1. Read [delegation.md](../workflow/references/delegation.md).
-2. Route a bounded read-only survey through that procedure.
-3. Confirm which initiatives are live, shipped, or newly envisioned.
-4. Read the strategy pillars that these initiatives serve.
-5. Keep the prioritization decision in the current context.
-6. Use qualitative judgment unless real usage data and a large scored backlog exist.
-7. Read dependency arrows first.
-8. Favor the initiative that unblocks the most downstream nodes.
-9. Use MoSCoW to reduce an overloaded band.
-10. Keep `Must` initiatives that the band cannot succeed without.
-11. Move `Should` and `Could` initiatives to a later band when capacity requires it.
-12. Move `Won't, this cycle` initiatives to `parked` with a reason.
-13. When adding work to a full band, demote other work to preserve finite capacity.
-14. For each applicable band, use value versus effort to find quick wins within that band.
-15. Move near-complete, low-effort, high-value initiatives forward within an applicable band when this releases useful progress.
-16. Identify high-effort, low-value initiatives as parking candidates.
+| Trigger | Transition | Associated changes |
+| --- | --- | --- |
+| Initial initiative map created | `envisioned` to `planned` | Cite requirements and any ADRs, and add the `click` map link. |
+| First slice starts design | `planned` to `in-progress` | None. |
+| Last slice lands | `in-progress` to `shipped` | Move to `Shipped` and remove the `click` map link. |
 
-- Don't
-  - Use RICE or ICE without real reach and effort data.
+Qualitative judgment is the default.
+RICE or ICE scores require real reach and effort data.
+Priority and dependency remain separate axes, without dates, durations, Gantt charts, or a duplicate dependency table.
+Coordination identifiers do not replace durable initiative identity.
 
-Invented scores create false confidence.
+## 3. Artifact rules
 
-## 3. Re-prioritize the roadmap
+The roadmap links its source as `[Roadmap diagram](roadmap.puml)`.
+Nonempty packages are `Now`, `Next`, `Later`, `Parked`, and `Shipped`.
+State stereotypes are `envisioned`, `planned`, `in-progress`, `shipped`, and `superseded`.
+Dependency arrows use `requires` or `unblocks`.
+The prose retains its header, `Serves`, roadmap link, initiative index, sequencing rationale, parked context, superseded context, open questions, and lifecycle.
+Alignment, rationale, overload risks, and unresolved questions stay in prose.
 
-This section applies only in re-prioritization mode and follows the prioritization lenses.
+- Return the paths and applied changes, or the unresolved decision.
 
-1. Apply the prioritization lenses to every proposed band change.
-2. Reassign initiatives among `Now`, `Next`, and `Later` by priority and cross-initiative dependency.
-3. Keep priority bands and dependency arrows visible as separate axes.
-4. When a band exceeds delivery capacity, state the overload and add a within-band order.
-5. When a band exceeds delivery capacity, record the within-band order in the sequencing rationale.
-6. Add new ideas as dashed `envisioned` nodes with only a name, intent, and served pillar.
-7. When `ideate` shaped an idea, attach its Approved requirement links while banding the node.
-8. Move de-prioritized work to `parked` and record the reason.
-9. Keep shipped nodes as the ledger of completed work.
-10. Route each strategic question to a banding decision, requirement task, or ADR.
-11. Do not keep an indefinite question list.
-12. Prepare the proposed roadmap and diagram without updating either durable file.
-
-An `envisioned` node usually has no requirements until `ideate` defines them.
-The `ideate` skill does not write the roadmap.
-Within-band order is priority, not a schedule or a phased design.
-
-## 4. Apply an orchestrated state change
-
-This mode performs one state change requested by `orchestrate` after its related gate passes.
-This mode has no new gate and asks the user no questions.
-This mode changes no other roadmap lifecycle state.
-The procedure applies exactly one requested state transition.
-
-1. Skip all re-prioritization actions, including prioritization lenses, visual review, and user acceptance.
-2. When the initiative has no node, return `BLOCKED` because only re-prioritization creates an initiative.
-3. When orchestration creates initial initiative state, make the node cite its requirements and any ADRs.
-4. When orchestration creates initial initiative state, change `envisioned` to `planned`.
-5. When orchestration creates initial initiative state, add the `click` map link.
-6. When the first slice enters `design`, change `planned` to `in-progress`.
-7. When the last slice lands, change `in-progress` to `shipped`.
-8. When the last slice lands, remove the `click` map link.
-9. Update only the files required for the requested transition and its listed link or node changes.
-
-## 5. Review, accept, and write the re-prioritization
-
-This section applies only in re-prioritization mode.
-
-1. Inspect the rendered proposed diagram through [visual-review.md](../workflow/references/visual-review.md) without updating either durable file.
-2. Present the proposed roadmap and unresolved banding choices through the gate delivery rules in `workflow`.
-3. Wait for user acceptance.
-4. After acceptance, update the roadmap file and store the accepted `roadmap.puml` beside it.
-
-## 6. Maintain the artifact format
-
-- Link the diagram from the roadmap as `[Roadmap diagram](roadmap.puml)`.
-- Treat the graph as the source of truth for bands, states, and dependency edges.
-- Use packages for nonempty `Now`, `Next`, `Later`, `Parked`, and `Shipped` groups.
-- Use stereotypes for `envisioned`, `planned`, `in-progress`, `shipped`, and `superseded` states.
-- Label each dependency arrow `requires` or `unblocks` to show its direction.
-- Keep the header and `Serves`, roadmap link, initiative index, sequencing rationale, parked context, superseded context, open questions, and lifecycle.
-- Keep strategy alignment, rationale, overload risks, and open questions in prose.
-
-```plantuml
-@startuml
-left to right direction
-package "Now" {
-  component "Initiative A" as A <<in-progress>>
-}
-package "Next" {
-  component "Initiative B" as B <<planned>>
-}
-A --> B : unblocks
-@enduml
-```
-
-## 7. Follow the conventions
-
-- Do
-  - Show priority with bands and dependency with arrows.
-  - Add a within-band order when a band exceeds delivery capacity.
-  - When a band exceeds delivery capacity, put the within-band order in the sequencing rationale.
-  - Keep requirements, ADRs, names, and strategy pillars as durable node identity.
-  - Keep the `click` map link only until the initiative ships.
-  - Sequence whole initiatives independently from architecture inside an initiative.
-  - Read and update PlantUML source directly.
-- Don't
-  - Add or infer dates or durations anywhere in the roadmap or diagram.
-  - Use a Gantt chart.
-  - Collapse priority and dependency into one axis.
-  - Represent within-band order as new bands or dates.
-  - Keep a separate cross-initiative dependency table.
-  - Cite coordination-state IDs as durable node identity.
-  - Delete an initiative coordination directory before its roadmap node is `shipped`.
-  - Use ASCII art, rendered images, or EBNF for roadmap content.
+The roadmap stores PlantUML source, not rendered images, ASCII diagrams, or EBNF.
+Initiative coordination cleanup must wait until its roadmap node is `shipped`.

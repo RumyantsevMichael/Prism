@@ -1,93 +1,88 @@
 ---
 name: workflow
-description: "Explain the Prism workflow, common terms, and skill boundaries."
+description: "Explain Prism phases, artifact ownership, and common terms when choosing or coordinating workflow skills."
 sdm: "0.3"
 ---
 
 # Prism workflow
 
-- Use Prism for changes that need approved intent, architectural judgment, or durable behavioral documentation.
-- Make a small change directly when project conventions provide enough guidance.
-- If `.prism/workflow.md` exists:
-  1. Read it.
-  2. Use its project paths, stack assumptions, verification, interaction, and review settings.
-- Use a project procedure before the Prism fallback.
+- Read `.prism/workflow.md` when present for project paths, verification commands, and gate settings.
+- Use project procedures before Prism fallbacks.
+- Make small changes directly when project conventions supply enough guidance.
 
-The sibling workflow skills are `roadmap`, `ideate`, `design`, `implement`, `review`, `orchestrate`, and the remaining `write-*` skills.
-- Use the host invocation mechanism for a sibling skill.
+## Choose the activity
 
-## Flow
+| Need | Skill |
+| --- | --- |
+| Configure a project | `workflow-init` |
+| Approve product intent | `ideate`, using `write-requirements` |
+| Prioritize initiatives | `roadmap` |
+| Coordinate recursive delivery | `orchestrate` |
+| Design an initiative or slice | `design` |
+| Implement a fitted slice | `implement` |
+| Independently audit design or code | `review` |
+| Author a specific artifact | The matching `write-*` skill |
 
-The `orchestrate` skill is the coordinating entry point for this lifecycle.
-This coordinating role does not require an `orchestrate` invocation before a sibling skill.
-The lifecycle has this ordered overview:
+These names resolve under the Prism plugin namespace.
+A direct skill invocation does not require an earlier `orchestrate` invocation.
 
-| Order | Phase | Skill and context |
-| --- | --- | --- |
-| 1 | Prioritize | `roadmap` |
-| 2 | Shape intent | `ideate`, using `write-requirements` for requirement-file authoring |
-| 3 | Explore and confirm fit | `design` for the current candidate slice |
-| 4 | Accept and map a split | `orchestrate` routes acceptance and runs `write-map` |
-| 5 | Audit the design | `review` in `design-audit` mode in a fresh context |
-| 6 | Test and implement | `implement` in the same delivery context |
-| 7 | Review completed code | `review` in `implementation-review` mode in a fresh context until `CLEAN` |
+## Delivery lifecycle
 
-- Keep one delivery context for a slice from exploration through verified code.
-- Use a fresh context for independent review.
+An initiative starts with a provisional root slice.
+Design returns `SPLIT` for smaller outcomes, `FIT` for independent audit, or `BLOCKED` for missing decisions or evidence.
+Orchestration passes ancestor diagrams and ADRs to child designs and repeats design until executable leaves fit.
+Each leaf keeps one delivery context and uses fresh reviewers.
+Implementation requires a clean design audit, complete effective dependencies, renewed fit, and the orchestration gate.
+Completion requires verified integration, clean implementation review, and user correctness confirmation.
+A split parent never implements and requires aggregate completion.
 
-The orchestrator owns routing, coordination state, and user gates.
+## Artifact ownership
 
-## Recursive slice flow
+Code establishes implemented behavior.
 
-The `roadmap` skill creates and prioritizes an initiative after product intent is available.
-The orchestrator starts only that roadmap initiative after it has Approved requirement links.
-The orchestrator creates one provisional root slice from that intent without inventing a breakdown.
-`design` reads the Approved requirements, durable documents, and focused code paths for the current leaf slice.
-When the slice fits, the normal design, review, and implementation flow continues.
-When the slice does not fit, `design` returns a `SPLIT` proposal with replacement child records.
-The orchestrator checks coverage and routes acceptance without changing the proposed boundaries or dependencies.
-Acceptance uses a user gate under conservative autonomy or policy acceptance under broad autonomy.
-After acceptance, the orchestrator runs `write-map` to apply the exact child proposal to the authoritative map.
-The orchestrator selects eligible child leaves and starts `design` for each one.
-This cycle repeats until every executable leaf returns `FIT` or a real blocker stops work.
-Design discovery can precede dependency implementation when the available evidence supports a sound fit decision.
-Implementation waits for complete effective dependencies and a renewed fit check against their integrated changes.
-Split parents remain `split` and count as complete only when all descendant leaves are confirmed, integrated, and `done`.
+1. Read durable sources in this order: glossary, Approved requirements, relevant ADRs, and relevant feature files.
 
-`write-map` applies accepted graph changes and makes no design decisions.
+- Stop and report conflicting durable sources for user resolution.
+- Keep every slice folder directly under the initiative directory.
+- Read [artifact rules](references/artifact-rules.md) before creating or reviewing workflow artifacts.
 
 ## Common terms
 
 | Term | Definition |
 | --- | --- |
 | Initiative | A roadmap-owned item that groups related Approved outcomes. |
-| Initiative coordination | Scratch state, map, findings, and recovery records for an initiative. |
-| Slice | One observable vertical outcome across every required layer. |
+| Initiative coordination | The initiative map, slice folders, design evidence, findings, and resume records. |
+| Slice | One observable outcome across required layers, recursively split until it fits one delivery context. |
+| `slice.md` | A slice folder's capability title, observable outcome, and Approved requirement links. |
+| Atomic slice | An outcome that one delivery context can design, implement, and verify within its remaining context and risk budget. |
 | Slice title | A concise human-readable capability name, stored separately from the stable slice slug and shown first on the map. |
-| Provisional root slice | The initial candidate slice from the declared initiative outcome before `design` confirms fit or returns `SPLIT`. |
+| Provisional root slice | The initial candidate from the initiative outcome and Approved requirements before `design` returns `FIT` or `SPLIT`. |
 | Design frontier | Unstarted leaf candidates eligible for exploration, including those with incomplete implementation dependencies. |
 | Implementation frontier | Audited fitted leaves with complete effective dependencies and permission to implement. |
 | Effective dependencies | A leaf's own dependencies plus the dependencies inherited from its ancestors. |
-| Dependency amendment | A design proposal to replace a leaf's direct dependencies while preserving its outcome and requirement assignment. |
+| Dependency amendment | An orchestrator-managed change to direct prerequisites that preserves the slice outcome and requirement assignment. |
 | Integrated result verification | Delivery comparison and verification after integration, with fresh review and confirmation when behavior changes or equivalence is uncertain. |
-| Aggregate completion | A split parent's completion when every descendant leaf is confirmed, integrated, and done. |
+| Aggregate completion | A split parent's completion when every descendant leaf is confirmed, integrated, and done, and fresh reviewers confirm all preserved finding lanes `CLEAN`. |
 | Requirement assignment | Stable Approved requirement statement references whose coverage is preserved through each recursive split. |
 | Starting surface | The command, route, public function, event, job, or user action where a slice enters the system. |
 | Acceptance suite | Feature scenarios plus executable bindings or tests that prove one slice's observable outcome. |
 | Approved requirement | An accepted product or system obligation. |
-| Delivery context | One `Develop <slice>` task that designs and implements one slice. |
-| Orchestrator | The agent that coordinates activities, records progress, and routes decisions and user gates. |
+| Delivery context | One `Develop <slice>` task that designs, implements, and corrects one slice. |
+| Orchestrator | The agent that owns coordination, parent relationships, dependencies, inherited design inputs, continuation, recovery, acceptance, and user gates. |
 | Reviewer | A fresh `Review <slice>` context that audits design or implementation. |
 | Fresh context | An independent context without the authoring conversation. |
 | Design audit | An independent review of requirements, design artifacts, boundaries, security, and verification before implementation. |
 | Implementation review | An independent review of completed code and verified behavior after implementation. |
+| Design finding | A defect in approved intent, fit, boundaries, or planned verification that prevents a sound implementation gate. |
+| Implementation gap | Missing production behavior or implementation-owned wiring after design fit that does not reopen design unless it invalidates the design evidence. |
 | Gate | A user decision or correctness confirmation that controls progress. |
-| Fit checkpoint | The design gate that decides whether one proposed slice fits one delivery context before slice-scoped artifacts are authored. |
-| FIT | The slice fits one delivery context and can proceed to slice-scoped design artifacts. |
-| SPLIT | The slice needs accepted child slices, with existing work preserved and assigned to those children. |
+| Fit checkpoint | The design decision that an outcome fits the remaining context and risk budget with settled architecture and end-to-end verification. |
+| FIT | A design result ready for independent audit, with design artifacts and verification evidence prepared. |
+| SPLIT | A design result reporting new child slice folders for orchestration to accept and continue. |
 | BLOCKED | An unresolved requirement, decision, or dependency stops progress. |
 | CLEAN | A review found no actionable finding. |
 | Proposed ADR | An architectural decision recorded for orchestration acceptance after implementation and verification. |
+| C4 code diagram | A PlantUML level 4 view stored in the slice folder, completed for atomic fit and verified against implementation. |
 | Contract decision | The canonical contract and consumers to use, or a specific reason that no contract is needed. |
 | Executable slice test | A test authored after the fit checkpoint through the selected starting surface that observes the required result or failure instead of a private helper. |
 | Executable contract | A machine-readable boundary consumed by production code, generated code, or verification. |
@@ -106,42 +101,15 @@ Split parents remain `split` and count as complete only when all descendant leav
 | Decision autonomy | An orchestration setting that controls automatic phase continuation without overriding requirements, ADR, or correctness gates. |
 | Slice continuation | An orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input. |
 | `state.json` | A short resume note with settings, active work, pending decisions, next actions, and evidence paths. |
-| `map.puml` | The authoritative slice topology, requirements, titles, dependencies, and structural lifecycle, maintained by `write-map`. |
-| `findings.md` | The canonical consolidated review record for one slice. |
-| Lane findings file | The only writable findings file for one reporting slice and review lane. |
+| `map.puml` | The authoritative initiative graph, with topology and dependencies owned by orchestration and written through `write-map`. |
+| `findings.md` | The authoritative review record for one reporting slice and review lane. |
+| Lane findings file | Alias for `findings.md`. |
 | `recovery.md` | A slice-owned note that preserves unfinished work and evidence when its delivery context must pause or be replaced. |
-
-## Artifacts
-
-Durable sources preserve intent, architectural decisions, boundary behavior, acceptance examples, and implemented structure across the workflow.
-Code remains the implementation source.
-
-- Keep the artifacts for one slice together across every required layer.
-- Create slice-scoped artifacts only after the design fit checkpoint passes.
-- Create an executable contract only when a real consumer needs it.
-- Don't
-  - Create an implementation handoff.
-  - Create a mandatory build plan.
-  - Create an execution ledger.
-
-## Durable sources
-
-Durable documentation has this source order:
-
-1. Read the glossary for terms and navigation.
-2. Read Approved requirements for product and system obligations.
-3. Read relevant ADRs for architectural decisions and invariants.
-4. Read relevant feature files for intended acceptance behavior and examples.
-
-- Stop when durable sources conflict.
-- Use code and tests to learn implementation details.
-- Don't
-  - Resolve a durable conflict without the user.
 
 ## Supporting procedures
 
-- Read [delegation.md](references/delegation.md) before delegated exploration or work.
-- Read [visual-review.md](references/visual-review.md) before a human visual review.
-- Read [artifact-rules.md](references/artifact-rules.md) when creating or reviewing diagrams, durable documentation, or user guidance.
-- State a decision in plain language before its artifact reference.
+- Read [delegation.md](references/delegation.md) before delegated work.
+- Read [visual-review.md](references/visual-review.md) before human artifact review.
+- Use the owning skill for artifact format and lifecycle rules.
+- State each decision in plain language before its artifact reference.
 - Ask only at a real gate or unresolved choice.

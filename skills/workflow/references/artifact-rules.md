@@ -1,30 +1,29 @@
 # Artifact rules
 
-Read this reference when a phase creates or reviews diagrams, durable documentation, or user guidance.
+Requirements preserve obligations, ADRs preserve decisions, and feature files preserve acceptance examples.
+Slice records contain only the capability title, outcome, and requirement links.
+The workflow creates no implementation handoff, mandatory build plan, or execution ledger.
 
-Do not create a prose design record or a slice-named design file.
+## Design evidence
 
-Create or update slice-scoped artifacts only after the design fit checkpoint passes.
+- Store C4 source and supplementary slice diagrams in the slice folder.
+- Preserve ancestor source for child designs.
+- Record settled shared decisions as Proposed ADRs before splitting when children need them.
+- Keep ADR state and sequence diagrams beside their decision record.
+- Reuse an ADR diagram instead of creating a duplicate slice view.
+- Complete a C4 code view for each atomic slice using [C4 code diagrams](../../design/references/c4-code-diagrams.md).
+- Author tests, contracts, scaffolds, and feature files only after atomic fit.
+- Put executable artifacts in project-owned consumer paths.
+- Mark proposed elements until implementation verifies them.
+- After verification, update diagram relationships from code evidence.
 
-Write PlantUML source beside the durable artifact or code area that it explains.
-Read the source and do not read rendered images as implementation input.
-Do not commit rendered images.
+Diagrams explain structure or behavior without prescribing implementation tasks.
+Requirements and feature files contain no diagrams.
+Implementation reads diagram source, not rendered images.
+Rendered images are not committed.
 
-Create an ADR decision diagram during design after the fit checkpoint passes when relationships, lifecycle, or call order are part of the decision.
-Create or update an implemented-structure diagram after code establishes the structure.
-Derive implemented structural relationships from code or CodeGraph when available.
-Add only information that materially improves human understanding.
-Do not use a diagram to instruct another agent how to implement the slice.
-Use a dependency graph for roadmap initiatives and initiative slices.
-Use a C4, component, class, state, or sequence diagram only when it materially improves understanding.
-Do not add diagrams to requirements or feature files.
+## Durable sources
 
-Durable artifacts must not reference slice names, coordination records, scratch paths, or temporary status identifiers.
-Cite a requirement for an obligation.
-Cite an ADR for rationale.
-Describe each artifact's owned information directly.
-
-Update the configured user-guide path when observable behavior changes.
-Ship an operator runbook with an operational capability.
-Use exact verified commands or UI steps.
-Mark an unsettled operational decision as `TBD`.
+- Cite requirements for obligations and ADRs for rationale.
+- Keep durable requirements, ADRs, features, and user guidance free of scratch paths and slice identities.
+- Use `write-user-docs` for verified user or operator changes.

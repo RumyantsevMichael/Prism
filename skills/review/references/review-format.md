@@ -3,12 +3,13 @@
 Mode: design-audit | implementation-review
 Initiative: <initiative name>
 Slice: <slice name>
-Lane: <review lane or design-audit>
+Lane: <lane>
 Reporting slice: <slice name>
-Writable findings: docs/plans/<initiative>/<slice>/lanes/<lane>/findings.md
-Canonical findings: docs/plans/<initiative>/<slice>/findings.md
+Findings: docs/plans/<initiative>/<slice>/<lane>/findings.md
 Last updated: <ISO 8601 timestamp>
 Review wave: <wave identifier>
+
+The findings file is authoritative for its reporting slice and lane.
 
 ## Findings
 
@@ -34,12 +35,11 @@ Review wave: <wave identifier>
 
 ## Result
 
-Lane: <lane or none>
+Lane: <lane>
 Reporting slice: <slice slug>
 Review focus: <specific risks>
 Coverage: <paths or checks>
-Findings: <exact lane-specific writable findings path>
-Canonical findings: docs/plans/<initiative>/<slice>/findings.md
+Findings: <exact findings path>
 Finding IDs: F-001, F-002
 ADRs: <paths or NONE>
 Executable tests: <paths or NONE>

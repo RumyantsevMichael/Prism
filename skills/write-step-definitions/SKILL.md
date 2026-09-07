@@ -4,48 +4,36 @@ description: "Connect design-authored Gherkin feature steps to executable assert
 sdm: "0.3"
 ---
 
-# Write step definitions
-
-This skill applies during implementation after a design-authored feature file exists.
-Step definitions connect durable domain language to the existing executable acceptance suite.
+# Bind feature steps to executable acceptance
 
 ## 1. Prepare
 
 1. If `.prism/workflow.md` exists, read it first.
-2. Read the feature file and its linked requirements.
-3. Read the executable tests and selected production surface.
-4. Read existing test helpers.
-5. When the workflow marks feature files as specification-only:
-   1. Preserve the feature file as the acceptance specification.
-   2. Do not add a BDD harness.
-6. Otherwise:
-   1. Use the configured BDD harness.
-   2. Bind the feature steps by following [Bind the steps](#2-bind-the-steps).
-7. Verify the acceptance path by following [Verify](#3-verify).
-8. Return to the calling implementation phase after verification finishes.
+2. Read the [feature file](../workflow/SKILL.md#common-terms), linked requirements, selected production surface, executable tests, and existing helpers.
 
-## 2. Bind the steps
+## 2. Connect the acceptance path
 
-- Reuse an existing step definition when its domain meaning is identical.
-- Keep implementation details inside step definitions and test helpers.
-- Use one typed state object for each scenario.
-- Initialize the state object before each scenario.
-- Bind each `Given` step through a product interface or existing test fixture.
-- Bind the single `When` step to the user or system action.
-- Bind each `Then` step to the minimum assertion that proves its observable claim.
-- Put reusable drivers, fakes, and spies in the existing shared test-helper location.
-- Let unexpected errors fail the scenario.
+- If features are specification-only, preserve them as acceptance specifications without adding a BDD harness.
+- Otherwise:
+  1. Use the configured BDD harness.
+  2. Reuse bindings with identical domain meaning.
+  3. Initialize one typed state object per scenario.
+  4. Bind Given through product interfaces or existing fixtures.
+  5. Bind When to the selected user or system action.
+  6. Bind Then to the minimum assertion proving its claim.
+  7. Put reusable drivers, fakes, and spies in the existing shared helper location.
 
-- Don't
-  - Add implementation details to feature files.
-  - Use mutable module-level state.
-  - Add assertions that the Gherkin step does not imply.
-  - Duplicate a shared helper in a feature-specific file.
+Bindings keep implementation details out of features and use no mutable module-level scenario state.
+Unexpected errors fail the scenario.
+Assertions preserve the feature's claims without adding behavior.
 
-## 3. Verify
+## 3. Verify for the calling phase
 
-1. Run the configured acceptance command.
-2. If the command fails, record only the command, exit status, and a short failure summary.
-3. Before production behavior exists, confirm that a red result names the expected missing behavior.
-4. When feature files are not specification-only, after implementation confirm that every feature step is bound.
-5. Finish only when the acceptance suite passes.
+1. Run the configured acceptance command, or the selected executable tests for specification-only features.
+2. If bindings or test setup fail, correct them before assessing product behavior.
+3. If the caller needs a red checkpoint, confirm failure at the selected surface because required behavior is absent.
+4. If the caller needs implementation verification:
+   1. Require passing acceptance tests.
+   2. Unless features are specification-only, require every feature step bound.
+5. If the expected phase result is unavailable, return the exact failure to the caller without changing feature intent.
+6. Return changed paths, command, exit status, and a short result summary to the calling phase.

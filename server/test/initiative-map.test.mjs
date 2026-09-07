@@ -55,19 +55,22 @@ test("rejects ambiguous syntax, missing coverage, invalid aliases, and dependenc
     [example.replace('state "Download signed reports"', 'state ""'), /Invalid slice title/],
     [example.replace("s_646f776e6c6f6164", "s_0"), /Invalid slice alias/],
     [example.replace("<<split>>", "<<done>>"), /Split status/],
-    [example.replace('s_646f776e6c6f6164 : requires "docs/requirements/reports.md#REQ-1"', ""), /Missing requirement|Incomplete child coverage/],
-    [example.replace("reports.md#REQ-2", "reports.md#REQ-3"), /Incomplete child coverage/],
+    [example.replace('s_646f776e6c6f6164 : requires "docs/requirements/reports.md#1"', ""), /Missing requirement|Incomplete child coverage/],
+    [example.replace("reports.md#2", "reports.md#3"), /Incomplete child coverage/],
     [example.replace("@enduml", "s_61757468 --> s_646f776e6c6f6164 : depends on\n@enduml"), /cycle/],
     [example.replace("@enduml", "s_646f776e6c6f6164 --> s_7265706f727473 : depends on\n@enduml"), /self-dependency/],
     [example.replace("@enduml", "s_646f776e6c6f6164 --> s_78 : depends on\n@enduml"), /Unknown dependency/],
     [example.replace("@enduml", 'state "Other root" as s_78 <<done>>\n@enduml'), /one root/]
   ];
-  for (const [source, error] of bad) assert.throws(() => parseMap(source), error);
+  for (const [source, error] of bad) {
+    assert.notEqual(source, example, "invalid-map mutation must change the fixture");
+    assert.throws(() => parseMap(source), error);
+  }
 });
 
 test("migration preserves legacy evidence and blocks missing facts", async () => {
   const orchestrate = await readFile(new URL("../../skills/orchestrate/SKILL.md", import.meta.url), "utf8");
-  assert.match(orchestrate, /Preserve older coordination files before replacing their format/);
-  assert.match(orchestrate, /If records disagree, inspect the actual artifacts/);
-  assert.match(orchestrate, /Do not infer approval or completion from a missing record/);
+  assert.match(orchestrate, /Before replacing coordination formats, preserve older files until their needed information has a durable home/);
+  assert.match(orchestrate, /If records conflict, ask the responsible worker to reconcile them against actual artifacts/);
+  assert.match(orchestrate, /Missing records establish neither approval nor completion/);
 });

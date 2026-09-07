@@ -6,82 +6,50 @@ sdm: "0.3"
 
 # Write a Gherkin acceptance feature
 
-A [feature file](../workflow/SKILL.md#common-terms) is a durable acceptance specification for observable behavior and examples.
-A feature file must not be a prose design summary or implementation handoff.
-Scenarios can remain unbound and failing until implementation binds them.
-The [fit checkpoint](../workflow/SKILL.md#common-terms) must pass before this skill creates or updates a feature file.
-The slice architecture must be settled before this skill creates or updates a feature file.
-Implementation must not have started before this skill creates or updates a feature file.
+A [feature file](../workflow/SKILL.md#common-terms) specifies observable behavior in domain language.
+Design authors it after atomic fit, including when corrections return from implementation or review.
 
 ## 1. Prepare
 
 1. If `.prism/workflow.md` exists, read it first.
-2. Read the Approved requirements.
-3. Read the relevant Proposed or Accepted ADRs.
-4. Read existing feature files and the glossary.
-5. Read the selected code and tests.
-6. If intent conflicts with the selected design or existing behavior, stop and report the conflict.
+2. Read Approved requirements, governing ADRs, the glossary, and related features.
+3. Inspect the selected code and tests for compatibility and acceptance paths.
+4. If intended behavior conflicts with the design or durable sources, stop and report the conflict.
 
-Requirements are the authority for intended behavior.
-ADRs are the authority for architectural constraints.
-Existing code and tests provide evidence of compatibility and current seams.
-Existing code and tests must not provide authority to invent behavior.
+Requirements govern behavior, while ADRs constrain architecture.
+Existing code and tests do not authorize new behavior.
 
-## 2. Location
+## 2. Write the feature
 
-The feature file must use the configured feature directory.
-When no feature directory is configured, the default is `docs/Features/`.
-The file name must use `F-<capability>.feature`.
+1. Create or update `F-<capability>.feature` in the configured feature directory, defaulting to `docs/Features/`.
+2. Use this shape for each invariant:
 
-## 3. Content
+   ```gherkin
+   Feature: <observable capability>
 
-The feature file must use domain language that a product expert can verify.
-The feature file must not use class names, methods, field paths, module paths, or internal identifiers.
-The feature file must not add behavior unsupported by the requirements and settled design.
-Each `Rule` must record one invariant.
-Each `Rule` must link to at least one Approved requirement in a Gherkin comment.
-The examples must cover the intended normal case and meaningful failure or boundary cases.
-The example set must be the smallest set that provides this coverage.
-One example is sufficient when it fully proves the rule.
+     Rule: <one behavioral invariant>
+       # Requirement: [requirement title](../requirements/example.md#anchor)
 
-- When a relevant Proposed or Accepted ADR constrains the behavior, link the ADR from the `Rule`.
-- Use this shape.
+       Example: <observable result>
+         Given <world state>
+         When <one action or event>
+         Then <observable outcome>
+   ```
 
-```gherkin
-Feature: <observable capability>
+3. Link each Rule to its Approved requirements and any ADR that constrains its behavior.
+4. Select the fewest examples covering normal behavior and meaningful failure or boundary cases.
+5. Name examples by their observable result.
+6. Use one When per example and separate Then steps for separate claims.
+7. Use Background only for setup required by every example.
+8. When capability boundaries permit, split files that reach 150 lines.
 
-  Rule: <one behavioral invariant>
-    # Requirement: [requirement title](../requirements/example.md#anchor)
+Features contain no internal code names, field paths, module paths, or implementation instructions.
+This skill creates neither step definitions nor BDD dependencies.
+Specification-only features remain specifications, while configured BDD features bind through `write-step-definitions` during implementation.
 
-    Example: <observable result>
-      Given <world state>
-      When <one action or event>
-      Then <observable outcome>
-```
+## 3. Return the specification
 
-- Use `Background` only when every example needs the same setup.
-- Use one `When` step for each example.
-- Split combined outcomes into separate `Then` steps.
-- Name examples by their result.
+1. Check requirement coverage, observable assertions, and domain language.
+2. Return feature paths and each example's selected test path or command.
 
-- Don't
-  - Name examples by a test number.
-
-## 4. Execution
-
-- When the project has a BDD harness, map each example to the selected acceptance path.
-- When the project has a BDD harness, require implementation to bind the feature through `write-step-definitions`.
-- When the project has a BDD harness, require implementation to run the acceptance command.
-- When the workflow marks feature files as specification-only, map each example to the selected acceptance path.
-
-- Don't
-  - Create step definitions with this skill.
-  - When the workflow marks feature files as specification-only, add a BDD dependency.
-
-## 5. Gate
-
-The skill can finish only when each `Rule` links to intent.
-The skill can finish only when each example states intended observable behavior.
-The skill can finish only when no implementation detail appears.
-The skill must not wait for completed code or passing acceptance tests.
-When a capability boundary permits a clean split, the file must remain below 150 lines.
+Completed code and passing tests are not required for this result.

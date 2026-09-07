@@ -1,61 +1,28 @@
 ---
 name: review
-description: "Audit a Prism slice before implementation or review completed code against approved intent, behavior, boundaries, and security."
+description: "Audit an atomic Prism design before implementation or review verified code and corrections in an independent context."
 sdm: "0.3"
 ---
 
 # Review a slice
 
-- Run in a fresh context that does not inherit the authoring context.
-- Use the mode supplied by orchestration.
-- Use `design-audit` before implementation or `implementation-review` after verification.
+A [fresh review context](../workflow/SKILL.md#common-terms) receives artifacts and evidence without the delivery conversation.
+`design-audit` checks implementability before production behavior exists.
+`implementation-review` checks verified code against Approved intent.
+Each review writes only its assigned lane findings file, except permitted implementation review probes.
 
-- Don't
-  - Edit production code, existing tests, requirements, ADRs, feature files, fixtures, helpers, harness configuration, or dependencies.
-  - Add tests during `design-audit`.
-- Do
-  - During `design-audit`, edit only `findings.md`.
-  - During `implementation-review`, add a minimal finding-scoped regression test only when a concrete finding needs executable proof.
+## Prepare
 
-1. Read `.prism/workflow.md` and project instructions.
-2. Read [review-format.md](references/review-format.md) before creating the findings file or reporting.
-3. Read the assigned initiative, reporting slice, lane, writable lane findings path, and canonical findings path.
-4. Read or create the complete assigned lane findings file before the review.
-5. Use its findings section for the lane findings file and its result section for the compact response.
-6. Read the requirements, relevant ADRs, executable slice tests, feature files, diagrams, declared contracts, and mode-specific paths.
-7. Use code as the source for implementation detail.
-
-## Findings
-
-The assigned lane findings file is the source of truth during this review.
-Canonical findings contain the latest correction evidence from delivery.
-The delivery context may set `IN PROGRESS` and `FIXED`.
-The review context may set `OPEN`, `VERIFIED`, and `REOPENED`.
-`OPEN` means that a reviewer found a defect without a complete correction.
-`IN PROGRESS` means that the delivery context started the correction.
-`FIXED` means that the delivery context applied the correction with evidence.
-`VERIFIED` means that a reviewer confirmed the closing condition.
-`REOPENED` means that a reviewer found that the closing condition still fails.
-
-- Assign a stable ID to each new root defect.
-- Read canonical correction evidence before checking earlier findings.
-- If the assigned code or evidence is outdated, request the current result before deciding closure.
-- Record the assigned reporting slice and lane on every finding.
-- Write only to the exact lane findings path supplied by orchestration.
-- When a finding affects another slice or the initiative, keep its evidence in this lane file and set its escalation target.
-- Do not move cross-slice evidence to the affected slice.
-- Reuse the ID when the same defect returns.
-- Write new findings with status `OPEN`.
-- Append evidence and review history without deleting earlier history.
-- Mark an implementer's `FIXED` finding `VERIFIED` when its closing condition passes.
-- Mark an implementer's `FIXED` finding `REOPENED` when its closing condition fails.
-- Report only actionable findings with an affected path and failure condition.
-- After the review, leave the findings section empty when no findings exist.
-- Return `CLEAN` only when no actionable finding remains.
+1. Read `.prism/workflow.md`, project instructions, and [review-format.md](references/review-format.md).
+2. Read the assigned mode, reporting slice, lane focus, findings path, and applicable review base.
+3. Read or create the complete assigned findings file.
+4. Read the requirements, relevant ADRs, tests, feature files, diagrams, contract decisions, and verification evidence for the lane.
+5. If code or correction evidence is outdated, request the current result before deciding findings or closure.
+6. Review the assigned scope through the applicable mode below.
 
 ## Contracts
 
-Every changed boundary shall use exactly one of the following contract decision forms.
+Every changed boundary has one contract decision in these forms:
 
 ```text
 Contract: <canonical path>
@@ -68,76 +35,69 @@ Contract: NO CONTRACT NEEDED
 Reason: <specific reason>
 ```
 
-- Do
-  - Check that every declared contract has a real consumer.
-- Don't
-  - Create a contract when no production code, generated code, or verification consumes it.
-  - Create a contract when an existing production type or schema governs the boundary.
-  - Accept a description such as `private session contract` without a canonical path and consumer.
-  - Store a final contract in a slice directory.
+- Check that each declaration names a canonical artifact, consumers, and verification command, or justifies no contract.
+- Check that an existing governing type or schema has no duplicate contract.
+- Reject final contracts stored in slice directories.
 
-## Design-audit mode
+Design can name a planned production consumer whose behavior is still absent.
+Missing planned behavior alone is not a design finding when the red checkpoint reaches the starting surface.
+Implementation review requires actual consumption and its verification evidence.
 
-### 1. Prepare
+## Review the assigned mode
 
-1. Read the accepted slice record, bounded code surfaces, and planned verification paths.
+- Check applicable ownership, inputs, outputs, state, failure, recovery, compatibility, migration, integration, security, and operations.
+- Check applicable lifecycle, cancellation, deadlines, cleanup, retries, resource ownership, and authority changes.
+- Check applicable concurrency, ordering, replay identity, quotas, atomicity, and idempotency.
+- For `design-audit`:
+  1. Trace every assigned requirement to planned behavior and an observable verification path.
+  2. Check that boundaries, consequential decisions, consumers, and verification support one safe, complete atomic outcome.
+  3. Check the shared concerns against diagrams and ADRs.
+  4. Check feature scenarios for requirement links, meaningful boundary cases, and domain language without implementation detail.
+  5. Check the red checkpoint reaches the starting surface and fails for missing behavior, or has a documentation-only exemption.
+  6. Record defects in fit, design, requirements, or verification as findings.
+  7. Route implementation-only gaps to delivery without opening design findings.
+- For `implementation-review`:
+  1. Read the complete diff against the supplied review base and recorded verification results.
+  2. Trace assigned requirements and architectural constraints through changed code and observable tests.
+  3. Reject product behavior outside Approved intent.
+  4. Check feature scenarios against Approved intent and verified behavior.
+  5. Check the shared concerns against changed code and tests.
+  6. Inspect changed trust boundaries for untrusted inputs, secrets, authorization, privilege, storage, network access, and IPC.
+  7. If the declared security surface is `none`, verify that classification and record the security audit exemption.
+  8. Check unrelated edits, generated files, temporary files, and stale user or operator guidance.
+  9. When a concrete finding needs executable proof:
+     1. Add one minimal regression probe in the canonical test location through a public or system surface.
+     2. Base assertions on requirements, ADRs, features, contracts, or verified behavior.
+     3. Use existing fixtures or local setup without changing existing tests, fixtures, helpers, dependencies, or harness configuration.
+     4. Record the probe path, command, and expected failure in the `OPEN` finding.
 
-### 2. Audit
+Review may run focused probes and records their results or why execution was unavailable.
+Implementation review does not rerun the full suite or configured verification commands.
+Delivery owns probe corrections and preserves or promotes verified coverage.
 
-1. Check each applicable item:
-   - Map each requirement to one planned behavior and one observable verification path.
-   - Check ownership, inputs, outputs, state, errors, recovery, compatibility, migration, and operations.
-   - Check lifecycle, cancellation, deadlines, cleanup, retries, resource ownership, and authority changes.
-   - When applicable, check concurrency, ordering, replay identity, quotas, and atomicity.
-   - Check changed boundaries, contract decisions, consumers, and verification commands.
-   - Check security boundaries and planned normal, failure, recovery, compatibility, and security tests.
-   - Check that feature files cover planned behavior, link to requirements, and contain no implementation details.
-   - Check that ADRs preserve architectural decisions and that executable tests and contracts enforce selected boundaries.
+## Record findings and corrections
 
-### 3. Assemble the result
+A finding identifies an actionable defect, its affected path, evidence, failure condition, and reviewer-verifiable closing condition.
+The reporting lane retains cross-slice evidence and records its escalation target.
 
-1. Require every contract decision to pass the consumer check before returning `CLEAN`.
-2. Include the findings path, ADR paths, executable test paths, review probe paths, feature file paths, and diagram paths in the compact result.
-3. Include every contract decision using the forms in [Contracts](#contracts).
-4. Include the verification command in the compact result.
+1. For each new defect, append an `OPEN` finding using the review format.
+2. For each earlier finding, inspect its current evidence and closing condition without deleting history.
+3. For each `FIXED` finding:
+   1. Check the implementer evidence and affected artifacts.
+   2. If closure evidence is insufficient, retain `FIXED` and report the missing evidence.
+   3. If the closing condition passes, mark it `VERIFIED`.
+   4. If the closing condition fails, mark it `REOPENED` with the remaining failure evidence.
+4. If a previously `VERIFIED` defect returns, reuse its ID with `REOPENED` status.
+5. Append status and review history for each finding change.
 
-## Implementation-review mode
+Delivery owns `IN PROGRESS` and `FIXED`, while reviewers own `OPEN`, `VERIFIED`, and `REOPENED`.
+Only `VERIFIED` findings are resolved.
 
-The review context does not rerun the full test suite or configured verification commands.
-Implementation owns each review probe fix and preserves or promotes the probe after verification.
+## Return the result
 
-### 1. Prepare
+1. Update the lane result using the review format, including scope, coverage, findings, artifact paths, and verification evidence.
+2. Include the contract decisions and design red checkpoint or exemption when applicable.
+3. Return `CLEAN` only when no actionable finding remains, otherwise return `FINDINGS` with unresolved IDs and the lane path.
 
-1. Read the completed diff, verification status, test paths, and exact commands.
-
-### 2. Audit
-
-1. When orchestration supplies a lane focus, review it exhaustively without repeating another lane's focus.
-2. Check each applicable item:
-   - Check every requirement without accepting added product behavior.
-   - Check tests through the user-visible or system surface.
-   - Check feature files against requirement intent and verified behavior.
-   - Check correctness, errors, state transitions, compatibility, migration, and integration.
-   - Check lifecycle, concurrency, ordering, replay, quotas, atomicity, and idempotency.
-   - Check public, process, network, storage, IPC, hosted-execution, and security boundaries.
-   - Check unrelated edits, generated files, temporary files, and stale documentation.
-   - When the security surface is non-empty, inspect applicable secrets, untrusted inputs, authorization, privilege, network access, storage, and IPC.
-   - When the security surface is `none`, verify that classification and record that the security audit was skipped.
-   - When a concrete finding needs executable proof:
-     1. Add one minimal review probe through the public or system surface.
-     2. Base the probe on approved intent, an ADR, a feature, a contract, or verified behavior.
-     3. Put the probe in the canonical test location.
-     4. Use existing fixtures or local setup.
-     5. Record the probe path, command, and expected failure in the finding.
-     6. Leave the finding `OPEN`.
-
-### 3. Assemble the result
-
-1. Include the lane, focus, coverage, findings path, finding IDs, review probe paths, and status in the compact result.
-
-## Reporting boundaries
-
-- Don't
-  - Restate the implementation.
-  - Praise successful work.
-  - Create requirements or architectural decisions during review.
+An expected design red checkpoint does not prevent `CLEAN`.
+The result contains actionable evidence without an implementation summary or praise.
