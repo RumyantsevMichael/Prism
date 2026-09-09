@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.7.0](https://github.com/RumyantsevMichael/Prism/compare/v0.6.0...v0.7.0) (2026-09-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* Child slice folders contain outcome records while orchestration owns map relationships. C4 diagrams live in slice folders, and findings remain authoritative in their review lanes.
+* Remove write-handoff, write-build-plan, and validate-artifacts. Replace the prior track specification format with compact slice records.
+
+### Added
+
+* adopt code-centered slice delivery workflow ([63156ec](https://github.com/RumyantsevMichael/Prism/commit/63156ecc2cd2fbb40f8203f1d715bcc316db0118))
+* adopt minimal recursive workflow skills ([3399dbe](https://github.com/RumyantsevMichael/Prism/commit/3399dbe87220c73a0526e46b945579b7503343bb))
+* adopt simplified SDM skills ([a3498b4](https://github.com/RumyantsevMichael/Prism/commit/a3498b4961b5ef4dd1306d856d44c8b9487e148a))
+* checkpoint slices around review phases ([e3b48f0](https://github.com/RumyantsevMichael/Prism/commit/e3b48f08a4ae8d00dd624b7ed3e74f427276ac8b))
+* improve Prism orchestration and review ([a153730](https://github.com/RumyantsevMichael/Prism/commit/a153730c46f06bc9a37ae79349663e2fa104a665))
+* let implementation reviews add regression probes ([7c63db8](https://github.com/RumyantsevMichael/Prism/commit/7c63db833775960f3c0397b305dad31dce5cf082))
+* preserve executable design artifacts after fit ([cb57dae](https://github.com/RumyantsevMichael/Prism/commit/cb57dae034b5d6163f5dfac57f08272ca999517e))
+* refine orchestration operations and child supervision ([fc539be](https://github.com/RumyantsevMichael/Prism/commit/fc539bed022c4e745867e500c6bb7c559ba62bd9))
+* simplify orchestration state ([348c18d](https://github.com/RumyantsevMichael/Prism/commit/348c18dcbaf509b7ffd90aa9a6f8c06ecdfb4b3c))
+* slim workflow skill and unify review flow ([79ae2ac](https://github.com/RumyantsevMichael/Prism/commit/79ae2acad520f734658e509657bdd4d845d3d288))
+
+
+### Fixed
+
+* align skills with SDM workflow rules ([d278646](https://github.com/RumyantsevMichael/Prism/commit/d278646e912fdca8cc15aa8610ddfccae26cd52d))
+* **review:** scope high-risk review lanes ([6bbac7d](https://github.com/RumyantsevMichael/Prism/commit/6bbac7d4a8ae21b0d8bbe732a800935fe6238f66))
+* **workflow:** add design audits and exhaustive review gates ([7cac3e6](https://github.com/RumyantsevMichael/Prism/commit/7cac3e6007e4fb8b1c6981529c7916c08bb86b88))
+* **workflow:** add explicit model routing policy ([0225763](https://github.com/RumyantsevMichael/Prism/commit/022576314bbe8b3d9fb19b1cb62101386f37fc40))
+* **workflow:** batch artifact review and streamline verification ([5dc1053](https://github.com/RumyantsevMichael/Prism/commit/5dc10537ed86ef4696a6d56c128b0533ccfa3345))
+
 ## [0.6.0](https://github.com/RumyantsevMichael/Prism/compare/v0.5.2...v0.6.0) (2026-08-13)
 
 
