@@ -24,9 +24,17 @@ Read [SDM validation](skill-language-validation.md) for the repository checks.
 - Use imperative list items for actions
 - Use SDM only where procedure or grouping matters
 - Treat a bare imperative as an instruction to the Agent
-- Do not prefix a normal action with `Agent MUST`
 - Use one term for one concept
 - Use Markdown code formatting for exact paths, commands, identifiers, and values
+
+## `Do` and `Don't` blocks
+
+- Write `Do` as a list item with a nested list of positive guidance
+- Write `Don't` as a list item with a nested list of prohibited guidance
+- Use bullets when block entries are independent
+- Use numbers when block entries have meaningful order
+- Treat the labels as grouping markers, not as extra actions
+- Keep conditions and repetitions in ordinary-English child items
 
 ## Headings
 
@@ -37,7 +45,8 @@ Read [SDM validation](skill-language-validation.md) for the repository checks.
 - Read groups in source order unless sibling headings have numeric prefixes
 - When sibling headings have numeric prefixes, use the prefixes as the group order
 - Use numeric prefixes for all sibling headings when heading order matters
-- Do not mix numbered and unnumbered sibling headings
+- Don't
+  - Mix numbered and unnumbered sibling headings
 
 ## Declarative content
 
@@ -45,12 +54,13 @@ Read [SDM validation](skill-language-validation.md) for the repository checks.
 - Use declarative content for facts, invariants, requirements, prohibitions, and result constraints
 - Use EARS for precise declarative requirements as defined by [EARS](https://alistairmavin.com/ears/)
 - Treat an EARS response as a required outcome, not as an instruction sequence
-- Do not use EARS to describe the Agent's step-by-step procedure
 - Treat ordinary explanatory prose as context, not as an action
-- Do not hide an action in explanatory prose
 - Treat fenced code blocks as examples or reference content, not as instructions
 - Place an example near the instruction or declaration it illustrates
 - Add a short comment inside a code block when the example needs explanation
+- Don't
+  - Use EARS to describe the Agent's step-by-step procedure
+  - Hide an action in explanatory prose
 
 ## Imperative content
 
@@ -62,21 +72,12 @@ Read [SDM validation](skill-language-validation.md) for the repository checks.
 - Use an unordered list when actions are independent
 - Use nested lists to group related actions
 - Choose the nested list type according to whether child order matters
-- Do not use list numbering only for visual styling
 - Keep a condition or repetition with the actions it qualifies, either in the same item or in a nested list
 - Express conditions and repetition in ordinary English
-- Use `If`, `When`, `While`, and `For each` with their normal meanings
 - Put a condition or repetition before its imperative action clause
-- Do not add keywords when ordinary English is enough
-
-## `Do` and `Don't` blocks
-
-- Write `Do` as a list item with a nested list of positive guidance
-- Write `Don't` as a list item with a nested list of prohibited guidance
-- Use bullets when block entries are independent
-- Use numbers when block entries have meaningful order
-- Treat the labels as grouping markers, not as extra actions
-- Keep conditions and repetitions in ordinary-English child items
+- Don't
+  - Use list numbering only for visual styling
+  - Add keywords when ordinary English is enough
 
 ## Terms and references
 
@@ -90,6 +91,7 @@ Read [SDM validation](skill-language-validation.md) for the repository checks.
 
 ## Minimal example
 
+````sdm
 ### 1. Prepare
 
 The input file shall be valid Markdown.
@@ -107,3 +109,4 @@ The input file shall be valid Markdown.
 ```text
 Example output.
 ```
+````

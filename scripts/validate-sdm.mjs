@@ -109,6 +109,22 @@ function doBlockWarnings(lines) {
   return warnings;
 }
 
+function negativeActionWarnings(lines) {
+  const warnings = [];
+  const action = /^\s*(?:[-*+]|\d+[.)])\s+Do not\b/i;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (action.test(lines[index])) {
+      warnings.push({
+        line: index + 1,
+        message: "use a declarative prohibition or a `Don't` block instead of a `Do not` action"
+      });
+    }
+  }
+
+  return warnings;
+}
+
 export function validateSkillDocument(document) {
   const errors = [];
   const warnings = [];
@@ -130,6 +146,7 @@ export function validateSkillDocument(document) {
   const lines = sourceLines(document);
   warnings.push(...headingWarnings(lines));
   warnings.push(...doBlockWarnings(lines));
+  warnings.push(...negativeActionWarnings(lines));
   return { errors, warnings };
 }
 

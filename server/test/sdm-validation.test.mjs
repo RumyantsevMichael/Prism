@@ -28,6 +28,20 @@ sdm: "0.3"
   ]);
 });
 
+test("warns on direct negative action items", () => {
+  const result = validateSkillDocument(`---
+sdm: "0.3"
+---
+# Test
+1. Do not create a report
+`);
+
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.warnings, [
+    { line: 5, message: "use a declarative prohibition or a `Don't` block instead of a `Do not` action" }
+  ]);
+});
+
 test("accepts every shipped skill", async () => {
   const root = new URL("../../", import.meta.url).pathname;
   const results = await validateRepositorySkills(root);

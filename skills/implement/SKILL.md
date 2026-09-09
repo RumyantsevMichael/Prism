@@ -41,9 +41,11 @@ Weakening or replacing design acceptance requires renewed design and its gates.
 
 ## 3. Implement the outcome
 
-1. Implement the complete observable outcome across every required layer.
-2. Replace all shape-only scaffolds with complete behavior before verification.
-3. Keep private helpers and local data structures in code and tests.
+1. Search the repository, active artifacts, approved dependencies, and available semantic exploration tools for existing solutions, then record relevant matches and the reason to reuse or reject them before adding a component or dependency.
+2. When a semantic exploration tool is available, use it before text search for relevant symbols and call paths.
+3. Implement the complete observable outcome across every required layer.
+4. Replace all shape-only scaffolds with complete behavior before verification.
+5. Keep private helpers and local data structures in code and tests.
 
 - If a requirement is missing or must change, return `BLOCKED` with the exact user question.
 - If a new consequential architectural decision is needed, return `BLOCKED` with that decision for orchestration.
@@ -65,11 +67,13 @@ Implementation does not edit requirements without user approval or revise ADRs w
 3. Check applicable failure, recovery, lifecycle, compatibility, security, and operational cases against the design and findings.
 4. Inspect the complete diff for unrelated edits, temporary files, generated caches, and stale documentation.
 5. Remove task-generated temporary files and caches from the change.
-6. Use `write-user-docs` for changed user behavior and required operator procedures.
+6. Use `write-user-docs` for changed user behavior and move verified necessary content from the slice's `runbook-draft.md` to the configured user-guide path.
 7. Update slice-folder diagram source against verified code, removing obsolete relationships and resolved proposed markers.
 
 In-process tests do not replace required cross-process or cross-surface proof.
 Feature scenarios retain their approved intent, and durable documentation does not cite coordination records or slice identities.
+- Don't
+  - Create a separate verification report when existing tests, probes, findings, runbooks, and result evidence preserve the required facts.
 
 ## 5. Return review evidence
 

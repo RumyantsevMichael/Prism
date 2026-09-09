@@ -24,8 +24,10 @@ An atomic slice delivers one observable outcome within the remaining context and
 ## 2. Explore
 
 1. Locate the starting surface where the required behavior enters the system.
-2. Inspect affected code, tests, boundaries, and dependency evidence until you can support a design and fit decision.
-3. When a technical uncertainty affects that decision, investigate it with a bounded experiment.
+2. Search the repository, active artifacts, approved dependencies, and available semantic exploration tools for existing solutions, then record relevant matches and the reason to reuse or reject them before selecting a new component, dependency, or design approach.
+3. When a semantic exploration tool is available, use it before text search for relevant symbols and call paths.
+4. Inspect affected code, tests, boundaries, and dependency evidence until you can support a design and fit decision.
+5. When a technical uncertainty affects that decision, investigate it with a bounded experiment.
 
 Incomplete dependency implementation does not block design when available evidence supports a sound fit decision.
 
@@ -83,6 +85,7 @@ The orchestrator manages parent relationships and dependencies in the initiative
      3. Run the test, confirming failure at the starting surface because required behavior is absent, not from setup defects.
   4. Use `write-feature` to create or update requirement-linked acceptance scenarios.
   5. Complete and validate the slice folder's C4 code diagram against the fitted design.
+  6. When a slice needs a runbook before verification, create or update `<configured plans>/<initiative>/<slice>/runbook-draft.md` in the slice folder.
 
 Design does not add production behavior or step definitions, change requirements, or mark findings `VERIFIED`.
 Tests, contracts, scaffolds, and feature files require atomic fit.
@@ -99,6 +102,9 @@ Finding evidence remains in its original lane file.
 3. When a findings path is assigned or resolved, include it for every status.
 4. When discovery changes prerequisites, include the affected slices and supporting evidence for orchestration.
 5. Return the result to end this invocation.
+
+- Don't
+  - Create a separate exploration or verification report when existing artifacts preserve the required facts.
 
 An accepted split makes the parent non-executable.
 The orchestrator owns lifecycle changes and the transition to implementation.

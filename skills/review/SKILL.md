@@ -48,6 +48,7 @@ Implementation review requires actual consumption and its verification evidence.
 - Check applicable ownership, inputs, outputs, state, failure, recovery, compatibility, migration, integration, security, and operations.
 - Check applicable lifecycle, cancellation, deadlines, cleanup, retries, resource ownership, and authority changes.
 - Check applicable concurrency, ordering, replay identity, quotas, atomicity, and idempotency.
+- Check that a new component, dependency, or design approach has a recorded search for existing solutions and a reuse or rejection reason.
 - For `design-audit`:
   1. Trace every assigned requirement to planned behavior and an observable verification path.
   2. Check that boundaries, consequential decisions, consumers, and verification support one safe, complete atomic outcome.
@@ -68,8 +69,10 @@ Implementation review requires actual consumption and its verification evidence.
   9. When a concrete finding needs executable proof:
      1. Add one minimal regression probe in the canonical test location through a public or system surface.
      2. Base assertions on requirements, ADRs, features, contracts, or verified behavior.
-     3. Use existing fixtures or local setup without changing existing tests, fixtures, helpers, dependencies, or harness configuration.
-     4. Record the probe path, command, and expected failure in the `OPEN` finding.
+     3. Use existing fixtures or local setup.
+     4. Don't
+        - Change existing tests, fixtures, helpers, dependencies, or harness configuration.
+     5. Record the probe path, command, and expected failure in the `OPEN` finding.
 
 Review may run focused probes and records their results or why execution was unavailable.
 Implementation review does not rerun the full suite or configured verification commands.

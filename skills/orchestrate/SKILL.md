@@ -51,7 +51,7 @@ Missing records establish neither approval nor completion.
      2. Check unique slugs, unchanged parent title, and exact collective coverage of the parent's requirement assignment.
      3. Derive prerequisite edges from the parent design and existing map, returning architectural uncertainty to design.
      4. Obtain split and dependency acceptance under the autonomy setting.
-     5. Save the parent's result and all inherited diagram and ADR paths in its slice folder.
+     5. Persist only a result fact that a later context needs and that the map, slice record, diagrams, ADRs, findings, or state note does not already contain.
      6. Use `write-map` to add the accepted children and dependencies under the existing parent.
      7. Repeat this section for the new leaves.
    - For `FIT`, continue to section 3.
@@ -154,12 +154,18 @@ Paths resolve from the note's directory unless absolute.
 Empty lists mean no current item.
 One orchestrator writes the note and requests map changes.
 
-- After meaningful results or before a pause, update the note with current workers, blockers, next actions, and evidence paths.
-- Save conversation-only results, review bases, ancestor evidence, and dependent user decisions in the owning slice folder.
-- Before replacing coordination formats, preserve older files until their needed information has a durable home.
-- After compaction or handoff, repeat section 1.
-- Give replacement workers the workspace, findings, recovery record, and retained ancestor diagram and ADR paths.
-- Prefer host progress events, using five-minute observations only when events are unavailable.
-- Treat silence as missing information and resume a recorded worker before replacing it when possible.
-- Broker child delegation through the procedure when necessary, without creating user-owned tasks as substitutes.
-- If fresh review is unavailable, ask the user to run a separate review task.
+1. After meaningful results or before a pause, update the note with current workers, blockers, next actions, and evidence paths.
+2. Persist conversation-only results, review bases, ancestor evidence, or dependent user decisions in the owning slice folder only when a later context needs them and no existing artifact can own them.
+3. Before replacing coordination formats, preserve older files until their needed information has a durable home.
+4. After compaction or handoff, repeat section 1.
+5. Give replacement workers the workspace, findings, recovery record, and retained ancestor diagram and ADR paths.
+6. Prefer host progress events, using five-minute observations only when events are unavailable.
+7. Treat the first timeout from an explore or review worker as non-terminal.
+8. Give the same worker more time before stopping or replacing it.
+9. When the host ends a worker turn at a timeout, resume that worker with a larger allowance before creating a replacement.
+10. Replace a worker only after explicit completion, failure, blocker, or confirmed host termination.
+11. Broker child delegation through the procedure when necessary.
+12. If fresh review is unavailable, ask the user to run a separate review task.
+
+- Don't
+  - Create user-owned tasks as child-agent substitutes.

@@ -119,6 +119,43 @@ test("creates code diagrams during design and verifies structure after code", as
   assert.match(await reference("design", "c4-code-diagrams.md"), /Each fitted slice requires a C4 code diagram, even when it needs no new ADR/);
 });
 
+test("requires prior-art search and non-terminal worker timeouts", async () => {
+  const design = await skill("design");
+  const implement = await skill("implement");
+  const review = await skill("review");
+  const orchestrate = await skill("orchestrate");
+
+  for (const source of [design, implement]) {
+    assert.match(source, /Search the repository, active artifacts, approved dependencies, and available semantic exploration tools/);
+    assert.match(source, /record relevant matches and the reason to reuse or reject them/);
+    assert.match(source, /use it before text search for relevant symbols and call paths/);
+  }
+  assert.match(review, /new component, dependency, or design approach has a recorded search for existing solutions/);
+  assert.match(orchestrate, /first timeout from an explore or review worker as non-terminal/);
+  assert.match(orchestrate, /resume that worker with a larger allowance before creating a replacement/);
+  assert.match(orchestrate, /Replace a worker only after explicit completion, failure, blocker, or confirmed host termination/);
+  assert.match(orchestrate, /Don't\n  - Create user-owned tasks as child-agent substitutes/);
+  assert.match(review, /Don't\n        - Change existing tests, fixtures, helpers, dependencies, or harness configuration/);
+});
+
+test("keeps workflow persistence minimal and stages runbook drafts in slices", async () => {
+  const artifacts = await reference("workflow", "artifact-rules.md");
+  const design = await skill("design");
+  const implement = await skill("implement");
+  const docs = await skill("write-user-docs");
+
+  assert.match(artifacts, /Workflow results stay in the agent response unless a later context needs them/);
+  assert.match(artifacts, /Use `state\.json` for current coordination facts and evidence paths, not copied reports/);
+  assert.match(artifacts, /Existing artifacts replace standalone exploration or verification reports when they preserve the required facts/);
+  assert.match(artifacts, /store `runbook-draft\.md` in the slice folder/);
+  assert.match(artifacts, /Move verified necessary content to the configured user-guide directory through `write-user-docs`/);
+  assert.match(design, /create or update `<configured plans>\/<initiative>\/<slice>\/runbook-draft\.md`/);
+  assert.match(design, /Don't\n  - Create a separate exploration or verification report when existing artifacts preserve the required facts/);
+  assert.match(implement, /move verified necessary content from the slice's `runbook-draft\.md`/);
+  assert.match(implement, /Don't\n  - Create a separate verification report when existing tests, probes, findings, runbooks, and result evidence preserve the required facts/);
+  assert.match(docs, /Use the slice's `runbook-draft\.md` as draft input when it exists and move only its verified necessary content/);
+});
+
 test("uses executable contracts only", async () => {
   const contract = await skill("write-contracts");
   const review = await skill("review");
@@ -138,7 +175,7 @@ test("uses one review skill for both review modes", async () => {
   for (const mode of ["design-audit", "implementation-review"]) assert.ok(review.includes("- For `" + mode + "`:"));
   assert.match(review, /Each review writes only its assigned lane findings file, except permitted implementation review probes/);
   assert.match(review, /Add one minimal regression probe in the canonical test location through a public or system surface/);
-  assert.match(review, /without changing existing tests, fixtures, helpers, dependencies, or harness configuration/);
+  assert.match(review, /Don't\n\s+- Change existing tests, fixtures, helpers, dependencies, or harness configuration/);
   assert.match(review, /Only `VERIFIED` findings are resolved/);
   assert.match(review, /retain `FIXED` and report the missing evidence/);
   assert.match(review, /Implementation review does not rerun the full suite or configured verification commands/);
@@ -230,6 +267,15 @@ test("keeps the resume note readable without a separate state protocol", async (
   for (const name of ["orchestrate", "design", "implement", "review", "write-map"]) {
     assert.doesNotMatch(await skill(name), /worker-protocol\.md|baseRevision|preconditions|correction digest/);
   }
+});
+
+test("orders continuity actions as a process", async () => {
+  const orchestrate = await skill("orchestrate");
+  const continuity = orchestrate.slice(orchestrate.indexOf("## 6. Preserve continuity"));
+
+  assert.match(continuity, /\n1\. After meaningful results or before a pause/);
+  assert.match(continuity, /\n12\. If fresh review is unavailable/);
+  assert.doesNotMatch(continuity, /\n- After meaningful results or before a pause/);
 });
 
 test("preserves recursive design ownership and delivery gates", async () => {

@@ -60,7 +60,7 @@ While validation is in progress, the validation engine shall report the active a
 ```
 
 Use a state that has a clear start and end.
-Do not use `while` for a single event.
+The `while` pattern describes a continuous state, not a single event.
 
 ### Event-driven
 
@@ -77,7 +77,7 @@ When the user submits a specification, the validation engine shall check every r
 ```
 
 Write the event as something that occurs at the system boundary.
-Do not hide the actor behind words such as `requested` or `commanded`.
+Event statements name the actor instead of hiding it behind words such as `requested` or `commanded`.
 
 ### Optional feature
 
@@ -93,7 +93,7 @@ Example:
 Where strict validation is enabled, the validation engine shall treat every warning as an error.
 ```
 
-Do not use `where` for a temporary runtime state.
+The `where` pattern describes a product or configuration variant, not a temporary runtime state.
 Use `while` for a temporary runtime state.
 
 ### Unwanted behavior
@@ -143,7 +143,7 @@ Write a short EARS requirement that links to that authoritative object.
 
 Use the same system name throughout a requirement file.
 Define the system boundary before you write the requirements.
-Do not alternate between a product name, a component name, and `the system` for the same thing.
+A requirement uses one system name instead of alternating between a product name, a component name, and `the system`.
 
 ### Use one obligation
 
@@ -234,7 +234,7 @@ Include the exact limit, just below the limit, and just above the limit during l
 
 These links provide historical and technical context.
 Their content does not carry an open-content license suitable for inclusion in Prism.
-Do not copy their prose, examples, diagrams, or tables into Prism artifacts.
+Prism artifacts do not copy their prose, examples, diagrams, or tables.
 
 - Alistair Mavin, Philip Wilkinson, Adrian Harwood, and Mark Novak, [EARS: Easy Approach to Requirements Syntax](https://doi.org/10.1109/RE.2009.9), 2009.
 - Alistair Mavin, Philip Wilkinson, Sarah Gregory, and Eero Uusitalo, [Listens Learned: Eight Lessons Learned Applying EARS](https://doi.org/10.1109/RE.2016.38), 2016.

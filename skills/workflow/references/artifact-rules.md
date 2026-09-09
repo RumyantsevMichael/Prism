@@ -4,6 +4,14 @@ Requirements preserve obligations, ADRs preserve decisions, and feature files pr
 Slice records contain only the capability title, outcome, and requirement links.
 The workflow creates no implementation handoff, mandatory build plan, or execution ledger.
 
+## Minimal persistence
+
+Workflow results stay in the agent response unless a later context needs them.
+Persist only facts that an existing artifact does not already own.
+Use `state.json` for current coordination facts and evidence paths, not copied reports.
+Existing artifacts replace standalone exploration or verification reports when they preserve the required facts.
+When no existing artifact can own a fact required by a later context, create one focused artifact and state why it is needed.
+
 ## Design evidence
 
 - Store C4 source and supplementary slice diagrams in the slice folder.
@@ -27,3 +35,6 @@ Rendered images are not committed.
 - Cite requirements for obligations and ADRs for rationale.
 - Keep durable requirements, ADRs, features, and user guidance free of scratch paths and slice identities.
 - Use `write-user-docs` for verified user or operator changes.
+
+When a slice needs a runbook before verification, store `runbook-draft.md` in the slice folder.
+Move verified necessary content to the configured user-guide directory through `write-user-docs` before slice completion.
