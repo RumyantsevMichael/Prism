@@ -3,6 +3,7 @@ name: ideate
 description: "Shape a raw idea into Approved EARS requirements before planning or design."
 argument-hint: '[idea]'
 sdm: "0.3"
+disable-model-invocation: true
 ---
 
 # Shape product intent
