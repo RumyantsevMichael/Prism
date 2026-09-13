@@ -10,6 +10,10 @@ const emptyFilter = document.getElementById("empty-filter");
 const toast = document.getElementById("toast");
 let selectedPath = new URLSearchParams(location.search).get("artifact");
 let openTabs = [];
+let sessionRevision = 0;
+let sessionConnected = false;
+let sessionStream;
+let saveQueue = Promise.resolve();
 let lastSnapshot = "";
 let toastTimer;
 let expandedFolders = new Set();
@@ -63,27 +67,34 @@ function renderTabs() {
   }
 }
 
-async function saveTabs() {
-  const response = await fetch("./api/session", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ openTabs })
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
+function saveSession() {
+  const payload = { openTabs: [...openTabs], activeTab: selectedPath };
+  const request = async () => {
+    const response = await fetch("./api/session", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    synchronizeSession(await response.json());
+  };
+  const queued = saveQueue.then(request, request);
+  saveQueue = queued.catch(() => {});
+  return queued;
 }
 
 function selectTab(path) {
   if (!openTabs.includes(path)) {
     openTabs.push(path);
-    void saveTabs().catch((error) => showToast(error.message));
   }
   selectedPath = path;
   lastSnapshot = "";
   updateLocation(path);
   renderTabs();
   void showArtifact(path);
+  void saveSession().catch((error) => showToast(error.message));
 }
 
 function closeTab(path) {
@@ -99,16 +110,27 @@ function closeTab(path) {
   } else {
     welcome();
   }
-  void saveTabs().catch((error) => showToast(error.message));
+  void saveSession().catch((error) => showToast(error.message));
 }
 
-function synchronizeTabs(serverTabs) {
-  if (samePaths(openTabs, serverTabs)) {
+function synchronizeSession(snapshot) {
+  const nextRevision = Number.isInteger(snapshot.revision) ? snapshot.revision : sessionRevision;
+  if (nextRevision <= sessionRevision) {
     return;
   }
-  openTabs = serverTabs;
-  if (!openTabs.includes(selectedPath)) {
-    selectedPath = openTabs[0] ?? null;
+  const nextTabs = Array.isArray(snapshot.openTabs) ? [...snapshot.openTabs] : [];
+  const nextSelectedPath = Object.hasOwn(snapshot, "activeTab")
+    ? snapshot.activeTab
+    : nextTabs.includes(selectedPath) ? selectedPath : nextTabs[0] ?? null;
+  const tabsChanged = !samePaths(openTabs, nextTabs);
+  const selectionChanged = selectedPath !== nextSelectedPath;
+  sessionRevision = nextRevision;
+  openTabs = nextTabs;
+  selectedPath = nextSelectedPath && nextTabs.includes(nextSelectedPath) ? nextSelectedPath : null;
+  if (!tabsChanged && !selectionChanged) {
+    return;
+  }
+  if (selectionChanged) {
     lastSnapshot = "";
     updateLocation(selectedPath);
   }
@@ -118,6 +140,24 @@ function synchronizeTabs(serverTabs) {
   } else {
     welcome();
   }
+}
+
+function connectSessionEvents() {
+  sessionStream = new EventSource("./api/events");
+  sessionStream.onopen = () => {
+    sessionConnected = true;
+  };
+  sessionStream.onerror = () => {
+    sessionConnected = false;
+  };
+  sessionStream.addEventListener("session", (event) => {
+    sessionConnected = true;
+    try {
+      synchronizeSession(JSON.parse(event.data));
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
 }
 
 function escapeHtml(value) {
@@ -501,11 +541,18 @@ async function initialize() {
   }
   const data = await response.json();
   openTabs = data.openTabs;
-  if (selectedPath && !openTabs.includes(selectedPath)) {
-    openTabs.push(selectedPath);
-    await saveTabs();
+  sessionRevision = Number.isInteger(data.revision) ? data.revision : 0;
+  const requestedPath = selectedPath;
+  const hasServerActiveTab = Object.hasOwn(data, "activeTab");
+  if (hasServerActiveTab) {
+    selectedPath = data.activeTab;
   }
-  if (!selectedPath) {
+  if (requestedPath && !openTabs.includes(requestedPath)) {
+    selectedPath = requestedPath;
+    openTabs.push(requestedPath);
+    await saveSession();
+  }
+  if (!selectedPath && !hasServerActiveTab) {
     selectedPath = openTabs[0] ?? null;
   }
   project.textContent = data.projectRoot;
@@ -517,6 +564,7 @@ async function initialize() {
   renderTreeNode(tree, artifacts);
   updateTreeState();
   renderTabs();
+  connectSessionEvents();
   artifactFilter.addEventListener("input", filterArtifacts);
   document.addEventListener("keydown", (event) => {
     if (event.key === "/" && document.activeElement !== artifactFilter) {
@@ -535,7 +583,10 @@ async function initialize() {
     try {
       const refreshed = await fetch("./api/index", { cache: "no-store" });
       if (refreshed.ok) {
-        synchronizeTabs((await refreshed.json()).openTabs);
+        const snapshot = await refreshed.json();
+        if (!sessionConnected) {
+          synchronizeSession(snapshot);
+        }
       }
       if (selectedPath) {
         await showArtifact(selectedPath);

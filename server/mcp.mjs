@@ -5,6 +5,7 @@ import { listArtifacts, startReviewServer } from "./review-server.mjs";
 import { readCoordinationState, updateCoordinationState, validateCoordinationState } from "./state.mjs";
 
 const reviewServers = new Map();
+const taskRoots = new Map();
 const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1000;
 const pluginManifest = JSON.parse(await readFile(new URL("../.codex-plugin/plugin.json", import.meta.url), "utf8"));
 
@@ -34,42 +35,59 @@ async function requestedProjectRoot(argumentsValue) {
   return resolvedRoot;
 }
 
-function refreshIdleTimeout(id, binding) {
+function refreshIdleTimeout(projectRoot, binding) {
   clearTimeout(binding.idleTimeout);
-  binding.idleTimeout = setTimeout(async () => {
-    if (reviewServers.get(id) !== binding) {
+  const idleTimeout = setTimeout(async () => {
+    if (binding.idleTimeout !== idleTimeout || reviewServers.get(projectRoot) !== binding) {
       return;
     }
-    reviewServers.delete(id);
     try {
       const review = await binding.review;
+      if (review.viewerCount() > 0) {
+        refreshIdleTimeout(projectRoot, binding);
+        return;
+      }
+      reviewServers.delete(projectRoot);
+      for (const [task, boundRoot] of taskRoots) {
+        if (boundRoot === projectRoot) {
+          taskRoots.delete(task);
+        }
+      }
       await review.close();
     } catch {
     }
   }, REVIEW_SERVER_IDLE_MS);
-  binding.idleTimeout.unref();
+  binding.idleTimeout = idleTimeout;
+  idleTimeout.unref();
 }
 
 async function server(argumentsValue, metadata) {
   const id = taskId(metadata);
   const projectRoot = await requestedProjectRoot(argumentsValue);
-  const existing = reviewServers.get(id);
+  const boundRoot = taskRoots.get(id);
+  if (boundRoot && boundRoot !== projectRoot) {
+    throw new Error(`This task is already bound to project root: ${boundRoot}`);
+  }
+  taskRoots.set(id, projectRoot);
+  const existing = reviewServers.get(projectRoot);
   if (existing) {
-    if (existing.projectRoot !== projectRoot) {
-      throw new Error(`This task is already bound to project root: ${existing.projectRoot}`);
-    }
-    refreshIdleTimeout(id, existing);
+    refreshIdleTimeout(projectRoot, existing);
     return existing.review;
   }
   const review = startReviewServer({ projectRoot });
   const binding = { projectRoot, review };
-  reviewServers.set(id, binding);
-  refreshIdleTimeout(id, binding);
+  reviewServers.set(projectRoot, binding);
+  refreshIdleTimeout(projectRoot, binding);
   try {
     return await review;
   } catch (error) {
     clearTimeout(binding.idleTimeout);
-    reviewServers.delete(id);
+    if (reviewServers.get(projectRoot) === binding) {
+      reviewServers.delete(projectRoot);
+    }
+    if (taskRoots.get(id) === projectRoot) {
+      taskRoots.delete(id);
+    }
     throw error;
   }
 }
@@ -101,6 +119,10 @@ function stateContent(result) {
   return `Coordination state ${validity}: ${result.statePath}\nRevision: ${revision}`;
 }
 
+function reviewSessionContent(review) {
+  return review.getSession();
+}
+
 function failure(id, code, message, data) {
   const response = { jsonrpc: "2.0", id, error: { code, message } };
   if (data !== undefined) {
@@ -125,7 +147,7 @@ function stateErrorData(error) {
 const tools = [
   {
     name: "get_review_url",
-    description: "Start or update the local Prism HTTPS review server and return a human review URL only. Use artifacts to select the persistent tabs. This tool does not open a browser or return rendered image data.",
+    description: "Start or update the local Prism HTTPS review server and return a human review URL only. Use artifacts to select the shared persistent tabs. This tool does not open a browser or return rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
@@ -140,7 +162,7 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open or update one local Prism HTTPS review page in the system browser for the human. Use artifacts to select the persistent tabs. Omit artifact to show the complete artifact tree when artifacts is also omitted. The tool returns no rendered image data.",
+    description: "Open or update one local Prism HTTPS review page in the system browser for the human. Use artifacts to select the shared persistent tabs. Repeated calls update connected viewer pages without opening another tab. Omit artifact to show the complete artifact tree when artifacts is also omitted. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
@@ -290,11 +312,11 @@ async function callTool(name, argumentsValue = {}, metadata) {
       await review.setOpenTabs(tabs);
     }
     const url = review.reviewUrl(tabs);
-    return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, openTabs: review.getOpenTabs(), certificatePath: review.certificatePath, trustInstructions: review.trustInstructions } };
+    return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, ...reviewSessionContent(review), certificatePath: review.certificatePath, trustInstructions: review.trustInstructions } };
   }
   if (name === "present_review") {
     const opened = await review.open(requestedTabs(argumentsValue));
-    return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, certificatePath: review.certificatePath, trustInstructions: review.trustInstructions } };
+    return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...reviewSessionContent(review), certificatePath: review.certificatePath, trustInstructions: review.trustInstructions } };
   }
   if (name === "list_reviewable_artifacts") {
     const artifacts = await listArtifacts(review.projectRoot);
@@ -337,4 +359,6 @@ input.on("close", async () => {
   }
   const reviews = await Promise.allSettled([...reviewServers.values()].map(({ review }) => review));
   await Promise.allSettled(reviews.filter(({ status }) => status === "fulfilled").map(({ value }) => value.close()));
+  reviewServers.clear();
+  taskRoots.clear();
 });

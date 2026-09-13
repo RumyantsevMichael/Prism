@@ -84,17 +84,20 @@ function fetchReview(url) {
 async function browserStub(context) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "prism-browser-stub-"));
   const marker = path.join(directory, "opened");
+  const count = path.join(directory, "open-count");
   context.after(() => rm(directory, { recursive: true, force: true }));
-  const stub = "#!/bin/sh\nprintf opened > \"$PRISM_BROWSER_MARKER\"\n";
+  const stub = "#!/bin/sh\nprintf opened > \"$PRISM_BROWSER_MARKER\"\nprintf x >> \"$PRISM_BROWSER_COUNT\"\n";
   for (const command of ["open", "xdg-open"]) {
     await writeFile(path.join(directory, command), stub);
     await chmod(path.join(directory, command), 0o755);
   }
   return {
     marker,
+    count,
     environment: {
       PATH: `${directory}${path.delimiter}${process.env.PATH}`,
-      PRISM_BROWSER_MARKER: marker
+      PRISM_BROWSER_MARKER: marker,
+      PRISM_BROWSER_COUNT: count
     }
   };
 }
@@ -123,6 +126,73 @@ async function markerContents(marker) {
     }
     throw error;
   }
+}
+
+async function openEventStream(url) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { rejectUnauthorized: false }, (response) => {
+      response.setEncoding("utf8");
+      let buffer = "";
+      const events = [];
+      const waiters = [];
+      let closed = false;
+      const rejectWaiters = (error) => {
+        while (waiters.length) {
+          waiters.shift().reject(error);
+        }
+      };
+      const deliver = (event) => {
+        const waiter = waiters.shift();
+        if (waiter) {
+          waiter.resolve(event);
+        } else {
+          events.push(event);
+        }
+      };
+      response.on("data", (chunk) => {
+        buffer += chunk;
+        let separator;
+        while ((separator = buffer.indexOf("\n\n")) !== -1) {
+          const block = buffer.slice(0, separator);
+          buffer = buffer.slice(separator + 2);
+          const data = block.split("\n").filter((line) => line.startsWith("data: ")).map((line) => line.slice(6)).join("\n");
+          if (data) {
+            deliver({ event: block.match(/^event: (.+)$/m)?.[1] ?? "message", data: JSON.parse(data) });
+          }
+        }
+      });
+      response.on("error", (error) => {
+        if (!closed) {
+          rejectWaiters(error);
+        }
+      });
+      response.on("end", () => {
+        if (!closed) {
+          rejectWaiters(new Error("The event stream ended."));
+        }
+      });
+      resolve({
+        status: response.statusCode,
+        headers: response.headers,
+        next() {
+          if (events.length) {
+            return Promise.resolve(events.shift());
+          }
+          return new Promise((resolveNext, rejectNext) => waiters.push({ resolve: resolveNext, reject: rejectNext }));
+        },
+        close() {
+          closed = true;
+          response.destroy();
+          request.destroy();
+        }
+      });
+    });
+    request.once("error", (error) => {
+      if (!request.destroyed) {
+        reject(error);
+      }
+    });
+  });
 }
 
 async function initialize(mcp, capabilities = {}) {
@@ -241,6 +311,20 @@ test("keeps Codex tasks bound to separate consumer roots", async (context) => {
   assert.match(changed.error.message, /already bound to project root/);
 });
 
+test("shares one review server across tasks with the same consumer root", async (context) => {
+  const root = await projectFixture(context, "shared-consumer", "first-only.md");
+  await writeFile(path.join(root, "docs", "second-only.md"), "# second\n");
+  const mcp = mcpProcess(context, root);
+
+  await initialize(mcp);
+  const first = await callTool(mcp, 2, "get_review_url", { projectRoot: root, artifact: "docs/first-only.md" }, "first-task");
+  const second = await callTool(mcp, 3, "get_review_url", { projectRoot: root, artifact: "docs/second-only.md" }, "second-task");
+  const firstUrl = new URL(first.result.structuredContent.url);
+  const secondUrl = new URL(second.result.structuredContent.url);
+  assert.equal(`${firstUrl.origin}${firstUrl.pathname.replace(/\/review$/, "")}`, `${secondUrl.origin}${secondUrl.pathname.replace(/\/review$/, "")}`);
+  assert.deepEqual(second.result.structuredContent.openTabs, ["docs/second-only.md"]);
+});
+
 test("requires an absolute project root without a host root", async (context) => {
   const pluginRoot = await projectFixture(context, "missing-root-plugin", "plugin-only.md");
   const mcp = mcpProcess(context, pluginRoot);
@@ -298,6 +382,32 @@ test("opens the system browser when it presents a review", async (context) => {
   assert.match(review.result.structuredContent.url, /^https:\/\/127\.0\.0\.1:/);
   assert.equal(review.result.structuredContent.opened, true);
   assert.equal(await waitForMarker(browser.marker), "opened");
+});
+
+test("does not reopen an existing viewer for repeated presentation calls", async (context) => {
+  const root = await projectFixture(context, "idempotent-present", "artifact.md");
+  const browser = await browserStub(context);
+  const mcp = mcpProcess(context, root, undefined, browser.environment);
+
+  await initialize(mcp);
+  const first = await callTool(mcp, 2, "present_review", { projectRoot: root, artifact: "docs/artifact.md" }, "first-task");
+  assert.equal(await waitForMarker(browser.marker), "opened");
+  const eventsUrl = new URL(first.result.structuredContent.url);
+  eventsUrl.pathname = eventsUrl.pathname.replace(/\/review$/, "/api/events");
+  eventsUrl.search = "";
+  const events = await openEventStream(eventsUrl);
+  assert.equal(events.status, 200);
+  await events.next();
+
+  const second = await callTool(mcp, 3, "present_review", { projectRoot: root, artifact: "docs/artifact.md" }, "second-task");
+  assert.equal(second.result.structuredContent.opened, false);
+  assert.equal(await readFile(browser.count, "utf8"), "x");
+  events.close();
+  await delay(50);
+  const third = await callTool(mcp, 4, "present_review", { projectRoot: root, artifact: "docs/artifact.md" }, "third-task");
+  assert.equal(third.result.structuredContent.opened, true);
+  await delay(50);
+  assert.equal(await readFile(browser.count, "utf8"), "xx");
 });
 
 test("opens one review page for the complete artifact tree when no artifact is selected", async (context) => {

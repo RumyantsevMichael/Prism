@@ -16,6 +16,8 @@ const AUTHORITY_PRIVATE_KEY_NAME = "review-ca-key.pem";
 const SERVER_CERTIFICATE_NAME = "review-server-cert.pem";
 const SERVER_PRIVATE_KEY_NAME = "review-server-key.pem";
 const SERVER_RENEWAL_WINDOW_DAYS = 30;
+const VIEWER_HEARTBEAT_MS = 15 * 1000;
+const VIEWER_OPEN_RETRY_MS = 10 * 1000;
 
 function isInside(root, target) {
   const relative = path.relative(root, target);
@@ -317,16 +319,116 @@ export async function startReviewServer(options = {}) {
   const certificate = await localCertificate(options);
   const token = randomBytes(24).toString("base64url");
   const prefix = `/session/${token}`;
-  let openTabs = [];
-  async function setOpenTabs(tabs) {
+  let session = { openTabs: [], activeTab: null, revision: 0 };
+  const viewers = new Map();
+  let viewerOpenLease = null;
+
+  function sessionSnapshot() {
+    return { openTabs: [...session.openTabs], activeTab: session.activeTab, revision: session.revision };
+  }
+
+  function clearViewerOpenLease() {
+    if (viewerOpenLease) {
+      clearTimeout(viewerOpenLease);
+      viewerOpenLease = null;
+    }
+  }
+
+  function armViewerOpenLease() {
+    clearViewerOpenLease();
+    viewerOpenLease = setTimeout(() => {
+      viewerOpenLease = null;
+    }, VIEWER_OPEN_RETRY_MS);
+    viewerOpenLease.unref();
+  }
+
+  function writeSessionEvent(response) {
+    response.write(`event: session\ndata: ${JSON.stringify(sessionSnapshot())}\n\n`);
+  }
+
+  function removeViewer(response) {
+    const heartbeat = viewers.get(response);
+    if (!heartbeat) {
+      return;
+    }
+    clearInterval(heartbeat);
+    viewers.delete(response);
+  }
+
+  function broadcastSession() {
+    for (const response of viewers.keys()) {
+      try {
+        writeSessionEvent(response);
+      } catch {
+        removeViewer(response);
+        response.destroy();
+      }
+    }
+  }
+
+  function openViewerStream(response) {
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-store",
+      Connection: "keep-alive",
+      "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer"
+    });
+    response.flushHeaders();
+    const heartbeat = setInterval(() => {
+      try {
+        response.write(": keep-alive\n\n");
+      } catch {
+        removeViewer(response);
+        response.destroy();
+      }
+    }, VIEWER_HEARTBEAT_MS);
+    heartbeat.unref();
+    viewers.set(response, heartbeat);
+    response.once("close", () => removeViewer(response));
+    clearViewerOpenLease();
+    writeSessionEvent(response);
+  }
+
+  async function updateSession(tabs, activeTab, activeTabProvided) {
     const requestedTabs = normalizeTabs(tabs);
     const availableArtifacts = new Set(await listArtifacts(projectRoot));
     const unknownTab = requestedTabs.find((tab) => !availableArtifacts.has(tab));
     if (unknownTab) {
       throw new Error(`The artifact is not available for review: ${unknownTab}`);
     }
-    openTabs = requestedTabs;
-    return openTabs;
+    let nextActiveTab;
+    if (activeTabProvided) {
+      if (activeTab !== null && (typeof activeTab !== "string" || !requestedTabs.includes(activeTab))) {
+        throw new Error("The active tab must be null or one of the open tabs.");
+      }
+      nextActiveTab = activeTab;
+    } else {
+      nextActiveTab = session.activeTab && requestedTabs.includes(session.activeTab) ? session.activeTab : requestedTabs[0] ?? null;
+    }
+    if (requestedTabs.length === 0) {
+      nextActiveTab = null;
+    }
+    if (requestedTabs.length !== session.openTabs.length || requestedTabs.some((tab, index) => tab !== session.openTabs[index]) || nextActiveTab !== session.activeTab) {
+      session = { openTabs: requestedTabs, activeTab: nextActiveTab, revision: session.revision + 1 };
+      broadcastSession();
+    }
+    return sessionSnapshot();
+  }
+
+  async function setOpenTabs(tabs) {
+    const requestedTabs = normalizeTabs(tabs);
+    const updated = await updateSession(requestedTabs, requestedTabs[0] ?? null, true);
+    return updated.openTabs;
+  }
+
+  function closeViewerStreams() {
+    clearViewerOpenLease();
+    for (const response of viewers.keys()) {
+      removeViewer(response);
+      response.end();
+    }
   }
   const server = createServer(certificate.serverOptions, async (request, response) => {
     try {
@@ -348,13 +450,15 @@ export async function startReviewServer(options = {}) {
         await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
       } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
         await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
+      } else if (route === "/api/events" && request.method === "GET") {
+        openViewerStream(response);
       } else if (route === "/api/index") {
-        send(response, 200, JSON.stringify({ projectRoot, artifacts: await listArtifacts(projectRoot), openTabs }), "application/json; charset=utf-8");
+        send(response, 200, JSON.stringify({ projectRoot, artifacts: await listArtifacts(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
       } else if (route === "/api/session" && request.method === "GET") {
-        send(response, 200, JSON.stringify({ openTabs }), "application/json; charset=utf-8");
+        send(response, 200, JSON.stringify(sessionSnapshot()), "application/json; charset=utf-8");
       } else if (route === "/api/session" && request.method === "PUT") {
         const body = await readJson(request);
-        send(response, 200, JSON.stringify({ openTabs: await setOpenTabs(body.openTabs) }), "application/json; charset=utf-8");
+        send(response, 200, JSON.stringify(await updateSession(body.openTabs, body.activeTab, Object.hasOwn(body, "activeTab"))), "application/json; charset=utf-8");
       } else if (route === "/api/artifact") {
         const artifactPath = url.searchParams.get("path");
         send(response, 200, JSON.stringify(await loadArtifact(projectRoot, artifactPath)), "application/json; charset=utf-8");
@@ -362,7 +466,11 @@ export async function startReviewServer(options = {}) {
         send(response, 404, "Not found");
       }
     } catch (error) {
-      send(response, 400, error.message);
+      if (response.headersSent) {
+        response.destroy();
+      } else {
+        send(response, 400, error.message);
+      }
     }
   });
   await new Promise((resolve, reject) => {
@@ -378,7 +486,13 @@ export async function startReviewServer(options = {}) {
     serverCertificatePath: certificate.serverCertificatePath,
     trustInstructions: certificateTrustInstructions(certificate.authorityCertificatePath),
     getOpenTabs() {
-      return [...openTabs];
+      return [...session.openTabs];
+    },
+    getSession() {
+      return sessionSnapshot();
+    },
+    viewerCount() {
+      return viewers.size;
     },
     async setOpenTabs(tabs) {
       return setOpenTabs(tabs);
@@ -391,9 +505,17 @@ export async function startReviewServer(options = {}) {
       const tabs = normalizeTabs(artifactPaths);
       await setOpenTabs(tabs);
       const url = this.reviewUrl(tabs);
-      return { url, opened: browserOpener(url) };
+      if (viewers.size > 0 || viewerOpenLease) {
+        return { url, opened: false, ...sessionSnapshot() };
+      }
+      const opened = Boolean(await browserOpener(url));
+      if (opened) {
+        armViewerOpenLease();
+      }
+      return { url, opened, ...sessionSnapshot() };
     },
     close() {
+      closeViewerStreams();
       return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   };

@@ -44,6 +44,68 @@ function fetchReview(url, options = {}) {
   });
 }
 
+function openEventStream(url) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { rejectUnauthorized: false }, (response) => {
+      response.setEncoding("utf8");
+      let buffer = "";
+      const events = [];
+      const waiters = [];
+      let closed = false;
+      const rejectWaiters = (error) => {
+        while (waiters.length) {
+          waiters.shift().reject(error);
+        }
+      };
+      const deliver = (event) => {
+        const waiter = waiters.shift();
+        if (waiter) {
+          waiter.resolve(event);
+        } else {
+          events.push(event);
+        }
+      };
+      response.on("data", (chunk) => {
+        buffer += chunk;
+        let separator;
+        while ((separator = buffer.indexOf("\n\n")) !== -1) {
+          const block = buffer.slice(0, separator);
+          buffer = buffer.slice(separator + 2);
+          const data = block.split("\n").filter((line) => line.startsWith("data: ")).map((line) => line.slice(6)).join("\n");
+          if (data) {
+            deliver({ event: block.match(/^event: (.+)$/m)?.[1] ?? "message", data: JSON.parse(data) });
+          }
+        }
+      });
+      response.on("error", (error) => {
+        if (!closed) {
+          rejectWaiters(error);
+        }
+      });
+      response.on("end", () => {
+        if (!closed) {
+          rejectWaiters(new Error("The event stream ended."));
+        }
+      });
+      resolve({
+        status: response.statusCode,
+        headers: response.headers,
+        next() {
+          if (events.length) {
+            return Promise.resolve(events.shift());
+          }
+          return new Promise((resolveNext, rejectNext) => waiters.push({ resolve: resolveNext, reject: rejectNext }));
+        },
+        close() {
+          closed = true;
+          request.destroy();
+        }
+      });
+    });
+    request.once("error", reject);
+  });
+}
+
 test("lists source artifacts and returns diagram source", async (context) => {
   const projectRoot = await fixture(context);
   const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
@@ -106,7 +168,8 @@ test("serves the browser runtime without an image endpoint", async (context) => 
     const client = await (await fetchReview(`${review.baseUrl}/review.js`)).text();
     assert.match(client, /data-action="zoom-in"/);
     assert.match(client, /PlantUML source copied/);
-    assert.match(client, /saveTabs/);
+    assert.match(client, /saveSession/);
+    assert.match(client, /EventSource/);
     const c4 = await fetchReview(`${review.baseUrl}/vendor/c4.min.js`);
     assert.equal(c4.status, 200);
     const image = await fetchReview(`${review.baseUrl}/render/svg?source=docs%2Froadmap.puml`);
@@ -143,16 +206,47 @@ test("stores agent-selected tabs and exposes them to the viewer", async (context
     await review.setOpenTabs(["docs/roadmap.md", "docs/roadmap.puml"]);
     assert.deepEqual(review.getOpenTabs(), ["docs/roadmap.md", "docs/roadmap.puml"]);
     const session = await fetchReview(`${review.baseUrl}/api/session`);
-    assert.deepEqual(await session.json(), { openTabs: ["docs/roadmap.md", "docs/roadmap.puml"] });
+    assert.deepEqual(await session.json(), { openTabs: ["docs/roadmap.md", "docs/roadmap.puml"], activeTab: "docs/roadmap.md", revision: 1 });
     const updated = await fetchReview(`${review.baseUrl}/api/session`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ openTabs: ["docs/roadmap.puml"] })
     });
-    assert.deepEqual(await updated.json(), { openTabs: ["docs/roadmap.puml"] });
+    assert.deepEqual(await updated.json(), { openTabs: ["docs/roadmap.puml"], activeTab: "docs/roadmap.puml", revision: 2 });
     assert.deepEqual(review.getOpenTabs(), ["docs/roadmap.puml"]);
+    const invalidActive = await fetchReview(`${review.baseUrl}/api/session`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ openTabs: ["docs/roadmap.puml"], activeTab: "docs/roadmap.md" })
+    });
+    assert.equal(invalidActive.status, 400);
     await assert.rejects(review.setOpenTabs(["secrets/private.md"]), /not available for review/);
   } finally {
     await review.close();
+  }
+});
+
+test("broadcasts session changes to every connected viewer page", async (context) => {
+  const projectRoot = await fixture(context);
+  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const streams = [];
+  try {
+    const first = await openEventStream(`${review.baseUrl}/api/events`);
+    const second = await openEventStream(`${review.baseUrl}/api/events`);
+    streams.push(first, second);
+    assert.equal(first.status, 200);
+    assert.match(first.headers["content-type"], /text\/event-stream/);
+    assert.deepEqual((await first.next()).data, { openTabs: [], activeTab: null, revision: 0 });
+    assert.deepEqual((await second.next()).data, { openTabs: [], activeTab: null, revision: 0 });
+
+    await review.setOpenTabs(["docs/roadmap.md", "docs/roadmap.puml"]);
+    const update = { openTabs: ["docs/roadmap.md", "docs/roadmap.puml"], activeTab: "docs/roadmap.md", revision: 1 };
+    assert.deepEqual((await first.next()).data, update);
+    assert.deepEqual((await second.next()).data, update);
+  } finally {
+    await review.close();
+    for (const stream of streams) {
+      stream.close();
+    }
   }
 });

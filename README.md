@@ -88,6 +88,7 @@ Agents read the PlantUML source and never read rendered images.
 The bundled review server renders diagrams in the human's browser without creating image files.
 
 Prism opens one viewer session after design audit and before final correctness confirmation.
+Repeated viewer requests update that session instead of opening another browser tab.
 The artifact tree shows all files, and tabs retain open artifacts.
 Ask the agent to open the viewer at any time during an active session.
 
