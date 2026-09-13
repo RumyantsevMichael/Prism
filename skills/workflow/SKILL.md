@@ -102,7 +102,6 @@ Code establishes implemented behavior.
 | Decision autonomy | An orchestration setting that controls automatic internal decisions. |
 | Agent flow | An orchestration setting that selects inline or delegated delivery. |
 | Slice continuation | An orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input. |
-| Coordination-state capability | The validated capability that owns `state.json` syntax validation, atomic writes, and concurrent-update checks. |
 | `state.json` | A short resume note with settings, active work, pending decisions, next actions, and evidence paths. |
 | `map.puml` | The authoritative initiative graph, with topology and dependencies owned by orchestration and written through `write-map`. |
 | `findings.md` | The authoritative review record for one reporting slice and review lane. |

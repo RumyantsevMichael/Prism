@@ -93,7 +93,7 @@ test("defines compact autonomy and agent-flow settings", async () => {
   assert.match(orchestrate, /- For `mono`, continue the orchestrator context with `implement`/);
   assert.match(orchestrate, /- For `multi`, resume the same delivery context/);
   assert.match(orchestrate, /The agent flow does not change after active work starts/);
-  assert.match(orchestrate, /block the initiative and ask the user to run a separate review task/);
+  assert.match(settings, /If fresh review capability is unavailable, block and ask the user to run a separate review task/);
   assert.match(orchestrate, /Mono delivery records `orchestrator` as the active worker/);
 });
 
@@ -154,11 +154,12 @@ test("creates code diagrams during design and verifies structure after code", as
   assert.match(await reference("design", "c4-code-diagrams.md"), /Each fitted slice requires a C4 code diagram, even when it needs no new ADR/);
 });
 
-test("requires prior-art search and non-terminal worker timeouts", async () => {
+test("requires prior-art search and a compact worker lifetime reference", async () => {
   const design = await skill("design");
   const implement = await skill("implement");
   const review = await skill("review");
   const orchestrate = await skill("orchestrate");
+  const lifetime = await reference("orchestrate", "worker-lifetime.md");
 
   for (const source of [design, implement]) {
     assert.match(source, /Search the repository, active artifacts, approved dependencies, and available semantic exploration tools/);
@@ -166,9 +167,11 @@ test("requires prior-art search and non-terminal worker timeouts", async () => {
     assert.match(source, /use it before text search for relevant symbols and call paths/);
   }
   assert.match(review, /new component, dependency, or design approach has a recorded search for existing solutions/);
-  assert.match(orchestrate, /first timeout from an explore or review worker as non-terminal/);
-  assert.match(orchestrate, /resume that worker with a larger allowance before creating a replacement/);
-  assert.match(orchestrate, /Replace a worker only after explicit completion, failure, blocker, or confirmed host termination/);
+  assert.match(orchestrate, /worker-lifetime\.md/);
+  assert.match(lifetime, /worker wait timeout or missing completion event as non-terminal/);
+  assert.match(lifetime, /preserving partial evidence/);
+  assert.match(lifetime, /resume the same worker before replacement/);
+  assert.match(lifetime, /replace it only after explicit completion, failure, blocker, or confirmed host termination/);
   assert.match(orchestrate, /Don't\n  - Create user-owned tasks as child-agent substitutes/);
   assert.match(review, /Don't\n        - Change existing tests, fixtures, helpers, dependencies, or harness configuration/);
 });
@@ -296,7 +299,7 @@ test("keeps coordination state concise without an inline schema example", async 
   const orchestrate = await skill("orchestrate");
   const continuity = orchestrate.slice(orchestrate.indexOf("## 6. Preserve continuity"));
   assert.doesNotMatch(continuity, /```json/);
-  assert.match(continuity, /The coordination-state capability owns state\.json syntax validation/);
+  assert.match(orchestrate, /Use the coordination-state tools to read `state\.json`/);
   await assert.rejects(reference("orchestrate", "state-schema.md"), /ENOENT/);
   for (const name of ["orchestrate", "design", "implement", "review", "write-map"]) {
     assert.doesNotMatch(await skill(name), /worker-protocol\.md|baseRevision|preconditions|correction digest/);
@@ -308,18 +311,19 @@ test("orders continuity actions as a process", async () => {
   const continuity = orchestrate.slice(orchestrate.indexOf("## 6. Preserve continuity"));
 
   assert.match(continuity, /\n1\. After meaningful results or before a pause/);
-  assert.match(continuity, /\n12\. If fresh review is unavailable/);
+  assert.match(continuity, /\n7\. Broker child delegation through the procedure/);
+  assert.doesNotMatch(continuity, /\n8\./);
   assert.doesNotMatch(continuity, /\n- After meaningful results or before a pause/);
 });
 
-test("uses the validated coordination state capability", async () => {
+test("uses the validated coordination state tools", async () => {
   const workflow = await skill("workflow");
   const artifacts = await reference("workflow", "artifact-rules.md");
   const orchestrate = await skill("orchestrate");
-  assert.match(workflow, /\| Coordination-state capability \|/);
+  assert.doesNotMatch(workflow, /\| Coordination-state capability \|/);
   assert.match(artifacts, /Use the coordination-state capability for `state\.json` reads and updates/);
-  assert.match(orchestrate, /Use the coordination-state capability to read `state\.json`/);
-  assert.match(orchestrate, /Direct file editing is an emergency recovery action/);
+  assert.match(orchestrate, /Use the coordination-state tools to read `state\.json`/);
+  assert.doesNotMatch(orchestrate, /Direct file editing is an emergency recovery action/);
 });
 
 test("preserves recursive design ownership and delivery gates", async () => {

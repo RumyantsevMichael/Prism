@@ -26,8 +26,9 @@ An atomic slice delivers one observable outcome within the remaining context and
 1. Locate the starting surface where the required behavior enters the system.
 2. Search the repository, active artifacts, approved dependencies, and available semantic exploration tools for existing solutions, then record relevant matches and the reason to reuse or reject them before selecting a new component, dependency, or design approach.
 3. When a semantic exploration tool is available, use it before text search for relevant symbols and call paths.
-4. Inspect affected code, tests, boundaries, and dependency evidence until you can support a design and fit decision.
-5. When a technical uncertainty affects that decision, investigate it with a bounded experiment.
+4. Use [delegation.md](../workflow/references/delegation.md) to research suitable 3rd party solutions.
+5. Inspect affected code, tests, boundaries, and dependency evidence until you can support a design and fit decision.
+6. When a technical uncertainty affects that decision, investigate it with a bounded experiment.
 
 Incomplete dependency implementation does not block design when available evidence supports a sound fit decision.
 

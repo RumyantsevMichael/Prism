@@ -12,10 +12,10 @@ The [workflow terms](../workflow/SKILL.md#common-terms) define the shared lifecy
 
 ## 1. Start or resume
 
-1. Read `.prism/workflow.md`, [delegation.md](../workflow/references/delegation.md), and [run-settings.md](references/run-settings.md).
+1. Read `.prism/workflow.md`, [run-settings.md](references/run-settings.md), and [worker-lifetime.md](references/worker-lifetime.md).
 2. Read the available roadmap initiative, intent, and Approved requirement links.
 3. Prepare coordination state before active work:
-   - Use the coordination-state capability to read `state.json` when it exists.
+   - Use the coordination-state tools to read `state.json` when it exists.
    - Inspect recorded workers and workspaces before resuming or replacing them.
    - Resolve and persist run settings using [run-settings.md](references/run-settings.md), retaining existing values.
 4. If the input is a raw idea or initiative inputs are missing, run `ideate` and `roadmap` inline in either agent flow and apply the resolved autonomy gate.
@@ -133,11 +133,7 @@ Corrections do not create intermediate commits.
 
 The initiative's `state.json` records current coordination facts beside `map.puml`.
 The map alone owns slice topology, requirement assignments, dependencies, and status.
-The coordination-state capability owns state.json syntax validation, atomic writes, and concurrent-update checks.
 The orchestrator remains the only workflow writer for the initiative state.
-State reads and updates use the coordination-state capability.
-Manual recovery is the next option when the capability is unavailable.
-Direct file editing is an emergency recovery action that requires validation immediately after the edit.
 Mono delivery records `orchestrator` as the active worker and the current workspace.
 The agent flow does not change after active work starts.
 
@@ -150,13 +146,8 @@ One orchestrator writes the note and requests map changes.
 3. Before replacing coordination formats, preserve older files until their needed information has a durable home.
 4. After compaction or handoff, repeat section 1.
 5. Give replacement workers the workspace, findings, recovery record, and retained ancestor diagram and ADR paths.
-6. Prefer host progress events, using five-minute observations only when events are unavailable.
-7. Treat the first timeout from an explore or review worker as non-terminal.
-8. Give the same worker more time before stopping or replacing it.
-9. When the host ends a worker turn at a timeout, resume that worker with a larger allowance before creating a replacement.
-10. Replace a worker only after explicit completion, failure, blocker, or confirmed host termination.
-11. Broker child delegation through the procedure when necessary.
-12. If fresh review is unavailable, block the initiative and ask the user to run a separate review task.
+6. Apply [worker-lifetime.md](references/worker-lifetime.md) to every worker start, wait, resume, and replacement.
+7. Broker child delegation through the procedure when necessary.
 
 - Don't
   - Create user-owned tasks as child-agent substitutes.
