@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Run or resume a Prism initiative through recursive design, implementation, independent review, and user gates."
+description: "Run or resume an initiative through recursive design, implementation, independent review, and user gates."
 disable-model-invocation: true
 argument-hint: '[initiative]'
 sdm: "0.3"
@@ -8,41 +8,33 @@ sdm: "0.3"
 
 # Orchestrate an initiative
 
-Design creates slice outcomes and architecture.
-One delivery context designs and implements each atomic slice, while fresh contexts review its artifacts.
 The [workflow terms](../workflow/SKILL.md#common-terms) define the shared lifecycle.
 
 ## 1. Start or resume
 
-1. Read `.prism/workflow.md` and [delegation.md](../workflow/references/delegation.md).
-2. Read the roadmap initiative, intent, and Approved requirement links.
-3. If these inputs are missing, return the missing input to `ideate` or `roadmap`.
-4. Read the initiative's `map.puml`, `state.json`, and linked evidence when they exist.
-5. Inspect recorded workers and workspaces before resuming or replacing them.
-6. Resolve missing run settings with the user, retaining existing authorization.
-
-| Setting | Default | Effect |
-| --- | --- | --- |
-| Decision autonomy | `conservative` | User accepts splits, dependency changes, and implementation after design audit. |
-| Decision autonomy | `broad` alternative | Orchestrator accepts these steps within Approved intent when consequential decisions are settled. |
-| Commit | `off` | `on` permits design and final checkpoints for slice-owned changes. |
-| Push | `off` | `on` permits pushing authorized commits. |
-| Slice continuation | `auto` | `stepwise` requires user continuation after each completed slice. |
-| Models | Host defaults | User-selected delivery, review, and security-review models override their roles. |
-
-Both autonomy modes require user correctness confirmation and preserve requirement approval and project decision rules.
-Missing records establish neither approval nor completion.
-
-7. If no map exists:
+1. Read `.prism/workflow.md`, [delegation.md](../workflow/references/delegation.md), and [run-settings.md](references/run-settings.md).
+2. Read the available roadmap initiative, intent, and Approved requirement links.
+3. Prepare coordination state before active work:
+   - Use the coordination-state capability to read `state.json` when it exists.
+   - Inspect recorded workers and workspaces before resuming or replacing them.
+   - Resolve and persist run settings using [run-settings.md](references/run-settings.md), retaining existing values.
+4. If the input is a raw idea or initiative inputs are missing, run `ideate` and `roadmap` inline in either agent flow and apply the resolved autonomy gate.
+5. Read the initiative's `map.puml` and linked evidence when they exist.
+6. If no map exists:
    1. Use `write-map` to create one root with the initiative title and complete Approved requirement assignment.
    2. Use `roadmap` to mark the initiative `planned` and link its map.
-8. If records conflict, ask the responsible worker to reconcile them against actual artifacts before dependent work.
+7. If `agentFlow` is already active, retain it and reject changes after the first active phase or worker starts.
+8. If records conflict, ask the responsible worker to reconcile them against actual artifacts.
+    Apply the resolved autonomy gate before dependent work.
+Missing records establish neither approval nor completion.
 
 ## 2. Design recursively
 
 1. Select candidate leaves from the map, allowing design before prerequisite implementation when evidence permits.
 2. Collect all ancestor diagram and ADR paths from retained design results, including inherited paths.
-3. Start or resume `Develop <slice>` with `design`, its requirements, map, workspace, settings, and ancestor paths.
+3. Route design by `agentFlow`:
+   - For `mono`, run `design` in the orchestrator context.
+   - For `multi`, start or resume `Develop <slice>` with `design`, its requirements, map, workspace, settings, and ancestor paths.
 4. When `slice.md` exists, supply its path as the outcome record.
 5. Use `write-map` to mark the leaf `in-progress` and `roadmap` to mark the initiative `in-progress`.
 6. Route the design result:
@@ -74,7 +66,9 @@ An accepted split parent never executes again and completes only after all desce
 6. Ask delivery to recheck fit against integrated dependency changes.
 7. If fit or design changed, return to section 2 before implementation.
 8. Preserve the audited tree as an immutable review base, including untracked files and deletions.
-9. Resume the same delivery context with `implement` and the review base.
+9. Route implementation by `agentFlow`:
+    - For `mono`, continue the orchestrator context with `implement` and the review base.
+    - For `multi`, resume the same delivery context.
 10. Route its result:
     - For verified code, run section 4 in `implementation-review` mode.
     - For a required redesign, return to section 2 with existing work and findings preserved.
@@ -120,8 +114,8 @@ Reviewers receive verification results and probe paths without a request to reru
    3. Repeat affected lane review until every preserved lane is `CLEAN`, or record the blocker and continue independent work.
    4. Keep aggregate completion blocked until every preserved lane is `CLEAN`.
 5. Complete visual review of changed artifacts.
-6. Present verification, review results, and remaining limitations for user correctness confirmation.
-7. After confirmation:
+6. Apply the correctness gate from [run-settings.md](references/run-settings.md).
+7. After the applicable confirmation:
    1. Accept Proposed ADRs only after all governed behavior is verified and confirmed, including behavior across relevant children.
    2. When accepting a replacement ADR, mark its original `Superseded` and link both records under project rules.
    3. Apply commit and push settings to slice-owned changes, preserving unrelated changes.
@@ -144,6 +138,8 @@ The orchestrator remains the only workflow writer for the initiative state.
 State reads and updates use the coordination-state capability.
 Manual recovery is the next option when the capability is unavailable.
 Direct file editing is an emergency recovery action that requires validation immediately after the edit.
+Mono delivery records `orchestrator` as the active worker and the current workspace.
+The agent flow does not change after active work starts.
 
 Paths resolve from the note's directory unless absolute.
 Empty lists mean no current item.
@@ -160,7 +156,7 @@ One orchestrator writes the note and requests map changes.
 9. When the host ends a worker turn at a timeout, resume that worker with a larger allowance before creating a replacement.
 10. Replace a worker only after explicit completion, failure, blocker, or confirmed host termination.
 11. Broker child delegation through the procedure when necessary.
-12. If fresh review is unavailable, ask the user to run a separate review task.
+12. If fresh review is unavailable, block the initiative and ask the user to run a separate review task.
 
 - Don't
   - Create user-owned tasks as child-agent substitutes.

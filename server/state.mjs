@@ -8,10 +8,11 @@ const LOCK_STALE_MS = 30000;
 const stateLocks = new Map();
 
 const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence"]);
-const SETTING_KEYS = new Set(["autonomy", "commit", "push", "continuation", "models"]);
+const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "models"]);
 const ACTIVE_KEYS = new Set(["slice", "activity", "workers", "workspace", "reviewLanes", "findingsPath"]);
 const SETTING_VALUES = {
-  autonomy: new Set(["conservative", "broad"]),
+  autonomy: new Set(["conservative", "broad", "full"]),
+  agentFlow: new Set(["mono", "multi"]),
   commit: new Set(["on", "off"]),
   push: new Set(["on", "off"]),
   continuation: new Set(["auto", "stepwise"])

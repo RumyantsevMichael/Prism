@@ -76,6 +76,11 @@ A bundled validator checks the constrained map grammar, coverage, and expanded d
 Slice files retain findings and evidence needed to resume work.
 Agents reason about the next step within the workflow's ownership rules and human gates.
 
+`orchestrate` stores decision autonomy and agent flow in each initiative's `state.json`.
+Autonomy supports `conservative`, `broad`, and `full`, while agent flow supports `multi` and `mono`.
+Mono flow keeps planning, design, implementation, and corrections in the orchestrator context, while both flows use fresh independent review contexts.
+Full autonomy can resolve internal decisions and defaults missing commits to on, but explicit commit, continuation, and push settings remain authoritative.
+
 Design creates new artifacts only after fit passes.
 Requirements preserve intent, ADRs preserve decisions, and feature files preserve acceptance examples.
 Tests and consumed contracts enforce behavior, diagrams explain structure, and code supplies implementation details.

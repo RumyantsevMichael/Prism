@@ -9,6 +9,7 @@ The workflow creates no implementation handoff, mandatory build plan, or executi
 Workflow results stay in the agent response unless a later context needs them.
 Persist only facts that an existing artifact does not already own.
 Use `state.json` for current coordination facts and evidence paths, not copied reports.
+Use the coordination-state capability for `state.json` reads and updates.
 Existing artifacts replace standalone exploration or verification reports when they preserve the required facts.
 When no existing artifact can own a fact required by a later context, create one focused artifact and state why it is needed.
 

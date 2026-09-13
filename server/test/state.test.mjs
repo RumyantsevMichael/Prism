@@ -27,7 +27,7 @@ test("creates and updates a validated coordination state atomically", async (con
     ...fixture,
     expectedRevision: null,
     changes: {
-      settings: { autonomy: "broad", commit: "off", push: "off", continuation: "auto", models: "defaults" },
+      settings: { autonomy: "full", agentFlow: "mono", commit: "off", push: "off", continuation: "stepwise", models: "defaults" },
       active: active("download"),
       pending: ["User decision: retention"],
       next: ["Run the design audit"],
@@ -48,6 +48,47 @@ test("creates and updates a validated coordination state atomically", async (con
   assert.deepEqual(updated.changedFields, ["active", "next"]);
   assert.deepEqual(updated.state.active, active("download", "review-worker"));
   assert.deepEqual(JSON.parse(await readFile(path.join(fixture.projectRoot, fixture.statePath), "utf8")), updated.state);
+});
+
+test("rejects unsupported autonomy and agent flow values", async (context) => {
+  const fixture = await stateFixture(context);
+
+  await assert.rejects(
+    updateCoordinationState({
+      ...fixture,
+      expectedRevision: null,
+      changes: { settings: { autonomy: "reckless", agentFlow: "hybrid" } }
+    }),
+    (caught) => caught.code === "invalid_state" && caught.errors.some((item) => item.includes("settings.autonomy")) && caught.errors.some((item) => item.includes("settings.agentFlow"))
+  );
+});
+
+test("accepts every autonomy and agent flow value", async (context) => {
+  const fixture = await stateFixture(context);
+  let expectedRevision = null;
+  for (const autonomy of ["conservative", "broad", "full"]) {
+    for (const agentFlow of ["mono", "multi"]) {
+      const updated = await updateCoordinationState({
+        ...fixture,
+        expectedRevision,
+        changes: { settings: { autonomy, agentFlow } }
+      });
+      assert.equal(updated.valid, true);
+      assert.equal(updated.state.settings.autonomy, autonomy);
+      assert.equal(updated.state.settings.agentFlow, agentFlow);
+      expectedRevision = updated.revision;
+    }
+  }
+});
+
+test("keeps legacy state valid without the additive settings", async (context) => {
+  const fixture = await stateFixture(context);
+  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { active: active("legacy") } });
+  assert.deepEqual(created.state.settings, {});
+  assert.equal(created.valid, true);
+  const loaded = await readCoordinationState(fixture);
+  assert.deepEqual(loaded.state.settings, {});
+  assert.equal(loaded.valid, true);
 });
 
 test("rejects a stale update without changing the state", async (context) => {

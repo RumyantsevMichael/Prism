@@ -227,6 +227,9 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.match(tools.present_review.description, /Omit artifact to show the complete artifact tree/);
   assert.deepEqual(tools.get_review_url.inputSchema.properties.artifacts.items, { type: "string" });
   assert.deepEqual(tools.present_review.inputSchema.properties.artifacts.items, { type: "string" });
+  const settings = tools.update_coordination_state.inputSchema.properties.changes.properties.settings.properties;
+  assert.deepEqual(settings.autonomy.enum, ["conservative", "broad", "full"]);
+  assert.deepEqual(settings.agentFlow.enum, ["mono", "multi"]);
   assert.equal(tools.get_coordination_state.annotations.readOnlyHint, true);
   assert.equal(tools.validate_coordination_state.annotations.readOnlyHint, true);
   assert.equal(tools.update_coordination_state.annotations.readOnlyHint, false);

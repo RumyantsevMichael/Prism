@@ -7,6 +7,7 @@ sdm: "0.3"
 # Prism workflow
 
 - Read `.prism/workflow.md` when present for project paths, verification commands, and gate settings.
+- Read [orchestrator run settings](../orchestrate/references/run-settings.md) when coordinating an initiative.
 - Use project procedures before Prism fallbacks.
 - Make small changes directly when project conventions supply enough guidance.
 
@@ -98,8 +99,10 @@ Code establishes implemented behavior.
 | Review probe | A minimal failing regression test authored by implementation review through a public or system surface that proves a concrete finding. |
 | Design checkpoint | The commit after a clean design audit and visual review that becomes the implementation diff base. |
 | Review base | The immutable design checkpoint or working-tree snapshot used for implementation review and every correction wave. |
-| Decision autonomy | An orchestration setting that controls automatic phase continuation without overriding requirements, ADR, or correctness gates. |
+| Decision autonomy | An orchestration setting that controls automatic internal decisions. |
+| Agent flow | An orchestration setting that selects inline or delegated delivery. |
 | Slice continuation | An orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input. |
+| Coordination-state capability | The validated capability that owns `state.json` syntax validation, atomic writes, and concurrent-update checks. |
 | `state.json` | A short resume note with settings, active work, pending decisions, next actions, and evidence paths. |
 | `map.puml` | The authoritative initiative graph, with topology and dependencies owned by orchestration and written through `write-map`. |
 | `findings.md` | The authoritative review record for one reporting slice and review lane. |

@@ -48,6 +48,7 @@ test("keeps common workflow terms aligned with the artifact model", async () => 
     "| Review probe |",
     "| Design checkpoint |",
     "| Decision autonomy |",
+    "| Agent flow |",
     "| Slice continuation |",
     "| `recovery.md` |"
   ]) {
@@ -60,6 +61,40 @@ test("keeps common workflow terms aligned with the artifact model", async () => 
   assert.match(workflow, /\| Design checkpoint \|.*commit after a clean design audit and visual review/);
   assert.match(workflow, /\| Step definition \|.*implementation-owned binding/);
   assert.match(workflow, /\| Red checkpoint \|.*expected failure recorded before production behavior changes/);
+});
+
+test("defines compact autonomy and agent-flow settings", async () => {
+  const settings = await reference("orchestrate", "run-settings.md");
+  const orchestrate = await skill("orchestrate");
+
+  for (const value of ["conservative", "broad", "full", "mono", "multi", "on", "off", "auto", "stepwise", "defaults", "host defaults"]) {
+    assert.match(settings, new RegExp(`\\\`${value}\\\``), value);
+  }
+  for (const setting of ["autonomy", "agentFlow", "commit", "push", "continuation", "models"]) {
+    assert.ok(settings.includes("| `" + setting + "` |"), setting);
+  }
+  assert.match(settings, /\| `commit` \| `on`, `off` \| `on` under `full`, otherwise `off` \|/);
+  assert.match(settings, /\| `push` \|[\s\S]*\| `off` \|/);
+  assert.match(settings, /\| `continuation` \|[\s\S]*\| `auto` \|/);
+  assert.match(settings, /Explicit `commit`, `continuation`, and `push` values override autonomy defaults/);
+  assert.match(settings, /`full` never turns push on by itself/);
+  assert.match(settings, /A persisted value remains authoritative/);
+  assert.match(settings, /`agentFlow` is fixed after the first active phase or worker starts/);
+  assert.match(settings, /Both flows run `ideate` and `roadmap` inline from a raw idea/);
+  assert.match(settings, /Both flows use fresh independent contexts for design and implementation review/);
+  assert.match(orchestrate, /Resolve and persist run settings using \[run-settings\.md\]\(references\/run-settings\.md\)/);
+  assert.doesNotMatch(orchestrate, /Decision autonomy: `conservative/);
+  assert.doesNotMatch(orchestrate, /Missing `commit` defaults/);
+  assert.match(orchestrate, /run `ideate` and `roadmap` inline in either agent flow/);
+  assert.match(orchestrate, /Route design by `agentFlow`:/);
+  assert.match(orchestrate, /- For `mono`, run `design` in the orchestrator context/);
+  assert.match(orchestrate, /- For `multi`, start or resume `Develop <slice>`/);
+  assert.match(orchestrate, /Route implementation by `agentFlow`:/);
+  assert.match(orchestrate, /- For `mono`, continue the orchestrator context with `implement`/);
+  assert.match(orchestrate, /- For `multi`, resume the same delivery context/);
+  assert.match(orchestrate, /The agent flow does not change after active work starts/);
+  assert.match(orchestrate, /block the initiative and ask the user to run a separate review task/);
+  assert.match(orchestrate, /Mono delivery records `orchestrator` as the active worker/);
 });
 
 test("forms bounded slice architecture before fit and authors artifacts only after fit", async () => {
@@ -290,6 +325,7 @@ test("uses the validated coordination state capability", async () => {
 test("preserves recursive design ownership and delivery gates", async () => {
   const orchestrate = await skill("orchestrate");
   const design = await skill("design");
+  const settings = await reference("orchestrate", "run-settings.md");
   assert.match(orchestrate, /Repeat this section for the new leaves/);
   assert.match(design, /child requirement references collectively equal the parent assignment, allowing shared references/);
   assert.match(design, /orchestrator manages parent relationships and dependencies/);
@@ -297,10 +333,10 @@ test("preserves recursive design ownership and delivery gates", async () => {
   assert.deepEqual([...shape.matchAll(/^\s*## (.+)$/gm)].map(m => m[1]), ["Outcome", "Requirements"]);
   assert.match(orchestrate, /Collect all ancestor diagram and ADR paths.*including inherited paths/);
   assert.match(orchestrate, /Wait for effective dependencies to complete, including inherited prerequisites/);
-  assert.match(orchestrate, /Both autonomy modes require user correctness confirmation/);
+  assert.match(settings, /After required verification and fresh review, `conservative` asks for correctness confirmation/);
   assert.match(orchestrate, /If fit or design changed, return to section 2 before implementation/);
   assert.match(orchestrate, /without reactivating the parent/);
-  assert.ok(orchestrate.indexOf("Keep aggregate completion blocked") < orchestrate.indexOf("Present verification, review results"));
+  assert.ok(orchestrate.indexOf("Keep aggregate completion blocked") < orchestrate.indexOf("Apply the correctness gate"));
 });
 
 test("keeps review independent and preserves corrections through integration", async () => {
