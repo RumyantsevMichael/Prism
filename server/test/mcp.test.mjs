@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
@@ -157,6 +157,43 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.match(tools.present_review.description, /Omit artifact to show the complete artifact tree/);
   assert.deepEqual(tools.get_review_url.inputSchema.properties.artifacts.items, { type: "string" });
   assert.deepEqual(tools.present_review.inputSchema.properties.artifacts.items, { type: "string" });
+  assert.equal(tools.get_coordination_state.annotations.readOnlyHint, true);
+  assert.equal(tools.validate_coordination_state.annotations.readOnlyHint, true);
+  assert.equal(tools.update_coordination_state.annotations.readOnlyHint, false);
+});
+
+test("updates coordination state without starting the review server", async (context) => {
+  const root = await projectFixture(context, "state-mcp", "artifact.md");
+  const statePath = "docs/plans/demo/state.json";
+  await mkdir(path.join(root, path.dirname(statePath)), { recursive: true });
+  const mcp = mcpProcess(context, root, root);
+
+  await initialize(mcp);
+  const missing = await callTool(mcp, 2, "get_coordination_state", { statePath });
+  assert.equal(missing.result.structuredContent.exists, false);
+  assert.equal(missing.result.structuredContent.revision, null);
+
+  const created = await callTool(mcp, 3, "update_coordination_state", {
+    statePath,
+    expectedRevision: null,
+    changes: { pending: ["User decision: retention"] }
+  });
+  assert.equal(created.result.structuredContent.created, true);
+  assert.equal(created.result.structuredContent.valid, true);
+
+  const current = await callTool(mcp, 4, "get_coordination_state", { statePath });
+  assert.deepEqual(current.result.structuredContent.state.pending, ["User decision: retention"]);
+  assert.equal(current.result.structuredContent.revision, created.result.structuredContent.revision);
+
+  const stale = await callTool(mcp, 5, "update_coordination_state", {
+    statePath,
+    expectedRevision: null,
+    changes: { next: ["Retry from the current revision"] }
+  });
+  assert.equal(stale.error.data.code, "revision_conflict");
+  assert.equal(stale.error.data.current.revision, current.result.structuredContent.revision);
+
+  await assert.rejects(access(path.join(root, ".prism-review-cert")), (caught) => caught.code === "ENOENT");
 });
 
 test("uses the consumer root provided by Claude Code", async (context) => {

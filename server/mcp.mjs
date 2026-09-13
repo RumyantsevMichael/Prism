@@ -2,6 +2,7 @@ import readline from "node:readline";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { listArtifacts, startReviewServer } from "./review-server.mjs";
+import { readCoordinationState, updateCoordinationState, validateCoordinationState } from "./state.mjs";
 
 const reviewServers = new Map();
 const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1000;
@@ -94,8 +95,31 @@ function reviewContent(url, review) {
   return `Human review URL: ${url}${trustInstructions}`;
 }
 
-function failure(id, code, message) {
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } })}\n`);
+function stateContent(result) {
+  const validity = result.valid ? "valid" : "invalid";
+  const revision = result.revision ?? "none";
+  return `Coordination state ${validity}: ${result.statePath}\nRevision: ${revision}`;
+}
+
+function failure(id, code, message, data) {
+  const response = { jsonrpc: "2.0", id, error: { code, message } };
+  if (data !== undefined) {
+    response.error.data = data;
+  }
+  process.stdout.write(`${JSON.stringify(response)}\n`);
+}
+
+function stateErrorData(error) {
+  if (error?.name !== "CoordinationStateError") {
+    return undefined;
+  }
+  const data = { code: error.code };
+  for (const key of ["errors", "warnings", "current", "validation"]) {
+    if (error[key] !== undefined) {
+      data[key] = error[key];
+    }
+  }
+  return data;
 }
 
 const tools = [
@@ -139,10 +163,126 @@ const tools = [
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "get_coordination_state",
+    description: "Read the initiative coordination state from state.json. Use this tool instead of reading and parsing the file manually. The statePath must be relative to the project root.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        statePath: { type: "string", description: "The project-relative path to the initiative state.json file." }
+      },
+      required: ["projectRoot", "statePath"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "validate_coordination_state",
+    description: "Validate an initiative state.json file without changing it. Use this tool before recovery or when a state update reports invalid data.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        statePath: { type: "string", description: "The project-relative path to the initiative state.json file." }
+      },
+      required: ["projectRoot", "statePath"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "update_coordination_state",
+    description: "Apply a validated atomic update to an initiative state.json file. Read the current state first and pass its revision as expectedRevision. Do not edit state.json directly when this tool is available.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        statePath: { type: "string", description: "The project-relative path to the initiative state.json file." },
+        expectedRevision: { oneOf: [{ type: "string" }, { type: "null" }], description: "The revision returned by get_coordination_state, or null when creating a missing state file." },
+        changes: {
+          type: "object",
+          description: "Managed fields to replace in one atomic update. Settings merge with existing settings, while arrays replace their current values.",
+          minProperties: 1,
+          additionalProperties: false,
+          properties: {
+            settings: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                autonomy: { type: "string", enum: ["conservative", "broad"] },
+                commit: { type: "string", enum: ["on", "off"] },
+                push: { type: "string", enum: ["on", "off"] },
+                continuation: { type: "string", enum: ["auto", "stepwise"] },
+                models: {
+                  oneOf: [
+                    { type: "string", enum: ["defaults", "host defaults"] },
+                    {
+                      type: "object",
+                      required: ["delivery", "review", "securityReview"],
+                      additionalProperties: false,
+                      properties: {
+                        delivery: { type: "string", minLength: 1 },
+                        review: { type: "string", minLength: 1 },
+                        securityReview: { type: "string", minLength: 1 }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            active: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["slice", "activity", "workers", "workspace"],
+                additionalProperties: false,
+                properties: {
+                  slice: { type: "string", minLength: 1 },
+                  activity: { type: "string", minLength: 1 },
+                  workers: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+                  workspace: { type: "string", minLength: 1 },
+                  reviewLanes: { type: "array" },
+                  findingsPath: { type: "string", minLength: 1 }
+                }
+              }
+            },
+            pending: { type: "array", items: { type: "string", minLength: 1 } },
+            next: { type: "array", items: { type: "string", minLength: 1 } },
+            evidence: { type: "array", items: { type: "string", minLength: 1 } }
+          }
+        }
+      },
+      required: ["projectRoot", "statePath", "expectedRevision", "changes"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   }
 ];
 
+const stateTools = new Set(["get_coordination_state", "validate_coordination_state", "update_coordination_state"]);
+
+async function callStateTool(name, argumentsValue) {
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  const input = { ...argumentsValue, projectRoot };
+  let resultValue;
+  if (name === "get_coordination_state") {
+    resultValue = await readCoordinationState(input);
+  } else if (name === "validate_coordination_state") {
+    resultValue = await validateCoordinationState(input);
+  } else if (name === "update_coordination_state") {
+    resultValue = await updateCoordinationState(input);
+  } else {
+    throw new Error(`Unknown state tool: ${name}`);
+  }
+  return { content: [{ type: "text", text: stateContent(resultValue) }], structuredContent: resultValue };
+}
+
 async function callTool(name, argumentsValue = {}, metadata) {
+  if (stateTools.has(name)) {
+    return callStateTool(name, argumentsValue);
+  }
   const review = await server(argumentsValue, metadata);
   if (name === "get_review_url") {
     const tabs = requestedTabs(argumentsValue);
@@ -186,7 +326,7 @@ input.on("line", async (line) => {
     }
   } catch (error) {
     if (request?.id !== undefined) {
-      failure(request.id, -32603, error.message);
+      failure(request.id, -32603, error.message, stateErrorData(error));
     }
   }
 });

@@ -257,12 +257,11 @@ test("uses the Codex benchmark model policy", async () => {
 });
 
 
-test("keeps the resume note readable without a separate state protocol", async () => {
+test("keeps coordination state concise without an inline schema example", async () => {
   const orchestrate = await skill("orchestrate");
-  const note = JSON.parse(orchestrate.match(/```json\n([\s\S]*?)\n```/)[1]);
-  assert.deepEqual(Object.keys(note), ["settings", "active", "pending", "next", "evidence"]);
-  assert.equal(note.active[0].slice, "download");
-  for (const key of ["pending", "next", "evidence"]) assert.ok(note[key].every((value) => typeof value === "string"));
+  const continuity = orchestrate.slice(orchestrate.indexOf("## 6. Preserve continuity"));
+  assert.doesNotMatch(continuity, /```json/);
+  assert.match(continuity, /The coordination-state capability owns state\.json syntax validation/);
   await assert.rejects(reference("orchestrate", "state-schema.md"), /ENOENT/);
   for (const name of ["orchestrate", "design", "implement", "review", "write-map"]) {
     assert.doesNotMatch(await skill(name), /worker-protocol\.md|baseRevision|preconditions|correction digest/);
@@ -276,6 +275,16 @@ test("orders continuity actions as a process", async () => {
   assert.match(continuity, /\n1\. After meaningful results or before a pause/);
   assert.match(continuity, /\n12\. If fresh review is unavailable/);
   assert.doesNotMatch(continuity, /\n- After meaningful results or before a pause/);
+});
+
+test("uses the validated coordination state capability", async () => {
+  const workflow = await skill("workflow");
+  const artifacts = await reference("workflow", "artifact-rules.md");
+  const orchestrate = await skill("orchestrate");
+  assert.match(workflow, /\| Coordination-state capability \|/);
+  assert.match(artifacts, /Use the coordination-state capability for `state\.json` reads and updates/);
+  assert.match(orchestrate, /Use the coordination-state capability to read `state\.json`/);
+  assert.match(orchestrate, /Direct file editing is an emergency recovery action/);
 });
 
 test("preserves recursive design ownership and delivery gates", async () => {

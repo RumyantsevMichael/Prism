@@ -139,16 +139,11 @@ Corrections do not create intermediate commits.
 
 The initiative's `state.json` records current coordination facts beside `map.puml`.
 The map alone owns slice topology, requirement assignments, dependencies, and status.
-
-```json
-{
-  "settings": { "autonomy": "broad", "commit": "off", "push": "off", "continuation": "auto", "models": "host defaults" },
-  "active": [{ "slice": "download", "activity": "design audit", "workers": ["agent-7"], "workspace": "/work/reports" }],
-  "pending": ["User decision: report retention period"],
-  "next": ["Return audit findings to delivery"],
-  "evidence": ["download/design-audit/findings.md", "download/recovery.md"]
-}
-```
+The coordination-state capability owns state.json syntax validation, atomic writes, and concurrent-update checks.
+The orchestrator remains the only workflow writer for the initiative state.
+State reads and updates use the coordination-state capability.
+Manual recovery is the next option when the capability is unavailable.
+Direct file editing is an emergency recovery action that requires validation immediately after the edit.
 
 Paths resolve from the note's directory unless absolute.
 Empty lists mean no current item.
