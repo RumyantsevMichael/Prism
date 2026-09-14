@@ -33,8 +33,8 @@ Missing records establish neither approval nor completion.
 1. Select candidate leaves from the map, allowing design before prerequisite implementation when evidence permits.
 2. Collect all ancestor diagram and ADR paths from retained design results, including inherited paths.
 3. Route design by `agentFlow`:
-   - For `mono`, run `design` in the orchestrator context.
-   - For `multi`, start or resume `Develop <slice>` with `design`, its requirements, map, workspace, settings, and ancestor paths.
+   - For `mono`, run `design` in the orchestrator worker.
+   - For `multi`, start or resume the `Develop <slice>` worker with `design`, its requirements, map, workspace, settings, and ancestor paths, and keep that worker available after `FIT` for review corrections.
 4. When `slice.md` exists, supply its path as the outcome record.
 5. Use `write-map` to mark the leaf `in-progress` and `roadmap` to mark the initiative `in-progress`.
 6. Route the design result:
@@ -43,7 +43,7 @@ Missing records establish neither approval nor completion.
      2. Check unique slugs, unchanged parent title, and exact collective coverage of the parent's requirement assignment.
      3. Derive prerequisite edges from the parent design and existing map, returning architectural uncertainty to design.
      4. Obtain split and dependency acceptance under the autonomy setting.
-     5. Persist only a result fact that a later context needs and that the map, slice record, diagrams, ADRs, findings, or state note does not already contain.
+     5. Persist only a result fact that a later worker needs and that the map, slice record, diagrams, ADRs, findings, or state note does not already contain.
      6. Use `write-map` to add the accepted children and dependencies under the existing parent.
      7. Repeat this section for the new leaves.
    - For `FIT`, continue to section 3.
@@ -67,8 +67,8 @@ An accepted split parent never executes again and completes only after all desce
 7. If fit or design changed, return to section 2 before implementation.
 8. Preserve the audited tree as an immutable review base, including untracked files and deletions.
 9. Route implementation by `agentFlow`:
-    - For `mono`, continue the orchestrator context with `implement` and the review base.
-    - For `multi`, resume the same delivery context.
+    - For `mono`, continue the orchestrator worker with `implement` and the review base.
+    - For `multi`, resume the same `Develop <slice>` worker.
 10. Route its result:
     - For verified code, run section 4 in `implementation-review` mode.
     - For a required redesign, return to section 2 with existing work and findings preserved.
@@ -85,20 +85,22 @@ One reviewer covers a normal slice.
 Distinct risk scopes can use separate lanes with one writer per findings file.
 The [review format](../review/references/review-format.md) defines each lane record and compact result.
 
-1. Assign fresh reviewers the mode, slice, lane focus, exact findings path, artifact paths, verification evidence, and applicable review base.
+1. Assign fresh `Review <slice>` workers the mode, slice, lane focus, exact findings path, artifact paths, verification evidence, and applicable review base, and keep each worker available after `FINDINGS` for correction.
 2. Exclude the delivery conversation from reviewer inputs.
 3. Wait for every assigned lane to return its current result.
 4. Route each lane result:
    - If evidence is outdated, repeat that lane against the current artifacts and correction evidence.
    - If findings remain:
-     1. Send the lane path and unresolved IDs to the same delivery context using `design` or `implement` for their source.
-     2. Route delivery's correction result:
+     1. Resume the same `Develop <slice>` worker and the `Review <slice>` worker that produced the findings as live workers before starting a replacement reviewer.
+     2. Give each worker the other worker ID.
+     3. Let the `Review <slice>` and `Develop <slice>` workers resolve the findings directly before reporting back.
+     4. Route delivery's correction result:
         - For corrected artifacts, start fresh reviewers for affected lanes with original findings files and current verification evidence.
         - For `SPLIT` or required redesign, preserve lane evidence and return to section 2 before further review.
         - For `BLOCKED`, record the unresolved issue and continue independent work.
-     3. Repeat correction review until all lanes are `CLEAN`, work returns to design, a blocker exists, or the user stops.
+     5. Repeat correction review until all lanes are `CLEAN`, work returns to design, a blocker exists, or the user stops.
    - If a design audit reports only implementation gaps, route them to `implement` after the implementation gate.
-5. If repeated corrections fail, use a replacement delivery context or a new design audit to investigate the cause.
+5. If repeated corrections fail, use a replacement `Develop <slice>` worker or a new design audit to investigate the cause.
 
 A new design audit requires evidence that changes fit, requirements, architecture, boundaries, dependencies, or planned verification.
 Reviewers receive verification results and probe paths without a request to rerun the complete suite.
@@ -110,7 +112,7 @@ Reviewers receive verification results and probe paths without a request to reru
 3. If integration changes reviewed behavior or leaves uncertain equivalence, repeat affected review before confirmation.
 4. For each split ancestor whose final unfinished descendant is this leaf:
    1. Dispatch fresh reviewers to its preserved lanes with original findings, applicable review bases, and current descendant artifacts and verification.
-   2. If findings remain, route correction to the affected delivery context or unresolved decision without reactivating the parent.
+   2. If findings remain, route correction to the affected `Develop <slice>` worker or unresolved decision without reactivating the parent.
    3. Repeat affected lane review until every preserved lane is `CLEAN`, or record the blocker and continue independent work.
    4. Keep aggregate completion blocked until every preserved lane is `CLEAN`.
 5. Complete visual review of changed artifacts.
@@ -141,8 +143,8 @@ Paths resolve from the note's directory unless absolute.
 Empty lists mean no current item.
 One orchestrator writes the note and requests map changes.
 
-1. After meaningful results or before a pause, update the note with current workers, blockers, next actions, and evidence paths.
-2. Persist conversation-only results, review bases, ancestor evidence, or dependent user decisions in the owning slice folder only when a later context needs them and no existing artifact can own them.
+1. After a resolution exchange, meaningful result, or before a pause, update the note with current workers, blockers, next actions, and evidence paths.
+2. Persist conversation-only results, review bases, ancestor evidence, or dependent user decisions in the owning slice folder only when a later worker needs them and no existing artifact can own them.
 3. Before replacing coordination formats, preserve older files until their needed information has a durable home.
 4. After compaction or handoff, repeat section 1.
 5. Give replacement workers the workspace, findings, recovery record, and retained ancestor diagram and ADR paths.

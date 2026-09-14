@@ -7,7 +7,7 @@ sdm: "0.3"
 
 # Implement an audited slice
 
-The same [delivery context](../workflow/SKILL.md#common-terms) owns design, implementation, and corrections unless orchestration replaces it.
+The same `Develop <slice>` worker owns design, implementation, and corrections unless orchestration replaces it.
 Orchestration owns review dispatch, lifecycle changes, ADR acceptance, commits, and correctness confirmation.
 
 ## 1. Prepare

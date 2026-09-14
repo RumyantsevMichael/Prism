@@ -81,17 +81,18 @@ test("defines compact autonomy and agent-flow settings", async () => {
   assert.match(settings, /A persisted value remains authoritative/);
   assert.match(settings, /`agentFlow` is fixed after the first active phase or worker starts/);
   assert.match(settings, /Both flows run `ideate` and `roadmap` inline from a raw idea/);
-  assert.match(settings, /Both flows use fresh independent contexts for design and implementation review/);
+  assert.match(settings, /Both flows use fresh independent `Review <slice>` workers for design and implementation review/);
+  assert.match(settings, /`multi` delegates slice delivery.*uses fresh `Review <slice>` workers/);
   assert.match(orchestrate, /Resolve and persist run settings using \[run-settings\.md\]\(references\/run-settings\.md\)/);
   assert.doesNotMatch(orchestrate, /Decision autonomy: `conservative/);
   assert.doesNotMatch(orchestrate, /Missing `commit` defaults/);
   assert.match(orchestrate, /run `ideate` and `roadmap` inline in either agent flow/);
   assert.match(orchestrate, /Route design by `agentFlow`:/);
-  assert.match(orchestrate, /- For `mono`, run `design` in the orchestrator context/);
-  assert.match(orchestrate, /- For `multi`, start or resume `Develop <slice>`/);
+  assert.match(orchestrate, /- For `mono`, run `design` in the orchestrator worker/);
+  assert.match(orchestrate, /- For `multi`, start or resume the `Develop <slice>` worker/);
   assert.match(orchestrate, /Route implementation by `agentFlow`:/);
-  assert.match(orchestrate, /- For `mono`, continue the orchestrator context with `implement`/);
-  assert.match(orchestrate, /- For `multi`, resume the same delivery context/);
+  assert.match(orchestrate, /- For `mono`, continue the orchestrator worker with `implement`/);
+  assert.match(orchestrate, /- For `multi`, resume the same `Develop <slice>` worker/);
   assert.match(orchestrate, /The agent flow does not change after active work starts/);
   assert.match(settings, /If fresh review capability is unavailable, block and ask the user to run a separate review task/);
   assert.match(orchestrate, /Mono delivery records `orchestrator` as the active worker/);
@@ -227,6 +228,9 @@ test("keeps findings authoritative per review lane", async () => {
   const orchestrate = await skill("orchestrate");
   assert.match(orchestrate, /one writer per findings file/);
   assert.match(orchestrate, /Wait for every assigned lane to return its current result/);
+  assert.match(orchestrate, /Resume the same `Develop <slice>` worker and the `Review <slice>` worker that produced the findings as live workers before starting a replacement reviewer/);
+  assert.match(orchestrate, /Let the `Review <slice>` and `Develop <slice>` workers resolve the findings directly before reporting back/);
+  assert.match(orchestrate, /Give each worker the other worker ID/);
   assert.match(orchestrate, /retain its reporting lane and route correction without transferring its identity or evidence/);
   assert.match(await skill("workflow"), /\| `findings\.md` \| The authoritative review record for one reporting slice and review lane/);
 });
@@ -237,6 +241,7 @@ test("detects delegation from a callable child-start capability", async () => {
   assert.match(delegation, /Child-agent capability exists only when a child-start action is callable/);
   assert.match(delegation, /A wait or status action alone is not child-agent capability/);
   assert.match(delegation, /return a broker request to the nearest parent with child-agent capability/);
+  assert.match(delegation, /use the host child-agent message action for live questions and candidate resolutions/);
   assert.match(delegation, /Kind: explore \| task \| review/);
 });
 
@@ -310,7 +315,7 @@ test("orders continuity actions as a process", async () => {
   const orchestrate = await skill("orchestrate");
   const continuity = orchestrate.slice(orchestrate.indexOf("## 6. Preserve continuity"));
 
-  assert.match(continuity, /\n1\. After meaningful results or before a pause/);
+  assert.match(continuity, /\n1\. After a resolution exchange, meaningful result, or before a pause/);
   assert.match(continuity, /\n7\. Broker child delegation through the procedure/);
   assert.doesNotMatch(continuity, /\n8\./);
   assert.doesNotMatch(continuity, /\n- After meaningful results or before a pause/);
@@ -347,6 +352,10 @@ test("keeps review independent and preserves corrections through integration", a
   const orchestrate = await skill("orchestrate");
   const review = await skill("review");
   assert.match(orchestrate, /Exclude the delivery conversation from reviewer inputs/);
+  assert.match(review, /In `multi` flow, the `Review <slice>` worker remains available after returning findings and enters a \[resolution exchange\]/);
+  assert.match(review, /Use the host child-agent message action/);
+  assert.match(await reference("orchestrate", "worker-lifetime.md"), /A phase result such as `FIT` or `FINDINGS` is a handoff, not a close condition/);
+  assert.match(await reference("orchestrate", "worker-lifetime.md"), /resume both as live workers before messaging/);
   assert.match(orchestrate, /Every implementation correction review uses that same base/);
   assert.match(review, /Route implementation-only gaps to delivery without opening design findings/);
   assert.match(orchestrate, /If integration changes reviewed behavior or leaves uncertain equivalence, repeat affected review before confirmation/);

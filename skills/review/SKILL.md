@@ -1,15 +1,18 @@
 ---
 name: review
-description: "Audit an atomic Prism design before implementation or review verified code and corrections in an independent context."
+description: "Audit an atomic Prism design before implementation or review verified code and corrections in an independent worker."
 sdm: "0.3"
 ---
 
 # Review a slice
 
-A [fresh review context](../workflow/SKILL.md#common-terms) receives artifacts and evidence without the delivery conversation.
+A fresh `Review <slice>` worker starts with artifacts and evidence without the `Develop <slice>` worker's conversation.
 `design-audit` checks implementability before production behavior exists.
 `implementation-review` checks verified code against Approved intent.
 Each review writes only its assigned lane findings file, except permitted implementation review probes.
+
+In `multi` flow, the `Review <slice>` worker remains available after returning findings and enters a [resolution exchange](../workflow/SKILL.md#common-terms) with the same `Develop <slice>` worker before a replacement reviewer starts.
+A reviewer in a resolution exchange cannot return final `CLEAN` or mark findings `VERIFIED` for that correction.
 
 ## Prepare
 
@@ -92,6 +95,13 @@ The reporting lane retains cross-slice evidence and records its escalation targe
    4. If the closing condition fails, mark it `REOPENED` with the remaining failure evidence.
 4. If a previously `VERIFIED` defect returns, reuse its ID with `REOPENED` status.
 5. Append status and review history for each finding change.
+
+During a resolution exchange:
+
+1. Use the host child-agent message action to send the `Develop <slice>` worker only the active finding IDs, evidence, closure, and closing conditions.
+2. Review the proposed changes and closure evidence against the current findings and artifacts.
+3. Send questions or challenges directly when the proposed resolution remains unclear or incomplete.
+4. State when a candidate resolution is ready for a fresh review without returning `CLEAN` or closing the findings.
 
 Delivery owns `IN PROGRESS` and `FIXED`, while reviewers own `OPEN`, `VERIFIED`, and `REOPENED`.
 Only `VERIFIED` findings are resolved.

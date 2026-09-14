@@ -27,10 +27,10 @@ All persisted settings below are fields under `state.json.settings`.
 
 ## Agent flow
 
-- `multi` delegates slice delivery to child contexts and uses fresh review contexts.
-- `mono` runs planning, design, implementation, corrections, and artifact-writing in the orchestrator context and workspace.
+- `multi` delegates slice delivery to `Develop <slice>` workers and uses fresh `Review <slice>` workers.
+- `mono` runs planning, design, implementation, corrections, and artifact-writing in the orchestrator worker and workspace.
 - Both flows run `ideate` and `roadmap` inline from a raw idea or missing initiative inputs.
-- Both flows use fresh independent contexts for design and implementation review.
+- Both flows use fresh independent `Review <slice>` workers for design and implementation review.
 - If fresh review capability is unavailable, block and ask the user to run a separate review task.
 - Mono delivery records `orchestrator` as the active worker and the current workspace.
 - `agentFlow` is fixed after the first active phase or worker starts.

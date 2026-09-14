@@ -4,11 +4,16 @@ Inspect callable host actions before delegation.
 
 Child-agent capability exists only when a child-start action is callable.
 A wait or status action alone is not child-agent capability.
-Use native child agents when the current context has a callable child-start action.
+Use native child agents when the current worker has a callable child-start action.
 A host action that creates a user-owned task, thread, or chat is not a child-agent substitute.
 Before starting a child, confirm that the child inherits the active parent permission and sandbox settings.
 Otherwise, return a broker request to the nearest parent with child-agent capability.
 Pass the model role and resolved model through every child start and broker request.
+
+When the orchestrator supplies a peer worker ID for a resolution exchange, use the host child-agent message action for live questions and candidate resolutions.
+Treat the findings file and resume note as durable records, not as the live message channel.
+Remain available after returning a phase result until the direct exchange result is returned to the orchestrator.
+Return the exchange result to the orchestrator with its status, next action, and evidence.
 
 Use this exact broker request:
 
@@ -22,14 +27,14 @@ Model role: <role>
 Model: <resolved model or host default>
 ```
 
-Put large read-only findings in the supplied scratch path only when a later context needs them.
+Put large read-only findings in the supplied scratch path only when a later worker needs them.
 Use the owning initiative coordination directory for scratch output when it exists.
 Otherwise, use task-scoped temporary scratch and delete it after the phase.
 Return only paths and short status records through the broker.
 
 When no parent can delegate, use the project fallback or work inline when permitted.
 A missing native child-agent capability does not justify creating a visible task as a fallback.
-When no context can provide a fresh reviewer, ask the user to run `review` in a separate task.
+When no worker can provide a fresh reviewer, ask the user to run `review` in a separate task.
 
 Render an execution profile as:
 

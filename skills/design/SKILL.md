@@ -1,6 +1,6 @@
 ---
 name: design
-description: "Design an initiative or slice, split work that exceeds one delivery context, and prepare atomic slices for implementation."
+description: "Design an initiative or slice, split work that exceeds what one `Develop <slice>` worker can handle, and prepare atomic slices for implementation."
 argument-hint: '[initiative/slice]'
 sdm: "0.3"
 ---
@@ -8,7 +8,7 @@ sdm: "0.3"
 # Design an initiative or slice
 
 Design turns Approved requirements into a technical design for an initiative or slice.
-An initiative starts as one root slice and splits into smaller outcomes when it exceeds one delivery context.
+An initiative starts as one root slice and splits into smaller outcomes when its scope exceeds what one `Develop <slice>` worker can handle.
 The orchestrator repeats design for each child until every leaf is atomic.
 An atomic slice delivers one observable outcome within the remaining context and risk budget of the task that designs and implements it.
 
@@ -116,7 +116,7 @@ The orchestrator owns lifecycle changes and the transition to implementation.
 - When orchestration returns findings:
   1. Read `.prism/workflow.md`.
   2. Use its assigned findings path or `<configured plans>/<initiative>/<slice>/design-audit/findings.md`.
-  3. Read [review-format.md](../review/references/review-format.md) and the complete findings file in the same delivery context.
+  3. Read [review-format.md](../review/references/review-format.md) and the complete findings file in the same `Develop <slice>` worker.
   4. For each `OPEN`, `REOPENED`, or `IN PROGRESS` design finding:
      1. Mark it `IN PROGRESS`.
      2. Repeat affected design steps, including the fit check when the correction changes scope, boundaries, dependencies, or verification.

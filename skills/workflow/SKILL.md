@@ -32,7 +32,7 @@ A direct skill invocation does not require an earlier `orchestrate` invocation.
 An initiative starts with a provisional root slice.
 Design returns `SPLIT` for smaller outcomes, `FIT` for independent audit, or `BLOCKED` for missing decisions or evidence.
 Orchestration passes ancestor diagrams and ADRs to child designs and repeats design until executable leaves fit.
-Each leaf keeps one delivery context and uses fresh reviewers.
+Each leaf keeps one `Develop <slice>` worker and uses fresh `Review <slice>` workers.
 Implementation requires a clean design audit, complete effective dependencies, renewed fit, and the orchestration gate.
 Completion requires verified integration, clean implementation review, and user correctness confirmation.
 A split parent never implements and requires aggregate completion.
@@ -53,9 +53,9 @@ Code establishes implemented behavior.
 | --- | --- |
 | Initiative | A roadmap-owned item that groups related Approved outcomes. |
 | Initiative coordination | The initiative map, slice folders, design evidence, findings, and resume records. |
-| Slice | One observable outcome across required layers, recursively split until it fits one delivery context. |
+| Slice | One observable outcome across required layers, recursively split until it fits one `Develop <slice>` worker. |
 | `slice.md` | A slice folder's capability title, observable outcome, and Approved requirement links. |
-| Atomic slice | An outcome that one delivery context can design, implement, and verify within its remaining context and risk budget. |
+| Atomic slice | An outcome that one `Develop <slice>` worker can design, implement, and verify within its remaining context and risk budget. |
 | Slice title | A concise human-readable capability name, stored separately from the stable slice slug and shown first on the map. |
 | Provisional root slice | The initial candidate from the initiative outcome and Approved requirements before `design` returns `FIT` or `SPLIT`. |
 | Design frontier | Unstarted leaf candidates eligible for exploration, including those with incomplete implementation dependencies. |
@@ -68,10 +68,10 @@ Code establishes implemented behavior.
 | Starting surface | The command, route, public function, event, job, or user action where a slice enters the system. |
 | Acceptance suite | Feature scenarios plus executable bindings or tests that prove one slice's observable outcome. |
 | Approved requirement | An accepted product or system obligation. |
-| Delivery context | One `Develop <slice>` task that designs, implements, and corrects one slice. |
+| Delivery context | The long-lived `Develop <slice>` worker and task that designs, implements, and corrects one slice. |
 | Orchestrator | The agent that owns coordination, parent relationships, dependencies, inherited design inputs, continuation, recovery, acceptance, and user gates. |
-| Reviewer | A fresh `Review <slice>` context that audits design or implementation. |
-| Fresh context | An independent context without the authoring conversation. |
+| Reviewer | A fresh `Review <slice>` worker and task that audits design or implementation. |
+| Fresh context | An independent worker task without the authoring conversation. |
 | Design audit | An independent review of requirements, design artifacts, boundaries, security, and verification before implementation. |
 | Implementation review | An independent review of completed code and verified behavior after implementation. |
 | Design finding | A defect in approved intent, fit, boundaries, or planned verification that prevents a sound implementation gate. |
@@ -92,8 +92,9 @@ Code establishes implemented behavior.
 | Shape-only scaffold | A non-behavioral seam authored after the fit checkpoint when the selected surface does not exist and replaced with complete behavior before verification. |
 | Red checkpoint | The exact test command and expected failure recorded before production behavior changes. |
 | Security surface | The declared trust boundaries and sensitive capabilities that determine security review scope. |
-| Review wave | One coordinated pass of fresh review contexts against one slice. |
+| Review wave | One coordinated pass of fresh `Review <slice>` workers against one slice. |
 | Review lane | One independently scoped review in a review wave. |
+| Resolution exchange | A bounded direct conversation between a `Develop <slice>` worker and its assigned `Review <slice>` worker that resolves findings before a fresh review. |
 | Reporting slice | The slice that owns a finding's original evidence and lane findings file. |
 | Escalation target | The affected slice or user gate named by a finding that exceeds its reporting slice. |
 | Review probe | A minimal failing regression test authored by implementation review through a public or system surface that proves a concrete finding. |
@@ -106,7 +107,7 @@ Code establishes implemented behavior.
 | `map.puml` | The authoritative initiative graph, with topology and dependencies owned by orchestration and written through `write-map`. |
 | `findings.md` | The authoritative review record for one reporting slice and review lane. |
 | Lane findings file | Alias for `findings.md`. |
-| `recovery.md` | A slice-owned note that preserves unfinished work and evidence when its delivery context must pause or be replaced. |
+| `recovery.md` | A slice-owned note that preserves unfinished work and evidence when its `Develop <slice>` worker must pause or be replaced. |
 
 ## Supporting procedures
 
