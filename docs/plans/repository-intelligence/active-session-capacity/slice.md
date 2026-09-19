@@ -26,8 +26,8 @@ Verification: `node --test server/test/session-capacity.test.mjs server/test/mcp
 ## Invariants
 
 - Session identity is selected as one block and is never mixed across sessions.
-- The hook hashes the raw session identifier locally and emits only the SHA-256 correlation key as bounded additional context.
-- Active MCP inputs require the correlation key and never use private request metadata.
+- The hook hashes the raw session identifier locally and emits the SHA-256 correlation key plus plugin data directory as bounded additional context.
+- Active MCP inputs require the correlation key and plugin data directory and never use private request metadata.
 - The bounded first transcript `session_meta` record supplies correlated Codex version and provider identity.
 - Transcript paths and content are never persisted or emitted.
 - Stored facts contain only allowlisted identity and capacity fields.
@@ -48,7 +48,7 @@ Verification: `node --test server/test/session-capacity.test.mjs server/test/mcp
 
 1. Implement bounded fact normalization and atomic digest-keyed local storage.
 2. Add the bounded Codex transcript classifier, host adapter, and hook command.
-3. Emit the correlation key through bounded hook additional context.
+3. Emit the correlation key and plugin data directory through bounded hook additional context.
 4. Add conservative active-session resolution to the capacity module.
 5. Expose correlation-keyed capacity, fit, and consumption tools through MCP.
 6. Update user guidance and workflow prompts.

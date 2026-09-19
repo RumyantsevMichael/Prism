@@ -821,7 +821,7 @@ test("a same-parent subagent hook cannot overwrite the supported root capacity r
   });
 });
 
-test("the hook emits only a digest correlation key after storing facts", async (context) => {
+test("the hook emits the digest and plugin data directory after storing facts", async (context) => {
   const hookPath = fileURLToPath(new URL("../../hooks/record-session-facts.mjs", import.meta.url));
   const dataDirectory = await temporaryDirectory(context, "prism-host-hook-output-");
   const root = await temporaryDirectory(context, "prism-host-hook-project-");
@@ -867,6 +867,7 @@ test("the hook emits only a digest correlation key after storing facts", async (
   assert.equal(Buffer.concat(stderr).toString(), "");
   assert.equal(output.hookSpecificOutput.hookEventName, "SessionStart");
   assert.match(output.hookSpecificOutput.additionalContext, new RegExp(createSessionCorrelationKey(sessionId)));
+  assert.match(output.hookSpecificOutput.additionalContext, new RegExp(dataDirectory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   for (const privateValue of [sessionId, transcriptPath, root, "private prompt"]) {
     assert.equal(outputText.includes(privateValue), false);
   }

@@ -63,15 +63,16 @@ Use the read-only `resolve_session_capacity` tool with active mode when the targ
   "projectRoot": "/absolute/project",
   "session": {
     "mode": "active",
-    "correlationKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    "correlationKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "dataDirectory": "/absolute/plugin-data"
   }
 }
 ```
 
 Active resolution requires the bundled hooks in `hooks/hooks.json` to be enabled and trusted by the host.
 Codex skips plugin hooks until the user reviews and trusts their current definition through `/hooks`.
-After it stores a fact record successfully, the hook emits a SHA-256 session correlation key as bounded developer context.
-Pass that exact key to active capacity, fit, and consumption requests.
+After it stores a fact record successfully, the hook emits a SHA-256 session correlation key and absolute plugin data directory as bounded developer context.
+Pass both exact values to active capacity, fit, and consumption requests.
 The hook stores only hashed session and project identities plus allowlisted model and capacity facts in the plugin data directory.
 It does not store prompts, source, commands, responses, credentials, or transcripts.
 The raw session identifier never appears in additional context, MCP input, or persisted public output.
@@ -98,11 +99,12 @@ Use `summarize_session_consumption` to inspect content-free observations from th
 ```json
 {
   "projectRoot": "/absolute/project",
-  "correlationKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  "correlationKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "dataDirectory": "/absolute/plugin-data"
 }
 ```
 
-Use the exact correlation key that the enabled session hook adds to developer context.
+Use the exact correlation key and plugin data directory that the enabled session hook adds to developer context.
 The key identifies the active session without exposing its raw host session identifier, and Prism also requires the canonical project identity to match.
 The bundled hooks observe supported searches, source reads, successful edits, failed edit attempts, tests, compaction, and session boundaries.
 The trace stores hashed identities, relative source ranges, numeric counts, coverage, and provenance in the plugin data directory.

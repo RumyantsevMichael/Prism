@@ -58,7 +58,7 @@ Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When a caller requests a session consumption summary with the hook-emitted correlation key, Prism shall return deduplicated source ranges and rendered token counts before the first successful edit, compaction timing, and coverage as `exact`, `partial`, or `unavailable`.
+Requirement: When a caller requests a session consumption summary with the hook-emitted correlation key and plugin data directory, Prism shall return deduplicated source ranges and rendered token counts before the first successful edit, compaction timing, and coverage as `exact`, `partial`, or `unavailable`.
 
 Rationale: Coverage-aware summaries can support later calibration without representing missing events as zero consumption.
 
@@ -123,7 +123,7 @@ Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When a caller requests a session consumption summary with a valid hook-emitted correlation key and canonical project root, Prism shall read only the trace that matches both identities.
+Requirement: When a caller requests a session consumption summary with a valid hook-emitted correlation key, plugin data directory, and canonical project root, Prism shall read only the trace that matches both identities.
 
 Rationale: MCP callers receive the session digest instead of the private raw host session identifier.
 

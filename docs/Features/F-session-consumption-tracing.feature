@@ -138,10 +138,10 @@ Feature: Session consumption tracing
       When it reaches the commit boundary
       Then it neither commits nor acknowledges the append
 
-  Rule: MCP reads use the hook-emitted correlation key
+  Rule: MCP reads use the hook-emitted correlation key and plugin data directory
     # Requirement: [Resolve traces by session correlation key](../requirements/session-consumption-tracing.md#8)
 
     Example: The same active trace is found without exposing its raw session identifier
-      Given an enabled hook emitted a valid session correlation key
-      When the caller requests consumption for that key and canonical project root
+      Given an enabled hook emitted a valid session correlation key and plugin data directory
+      When the caller requests consumption for that key, data directory, and canonical project root
       Then Prism returns only the trace that matches both identities

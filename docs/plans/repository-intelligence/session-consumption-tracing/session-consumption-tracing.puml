@@ -23,7 +23,7 @@ Record --> Store : appends bounded idempotent events
 Store --> Store : orders events and derives first edit
 Store --> Store : fences cleanup and atomic commit with token ownership
 Store --> Store : removes expired traces and owned stale temporary files
-Mcp --> Summarize : supplies correlation key and canonical root
+Mcp --> Summarize : supplies key, data directory, and canonical root
 Summarize --> Store : reads isolated session events
 Summarize --> Summarize : uses occurrence order and deduplicates ranges
 

@@ -33,7 +33,7 @@ Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When an enabled host hook reports a session event, Prism shall store only the allowlisted session identity and capacity facts under a SHA-256 session correlation key in plugin-local storage and shall emit only that key as bounded additional context.
+Requirement: When an enabled host hook reports a session event, Prism shall store only the allowlisted session identity and capacity facts under a SHA-256 session correlation key in plugin-local storage and shall emit that key plus the absolute plugin data directory as bounded additional context.
 
 Rationale: The host event is the authoritative source for the active session, while a narrow allowlist protects unrelated configuration and secrets.
 
@@ -46,7 +46,7 @@ Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When a caller requests active-session capacity with the hook-emitted correlation key, Prism shall apply complete explicit capacity overrides before complete directly attested same-session capacity and shall never use user configuration or a registry default as proof of the active threshold.
+Requirement: When a caller requests active-session capacity with the hook-emitted correlation key and plugin data directory, Prism shall apply complete explicit capacity overrides before complete directly attested same-session capacity and shall never use user configuration or a registry default as proof of the active threshold.
 
 Rationale: A deterministic precedence order makes capacity decisions reproducible without assuming that a known default outranks an unobserved active override.
 

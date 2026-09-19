@@ -7,9 +7,9 @@ Feature: Active session capacity
 
     Example: Matching Codex facts resolve capacity
       Given an enabled Codex hook recorded allowlisted facts for the active session
-      And the hook emitted a SHA-256 correlation key as additional context
+      And the hook emitted a SHA-256 correlation key and plugin data directory as additional context
       And the host directly attested complete capacity with total compaction scope
-      And the MCP request supplies that correlation key
+      And the MCP request supplies that correlation key and plugin data directory
       When active session capacity is resolved
       Then the exact effective capacity is returned with provenance
       And the bounded transcript session metadata supplies the active host version and provider

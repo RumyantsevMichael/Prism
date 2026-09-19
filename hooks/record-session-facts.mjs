@@ -46,7 +46,7 @@ export async function recordSessionFacts({
       hookOutput = {
         hookSpecificOutput: {
           hookEventName,
-          additionalContext: `Prism session correlation key: ${capture.record.sessionDigest}. Pass this exact value as correlationKey to Prism active-session capacity and consumption tools.`
+          additionalContext: `Prism session correlation key: ${capture.record.sessionDigest}. Prism plugin data directory: ${dataDirectory}. Pass both exact values to Prism active-session capacity and consumption tools.`
         }
       };
     }

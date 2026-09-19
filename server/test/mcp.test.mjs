@@ -271,13 +271,15 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.equal(tools.resolve_session_capacity.annotations.readOnlyHint, true);
   assert.deepEqual(tools.resolve_session_capacity.inputSchema.required, ["session"]);
   assert.equal(tools.summarize_session_consumption.annotations.readOnlyHint, true);
-  assert.deepEqual(tools.summarize_session_consumption.inputSchema.required, ["projectRoot", "correlationKey"]);
+  assert.deepEqual(tools.summarize_session_consumption.inputSchema.required, ["projectRoot", "correlationKey", "dataDirectory"]);
   assert.equal(tools.summarize_session_consumption.inputSchema.properties.correlationKey.pattern, "^[a-f0-9]{64}$");
+  assert.equal(tools.summarize_session_consumption.inputSchema.properties.dataDirectory.type, "string");
   assert.equal(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[0].additionalProperties, false);
   assert.equal(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[0].properties.capacityOverrides.additionalProperties, false);
   assert.deepEqual(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[1].properties.mode, { const: "active" });
-  assert.deepEqual(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[1].required, ["mode", "correlationKey"]);
+  assert.deepEqual(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[1].required, ["mode", "correlationKey", "dataDirectory"]);
   assert.equal(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[1].properties.correlationKey.pattern, "^[a-f0-9]{64}$");
+  assert.equal(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[1].properties.dataDirectory.type, "string");
   assert.deepEqual(
     tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[1].properties.capacityOverrides.required,
     ["contextWindowTokens", "compactionThresholdTokens"]
@@ -489,12 +491,12 @@ test("evaluates repository fit from same-session host facts and rejects invalid 
     }
   });
   await writeHostSessionFacts(record, { dataDirectory });
-  const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: dataDirectory });
+  const mcp = mcpProcess(context, root, root);
 
   await initialize(mcp);
   const fitArguments = {
     projectRoot: root,
-    session: { mode: "active", correlationKey: record.sessionDigest },
+    session: { mode: "active", correlationKey: record.sessionDigest, dataDirectory },
     costs: {
       baseSessionContextTokens: 20000,
       featureDesignContextTokens: 10000,
@@ -551,12 +553,12 @@ test("fails closed when active session facts are absent", async (context) => {
   const root = await projectFixture(context, "missing-active-facts", "artifact.md");
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-missing-active-facts-"));
   context.after(() => rm(dataDirectory, { recursive: true, force: true }));
-  const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: dataDirectory });
+  const mcp = mcpProcess(context, root, root);
 
   await initialize(mcp);
   const response = await callTool(mcp, 2, "resolve_session_capacity", {
     projectRoot: root,
-    session: { mode: "active", correlationKey: "a".repeat(64) }
+    session: { mode: "active", correlationKey: "a".repeat(64), dataDirectory }
   });
 
   assert.equal(response.result.structuredContent.status, "UNSUPPORTED");
@@ -576,6 +578,7 @@ test("rejects partial active capacity overrides before reading host facts", asyn
     session: {
       mode: "active",
       correlationKey: "a".repeat(64),
+      dataDirectory,
       capacityOverrides: { contextWindowTokens: 120000 }
     }
   });
@@ -619,7 +622,8 @@ test("summarizes consumption only for the same active session", async (context) 
   await initialize(mcp);
   const supported = await callTool(mcp, 2, "summarize_session_consumption", {
     projectRoot: root,
-    correlationKey: events[0].sessionDigest
+    correlationKey: events[0].sessionDigest,
+    dataDirectory
   });
   assert.equal(supported.result.structuredContent.status, "SUPPORTED");
   assert.equal(supported.result.structuredContent.coverage, "exact");
@@ -628,7 +632,8 @@ test("summarizes consumption only for the same active session", async (context) 
 
   const other = await callTool(mcp, 3, "summarize_session_consumption", {
     projectRoot: root,
-    correlationKey: "b".repeat(64)
+    correlationKey: "b".repeat(64),
+    dataDirectory
   });
   assert.equal(other.result.structuredContent.status, "UNSUPPORTED");
   assert.equal(other.result.structuredContent.reasonCode, "NO_SESSION_TRACE");

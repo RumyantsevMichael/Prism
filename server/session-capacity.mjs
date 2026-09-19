@@ -274,15 +274,15 @@ function validateActiveSessionRequest(value) {
 export function createActiveSessionCapacityRequest(session, { dataDirectory, projectRoot } = {}) {
   assertExactKeys(
     session,
-    ["mode", "correlationKey", "capacityOverrides", "compactionScope"],
-    ["mode", "correlationKey"],
+    ["mode", "correlationKey", "dataDirectory", "capacityOverrides", "compactionScope"],
+    ["mode", "correlationKey", "dataDirectory"],
     "session"
   );
   if (session.mode !== "active") {
     throw new Error("session.mode must be active.");
   }
   const request = {
-    dataDirectory,
+    dataDirectory: session.dataDirectory ?? dataDirectory,
     correlationKey: session.correlationKey,
     projectRoot,
     ...(Object.hasOwn(session, "capacityOverrides") ? { capacityOverrides: session.capacityOverrides } : {}),

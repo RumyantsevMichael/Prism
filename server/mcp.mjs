@@ -276,10 +276,11 @@ const explicitSessionInputSchema = {
 const activeSessionInputSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["mode", "correlationKey"],
+  required: ["mode", "correlationKey", "dataDirectory"],
   properties: {
     mode: { const: "active" },
     correlationKey: sessionCorrelationKeyInputSchema,
+    dataDirectory: { type: "string", minLength: 1, description: "The absolute Prism plugin data directory emitted by the enabled session hook." },
     capacityOverrides: completeCapacityOverridesInputSchema,
     compactionScope: { const: "total", description: "Explicitly attest that the supplied capacity threshold counts total session tokens." }
   }
@@ -372,7 +373,7 @@ const tools = [
   },
   {
     name: "resolve_session_capacity",
-    description: "Resolve exact capacity for an explicit session or for the same active host session identified by the hook-emitted correlation key. Active resolution fails closed when hook facts are unavailable, stale, mismatched, or do not attest an exact total-session threshold.",
+    description: "Resolve exact capacity for an explicit session or for the same active host session identified by the hook-emitted correlation key and plugin data directory. Active resolution fails closed when hook facts are unavailable, stale, mismatched, or do not attest an exact total-session threshold.",
     inputSchema: {
       type: "object",
       properties: {
@@ -420,14 +421,15 @@ const tools = [
   },
   {
     name: "summarize_session_consumption",
-    description: "Summarize content-free repository context observations before the first successful edit in the same active host session identified by the hook-emitted correlation key. Missing or incomplete instrumentation stays explicit.",
+    description: "Summarize content-free repository context observations before the first successful edit in the same active host session identified by the hook-emitted correlation key and plugin data directory. Missing or incomplete instrumentation stays explicit.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        correlationKey: sessionCorrelationKeyInputSchema
+        correlationKey: sessionCorrelationKeyInputSchema,
+        dataDirectory: { type: "string", minLength: 1, description: "The absolute Prism plugin data directory emitted by the enabled session hook." }
       },
-      required: ["projectRoot", "correlationKey"],
+      required: ["projectRoot", "correlationKey", "dataDirectory"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
@@ -551,9 +553,10 @@ async function callStateTool(name, argumentsValue) {
 
 async function callRepositoryTool(name, argumentsValue) {
   if (name === "summarize_session_consumption") {
+    assertExactToolArguments(argumentsValue, ["projectRoot", "correlationKey", "dataDirectory"], ["projectRoot", "correlationKey", "dataDirectory"], "summarize_session_consumption arguments");
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const summary = await summarizeSessionConsumption({
-      dataDirectory: process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA,
+      dataDirectory: argumentsValue.dataDirectory || process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA,
       correlationKey: argumentsValue.correlationKey,
       projectRoot
     });

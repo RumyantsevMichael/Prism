@@ -24,8 +24,8 @@ TranscriptMetadata --> Transcript : reads only first session_meta record
 Record --> Store : writes one digest-keyed atomic record
 Store --> Store : evicts expired and oldest records under quota
 Store --> Store : rejects links and uses token-owned retention locks
-Record --> Agent : emits SHA-256 correlation key as context
-Agent --> Mcp : supplies key and canonical project root
+Record --> Agent : emits key and plugin data directory as context
+Agent --> Mcp : supplies key, data directory, and canonical project root
 Agent --> Mcp : supplies both active overrides or neither
 Mcp --> Active : requests same-session capacity
 Active --> Store : reads bounded fresh facts

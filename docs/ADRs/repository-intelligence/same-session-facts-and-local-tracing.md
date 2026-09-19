@@ -28,7 +28,7 @@ Future calibration also needs pre-edit measurements without retaining user conte
 ## Decision
 
 Prism MUST accept active-session facts only through enabled host hooks or complete explicit input.
-The fact hook MUST hash the raw host session identifier locally and MUST expose only the resulting SHA-256 correlation key as bounded additional context.
+The fact hook MUST hash the raw host session identifier locally and MUST expose the resulting SHA-256 correlation key plus the absolute plugin data directory as bounded additional context.
 Stored facts and traces MUST use the same digest, and active MCP tools MUST require that digest instead of reading private request metadata.
 The raw session identifier MUST NOT leave the hook boundary through MCP input, stored public output, or additional context.
 Stored facts MUST be matched as one identity block by correlation key and canonical project root.
@@ -114,8 +114,8 @@ Old trace files can be removed on the next append after they exceed the retentio
 ## Mechanism
 
 Host hooks write validated facts and events to plugin-local storage with restrictive permissions, canonical path containment, link rejection, and atomic replacement.
-The hook writes the SHA-256 correlation key as additional developer context after a fact record is stored successfully.
-The MCP server resolves active capacity and consumption only when the caller supplies that same correlation key and the canonical project root matches.
+The hook writes the SHA-256 correlation key and absolute plugin data directory as additional developer context after a fact record is stored successfully.
+The MCP server resolves active capacity and consumption only when the caller supplies that same correlation key and data directory and the canonical project root matches.
 The trace behavior registry binds exact reviewed Codex versions to the lifecycle and response-shape facts that tracing may trust.
 The session trace store appends idempotent bounded events, orders them by occurrence, and derives a content-free summary on request.
 The fact store serializes cleanup and commit under a token-owned lock, reclaims an aged lock only for a confirmed-dead matching process, and treats active or unknown owners as busy.
