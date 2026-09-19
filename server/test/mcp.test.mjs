@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { access, chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import https from "node:https";
 import os from "node:os";
@@ -7,8 +7,14 @@ import path from "node:path";
 import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { createHostSessionFactRecord, writeHostSessionFacts } from "../host-session-facts.mjs";
+import { REPOSITORY_CONTEXT_INPUT_LIMITS } from "../repository-intelligence.mjs";
+import { createSessionTraceEvent } from "../session-trace.mjs";
+import { appendSessionTraceEvent } from "../session-trace-store.mjs";
 
 const SERVER_PATH = fileURLToPath(new URL("../mcp.mjs", import.meta.url));
+const execFileAsync = promisify(execFile);
 
 async function projectFixture(context, name, artifact) {
   const root = await mkdtemp(path.join(os.tmpdir(), `${name}-`));
@@ -100,6 +106,34 @@ async function browserStub(context) {
       PRISM_BROWSER_COUNT: count
     }
   };
+}
+
+async function codeNibStub(context, commit, projectRoot) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "prism-codenib-stub-"));
+  const executable = path.join(directory, "codenib-stub");
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const source = `#!/usr/bin/env node
+import readline from "node:readline";
+const input = readline.createInterface({ input: process.stdin });
+const repositoryCommit = ${JSON.stringify(commit)};
+const repositoryRoot = ${JSON.stringify(projectRoot)};
+const responses = {
+  get_manifest: { repo: { path: repositoryRoot, commit: repositoryCommit, source_fingerprint: "fixture-source" }, runtime: { loaded_views: ["bm25", "vector", "symbol_graph"], source_read: { verified: true } } },
+  search_context: { plan: { stages: [{ engine: "sparse" }, { engine: "dense" }], graph: null }, source: { commit: repositoryCommit, source_fingerprint: "fixture-source" }, results: [{ node_id: "entry", node_name: "entry", type: "function", file: "src/entry.mjs", start_line: 1, end_line: 5, score: 1, content: "entry" }] },
+  dependency_subgraph: { root: "entry", nodes: [{ name: "support", file: "src/support.mjs", line: 2, kind: "function", depth: 1 }], edges: [] },
+  read_source: { content: "export function entry() {}\\n", source: { commit: repositoryCommit, source_fingerprint: "fixture-source", verified: true } }
+};
+input.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  const response = request.params?.name === "read_source" ? { ...responses.read_source, file: request.params.arguments.file_path, start_line: request.params.arguments.start_line, end_line: request.params.arguments.end_line } : responses[request.params?.name];
+  const value = request.method === "initialize" ? { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "codenib", version: "0.2.3" } } : { content: [{ type: "text", text: JSON.stringify(response) }], structuredContent: response };
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: value }) + "\\n");
+});
+`;
+  await writeFile(executable, source);
+  await chmod(executable, 0o755);
+  return executable;
 }
 
 function delay(milliseconds) {
@@ -220,6 +254,40 @@ test("declares the project root and read-only artifact tools", async (context) =
   const tools = Object.fromEntries(response.result.tools.map((tool) => [tool.name, tool]));
   assert.deepEqual(tools.list_reviewable_artifacts.inputSchema.required, ["projectRoot"]);
   assert.equal(tools.list_reviewable_artifacts.annotations.readOnlyHint, true);
+  assert.equal(tools.list_repository_intelligence_providers.annotations.readOnlyHint, true);
+  assert.deepEqual(tools.list_repository_intelligence_providers.inputSchema.required, ["projectRoot"]);
+  assert.equal(tools.plan_repository_context.annotations.readOnlyHint, true);
+  assert.deepEqual(tools.plan_repository_context.inputSchema.required, ["projectRoot", "task"]);
+  assert.deepEqual(tools.plan_repository_context.inputSchema.properties.provider.enum, ["auto", "native", "codegraph", "codenib"]);
+  assert.deepEqual(tools.plan_repository_context.inputSchema.properties.budget.enum, ["fast", "balanced", "thorough"]);
+  assert.equal(tools.plan_repository_context.inputSchema.properties.task.maxLength, REPOSITORY_CONTEXT_INPUT_LIMITS.taskCharacters);
+  assert.equal(tools.plan_repository_context.inputSchema.properties.hints.additionalProperties, false);
+  for (const hint of Object.values(tools.plan_repository_context.inputSchema.properties.hints.properties)) {
+    assert.equal(hint.maxItems, REPOSITORY_CONTEXT_INPUT_LIMITS.hintsPerKind);
+    assert.equal(hint.items.maxLength, REPOSITORY_CONTEXT_INPUT_LIMITS.hintCharacters);
+  }
+  assert.equal(tools.evaluate_repository_fit.annotations.readOnlyHint, true);
+  assert.deepEqual(tools.evaluate_repository_fit.inputSchema.required, ["session", "costs", "tokenEstimate"]);
+  assert.equal(tools.resolve_session_capacity.annotations.readOnlyHint, true);
+  assert.deepEqual(tools.resolve_session_capacity.inputSchema.required, ["session"]);
+  assert.equal(tools.summarize_session_consumption.annotations.readOnlyHint, true);
+  assert.deepEqual(tools.summarize_session_consumption.inputSchema.required, ["projectRoot", "correlationKey"]);
+  assert.equal(tools.summarize_session_consumption.inputSchema.properties.correlationKey.pattern, "^[a-f0-9]{64}$");
+  assert.equal(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[0].additionalProperties, false);
+  assert.equal(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[0].properties.capacityOverrides.additionalProperties, false);
+  assert.deepEqual(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[1].properties.mode, { const: "active" });
+  assert.deepEqual(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[1].required, ["mode", "correlationKey"]);
+  assert.equal(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[1].properties.correlationKey.pattern, "^[a-f0-9]{64}$");
+  assert.deepEqual(
+    tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[1].properties.capacityOverrides.required,
+    ["contextWindowTokens", "compactionThresholdTokens"]
+  );
+  assert.deepEqual(tools.evaluate_repository_fit.inputSchema.properties.session.oneOf[1].properties.compactionScope, {
+    const: "total",
+    description: "Explicitly attest that the supplied capacity threshold counts total session tokens."
+  });
+  assert.equal(tools.evaluate_repository_fit.inputSchema.properties.costs.additionalProperties, false);
+  assert.equal(tools.evaluate_repository_fit.inputSchema.properties.tokenEstimate.additionalProperties, false);
   assert.equal(tools.get_review_url.annotations.readOnlyHint, true);
   assert.match(tools.get_review_url.description, /URL only/);
   assert.match(tools.get_review_url.description, /does not open a browser/);
@@ -267,6 +335,327 @@ test("updates coordination state without starting the review server", async (con
   assert.equal(stale.error.data.current.revision, current.result.structuredContent.revision);
 
   await assert.rejects(access(path.join(root, ".prism-review-cert")), (caught) => caught.code === "ENOENT");
+});
+
+test("plans repository context through the CodeNib sidecar", async (context) => {
+  const root = await projectFixture(context, "repository-context", "artifact.md");
+  await mkdir(path.join(root, "src"), { recursive: true });
+  await writeFile(path.join(root, "src", "entry.mjs"), "export function entry() {\n  return true;\n}\n\n// entry behavior\n");
+  await writeFile(path.join(root, "src", "support.mjs"), "// support\nexport function support() {}\n");
+  await execFileAsync("git", ["init", "--quiet", root]);
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "-c", "user.name=Prism Test", "-c", "user.email=prism@example.invalid", "commit", "--quiet", "-m", "fixture"]);
+  const { stdout: commitOutput } = await execFileAsync("git", ["-C", root, "rev-parse", "HEAD"]);
+  const command = await codeNibStub(context, commitOutput.trim(), root);
+  const mcp = mcpProcess(context, root, root, { PRISM_CODENIB_COMMAND: command });
+
+  await initialize(mcp);
+  const response = await callTool(mcp, 2, "plan_repository_context", {
+    projectRoot: root,
+    provider: "codenib",
+    task: "Change the entry behavior.",
+    hints: { symbols: ["entry"] },
+    budget: "balanced",
+    searchHits: 4,
+    graphNodes: 4
+  });
+
+  assert.match(response.result.structuredContent.commit, /^[a-f0-9]{40,64}$/);
+  assert.match(response.result.structuredContent.sourceFingerprint, /^[a-f0-9]{64}$/);
+  assert.equal(response.result.structuredContent.provider.name, "native+codenib");
+  assert.deepEqual(response.result.structuredContent.provider.contributors.map(({ id }) => id), ["native", "codenib"]);
+  assert.deepEqual(response.result.structuredContent.mustRead.map(({ file }) => file), ["src/entry.mjs"]);
+  assert.deepEqual(response.result.structuredContent.likelyRead.map(({ file }) => file), ["src/support.mjs"]);
+  assert.match(response.result.content[0].text, /Token estimate:/);
+});
+
+test("lists repository intelligence providers without starting the review server", async (context) => {
+  const root = await projectFixture(context, "repository-provider-list", "artifact.md");
+  const mcp = mcpProcess(context, root, root, { PRISM_CODENIB_COMMAND: "prism-codenib-command-does-not-exist" });
+
+  await initialize(mcp);
+  const response = await callTool(mcp, 2, "list_repository_intelligence_providers", { projectRoot: root });
+
+  assert.deepEqual(response.result.structuredContent.providers.map(({ id }) => id), ["codegraph", "codenib", "native"]);
+  for (const provider of response.result.structuredContent.providers) {
+    assert.equal(typeof provider.version, "string");
+    assert.equal(typeof provider.capabilities, "object");
+  }
+  assert.equal(response.result.structuredContent.providers.find(({ id }) => id === "native").status, "available");
+  const codenib = response.result.structuredContent.providers.find(({ id }) => id === "codenib");
+  assert.equal(codenib.diagnosticCode, "not-installed");
+  assert.equal(codenib.capabilities.semanticSearch, true);
+  assert.match(response.result.content[0].text, /native: available/);
+  await assert.rejects(access(path.join(root, ".prism-review-cert")), (caught) => caught.code === "ENOENT");
+});
+
+test("plans repository context with the native baseline when no external provider is selected", async (context) => {
+  const root = await projectFixture(context, "repository-native", "artifact.md");
+  await mkdir(path.join(root, "src"), { recursive: true });
+  await writeFile(path.join(root, "src", "entry.mjs"), "export function entry() {\n  return true;\n}\n");
+  const mcp = mcpProcess(context, root, root);
+
+  await initialize(mcp);
+  const response = await callTool(mcp, 2, "plan_repository_context", {
+    projectRoot: root,
+    provider: "native",
+    task: "Change entry.",
+    hints: { symbols: ["entry"] }
+  });
+
+  assert.equal(response.result.structuredContent.provider.name, "native");
+  assert.deepEqual(response.result.structuredContent.provider.selection, { requested: "native", selected: "native" });
+  assert.deepEqual(response.result.structuredContent.mustRead.map(({ file }) => file), ["src/entry.mjs"]);
+  assert.equal(response.result.structuredContent.tokenEstimate.expected, null);
+  await assert.rejects(access(path.join(root, ".prism-review-cert")), (caught) => caught.code === "ENOENT");
+});
+
+test("evaluates repository fit without starting the review server", async (context) => {
+  const root = await projectFixture(context, "repository-fit", "artifact.md");
+  const mcp = mcpProcess(context, root, root);
+
+  await initialize(mcp);
+  const response = await callTool(mcp, 2, "evaluate_repository_fit", {
+    session: {
+      harness: "codex-cli",
+      harnessVersion: "0.147.0",
+      provider: "openai",
+      model: "gpt-5.6-sol"
+    },
+    costs: {
+      baseSessionContextTokens: 20000,
+      featureDesignContextTokens: 10000,
+      implementationReserveTokens: 90000
+    },
+    tokenEstimate: { lower: 140000, expected: 145000, upper: 150000 }
+  });
+
+  assert.equal(response.result.structuredContent.status, "SUPPORTED");
+  assert.equal(response.result.structuredContent.fit, "SPLIT");
+  assert.equal(response.result.structuredContent.repositoryReadBudgetTokens, 124800);
+  assert.match(response.result.content[0].text, /Repository fit: SPLIT/);
+  await assert.rejects(access(path.join(root, ".prism-review-cert")), (caught) => caught.code === "ENOENT");
+});
+
+test("resolves explicit session capacity without starting the review server", async (context) => {
+  const root = await projectFixture(context, "session-capacity", "artifact.md");
+  const mcp = mcpProcess(context, root, root);
+
+  await initialize(mcp);
+  const response = await callTool(mcp, 2, "resolve_session_capacity", {
+    session: {
+      harness: "codex-cli",
+      harnessVersion: "0.147.0",
+      provider: "openai",
+      model: "gpt-5.6-sol"
+    }
+  });
+
+  assert.equal(response.result.structuredContent.status, "SUPPORTED");
+  assert.equal(response.result.structuredContent.capacity.compactionThresholdTokens, 244800);
+  assert.match(response.result.content[0].text, /Session capacity: SUPPORTED/);
+  await assert.rejects(access(path.join(root, ".prism-review-cert")), (caught) => caught.code === "ENOENT");
+});
+
+test("evaluates repository fit from same-session host facts and rejects invalid raw active input", async (context) => {
+  const root = await projectFixture(context, "active-repository-fit", "artifact.md");
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-active-facts-"));
+  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  const sessionId = "active-thread";
+  const record = createHostSessionFactRecord({
+    sessionId,
+    projectRoot: await realpath(root),
+    observedAt: new Date().toISOString(),
+    status: "SUPPORTED",
+    host: {
+      harness: "codex-cli",
+      harnessVersion: "0.147.0",
+      provider: "openai",
+      model: "gpt-5.6-sol"
+    },
+    capacityOverrides: {
+      contextWindowTokens: 272000,
+      compactionThresholdTokens: 244800
+    },
+    compactionScope: "total",
+    sources: {
+      harness: "codex-adapter",
+      harnessVersion: "transcript.session_meta.cli_version",
+      provider: "transcript.session_meta.model_provider",
+      model: "hook.model",
+      contextWindowTokens: "hook.model_context_window",
+      compactionThresholdTokens: "hook.model_auto_compact_token_limit",
+      compactionScope: "hook.model_auto_compact_token_limit_scope"
+    }
+  });
+  await writeHostSessionFacts(record, { dataDirectory });
+  const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: dataDirectory });
+
+  await initialize(mcp);
+  const fitArguments = {
+    projectRoot: root,
+    session: { mode: "active", correlationKey: record.sessionDigest },
+    costs: {
+      baseSessionContextTokens: 20000,
+      featureDesignContextTokens: 10000,
+      implementationReserveTokens: 90000
+    },
+    tokenEstimate: { lower: 90000, expected: 100000, upper: 120000 }
+  };
+  const response = await callTool(mcp, 2, "evaluate_repository_fit", fitArguments);
+
+  assert.equal(response.result.structuredContent.status, "SUPPORTED");
+  assert.equal(response.result.structuredContent.fit, "FIT");
+  assert.equal(response.result.structuredContent.session.model, "gpt-5.6-sol");
+  assert.equal(response.result.structuredContent.sessionProvenance.source, "active-host-session");
+
+  const invalidCases = [
+    {
+      argumentsValue: {
+        ...fitArguments,
+        session: { ...fitArguments.session, capacityOverrides: null }
+      },
+      message: /capacityOverrides must be an object/
+    },
+    {
+      argumentsValue: {
+        ...fitArguments,
+        session: { ...fitArguments.session, compactionScope: null }
+      },
+      message: /compactionScope must be total/
+    },
+    {
+      argumentsValue: {
+        ...fitArguments,
+        session: { ...fitArguments.session, unexpected: true }
+      },
+      message: /session contains an unknown property/
+    },
+    {
+      argumentsValue: { ...fitArguments, unexpected: true },
+      message: /arguments contains an unknown property/
+    },
+    {
+      argumentsValue: { ...fitArguments, projectRoot: null },
+      message: /projectRoot argument must be an absolute path/
+    }
+  ];
+  for (const [index, invalidCase] of invalidCases.entries()) {
+    const invalidResponse = await callTool(mcp, index + 3, "evaluate_repository_fit", invalidCase.argumentsValue);
+    assert.match(invalidResponse.error.message, invalidCase.message);
+    assert.equal(invalidResponse.result, undefined);
+  }
+});
+
+test("fails closed when active session facts are absent", async (context) => {
+  const root = await projectFixture(context, "missing-active-facts", "artifact.md");
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-missing-active-facts-"));
+  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: dataDirectory });
+
+  await initialize(mcp);
+  const response = await callTool(mcp, 2, "resolve_session_capacity", {
+    projectRoot: root,
+    session: { mode: "active", correlationKey: "a".repeat(64) }
+  });
+
+  assert.equal(response.result.structuredContent.status, "UNSUPPORTED");
+  assert.equal(response.result.structuredContent.reasonCode, "NO_SESSION_FACTS");
+  assert.match(response.result.content[0].text, /Reason code: NO_SESSION_FACTS/);
+});
+
+test("rejects partial active capacity overrides before reading host facts", async (context) => {
+  const root = await projectFixture(context, "partial-active-capacity", "artifact.md");
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-partial-active-capacity-"));
+  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: dataDirectory });
+
+  await initialize(mcp);
+  const response = await callTool(mcp, 2, "resolve_session_capacity", {
+    projectRoot: root,
+    session: {
+      mode: "active",
+      correlationKey: "a".repeat(64),
+      capacityOverrides: { contextWindowTokens: 120000 }
+    }
+  });
+
+  assert.match(response.error.message, /compactionThresholdTokens is required/);
+  assert.equal(response.result, undefined);
+});
+
+test("summarizes consumption only for the same active session", async (context) => {
+  const root = await projectFixture(context, "session-consumption", "artifact.md");
+  const canonicalRoot = await realpath(root);
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-session-consumption-"));
+  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  const sessionId = "consumption-thread";
+  const events = [
+    createSessionTraceEvent({
+      sessionId,
+      projectRoot: canonicalRoot,
+      eventId: "start",
+      eventType: "session_start",
+      occurredAt: "2026-09-19T12:00:00.000Z",
+      coverage: "exact",
+      provenance: { collector: "test", hostEvent: "Custom" }
+    }),
+    createSessionTraceEvent({
+      sessionId,
+      projectRoot: canonicalRoot,
+      eventId: "read",
+      eventType: "source_read",
+      occurredAt: "2026-09-19T12:00:01.000Z",
+      sourceLocation: { path: "server/example.mjs", startLine: 1, endLine: 10 },
+      counts: { renderedTokens: 80 },
+      provenance: { collector: "test", hostEvent: "Custom" }
+    })
+  ];
+  for (const event of events) {
+    await appendSessionTraceEvent(event, { dataDirectory });
+  }
+  const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: dataDirectory });
+
+  await initialize(mcp);
+  const supported = await callTool(mcp, 2, "summarize_session_consumption", {
+    projectRoot: root,
+    correlationKey: events[0].sessionDigest
+  });
+  assert.equal(supported.result.structuredContent.status, "SUPPORTED");
+  assert.equal(supported.result.structuredContent.coverage, "exact");
+  assert.equal(supported.result.structuredContent.preEdit.renderedTokens, 80);
+  assert.match(supported.result.content[0].text, /Rendered tokens: 80/);
+
+  const other = await callTool(mcp, 3, "summarize_session_consumption", {
+    projectRoot: root,
+    correlationKey: "b".repeat(64)
+  });
+  assert.equal(other.result.structuredContent.status, "UNSUPPORTED");
+  assert.equal(other.result.structuredContent.reasonCode, "NO_SESSION_TRACE");
+});
+
+test("rejects invalid repository fit input without a classification", async (context) => {
+  const root = await projectFixture(context, "invalid-repository-fit", "artifact.md");
+  const mcp = mcpProcess(context, root, root);
+
+  await initialize(mcp);
+  const response = await callTool(mcp, 2, "evaluate_repository_fit", {
+    session: {
+      harness: "codex-cli",
+      harnessVersion: "0.147.0",
+      provider: "openai",
+      model: "gpt-5.6-sol"
+    },
+    costs: {
+      baseSessionContextTokens: 20000,
+      featureDesignContextTokens: 10000,
+      implementationReserveTokens: -1
+    },
+    tokenEstimate: { lower: 1, expected: 2, upper: 3 }
+  });
+
+  assert.match(response.error.message, /nonnegative integer/);
+  assert.equal(response.result, undefined);
 });
 
 test("uses the consumer root provided by Claude Code", async (context) => {

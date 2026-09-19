@@ -1,0 +1,31 @@
+@startuml
+title C4 code - Repository intelligence - session fit
+package "Prism MCP server" {
+  class "mcp.callTool" as Mcp <<existing function>>
+  class "evaluateRepositoryFit" as Evaluate <<function>>
+  class "resolveSessionCapacity" as Resolve <<function>>
+  class "CapacityRegistry" as Registry <<data contract>>
+  class "ContextPlanEstimate" as Estimate <<input contract>>
+  class "SessionCosts" as Costs <<input contract>>
+  class "FitDecision" as Decision <<return value>>
+}
+
+Mcp --> Evaluate : evaluates a read-only fit request
+Evaluate ..> Resolve : resolves exact supported capacity
+Resolve ..> Registry : selects host, provider, model, and version
+Evaluate ..> Estimate : reads lower and upper estimates
+Evaluate ..> Costs : subtracts target-session costs
+Evaluate ..> Decision : returns FIT, SPLIT, UNCERTAIN, or UNSUPPORTED
+
+note right of Resolve
+  Condition: no exact supported registry entry exists.
+  Response: return UNSUPPORTED without a fit classification.
+  Governing requirement: session-fit.md section 2.
+end note
+
+note right of Evaluate
+  Condition: an estimate is incomplete or a cost is invalid.
+  Response: return UNCERTAIN or reject invalid input.
+  Governing requirement: session-fit.md section 3.
+end note
+@enduml

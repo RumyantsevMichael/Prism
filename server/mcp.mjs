@@ -1,6 +1,20 @@
 import readline from "node:readline";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence.mjs";
+import {
+  listRepositoryIntelligenceProviders,
+  RepositoryIntelligenceSelectionError,
+  withRepositoryIntelligence
+} from "./repository-intelligence-providers.mjs";
+import {
+  createActiveSessionCapacityRequest,
+  evaluateActiveRepositoryFit,
+  evaluateRepositoryFit,
+  resolveActiveSessionCapacity,
+  resolveSessionCapacity
+} from "./session-capacity.mjs";
+import { summarizeSessionConsumption } from "./session-trace-store.mjs";
 import { listArtifacts, startReviewServer } from "./review-server.mjs";
 import { readCoordinationState, updateCoordinationState, validateCoordinationState } from "./state.mjs";
 
@@ -15,6 +29,13 @@ function taskId(metadata = {}) {
 
 async function requestedProjectRoot(argumentsValue) {
   const hostProjectRoot = process.env.CLAUDE_PROJECT_DIR;
+  const hasSuppliedProjectRoot = Object.hasOwn(argumentsValue, "projectRoot");
+  if (
+    hasSuppliedProjectRoot
+    && (typeof argumentsValue.projectRoot !== "string" || !path.isAbsolute(argumentsValue.projectRoot))
+  ) {
+    throw new Error("The projectRoot argument must be an absolute path.");
+  }
   const projectRoot = hostProjectRoot ?? argumentsValue.projectRoot;
   if (!projectRoot) {
     throw new Error("The projectRoot argument is required when the host does not provide a project root.");
@@ -23,10 +44,7 @@ async function requestedProjectRoot(argumentsValue) {
     throw new Error("The projectRoot argument must be an absolute path.");
   }
   const resolvedRoot = await realpath(projectRoot);
-  if (hostProjectRoot && argumentsValue.projectRoot) {
-    if (!path.isAbsolute(argumentsValue.projectRoot)) {
-      throw new Error("The projectRoot argument must be an absolute path.");
-    }
+  if (hostProjectRoot && hasSuppliedProjectRoot) {
     const suppliedRoot = await realpath(argumentsValue.projectRoot);
     if (suppliedRoot !== resolvedRoot) {
       throw new Error("The projectRoot argument does not match the host project root.");
@@ -119,8 +137,83 @@ function stateContent(result) {
   return `Coordination state ${validity}: ${result.statePath}\nRevision: ${revision}`;
 }
 
+function contextPlanContent(plan) {
+  return [
+    `Repository context plan for commit ${plan.commit}.`,
+    `Must read: ${plan.mustRead.length}.`,
+    `Likely read: ${plan.likelyRead.length}.`,
+    `Possible read: ${plan.possibleRead.length}.`,
+    `Token estimate: ${plan.tokenEstimate.lower} / ${plan.tokenEstimate.expected} / ${plan.tokenEstimate.upper}.`
+  ].join("\n");
+}
+
+function repositoryFitContent(result) {
+  if (result.status === "UNSUPPORTED") {
+    return `Repository fit: UNSUPPORTED.\nReason: ${result.reason}${result.reasonCode ? `\nReason code: ${result.reasonCode}.` : ""}`;
+  }
+  return [
+    `Repository fit: ${result.fit}.`,
+    `Repository read budget: ${result.repositoryReadBudgetTokens}.`,
+    `Compaction threshold: ${result.capacity.compactionThresholdTokens}.`,
+    `Capacity profile: ${result.profileId ?? "explicit-input"}.`
+  ].join("\n");
+}
+
+function sessionCapacityContent(result) {
+  if (result.status === "UNSUPPORTED") {
+    return `Session capacity: UNSUPPORTED.\nReason: ${result.reason}${result.reasonCode ? `\nReason code: ${result.reasonCode}.` : ""}`;
+  }
+  return [
+    "Session capacity: SUPPORTED.",
+    `Context window: ${result.capacity.contextWindowTokens}.`,
+    `Compaction threshold: ${result.capacity.compactionThresholdTokens}.`,
+    `Capacity profile: ${result.profileId ?? "explicit-input"}.`
+  ].join("\n");
+}
+
+function providerListContent(providers) {
+  return providers.map(({ id, status, diagnosticCode }) => `${id}: ${status}${diagnosticCode ? ` (${diagnosticCode})` : ""}`).join("\n");
+}
+
+function sessionConsumptionContent(summary) {
+  if (summary.status === "UNSUPPORTED") {
+    return `Session consumption: UNSUPPORTED.\nReason: ${summary.reason}${summary.reasonCode ? `\nReason code: ${summary.reasonCode}.` : ""}`;
+  }
+  return [
+    "Session consumption: SUPPORTED.",
+    `Coverage: ${summary.coverage}.`,
+    `Pre-edit window: ${summary.preEdit.window}.`,
+    `Rendered tokens: ${summary.preEdit.renderedTokens ?? "unavailable"}.`,
+    `Source reads: ${summary.preEdit.sourceReadCount}.`,
+    `Compactions before first edit: ${summary.compaction.countBeforeFirstEdit}.`
+  ].join("\n");
+}
+
 function reviewSessionContent(review) {
   return review.getSession();
+}
+
+function assertExactToolArguments(value, allowed, required, name) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} must be an object.`);
+  }
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) {
+      throw new Error(`${name} contains an unknown property: ${key}.`);
+    }
+  }
+  for (const key of required) {
+    if (!Object.hasOwn(value, key)) {
+      throw new Error(`${name}.${key} is required.`);
+    }
+  }
+}
+
+function activeCapacityRequest(argumentsValue, projectRoot) {
+  return createActiveSessionCapacityRequest(argumentsValue.session, {
+    dataDirectory: process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA,
+    projectRoot
+  });
 }
 
 function failure(id, code, message, data) {
@@ -132,6 +225,9 @@ function failure(id, code, message, data) {
 }
 
 function stateErrorData(error) {
+  if (error instanceof RepositoryIntelligenceSelectionError) {
+    return { code: error.code, provider: error.provider, recoverable: error.recoverable };
+  }
   if (error?.name !== "CoordinationStateError") {
     return undefined;
   }
@@ -143,6 +239,53 @@ function stateErrorData(error) {
   }
   return data;
 }
+
+const capacityOverridesInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    contextWindowTokens: { type: "integer", minimum: 1, maximum: 9007199254740991 },
+    compactionThresholdTokens: { type: "integer", minimum: 1, maximum: 9007199254740991 }
+  }
+};
+
+const completeCapacityOverridesInputSchema = {
+  ...capacityOverridesInputSchema,
+  required: ["contextWindowTokens", "compactionThresholdTokens"]
+};
+
+const sessionCorrelationKeyInputSchema = {
+  type: "string",
+  pattern: "^[a-f0-9]{64}$",
+  description: "The SHA-256 session correlation key emitted as developer context by the enabled Prism session hook."
+};
+
+const explicitSessionInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["harness", "harnessVersion", "provider", "model"],
+  properties: {
+    harness: { type: "string", minLength: 1 },
+    harnessVersion: { type: "string", minLength: 1 },
+    provider: { type: "string", minLength: 1 },
+    model: { type: "string", minLength: 1 },
+    capacityOverrides: capacityOverridesInputSchema
+  }
+};
+
+const activeSessionInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["mode", "correlationKey"],
+  properties: {
+    mode: { const: "active" },
+    correlationKey: sessionCorrelationKeyInputSchema,
+    capacityOverrides: completeCapacityOverridesInputSchema,
+    compactionScope: { const: "total", description: "Explicitly attest that the supplied capacity threshold counts total session tokens." }
+  }
+};
+
+const sessionInputSchema = { oneOf: [explicitSessionInputSchema, activeSessionInputSchema] };
 
 const tools = [
   {
@@ -182,6 +325,109 @@ const tools = [
       type: "object",
       properties: { projectRoot: { type: "string", description: "The absolute path to the active project root." } },
       required: ["projectRoot"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "list_repository_intelligence_providers",
+    description: "List registered repository intelligence providers and their current availability for a project. This tool does not create, synchronize, or update provider indexes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." }
+      },
+      required: ["projectRoot"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "plan_repository_context",
+    description: "Plan bounded repository source context through the native provider and zero or one selected external provider. Returns explainable must, likely, and possible source ranges with token estimates. This tool does not decide session fit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        provider: { type: "string", enum: ["auto", "native", "codegraph", "codenib"], default: "auto", description: "Select native only, one explicit external contributor, or automatic capability-aware selection." },
+        task: { type: "string", minLength: 1, maxLength: REPOSITORY_CONTEXT_INPUT_LIMITS.taskCharacters, description: "The implementation or design outcome to investigate." },
+        hints: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            files: { type: "array", maxItems: REPOSITORY_CONTEXT_INPUT_LIMITS.hintsPerKind, items: { type: "string", minLength: 1, maxLength: REPOSITORY_CONTEXT_INPUT_LIMITS.hintCharacters } },
+            symbols: { type: "array", maxItems: REPOSITORY_CONTEXT_INPUT_LIMITS.hintsPerKind, items: { type: "string", minLength: 1, maxLength: REPOSITORY_CONTEXT_INPUT_LIMITS.hintCharacters } },
+            concepts: { type: "array", maxItems: REPOSITORY_CONTEXT_INPUT_LIMITS.hintsPerKind, items: { type: "string", minLength: 1, maxLength: REPOSITORY_CONTEXT_INPUT_LIMITS.hintCharacters } },
+            expectedModifiedFiles: { type: "array", maxItems: REPOSITORY_CONTEXT_INPUT_LIMITS.hintsPerKind, items: { type: "string", minLength: 1, maxLength: REPOSITORY_CONTEXT_INPUT_LIMITS.hintCharacters } }
+          }
+        },
+        budget: { type: "string", enum: ["fast", "balanced", "thorough"], default: "balanced" },
+        searchHits: { type: "integer", minimum: 1, maximum: 100, default: 12 },
+        graphNodes: { type: "integer", minimum: 1, maximum: 100, default: 24 }
+      },
+      required: ["projectRoot", "task"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "resolve_session_capacity",
+    description: "Resolve exact capacity for an explicit session or for the same active host session identified by the hook-emitted correlation key. Active resolution fails closed when hook facts are unavailable, stale, mismatched, or do not attest an exact total-session threshold.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root. Active mode requires this value when the host does not provide it." },
+        session: sessionInputSchema
+      },
+      required: ["session"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "evaluate_repository_fit",
+    description: "Resolve supported target-session capacity and compare a repository context estimate with its adjustable read budget. Returns FIT, SPLIT, UNCERTAIN, or UNSUPPORTED with capacity provenance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root. Active mode requires this value when the host does not provide it." },
+        session: sessionInputSchema,
+        costs: {
+          type: "object",
+          additionalProperties: false,
+          required: ["baseSessionContextTokens", "featureDesignContextTokens"],
+          properties: {
+            baseSessionContextTokens: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+            featureDesignContextTokens: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+            implementationReserveTokens: { type: "integer", minimum: 0, maximum: 9007199254740991 }
+          }
+        },
+        tokenEstimate: {
+          type: "object",
+          additionalProperties: false,
+          required: ["lower", "expected", "upper"],
+          properties: {
+            lower: { oneOf: [{ type: "integer", minimum: 0, maximum: 9007199254740991 }, { type: "null" }] },
+            expected: { oneOf: [{ type: "integer", minimum: 0, maximum: 9007199254740991 }, { type: "null" }] },
+            upper: { oneOf: [{ type: "integer", minimum: 0, maximum: 9007199254740991 }, { type: "null" }] }
+          }
+        }
+      },
+      required: ["session", "costs", "tokenEstimate"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "summarize_session_consumption",
+    description: "Summarize content-free repository context observations before the first successful edit in the same active host session identified by the hook-emitted correlation key. Missing or incomplete instrumentation stays explicit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        correlationKey: sessionCorrelationKeyInputSchema
+      },
+      required: ["projectRoot", "correlationKey"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
@@ -285,6 +531,7 @@ const tools = [
 ];
 
 const stateTools = new Set(["get_coordination_state", "validate_coordination_state", "update_coordination_state"]);
+const repositoryTools = new Set(["list_repository_intelligence_providers", "plan_repository_context", "resolve_session_capacity", "evaluate_repository_fit", "summarize_session_consumption"]);
 
 async function callStateTool(name, argumentsValue) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
@@ -302,9 +549,78 @@ async function callStateTool(name, argumentsValue) {
   return { content: [{ type: "text", text: stateContent(resultValue) }], structuredContent: resultValue };
 }
 
+async function callRepositoryTool(name, argumentsValue) {
+  if (name === "summarize_session_consumption") {
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const summary = await summarizeSessionConsumption({
+      dataDirectory: process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA,
+      correlationKey: argumentsValue.correlationKey,
+      projectRoot
+    });
+    return { content: [{ type: "text", text: sessionConsumptionContent(summary) }], structuredContent: summary };
+  }
+  if (name === "resolve_session_capacity") {
+    assertExactToolArguments(argumentsValue, ["projectRoot", "session"], ["session"], "resolve_session_capacity arguments");
+    let capacity;
+    if (argumentsValue.session?.mode === "active") {
+      const projectRoot = await requestedProjectRoot(argumentsValue);
+      capacity = await resolveActiveSessionCapacity(activeCapacityRequest(argumentsValue, projectRoot));
+    } else {
+      capacity = resolveSessionCapacity(argumentsValue.session);
+    }
+    return { content: [{ type: "text", text: sessionCapacityContent(capacity) }], structuredContent: capacity };
+  }
+  if (name === "evaluate_repository_fit") {
+    assertExactToolArguments(
+      argumentsValue,
+      ["projectRoot", "session", "costs", "tokenEstimate"],
+      ["session", "costs", "tokenEstimate"],
+      "evaluate_repository_fit arguments"
+    );
+    let fit;
+    if (argumentsValue.session?.mode === "active") {
+      const projectRoot = await requestedProjectRoot(argumentsValue);
+      fit = await evaluateActiveRepositoryFit({
+        costs: argumentsValue.costs,
+        tokenEstimate: argumentsValue.tokenEstimate
+      }, activeCapacityRequest(argumentsValue, projectRoot));
+    } else {
+      fit = evaluateRepositoryFit({
+        session: argumentsValue.session,
+        costs: argumentsValue.costs,
+        tokenEstimate: argumentsValue.tokenEstimate
+      });
+    }
+    return { content: [{ type: "text", text: repositoryFitContent(fit) }], structuredContent: fit };
+  }
+  if (name === "list_repository_intelligence_providers") {
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const providers = await listRepositoryIntelligenceProviders(projectRoot);
+    return { content: [{ type: "text", text: providerListContent(providers) }], structuredContent: { providers } };
+  }
+  if (name === "plan_repository_context") {
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const plan = await withRepositoryIntelligence(projectRoot, (provider) => planRepositoryContext({
+      task: argumentsValue.task,
+      hints: argumentsValue.hints,
+      provider,
+      limits: {
+        budget: argumentsValue.budget,
+        searchHits: argumentsValue.searchHits,
+        graphNodes: argumentsValue.graphNodes
+      }
+    }), { selection: argumentsValue.provider || "auto" });
+    return { content: [{ type: "text", text: contextPlanContent(plan) }], structuredContent: plan };
+  }
+  throw new Error(`Unknown repository-intelligence tool: ${name}`);
+}
+
 async function callTool(name, argumentsValue = {}, metadata) {
   if (stateTools.has(name)) {
     return callStateTool(name, argumentsValue);
+  }
+  if (repositoryTools.has(name)) {
+    return callRepositoryTool(name, argumentsValue);
   }
   const review = await server(argumentsValue, metadata);
   if (name === "get_review_url") {

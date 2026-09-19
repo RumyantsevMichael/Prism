@@ -1,0 +1,59 @@
+@startuml
+title C4 code - Repository intelligence - session consumption tracing
+package "Host session" {
+  class "Tool and session hooks" as Hooks <<host events>>
+  class "record-session-trace" as Record <<command>>
+}
+
+package "Prism MCP server" {
+  class "CodexTranscriptClassifier" as Classify <<module>>
+  class "TraceBehaviorRegistry" as Behavior <<versioned contract>>
+  class "SessionTraceValidator" as Validate <<module>>
+  class "SessionTraceStore" as Store <<module>>
+  class "summarizeSessionConsumption" as Summarize <<function>>
+  class "mcp.callRepositoryTool" as Mcp <<existing function>>
+}
+
+Hooks --> Record : provides supported event metadata
+Record --> Classify : proves root or subagent execution
+Classify --> Record : returns allowlisted session metadata only
+Record --> Behavior : resolves exact lifecycle and response shape
+Record --> Validate : creates content-free canonical events
+Record --> Store : appends bounded idempotent events
+Store --> Store : orders events and derives first edit
+Store --> Store : fences cleanup and atomic commit with token ownership
+Store --> Store : removes expired traces and owned stale temporary files
+Mcp --> Summarize : supplies correlation key and canonical root
+Summarize --> Store : reads isolated session events
+Summarize --> Summarize : uses occurrence order and deduplicates ranges
+
+note right of Validate
+  Condition: an event is malformed, oversized, or contains unknown fields.
+  Response: reject the event without blocking the host action.
+  Governing requirement: session-consumption-tracing.md section 4.
+end note
+
+note right of Classify
+  Condition: execution is a subagent or root classification is uncertain.
+  Response: exclude action details and append a root coverage gap when stable root identity is known.
+  Governing requirement: session-consumption-tracing.md section 5.
+end note
+
+note right of Behavior
+  Condition: a Codex version or provider has no exact reviewed profile.
+  Response: keep mutation success unproved and mark missing observations partial.
+  Governing requirement: session-consumption-tracing.md section 9.
+end note
+
+note right of Store
+  Condition: storage authority or lock ownership cannot be proved.
+  Response: reject the operation without following links or acknowledging an append.
+  Governing requirement: session-consumption-tracing.md section 11.
+end note
+
+note right of Summarize
+  Condition: the host cannot observe every read or mutation path.
+  Response: report partial or unavailable coverage instead of exact zero.
+  Governing requirement: session-consumption-tracing.md section 3.
+end note
+@enduml

@@ -20,6 +20,7 @@ An atomic slice delivers one observable outcome within the remaining context and
 2. Use the [workflow terms](../workflow/SKILL.md#common-terms).
 3. Read the initiative map, glossary, assigned Approved requirements, relevant ADRs, feature files, and current slice record.
 4. Read the ancestor diagram source and ADRs supplied by orchestration before refining the current slice's design.
+5. Read [repository context planning](references/context-planning.md).
 
 ## 2. Explore
 
@@ -29,6 +30,7 @@ An atomic slice delivers one observable outcome within the remaining context and
 4. Use [delegation.md](../workflow/references/delegation.md) to research suitable 3rd party solutions.
 5. Inspect affected code, tests, boundaries, and dependency evidence until you can support a design and fit decision.
 6. When a technical uncertainty affects that decision, investigate it with a bounded experiment.
+7. When repository-context planning is available, generate a context plan from the outcome and discovered hints before the fit decision.
 
 Incomplete dependency implementation does not block design when available evidence supports a sound fit decision.
 
@@ -52,7 +54,9 @@ Implementation owns private helpers and local data structures.
 1. Check every assigned requirement against planned behavior and observable verification.
 2. Check the design against code evidence, inherited decisions, and unresolved findings.
 3. When requirements, decisions, evidence, or durable-source conflicts prevent sound design, return `BLOCKED` with the exact unresolved issue.
-4. Confirm atomic fit only with settled consequential decisions and one end-to-end verification path covering a safe, complete outcome.
+4. Apply the context-plan budget policy when session-capacity resolution is supported and every target-session cost is known.
+5. Treat a context-plan `UNCERTAIN` result as a request for more evidence or a safer split.
+6. Confirm atomic fit only with settled consequential decisions and one end-to-end verification path covering a safe, complete outcome.
 
 ## 5. Prepare the next stage
 

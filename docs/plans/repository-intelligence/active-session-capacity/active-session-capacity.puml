@@ -1,0 +1,40 @@
+@startuml
+title C4 code - Repository intelligence - active session capacity
+package "Host session" {
+  class "SessionStart hook" as Hook <<host event>>
+  class "record-session-facts" as Record <<command>>
+  class "Codex session transcript" as Transcript <<bounded source>>
+  class "Agent request" as Agent <<caller>>
+}
+
+package "Prism MCP server" {
+  class "HostSessionFactStore" as Store <<module>>
+  class "CodexHostAdapter" as Adapter <<module>>
+  class "CodexTranscriptMetadata" as TranscriptMetadata <<classifier>>
+  class "resolveActiveSessionCapacity" as Active <<function>>
+  class "resolveSessionCapacity" as Resolve <<existing function>>
+  class "CapacityRegistry" as Registry <<existing data contract>>
+  class "mcp.callRepositoryTool" as Mcp <<existing function>>
+}
+
+Hook --> Record : provides session and active model facts
+Record --> Adapter : allowlists and normalizes Codex facts
+Adapter --> TranscriptMetadata : requests correlated identity
+TranscriptMetadata --> Transcript : reads only first session_meta record
+Record --> Store : writes one digest-keyed atomic record
+Store --> Store : evicts expired and oldest records under quota
+Store --> Store : rejects links and uses token-owned retention locks
+Record --> Agent : emits SHA-256 correlation key as context
+Agent --> Mcp : supplies key and canonical project root
+Agent --> Mcp : supplies both active overrides or neither
+Mcp --> Active : requests same-session capacity
+Active --> Store : reads bounded fresh facts
+Active --> Resolve : applies explicit, host, and registry precedence
+Resolve --> Registry : selects an exact supported profile
+
+note right of Active
+  Condition: facts are missing, stale, ambiguous, or cross-session.
+  Response: return UNSUPPORTED with a stable reason code.
+  Governing requirement: active-session-capacity.md section 3.
+end note
+@enduml

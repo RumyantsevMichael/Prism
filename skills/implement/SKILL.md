@@ -43,9 +43,11 @@ Weakening or replacing design acceptance requires renewed design and its gates.
 
 1. Search the repository, active artifacts, approved dependencies, and available semantic exploration tools for existing solutions, then record relevant matches and the reason to reuse or reject them before adding a component or dependency.
 2. When a semantic exploration tool is available, use it before text search for relevant symbols and call paths.
-3. Implement the complete observable outcome across every required layer.
-4. Replace all shape-only scaffolds with complete behavior before verification.
-5. Keep private helpers and local data structures in code and tests.
+3. When repository-context planning is available, refresh the context plan at the current commit and read its `mustRead` items before the first production edit.
+4. Read `likelyRead` items as the implementation reaches their behavior and keep `possibleRead` as a bounded investigation frontier.
+5. Implement the complete observable outcome across every required layer.
+6. Replace all shape-only scaffolds with complete behavior before verification.
+7. Keep private helpers and local data structures in code and tests.
 
 - If a requirement is missing or must change, return `BLOCKED` with the exact user question.
 - If a new consequential architectural decision is needed, return `BLOCKED` with that decision for orchestration.

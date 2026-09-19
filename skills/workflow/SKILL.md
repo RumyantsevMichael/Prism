@@ -78,6 +78,9 @@ Code establishes implemented behavior.
 | Implementation gap | Missing production behavior or implementation-owned wiring after design fit that does not reopen design unless it invalidates the design evidence. |
 | Gate | A user decision or correctness confirmation that controls progress. |
 | Fit checkpoint | The design decision that an outcome fits the remaining context and risk budget with settled architecture and end-to-end verification. |
+| Context plan | An explainable commit-bound estimate of repository source ranges that implementation must, likely, or possibly reads. |
+| Session capacity profile | A versioned exact host, provider, model, and version match that supplies capacity facts with provenance. |
+| Repository read budget | The context available for repository discovery after base, design, and implementation reserves are removed from the compaction threshold. |
 | FIT | A design result ready for independent audit, with design artifacts and verification evidence prepared. |
 | SPLIT | A design result reporting new child slice folders for orchestration to accept and continue. |
 | BLOCKED | An unresolved requirement, decision, or dependency stops progress. |

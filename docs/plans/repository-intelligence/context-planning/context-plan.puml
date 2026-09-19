@@ -1,0 +1,31 @@
+@startuml
+title C4 code - Repository intelligence - context planning
+package "Prism MCP server" {
+  class "mcp.callTool" as Mcp <<existing function>>
+  class "planRepositoryContext" as Planner <<function>>
+  interface "RepositoryIntelligence" as Provider <<provider contract>> {
+    + describe()
+    + search(task, hints, options)
+    + neighbors(nodes, options)
+    + read(sourceRange)
+  }
+  class "CodeNibRepositoryIntelligence" as CodeNib <<class>>
+  class "ContextPlan" as Plan <<return value>>
+  class "TokenCounter" as Counter <<strategy>>
+}
+class "CodeNib MCP process" as Sidecar <<external process>>
+
+Mcp --> Planner : requests a project context plan
+Planner --> Provider : gets ranked anchors and bounded neighbors
+Planner --> Provider : reads merged source ranges
+Planner --> Counter : counts rendered read responses
+Planner ..> Plan : returns classified context and diagnostics
+CodeNib ..|> Provider : normalizes provider data
+CodeNib --> Sidecar : uses hybrid search, graph, and source tools
+
+note right of CodeNib
+  Condition: CodeNib is absent or its index is stale.
+  Response: return a provider diagnostic and no false FIT result.
+  Governing ADR: provider-independent-context-planning.md
+end note
+@enduml

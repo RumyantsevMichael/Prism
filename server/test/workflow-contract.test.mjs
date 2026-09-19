@@ -177,6 +177,28 @@ test("requires prior-art search and a compact worker lifetime reference", async 
   assert.match(review, /Don't\n        - Change existing tests, fixtures, helpers, dependencies, or harness configuration/);
 });
 
+test("uses repository context consumption for fit and implementation discovery", async () => {
+  const design = await skill("design");
+  const implement = await skill("implement");
+  const workflow = await skill("workflow");
+  const planning = await reference("design", "context-planning.md");
+
+  assert.match(design, /Read \[repository context planning\]\(references\/context-planning\.md\)/);
+  assert.match(design, /generate a context plan from the outcome and discovered hints before the fit decision/);
+  assert.match(design, /Apply the context-plan budget policy when session-capacity resolution is supported and every target-session cost is known/);
+  assert.match(implement, /refresh the context plan at the current commit and read its `mustRead` items before the first production edit/);
+  assert.match(workflow, /\| Context plan \|/);
+  assert.match(workflow, /\| Repository read budget \|/);
+  assert.match(planning, /compactionThreshold/);
+  assert.match(planning, /if upper <= repositoryReadBudget/);
+  assert.match(planning, /else if lower > repositoryReadBudget/);
+  assert.match(planning, /`UNCERTAIN` requires more evidence or a safer split/);
+  assert.match(planning, /Use `evaluate_repository_fit`/);
+  assert.match(planning, /For a fresh worker, it includes the worker's startup context/);
+  assert.match(planning, /For a resumed worker, it includes the context retained at the fit checkpoint/);
+  assert.match(planning, /Do not use file count, changed-file count, raw bytes, or unmerged source ranges as a substitute/);
+});
+
 test("keeps workflow persistence minimal and stages runbook drafts in slices", async () => {
   const artifacts = await reference("workflow", "artifact-rules.md");
   const design = await skill("design");

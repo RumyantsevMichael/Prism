@@ -1,0 +1,37 @@
+@startuml
+title C4 code - Repository intelligence - provider selection
+package "Prism MCP server" {
+  class "mcp.callRepositoryTool" as Mcp <<existing function>>
+  class "ProviderCatalog" as Catalog <<module>>
+  class "withRepositoryIntelligence" as Select <<function>>
+  class "CompositeRepositoryIntelligence" as Composite <<class>>
+  class "NativeRepositoryIntelligence" as Native <<class>>
+  class "CodeGraphRepositoryIntelligence" as CodeGraph <<class>>
+  class "CodeNibRepositoryIntelligence" as CodeNib <<existing class>>
+  class "planRepositoryContext" as Plan <<existing function>>
+}
+
+Mcp --> Catalog : lists registered provider availability
+Mcp --> Select : requests auto, native, or explicit selection
+Select --> Native : always opens the live source authority
+Select --> CodeGraph : may add structural evidence
+Select --> CodeNib : may add hybrid evidence
+Select --> Composite : creates one bounded provider view
+Composite --> Native : reads final source ranges
+Composite ..> CodeGraph : fuses optional ranked and graph evidence
+Composite ..> CodeNib : fuses optional ranked and graph evidence
+Mcp --> Plan : creates the public context plan
+Plan --> Composite : uses the provider-independent contract
+
+note right of Catalog
+  Condition: an external executable or index is unavailable.
+  Response: return a sanitized availability record without mutation.
+  Governing requirement: repository-intelligence-providers.md section 2.
+end note
+
+note right of Select
+  Condition: an automatically selected external provider fails.
+  Response: retry once with native and record the fallback.
+  Governing requirement: repository-intelligence-providers.md section 3.
+end note
+@enduml
