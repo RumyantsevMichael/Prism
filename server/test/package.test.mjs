@@ -43,6 +43,8 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
 
   assert.ok(commands("SessionStart").includes(factCommand));
   assert.ok(commands("UserPromptSubmit").includes(factCommand));
+  assert.ok(commands("PreToolUse").includes(factCommand));
+  assert.ok(commands("PreToolUse").indexOf(factCommand) < commands("PreToolUse").indexOf(traceCommand));
   for (const event of ["SessionStart", "UserPromptSubmit"]) {
     const factHook = hookManifest.hooks[event]
       .flatMap((group) => group.hooks)

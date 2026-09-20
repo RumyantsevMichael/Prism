@@ -37,14 +37,14 @@ Requirement: When an enabled host hook reports a session event, Prism shall stor
 
 Rationale: The host event is the authoritative source for the active session, while a narrow allowlist protects unrelated configuration and secrets.
 
-Related: [active-session-capacity.md§2](#2), [active-session-capacity.md§3](#3), [active-session-capacity.md§4](#4)
+Related: [active-session-capacity.md§5](#5), [active-session-capacity.md§3](#3), [active-session-capacity.md§4](#4)
 
 <a id="2"></a>
 ## 2. Resolve same-session capacity
 
 Pattern: Event-driven
 
-Disposition: Active
+Disposition: Superseded by [active-session-capacity.md§5](#5)
 
 Requirement: When a caller requests active-session capacity with the hook-emitted correlation key and plugin data directory, Prism shall apply complete explicit capacity overrides before complete directly attested same-session capacity and shall never use user configuration or a registry default as proof of the active threshold.
 
@@ -63,7 +63,7 @@ Requirement: If active-session facts are missing, stale, ambiguous, cross-projec
 
 Rationale: A shell binary or nearby session can differ from the model and settings of the active request.
 
-Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§2](#2), [session-fit.md§2](session-fit.md#2)
+Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§5](#5), [session-fit.md§2](session-fit.md#2)
 
 <a id="4"></a>
 ## 4. Bound local fact retention
@@ -77,3 +77,18 @@ Requirement: While Prism stores active-session facts, Prism shall remove records
 Rationale: A per-record size limit does not bound storage across an unbounded number of host sessions.
 
 Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§3](#3)
+
+<a id="5"></a>
+## 5. Refresh and resolve active Codex capacity
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Supersedes: [active-session-capacity.md§2](#2)
+
+Requirement: When Prism handles a `PreToolUse` event for a root Codex session, Prism shall refresh allowlisted capacity facts from the correlated transcript's latest bounded `token_count` event and effective Codex configuration for the event working directory, shall use an explicit `model_auto_compact_token_limit` and scope when the effective configuration provides them, shall use the exact version, provider, and model registry default threshold policy when no threshold override is present, shall preserve complete explicit caller overrides as highest precedence, and shall return `UNSUPPORTED` for unavailable or conflicting runtime facts or `body_after_prefix` scope.
+
+Rationale: PreToolUse refresh makes the first model call observable while the effective app-server configuration and exact registry profile prevent unsafe threshold guesses.
+
+Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§3](#3), [session-fit.md§1](session-fit.md#1)

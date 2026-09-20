@@ -47,6 +47,32 @@ test("reads only allowlisted root execution metadata", async (context) => {
   });
 });
 
+test("reads the latest bounded token count context window", async (context) => {
+  const root = await fixture(context);
+  const transcript = path.join(root, "rollout-with-token-counts.jsonl");
+  await writeFile(transcript, [
+    sessionMeta({ sessionId: "thread-1", projectRoot: root }),
+    JSON.stringify({
+      type: "event_msg",
+      payload: { type: "token_count", info: { model_context_window: 258400 } }
+    }),
+    JSON.stringify({
+      type: "event_msg",
+      payload: { type: "token_count", info: { model_context_window: 260000 } }
+    })
+  ].join("\n") + "\n");
+
+  const result = await inspectCodexTranscriptMetadata({
+    transcriptPath: transcript,
+    sessionId: "thread-1",
+    projectRoot: root
+  });
+
+  assert.equal(result.status, "SUPPORTED");
+  assert.equal(result.contextWindowTokens, 260000);
+  assert.equal(result.contextWindowSource, "transcript.event_msg.token_count.info.model_context_window");
+});
+
 test("identifies subagent execution with the parent session identifier", async (context) => {
   const root = await fixture(context);
   const transcript = path.join(root, "subagent.jsonl");
@@ -172,6 +198,47 @@ test("fails closed when the transcript path is swapped after inspection", async 
   assert.equal(result.status, "UNSUPPORTED");
   assert.equal(result.reasonCode, CODEX_TRANSCRIPT_REASON.INVALID_TRANSCRIPT);
   assert.equal(await fileSystem.readFile(forged, "utf8"), forgedText);
+});
+
+test("fails closed when the transcript inode changes between metadata and tail reads", async (context) => {
+  const root = await fixture(context);
+  const transcript = path.join(root, "changed-between-reads.jsonl");
+  const original = path.join(root, "original-between-reads.jsonl");
+  const forged = path.join(root, "forged-between-reads.jsonl");
+  const metadata = sessionMeta({ sessionId: "thread-1", projectRoot: root });
+  await writeFile(transcript, `${metadata}\n${JSON.stringify({
+    type: "event_msg",
+    payload: { type: "token_count", info: { model_context_window: 258400 } }
+  })}\n`);
+  await writeFile(forged, `${metadata}\n${JSON.stringify({
+    type: "event_msg",
+    payload: { type: "token_count", info: { model_context_window: 999999 } }
+  })}\n`);
+  let openCount = 0;
+  const swappingFileSystem = {
+    ...fileSystem,
+    async open(target, ...argumentsValue) {
+      if (target === transcript) {
+        openCount += 1;
+        if (openCount === 2) {
+          await fileSystem.rename(transcript, original);
+          await fileSystem.rename(forged, transcript);
+        }
+      }
+      return fileSystem.open(target, ...argumentsValue);
+    }
+  };
+
+  const result = await inspectCodexTranscriptMetadata({
+    transcriptPath: transcript,
+    sessionId: "thread-1",
+    projectRoot: root,
+    fileSystem: swappingFileSystem
+  });
+
+  assert.equal(openCount, 2);
+  assert.equal(result.status, "UNSUPPORTED");
+  assert.equal(result.reasonCode, CODEX_TRANSCRIPT_REASON.TOKEN_COUNT_UNAVAILABLE);
 });
 
 test("fails closed for a hard-linked transcript", async (context) => {

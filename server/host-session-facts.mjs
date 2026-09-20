@@ -103,9 +103,24 @@ const SOURCE_VALUES = Object.freeze({
   harnessVersion: new Set(["transcript.session_meta.cli_version", null]),
   provider: new Set(["transcript.session_meta.model_provider", null]),
   model: new Set(["hook.model", null]),
-  contextWindowTokens: new Set(["hook.model_context_window", null]),
-  compactionThresholdTokens: new Set(["hook.model_auto_compact_token_limit", null]),
-  compactionScope: new Set(["hook.model_auto_compact_token_limit_scope", null])
+  contextWindowTokens: new Set([
+    "hook.model_context_window",
+    "transcript.event_msg.token_count.info.model_context_window",
+    null
+  ]),
+  compactionThresholdTokens: new Set([
+    "hook.model_auto_compact_token_limit",
+    "config.model_auto_compact_token_limit",
+    "config.absent.model_auto_compact_token_limit",
+    "registry.derived.model_auto_compact_token_limit",
+    null
+  ]),
+  compactionScope: new Set([
+    "hook.model_auto_compact_token_limit_scope",
+    "config.model_auto_compact_token_limit_scope",
+    "config.default.model_auto_compact_token_limit_scope",
+    null
+  ])
 });
 const REASON_CODES = new Set(Object.values(HOST_FACT_REASON));
 
@@ -766,7 +781,12 @@ export function validateHostSessionFacts(record) {
     }
   }
   for (const key of CAPACITY_KEYS) {
-    if (Object.hasOwn(record.capacityOverrides, key) !== (record.sources[key] !== null)) {
+    const absentThresholdProof = key === "compactionThresholdTokens"
+      && record.sources[key] === "config.absent.model_auto_compact_token_limit";
+    if (absentThresholdProof && Object.hasOwn(record.capacityOverrides, key)) {
+      throw new Error("An absent threshold proof cannot accompany a threshold value.");
+    }
+    if (Object.hasOwn(record.capacityOverrides, key) !== (record.sources[key] !== null) && !absentThresholdProof) {
       throw new Error(`hostSessionFacts.${key} value and source must be present together.`);
     }
   }
@@ -783,10 +803,14 @@ export function validateHostSessionFacts(record) {
     if (record.compactionScope !== "total") {
       throw new Error("Supported host-session facts require total compaction accounting.");
     }
-    for (const key of CAPACITY_KEYS) {
-      if (!Object.hasOwn(record.capacityOverrides, key)) {
-        throw new Error(`Supported host-session facts require capacityOverrides.${key}.`);
-      }
+    if (!Object.hasOwn(record.capacityOverrides, "contextWindowTokens")) {
+      throw new Error("Supported host-session facts require capacityOverrides.contextWindowTokens.");
+    }
+    const hasThreshold = Object.hasOwn(record.capacityOverrides, "compactionThresholdTokens");
+    const provesDefaultThreshold = record.sources.compactionThresholdTokens
+      === "config.absent.model_auto_compact_token_limit";
+    if (!hasThreshold && !provesDefaultThreshold) {
+      throw new Error("Supported host-session facts require a threshold or proof that its override is absent.");
     }
   }
   return true;

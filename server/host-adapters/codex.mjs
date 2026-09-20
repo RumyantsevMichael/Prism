@@ -5,6 +5,11 @@ import {
   unsupportedHostSessionFacts
 } from "../host-session-facts.mjs";
 import { inspectCodexTranscriptMetadata } from "./codex-transcript.mjs";
+import {
+  CODEX_CONFIG_REASON,
+  inspectCodexEffectiveConfig
+} from "./codex-config.mjs";
+import { resolveRegisteredCapacityPolicy } from "../session-capacity.mjs";
 
 const HOST_VALUE_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._:/@\[\]-]{0,255}$/;
 
@@ -43,11 +48,12 @@ function unsupportedWithoutRecord(reasonCode) {
 }
 
 /**
- * The transcript inspector supplies only correlated session metadata; exact capacity must be attested directly by the hook.
+ * The adapter combines correlated transcript evidence with bounded effective configuration evidence.
  */
 export function createCodexHostAdapter({
   now = () => new Date(),
-  inspectTranscriptMetadata = inspectCodexTranscriptMetadata
+  inspectTranscriptMetadata = inspectCodexTranscriptMetadata,
+  readEffectiveConfig = inspectCodexEffectiveConfig
 } = {}) {
   if (typeof now !== "function") {
     throw new TypeError("The Codex adapter clock must be a function.");
@@ -55,9 +61,12 @@ export function createCodexHostAdapter({
   if (typeof inspectTranscriptMetadata !== "function") {
     throw new TypeError("The Codex transcript metadata inspector must be a function.");
   }
+  if (typeof readEffectiveConfig !== "function") {
+    throw new TypeError("The Codex effective config reader must be a function.");
+  }
 
   return {
-    async capture({ hookInput = {} } = {}) {
+    async capture({ hookInput = {}, environment = process.env } = {}) {
       const input = isObject(hookInput) ? hookInput : {};
       const sessionId = nonemptyString(input.session_id);
       if (!sessionId) {
@@ -188,7 +197,17 @@ export function createCodexHostAdapter({
           sources
         }));
       }
-      if (!validContext || !validThreshold || compactionScope !== "total") {
+      const directCapacityComplete = validContext && validThreshold && compactionScope === "total";
+      if (directCapacityComplete && input.hook_event_name !== "PreToolUse") {
+        return resultFromRecord(makeRecord({
+          status: "SUPPORTED",
+          capacityOverrides,
+          compactionScope,
+          sources
+        }));
+      }
+
+      if (input.hook_event_name !== "PreToolUse") {
         return resultFromRecord(makeRecord({
           status: "UNSUPPORTED",
           reasonCode: HOST_FACT_REASON.HOST_CAPACITY_UNAVAILABLE,
@@ -198,11 +217,204 @@ export function createCodexHostAdapter({
         }));
       }
 
+      const transcriptContext = correlatedMetadata.contextWindowTokens;
+      if (!validTokenCount(transcriptContext) || (validContext && contextWindowTokens !== transcriptContext)) {
+        return resultFromRecord(makeRecord({
+          status: "UNSUPPORTED",
+          reasonCode: HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS,
+          capacityOverrides,
+          compactionScope,
+          sources
+        }));
+      }
+
+      const observedRuntimeOverrides = {
+        contextWindowTokens: transcriptContext,
+        ...(validThreshold ? { compactionThresholdTokens } : {})
+      };
+      let effectiveConfig;
+      try {
+        effectiveConfig = await readEffectiveConfig({ cwd: correlatedProjectRoot, environment });
+      } catch {
+        effectiveConfig = { status: "UNSUPPORTED" };
+      }
+      if (effectiveConfig?.status !== "SUPPORTED") {
+        const invalid = [
+          CODEX_CONFIG_REASON.CONFLICTING_VALUES,
+          CODEX_CONFIG_REASON.INVALID_RESPONSE,
+          CODEX_CONFIG_REASON.UNSUPPORTED_SCOPE
+        ].includes(effectiveConfig?.reasonCode);
+        return resultFromRecord(makeRecord({
+          status: "UNSUPPORTED",
+          reasonCode: invalid
+            ? HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS
+            : HOST_FACT_REASON.EFFECTIVE_SETTINGS_UNAVAILABLE,
+          capacityOverrides: observedRuntimeOverrides,
+          compactionScope,
+          sources: {
+            ...sources,
+            contextWindowTokens: correlatedMetadata.contextWindowSource
+          }
+        }));
+      }
+
+      const config = effectiveConfig.config;
+      if (config.model !== null && config.model !== model) {
+        return resultFromRecord(makeRecord({
+          status: "UNSUPPORTED",
+          reasonCode: HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS,
+          capacityOverrides: observedRuntimeOverrides,
+          compactionScope,
+          sources: {
+            ...sources,
+            contextWindowTokens: correlatedMetadata.contextWindowSource
+          }
+        }));
+      }
+      const configThreshold = config.model_auto_compact_token_limit;
+      const configContext = config.model_context_window;
+      const configScope = config.model_auto_compact_token_limit_scope;
+      if (
+        (validThreshold && configThreshold !== null && compactionThresholdTokens !== configThreshold)
+        || (compactionScope !== null && configScope !== null && compactionScope !== configScope)
+      ) {
+        return resultFromRecord(makeRecord({
+          status: "UNSUPPORTED",
+          reasonCode: HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS,
+          capacityOverrides: { contextWindowTokens: transcriptContext, ...capacityOverrides },
+          compactionScope,
+          sources: {
+            ...sources,
+            contextWindowTokens: correlatedMetadata.contextWindowSource
+          }
+        }));
+      }
+
+      let resolvedThreshold = validThreshold ? compactionThresholdTokens : configThreshold;
+      let thresholdSource = validThreshold
+        ? sources.compactionThresholdTokens
+        : (configThreshold === null ? null : "config.model_auto_compact_token_limit");
+      if (resolvedThreshold === null && configContext !== null) {
+        const policy = resolveRegisteredCapacityPolicy({
+          harness: "codex-cli",
+          harnessVersion,
+          provider,
+          model
+        });
+        if (!policy) {
+          return resultFromRecord(makeRecord({
+            status: "UNSUPPORTED",
+            reasonCode: HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS,
+            capacityOverrides: { contextWindowTokens: transcriptContext },
+            compactionScope,
+            sources: {
+              ...sources,
+              contextWindowTokens: correlatedMetadata.contextWindowSource
+            }
+          }));
+        }
+        const expectedEffectiveContext = Number(
+          BigInt(configContext) * BigInt(policy.effectiveContextWindowPercent) / 100n
+        );
+        if (expectedEffectiveContext !== transcriptContext) {
+          return resultFromRecord(makeRecord({
+            status: "UNSUPPORTED",
+            reasonCode: HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS,
+            capacityOverrides: { contextWindowTokens: transcriptContext },
+            compactionScope,
+            sources: {
+              ...sources,
+              contextWindowTokens: correlatedMetadata.contextWindowSource
+            }
+          }));
+        }
+        resolvedThreshold = Number(
+          BigInt(configContext) * BigInt(policy.autoCompactionPercent) / 100n
+        );
+        thresholdSource = "registry.derived.model_auto_compact_token_limit";
+      }
+      if (compactionScope === null && configScope === null && !resolveRegisteredCapacityPolicy({
+        harness: "codex-cli",
+        harnessVersion,
+        provider,
+        model
+      })) {
+        return resultFromRecord(makeRecord({
+          status: "UNSUPPORTED",
+          reasonCode: HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS,
+          capacityOverrides: observedRuntimeOverrides,
+          compactionScope,
+          sources: {
+            ...sources,
+            contextWindowTokens: correlatedMetadata.contextWindowSource
+          }
+        }));
+      }
+      const resolvedScope = compactionScope ?? configScope ?? "total";
+      if (resolvedScope === "body_after_prefix") {
+        return resultFromRecord(makeRecord({
+          status: "UNSUPPORTED",
+          reasonCode: HOST_FACT_REASON.UNSUPPORTED_COMPACTION_SCOPE,
+          capacityOverrides: {
+            contextWindowTokens: transcriptContext,
+            ...(resolvedThreshold === null ? {} : { compactionThresholdTokens: resolvedThreshold })
+          },
+          compactionScope: resolvedScope,
+          sources: {
+            ...sources,
+            contextWindowTokens: correlatedMetadata.contextWindowSource,
+            compactionThresholdTokens: resolvedThreshold === null
+              ? "config.absent.model_auto_compact_token_limit"
+              : thresholdSource,
+            compactionScope: compactionScope !== null
+              ? sources.compactionScope
+              : (configScope === null
+                  ? "config.default.model_auto_compact_token_limit_scope"
+                  : "config.model_auto_compact_token_limit_scope")
+          }
+        }));
+      }
+      const resolvedOverrides = {
+        contextWindowTokens: transcriptContext,
+        ...(resolvedThreshold === null ? {} : { compactionThresholdTokens: resolvedThreshold })
+      };
+      if (
+        Object.hasOwn(resolvedOverrides, "compactionThresholdTokens")
+        && resolvedOverrides.compactionThresholdTokens > transcriptContext
+      ) {
+        return resultFromRecord(makeRecord({
+          status: "UNSUPPORTED",
+          reasonCode: HOST_FACT_REASON.INVALID_EFFECTIVE_SETTINGS,
+          capacityOverrides: resolvedOverrides,
+          compactionScope: resolvedScope,
+          sources: {
+            ...sources,
+            contextWindowTokens: correlatedMetadata.contextWindowSource,
+            compactionThresholdTokens: thresholdSource,
+            compactionScope: compactionScope !== null
+              ? sources.compactionScope
+              : (configScope === null
+                  ? "config.default.model_auto_compact_token_limit_scope"
+                  : "config.model_auto_compact_token_limit_scope")
+          }
+        }));
+      }
       return resultFromRecord(makeRecord({
         status: "SUPPORTED",
-        capacityOverrides,
-        compactionScope,
-        sources
+        capacityOverrides: resolvedOverrides,
+        compactionScope: resolvedScope,
+        sources: {
+          ...sources,
+          contextWindowTokens: correlatedMetadata.contextWindowSource,
+          compactionThresholdTokens: resolvedThreshold === null
+            ? "config.absent.model_auto_compact_token_limit"
+            : thresholdSource,
+          compactionScope: compactionScope !== null
+            ? sources.compactionScope
+            : (configScope === null
+                ? "config.default.model_auto_compact_token_limit_scope"
+                : "config.model_auto_compact_token_limit_scope")
+        }
       }));
     }
   };

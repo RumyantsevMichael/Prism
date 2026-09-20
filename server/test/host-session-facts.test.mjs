@@ -164,6 +164,95 @@ test("captures only correlated transcript identity and direct hook capacity", as
   }
 });
 
+test("resolves Desktop capacity from transcript context and effective config defaults", async () => {
+  const adapter = createCodexHostAdapter({
+    now: () => new Date(observedAt),
+    inspectTranscriptMetadata: transcriptMetadata({
+      contextWindowTokens: 258400,
+      contextWindowSource: "transcript.event_msg.token_count.info.model_context_window"
+    }),
+    readEffectiveConfig: async ({ cwd }) => {
+      assert.equal(cwd, projectRoot);
+      return {
+        status: "SUPPORTED",
+        config: {
+          model: "gpt-5.6-sol",
+          model_context_window: null,
+          model_auto_compact_token_limit: null,
+          model_auto_compact_token_limit_scope: null
+        },
+        provenance: {
+          source: "codex-app-server-config-read",
+          sourceVersion: "codex-cli 0.155.1",
+          verifiedAt: observedAt,
+          fields: {
+            model: "config.model",
+            model_context_window: "config.model_context_window",
+            model_auto_compact_token_limit: null,
+            model_auto_compact_token_limit_scope: null
+          }
+        }
+      };
+    }
+  });
+
+  const capture = await adapter.capture({
+    hookInput: {
+      session_id: sessionId,
+      transcript_path: "/private/transcript.jsonl",
+      cwd: projectRoot,
+      model: "gpt-5.6-sol",
+      hook_event_name: "PreToolUse"
+    }
+  });
+
+  assert.equal(capture.status, "SUPPORTED");
+  assert.deepEqual(capture.record.capacityOverrides, { contextWindowTokens: 258400 });
+  assert.equal(capture.record.compactionScope, "total");
+  assert.equal(capture.record.sources.contextWindowTokens, "transcript.event_msg.token_count.info.model_context_window");
+  assert.equal(capture.record.sources.compactionThresholdTokens, "config.absent.model_auto_compact_token_limit");
+  assert.equal(capture.record.sources.compactionScope, "config.default.model_auto_compact_token_limit_scope");
+});
+
+test("derives the reviewed default threshold from an explicit context override", async () => {
+  const adapter = createCodexHostAdapter({
+    now: () => new Date(observedAt),
+    inspectTranscriptMetadata: transcriptMetadata({
+      contextWindowTokens: 285000,
+      contextWindowSource: "transcript.event_msg.token_count.info.model_context_window"
+    }),
+    readEffectiveConfig: async () => ({
+      status: "SUPPORTED",
+      config: {
+        model: "gpt-5.6-sol",
+        model_context_window: 300000,
+        model_auto_compact_token_limit: null,
+        model_auto_compact_token_limit_scope: null
+      }
+    })
+  });
+
+  const capture = await adapter.capture({
+    hookInput: {
+      session_id: sessionId,
+      transcript_path: "/private/transcript.jsonl",
+      cwd: projectRoot,
+      model: "gpt-5.6-sol",
+      hook_event_name: "PreToolUse"
+    }
+  });
+
+  assert.equal(capture.status, "SUPPORTED");
+  assert.deepEqual(capture.record.capacityOverrides, {
+    contextWindowTokens: 285000,
+    compactionThresholdTokens: 270000
+  });
+  assert.equal(
+    capture.record.sources.compactionThresholdTokens,
+    "registry.derived.model_auto_compact_token_limit"
+  );
+});
+
 test("fails closed while retaining correlated identity when direct capacity is incomplete", async () => {
   const capture = await captureSupported(supportedAdapter(), {
     model_auto_compact_token_limit: undefined,

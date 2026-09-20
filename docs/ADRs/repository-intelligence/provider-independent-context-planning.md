@@ -11,7 +11,7 @@ Created: 2026-09-17
 [Accept an adjustable implementation reserve](../../requirements/session-fit.md#4) requires a caller override for implementation headroom.
 [Provide a native baseline](../../requirements/repository-intelligence-providers.md#1) requires repository discovery without an external executable.
 [Select and compose providers](../../requirements/repository-intelligence-providers.md#3) requires native source with optional external evidence.
-[Resolve same-session capacity](../../requirements/active-session-capacity.md#2) requires deterministic active-host capacity precedence.
+[Refresh and resolve active Codex capacity](../../requirements/active-session-capacity.md#5) requires deterministic active-host capacity precedence.
 [Summarize pre-edit repository consumption](../../requirements/session-consumption-tracing.md#3) requires coverage-aware measurements for later calibration.
 The initiating user request also requires explainable repository-context estimates based on symbol-level hybrid retrieval and bounded structural expansion.
 

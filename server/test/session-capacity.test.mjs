@@ -85,6 +85,19 @@ test("resolves the active Codex host version only for its verified model", () =>
   }).status, "UNSUPPORTED");
 });
 
+test("resolves the reviewed Desktop Codex alpha profile", () => {
+  const result = resolveSessionCapacity({
+    harness: "codex-cli",
+    harnessVersion: "0.155.0-alpha.2.6",
+    provider: "openai",
+    model: "gpt-5.6-sol"
+  });
+
+  assert.equal(result.status, "SUPPORTED");
+  assert.equal(result.profileId, "codex-cli-0.155.0-alpha.2.6-openai-gpt-5.6-sol");
+  assert.equal(result.capacity.compactionThresholdTokens, 244800);
+});
+
 test("uses explicit capacity overrides before registered values", () => {
   const result = resolveSessionCapacity({
     ...supportedSession,
@@ -496,6 +509,72 @@ test("does not fall back to a registry threshold that the active host did not at
         source: "active-host-session",
         observedAt: "2026-09-19T12:00:00.000Z",
         fields: { compactionScope: "hook.model_auto_compact_token_limit_scope" }
+      }
+    })
+  });
+
+  assert.equal(resolution.status, "UNSUPPORTED");
+  assert.equal(resolution.reasonCode, ACTIVE_CAPACITY_REASON.UNATTESTED_ACTIVE_CAPACITY);
+});
+
+test("uses the exact registry threshold when effective config proves no override", async () => {
+  const resolution = await resolveActiveSessionCapacity({
+    dataDirectory: "/plugin-data",
+    correlationKey,
+    projectRoot: "/project"
+  }, {
+    readFacts: async () => ({
+      status: "SUPPORTED",
+      session: {
+        harness: "codex-cli",
+        harnessVersion: "0.155.0-alpha.2.6",
+        provider: "openai",
+        model: "gpt-5.6-sol",
+        capacityOverrides: { contextWindowTokens: 258400 }
+      },
+      compactionScope: "total",
+      provenance: {
+        source: "active-host-session",
+        observedAt: "2026-09-19T12:00:00.000Z",
+        fields: {
+          contextWindowTokens: "transcript.event_msg.token_count.info.model_context_window",
+          compactionThresholdTokens: "config.absent.model_auto_compact_token_limit",
+          compactionScope: "config.default.model_auto_compact_token_limit_scope"
+        }
+      }
+    })
+  });
+
+  assert.equal(resolution.status, "SUPPORTED");
+  assert.equal(resolution.capacity.contextWindowTokens, 258400);
+  assert.equal(resolution.capacity.compactionThresholdTokens, 244800);
+  assert.equal(resolution.provenance.compactionThreshold.source, "registry");
+});
+
+test("rejects registry fallback when the active context does not match the exact default", async () => {
+  const resolution = await resolveActiveSessionCapacity({
+    dataDirectory: "/plugin-data",
+    correlationKey,
+    projectRoot: "/project"
+  }, {
+    readFacts: async () => ({
+      status: "SUPPORTED",
+      session: {
+        harness: "codex-cli",
+        harnessVersion: "0.155.0-alpha.2.6",
+        provider: "openai",
+        model: "gpt-5.6-sol",
+        capacityOverrides: { contextWindowTokens: 200000 }
+      },
+      compactionScope: "total",
+      provenance: {
+        source: "active-host-session",
+        observedAt: "2026-09-19T12:00:00.000Z",
+        fields: {
+          contextWindowTokens: "transcript.event_msg.token_count.info.model_context_window",
+          compactionThresholdTokens: "config.absent.model_auto_compact_token_limit",
+          compactionScope: "config.default.model_auto_compact_token_limit_scope"
+        }
       }
     })
   });

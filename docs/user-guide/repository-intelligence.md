@@ -78,11 +78,16 @@ It does not store prompts, source, commands, responses, credentials, or transcri
 The raw session identifier never appears in additional context, MCP input, or persisted public output.
 Fact cleanup runs during writes, removes records older than 30 days, and evicts the oldest eligible records by modification time and file name before the fact directory exceeds 16 MiB.
 
-The Codex adapter reads only the first bounded `session_meta` transcript record to correlate the session, canonical project root, root execution, CLI version, and model provider.
-It reads at most 256 KiB and persists neither the transcript path nor transcript content.
-The active model comes from the hook event, and active automatic capacity is supported only when the same event directly attests the context window, compaction threshold, and `total` accounting scope.
-Prism does not read user `config.toml` for fit because layered settings do not prove what the active process applied.
-Registry defaults do not prove active capacity when a higher-precedence custom threshold could be in effect.
+The Codex adapter reads the first bounded `session_meta` transcript record to correlate the session, canonical project root, root execution, CLI version, and model provider.
+On `PreToolUse`, it also reads the latest record from a bounded 256 KiB transcript tail to obtain the effective `model_context_window` reported after the first model call.
+It persists neither the transcript path nor transcript content.
+The active model comes from the hook event.
+Prism requests the effective layered Codex configuration for the event working directory through the local app-server and stores only allowlisted capacity values and provenance.
+An explicit effective threshold and scope take precedence over a registry default.
+When the effective configuration proves that no threshold override exists, Prism uses only the exact host version, provider, and model registry threshold policy.
+An explicit context-window override uses that profile's reviewed default percentage after the transcript effective window is verified.
+Missing, timed-out, malformed, or ambiguous effective configuration keeps capacity unsupported.
+Prism rejects `body_after_prefix` accounting.
 If correlated facts contain complete identity but no exact threshold, the caller may supply both capacity overrides and `compactionScope: "total"`.
 Active override objects must contain both `contextWindowTokens` and `compactionThresholdTokens`.
 Prism rejects partial objects instead of merging them with hook facts.

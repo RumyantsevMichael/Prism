@@ -203,6 +203,20 @@ function findProfile(session, registry) {
   return matches[0] ?? null;
 }
 
+export function resolveRegisteredCapacityPolicy(session, { registry = canonicalRegistry } = {}) {
+  validateSession(session);
+  validateCapacityRegistry(registry);
+  const profile = findProfile(session, registry);
+  if (!profile) return null;
+  return {
+    profileId: profile.id,
+    contextWindowTokens: profile.capacity.contextWindowTokens,
+    effectiveContextWindowPercent: profile.capacity.effectiveContextWindowPercent,
+    autoCompactionPercent: profile.capacity.autoCompactionPercent,
+    compactionThresholdTokens: profile.capacity.compactionThresholdTokens
+  };
+}
+
 export function resolveSessionCapacity(session, { registry = canonicalRegistry } = {}) {
   validateSession(session);
   validateCapacityRegistry(registry);
@@ -350,7 +364,14 @@ export async function resolveActiveSessionCapacity(activeSession, {
   const hostOverrides = facts.session.capacityOverrides || {};
   const hostHasCompleteCapacity = ["contextWindowTokens", "compactionThresholdTokens"]
     .every((key) => Object.hasOwn(hostOverrides, key));
-  if (!hostHasCompleteCapacity && !callerHasCompleteCapacity) {
+  const registryThresholdProven = facts.provenance?.fields?.compactionThresholdTokens
+    === "config.absent.model_auto_compact_token_limit";
+  const hostHasRuntimeContext = Object.hasOwn(hostOverrides, "contextWindowTokens");
+  if (
+    !hostHasCompleteCapacity
+    && !callerHasCompleteCapacity
+    && !(hostHasRuntimeContext && registryThresholdProven)
+  ) {
     return {
       status: "UNSUPPORTED",
       reasonCode: ACTIVE_CAPACITY_REASON.UNATTESTED_ACTIVE_CAPACITY,
@@ -367,6 +388,29 @@ export async function resolveActiveSessionCapacity(activeSession, {
     model: facts.session.model,
     ...(Object.keys(mergedOverrides).length ? { capacityOverrides: mergedOverrides } : {})
   };
+  if (
+    registryThresholdProven
+    && !callerHasCompleteCapacity
+    && !Object.hasOwn(hostOverrides, "compactionThresholdTokens")
+  ) {
+    const policy = resolveRegisteredCapacityPolicy(session, { registry });
+    const expectedEffectiveContext = policy === null
+      ? null
+      : Number(
+          BigInt(policy.contextWindowTokens)
+          * BigInt(policy.effectiveContextWindowPercent)
+          / 100n
+        );
+    if (expectedEffectiveContext === null || hostOverrides.contextWindowTokens !== expectedEffectiveContext) {
+      return {
+        status: "UNSUPPORTED",
+        reasonCode: ACTIVE_CAPACITY_REASON.UNATTESTED_ACTIVE_CAPACITY,
+        reason: "The active context window does not match the exact default profile.",
+        session: { ...facts.session, capacityOverrides: mergedOverrides },
+        sessionProvenance: facts.provenance
+      };
+    }
+  }
   const resolution = resolveSessionCapacity(session, { registry });
   if (resolution.status === "UNSUPPORTED") {
     return {

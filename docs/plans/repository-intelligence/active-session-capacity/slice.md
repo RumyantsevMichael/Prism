@@ -7,7 +7,7 @@ Prism resolves target capacity from allowlisted facts for the same active host s
 ## Requirements
 
 - [Capture allowlisted active-session facts](../../../requirements/active-session-capacity.md#1)
-- [Resolve same-session capacity](../../../requirements/active-session-capacity.md#2)
+- [Refresh and resolve active Codex capacity](../../../requirements/active-session-capacity.md#5)
 - [Reject unproved active-session capacity](../../../requirements/active-session-capacity.md#3)
 - [Bound local fact retention](../../../requirements/active-session-capacity.md#4)
 - [Resolve supported session capacity](../../../requirements/session-fit.md#1)
@@ -29,12 +29,13 @@ Verification: `node --test server/test/session-capacity.test.mjs server/test/mcp
 - The hook hashes the raw session identifier locally and emits the SHA-256 correlation key plus plugin data directory as bounded additional context.
 - Active MCP inputs require the correlation key and plugin data directory and never use private request metadata.
 - The bounded first transcript `session_meta` record supplies correlated Codex version and provider identity.
+- The latest bounded transcript `token_count` record supplies the effective context window after the first model call.
 - Transcript paths and content are never persisted or emitted.
 - Stored facts contain only allowlisted identity and capacity fields.
-- User configuration is advisory only and never establishes effective active-session capacity.
+- The Codex app-server effective configuration query proves whether capacity overrides are present for the event working directory.
 - Complete explicit overrides take precedence over complete direct same-session facts.
 - Partial active override objects are rejected before host facts are read.
-- Registry defaults never prove an active threshold when an active override may exist.
+- An exact registry threshold is usable only when effective configuration proves that the threshold override is absent.
 - Complete active overrides recover an identity-matched unsupported record only with explicit total-scope attestation.
 - A stored `body_after_prefix` scope cannot be contradicted by active input.
 - Missing, stale, ambiguous, or insufficient facts return `UNSUPPORTED` with a stable reason code.
@@ -43,6 +44,14 @@ Verification: `node --test server/test/session-capacity.test.mjs server/test/mcp
 - Fact-retention lock owners carry unique tokens and cannot release a successor after stale takeover.
 - Hook failures do not block the host action.
 - Existing explicit session input remains compatible.
+
+## Verification checkpoint
+
+Command: `node --test server/test/codex-transcript.test.mjs server/test/host-session-facts.test.mjs server/test/session-capacity.test.mjs`
+
+Result: Exit status `0` with all focused tests passing.
+
+Verified behavior: The transcript inspector exposes the latest bounded `token_count` context, the Codex adapter consumes effective configuration, and the registry contains the reviewed `0.155.0-alpha.2.6` profile.
 
 ## Delivery order
 

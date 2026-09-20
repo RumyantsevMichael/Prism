@@ -1,9 +1,10 @@
 @startuml
 title C4 code - Repository intelligence - active session capacity
 package "Host session" {
-  class "SessionStart hook" as Hook <<host event>>
+  class "SessionStart and PreToolUse hooks" as Hook <<host event>>
   class "record-session-facts" as Record <<command>>
   class "Codex session transcript" as Transcript <<bounded source>>
+  class "Codex app-server config/read" as Config <<effective settings>>
   class "Agent request" as Agent <<caller>>
 }
 
@@ -11,6 +12,7 @@ package "Prism MCP server" {
   class "HostSessionFactStore" as Store <<module>>
   class "CodexHostAdapter" as Adapter <<module>>
   class "CodexTranscriptMetadata" as TranscriptMetadata <<classifier>>
+  class "CodexEffectiveConfig" as EffectiveConfig <<reader>>
   class "resolveActiveSessionCapacity" as Active <<function>>
   class "resolveSessionCapacity" as Resolve <<existing function>>
   class "CapacityRegistry" as Registry <<existing data contract>>
@@ -20,7 +22,9 @@ package "Prism MCP server" {
 Hook --> Record : provides session and active model facts
 Record --> Adapter : allowlists and normalizes Codex facts
 Adapter --> TranscriptMetadata : requests correlated identity
-TranscriptMetadata --> Transcript : reads only first session_meta record
+TranscriptMetadata --> Transcript : reads first session_meta and latest bounded token_count
+Adapter --> EffectiveConfig : requests effective capacity settings
+EffectiveConfig --> Config : reads effective values and layer provenance
 Record --> Store : writes one digest-keyed atomic record
 Store --> Store : evicts expired and oldest records under quota
 Store --> Store : rejects links and uses token-owned retention locks
@@ -29,7 +33,7 @@ Agent --> Mcp : supplies key, data directory, and canonical project root
 Agent --> Mcp : supplies both active overrides or neither
 Mcp --> Active : requests same-session capacity
 Active --> Store : reads bounded fresh facts
-Active --> Resolve : applies explicit, host, and registry precedence
+Active --> Resolve : applies caller, runtime, config, and proven-default precedence
 Resolve --> Registry : selects an exact supported profile
 
 note right of Active

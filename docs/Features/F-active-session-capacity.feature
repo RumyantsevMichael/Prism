@@ -2,7 +2,8 @@ Feature: Active session capacity
 
   Rule: Active capacity uses correlated host facts
     # Requirement: [Capture allowlisted active-session facts](../requirements/active-session-capacity.md#1)
-    # Requirement: [Resolve same-session capacity](../requirements/active-session-capacity.md#2)
+    # Requirement: [Refresh and resolve active Codex capacity](../requirements/active-session-capacity.md#5)
+    # ADR: [Refresh active Codex capacity from correlated runtime evidence](../ADRs/repository-intelligence/active-codex-capacity-resolution.md)
     # ADR: [Same-session facts and local tracing](../ADRs/repository-intelligence/same-session-facts-and-local-tracing.md)
 
     Example: Matching Codex facts resolve capacity
@@ -21,6 +22,14 @@ Feature: Active session capacity
       When active session capacity is resolved
       Then the explicit capacity is returned
       And the result identifies explicit input as its source
+
+    Example: Effective configuration absence enables the exact registry threshold
+      Given a root Codex session has completed its first model call
+      And effective configuration proves no compaction threshold override is present
+      And an exact host version, provider, and model registry profile exists
+      When active session capacity is resolved
+      Then the transcript context window and exact registry threshold are returned
+      And field-level provenance identifies both sources
 
     Example: A child-directory hook uses the transcript project root
       Given a root Codex session transcript names the canonical project root
@@ -44,8 +53,9 @@ Feature: Active session capacity
       Then the result is UNSUPPORTED
       And the result reason code is NO_SESSION_FACTS
 
-    Example: A known registry default does not prove active capacity
+    Example: A registry default without effective configuration proof does not prove active capacity
       Given matching active-session identity has no directly attested threshold
+      And effective configuration did not prove that the threshold override is absent
       And the caller supplies no complete capacity override
       When active session capacity is resolved
       Then the result is UNSUPPORTED
