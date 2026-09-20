@@ -36,6 +36,7 @@ Feature: Active session capacity
       And the correlated hook runs from a child directory
       When active session facts are recorded
       Then the facts are keyed to the canonical transcript project root
+      And effective configuration is read for the child directory
 
     Example: A same-parent subagent cannot replace root capacity
       Given supported capacity was recorded for a root Codex execution

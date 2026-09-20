@@ -234,7 +234,7 @@ export function createCodexHostAdapter({
       };
       let effectiveConfig;
       try {
-        effectiveConfig = await readEffectiveConfig({ cwd: correlatedProjectRoot, environment });
+        effectiveConfig = await readEffectiveConfig({ cwd: projectRoot, environment });
       } catch {
         effectiveConfig = { status: "UNSUPPORTED" };
       }

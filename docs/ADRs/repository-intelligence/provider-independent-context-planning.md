@@ -1,7 +1,8 @@
 # Keep repository context planning provider-independent
 
-Status: Proposed
+Status: Accepted
 Created: 2026-09-17
+Accepted: 2026-09-20
 
 ## Requirements
 
@@ -116,3 +117,4 @@ The session trace code view is [session-consumption-tracing.puml](../../../plans
 2026-09-17: Proposed a provider-independent context planner with CodeNib as the first optional adapter.
 2026-09-19: Added deterministic capacity resolution and session-lifecycle-neutral fit evaluation after the user approved implementation.
 2026-09-19: Added a native baseline, provider composition, CodeGraph support, same-session capacity facts, and local pre-edit tracing.
+2026-09-20: Accepted the implemented provider-independent context planning boundary.

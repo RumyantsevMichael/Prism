@@ -31,6 +31,9 @@ codex plugin marketplace add RumyantsevMichael/Prism
 codex plugin add prism@prism
 ```
 
+In Codex Desktop, trust the current Prism hooks through `/hooks`, then start a new root task.
+See [Repository intelligence](docs/user-guide/repository-intelligence.md) for provider roles and optional setup.
+
 ## Start a project
 
 Initialize Prism once in each project.
@@ -170,6 +173,8 @@ The migration keeps the old file unchanged.
 ```bash
 codex plugin marketplace upgrade prism
 ```
+
+Review changed Prism hooks through `/hooks`, then start a new root task.
 
 Releases follow semantic versioning and appear in [CHANGELOG.md](CHANGELOG.md).
 Before version 1.0, a minor release can include a breaking workflow or artifact migration.

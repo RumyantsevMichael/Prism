@@ -296,12 +296,29 @@ test("keys adapter facts to the canonical transcript root when the hook runs in 
         execution: "root",
         harnessVersion: "0.147.0",
         provider: "openai",
-        projectRoot
+        projectRoot,
+        contextWindowTokens: 272000,
+        contextWindowSource: "transcript.event_msg.token_count.info.model_context_window"
+      };
+    },
+    readEffectiveConfig: async ({ cwd }) => {
+      assert.equal(cwd, hookRoot);
+      return {
+        status: "SUPPORTED",
+        config: {
+          model: "gpt-5.6-sol",
+          model_context_window: null,
+          model_auto_compact_token_limit: 244800,
+          model_auto_compact_token_limit_scope: "total"
+        }
       };
     }
   });
 
-  const capture = await captureSupported(adapter, { cwd: hookRoot });
+  const capture = await captureSupported(adapter, {
+    cwd: hookRoot,
+    hook_event_name: "PreToolUse"
+  });
 
   assert.equal(capture.status, "SUPPORTED");
   assert.equal(capture.record.projectDigest, factRecord(sessionId).projectDigest);

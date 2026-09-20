@@ -1,7 +1,8 @@
 # Refresh active Codex capacity from correlated runtime evidence
 
-Status: Proposed
+Status: Accepted
 Created: 2026-09-20
+Accepted: 2026-09-20
 
 ## Requirements
 
@@ -78,4 +79,4 @@ It preserves the original ADR's identity correlation, storage, retention, tracin
 
 ## Decision Log
 
-2026-09-20: Proposed bounded transcript refresh and app-server effective configuration as the active Codex capacity sources.
+2026-09-20: Accepted bounded transcript refresh and app-server effective configuration as the active Codex capacity sources.

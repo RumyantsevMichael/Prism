@@ -7,8 +7,16 @@ Prism can plan repository context and compare that plan with the capacity of a t
 Use `list_repository_intelligence_providers` to inspect the registered native, CodeGraph, and CodeNib providers for one project.
 Discovery is read-only and never creates or updates an external index.
 
+| Provider | Role | Numeric `FIT` |
+|---|---|---|
+| Native | Always supplies live lexical search and verified source | No |
+| CodeGraph | Adds lexical and typed structural evidence from an existing index | No |
+| CodeNib | Adds hybrid semantic, lexical, and graph evidence | Yes, when all required evidence is complete |
+
 Use `provider: auto` with `plan_repository_context` for normal operation.
 Automatic selection always includes native live-source coverage and adds at most one healthy external contributor.
+Automatic selection prefers a fully capable CodeNib provider over CodeGraph.
+If the selected external provider fails during planning, automatic selection falls back to native instead of trying another external provider.
 Prism uses external evidence only after the adapter binds it to the same normalized source snapshot identity as native.
 For CodeNib, this binding requires the same canonical project root, verified CodeNib source access, the same concrete commit, and a fresh complete native snapshot after CodeNib verifies its manifest.
 CodeNib and native can use different private fingerprint schemes, so Prism does not compare those raw fingerprints.
@@ -41,6 +49,7 @@ Native-only plans report missing semantic and graph capabilities, so their token
 CodeGraph requires an executable version greater than or equal to `1.6.0` and less than `1.7.0`.
 CodeGraph also requires a complete current `.codegraph` index for the exact project root.
 Prism uses CodeGraph lexical and symbol-graph evidence but does not claim that CodeGraph provides embedding-based semantic search.
+Therefore, CodeGraph improves discovery but cannot support a numeric `FIT` result under the current policy.
 Prism never runs CodeGraph initialization, synchronization, or indexing commands.
 Prism caps CodeGraph context nodes, edges, entry points, and explicit symbol matches.
 Evidence that reaches a cap without an affirmative completeness signal cannot support a numeric estimate.
@@ -53,6 +62,24 @@ Prism rejects POSIX absolute paths, Windows drive paths, Windows drive-relative 
 CodeNib graph evidence cannot support a numeric estimate when seed or node limits bound it, when CodeNib reports a graph note or error, or when a graph source range remains incomplete.
 Any caller concept that no contributor resolves prevents a numeric estimate.
 When provider reads expand into overlapping ranges, Prism merges the ranges and counts the final merged rendering once.
+
+### Prepare an external provider
+
+Prepare external indexes outside Prism because provider discovery never changes them.
+
+For CodeNib, install the supported release and prepare the project:
+
+```bash
+python -m pip install "codenib[graph,mcp]==0.2.3"
+codenib codegraph init /absolute/project
+```
+
+For CodeGraph, install a compatible `1.6.x` release and create or synchronize the project `.codegraph` index with CodeGraph.
+Set `PRISM_CODENIB_COMMAND` or `PRISM_CODEGRAPH_COMMAND` when the executable is not on `PATH`.
+Use `list_repository_intelligence_providers` to verify availability before planning.
+For `not-installed`, fix the executable or command setting.
+For `not-indexed`, `stale-index`, or `incomplete-index`, update the provider-owned index outside Prism.
+For a snapshot mismatch, finish repository or index changes and retry planning.
 
 ## Resolve active session capacity
 
@@ -71,6 +98,9 @@ Use the read-only `resolve_session_capacity` tool with active mode when the targ
 
 Active resolution requires the bundled hooks in `hooks/hooks.json` to be enabled and trusted by the host.
 Codex skips plugin hooks until the user reviews and trusts their current definition through `/hooks`.
+After a Prism install or update, trust the current hook definition and start a new root Codex task.
+Send the first prompt so Codex records the effective context window.
+The first subsequent tool call refreshes Prism's active capacity facts.
 After it stores a fact record successfully, the hook emits a SHA-256 session correlation key and absolute plugin data directory as bounded developer context.
 Pass both exact values to active capacity, fit, and consumption requests.
 The hook stores only hashed session and project identities plus allowlisted model and capacity facts in the plugin data directory.
@@ -95,7 +125,7 @@ A stored `body_after_prefix` scope cannot be overridden by claiming `total`.
 
 Active capacity returns `UNSUPPORTED` with a stable reason code when facts are absent, stale, associated with another key, cross-project, malformed, or do not prove exact total-scope capacity.
 Using another valid key normally returns `NO_SESSION_FACTS` because storage is keyed by the digest.
-Use explicit session input when the host cannot prove active facts or when a different implementation session is the target.
+Use explicit session input when the key or data directory does not appear, active evidence stays unsupported, or a different implementation session is the target.
 
 ## Summarize pre-edit consumption
 
