@@ -29,6 +29,8 @@ Migration leaves the legacy file unchanged.
 5. Present discovered settings and defaults, asking only about unresolved values or intended changes.
 6. Include project prohibitions and sign-off requirements in that discussion.
 7. In update mode, confirm proposed values together before writing, except values already accepted or explicitly authorized.
+8. Set `CodeNib command` to an absolute executable path when CodeNib is outside the Prism MCP process `PATH`.
+9. Set `CodeNib command` to `n/a` when the environment or default `PATH` lookup should apply.
 
 A missing BDD harness uses `none`, making feature files specification-only.
 `Interaction style` defaults to `structured`, using structured input when available and plain text otherwise.
@@ -66,6 +68,9 @@ Both styles follow the [workflow gate rules](../workflow/SKILL.md#supporting-pro
 - BDD harness: <name and acceptance command, or none>
 - Typecheck: <...>
 - Lint/format: <command and whether it writes changes>
+
+## Repository intelligence
+- CodeNib command: n/a
 
 ## Verification
 - <How to exercise the product and prove a change.>

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { readCodeNibCommand } from "./repository-intelligence-config.mjs";
 import { normalizeRepositorySourcePath, normalizeRepositorySourceRange } from "./repository-source-path.mjs";
 
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -287,7 +288,8 @@ export class McpStdioClient {
 
 export async function openCodeNibClient(projectRoot, options = {}) {
   const canonicalRoot = await realpath(projectRoot);
-  const command = options.command || process.env.PRISM_CODENIB_COMMAND || "codenib";
+  const configuredCommand = options.command || process.env.PRISM_CODENIB_COMMAND || await readCodeNibCommand(canonicalRoot);
+  const command = configuredCommand || "codenib";
   const child = spawn(command, ["mcp", canonicalRoot], {
     cwd: canonicalRoot,
     env: process.env,

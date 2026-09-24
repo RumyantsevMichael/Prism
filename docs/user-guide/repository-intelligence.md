@@ -75,9 +75,21 @@ codenib codegraph init /absolute/project
 ```
 
 For CodeGraph, install a compatible `1.6.x` release and create or synchronize the project `.codegraph` index with CodeGraph.
-Set `PRISM_CODENIB_COMMAND` or `PRISM_CODEGRAPH_COMMAND` when the executable is not on `PATH`.
+Set `PRISM_CODEGRAPH_COMMAND` when the CodeGraph executable is not on `PATH`.
+Set `CodeNib command` in `.prism/workflow.md` when the CodeNib executable is not on the Prism MCP process `PATH`.
+Set the project field to an absolute executable path without arguments, or use `n/a` to defer to the environment or default `PATH` lookup.
+`PRISM_CODENIB_COMMAND` overrides the project field and may name a command on the Prism MCP process `PATH`.
+The project field overrides the default `codenib` lookup when the environment variable is absent.
+Prism reads this setting only from `.prism/workflow.md` under the requested project root and rejects a config file that resolves outside that root.
+
+```markdown
+## Repository intelligence
+- CodeNib command: /absolute/path/to/codenib
+```
+
 Use `list_repository_intelligence_providers` to verify availability before planning.
 For `not-installed`, fix the executable or command setting.
+For `invalid-config`, set `CodeNib command` to an absolute executable path or `n/a`.
 For `not-indexed`, `stale-index`, or `incomplete-index`, update the provider-owned index outside Prism.
 For a snapshot mismatch, finish repository or index changes and retry planning.
 

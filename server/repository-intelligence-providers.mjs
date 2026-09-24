@@ -23,6 +23,7 @@ function sanitizedMessage(provider, code) {
     "stale-index": `${provider} has an index that does not match the current project state.`,
     "incomplete-index": `${provider} has an incomplete index.`,
     "incompatible-index": `${provider} has an index built by an incompatible version.`,
+    "invalid-config": "The Prism workflow config has an invalid CodeNib command setting.",
     "incompatible-version": `${provider} has an unsupported executable version.`,
     "invalid-server-identity": `${provider} did not return its required executable identity.`,
     "worktree-mismatch": `${provider} is indexed for another worktree.`,
