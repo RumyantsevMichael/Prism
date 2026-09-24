@@ -2,8 +2,8 @@
 
 ## PlantUML
 
-Prism includes selected files from `@plantuml/core` version 1.2026.6 and the matching C4 standard-library bundle.
-PlantUML version 1.2026.6 provides these files under the MIT License.
+Prism includes selected files from `@plantuml/core` version 1.2026.8 and the matching C4 standard-library bundle.
+PlantUML version 1.2026.8 provides these files under the MIT License.
 The included license text is at `vendor/plantuml/LICENSE`.
 The upstream project is [PlantUML](https://github.com/plantuml/plantuml).
 

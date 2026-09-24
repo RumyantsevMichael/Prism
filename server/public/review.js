@@ -320,7 +320,7 @@ function renderDiagram(source, target, section) {
     }, (message) => {
       target.innerHTML = `<p class="error">${escapeHtml(String(message))}</p>`;
       resolve();
-    });
+    }, { maxSvgSize: 8192 });
   });
 }
 
