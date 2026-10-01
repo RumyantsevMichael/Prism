@@ -7,6 +7,7 @@
   },
   "scripts": {
     "test": "node --test server/test/*.test.mjs",
-    "validate:sdm": "node scripts/validate-sdm.mjs"
+    "validate:sdm": "node scripts/validate-sdm.mjs",
+    "render": "bun scripts/render-diagrams.ts"
   }
 }

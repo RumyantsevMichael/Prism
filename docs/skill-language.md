@@ -55,7 +55,8 @@ Read [SDM validation](skill-language-validation.md) for the repository checks.
 - Use EARS for precise declarative requirements as defined by [EARS](https://alistairmavin.com/ears/)
 - Treat an EARS response as a required outcome, not as an instruction sequence
 - Treat ordinary explanatory prose as context, not as an action
-- Treat fenced code blocks as examples or reference content, not as instructions
+- Treat fenced code blocks as examples or reference content unless the skill explicitly declares a PlantUML block as its process
+- Follow a declared PlantUML process for phase order, branches, and returns
 - Place an example near the instruction or declaration it illustrates
 - Add a short comment inside a code block when the example needs explanation
 - Don't

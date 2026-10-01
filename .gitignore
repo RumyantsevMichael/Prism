@@ -6,3 +6,5 @@ node_modules/
 # Backfill backups (bench.py backfill --write)
 *.results.jsonl.bak
 results.jsonl.bak
+
+skills/**/*.png

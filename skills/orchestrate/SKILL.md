@@ -9,147 +9,193 @@ sdm: "0.3"
 # Orchestrate an initiative
 
 The [workflow terms](../workflow/SKILL.md#common-terms) define the shared lifecycle.
+The diagrams own phase order, branches, and returns.
+The prose defines inputs, constraints, and tool arguments.
 
-## 1. Start or resume
+## Core flow
 
-1. Read `.prism/workflow.md`, [run-settings.md](references/run-settings.md), and [worker-lifetime.md](references/worker-lifetime.md).
-2. Read the available roadmap initiative, intent, and Approved requirement links.
-3. Prepare coordination state before active work:
-   - Use the coordination-state tools to read `state.json` when it exists.
-   - Inspect recorded workers and workspaces before resuming or replacing them.
-   - Resolve and persist run settings using [run-settings.md](references/run-settings.md), retaining existing values.
-4. If the input is a raw idea or initiative inputs are missing, run `ideate` and `roadmap` inline in either agent flow and apply the resolved autonomy gate.
-5. Read the initiative's `map.puml` and linked evidence when they exist.
-6. If no map exists:
-   1. Use `write-map` to create one root with the initiative title and complete Approved requirement assignment.
-   2. Use `roadmap` to mark the initiative `planned` and link its map.
-7. If `agentFlow` is already active, retain it and reject changes after the first active phase or worker starts.
-8. If records conflict, ask the responsible worker to reconcile them against actual artifacts.
-    Apply the resolved autonomy gate before dependent work.
+The following PlantUML block defines the required orchestration process.
+The [pause flow](references/pause-flow.puml) applies when unfinished work must pause.
+
+```plantuml
+@startuml
+title Orchestrate an initiative
+
+start
+:Read workflow configuration, run settings, worker lifetime, and initiative inputs;
+:Call get_coordination_state tool;
+if (Settings missing?) then (yes)
+  :Call update_coordination_state tool before active work;
+endif
+if (Initiative inputs missing?) then (yes)
+  :Run ideate and roadmap skills under the autonomy gate;
+endif
+if (Map missing?) then (yes)
+  :Run write-map skill;
+  :Run roadmap skill;
+endif
+
+while (An unfinished leaf can progress?) is (yes)
+  :Select a candidate leaf;
+  :Read its coordination activity, outcome,\nreview findings, and current artifacts;
+  if (Resuming or replacing a worker?) then (yes)
+    :Inspect recorded workers and workspaces against actual artifacts;
+    if (Worker records conflict?) then (yes)
+      :Ask the responsible worker to reconcile records\nagainst actual artifacts;
+      :Re-read worker records and actual artifacts;
+    endif
+  endif
+  if (Current FIT outcome exists?) then (no)
+    :Run write-map skill;
+    :Run roadmap skill;
+    :Collect ancestor evidence and run design\nin the selected agent flow;
+    if (Design returned SPLIT?) then (yes)
+      :Check unique child slugs, unchanged parent title,\nexact coverage, and map consistency;
+      if (Coverage or map conflict?) then (yes)
+        :Return the specific defect to design;
+      else (no)
+        :Derive child dependencies from parent design\nand the current map;
+        :Accept the split and dependencies under the autonomy setting;
+        if (Late split has preserved work or findings?) then (yes)
+          :Preserve completed work and original review lane paths\nin recovery evidence;
+        endif
+        :Run write-map skill;
+      endif
+    else (no)
+      if (Evidence changes dependencies?) then (yes)
+        :Apply the autonomy gate before changing the map;
+        :Run write-map skill;
+      endif
+      if (Design returned BLOCKED?) then (yes)
+        :Record the blocker and seek independent work;
+      endif
+    endif
+  endif
+  if (Current FIT outcome exists?) then (yes)
+    :Read review, delivery, and completion rules;
+    :Resume at the first unmet gate\nand repeat gates with outdated evidence;
+    :Run independent design audit and corrections;
+    if (All design audit lanes CLEAN?) then (yes)
+      :Confirm red checkpoint and visual review;
+      :Apply the implementation gate;
+      :Wait for effective dependencies and recheck fit;
+      if (Fit or design changed?) then (yes)
+        :Invalidate FIT and return to design;
+      else (no)
+        :Preserve the immutable review base;
+        :Run or resume implement skill in the selected agent flow;
+        if (Implementation needs redesign?) then (yes)
+          :Invalidate FIT and return to design;
+        elseif (Implementation BLOCKED?) then (yes)
+          :Record the blocker and seek independent work;
+        else (ready)
+          :Run independent implementation review and corrections;
+          if (All review lanes CLEAN?) then (yes)
+            :Preserve the reviewed result;
+            :Integrate and verify the integrated tree;
+            :Review changed behavior and preserved ancestor lanes;
+            :Complete visual review and correctness gate;
+            if (All completion gates pass?) then (yes)
+              :Accept eligible ADRs and apply commit and push settings;
+              :Run write-map skill for the done transition;
+            else (no)
+              :Keep the leaf active and resolve the missing gate;
+            endif
+          else (no)
+            :Route unresolved lanes to correction, design, or a blocker;
+          endif
+        endif
+      endif
+    else (no)
+      :Record the blocker or unresolved audit lane;
+    endif
+  endif
+  :Call get_coordination_state tool;
+  :Call update_coordination_state tool;
+  if (Leaf done and continuation is stepwise?) then (yes)
+    :Follow pause-flow.puml;
+    :Report the completed leaf;
+    stop
+  endif
+endwhile (no)
+
+if (All leaves and preserved finding lanes are done?) then (yes)
+  :Graduate durable information;
+  :Run roadmap skill;
+else (no)
+  :Report blockers or wait under continuation settings;
+  if (Unfinished work must pause?) then (yes)
+    :Follow pause-flow.puml;
+  endif
+endif
+stop
+
+@enduml
+```
+
+## Inputs and coordination contracts
+
+Required inputs are:
+- `.prism/workflow.md`
+- the roadmap initiative
+- intent
+- Approved requirements
+- `map.puml`
+- linked evidence when they exist.
+The [run settings](references/run-settings.md) define decision gates and agent flow.
+The [worker lifetime](references/worker-lifetime.md) rules define valid worker waits, resumes, and replacements.
+The `get_coordination_state` input includes the initiative path, even when `state.json` does not exist.
+The `update_coordination_state` input includes the current revision.
+Settings resolution supplies `changes.settings`.
+Initiative state updates supply current workers, blockers, next actions, and evidence paths.
 Missing records establish neither approval nor completion.
+The agent flow is immutable after active work starts.
+Dependent work requires its applicable gate under the resolved autonomy setting.
 
-## 2. Design recursively
+## Design and worker invariants
 
-1. Select candidate leaves from the map, allowing design before prerequisite implementation when evidence permits.
-2. Collect all ancestor diagram and ADR paths from retained design results, including inherited paths.
-3. Route design by `agentFlow`:
-   - For `mono`, run `design` in the orchestrator worker.
-   - For `multi`, start or resume the `Develop <slice>` worker with `design`, its requirements, map, workspace, settings, and ancestor paths, and keep that worker available after `FIT` for review corrections.
-4. When `slice.md` exists, supply its path as the outcome record.
-5. Use `write-map` to mark the leaf `in-progress` and `roadmap` to mark the initiative `in-progress`.
-6. Route the design result:
-   - For `SPLIT`:
-     1. Read the reported child folders and their `slice.md` files.
-     2. Check unique slugs, unchanged parent title, and exact collective coverage of the parent's requirement assignment.
-     3. Derive prerequisite edges from the parent design and existing map, returning architectural uncertainty to design.
-     4. Obtain split and dependency acceptance under the autonomy setting.
-     5. Persist only a result fact that a later worker needs and that the map, slice record, diagrams, ADRs, findings, or state note does not already contain.
-     6. Use `write-map` to add the accepted children and dependencies under the existing parent.
-     7. Repeat this section for the new leaves.
-   - For `FIT`, continue to section 3.
-   - For `BLOCKED`, record the unresolved issue and continue independent work.
+The design worker receives ancestor diagram and ADR paths, including inherited paths.
+Design can start before prerequisite implementation when available evidence supports it.
+An existing `slice.md` supplies the design outcome record.
+The configured `agentFlow` controls design and implementation routing.
+In `multi` flow, the `Develop <slice>` worker receives requirements, map, workspace, settings, and ancestor paths.
+The `Develop <slice>` worker remains available after `FIT` for implementation and corrections.
+`write-map` receives the root title and complete Approved requirement assignment when no map exists.
+`write-map` receives leaf status (`in-progress` or `done`), accepted child slugs, and dependency edges when they change.
+The `roadmap` update receives status (`planned`, `in-progress`, or `shipped`) and the map path.
 
-An accepted split parent never executes again and completes only after all descendant leaves and preserved findings pass completion gates.
+A valid `SPLIT` has unique child slugs, an unchanged parent title, and exact collective requirement coverage.
+Child dependencies follow the parent design and map, and require acceptance under the autonomy setting.
+An accepted split parent never executes again.
+Its completion waits for all descendants and preserved findings.
+Late splits preserve completed work and original review lane paths in recovery evidence.
+A split result is persisted only when a later worker needs a fact that no existing artifact owns.
 
-- When a proposal fails coverage or conflicts with the map, return the specific defect to design.
-- When evidence changes dependencies, route the change under the autonomy setting before applying it through `write-map`.
-- After a late split, record preserved work and original lane paths in the resume note for the completion gate.
-- When a finding spans slices, retain its reporting lane and route correction without transferring its identity or evidence.
+## Delivery invariants
 
-## 3. Audit and implement
+Delivery requires a current `FIT` result.
+The [review and correction rules](references/review-rules.md) apply to design audits and implementation reviews.
+The [delivery rules](references/delivery-rules.md) define implementation constraints.
+The [integration and completion rules](references/completion-rules.md) define integration and completion constraints.
 
-1. Run section 4 in `design-audit` mode until all assigned lanes are `CLEAN`.
-2. Confirm the expected red checkpoint or explicit documentation-only exemption.
-3. Complete [visual review](../workflow/references/visual-review.md) before the implementation gate.
-4. Obtain implementation acceptance under the autonomy setting.
-5. Wait for effective dependencies to complete, including inherited prerequisites.
-6. Ask delivery to recheck fit against integrated dependency changes.
-7. If fit or design changed, return to section 2 before implementation.
-8. Preserve the audited tree as an immutable review base, including untracked files and deletions.
-9. Route implementation by `agentFlow`:
-    - For `mono`, continue the orchestrator worker with `implement` and the review base.
-    - For `multi`, resume the same `Develop <slice>` worker.
-10. Route its result:
-    - For verified code, run section 4 in `implementation-review` mode.
-    - For a required redesign, return to section 2 with existing work and findings preserved.
-    - For `BLOCKED`, record the unresolved issue and continue independent work.
-11. When implementation review is `CLEAN`, continue to section 5.
-
-The review base is the design checkpoint commit with Commit on, otherwise an immutable working-tree snapshot.
-Every implementation correction review uses that same base.
-Concurrent delivery requires isolated workspaces.
-
-## 4. Review and correct
-
-One reviewer covers a normal slice.
-Distinct risk scopes can use separate lanes with one writer per findings file.
-The [review format](../review/references/review-format.md) defines each lane record and compact result.
-
-1. Assign fresh `Review <slice>` workers the mode, slice, lane focus, exact findings path, artifact paths, verification evidence, and applicable review base, and keep each worker available after `FINDINGS` for correction.
-2. Exclude the delivery conversation from reviewer inputs.
-3. Wait for every assigned lane to return its current result.
-4. Route each lane result:
-   - If evidence is outdated, repeat that lane against the current artifacts and correction evidence.
-   - If findings remain:
-     1. Resume the same `Develop <slice>` worker and the `Review <slice>` worker that produced the findings as live workers before starting a replacement reviewer.
-     2. Give each worker the other worker ID.
-     3. Let the `Review <slice>` and `Develop <slice>` workers resolve the findings directly before reporting back.
-     4. Route delivery's correction result:
-        - For corrected artifacts, start fresh reviewers for affected lanes with original findings files and current verification evidence.
-        - For `SPLIT` or required redesign, preserve lane evidence and return to section 2 before further review.
-        - For `BLOCKED`, record the unresolved issue and continue independent work.
-     5. Repeat correction review until all lanes are `CLEAN`, work returns to design, a blocker exists, or the user stops.
-   - If a design audit reports only implementation gaps, route them to `implement` after the implementation gate.
-5. If repeated corrections fail, use a replacement `Develop <slice>` worker or a new design audit to investigate the cause.
-
-A new design audit requires evidence that changes fit, requirements, architecture, boundaries, dependencies, or planned verification.
-Reviewers receive verification results and probe paths without a request to rerun the complete suite.
-
-## 5. Integrate and confirm
-
-1. Preserve the reviewed result before integrating an isolated workspace.
-2. Ask delivery to compare and verify the integrated tree, including conflict resolutions and affected dependencies.
-3. If integration changes reviewed behavior or leaves uncertain equivalence, repeat affected review before confirmation.
-4. For each split ancestor whose final unfinished descendant is this leaf:
-   1. Dispatch fresh reviewers to its preserved lanes with original findings, applicable review bases, and current descendant artifacts and verification.
-   2. If findings remain, route correction to the affected `Develop <slice>` worker or unresolved decision without reactivating the parent.
-   3. Repeat affected lane review until every preserved lane is `CLEAN`, or record the blocker and continue independent work.
-   4. Keep aggregate completion blocked until every preserved lane is `CLEAN`.
-5. Complete visual review of changed artifacts.
-6. Apply the correctness gate from [run-settings.md](references/run-settings.md).
-7. After the applicable confirmation:
-   1. Accept Proposed ADRs only after all governed behavior is verified and confirmed, including behavior across relevant children.
-   2. When accepting a replacement ADR, mark its original `Superseded` and link both records under project rules.
-   3. Apply commit and push settings to slice-owned changes, preserving unrelated changes.
-   4. When all completion gates pass:
-      1. Use `write-map` to mark the leaf `done`.
-      2. Remove its active resume entry.
-8. If confirmed behavior changes, repeat affected verification, review, and confirmation.
-9. If leaves remain, continue automatically or request continuation under the stepwise setting.
-10. When all leaves are `done`, graduate durable information and use `roadmap` to mark the initiative `shipped`.
-
-Coordination cleanup follows durable graduation and the `shipped` transition.
-Corrections do not create intermediate commits.
-
-## 6. Preserve continuity
+## State and recovery invariants
 
 The initiative's `state.json` records current coordination facts beside `map.puml`.
 The map alone owns slice topology, requirement assignments, dependencies, and status.
-The orchestrator remains the only workflow writer for the initiative state.
+The orchestrator is the only workflow writer for initiative state.
 Mono delivery records `orchestrator` as the active worker and the current workspace.
-The agent flow does not change after active work starts.
-
-Paths resolve from the note's directory unless absolute.
+State evidence paths resolve from the note's directory unless absolute.
 Empty lists mean no current item.
-One orchestrator writes the note and requests map changes.
+An old recovery note for an inactive parent slice is historical evidence, not an active pause failure.
 
-1. After a resolution exchange, meaningful result, or before a pause, update the note with current workers, blockers, next actions, and evidence paths.
-2. Persist conversation-only results, review bases, ancestor evidence, or dependent user decisions in the owning slice folder only when a later worker needs them and no existing artifact can own them.
-3. Before replacing coordination formats, preserve older files until their needed information has a durable home.
-4. After compaction or handoff, repeat section 1.
-5. Give replacement workers the workspace, findings, recovery record, and retained ancestor diagram and ADR paths.
-6. Apply [worker-lifetime.md](references/worker-lifetime.md) to every worker start, wait, resume, and replacement.
-7. Broker child delegation through the procedure when necessary.
+The `checkpoint_pause` input includes the current revision, active slice, recovery content and path, and state changes.
+The fallback `update_coordination_state` input includes the current revision, recovery path, and state changes.
+The fallback applies only when `checkpoint_pause` is unavailable and the other coordination-state tools work.
+A completed pause requires recovery and state updates.
+Replacement workers need retained recovery and ancestor evidence after compaction or handoff.
+Older coordination files remain until their required information has a durable home.
+Conversation-only facts belong in the owning slice folder only when a later worker needs them.
+The [delegation procedure](../workflow/references/delegation.md) governs child-worker delegation.
 
 - Don't
   - Create user-owned tasks as child-agent substitutes.

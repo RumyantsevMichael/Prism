@@ -1,0 +1,44 @@
+@startuml
+title Orchestrate one initiative - pause checkpoint
+
+start
+:Stop or wait for workers under worker-lifetime rules;
+:Identify unfinished slices and collect recovery evidence;
+if (get_coordination_state available?) then (no)
+  :Report the state-tool gap and incomplete pause;
+  stop
+endif
+if (Unfinished slice needs recovery?) then (no)
+  :Call get_coordination_state tool;
+  :Report that no active slice needs recovery;
+  stop
+else (yes)
+  :Call get_coordination_state tool;
+  if (Slice absent from active state?) then (yes)
+    :Reconcile state with the actual slice and workers;
+    :Call update_coordination_state tool;
+    :Call get_coordination_state tool;
+  endif
+  :Call checkpoint_pause tool;
+  if (Revision conflict?) then (yes)
+    :Read current state and reconcile changes;
+    :Retry checkpoint_pause;
+  endif
+  if (Checkpoint tool unavailable?) then (yes)
+    if (Other coordination-state tools available?) then (yes)
+      :Write recovery before calling update_coordination_state;
+      :Report the checkpoint coverage gap;
+    else (no)
+      :Report the state-tool gap and incomplete pause;
+      stop
+    endif
+  endif
+  if (Recovery and state update succeeded?) then (yes)
+    :Report paused with recovery path and state revision;
+  else (no)
+    :Report the incomplete checkpoint and exact failure;
+  endif
+endif
+stop
+
+@enduml
