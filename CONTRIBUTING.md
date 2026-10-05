@@ -98,6 +98,7 @@ node scripts/native-build/mcp-smoke.mjs dist/native
 ```
 
 The archive builder verifies generated files and copies pinned dependencies without running installation scripts.
+ONNX Runtime stays pinned to `1.22.0` because later packages omit the Intel macOS binding.
 The smoke tests run the packaged Node helper without external executables.
 The MCP smoke test also checks native estimates, offline reuse, responsive discovery, and source changes.
 The runtime workflow builds and tests all five target platforms before optional publication.

@@ -11,10 +11,8 @@ const SERVER = fileURLToPath(new URL("../mcp.mjs", import.meta.url));
 const examples = JSON.parse(await readFile(new URL("./fixtures/concept-delta.json", import.meta.url), "utf8"));
 async function fixture(t) {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "prism-concept-mcp-"));
-  t.after(() => rm(projectRoot, { recursive: true, force: true }));
   const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-concept-mcp-data-")));
-  t.after(() => rm(privateData, { recursive: true, force: true }));
-  const env = { ...process.env, PLUGIN_DATA: privateData };
+  const env = { ...process.env, PLUGIN_DATA: privateData, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
   delete env.CLAUDE_PROJECT_DIR;
   const child = spawn(process.execPath, [SERVER], { cwd: projectRoot, env, stdio: ["pipe", "pipe", "pipe"] });
   const pending = new Map();
@@ -31,9 +29,15 @@ async function fixture(t) {
     pending.clear();
   });
   t.after(async () => {
-    const exited = new Promise((resolve) => child.once("exit", resolve));
-    child.stdin.end();
-    if (child.exitCode === null) await exited;
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise((resolve) => child.once("exit", resolve));
+      const timer = setTimeout(() => child.kill(), 5000);
+      timer.unref();
+      child.stdin.end();
+      try { await exited; } finally { clearTimeout(timer); }
+    }
+    await rm(privateData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
   const rpc = (method, params = {}) => new Promise((resolve, reject) => {
     const next = ++id;
