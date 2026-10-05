@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.8.0](https://github.com/RumyantsevMichael/Prism/compare/v0.7.0...v0.8.0) (2026-09-24)
+
+
+### Added
+
+* add autonomy and agent-flow controls ([b27c062](https://github.com/RumyantsevMichael/Prism/commit/b27c0629494ab8c270b4f7e69244ad77d4411361))
+* add coordination state MCP tools ([f58100c](https://github.com/RumyantsevMichael/Prism/commit/f58100c3443c1249537c01f984ef01f62fadef49))
+* add repository intelligence layer ([28f421c](https://github.com/RumyantsevMichael/Prism/commit/28f421cd90b124878917f69249ea6e10b9ac44f6))
+* configure CodeNib command in workflow settings ([042bbf4](https://github.com/RumyantsevMichael/Prism/commit/042bbf415852ca93bbb2890e16dcdcadb1d6047b))
+* make review viewer stateful ([fdf3b62](https://github.com/RumyantsevMichael/Prism/commit/fdf3b62674cf6ea2d65e60dabac1cde9cfb9d076))
+
+
+### Fixed
+
+* bridge Codex session data to active tools ([c6d3a01](https://github.com/RumyantsevMichael/Prism/commit/c6d3a012c6ec9582c21070f528428286ec0e2993))
+* centralize worker lifetime guidance ([6955490](https://github.com/RumyantsevMichael/Prism/commit/6955490a6e7a7f1095f430f7fc2795203cd30065))
+* clarify direct worker communication lifecycle ([fdac0ff](https://github.com/RumyantsevMichael/Prism/commit/fdac0ffa089d783e52f2e65489e99489e13a181a))
+* clarify repository intelligence providers ([c84e6b4](https://github.com/RumyantsevMichael/Prism/commit/c84e6b4d1e5fa4d0ad142b1116bac32616ef0f90))
+* resolve active Codex capacity from runtime facts ([b8fb7d9](https://github.com/RumyantsevMichael/Prism/commit/b8fb7d94c44da2c02341a87c165a19e2ec2e4df3))
+
 ## [0.7.0](https://github.com/RumyantsevMichael/Prism/compare/v0.6.0...v0.7.0) (2026-09-09)
 
 
