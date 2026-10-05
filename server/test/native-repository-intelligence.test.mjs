@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import {
+  NATIVE_SNAPSHOT_IDENTITY_SCHEME,
   NativeRepositoryIntelligence,
   openNativeRepositoryIntelligence,
   withNativeRepositoryIntelligence
@@ -13,6 +15,21 @@ import {
 import { planRepositoryContext } from "../repository-intelligence.mjs";
 
 const execFileAsync = promisify(execFile);
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function identityFingerprint(kind, file, value) {
+  const hash = createHash("sha256");
+  hash.update(kind);
+  hash.update("\0");
+  hash.update(file);
+  hash.update("\0");
+  hash.update(sha256(value));
+  hash.update("\0");
+  return hash.digest("hex");
+}
 
 async function fixture(context, name) {
   const root = await mkdtemp(path.join(os.tmpdir(), `${name}-`));
@@ -47,6 +64,8 @@ test("implements the provider contract with Git nonignored source", async (conte
   const source = await provider.read(exactHit.node);
 
   assert.equal(description.name, "native");
+  assert.equal(NATIVE_SNAPSHOT_IDENTITY_SCHEME, "prism-native-sha256-v2");
+  assert.equal(description.snapshotIdentity.scheme, "prism-native-sha256-v2");
   assert.match(description.commit, /^(snapshot|git):/);
   assert.match(description.sourceFingerprint, /^[a-f0-9]{64}$/);
   assert.deepEqual(description.capabilities, {
@@ -164,9 +183,104 @@ test("uses a bounded filesystem fallback without following symlinks", async (con
 
   assert.match(description.commit, /^snapshot:/);
   assert.equal(search.retrievalPlan.corpus.enumerator, "filesystem");
+  assert.equal(search.retrievalPlan.corpus.complete, true);
   assert.deepEqual(search.hits.map(({ node }) => node.file), ["src/inside.js"]);
   assert.ok(search.diagnostics.some(({ code }) => code === "git_unavailable"));
-  assert.ok(search.diagnostics.some(({ code }) => code === "symlink_skipped"));
+  assert.deepEqual(search.diagnostics.find(({ code }) => code === "symlink_recorded")?.details, { count: 1 });
+  await provider.verifySnapshot({ requireComplete: true });
+});
+
+test("tracks a symbolic-link value without exposing the link as source", async (context) => {
+  const root = await fixture(context, "native-provider-symlink-identity");
+  await initializeGit(root);
+  await write(root, "src/first.js", "export const first = true;\n");
+  await write(root, "src/second.js", "export const second = true;\n");
+  const linkPath = path.join(root, "src", "current.js");
+  await symlink("first.js", linkPath);
+  const provider = await openNativeRepositoryIntelligence(root);
+
+  const description = await provider.describe();
+  const search = await provider.search("first", { files: ["src/current.js"] }, { topK: 8, budget: "balanced" });
+
+  assert.equal(search.retrievalPlan.corpus.complete, true);
+  assert.equal(search.hits.some(({ node }) => node.file === "src/current.js"), false);
+  assert.ok(search.unresolvedRequired.some(({ kind, value }) => kind === "file" && value === "src/current.js"));
+  assert.deepEqual(search.diagnostics.find(({ code }) => code === "symlink_recorded")?.details, { count: 1 });
+  await provider.verifySnapshot({ requireComplete: true });
+
+  await rm(linkPath);
+  await symlink("second.js", linkPath);
+
+  await assert.rejects(
+    provider.verifySnapshot({ requireComplete: true }),
+    (error) => error?.code === "snapshot-changed" && /native source snapshot changed/i.test(error.message)
+  );
+  const changed = await openNativeRepositoryIntelligence(root);
+  assert.notEqual((await changed.describe()).sourceFingerprint, description.sourceFingerprint);
+});
+
+test("separates regular-file and symbolic-link identity with the same bytes", async (context) => {
+  const fileRoot = await fixture(context, "native-provider-file-identity-kind");
+  const linkRoot = await fixture(context, "native-provider-link-identity-kind");
+  await initializeGit(fileRoot);
+  await initializeGit(linkRoot);
+  await write(fileRoot, "src/current.js", "first.js");
+  await mkdir(path.join(linkRoot, "src"), { recursive: true });
+  await symlink("first.js", path.join(linkRoot, "src", "current.js"));
+
+  const fileDescription = await (await openNativeRepositoryIntelligence(fileRoot)).describe();
+  const linkDescription = await (await openNativeRepositoryIntelligence(linkRoot)).describe();
+
+  assert.equal(fileDescription.sourceFingerprint, identityFingerprint("source", "src/current.js", "first.js"));
+  assert.equal(linkDescription.sourceFingerprint, identityFingerprint("symlink", "src/current.js", "first.js"));
+});
+
+test("bounds symbolic links by entry count", async (context) => {
+  const countRoot = await fixture(context, "native-provider-link-count-bound");
+  await mkdir(path.join(countRoot, "links"), { recursive: true });
+  await symlink("one", path.join(countRoot, "links", "a"));
+  await symlink("two", path.join(countRoot, "links", "b"));
+  await symlink("three", path.join(countRoot, "links", "c"));
+  const countProvider = new NativeRepositoryIntelligence(countRoot, {
+    gitCommand: "prism-git-command-does-not-exist",
+    maxFiles: 2
+  });
+
+  const countSearch = await countProvider.search("links", {}, { topK: 4, budget: "fast" });
+
+  assert.equal(countSearch.retrievalPlan.corpus.complete, false);
+  assert.ok(countSearch.diagnostics.some(({ code }) => code === "scan_incomplete"));
+});
+
+test("bounds each symbolic-link value by the per-entry byte limit", async (context) => {
+  const byteRoot = await fixture(context, "native-provider-link-byte-bound");
+  await mkdir(path.join(byteRoot, "links"), { recursive: true });
+  await symlink("target-value-exceeds-limit", path.join(byteRoot, "links", "large"));
+  const byteProvider = new NativeRepositoryIntelligence(byteRoot, {
+    gitCommand: "prism-git-command-does-not-exist",
+    maxFileBytes: 8
+  });
+
+  const byteSearch = await byteProvider.search("links", {}, { topK: 4, budget: "fast" });
+
+  assert.equal(byteSearch.retrievalPlan.corpus.complete, false);
+  assert.deepEqual(byteSearch.diagnostics.find(({ code }) => code === "oversized_symlink_skipped")?.details, { count: 1 });
+});
+
+test("bounds aggregate symbolic-link values by the whole-snapshot byte limit", async (context) => {
+  const root = await fixture(context, "native-provider-link-total-byte-bound");
+  await mkdir(path.join(root, "links"), { recursive: true });
+  await symlink("first!", path.join(root, "links", "a"));
+  await symlink("second", path.join(root, "links", "b"));
+  const provider = new NativeRepositoryIntelligence(root, {
+    gitCommand: "prism-git-command-does-not-exist",
+    maxBytes: 10
+  });
+
+  const search = await provider.search("links", {}, { topK: 4, budget: "fast" });
+
+  assert.equal(search.retrievalPlan.corpus.complete, false);
+  assert.ok(search.diagnostics.some(({ code }) => code === "scan_incomplete"));
 });
 
 test("marks a bounded or oversized scan as incomplete", async (context) => {
@@ -200,6 +314,18 @@ test("marks an enumerated Git submodule path as incomplete", async (context) => 
   assert.equal(search.retrievalPlan.corpus.complete, false);
   assert.ok(search.unresolvedRequired.some(({ kind }) => kind === "repository-scan"));
   assert.ok(search.diagnostics.some(({ code }) => code === "non_file_skipped"));
+});
+
+test("marks an unsupported fallback filesystem entry as incomplete", { skip: process.platform === "win32" }, async (context) => {
+  const root = await fixture(context, "native-provider-fallback-special-entry");
+  await execFileAsync("mkfifo", [path.join(root, "events.fifo")]);
+  const provider = new NativeRepositoryIntelligence(root, { gitCommand: "prism-git-command-does-not-exist" });
+
+  const search = await provider.search("events", {}, { topK: 4, budget: "fast" });
+
+  assert.equal(search.retrievalPlan.corpus.complete, false);
+  assert.deepEqual(search.diagnostics.find(({ code }) => code === "non_file_skipped")?.details, { count: 1 });
+  assert.ok(search.diagnostics.some(({ code }) => code === "scan_incomplete"));
 });
 
 test("marks a tracked POSIX drive-relative name as an incomplete portable scan", { skip: path.sep !== "/" }, async (context) => {

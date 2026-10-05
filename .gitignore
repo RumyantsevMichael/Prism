@@ -1,6 +1,7 @@
 .DS_Store
 *.log
 node_modules/
+/dist/native/
 .claude/settings.local.json
 
 # Backfill backups (bench.py backfill --write)

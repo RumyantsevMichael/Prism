@@ -70,7 +70,8 @@ test("rejects ambiguous syntax, missing coverage, invalid aliases, and dependenc
 
 test("migration preserves legacy evidence and blocks missing facts", async () => {
   const orchestrate = await readFile(new URL("../../skills/orchestrate/SKILL.md", import.meta.url), "utf8");
-  assert.match(orchestrate, /Before replacing coordination formats, preserve older files until their needed information has a durable home/);
-  assert.match(orchestrate, /If records conflict, ask the responsible worker to reconcile them against actual artifacts/);
+  assert.match(orchestrate, /Older coordination files remain until their required information has a durable home/);
+  const flow = orchestrate.match(/```plantuml\n([\s\S]*?)\n```/)[1];
+  assert.match(flow, /Worker records conflict\?[\s\S]*Ask the responsible worker to reconcile records\\nagainst actual artifacts[\s\S]*Re-read worker records and actual artifacts/);
   assert.match(orchestrate, /Missing records establish neither approval nor completion/);
 });

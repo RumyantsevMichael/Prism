@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { normalizeRepositorySourcePath, normalizeRepositorySourceRange } from "./repository-source-path.mjs";
+import { domainFor } from "../native-runtime/domains.mjs";
 
 const DEFAULT_MAX_FILES = 20000;
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
@@ -10,12 +11,14 @@ const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_GIT_TIMEOUT_MS = 5000;
 const DEFAULT_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_SEARCH_RESULTS = 100;
-export const NATIVE_SNAPSHOT_IDENTITY_SCHEME = "prism-native-sha256-v1";
+export const NATIVE_SNAPSHOT_IDENTITY_SCHEME = "prism-native-sha256-v2";
 const FALLBACK_EXCLUDED_DIRECTORIES = new Set([
   ".git",
   ".hg",
   ".svn",
   ".cache",
+  ".codegraph",
+  ".codenib",
   ".next",
   ".venv",
   "bower_components",
@@ -187,6 +190,7 @@ async function gitFiles(root, options) {
   const rejectedPaths = [];
   const normalizedGroups = new Map();
   for (const rawPath of rawPaths) {
+    if ([".codegraph", ".codenib"].includes(rawPath.split("/")[0])) continue;
     const normalized = normalizedRepositoryPath(rawPath);
     if (!normalized) {
       rejectedPaths.push(rawPath);
@@ -230,7 +234,6 @@ async function gitCommit(root, options) {
 
 async function filesystemFiles(root, maxFiles) {
   const files = [];
-  let skippedSymlinks = 0;
   let unreadableDirectories = 0;
   let truncated = false;
   const visit = async (directory, relativeDirectory = "") => {
@@ -249,23 +252,25 @@ async function filesystemFiles(root, maxFiles) {
       }
       const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
       if (entry.isSymbolicLink()) {
-        skippedSymlinks += 1;
+        files.push(relativePath);
       } else if (entry.isDirectory()) {
         if (!FALLBACK_EXCLUDED_DIRECTORIES.has(entry.name)) {
           await visit(path.join(directory, entry.name), relativePath);
         }
       } else if (entry.isFile()) {
         files.push(relativePath);
+      } else {
+        files.push(relativePath);
       }
     }
   };
   await visit(root);
-  return { files, skippedSymlinks, unreadableDirectories, truncated };
+  return { files, unreadableDirectories, truncated };
 }
 
 async function enumerateFiles(root, options) {
   try {
-    return { ...(await gitFiles(root, options)), enumerator: "git", diagnostics: [], skippedSymlinks: 0 };
+    return { ...(await gitFiles(root, options)), enumerator: "git", diagnostics: [] };
   } catch {
     const fallback = await filesystemFiles(root, options.maxFiles);
     return {
@@ -290,7 +295,25 @@ async function sourceRecord(root, relativePath, limits) {
   } catch {
     return { status: "unreadable" };
   }
-  if (metadata.isSymbolicLink()) return { status: "symlink" };
+  if (metadata.isSymbolicLink()) {
+    let linkValue;
+    try {
+      linkValue = await readlink(absolutePath, { encoding: "buffer" });
+    } catch {
+      return { status: "unreadable" };
+    }
+    if (linkValue.length > limits.maxFileBytes) return { status: "oversized-symlink" };
+    return {
+      status: "identity",
+      identity: {
+        kind: "symlink",
+        file: normalized,
+        bytes: linkValue.length,
+        hash: sha256(linkValue),
+        ...(limits.retainOpaque ? { mode: metadata.mode & 0o777, target: linkValue.toString("utf8") } : {})
+      }
+    };
+  }
   if (!metadata.isFile()) return { status: "not-file" };
   if (metadata.size > limits.maxFileBytes) return { status: "oversized" };
   let canonicalPath;
@@ -306,9 +329,10 @@ async function sourceRecord(root, relativePath, limits) {
   } catch {
     return { status: "unreadable" };
   }
-  if (isBinary(buffer)) return { status: "binary" };
   const content = decodeUtf8(buffer);
-  if (content === null) return { status: "binary" };
+  if (isBinary(buffer) || content === null) return limits.retainOpaque
+    ? { status: "identity", identity: { kind: "opaque", file: normalized, bytes: buffer.length, hash: sha256(buffer), mode: metadata.mode & 0o777, absolutePath: canonicalPath } }
+    : { status: "binary" };
   return {
     status: "source",
     file: {
@@ -316,6 +340,8 @@ async function sourceRecord(root, relativePath, limits) {
       absolutePath: canonicalPath,
       bytes: buffer.length,
       content,
+      kind: "source",
+      mode: metadata.mode & 0o777,
       hash: sha256(buffer),
       lineCount: lineSegments(content).length,
       size: metadata.size,
@@ -329,12 +355,17 @@ async function buildSnapshot(projectRoot, options) {
   const rootMetadata = await stat(root);
   if (!rootMetadata.isDirectory()) throw new TypeError("The native repository root must be a directory.");
   const enumeration = await enumerateFiles(root, options);
+  // Evidence paths are registered by server mutations, never supplied as caller exclusion patterns.
+  const { conservationStore } = await import("./conservation-store.mjs");
+  const evidenceOutputs = new Set(await conservationStore.outputs(root));
+  enumeration.files = enumeration.files.filter(file => !evidenceOutputs.has(file));
   const diagnostics = [...enumeration.diagnostics];
   const counters = {
     binary: 0,
     notFile: 0,
     oversized: 0,
-    symlink: enumeration.skippedSymlinks,
+    oversizedSymlink: 0,
+    symlink: 0,
     unreadable: 0,
     unsafe: 0
   };
@@ -344,31 +375,49 @@ async function buildSnapshot(projectRoot, options) {
     && enumeration.aliasedPaths === 0
     && enumeration.collidingPaths === 0;
   let candidates = enumeration.files;
+  const unknownOmissions = !complete;
+  const omissions = [];
   if (candidates.length > options.maxFiles) {
+    omissions.push(...candidates.slice(options.maxFiles).map(file => ({ file, reason: "file-count-limit" })));
     candidates = candidates.slice(0, options.maxFiles);
     complete = false;
   }
   const files = [];
+  const identities = [];
   let totalBytes = 0;
+  let snapshotBytes = 0;
   for (const relativePath of candidates) {
     const record = await sourceRecord(root, relativePath, options);
-    if (record.status !== "source") {
+    if (record.status !== "source" && record.status !== "identity") {
+      omissions.push({ file: relativePath, reason: record.status });
       if (record.status === "not-file") counters.notFile += 1;
+      else if (record.status === "oversized-symlink") counters.oversizedSymlink += 1;
       else if (Object.hasOwn(counters, record.status)) counters[record.status] += 1;
-      if (["not-file", "oversized", "symlink", "unreadable", "unsafe"].includes(record.status)) complete = false;
+      if (["not-file", "oversized", "oversized-symlink", "unreadable", "unsafe"].includes(record.status)) complete = false;
       continue;
     }
-    if (totalBytes + record.file.bytes > options.maxBytes) {
+    const identity = record.status === "source"
+      ? { kind: record.file.kind, file: record.file.file, bytes: record.file.bytes, hash: record.file.hash, ...(options.retainOpaque ? { mode: record.file.mode, absolutePath: record.file.absolutePath } : {}) }
+      : record.identity;
+    if (snapshotBytes + identity.bytes > options.maxBytes) {
       complete = false;
+      omissions.push(...candidates.slice(candidates.indexOf(relativePath)).map(file => ({ file, reason: "total-byte-limit" })));
       break;
     }
-    files.push(record.file);
-    totalBytes += record.file.bytes;
+    identities.push(identity);
+    snapshotBytes += identity.bytes;
+    if (record.status === "source") {
+      files.push(record.file);
+      totalBytes += record.file.bytes;
+    } else if (identity.kind === "symlink") {
+      counters.symlink += 1;
+    }
   }
-  if (counters.symlink) diagnostics.push(diagnostic("symlink_skipped", "The native scanner skipped symbolic links.", { count: counters.symlink }));
+  if (counters.symlink) diagnostics.push(diagnostic("symlink_recorded", "The native scanner recorded symbolic-link identity without following targets.", { count: counters.symlink }));
   if (counters.binary) diagnostics.push(diagnostic("binary_skipped", "The native scanner skipped binary or non-UTF-8 files.", { count: counters.binary }));
   if (counters.notFile) diagnostics.push(diagnostic("non_file_skipped", "The native scanner skipped an enumerated path that was not a regular file.", { count: counters.notFile }));
   if (counters.oversized) diagnostics.push(diagnostic("oversized_file_skipped", "The native scanner skipped files above its per-file limit.", { count: counters.oversized }));
+  if (counters.oversizedSymlink) diagnostics.push(diagnostic("oversized_symlink_skipped", "The native scanner skipped symbolic links above its per-entry limit.", { count: counters.oversizedSymlink }));
   if (counters.unreadable) diagnostics.push(diagnostic("unreadable_file_skipped", "The native scanner skipped unreadable files.", { count: counters.unreadable }));
   if (counters.unsafe) diagnostics.push(diagnostic("unsafe_path_skipped", "The native scanner skipped paths outside the repository root.", { count: counters.unsafe }));
   if (enumeration.rejectedPaths) diagnostics.push(diagnostic("portable_path_rejected", "The native scanner rejected Git paths outside its portable path domain.", { count: enumeration.rejectedPaths }));
@@ -377,11 +426,14 @@ async function buildSnapshot(projectRoot, options) {
   if (enumeration.unreadableDirectories) diagnostics.push(diagnostic("unreadable_directory_skipped", "The native scanner skipped unreadable directories.", { count: enumeration.unreadableDirectories }));
   if (!complete) diagnostics.push(diagnostic("scan_incomplete", "The native source scan is incomplete, so its context estimate is not fit-eligible."));
   const fingerprintHash = createHash("sha256");
-  for (const file of files) {
-    fingerprintHash.update(file.file);
+  for (const identity of identities) {
+    fingerprintHash.update(identity.kind);
     fingerprintHash.update("\0");
-    fingerprintHash.update(file.hash);
+    fingerprintHash.update(identity.file);
     fingerprintHash.update("\0");
+    fingerprintHash.update(identity.hash);
+    fingerprintHash.update("\0");
+    if (options.retainOpaque) fingerprintHash.update(`${identity.mode}\0`);
   }
   const sourceFingerprint = fingerprintHash.digest("hex");
   const head = enumeration.enumerator === "git" ? await gitCommit(root, options) : null;
@@ -391,6 +443,9 @@ async function buildSnapshot(projectRoot, options) {
     sourceFingerprint,
     files,
     filesByPath: new Map(files.map((file) => [file.file, file])),
+    inventory: identities,
+    omissions,
+    unknownOmissions,
     complete,
     totalBytes,
     enumerator: enumeration.enumerator,
@@ -429,7 +484,8 @@ export class NativeRepositoryIntelligence {
       gitOutputBytes: positiveInteger(options.gitOutputBytes, DEFAULT_GIT_OUTPUT_BYTES, "gitOutputBytes"),
       maxFiles: positiveInteger(options.maxFiles, DEFAULT_MAX_FILES, "maxFiles"),
       maxBytes: positiveInteger(options.maxBytes, DEFAULT_MAX_BYTES, "maxBytes"),
-      maxFileBytes: positiveInteger(options.maxFileBytes, DEFAULT_MAX_FILE_BYTES, "maxFileBytes")
+      maxFileBytes: positiveInteger(options.maxFileBytes, DEFAULT_MAX_FILE_BYTES, "maxFileBytes"),
+      retainOpaque: options.retainOpaque === true
     };
     this.snapshotPromise = null;
   }
@@ -469,6 +525,11 @@ export class NativeRepositoryIntelligence {
     if (typeof task !== "string" || !task.trim()) throw new TypeError("The native search task must be a non-empty string.");
     const snapshot = await this.snapshot();
     const topK = Math.min(MAX_SEARCH_RESULTS, positiveInteger(options.topK, 12, "topK"));
+    const filters = options.filters;
+    const eligible = file => (!filters?.domains?.length || filters.domains.includes(domainFor(file.file)))
+      && (!filters?.kinds?.length || filters.kinds.includes(nodeFor(file).kind))
+      && (!filters?.paths?.length || filters.paths.some(prefix => file.file === prefix || file.file.startsWith(prefix + "/")));
+    const files = snapshot.files.filter(eligible);
     const requiredReasons = new Map();
     const requiredNames = new Map();
     const unresolvedRequired = [];
@@ -482,13 +543,13 @@ export class NativeRepositoryIntelligence {
     for (const fileHint of hintValues(hints, "files")) {
       const normalized = normalizedRepositoryPath(fileHint);
       const file = normalized ? snapshot.filesByPath.get(normalized) : null;
-      if (file) addRequired(file, "explicit-design-reference");
+      if (file && eligible(file)) addRequired(file, "explicit-design-reference");
       else unresolvedRequired.push({ kind: "file", value: fileHint });
     }
     for (const fileHint of hintValues(hints, "expectedModifiedFiles")) {
       const normalized = normalizedRepositoryPath(fileHint);
       const file = normalized ? snapshot.filesByPath.get(normalized) : null;
-      if (file) addRequired(file, "expected-modification-target");
+      if (file && eligible(file)) addRequired(file, "expected-modification-target");
       else unresolvedRequired.push({ kind: "file", value: fileHint });
     }
     if (requiredReasons.size > topK) {
@@ -496,7 +557,7 @@ export class NativeRepositoryIntelligence {
     }
     let requiredEvidenceComplete = true;
     for (const symbol of hintValues(hints, "symbols")) {
-      const matches = snapshot.files.filter((file) => exactLexicalPattern(symbol).test(file.content));
+      const matches = files.filter((file) => exactLexicalPattern(symbol).test(file.content));
       if (matches.length === 0) {
         unresolvedRequired.push({ kind: "symbol", value: symbol });
         diagnostics.push(diagnostic("explicit_symbol_unresolved", `The native provider could not resolve the explicit symbol ${symbol}.`));
@@ -518,7 +579,7 @@ export class NativeRepositoryIntelligence {
     if (!snapshot.complete) unresolvedRequired.push({ kind: "repository-scan", value: "incomplete" });
     const concepts = hintValues(hints, "concepts");
     const tokens = queryTokens([task, ...concepts].join(" "));
-    const scored = snapshot.files.map((file) => ({ file, score: scoreFile(file, tokens, task) }));
+    const scored = files.map((file) => ({ file, score: scoreFile(file, tokens, task) }));
     scored.sort((left, right) => right.score - left.score || left.file.file.localeCompare(right.file.file));
     const requiredHits = [...requiredReasons.entries()].map(([filePath, reasons]) => {
       const file = snapshot.filesByPath.get(filePath);
@@ -536,7 +597,7 @@ export class NativeRepositoryIntelligence {
       .map(({ file, score }) => ({ node: nodeFor(file), score, reasons: ["provider-ranked-match", "lexical-match"] }));
     const unresolvedConcepts = concepts.filter((concept) => {
       const lower = concept.toLowerCase();
-      return !snapshot.files.some((file) => file.file.toLowerCase().includes(lower) || file.content.toLowerCase().includes(lower));
+      return !files.some((file) => file.file.toLowerCase().includes(lower) || file.content.toLowerCase().includes(lower));
     });
     diagnostics.push(diagnostic("semantic_unavailable", "The native provider supplies lexical retrieval without semantic search."));
     return {

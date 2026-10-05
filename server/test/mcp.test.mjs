@@ -27,7 +27,7 @@ async function projectFixture(context, name, artifact) {
 }
 
 function mcpProcess(context, cwd, projectRoot, environment = {}) {
-  const env = { ...process.env, PRISM_REVIEW_CERT_DIR: path.join(cwd, ".prism-review-cert"), ...environment };
+  const env = { ...process.env, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_REVIEW_CERT_DIR: path.join(cwd, ".prism-review-cert"), ...environment };
   if (projectRoot) {
     env.CLAUDE_PROJECT_DIR = projectRoot;
   } else {
@@ -256,7 +256,8 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.equal(tools.list_reviewable_artifacts.annotations.readOnlyHint, true);
   assert.equal(tools.list_repository_intelligence_providers.annotations.readOnlyHint, true);
   assert.deepEqual(tools.list_repository_intelligence_providers.inputSchema.required, ["projectRoot"]);
-  assert.equal(tools.plan_repository_context.annotations.readOnlyHint, true);
+  assert.equal(tools.plan_repository_context.annotations.readOnlyHint, false);
+  assert.equal(tools.plan_repository_context.annotations.openWorldHint, true);
   assert.deepEqual(tools.plan_repository_context.inputSchema.required, ["projectRoot", "task"]);
   assert.deepEqual(tools.plan_repository_context.inputSchema.properties.provider.enum, ["auto", "native", "codegraph", "codenib"]);
   assert.deepEqual(tools.plan_repository_context.inputSchema.properties.budget.enum, ["fast", "balanced", "thorough"]);
@@ -303,6 +304,73 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.equal(tools.get_coordination_state.annotations.readOnlyHint, true);
   assert.equal(tools.validate_coordination_state.annotations.readOnlyHint, true);
   assert.equal(tools.update_coordination_state.annotations.readOnlyHint, false);
+  assert.equal(tools.set_workflow_recording.annotations.readOnlyHint, false);
+  assert.equal(tools.read_workflow_decisions.annotations.readOnlyHint, true);
+  assert.equal(tools.record_workflow_decision.annotations.readOnlyHint, false);
+  assert.equal(tools.checkpoint_pause.annotations.readOnlyHint, false);
+});
+
+test("records native null estimates and explicit provider failures after opt-in", async (context) => {
+  const root = await projectFixture(context, "decision-mcp", "artifact.md");
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-decision-mcp-"));
+  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  const mcp = mcpProcess(context, root, root);
+  await initialize(mcp);
+  const enabled = await callTool(mcp, 2, "set_workflow_recording", { projectRoot: root, dataDirectory, enabled: true });
+  assert.equal(enabled.result.structuredContent.enabled, true);
+  const plan = await callTool(mcp, 3, "plan_repository_context", { projectRoot: root, dataDirectory, provider: "native", task: "Inspect artifact.", hints: { files: ["docs/artifact.md"] } });
+  assert.equal(plan.result.structuredContent.tokenEstimate.expected, null);
+  assert.ok(plan.result.structuredContent.observedSource.approximateTokens > 0);
+  const failed = await callTool(mcp, 4, "plan_repository_context", { projectRoot: root, dataDirectory, provider: "codegraph", task: "Inspect artifact." });
+  assert.ok(failed.error);
+  const history = await callTool(mcp, 5, "read_workflow_decisions", { projectRoot: root, dataDirectory });
+  const records = history.result.structuredContent.records;
+  assert.equal(records.length, 2);
+  assert.equal(records[0].selectedProvider, "native");
+  assert.equal(records[0].estimate.expected, null);
+  assert.ok(records[0].reasonCodes.length > 0);
+  assert.equal(records[1].requestedProvider, "codegraph");
+  assert.equal(records[1].outcome, "FAILURE");
+});
+
+test("checkpoints a pause and records its recovery evidence through MCP", async (context) => {
+  const root = await projectFixture(context, "pause-mcp", "artifact.md");
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-pause-mcp-"));
+  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  const mcp = mcpProcess(context, root, root);
+  await initialize(mcp);
+  const statePath = "docs/plans/example/state.json";
+  const recoveryPath = "docs/plans/example/child/recovery.md";
+  const current = await callTool(mcp, 2, "update_coordination_state", { projectRoot: root, statePath, expectedRevision: null,
+    changes: { activeOperations: [{ slice: "child", activity: "design", workers: ["worker"], workspace: "/work" }].map(entry => ({ op: "start", entry })) } });
+  await callTool(mcp, 3, "set_workflow_recording", { projectRoot: root, dataDirectory, enabled: true });
+  const paused = await callTool(mcp, 4, "checkpoint_pause", { projectRoot: root, statePath, expectedRevision: current.result.structuredContent.revision,
+    activeSlice: "child", recoveryPath, recoveryContent: "Current recovery.\n", changes: { next: ["Continue child"] }, dataDirectory });
+  assert.equal(paused.result.structuredContent.pausedSlice, "child");
+  assert.equal(paused.result.structuredContent.decisionRecording.status, "recorded");
+  const history = await callTool(mcp, 5, "read_workflow_decisions", { projectRoot: root, dataDirectory, statePath, recoveryPaths: [recoveryPath] });
+  assert.equal(history.result.structuredContent.records.at(-1).kind, "pause");
+  assert.equal(history.result.structuredContent.recovery[0].status, "historical");
+});
+
+test("requires structured diagram and review checkpoints through MCP", async (context) => {
+  const root = await projectFixture(context, "checkpoint-mcp", "artifact.md");
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-checkpoint-mcp-"));
+  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  const mcp = mcpProcess(context, root, root);
+  await initialize(mcp);
+  await callTool(mcp, 2, "set_workflow_recording", { projectRoot: root, dataDirectory, enabled: true });
+  const missing = await callTool(mcp, 3, "record_workflow_decision", { projectRoot: root, dataDirectory,
+    decision: { kind: "design_fit", outcome: "FIT", readability: "unreadable" } });
+  assert.ok(missing.error);
+  const fit = await callTool(mcp, 4, "record_workflow_decision", { projectRoot: root, dataDirectory,
+    decision: { kind: "design_fit", outcome: "SPLIT", readability: "unreadable", splitAssessment: "split", counts: { elements: 50, links: 84, notes: 17 } } });
+  assert.equal(fit.result.structuredContent.status, "recorded");
+  const review = await callTool(mcp, 5, "record_workflow_decision", { projectRoot: root, dataDirectory,
+    decision: { kind: "review", outcome: "FINDINGS", reviewPhase: "design_audit", findingIds: ["F-004"], dispositions: ["open"] } });
+  assert.equal(review.result.structuredContent.status, "recorded");
+  const history = await callTool(mcp, 6, "read_workflow_decisions", { projectRoot: root, dataDirectory });
+  assert.deepEqual(history.result.structuredContent.records.map((item) => item.kind), ["design_fit", "review"]);
 });
 
 test("updates coordination state without starting the review server", async (context) => {
@@ -819,4 +887,34 @@ test("opens one review page for the complete artifact tree when no artifact is s
   assert.doesNotMatch(review.result.structuredContent.url, /artifact=/);
   assert.equal(review.result.structuredContent.opened, true);
   assert.equal(await waitForMarker(browser.marker), "opened");
+});
+
+test("native semantic MCP discovery is passive and search exposes bounded structured results and stable errors", async context => {
+  const root = await projectFixture(context, "prism-semantic-mcp", "retry.md");
+  await writeFile(path.join(root, "docs/retry.md"), "Retry transient network failures.\n");
+  const mcp = mcpProcess(context, root);
+  await initialize(mcp);
+  mcp.send({ id: 2, method: "tools/list" });
+  const listed = (await mcp.next()).result.tools;
+  const search = listed.find(tool => tool.name === "search_repository_concepts");
+  assert.equal(search.inputSchema.properties.limit.maximum, 50);
+  assert.equal(search.inputSchema.properties.filters.additionalProperties, false);
+  assert.equal(search.annotations.readOnlyHint, false);
+  assert.equal(search.annotations.openWorldHint, true);
+  assert.equal(listed.find(tool => tool.name === "get_repository_intelligence_status").annotations.readOnlyHint, true);
+  mcp.send({ id: 3, method: "tools/call", params: { name: "discover_repository_intelligence", arguments: { projectRoot: root } } });
+  assert.equal((await mcp.next()).result.structuredContent.status, "unprepared");
+  mcp.send({ id: 4, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: root, query: "network failures", filters: { paths: ["docs"], domains: ["documentation"] } } } });
+  const result = (await mcp.next()).result;
+  assert.equal(result.structuredContent.status, "degraded");
+  assert.equal(result.structuredContent.results[0].file, "docs/retry.md");
+  assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+  mcp.send({ id: 5, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: root, query: "retry", expectedSnapshot: "0".repeat(64) } } });
+  assert.equal((await mcp.next()).error.data.code, "stale_snapshot");
+  mcp.send({ id: 6, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: root, query: "retry", limit: 51 } } });
+  assert.equal((await mcp.next()).error.data.code, "validation_failed");
+  mcp.send({ id: 7, method: "tools/call", params: { name: "get_repository_intelligence_status", arguments: { projectRoot: root, waitMs: 30001 } } });
+  assert.equal((await mcp.next()).error.data.code, "validation_failed");
+  mcp.send({ id: 8, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: "relative/path", query: "retry" } } });
+  assert.equal((await mcp.next()).error.data.code, "invalid_path");
 });

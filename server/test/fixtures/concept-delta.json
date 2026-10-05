@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "scope": ["src/retry", "instructions/answers.md", "docs/retry.md", "config/retry.json"],
+  "concepts": [
+    {
+      "id": "retry-policy", "kind": "class", "label": "RequestRetryStrategy", "action": "MODIFY",
+      "before": [{"path": "src/retry/strategy.ts", "selector": "RequestRetryStrategy"}],
+      "after": [{"path": "src/retry/strategy.ts", "selector": "RequestRetryStrategy"}],
+      "reason": "The existing strategy will own timeout retries."
+    },
+    {
+      "id": "legacy-retry", "kind": "class", "label": "LegacyRetryHandler", "action": "DELETE",
+      "before": [{"path": "src/retry/legacy.ts", "selector": "LegacyRetryHandler"}], "after": [],
+      "reason": "The existing strategy will cover the remaining behavior."
+    },
+    {
+      "id": "direct-answer", "kind": "rule", "label": "Answer directly", "action": "REPLACE",
+      "before": [
+        {"path": "instructions/answers.md", "selector": "Do not repeat the user's question"},
+        {"path": "instructions/answers.md", "selector": "Keep introductions short"}
+      ],
+      "after": [{"path": "instructions/answers.md", "selector": "Answer directly and include only information needed to satisfy the request"}],
+      "reason": "One rule will preserve both constraints without duplicate guidance."
+    },
+    {
+      "id": "retry-documentation", "kind": "section", "label": "Retry examples", "action": "REPLACE",
+      "before": [{"path": "docs/retry.md", "selector": "Examples"}],
+      "after": [{"path": "docs/retry.md", "selector": "Timeout examples"}, {"path": "docs/retry.md", "selector": "Connection examples"}],
+      "reason": "Separate examples will explain the two failure conditions."
+    },
+    {
+      "id": "attempt-timeout", "kind": "configuration-option", "label": "attemptTimeoutMs", "action": "KEEP",
+      "before": [{"path": "config/retry.json", "selector": "/attemptTimeoutMs"}],
+      "after": [{"path": "config/retry.json", "selector": "/attemptTimeoutMs"}],
+      "reason": "The per-attempt timeout keeps its current meaning."
+    },
+    {
+      "id": "retry-deadline", "kind": "configuration-option", "label": "retryDeadlineMs", "action": "ADD",
+      "before": [], "after": [{"path": "config/retry.json", "selector": "/retryDeadlineMs"}],
+      "reason": "Users need a total deadline across retry attempts.",
+      "reuseEvidence": {
+        "method": "Search configuration definitions and retry consumers. Semantic retrieval was unavailable.",
+        "candidates": [{"reference": {"path": "config/retry.json", "selector": "/attemptTimeoutMs"}, "disposition": "REJECT", "reason": "This option limits each attempt, not the total duration."}],
+        "justification": "A total deadline is independent of the existing per-attempt timeout."
+      }
+    }
+  ]
+}

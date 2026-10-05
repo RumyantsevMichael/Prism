@@ -56,7 +56,7 @@ function sourceProvider() {
         commit: "0123456789abcdef",
         sourceFingerprint: "source-0123456789abcdef",
         snapshotIdentity: {
-          scheme: "prism-native-sha256-v1",
+          scheme: "prism-native-sha256-v2",
           commit: "0123456789abcdef",
           fingerprint: "source-0123456789abcdef"
         },
@@ -180,7 +180,7 @@ test("describes the adapter through native source identity", async (context) => 
   assert.equal(description.version, "1.6.0");
   assert.equal(description.commit, "0123456789abcdef");
   assert.equal(description.sourceFingerprint, "source-0123456789abcdef");
-  assert.equal(description.snapshotIdentity.scheme, "prism-native-sha256-v1");
+  assert.equal(description.snapshotIdentity.scheme, "prism-native-sha256-v2");
   assert.deepEqual(description.capabilities, {
     lexicalSearch: true,
     semanticSearch: false,

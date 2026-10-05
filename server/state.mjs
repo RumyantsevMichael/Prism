@@ -1,15 +1,15 @@
-import { createHash, randomBytes } from "node:crypto";
-import { mkdir, open, readFile, realpath, rename, rm, stat, lstat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { applyActiveOperations, withReviewGatesLocked } from "./active-operations.mjs";
+import { conservationStore } from "./conservation-store.mjs";
+import { mkdir, readFile, realpath, rm, lstat } from "node:fs/promises";
 import path from "node:path";
+import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 
 const SCHEMA_VERSION = 1;
-const LOCK_TIMEOUT_MS = 5000;
-const LOCK_STALE_MS = 30000;
-const stateLocks = new Map();
 
 const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence"]);
 const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "models"]);
-const ACTIVE_KEYS = new Set(["slice", "activity", "workers", "workspace", "reviewLanes", "findingsPath"]);
+const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const SETTING_VALUES = {
   autonomy: new Set(["conservative", "broad", "full"]),
   agentFlow: new Set(["mono", "multi"]),
@@ -321,7 +321,7 @@ function validateChanges(changes) {
     throw error("invalid_changes", "The changes argument must contain at least one managed state field.");
   }
   for (const key of Object.keys(changes)) {
-    if (!TOP_LEVEL_KEYS.has(key) || key === "schemaVersion") {
+    if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations") || key === "schemaVersion") {
       throw error("invalid_changes", `The state field ${key} cannot be changed through this capability.`);
     }
   }
@@ -393,91 +393,6 @@ function publicStateResult(resolved, loaded) {
   };
 }
 
-async function wait(milliseconds) {
-  await new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-async function acquireFileLock(statePath) {
-  const lockPath = `${statePath}.lock`;
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    try {
-      const handle = await open(lockPath, "wx", 0o600);
-      await handle.writeFile(JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
-      return { handle, lockPath };
-    } catch (caught) {
-      if (caught.code !== "EEXIST") {
-        throw caught;
-      }
-      try {
-        const lockInfo = await stat(lockPath);
-        if (Date.now() - lockInfo.mtimeMs > LOCK_STALE_MS) {
-          await rm(lockPath, { force: true });
-          continue;
-        }
-      } catch (lockError) {
-        if (lockError.code !== "ENOENT") {
-          throw lockError;
-        }
-      }
-      await wait(25);
-    }
-  }
-  throw error("lock_timeout", "The state file is locked by another writer.");
-}
-
-async function withFileLock(statePath, action) {
-  const lock = await acquireFileLock(statePath);
-  try {
-    return await action();
-  } finally {
-    await lock.handle.close().catch(() => {});
-    await rm(lock.lockPath, { force: true }).catch(() => {});
-  }
-}
-
-async function withStateLock(statePath, action) {
-  const previous = stateLocks.get(statePath) ?? Promise.resolve();
-  let release;
-  const current = new Promise((resolve) => {
-    release = resolve;
-  });
-  stateLocks.set(statePath, current);
-  await previous;
-  try {
-    return await action();
-  } finally {
-    release();
-    if (stateLocks.get(statePath) === current) {
-      stateLocks.delete(statePath);
-    }
-  }
-}
-
-async function writeAtomically(statePath, contents) {
-  let mode = 0o644;
-  try {
-    mode = (await stat(statePath)).mode & 0o777;
-  } catch (caught) {
-    if (caught.code !== "ENOENT") {
-      throw caught;
-    }
-  }
-  const temporaryPath = path.join(path.dirname(statePath), `.${path.basename(statePath)}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`);
-  try {
-    const handle = await open(temporaryPath, "wx", mode);
-    try {
-      await handle.writeFile(contents, "utf8");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await rename(temporaryPath, statePath);
-  } finally {
-    await rm(temporaryPath, { force: true });
-  }
-}
-
 function changedFields(before, after) {
   return ["settings", "active", "pending", "next", "evidence"].filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after[key]));
 }
@@ -497,7 +412,11 @@ export async function updateCoordinationState({ projectRoot, statePath, expected
     throw error("invalid_revision", "The expectedRevision argument must be a state revision string or null.");
   }
   const resolved = await resolveStatePath(projectRoot, statePath, true);
-  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+  await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.displayPath]);
+  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => applyStateChange(resolved, expectedRevision, changes), error, { renew: Boolean(changes.activeOperations?.length) }));
+}
+
+async function applyStateChange(resolved, expectedRevision, changes) {
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision) {
       throw error("revision_conflict", "The state changed since it was read. Read it again and retry with its current revision.", { current: publicStateResult(resolved, current) });
@@ -506,10 +425,13 @@ export async function updateCoordinationState({ projectRoot, statePath, expected
       throw error("invalid_state", "The existing state is invalid and was not changed.", { validation: publicStateResult(resolved, current) });
     }
     const before = current.state ?? defaultState();
+    if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(before.active)) throw error("gate_blocked", "Use typed activeOperations to change active work; array replacement cannot bypass review gates.");
+    return withReviewGatesLocked(resolved.root, before.active, changes.activeOperations ?? [], async () => {
+    const activeResult = await applyActiveOperations(resolved.root, before.active, changes.activeOperations ?? []);
     const candidate = normalizeState({
       ...before,
+      active: activeResult.active,
       ...(changes.settings === undefined ? {} : { settings: { ...before.settings, ...changes.settings } }),
-      ...(changes.active === undefined ? {} : { active: changes.active }),
       ...(changes.pending === undefined ? {} : { pending: changes.pending }),
       ...(changes.next === undefined ? {} : { next: changes.next }),
       ...(changes.evidence === undefined ? {} : { evidence: changes.evidence })
@@ -519,8 +441,9 @@ export async function updateCoordinationState({ projectRoot, statePath, expected
       throw error("invalid_state", "The proposed state is invalid and was not written.", { errors: validation.errors, warnings: validation.warnings });
     }
     const contents = `${JSON.stringify(candidate, null, 2)}\n`;
+    await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.displayPath]);
     if (!current.exists || contents !== current.contents) {
-      await writeAtomically(resolved.path, contents);
+      await conservationStore.writeManaged(resolved.root, resolved.path, contents);
     }
     const updated = await loadState(resolved.path);
     return {
@@ -528,6 +451,58 @@ export async function updateCoordinationState({ projectRoot, statePath, expected
       created: !current.exists,
       changedFields: changedFields(before, updated.state),
       previousRevision: current.revision
+      ,completions: activeResult.completions
     };
-  }));
+    });
+}
+
+export async function checkpointPause({ projectRoot, statePath, expectedRevision, activeSlice, recoveryPath, recoveryContent, changes }) {
+  validateChanges(changes);
+  if (typeof activeSlice !== "string" || !activeSlice || typeof recoveryContent !== "string" || !recoveryContent.trim() || Buffer.byteLength(recoveryContent) > 65536) {
+    throw error("invalid_pause", "An active slice and a recovery note of at most 64 KiB are required.");
+  }
+  if (typeof recoveryPath !== "string" || path.isAbsolute(recoveryPath) || path.basename(recoveryPath) !== "recovery.md") {
+    throw error("invalid_path", "The recoveryPath must name a project-relative recovery.md file.");
+  }
+  const resolved = await resolveStatePath(projectRoot, statePath, true);
+  const recovery = path.resolve(resolved.root, recoveryPath);
+  if (!isInside(resolved.root, recovery) || path.dirname(recovery) === resolved.root || !recoveryPath.split(/[\\/]/).includes(activeSlice)) {
+    throw error("invalid_path", "The recovery note must be inside a slice directory.");
+  }
+  await assertNearestExistingPathInside(resolved.root, path.dirname(recovery));
+  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+    const current = await loadState(resolved.path);
+    if (current.revision !== expectedRevision) {
+      throw error("revision_conflict", "The state changed since it was read. Read it again and retry with its current revision.", { current: publicStateResult(resolved, current) });
+    }
+    if (!current.valid || !current.state?.active.some((item) => item.slice === activeSlice)) {
+      throw error("invalid_pause", "The slice is not active in the current coordination state.");
+    }
+    const recoveryRelative = path.relative(resolved.root, recovery).split(path.sep).join("/");
+    const stateRelativeRecovery = path.relative(path.dirname(resolved.path), recovery).split(path.sep).join("/");
+    const remainingActive = current.state.active.filter((item) => item.slice !== activeSlice);
+    if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(remainingActive)) {
+      throw error("invalid_pause", "The pause must preserve every other active slice.");
+    }
+    if (changes.activeOperations !== undefined) throw error("invalid_pause", "A pause releases only its named slice; other active operations are not allowed.");
+    const existing = await lstat(recovery).catch((caught) => caught.code === "ENOENT" ? null : Promise.reject(caught));
+    if (existing?.isSymbolicLink() || (existing && !existing.isFile())) throw error("invalid_path", "The recovery note must be a regular file.");
+    const previous = existing ? await readFile(recovery, "utf8") : null;
+    try {
+      await conservationStore.registerCoordinationOutputs(resolved.root, [recoveryRelative]);
+      await mkdir(path.dirname(recovery), { recursive: true });
+      await conservationStore.writeManaged(resolved.root, recovery, recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}\n`);
+      const result = await applyStateChange(resolved, expectedRevision, {
+        ...changes,
+        active: undefined,
+        activeOperations: [{ op: "release", slice: activeSlice }],
+        evidence: [...new Set([...current.state.evidence, ...(changes.evidence ?? []), stateRelativeRecovery])]
+      });
+      return { ...result, recoveryPath: recoveryRelative, recoveryDigest: createHash("sha256").update(recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}\n`).digest("hex"), pausedSlice: activeSlice };
+    } catch (caught) {
+      if (previous === null) await rm(recovery, { force: true }).catch(() => {});
+      else await writeAtomically(recovery, previous).catch(() => {});
+      throw caught;
+    }
+  }, error));
 }

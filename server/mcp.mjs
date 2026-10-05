@@ -1,4 +1,8 @@
 import readline from "node:readline";
+import { ACTIVE_OPERATIONS_SCHEMA } from "./active-operations.mjs";
+import { assertInput } from "./artifact-schema.mjs";
+import { CONSERVATION_TOOLS, callConservationTool } from "./conservation-tools.mjs";
+import { ConceptDeltaError, GET_CONCEPT_DELTA_SCHEMA, UPDATE_CONCEPT_DELTA_SCHEMA, getConceptDelta, updateConceptDelta } from "./concept-delta.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence.mjs";
@@ -15,13 +19,65 @@ import {
   resolveSessionCapacity
 } from "./session-capacity.mjs";
 import { summarizeSessionConsumption } from "./session-trace-store.mjs";
+import { appendDecision, readDecisionHistory, setDecisionRecording } from "./decision-history.mjs";
 import { listArtifacts, startReviewServer } from "./review-server.mjs";
-import { readCoordinationState, updateCoordinationState, validateCoordinationState } from "./state.mjs";
+import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./state.mjs";
+import { nativeSemanticRuntime } from "./native-semantic-runtime.mjs";
+import { NATIVE_INTELLIGENCE_TOOLS, prepareNativeProvider, searchRepositoryConcepts } from "./semantic-native-provider.mjs";
 
 const reviewServers = new Map();
 const taskRoots = new Map();
 const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1000;
 const pluginManifest = JSON.parse(await readFile(new URL("../.codex-plugin/plugin.json", import.meta.url), "utf8"));
+
+function decisionDataDirectory(argumentsValue) {
+  const configured = process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA;
+  if (configured && argumentsValue.dataDirectory && path.resolve(argumentsValue.dataDirectory) !== path.resolve(configured)) {
+    throw new Error("The dataDirectory argument does not match the host plugin data directory.");
+  }
+  return argumentsValue.dataDirectory || configured;
+}
+
+async function recordAutomaticDecision(input) {
+  try {
+    return await appendDecision(input);
+  } catch {
+    return { status: "unavailable", reasonCode: "decision_store_unavailable" };
+  }
+}
+
+function estimateReasons(plan) {
+  if (plan.tokenEstimate?.expected !== null) return [];
+  const result = [];
+  const diagnostics = plan.diagnostics || {};
+  if (diagnostics.noAnchors) result.push("no_anchors");
+  if (diagnostics.unresolvedRequired?.length) result.push("unresolved_required");
+  if (diagnostics.unresolvedConcepts?.length) result.push("unresolved_concepts");
+  for (const [name, enabled] of Object.entries(plan.provider?.capabilities || {})) {
+    if (["lexicalSearch", "semanticSearch", "symbolGraph", "verifiedSource"].includes(name) && enabled !== true) {
+      result.push(`${name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}_unavailable`);
+    }
+  }
+  if (!diagnostics.estimateEligible && result.length === 0) result.push("provider_estimate_ineligible");
+  return result;
+}
+
+function contextDecision(plan, requestedProvider, exclusions = []) {
+  const ranges = [plan.mustRead || [], plan.likelyRead || [], plan.possibleRead || []];
+  const verifiedTokens = plan.observedSource?.approximateTokens ?? ranges.flat().reduce((sum, item) => sum + (item.rangeComplete && Number.isSafeInteger(item.sourceTokens) ? item.sourceTokens : 0), 0);
+  return {
+    kind: "context_plan",
+    outcome: "SUCCESS",
+    requestedProvider,
+    selectedProvider: plan.provider?.selection?.selected || "native",
+    reasonCodes: [
+      ...estimateReasons(plan),
+      ...exclusions.map((item) => `${item.provider}_${item.reasonCode}`.replace(/[^a-z0-9_-]/g, "_"))
+    ],
+    counts: { must: ranges[0].length, likely: ranges[1].length, possible: ranges[2].length, verifiedTokens },
+    estimate: { lower: plan.tokenEstimate?.lower ?? null, expected: plan.tokenEstimate?.expected ?? null, upper: plan.tokenEstimate?.upper ?? null }
+  };
+}
 
 function taskId(metadata = {}) {
   return metadata["x-codex-turn-metadata"]?.thread_id ?? metadata.threadId ?? "mcp-process";
@@ -143,7 +199,8 @@ function contextPlanContent(plan) {
     `Must read: ${plan.mustRead.length}.`,
     `Likely read: ${plan.likelyRead.length}.`,
     `Possible read: ${plan.possibleRead.length}.`,
-    `Token estimate: ${plan.tokenEstimate.lower} / ${plan.tokenEstimate.expected} / ${plan.tokenEstimate.upper}.`
+    `Token estimate: ${plan.tokenEstimate.lower} / ${plan.tokenEstimate.expected} / ${plan.tokenEstimate.upper}.`,
+    `Observed verified source: ${plan.observedSource?.approximateTokens ?? 0} approximate tokens across ${plan.observedSource?.verifiedRangeCount ?? 0} ranges.`
   ].join("\n");
 }
 
@@ -228,7 +285,11 @@ function stateErrorData(error) {
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
   }
+  if (error instanceof ConceptDeltaError) {
+    return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
+  }
   if (error?.name !== "CoordinationStateError") {
+    if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
     return undefined;
   }
   const data = { code: error.code };
@@ -289,6 +350,20 @@ const activeSessionInputSchema = {
 const sessionInputSchema = { oneOf: [explicitSessionInputSchema, activeSessionInputSchema] };
 
 const tools = [
+  ...CONSERVATION_TOOLS,
+  ...NATIVE_INTELLIGENCE_TOOLS,
+  {
+    name: "get_concept_delta",
+    description: "Read a bounded page of a slice concept-delta.json through MCP. Pin expectedRevision across pages and to the audited design. Reads never create files.",
+    inputSchema: GET_CONCEPT_DELTA_SCHEMA,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "update_concept_delta",
+    description: "Insert, update, or remove concept entries in one validated atomic batch. Read first and pass its revision. Use null only for creation. Never edit the artifact directly. Missing addition evidence keeps drafts not ready for FIT.",
+    inputSchema: UPDATE_CONCEPT_DELTA_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  },
   {
     name: "get_review_url",
     description: "Start or update the local Prism HTTPS review server and return a human review URL only. Use artifacts to select the shared persistent tabs. This tool does not open a browser or return rendered image data.",
@@ -345,12 +420,12 @@ const tools = [
   },
   {
     name: "plan_repository_context",
-    description: "Plan bounded repository source context through the native provider and zero or one selected external provider. Returns explainable must, likely, and possible source ranges with token estimates. This tool does not decide session fit.",
+    description: "Plan bounded repository source context. Auto prepares bundled native semantic analysis, downloading pinned assets and writing private caches as needed. Returns preparing after ten seconds or source ranges with token estimates. Explicit external providers remain available. This tool does not decide session fit.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        provider: { type: "string", enum: ["auto", "native", "codegraph", "codenib"], default: "auto", description: "Select native only, one explicit external contributor, or automatic capability-aware selection." },
+        provider: { type: "string", enum: ["auto", "native", "codegraph", "codenib"], default: "auto", description: "Auto selects native analysis. Select codegraph or codenib explicitly to use an external contributor." },
         task: { type: "string", minLength: 1, maxLength: REPOSITORY_CONTEXT_INPUT_LIMITS.taskCharacters, description: "The implementation or design outcome to investigate." },
         hints: {
           type: "object",
@@ -364,12 +439,15 @@ const tools = [
         },
         budget: { type: "string", enum: ["fast", "balanced", "thorough"], default: "balanced" },
         searchHits: { type: "integer", minimum: 1, maximum: 100, default: 12 },
-        graphNodes: { type: "integer", minimum: 1, maximum: 100, default: 24 }
+        graphNodes: { type: "integer", minimum: 1, maximum: 100, default: 24 },
+        expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" },
+        correlationKey: sessionCorrelationKeyInputSchema,
+        dataDirectory: { type: "string", description: "The absolute Prism plugin data directory for optional decision recording." }
       },
       required: ["projectRoot", "task"],
       additionalProperties: false
     },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   },
   {
     name: "resolve_session_capacity",
@@ -433,6 +511,100 @@ const tools = [
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "set_workflow_recording",
+    description: "Enable or disable local decision recording for one project. Recording is disabled by default.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string" },
+        dataDirectory: { type: "string" },
+        enabled: { type: "boolean" }
+      },
+      required: ["projectRoot", "dataDirectory", "enabled"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "read_workflow_decisions",
+    description: "Read local ordered decision records and explicit coverage gaps for one project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string" },
+        dataDirectory: { type: "string" },
+        correlationKey: sessionCorrelationKeyInputSchema,
+        statePath: { type: "string" },
+        recoveryPaths: { type: "array", items: { type: "string" } }
+      },
+      required: ["projectRoot", "dataDirectory"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "record_workflow_decision",
+    description: "Record a structured design or review checkpoint without prompts or source text.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string" },
+        dataDirectory: { type: "string" },
+        correlationKey: sessionCorrelationKeyInputSchema,
+        decision: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "outcome"],
+          properties: {
+            kind: { type: "string", enum: ["design_fit", "review"] },
+            outcome: { type: "string", enum: ["FIT", "SPLIT", "BLOCKED", "CLEAN", "FINDINGS"] },
+            reasonCodes: { type: "array", items: { type: "string" } },
+            evidencePaths: { type: "array", items: { type: "string" } },
+            counts: { type: "object", additionalProperties: false, properties: { elements: { type: "integer" }, links: { type: "integer" }, notes: { type: "integer" } } },
+            readability: { type: "string", enum: ["readable", "difficult", "unreadable", "not_assessed"] },
+            splitAssessment: { type: "string", enum: ["split", "keep", "undecided"] },
+            findingIds: { type: "array", items: { type: "string" } },
+            reviewPhase: { type: "string", enum: ["design_audit", "implementation_review", "security_review"] },
+            dispositions: { type: "array", items: { type: "string" } },
+            agentLabel: { type: "string" }
+          }
+        }
+      },
+      required: ["projectRoot", "dataDirectory", "decision"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  },
+  {
+    name: "checkpoint_pause",
+    description: "Write the active slice recovery note and update coordination state under one revision lock.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string" },
+        statePath: { type: "string" },
+        expectedRevision: { oneOf: [{ type: "string" }, { type: "null" }] },
+        activeSlice: { type: "string" },
+        recoveryPath: { type: "string" },
+        recoveryContent: { type: "string", maxLength: 65536 },
+        changes: {
+          type: "object", additionalProperties: false,
+          properties: {
+            active: { type: "array", items: { type: "object" } },
+            pending: { type: "array", items: { type: "string" } },
+            next: { type: "array", items: { type: "string" } },
+            evidence: { type: "array", items: { type: "string" } }
+          }
+        },
+        dataDirectory: { type: "string" },
+        correlationKey: sessionCorrelationKeyInputSchema
+      },
+      required: ["projectRoot", "statePath", "expectedRevision", "activeSlice", "recoveryPath", "recoveryContent", "changes"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   },
   {
     name: "get_coordination_state",
@@ -503,6 +675,7 @@ const tools = [
                 }
               }
             },
+            activeOperations: ACTIVE_OPERATIONS_SCHEMA,
             active: {
               type: "array",
               items: {
@@ -532,8 +705,8 @@ const tools = [
   }
 ];
 
-const stateTools = new Set(["get_coordination_state", "validate_coordination_state", "update_coordination_state"]);
-const repositoryTools = new Set(["list_repository_intelligence_providers", "plan_repository_context", "resolve_session_capacity", "evaluate_repository_fit", "summarize_session_consumption"]);
+const stateTools = new Set(["get_coordination_state", "validate_coordination_state", "update_coordination_state", "checkpoint_pause"]);
+const repositoryTools = new Set([...NATIVE_INTELLIGENCE_TOOLS.map(tool => tool.name), "list_repository_intelligence_providers", "plan_repository_context", "resolve_session_capacity", "evaluate_repository_fit", "summarize_session_consumption", "set_workflow_recording", "read_workflow_decisions", "record_workflow_decision"]);
 
 async function callStateTool(name, argumentsValue) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
@@ -545,6 +718,15 @@ async function callStateTool(name, argumentsValue) {
     resultValue = await validateCoordinationState(input);
   } else if (name === "update_coordination_state") {
     resultValue = await updateCoordinationState(input);
+  } else if (name === "checkpoint_pause") {
+    resultValue = await checkpointPause(input);
+    const dataDirectory = decisionDataDirectory(argumentsValue);
+    if (dataDirectory) {
+      const recording = await recordAutomaticDecision({ projectRoot, dataDirectory, correlationKey: argumentsValue.correlationKey,
+        decision: { kind: "pause", outcome: "PAUSED", evidencePaths: [resultValue.recoveryPath, resultValue.statePath], stateRevision: resultValue.revision,
+          recoveryDigest: resultValue.recoveryDigest, activeSlices: [argumentsValue.activeSlice] } });
+      resultValue = { ...resultValue, decisionRecording: recording };
+    }
   } else {
     throw new Error(`Unknown state tool: ${name}`);
   }
@@ -552,6 +734,37 @@ async function callStateTool(name, argumentsValue) {
 }
 
 async function callRepositoryTool(name, argumentsValue) {
+  if (NATIVE_INTELLIGENCE_TOOLS.some(tool => tool.name === name)) {
+    const schema = NATIVE_INTELLIGENCE_TOOLS.find(tool => tool.name === name).inputSchema;
+    assertInput(schema, argumentsValue);
+    try { assertExactToolArguments(argumentsValue, Object.keys(schema.properties), schema.required, `${name} arguments`); }
+    catch (error) { error.code = "validation_failed"; throw error; }
+    const projectRoot = await requestedProjectRoot(argumentsValue).catch(error => { error.code = "invalid_path"; throw error; });
+    let value = name === "search_repository_concepts" ? await searchRepositoryConcepts({ ...argumentsValue, projectRoot }) : await nativeSemanticRuntime.status(projectRoot, argumentsValue.waitMs);
+    if (name !== "search_repository_concepts") {
+      const diagnostics = value.diagnostics || [], offset = argumentsValue.offset || 0, limit = argumentsValue.limit || 20;
+      value = { ...value, diagnostics: diagnostics.slice(offset, offset + limit), totalDiagnostics: diagnostics.length, nextOffset: offset + limit < diagnostics.length ? offset + limit : null };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+  }
+  if (name === "set_workflow_recording") {
+    assertExactToolArguments(argumentsValue, ["projectRoot", "dataDirectory", "enabled"], ["projectRoot", "dataDirectory", "enabled"], "set_workflow_recording arguments");
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const result = await setDecisionRecording({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), enabled: argumentsValue.enabled });
+    return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+  }
+  if (name === "read_workflow_decisions") {
+    assertExactToolArguments(argumentsValue, ["projectRoot", "dataDirectory", "correlationKey", "statePath", "recoveryPaths"], ["projectRoot", "dataDirectory"], "read_workflow_decisions arguments");
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const result = await readDecisionHistory({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, statePath: argumentsValue.statePath, recoveryPaths: argumentsValue.recoveryPaths });
+    return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+  }
+  if (name === "record_workflow_decision") {
+    assertExactToolArguments(argumentsValue, ["projectRoot", "dataDirectory", "correlationKey", "decision"], ["projectRoot", "dataDirectory", "decision"], "record_workflow_decision arguments");
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const result = await appendDecision({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, decision: argumentsValue.decision, source: "agent_checkpoint" });
+    return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+  }
   if (name === "summarize_session_consumption") {
     assertExactToolArguments(argumentsValue, ["projectRoot", "correlationKey", "dataDirectory"], ["projectRoot", "correlationKey", "dataDirectory"], "summarize_session_consumption arguments");
     const projectRoot = await requestedProjectRoot(argumentsValue);
@@ -594,16 +807,36 @@ async function callRepositoryTool(name, argumentsValue) {
         tokenEstimate: argumentsValue.tokenEstimate
       });
     }
+    const dataDirectory = argumentsValue.session?.dataDirectory || decisionDataDirectory(argumentsValue);
+    if (dataDirectory) {
+      const recording = await recordAutomaticDecision({
+        projectRoot: await requestedProjectRoot(argumentsValue), dataDirectory,
+        correlationKey: argumentsValue.session?.correlationKey,
+        decision: { kind: "repository_fit", outcome: fit.fit || "UNSUPPORTED", reasonCodes: fit.reasonCode ? [String(fit.reasonCode).toLowerCase().replace(/[^a-z0-9_-]/g, "_")] : [], estimate: argumentsValue.tokenEstimate }
+      });
+      if (recording.status === "unavailable") fit = { ...fit, decisionRecording: recording };
+    }
     return { content: [{ type: "text", text: repositoryFitContent(fit) }], structuredContent: fit };
   }
   if (name === "list_repository_intelligence_providers") {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const providers = await listRepositoryIntelligenceProviders(projectRoot);
-    return { content: [{ type: "text", text: providerListContent(providers) }], structuredContent: { providers } };
+    return { content: [{ type: "text", text: providerListContent(providers) }], structuredContent: { providers, native: await nativeSemanticRuntime.status(projectRoot) } };
   }
   if (name === "plan_repository_context") {
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const plan = await withRepositoryIntelligence(projectRoot, (provider) => planRepositoryContext({
+    let native;
+    if (["auto", "native"].includes(argumentsValue.provider || "auto")) {
+      native = await prepareNativeProvider(projectRoot, { expectedSnapshot: argumentsValue.expectedSnapshot });
+      if (native.preparation.status === "preparing") {
+        const value = { ...native.preparation, prepared: undefined };
+        return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+      }
+    }
+    let plan;
+    const exclusions = [];
+    try {
+      plan = await withRepositoryIntelligence(projectRoot, (provider) => planRepositoryContext({
       task: argumentsValue.task,
       hints: argumentsValue.hints,
       provider,
@@ -612,13 +845,36 @@ async function callRepositoryTool(name, argumentsValue) {
         searchHits: argumentsValue.searchHits,
         graphNodes: argumentsValue.graphNodes
       }
-    }), { selection: argumentsValue.provider || "auto" });
+      }), { selection: argumentsValue.provider || "auto", ...(native ? { openNative: async () => native.provider } : {}), onExclusion: (item) => exclusions.push(item) });
+    } catch (error) {
+      const dataDirectory = decisionDataDirectory(argumentsValue);
+      if (dataDirectory) await recordAutomaticDecision({ projectRoot, dataDirectory, correlationKey: argumentsValue.correlationKey,
+        decision: { kind: "context_plan", outcome: "FAILURE", requestedProvider: argumentsValue.provider || "auto", reasonCodes: [String(error.code || "planning_failed").toLowerCase().replace(/[^a-z0-9_-]/g, "_")] } });
+      throw error;
+    }
+    const dataDirectory = decisionDataDirectory(argumentsValue);
+    if (dataDirectory) {
+      const recording = await recordAutomaticDecision({ projectRoot, dataDirectory, correlationKey: argumentsValue.correlationKey,
+        decision: contextDecision(plan, argumentsValue.provider || "auto", exclusions) });
+      if (recording.status === "unavailable") plan = { ...plan, decisionRecording: recording };
+    }
     return { content: [{ type: "text", text: contextPlanContent(plan) }], structuredContent: plan };
   }
   throw new Error(`Unknown repository-intelligence tool: ${name}`);
 }
 
 async function callTool(name, argumentsValue = {}, metadata) {
+  if (CONSERVATION_TOOLS.some(tool => tool.name === name)) {
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const value = await callConservationTool(name, { ...argumentsValue, projectRoot });
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+  }
+  if (["get_concept_delta", "update_concept_delta"].includes(name)) {
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const input = { ...argumentsValue, projectRoot };
+    const value = name === "get_concept_delta" ? await getConceptDelta(input) : await updateConceptDelta(input);
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+  }
   if (stateTools.has(name)) {
     return callStateTool(name, argumentsValue);
   }
@@ -674,6 +930,7 @@ input.on("line", async (line) => {
 });
 
 input.on("close", async () => {
+  nativeSemanticRuntime.close();
   for (const binding of reviewServers.values()) {
     clearTimeout(binding.idleTimeout);
   }

@@ -79,6 +79,40 @@ Run a local human review from the repository root:
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.
 
+## Native semantic runtime
+
+The new native subsystem uses strict TypeScript in `.mts` files.
+The existing server remains JavaScript.
+Shared concept and worker message types live in `server/repository-concept-types.mts`.
+Edit the TypeScript sources, then regenerate their adjacent `.mjs` files.
+The package ships generated JavaScript, so users do not need a TypeScript compiler.
+
+```bash
+npm ci --prefix native-runtime --ignore-scripts
+npm ci --prefix scripts/native-build --ignore-scripts
+npm run build:native
+npm run check:native
+node scripts/build-native-runtime.mjs
+node scripts/native-build/smoke.mjs dist/native
+node scripts/native-build/mcp-smoke.mjs dist/native
+```
+
+The archive builder verifies generated files and copies pinned dependencies without running installation scripts.
+The smoke tests run the packaged Node helper without external executables.
+The MCP smoke test also checks native estimates, offline reuse, responsive discovery, and source changes.
+The runtime workflow builds and tests all five target platforms before optional publication.
+Push to `codex/native-runtime-assets` to publish verified bundles, or dispatch the workflow with `publish` enabled.
+Promote immutable asset hashes into `vendor/native-runtime/manifest.json` only after those platform checks pass.
+An empty bundle manifest leaves semantic preparation unavailable and preserves lexical results.
+Use a host-owned `PRISM_NATIVE_ASSET_MANIFEST` path for local archive tests.
+Project files cannot select that manifest.
+
+The runtime publication workflow also tests the default manifest on all five platforms after publication.
+Those checks include semantic discovery, retained receipts, and managed-addition readiness without a manifest override.
+Only a successful run produces the `verified-native-manifest` artifact.
+Replace `vendor/native-runtime/manifest.json` with that artifact before distributing the default package.
+Run `node scripts/native-build/mcp-smoke.mjs --default` to verify the promoted manifest locally.
+
 ## Writing skills
 
 - **Read the SDM documents first.** Before editing a skill, read [the Skill Definition Markdown standard](docs/skill-language.md) and [its validation behavior](docs/skill-language-validation.md).
