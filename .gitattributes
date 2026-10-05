@@ -1,2 +1,4 @@
+vendor/plantuml/*.js binary
+vendor/plantuml/LICENSE text eol=lf
 *.mjs text eol=lf
 *.mts text eol=lf
