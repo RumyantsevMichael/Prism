@@ -137,7 +137,10 @@ test('compares retained DELETE, changed KEEP, missing replacement and source out
 test('mode-only changes cannot pass KEEP',async()=>{
  const f=await fixture({'a.sh':'echo x\n','requirements.md':'Requirement'});
  const d=await f.update({expectedRevision:null,scope:['a.sh'],baselineId:f.b.snapshotId,requirements:[ref('requirements.md')],operations:[{op:'insert',entry:entry('keep','KEEP',[ref('a.sh')],[ref('a.sh')])}]});
- await chmod(path.join(f.root,'a.sh'),0o755);const c=await compare(f,d,await store.capture(f.root));assert.ok(c.observations.some(x=>x.code==='keep_changed'));
+ const target=path.join(f.root,'a.sh');
+ await chmod(target,process.platform==='win32'?0o444:0o755);
+ try {const c=await compare(f,d,await store.capture(f.root));assert.ok(c.observations.some(x=>x.code==='keep_changed'));}
+ finally {await chmod(target,0o644);}
 });
 test('review acceptance, exact source gates, concurrent lanes and coordination bypasses',async()=>{
  const f=await fixture();await analysis(f.root,f.b);
