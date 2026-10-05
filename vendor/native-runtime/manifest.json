@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "assetVersion": "native-runtime-37346099054-1",
+  "bundles": {
+    "darwin-arm64": {
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-37346099054-1/prism-native-darwin-arm64.tar.gz",
+      "bytes": 115634553,
+      "sha256": "a90094972eca8cf8877a7ab6c57f332a23bd779e656987e91aa609fceb838db4",
+      "unpackedBytes": 513406366
+    },
+    "darwin-x64": {
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-37346099054-1/prism-native-darwin-x64.tar.gz",
+      "bytes": 118190149,
+      "sha256": "12445aa6d8c3b528d0019f3edab581cbc3fa8f8a22ad8109b37a89ae48c20c03",
+      "unpackedBytes": 521747495
+    },
+    "linux-x64": {
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-37346099054-1/prism-native-linux-x64.tar.gz",
+      "bytes": 131024104,
+      "sha256": "fcc12da6dd1a06495a9f435ce325202047e3baeb7a6a389d1e1535083b2e4f6b",
+      "unpackedBytes": 533461362
+    },
+    "linux-arm64": {
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-37346099054-1/prism-native-linux-arm64.tar.gz",
+      "bytes": 126686256,
+      "sha256": "1007394395ef5f6472378c9a2495ecab94c7cf8ae9d7917ee3eb4f86ad7fc89e",
+      "unpackedBytes": 517334334
+    },
+    "win32-x64": {
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-37346099054-1/prism-native-win32-x64.tar.gz",
+      "bytes": 127672312,
+      "sha256": "b52833d86e704d2fc212d10cc353a3521852e3e1cb4a6327d4b1d4beaaa65669",
+      "unpackedBytes": 511915429
+    }
+  },
+  "model": {
+    "id": "Xenova/bge-small-en-v1.5",
+    "revision": "ea104dacec62c0de699686887e3f920caeb4f3e3",
+    "dimensions": 384,
+    "pooling": "cls",
+    "normalize": true,
+    "queryPrefix": "Represent this sentence for searching relevant passages: ",
+    "files": [
+      {
+        "path": "config.json",
+        "bytes": 683,
+        "sha256": "fa73f90bf92c8cace1fbcb709626306f2bdbc9ea3e5b5f94b440df9b6aa56350"
+      },
+      {
+        "path": "tokenizer.json",
+        "bytes": 711396,
+        "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "bytes": 366,
+        "sha256": "9261e7d79b44c8195c1cada2b453e55b00aeb81e907a6664974b4d7776172ab3"
+      },
+      {
+        "path": "onnx/model_quantized.onnx",
+        "bytes": 34014426,
+        "sha256": "6c9c6101a956d62dfb5e7190c538226c0c5bb9cb27b651234b6df063ee7dbfe4"
+      },
+      {
+        "path": "special_tokens_map.json",
+        "bytes": 125,
+        "sha256": "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3"
+      },
+      {
+        "path": "vocab.txt",
+        "bytes": 231508,
+        "sha256": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"
+      }
+    ],
+    "license": "MIT"
+  }
+}

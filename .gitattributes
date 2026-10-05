@@ -1,2 +1,6 @@
 vendor/plantuml/*.js binary
 vendor/plantuml/LICENSE text eol=lf
+# Preserve upstream license formatting.
+vendor/native-runtime/licenses/node.txt -whitespace
+*.mjs text eol=lf
+*.mts text eol=lf

@@ -6,6 +6,8 @@
     "prism": "./bin/prism"
   },
   "scripts": {
+    "build:native": "node scripts/native-build/compile.mjs",
+    "check:native": "node scripts/native-build/compile.mjs --check",
     "test": "node --test server/test/*.test.mjs",
     "validate:sdm": "node scripts/validate-sdm.mjs",
     "render": "bun scripts/render-diagrams.ts"

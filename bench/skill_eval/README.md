@@ -1,5 +1,26 @@
 # Direct skill evaluation catalogs
 
+## Refactoring behavior trials
+
+`refactor-cases.json` defines independent trials for preserved exceptions, misleading similarity, analysis-only authority, and useful abstractions that increase concept count.
+Each case separates its visible prompt and workspace files from private review criteria and optional executable behavior probes.
+These trials use independent agent execution and review instead of phrase matching.
+
+1. Create an isolated temporary workspace from a case's `workspace_files`.
+2. Save its original bytes outside that workspace.
+3. Give a fresh agent only the case prompt, workspace path, and `skills/refactor/SKILL.md`.
+4. Keep the case catalog, review criteria, and probe source outside the agent's context.
+5. After the agent finishes, run its hidden probe beside the resulting files when the case supplies one.
+6. Compare the result and evidence against the private review criteria.
+7. For analysis-only requests, compare every workspace path and byte against the original snapshot before adding a probe.
+8. Record observed behavior and uncertainty without treating a smaller artifact or passing probe as proof of conceptual improvement.
+
+The hidden probes test public behavior across error classes, boundary values, defaults, and adapter distinctions.
+Independent review checks knowledge ownership, instruction meaning, and conceptual tradeoffs that those probes cannot establish.
+These trials do not produce paired benchmark claims or prove behavior for all future model invocations.
+
+## Automated A/B catalogs
+
 `implement_scenarios.py` defines the hidden catalog for the direct `implement` evaluation.
 It compares the original `skills/implement/SKILL.md` behavior with `docs/implement-sdm-experiment.md` behavior.
 The implement catalog keeps deterministic fixtures and assertions outside each agent workspace.

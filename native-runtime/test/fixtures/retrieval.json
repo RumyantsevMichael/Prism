@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 1,
+  "description": "Fixed synthetic code and non-code retrieval cases with one semantic hard negative per case. Each query has one relevant file.",
+  "cases": [
+    {
+      "domain": "code",
+      "id": "totalDeadline",
+      "meaning": "Reject additional retries when the total elapsed request duration reaches the deadline.",
+      "query": "stop the entire sequence once its overall time allowance expires",
+      "negative": "Return whether a single network attempt timed out.",
+      "negativeId": "attemptTimeout"
+    },
+    {
+      "domain": "code",
+      "id": "retryDelay",
+      "meaning": "Compute exponential backoff between successive failed requests.",
+      "query": "increase waiting time after each temporary connection failure",
+      "negative": "Delay a scheduled job until its calendar start time.",
+      "negativeId": "scheduleDelay"
+    },
+    {
+      "domain": "code",
+      "id": "cacheExpiry",
+      "meaning": "Discard cached entries whose expiration timestamp has passed.",
+      "query": "remove stored responses that are too old to reuse",
+      "negative": "Refresh the authentication token before expiry.",
+      "negativeId": "tokenExpiry"
+    },
+    {
+      "domain": "code",
+      "id": "deduplicate",
+      "meaning": "Keep only one item for each stable identifier in a collection.",
+      "query": "eliminate repeated records using their unique key",
+      "negative": "Generate a unique identifier for a new record.",
+      "negativeId": "newIdentifier"
+    },
+    {
+      "domain": "code",
+      "id": "cancelPending",
+      "meaning": "Abort outstanding work when a cancellation signal is received.",
+      "query": "stop unfinished operations when the caller withdraws the request",
+      "negative": "Cancel an email subscription for an account.",
+      "negativeId": "unsubscribe"
+    },
+    {
+      "domain": "code",
+      "id": "validateRange",
+      "meaning": "Reject source intervals that extend beyond file boundaries.",
+      "query": "prevent reading line numbers outside the source document",
+      "negative": "Validate that a numeric input is within a business price range.",
+      "negativeId": "validatePrice"
+    },
+    {
+      "domain": "instruction",
+      "id": "direct-answer",
+      "meaning": "Answer directly and include only information needed to satisfy the request.",
+      "query": "avoid repeating the question and keep introductory text brief",
+      "negative": "Always include a detailed introduction in an educational essay.",
+      "negativeId": "essay-intro"
+    },
+    {
+      "domain": "instruction",
+      "id": "preserve-work",
+      "meaning": "Preserve unrelated uncommitted changes when editing the repository.",
+      "query": "leave existing user edits intact during implementation",
+      "negative": "Commit every changed file before switching branches.",
+      "negativeId": "commit-work"
+    },
+    {
+      "domain": "instruction",
+      "id": "reuse-first",
+      "meaning": "Search existing concepts and prefer extending their behavior before adding new concepts.",
+      "query": "look for prior solutions before introducing another abstraction",
+      "negative": "Always create a fresh component for every incoming requirement.",
+      "negativeId": "new-components"
+    },
+    {
+      "domain": "instruction",
+      "id": "independent-review",
+      "meaning": "Use a separate reviewer to assess the implementation evidence.",
+      "query": "have someone outside the implementation process check the changes",
+      "negative": "The implementer can run unit tests during development.",
+      "negativeId": "self-test"
+    },
+    {
+      "domain": "instruction",
+      "id": "fresh-source",
+      "meaning": "Verify the repository snapshot before returning evidence from indexed source.",
+      "query": "ensure cached findings still correspond to current files",
+      "negative": "Use the current date in every report header.",
+      "negativeId": "current-date"
+    },
+    {
+      "domain": "instruction",
+      "id": "bounded-questions",
+      "meaning": "Ask for missing facts only when they materially affect the next decision.",
+      "query": "avoid repeated confirmation for actions already authorized",
+      "negative": "Ask every user to fill out an onboarding survey.",
+      "negativeId": "user-survey"
+    },
+    {
+      "domain": "documentation",
+      "id": "offline-cache",
+      "meaning": "After the initial asset download, cached model inference runs locally without a network connection.",
+      "query": "can analysis operate while the computer is disconnected",
+      "negative": "Cloud inference sends each request to a remote service.",
+      "negativeId": "cloud-inference"
+    },
+    {
+      "domain": "documentation",
+      "id": "recovery",
+      "meaning": "After an interrupted operation, the previous complete generation remains available.",
+      "query": "recover from a crash without losing the last successful index",
+      "negative": "Delete all previous generations before starting a new index.",
+      "negativeId": "clean-start"
+    },
+    {
+      "domain": "documentation",
+      "id": "revision",
+      "meaning": "Pass the returned revision when updating an artifact to reject concurrent changes.",
+      "query": "avoid overwriting edits made after the file was read",
+      "negative": "The product version is shown on the about page.",
+      "negativeId": "product-version"
+    },
+    {
+      "domain": "documentation",
+      "id": "relationships",
+      "meaning": "Document links and configuration references have distinct relationship types from code calls.",
+      "query": "how does the graph represent non-code connections",
+      "negative": "Function callers and callees are shown in code dependency diagrams.",
+      "negativeId": "code-calls"
+    },
+    {
+      "domain": "documentation",
+      "id": "privacy",
+      "meaning": "Repository content stays on the local machine during embedding inference.",
+      "query": "does semantic search upload project source to a service",
+      "negative": "Downloading runtime assets requires internet access on first use.",
+      "negativeId": "asset-download"
+    },
+    {
+      "domain": "documentation",
+      "id": "preparation",
+      "meaning": "A cold request returns a preparation identifier while indexing continues in the background.",
+      "query": "how can a caller check a long running first search",
+      "negative": "Search results can be sorted alphabetically after indexing.",
+      "negativeId": "result-order"
+    },
+    {
+      "domain": "configuration",
+      "id": "totalDeadlineMs",
+      "meaning": "Maximum elapsed time across all retry attempts.",
+      "query": "cap the duration of an entire retry sequence",
+      "negative": "Maximum wait for one request attempt.",
+      "negativeId": "attemptTimeoutMs"
+    },
+    {
+      "domain": "configuration",
+      "id": "idleTimeoutMs",
+      "meaning": "Release the inference worker after this period with no active requests.",
+      "query": "stop the helper after it has been unused for a while",
+      "negative": "Maximum time to wait for a remote HTTP response.",
+      "negativeId": "httpTimeoutMs"
+    },
+    {
+      "domain": "configuration",
+      "id": "maxSourceBytes",
+      "meaning": "Maximum aggregate size of all source files captured in one snapshot.",
+      "query": "limit the complete repository input size",
+      "negative": "Maximum size of one individual source file.",
+      "negativeId": "maxFileBytes"
+    },
+    {
+      "domain": "configuration",
+      "id": "inferenceThreads",
+      "meaning": "Number of CPU threads used inside one model inference operation.",
+      "query": "restrict processor parallelism for embedding execution",
+      "negative": "Maximum number of external review agents.",
+      "negativeId": "reviewWorkers"
+    },
+    {
+      "domain": "configuration",
+      "id": "modelRevision",
+      "meaning": "Immutable commit identifier of the embedding model weights and tokenizer.",
+      "query": "pin a specific trained model rather than its moving latest version",
+      "negative": "Version string displayed for the plugin release.",
+      "negativeId": "pluginVersion"
+    },
+    {
+      "domain": "configuration",
+      "id": "pageLimit",
+      "meaning": "Maximum number of concept candidates returned by one search call.",
+      "query": "bound the size of a concept search response",
+      "negative": "Maximum number of source files admitted to the repository snapshot.",
+      "negativeId": "maxFiles"
+    }
+  ]
+}

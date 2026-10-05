@@ -9,14 +9,16 @@ Discovery is read-only and never creates or updates an external index.
 
 | Provider | Role | Numeric `FIT` |
 |---|---|---|
-| Native | Always supplies live lexical search and verified source | No |
+| Native | Bundled local semantic, lexical, code, and document analysis with verified source | Yes, when all required evidence is complete |
 | CodeGraph | Adds lexical and typed structural evidence from an existing index | No |
 | CodeNib | Adds hybrid semantic, lexical, and graph evidence | Yes, when all required evidence is complete |
 
 Use `provider: auto` with `plan_repository_context` for normal operation.
-Automatic selection always includes native live-source coverage and adds at most one healthy external contributor.
-Automatic selection prefers a fully capable CodeNib provider over CodeGraph.
-If the selected external provider fails during planning, automatic selection falls back to native instead of trying another external provider.
+Automatic selection prepares bundled native analysis without invoking external indexers.
+The first analysis downloads pinned runtime and model assets, then inference runs locally.
+The default manifest contains published archives for all five supported platforms.
+Prism verifies each downloaded archive against its pinned size and hash.
+Subsequent analysis works offline when those verified assets remain cached.
 Prism uses external evidence only after the adapter binds it to the same normalized source snapshot identity as native.
 For CodeNib, this binding requires the same canonical project root, verified CodeNib source access, the same concrete commit, and a fresh complete native snapshot after CodeNib verifies its manifest.
 CodeNib and native can use different private fingerprint schemes, so Prism does not compare those raw fingerprints.
@@ -40,17 +42,18 @@ An unavailable explicit provider fails visibly instead of selecting another exte
 
 The native provider searches Git-tracked and nonignored text files when Git is available.
 It uses a bounded filesystem scan outside Git repositories.
-It never follows symbolic links and it rejects source changes during planning.
-An enumerated non-file path, such as a Git submodule path, makes the native scan incomplete.
+It records symbolic-link values within the native scan limits for freshness checks without following targets or exposing links as searchable source.
+An enumerated path that is neither a regular file nor a symbolic link, such as a Git submodule path, makes the native scan incomplete.
 An unsafe, aliased, or colliding Git path also makes the native scan incomplete.
 Prism verifies the whole native snapshot before it returns a plan, so a change to an unselected source file also rejects the plan.
-Native-only plans report missing semantic and graph capabilities, so their token estimates remain unavailable for `FIT` decisions.
+Native plans can support numeric `FIT` when semantic retrieval, applicable structure, source freshness, hints, and source ranges are complete.
 
 CodeGraph requires an executable version greater than or equal to `1.6.0` and less than `1.7.0`.
 CodeGraph also requires a complete current `.codegraph` index for the exact project root.
 Prism uses CodeGraph lexical and symbol-graph evidence but does not claim that CodeGraph provides embedding-based semantic search.
 Therefore, CodeGraph improves discovery but cannot support a numeric `FIT` result under the current policy.
-Prism never runs CodeGraph initialization, synchronization, or indexing commands.
+Explicit CodeGraph selection never runs initialization, synchronization, or indexing commands against the external index.
+Bundled native analysis runs the SDK against a private snapshot mirror and leaves the project's `.codegraph` and CodeNib indexes unchanged.
 Prism caps CodeGraph context nodes, edges, entry points, and explicit symbol matches.
 Evidence that reaches a cap without an affirmative completeness signal cannot support a numeric estimate.
 
@@ -62,6 +65,50 @@ Prism rejects POSIX absolute paths, Windows drive paths, Windows drive-relative 
 CodeNib graph evidence cannot support a numeric estimate when seed or node limits bound it, when CodeNib reports a graph note or error, or when a graph source range remains incomplete.
 Any caller concept that no contributor resolves prevents a numeric estimate.
 When provider reads expand into overlapping ranges, Prism merges the ranges and counts the final merged rendering once.
+
+### Search for reusable concepts
+
+Call `search_repository_concepts` before introducing a concept:
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "query": "retry temporary network failures within a total deadline",
+  "filters": {"domains": ["code", "configuration"]},
+  "limit": 10
+}
+```
+
+Domains are `code`, `instruction`, `documentation`, and `configuration`.
+Optional path and kind filters restrict the candidate set.
+Search defaults to ten results and permits at most fifty.
+Each result identifies its path, selector, source range, source hash, and bounded excerpt.
+Cosine similarity, lexical score, fused rank, model identity, and index revision have distinct meanings.
+Similarity does not establish conceptual equivalence or approve an addition.
+
+Native code structure covers JavaScript, TypeScript, Python, Go, Rust, Java, C#, C, and C++ through the pinned SDK.
+Markdown sections and rules, JSON keys, and YAML keys have source locations and typed containment or reference relationships.
+Unsupported constructs, missing dependencies, malformed files, unresolved links, and denied configuration reads are disclosed as incomplete structure.
+Relevant incomplete structure prevents a numeric fit estimate.
+
+If preparation exceeds ten seconds, search and planning return `preparing` with a stable preparation ID.
+Call `get_repository_intelligence_status` with `projectRoot` and optional `waitMs` up to 30000, then repeat the original request.
+Concurrent requests share preparation.
+Use `discover_repository_intelligence` for native runtime, model, index, and coverage status without starting downloads or preparation.
+
+Pass a returned `snapshot` as `expectedSnapshot` to bind subsequent searches or native context planning to that source identity.
+On `stale_snapshot`, repeat the search against current source and reassess the candidates.
+On `corrupt_asset`, replace the affected private cache from the pinned release and retry.
+On `unsupported_runtime` or `preparation_failed`, inspect the status diagnostic and retry after correcting the platform or download problem.
+Degraded analysis supplies lexical results and explicitly withholds semantic fit eligibility.
+
+Runtime archives include Node 24, so users do not need npm, Python, compilers, CodeNib, or a CodeGraph executable.
+Assets, models, and indexes use the host plugin data directory when available, or the user's private Prism cache.
+They are never stored in the target repository.
+One helper runs per MCP server with two inference threads and exits after five idle minutes.
+Native source limits remain 20,000 files, 64 MiB total, and 2 MiB per file.
+The SDK's stricter limits and omissions are reported independently of its completion flag.
+The supported platforms are macOS and Linux on x64 and arm64, plus Windows x64.
 
 ### Prepare an external provider
 

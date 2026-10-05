@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "typeRoots": ["./scripts/native-build/node_modules/@types"],
+    "useUnknownInCatchVariables": false
+  },
+  "include": ["native-runtime/*.mts", "server/*.mts"]
+}

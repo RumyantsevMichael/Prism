@@ -15,10 +15,11 @@ Orchestration owns review dispatch, lifecycle changes, ADR acceptance, commits, 
 1. Read `.prism/workflow.md` and applicable project instructions.
 2. Read the Approved requirements, audited design result, relevant ADRs, contract decisions, tests, feature files, and slice diagrams.
 3. Confirm orchestration cleared the implementation gate and supplied the current workspace and review base.
-4. If required design evidence is missing or invalid, return to `design` before production edits.
-5. If orchestration supplies no findings path, use `<configured plans>/<initiative>/<slice>/design-audit/findings.md` when it exists.
-6. Read every supplied or fallback findings file completely.
-7. Select the entry path:
+4. Before edits, read the complete [concept delta](../design/references/concept-delta.md) through MCP at its audited revision.
+5. If required design evidence is missing or invalid, return to `design` before production edits.
+6. Use the slice `review.json` through MCP as defined by [review-format.md](../review/references/review-format.md).
+7. Read every assigned review lane through `get_review` and check the current implementation gate before edits.
+8. Select the entry path:
    - For initial implementation, complete section 2 before section 6.
    - For returned findings, follow section 6.
    - For integrated-result verification, compare the reviewed result with the integrated tree before section 6.
@@ -41,8 +42,8 @@ Weakening or replacing design acceptance requires renewed design and its gates.
 
 ## 3. Implement the outcome
 
-1. Search the repository, active artifacts, approved dependencies, and available semantic exploration tools for existing solutions, then record relevant matches and the reason to reuse or reject them before adding a component or dependency.
-2. When a semantic exploration tool is available, use it before text search for relevant symbols and call paths.
+1. Before adding a component or dependency, use `refactor` analysis with the audited design and known repository evidence.
+2. When safe simplification or unexpected overlap appears, use `refactor` within the accepted behavior, design, and permitted edit scope.
 3. When repository-context planning is available, refresh the context plan at the current commit and read its `mustRead` items before the first production edit.
 4. Read `likelyRead` items as the implementation reaches their behavior and keep `possibleRead` as a bounded investigation frontier.
 5. Implement the complete observable outcome across every required layer.
@@ -54,6 +55,8 @@ Weakening or replacing design acceptance requires renewed design and its gates.
 - If the outcome exceeds atomic fit or contradicts acceptance, preserve the work and return to `design` through orchestration.
 
 Implementation does not edit requirements without user approval or revise ADRs without a user or orchestrator response.
+A changed delta revision or material concept deviation requires design revision and a new design audit.
+Implementation never rewrites the accepted delta to match its output.
 
 ## 4. Verify and update artifacts
 
@@ -71,6 +74,8 @@ Implementation does not edit requirements without user approval or revise ADRs w
 5. Remove task-generated temporary files and caches from the change.
 6. Use `write-user-docs` for changed user behavior and move verified necessary content from the slice's `runbook-draft.md` to the configured user-guide path.
 7. Update slice-folder diagram source against verified code, removing obsolete relationships and resolved proposed markers.
+8. Apply [text convergence](../design/references/concept-delta.md#text-convergence) after all target updates, then capture F and compare B→F through MCP.
+9. If any target changes afterward, recapture F, compare B→F, and refresh assessments before returning review evidence.
 
 In-process tests do not replace required cross-process or cross-surface proof.
 Feature scenarios retain their approved intent, and durable documentation does not cite coordination records or slice identities.
@@ -84,13 +89,14 @@ Feature scenarios retain their approved intent, and durable documentation does n
 3. Include every [contract decision](../review/SKILL.md#contracts) and exact verification command with its result.
 4. When findings exist, include each lane path and corrected IDs with closure evidence.
 5. For integration verification, report conflict resolutions, changed behavior, and uncertain equivalence for review routing.
+6. For refactoring, include its [result evidence](../refactor/references/analysis.md#result-fields) through existing evidence records.
 
 If verification or correction cannot finish, the result states the blocker and unfinished work instead of readiness.
 The result contains evidence paths, not a prose design summary.
 
 ## 6. Correct review findings
 
-1. Read [review-format.md](../review/references/review-format.md) and every assigned lane file completely before correction.
+1. Read [review-format.md](../review/references/review-format.md) and every assigned lane through MCP before correction.
 2. For each `OPEN`, `REOPENED`, or `IN PROGRESS` finding assigned to implementation:
    1. Mark it `IN PROGRESS`.
    2. If a review probe exists, run it before correction and preserve its asserted behavior.

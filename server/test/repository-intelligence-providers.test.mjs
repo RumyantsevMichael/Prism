@@ -25,7 +25,7 @@ function provider(name, capabilities = {}, behavior = {}) {
         version: "1.0.0",
         commit,
         sourceFingerprint,
-        snapshotIdentity: { scheme: "prism-native-sha256-v1", commit, fingerprint: sourceFingerprint },
+        snapshotIdentity: { scheme: "prism-native-sha256-v2", commit, fingerprint: sourceFingerprint },
         capabilities
       };
     },
@@ -134,7 +134,7 @@ test("closes an opened session when its supplied description is malformed", asyn
   assert.deepEqual(closes, ["codenib", "native"]);
 });
 
-test("automatic selection chooses the strongest healthy external provider", async () => {
+test("automatic selection uses native without opening healthy external providers", async () => {
   const catalog = descriptors([
     { id: "codegraph", value: provider("codegraph", { lexicalSearch: true, symbolGraph: true, verifiedSource: true }) },
     { id: "codenib", value: provider("codenib", { lexicalSearch: true, semanticSearch: true, hybridSearch: true, symbolGraph: true, verifiedSource: true }) }
@@ -142,8 +142,8 @@ test("automatic selection chooses the strongest healthy external provider", asyn
 
   const result = await withRepositoryIntelligence("/project", (selected) => selected.describe(), { descriptors: catalog, selection: "auto" });
 
-  assert.deepEqual(result.selection, { requested: "auto", selected: "codenib" });
-  assert.deepEqual(result.contributors.map(({ id }) => id), ["native", "codenib"]);
+  assert.deepEqual(result.selection, { requested: "auto", selected: "native" });
+  assert.deepEqual(result.contributors.map(({ id }) => id), ["native"]);
 });
 
 test("explicit external selection fails without substitution", async () => {
@@ -159,7 +159,7 @@ test("explicit external selection fails without substitution", async () => {
   );
 });
 
-test("automatic runtime failure retries once with native and records fallback", async () => {
+test("automatic selection does not invoke failing external providers", async () => {
   const failure = Object.assign(new Error("changed"), { code: "snapshot-changed" });
   const catalog = descriptors([
     { id: "codegraph", value: provider("codegraph", { symbolGraph: true, verifiedSource: true }, { searchError: failure }) }
@@ -173,11 +173,9 @@ test("automatic runtime failure retries once with native and records fallback", 
     return description;
   }, { descriptors: catalog, selection: "auto" });
 
-  assert.deepEqual(attempts, ["codegraph", "native"]);
+  assert.deepEqual(attempts, ["native"]);
   assert.equal(result.selection.selected, "native");
-  assert.equal(result.fallback.provider, "codegraph");
-  assert.equal(result.fallback.code, "snapshot-changed");
-  assert.doesNotMatch(result.fallback.message, /changed/);
+  assert.equal(result.fallback, null);
 });
 
 test("automatic selection does not retry an arbitrary consumer failure", async () => {
@@ -212,7 +210,7 @@ test("automatic selection does not retry a native provider failure", async () =>
   assert.equal(attempts, 1);
 });
 
-test("automatic selection records a typed snapshot mismatch fallback", async () => {
+test("automatic selection ignores unrelated external snapshots", async () => {
   const catalog = descriptors([
     {
       id: "codenib",
@@ -223,8 +221,7 @@ test("automatic selection records a typed snapshot mismatch fallback", async () 
   const result = await withRepositoryIntelligence("/project", (selected) => selected.describe(), { descriptors: catalog, selection: "auto" });
 
   assert.deepEqual(result.selection, { requested: "auto", selected: "native" });
-  assert.equal(result.fallback.provider, "codenib");
-  assert.equal(result.fallback.code, "snapshot-mismatch");
+  assert.equal(result.fallback, null);
 });
 
 test("explicit selection exposes a typed snapshot mismatch", async () => {

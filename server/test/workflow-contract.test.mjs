@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const productiveSkills = [
-  "design", "ideate", "implement", "orchestrate", "review", "roadmap", "write-map",
+  "design", "ideate", "implement", "orchestrate", "refactor", "review", "roadmap", "write-map",
   "workflow-init", "workflow", "write-adr", "write-contracts", "write-feature",
   "write-requirements", "write-step-definitions", "write-user-docs"
 ];
@@ -26,7 +26,7 @@ test("uses code as the implementation specification", async () => {
   const workflow = await skill("workflow");
   const artifacts = await reference("workflow", "artifact-rules.md");
   assert.match(workflow, /Code establishes implemented behavior/);
-  assert.match(artifacts, /no implementation handoff, mandatory build plan, or execution ledger/);
+  assert.match(artifacts, /Review evidence belongs in MCP-managed records/);
   assert.doesNotMatch(workflow, /layered specification/);
 });
 
@@ -83,17 +83,18 @@ test("defines compact autonomy and agent-flow settings", async () => {
   assert.match(settings, /Both flows run `ideate` and `roadmap` inline from a raw idea/);
   assert.match(settings, /Both flows use fresh independent `Review <slice>` workers for design and implementation review/);
   assert.match(settings, /`multi` delegates slice delivery.*uses fresh `Review <slice>` workers/);
-  assert.match(orchestrate, /Resolve and persist run settings using \[run-settings\.md\]\(references\/run-settings\.md\)/);
+  assert.match(settings, /write `changes.settings` with `update_coordination_state` and the current revision before active work/);
+  assert.match(orchestrate, /Settings resolution supplies `changes.settings`/);
   assert.doesNotMatch(orchestrate, /Decision autonomy: `conservative/);
   assert.doesNotMatch(orchestrate, /Missing `commit` defaults/);
-  assert.match(orchestrate, /run `ideate` and `roadmap` inline in either agent flow/);
-  assert.match(orchestrate, /Route design by `agentFlow`:/);
-  assert.match(orchestrate, /- For `mono`, run `design` in the orchestrator worker/);
-  assert.match(orchestrate, /- For `multi`, start or resume the `Develop <slice>` worker/);
-  assert.match(orchestrate, /Route implementation by `agentFlow`:/);
-  assert.match(orchestrate, /- For `mono`, continue the orchestrator worker with `implement`/);
-  assert.match(orchestrate, /- For `multi`, resume the same `Develop <slice>` worker/);
-  assert.match(orchestrate, /The agent flow does not change after active work starts/);
+  const phaseFlow = orchestrate.match(/```plantuml\n([\s\S]*?)\n```/)[1];
+  assert.match(phaseFlow, /Run ideate and roadmap skills under the autonomy gate/);
+  assert.match(phaseFlow, /Design returned SPLIT\?/);
+  assert.match(phaseFlow, /Run or resume implement skill in the selected agent flow/);
+  assert.match(orchestrate, /configured `agentFlow` controls design and implementation routing/);
+  assert.match(settings, /`mono` runs planning, design, implementation, corrections/);
+  assert.match(settings, /`multi` delegates slice delivery/);
+  assert.match(orchestrate, /The agent flow is immutable after active work starts/);
   assert.match(settings, /If fresh review capability is unavailable, block and ask the user to run a separate review task/);
   assert.match(orchestrate, /Mono delivery records `orchestrator` as the active worker/);
 });
@@ -113,7 +114,7 @@ test("forms bounded slice architecture before fit and authors artifacts only aft
   for (const status of ["FIT", "SPLIT", "BLOCKED"]) assert.ok(design.includes("`" + status + "`:"));
   assert.match(design, /When orchestration returns findings, start at section 7 instead of section 1/);
   assert.match(design, /follow section 5's non-atomic branch before returning `SPLIT`/);
-  assert.match(design, /design-audit\/findings\.md/);
+  assert.match(design, /slice `review.json` and design-audit lane through MCP/);
 });
 
 test("keeps one delivery task through tests and code", async () => {
@@ -129,6 +130,10 @@ test("keeps one delivery task through tests and code", async () => {
   assert.match(implement, /If a review probe exists, run it before correction and preserve its asserted behavior/);
   assert.match(implement, /READY FOR REVIEW.*READY FOR RE-REVIEW.*only when required verification passes/);
   assert.match(implement, /If an unrelated production defect prevents the checkpoint, return the blocker/);
+  const capture = implement.indexOf("then capture F and compare B→F through MCP");
+  for (const update of ["Remove task-generated temporary files", "Use `write-user-docs`", "Update slice-folder diagram source"]) assert.ok(implement.indexOf(update) >= 0 && implement.indexOf(update) < capture, update);
+  assert.ok(capture < implement.indexOf("## 5. Return review evidence"));
+  assert.match(implement, /If any target changes afterward, recapture F, compare B→F, and refresh assessments before returning review evidence/);
 });
 
 test("authors Gherkin during design and binds steps during implementation", async () => {
@@ -161,12 +166,15 @@ test("requires prior-art search and a compact worker lifetime reference", async 
   const review = await skill("review");
   const orchestrate = await skill("orchestrate");
   const lifetime = await reference("orchestrate", "worker-lifetime.md");
+  const refactor = await skill("refactor");
 
   for (const source of [design, implement]) {
-    assert.match(source, /Search the repository, active artifacts, approved dependencies, and available semantic exploration tools/);
-    assert.match(source, /record relevant matches and the reason to reuse or reject them/);
-    assert.match(source, /use it before text search for relevant symbols and call paths/);
+    assert.match(source, /[Uu]se `refactor`.*analysis/);
   }
+  assert.match(refactor, /Prism repository intelligence for semantic discovery/);
+  assert.match(refactor, /Record relevant matches and the reason to reuse or reject them/);
+  assert.match(refactor, /semantic indexing is unavailable or incomplete.*available structural and text evidence/);
+  assert.match(design, /semantic reuse procedure.*before accepting an `ADD` transition/);
   assert.match(review, /new component, dependency, or design approach has a recorded search for existing solutions/);
   assert.match(orchestrate, /worker-lifetime\.md/);
   assert.match(lifetime, /worker wait timeout or missing completion event as non-terminal/);
@@ -234,7 +242,7 @@ test("uses executable contracts only", async () => {
 test("uses one review skill for both review modes", async () => {
   const review = await skill("review");
   for (const mode of ["design-audit", "implementation-review"]) assert.ok(review.includes("- For `" + mode + "`:"));
-  assert.match(review, /Each review writes only its assigned lane findings file, except permitted implementation review probes/);
+  assert.match(review, /Each reviewer changes only its assigned lanes through `update_review`, except permitted implementation review probes/);
   assert.match(review, /Add one minimal regression probe in the canonical test location through a public or system surface/);
   assert.match(review, /Don't\n\s+- Change existing tests, fixtures, helpers, dependencies, or harness configuration/);
   assert.match(review, /Only `VERIFIED` findings are resolved/);
@@ -245,16 +253,16 @@ test("uses one review skill for both review modes", async () => {
 
 test("keeps findings authoritative per review lane", async () => {
   const format = await reference("review", "review-format.md");
-  assert.match(format, /Findings: docs\/plans\/\<initiative>\/\<slice>\/\<lane>\/findings\.md/);
+  assert.match(format, /One slice `review.json` is authoritative for all its lanes and waves/);
   assert.doesNotMatch(format, /Canonical findings/);
-  const orchestrate = await skill("orchestrate");
-  assert.match(orchestrate, /one writer per findings file/);
-  assert.match(orchestrate, /Wait for every assigned lane to return its current result/);
-  assert.match(orchestrate, /Resume the same `Develop <slice>` worker and the `Review <slice>` worker that produced the findings as live workers before starting a replacement reviewer/);
-  assert.match(orchestrate, /Let the `Review <slice>` and `Develop <slice>` workers resolve the findings directly before reporting back/);
-  assert.match(orchestrate, /Give each worker the other worker ID/);
-  assert.match(orchestrate, /retain its reporting lane and route correction without transferring its identity or evidence/);
-  assert.match(await skill("workflow"), /\| `findings\.md` \| The authoritative review record for one reporting slice and review lane/);
+  const reviewRules = await reference("orchestrate", "review-rules.md");
+  assert.match(reviewRules, /pinned required lane set/);
+  assert.match(reviewRules, /Every assigned lane needs a current result/);
+  assert.match(reviewRules, /original `Develop <slice>` and `Review <slice>` workers stay available/);
+  assert.match(reviewRules, /direct correction exchange/);
+  assert.match(reviewRules, /Each worker receives the other worker ID/);
+  assert.match(reviewRules, /retain its reporting lane and route correction without transferring its identity or evidence/);
+  assert.match(await skill("workflow"), /\| `review.json` \| The authoritative MCP-managed slice review/);
 });
 
 test("detects delegation from a callable child-start capability", async () => {
@@ -324,23 +332,26 @@ test("uses the Codex benchmark model policy", async () => {
 
 test("keeps coordination state concise without an inline schema example", async () => {
   const orchestrate = await skill("orchestrate");
-  const continuity = orchestrate.slice(orchestrate.indexOf("## 6. Preserve continuity"));
-  assert.doesNotMatch(continuity, /```json/);
-  assert.match(orchestrate, /Use the coordination-state tools to read `state\.json`/);
+  assert.doesNotMatch(orchestrate, /```json/);
+  assert.match(orchestrate, /The `get_coordination_state` input includes the initiative path/);
   await assert.rejects(reference("orchestrate", "state-schema.md"), /ENOENT/);
   for (const name of ["orchestrate", "design", "implement", "review", "write-map"]) {
     assert.doesNotMatch(await skill(name), /worker-protocol\.md|baseRevision|preconditions|correction digest/);
   }
 });
 
-test("orders continuity actions as a process", async () => {
+test("places process order in diagrams and pause inputs in prose", async () => {
   const orchestrate = await skill("orchestrate");
-  const continuity = orchestrate.slice(orchestrate.indexOf("## 6. Preserve continuity"));
+  const phaseFlow = orchestrate.match(/```plantuml\n([\s\S]*?)\n```/)[1];
+  const pauseFlow = await reference("orchestrate", "pause-flow.puml");
 
-  assert.match(continuity, /\n1\. After a resolution exchange, meaningful result, or before a pause/);
-  assert.match(continuity, /\n7\. Broker child delegation through the procedure/);
-  assert.doesNotMatch(continuity, /\n8\./);
-  assert.doesNotMatch(continuity, /\n- After meaningful results or before a pause/);
+  assert.match(phaseFlow, /Call get_coordination_state tool/);
+  assert.match(orchestrate, /The `update_coordination_state` input includes the current revision/);
+  assert.match(phaseFlow, /Leaf done and continuation is stepwise\?/);
+  assert.match(pauseFlow, /Slice absent from active state\?/);
+  assert.match(pauseFlow, /Other coordination-state tools available\?/);
+  assert.match(orchestrate, /The `checkpoint_pause` input includes the current revision/);
+  assert.doesNotMatch(orchestrate, /## Continuity and pause[\s\S]*\n1\./);
 });
 
 test("uses the validated coordination state tools", async () => {
@@ -348,41 +359,52 @@ test("uses the validated coordination state tools", async () => {
   const artifacts = await reference("workflow", "artifact-rules.md");
   const orchestrate = await skill("orchestrate");
   assert.doesNotMatch(workflow, /\| Coordination-state capability \|/);
-  assert.match(artifacts, /Use the coordination-state capability for `state\.json` reads and updates/);
-  assert.match(orchestrate, /Use the coordination-state tools to read `state\.json`/);
+  assert.match(artifacts, /Call `get_coordination_state` to read `state\.json` and its revision/);
+  assert.match(artifacts, /Call `update_coordination_state` with that revision/);
+  assert.match(orchestrate, /The `get_coordination_state` input includes the initiative path/);
+  assert.match(orchestrate, /Typed `activeOperations` use `start`, `update`, `finish`, and `release`/);
+  assert.match(orchestrate, /only `finish` claims completion after the server checks current review evidence/);
   assert.doesNotMatch(orchestrate, /Direct file editing is an emergency recovery action/);
 });
 
 test("preserves recursive design ownership and delivery gates", async () => {
   const orchestrate = await skill("orchestrate");
+  const phaseFlow = orchestrate.match(/```plantuml\n([\s\S]*?)\n```/)[1];
+  const deliveryRules = await reference("orchestrate", "delivery-rules.md");
+  const completionRules = await reference("orchestrate", "completion-rules.md");
   const design = await skill("design");
   const settings = await reference("orchestrate", "run-settings.md");
-  assert.match(orchestrate, /Repeat this section for the new leaves/);
+  assert.match(phaseFlow, /while \(An unfinished leaf can progress\?\)/);
   assert.match(design, /child requirement references collectively equal the parent assignment, allowing shared references/);
   assert.match(design, /orchestrator manages parent relationships and dependencies/);
   const shape = design.match(/```markdown\n([\s\S]*?)\n\s*```/)[1];
   assert.deepEqual([...shape.matchAll(/^\s*## (.+)$/gm)].map(m => m[1]), ["Outcome", "Requirements"]);
-  assert.match(orchestrate, /Collect all ancestor diagram and ADR paths.*including inherited paths/);
-  assert.match(orchestrate, /Wait for effective dependencies to complete, including inherited prerequisites/);
+  assert.match(orchestrate, /The design worker receives ancestor diagram and ADR paths, including inherited paths/);
+  assert.match(deliveryRules, /Effective dependencies include inherited prerequisites/);
   assert.match(settings, /After required verification and fresh review, `conservative` asks for correctness confirmation/);
-  assert.match(orchestrate, /If fit or design changed, return to section 2 before implementation/);
-  assert.match(orchestrate, /without reactivating the parent/);
-  assert.ok(orchestrate.indexOf("Keep aggregate completion blocked") < orchestrate.indexOf("Apply the correctness gate"));
+  assert.match(phaseFlow, /Fit or design changed\?/);
+  assert.match(phaseFlow, /Run independent design audit and corrections[\s\S]*All design audit lanes CLEAN\?[\s\S]*Apply the implementation gate[\s\S]*Run or resume implement skill/);
+  assert.match(completionRules, /without reactivating the parent/);
+  assert.ok(completionRules.indexOf("Aggregate completion remains blocked") < completionRules.indexOf("correctness confirmation"));
 });
 
 test("keeps review independent and preserves corrections through integration", async () => {
   const orchestrate = await skill("orchestrate");
+  const reviewRules = await reference("orchestrate", "review-rules.md");
+  const deliveryRules = await reference("orchestrate", "delivery-rules.md");
+  const completionRules = await reference("orchestrate", "completion-rules.md");
   const review = await skill("review");
-  assert.match(orchestrate, /Exclude the delivery conversation from reviewer inputs/);
+  assert.match(orchestrate, /\[review and correction rules\]\(references\/review-rules\.md\)/);
+  assert.match(reviewRules, /The delivery conversation is excluded from reviewer inputs/);
   assert.match(review, /In `multi` flow, the `Review <slice>` worker remains available after returning findings and enters a \[resolution exchange\]/);
   assert.match(review, /Use the host child-agent message action/);
   assert.match(await reference("orchestrate", "worker-lifetime.md"), /A phase result such as `FIT` or `FINDINGS` is a handoff, not a close condition/);
   assert.match(await reference("orchestrate", "worker-lifetime.md"), /resume both as live workers before messaging/);
-  assert.match(orchestrate, /Every implementation correction review uses that same base/);
+  assert.match(deliveryRules, /Every implementation correction review compares B→F/);
   assert.match(review, /Route implementation-only gaps to delivery without opening design findings/);
-  assert.match(orchestrate, /If integration changes reviewed behavior or leaves uncertain equivalence, repeat affected review before confirmation/);
-  assert.match(orchestrate, /If confirmed behavior changes, repeat affected verification, review, and confirmation/);
-  assert.match(orchestrate, /Coordination cleanup follows durable graduation and the `shipped` transition/);
+  assert.match(completionRules, /Changed reviewed behavior or uncertain equivalence requires affected review before confirmation/);
+  assert.match(completionRules, /If confirmed behavior changes, repeat affected verification, review, and confirmation/);
+  assert.match(completionRules, /Coordination cleanup follows durable graduation and the `shipped` transition/);
 });
 
 test("all local skill and README links resolve", async () => {

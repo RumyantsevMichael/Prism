@@ -1,0 +1,13 @@
+{
+  "name": "prism-native-build",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "esbuild": "0.25.9",
+    "tar": "7.5.22"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "typescript": "5.9.3"
+  }
+}

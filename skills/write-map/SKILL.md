@@ -18,6 +18,7 @@ This skill does not explore code or choose slice boundaries.
 4. If the map exists, read it.
 5. For bootstrap, use the supplied root title and complete Approved requirement assignment.
 6. If an input or required acceptance is missing, return the missing input without inferring it.
+7. Before a `done` transition, call `check_review_gate` for current completion evidence as required by the [conservation procedure](../design/references/concept-delta.md#audit-and-implementation).
 
 ## 2. Apply and validate
 

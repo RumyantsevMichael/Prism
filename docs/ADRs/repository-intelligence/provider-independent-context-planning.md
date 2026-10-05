@@ -10,7 +10,7 @@ Accepted: 2026-09-20
 [Reject unsupported capacity combinations](../../requirements/session-fit.md#2) prohibits fit classification from guessed capacity values.
 [Classify repository context fit](../../requirements/session-fit.md#3) requires deterministic budget policy.
 [Accept an adjustable implementation reserve](../../requirements/session-fit.md#4) requires a caller override for implementation headroom.
-[Provide a native baseline](../../requirements/repository-intelligence-providers.md#1) requires repository discovery without an external executable.
+[Provide a native baseline with safe symbolic-link identity](../../requirements/repository-intelligence-providers.md#6) requires repository discovery without an external executable.
 [Select and compose providers](../../requirements/repository-intelligence-providers.md#3) requires native source with optional external evidence.
 [Refresh and resolve active Codex capacity](../../requirements/active-session-capacity.md#5) requires deterministic active-host capacity precedence.
 [Summarize pre-edit repository consumption](../../requirements/session-consumption-tracing.md#3) requires coverage-aware measurements for later calibration.
@@ -53,9 +53,10 @@ Separate fit arithmetic lets Prism resolve host capacity without coupling reposi
 
 Declined because CodeNib does not own Prism's implementation-session budget or workflow gates.
 
-### Build search and embeddings inside Prism
+### Reimplement semantic and structural engines inside Prism
 
-Declined because mature providers already supply lexical, semantic, and structural repository views.
+Declined because mature libraries supply inference, lexical and vector search, and language resolution.
+Prism embeds pinned Transformers.js, Orama, and CodeGraph SDK dependencies behind its existing source and provider boundaries.
 
 ### Count whole files and changed files
 
@@ -78,9 +79,10 @@ Host adapters expose only allowlisted effective capacity facts.
 
 ## Consequences
 
-Prism ships a bounded native lexical provider, so context planning does not require a separately installed index.
-Native-only planning reports semantic and structural gaps and does not produce estimates that can support `FIT`.
-Automatic selection can add one healthy external contributor and retries once with native after an external runtime failure.
+Prism ships bounded native semantic, lexical, and structural analysis without a separately installed indexer.
+Automatic selection prepares native analysis and never invokes external indexers.
+Native evidence can support numeric `FIT` when retrieval, applicable structure, required hints, source freshness, and source ranges satisfy the planner contract.
+Unavailable semantic assets retain lexical retrieval with explicit degraded capabilities and no numeric `FIT` support.
 Explicit external selection fails visibly when that provider is unavailable.
 CodeNib is a beta dependency, so its adapter must contain API changes and report incompatible responses.
 The first adapter requires CodeNib `0.2.3` and validates the MCP server identity and required response fields at runtime.
@@ -89,7 +91,8 @@ CodeNib graph edges do not distinguish every Prism relationship, so the adapter 
 CodeNib source reads require a verified source fingerprint and can become unavailable after implementation edits.
 CodeNib onboarding MUST use its read-only CodeGraph path because generic graph preparation can create project files.
 CodeGraph contributes lexical and symbol-graph evidence only from a compatible complete index for the exact project root.
-Prism never initializes, synchronizes, or updates a CodeGraph index during discovery or planning.
+Prism never initializes, synchronizes, or updates the target project's external CodeGraph index.
+The embedded SDK indexes only an immutable private mirror of verified snapshot files.
 The planner can produce useful context estimates before Prism knows the session budget.
 Token estimates remain conservative approximations until a host or provider supplies an exact tokenizer.
 Supported capacity defaults require registry maintenance when a host or model changes.
@@ -100,6 +103,17 @@ Local session instrumentation can add search, read, first-edit, edit, test, comp
 ## Mechanism
 
 The Prism MCP process opens the native provider and zero or one selected external contributor for one project.
+Discovery never downloads assets or loads the model.
+Native preparation uses one lazy Node 24 helper, two inference threads, and a five-minute idle timeout.
+Pinned platform archives and model files are verified before atomic publication in private storage.
+The helper uses Transformers.js 4.3.0, ONNX Runtime 1.30.0, Orama 3.1.18, and CodeGraph SDK 1.6.0.
+Orama 3.2.0 was not published when the implementation pins were verified.
+The BGE model revision is `ea104dacec62c0de699686887e3f920caeb4f3e3`, with quantized weights, CLS pooling, normalization, and the retrieval query prefix.
+Independent lexical and vector rankings use equal-weight reciprocal-rank fusion with `k = 60`.
+Source ranges determine context token counts, while semantic scores only affect retrieval order.
+Markdown containment and links and JSON/YAML reference relationships retain their own types.
+The SDK runs its complete resolution pipeline inline, with snapshot-confined reads and explicit parse, resolution, and denied-read diagnostics.
+Index generations reuse content-addressed embeddings and rebuild graph resolution after source changes.
 The provider returns normalized anchors and relationships while it retains provider-specific plans and response shapes internally.
 The planner merges overlapping ranges, reads each merged range once, and counts the rendered provider response.
 The planner returns the repository commit, classified items, lower and expected and upper estimates, and diagnostics.
@@ -118,3 +132,6 @@ The session trace code view is [session-consumption-tracing.puml](../../../plans
 2026-09-19: Added deterministic capacity resolution and session-lifecycle-neutral fit evaluation after the user approved implementation.
 2026-09-19: Added a native baseline, provider composition, CodeGraph support, same-session capacity facts, and local pre-edit tracing.
 2026-09-20: Accepted the implemented provider-independent context planning boundary.
+2026-10-04: Adopted bundled native semantics and evidence-based native fit eligibility after the user approved implementation.
+2026-10-05: Platform verification corrected the ONNX Runtime pin to `1.22.0` because the `1.30.0` package omits the Intel macOS binding.
+All five platform archives passed semantic search and managed-addition checks with the default manifest.

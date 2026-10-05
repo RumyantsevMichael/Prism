@@ -21,12 +21,17 @@ An atomic slice delivers one observable outcome within the remaining context and
 3. Read the initiative map, glossary, assigned Approved requirements, relevant ADRs, feature files, and current slice record.
 4. Read the ancestor diagram source and ADRs supplied by orchestration before refining the current slice's design.
 5. Read [repository context planning](references/context-planning.md).
+6. Read [MCP-managed concept delta](references/concept-delta.md).
+7. Before any target edit, capture the original baseline through its [source evidence procedure](references/concept-delta.md#capture-source-evidence).
 
 ## 2. Explore
 
 1. Locate the starting surface where the required behavior enters the system.
-2. Search the repository, active artifacts, approved dependencies, and available semantic exploration tools for existing solutions, then record relevant matches and the reason to reuse or reject them before selecting a new component, dependency, or design approach.
-3. When a semantic exploration tool is available, use it before text search for relevant symbols and call paths.
+2. Use `refactor` in analysis mode to assess existing concepts against the required behavior before selecting concept transitions.
+   - Supply the outcome, governing requirements, discovery scope, baseline, and known repository context.
+   - Include active artifacts and approved dependencies in the investigation.
+   - Use its relationship evidence to decide reuse, modification, replacement, generalization, consolidation, deletion, or addition.
+3. Use the [semantic reuse procedure](references/concept-delta.md#semantic-reuse-search) before accepting an `ADD` transition.
 4. Use [delegation.md](../workflow/references/delegation.md) to research suitable 3rd party solutions.
 5. Inspect affected code, tests, boundaries, and dependency evidence until you can support a design and fit decision.
 6. When a technical uncertainty affects that decision, investigate it with a bounded experiment.
@@ -49,14 +54,23 @@ Child designs settle finer decisions within inherited boundaries.
 Parent diagrams remain in the parent slice folder as shared design input, while children author their own refined views.
 Implementation owns private helpers and local data structures.
 
+- After exploration, author every planned semantic transition through the concept-delta MCP capability.
+- Before `FIT`, validate the complete delta at one revision using the [concept-delta procedure](references/concept-delta.md).
+
 ## 4. Check whether the scope is atomic
 
 1. Check every assigned requirement against planned behavior and observable verification.
 2. Check the design against code evidence, inherited decisions, and unresolved findings.
 3. When requirements, decisions, evidence, or durable-source conflicts prevent sound design, return `BLOCKED` with the exact unresolved issue.
-4. Apply the context-plan budget policy when session-capacity resolution is supported and every target-session cost is known.
-5. Treat a context-plan `UNCERTAIN` result as a request for more evidence or a safer split.
-6. Confirm atomic fit only with settled consequential decisions and one end-to-end verification path covering a safe, complete outcome.
+4. Count rendered diagram elements, links, and notes, then judge readability at normal review width.
+5. If the diagram is unreadable, assess a split and record why the scope can or cannot stay atomic.
+6. Apply the context-plan budget policy when session-capacity resolution is supported and every target-session cost is known.
+7. Treat a context-plan `UNCERTAIN` result as a request for more evidence or a safer split.
+8. Confirm atomic fit only with settled consequential decisions and one end-to-end verification path covering a safe, complete outcome.
+
+Diagram counts are a signal for the fit decision, not an automatic split rule.
+When recording is enabled, submit fit status, diagram counts, readability, split assessment, and evidence paths through the decision capability.
+If that capability is unavailable, include these facts in the returned result.
 
 ## 5. Prepare the next stage
 
@@ -103,10 +117,12 @@ Finding evidence remains in its original lane file.
    - `SPLIT`: the unchanged parent title, parent diagram and ADR paths, and new child slice slugs with their folder paths.
    - `FIT`: the capability title, starting surface, artifact paths, contract decisions, verification command, and security surface or `none`.
    - `BLOCKED`: the unresolved question or missing evidence.
-2. For `FIT`, include the red checkpoint's exact command, exit status, and expected failure reason, or the exemption reason.
-3. When a findings path is assigned or resolved, include it for every status.
-4. When discovery changes prerequisites, include the affected slices and supporting evidence for orchestration.
-5. Return the result to end this invocation.
+2. For `FIT`, include the ready concept delta path and exact revision.
+3. For `FIT`, include the red checkpoint's exact command, exit status, and expected failure reason, or the exemption reason.
+4. For `FIT` or `SPLIT`, include diagram counts, readability, and the split assessment.
+5. When a findings path is assigned or resolved, include it for every status.
+6. When discovery changes prerequisites, include the affected slices and supporting evidence for orchestration.
+7. Return the result to end this invocation.
 
 - Don't
   - Create a separate exploration or verification report when existing artifacts preserve the required facts.
@@ -119,8 +135,8 @@ The orchestrator owns lifecycle changes and the transition to implementation.
 
 - When orchestration returns findings:
   1. Read `.prism/workflow.md`.
-  2. Use its assigned findings path or `<configured plans>/<initiative>/<slice>/design-audit/findings.md`.
-  3. Read [review-format.md](../review/references/review-format.md) and the complete findings file in the same `Develop <slice>` worker.
+  2. Use its assigned slice `review.json` and design-audit lane through MCP.
+  3. Read [review-format.md](../review/references/review-format.md) and the complete lane findings through `get_review` in the same `Develop <slice>` worker.
   4. For each `OPEN`, `REOPENED`, or `IN PROGRESS` design finding:
      1. Mark it `IN PROGRESS`.
      2. Repeat affected design steps, including the fit check when the correction changes scope, boundaries, dependencies, or verification.

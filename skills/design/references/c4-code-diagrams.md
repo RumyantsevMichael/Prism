@@ -18,6 +18,11 @@ The diagram describes the proposed structure, not an implementation task sequenc
 - Check the source with an available PlantUML renderer before returning `FIT`.
 - If rendering is unavailable, report that limitation in the result.
 
+Count each declared class, interface, component, or other named code node once as an element.
+Count each relationship once as a link and each note once as a note.
+Exclude packages, style declarations, labels, and layout-only links from these counts.
+Judge readability at normal browser review width without zooming the diagram.
+
 The examples use built-in PlantUML notation and need no remote includes or C4 macro library.
 Names and relationships are illustrative, not required architecture.
 

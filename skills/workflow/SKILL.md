@@ -20,6 +20,7 @@ sdm: "0.3"
 | Prioritize initiatives | `roadmap` |
 | Coordinate recursive delivery | `orchestrate` |
 | Design an initiative or slice | `design` |
+| Analyze reuse or restructure existing concepts | `refactor` |
 | Implement a fitted slice | `implement` |
 | Independently audit design or code | `review` |
 | Author a specific artifact | The matching `write-*` skill |
@@ -78,6 +79,16 @@ Code establishes implemented behavior.
 | Implementation gap | Missing production behavior or implementation-owned wiring after design fit that does not reopen design unless it invalidates the design evidence. |
 | Gate | A user decision or correctness confirmation that controls progress. |
 | Fit checkpoint | The design decision that an outcome fits the remaining context and risk budget with settled architecture and end-to-end verification. |
+| Workflow decision record | An opt-in local record of a structured decision, its reason codes, evidence paths, and identity coverage. |
+| Concept delta | MCP-managed version 2 design evidence binding the original baseline, requirements, native search receipts, planned transitions, and growth policy to an audited revision. |
+| Conservation evidence | Immutable private B, A, and F source snapshots, semantic receipts, observations, and measurements used by MCP review gates. |
+| Semantic reuse evidence | Snapshot-bound search candidates with model identity and reviewed reuse dispositions, recorded through the concept-delta MCP capability without treating similarity as equivalence. |
+| Refactoring | Behavior-preserving restructuring of existing concepts, with shared analysis for targeted cleanup and design reuse. |
+| Semantic concept | A unit of meaning or responsibility that can span several source units or share one with other concepts. |
+| Candidate relationship | An evidence-supported explanation of why concepts appear related, established before choosing a transformation. |
+| Desired conceptual model | The structure that fits current requirements and knowledge, including meaningful distinctions and knowledge ownership. |
+| Resynthesis | Reconstruction of affected text or declarations from current semantic requirements while preserving their observable obligations. |
+| Complexity delta | Independent before/after measurements and qualified judgments whose tradeoffs require conceptual and behavioral evidence. |
 | Context plan | An explainable commit-bound estimate of repository source ranges that implementation must, likely, or possibly reads. |
 | Session capacity profile | A versioned exact host, provider, model, and version match that supplies capacity facts with provenance. |
 | Repository read budget | The context available for repository discovery after base, design, and implementation reserves are removed from the compaction threshold. |
@@ -98,7 +109,7 @@ Code establishes implemented behavior.
 | Review wave | One coordinated pass of fresh `Review <slice>` workers against one slice. |
 | Review lane | One independently scoped review in a review wave. |
 | Resolution exchange | A bounded direct conversation between a `Develop <slice>` worker and its assigned `Review <slice>` worker that resolves findings before a fresh review. |
-| Reporting slice | The slice that owns a finding's original evidence and lane findings file. |
+| Reporting slice | The slice that owns a finding's original evidence and lane in `review.json`. |
 | Escalation target | The affected slice or user gate named by a finding that exceeds its reporting slice. |
 | Review probe | A minimal failing regression test authored by implementation review through a public or system surface that proves a concrete finding. |
 | Design checkpoint | The commit after a clean design audit and visual review that becomes the implementation diff base. |
@@ -106,11 +117,13 @@ Code establishes implemented behavior.
 | Decision autonomy | An orchestration setting that controls automatic internal decisions. |
 | Agent flow | An orchestration setting that selects inline or delegated delivery. |
 | Slice continuation | An orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input. |
-| `state.json` | A short resume note with settings, active work, pending decisions, next actions, and evidence paths. |
+| `state.json` | Machine-managed coordination state with settings, active work, pending decisions, next actions, evidence paths, and a revision. |
 | `map.puml` | The authoritative initiative graph, with topology and dependencies owned by orchestration and written through `write-map`. |
-| `findings.md` | The authoritative review record for one reporting slice and review lane. |
-| Lane findings file | Alias for `findings.md`. |
+| `review.json` | The authoritative MCP-managed slice review containing lanes, waves, findings, assessments, disagreements, and evidence bindings. |
+| `findings.md` | Legacy review evidence that remains readable and can be imported through MCP without carrying historical acceptance forward. |
+| Lane findings file | A legacy name for a lane now read and changed through `review.json`; `review.md` is a generated human view. |
 | `recovery.md` | A slice-owned note that preserves unfinished work and evidence when its `Develop <slice>` worker must pause or be replaced. |
+| Pause checkpoint | An orchestrator action that writes an active slice recovery note before it updates coordination state at an expected revision. |
 
 ## Supporting procedures
 

@@ -6,6 +6,8 @@ package "Prism MCP server" {
   class "withRepositoryIntelligence" as Select <<function>>
   class "CompositeRepositoryIntelligence" as Composite <<class>>
   class "NativeRepositoryIntelligence" as Native <<class>>
+  class "buildSnapshot" as Snapshot <<function>>
+  class "sourceRecord" as Record <<function>>
   class "CodeGraphRepositoryIntelligence" as CodeGraph <<class>>
   class "CodeNibRepositoryIntelligence" as CodeNib <<existing class>>
   class "planRepositoryContext" as Plan <<existing function>>
@@ -14,6 +16,8 @@ package "Prism MCP server" {
 Mcp --> Catalog : lists registered provider availability
 Mcp --> Select : requests auto, native, or explicit selection
 Select --> Native : always opens the live source authority
+Native --> Snapshot : creates and verifies native identity
+Snapshot --> Record : hashes text files and link values by entry kind
 Select --> CodeGraph : may add structural evidence
 Select --> CodeNib : may add hybrid evidence
 Select --> Composite : creates one bounded provider view
@@ -33,5 +37,11 @@ note right of Select
   Condition: an automatically selected external provider fails.
   Response: retry once with native and record the fallback.
   Governing requirement: repository-intelligence-providers.md section 3.
+end note
+
+note right of Snapshot
+  Condition: discovery finds a symbolic link.
+  Response: count it, bound its bytes, and hash its stored link value without following the target.
+  Governing requirement: repository-intelligence-providers.md section 6.
 end note
 @enduml

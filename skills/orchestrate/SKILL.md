@@ -181,6 +181,8 @@ The [integration and completion rules](references/completion-rules.md) define in
 ## State and recovery invariants
 
 The initiative's `state.json` records current coordination facts beside `map.puml`.
+Typed `activeOperations` use `start`, `update`, `finish`, and `release`; only `finish` claims completion after the server checks current review evidence.
+Activities are `design`, `implementation`, `review`, and `integration`, with descriptive labels stored separately.
 The map alone owns slice topology, requirement assignments, dependencies, and status.
 The orchestrator is the only workflow writer for initiative state.
 Mono delivery records `orchestrator` as the active worker and the current workspace.

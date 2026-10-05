@@ -1,0 +1,141 @@
+name: Native semantic runtime
+
+on:
+  pull_request:
+    paths: ['native-runtime/**', 'server/**', 'tsconfig.native.json', 'scripts/build-native-runtime.mjs', 'scripts/native-build/**', 'vendor/native-runtime/**', '.github/workflows/native-runtime.yml']
+  push:
+    branches: ['codex/native-runtime-assets']
+  workflow_dispatch:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+        description: Publish verified immutable runtime assets
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin-arm64
+          - os: macos-15-intel
+            platform: darwin-x64
+          - os: ubuntu-24.04
+            platform: linux-x64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+          - os: windows-2025
+            platform: win32-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.16.0'
+      - name: Install pinned build dependencies without scripts
+        run: |
+          npm ci --prefix native-runtime --ignore-scripts --no-audit --no-fund
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+      - name: Check TypeScript and generated JavaScript
+        run: npm run check:native
+      - name: Patch the embedded SDK
+        run: node native-runtime/patch-codegraph.mjs native-runtime/node_modules/@colbymchenry/codegraph-${{ matrix.platform }}/lib/dist
+      - name: Test parsers, language relationships, and containment
+        run: |
+          node --liftoff-only --test --test-reporter=tap --test-timeout=120000 native-runtime/test/*.test.mjs
+          node --test --test-reporter=tap --test-timeout=120000 scripts/native-build/*.test.mjs server/test/native-semantics.test.mjs server/test/conservation.test.mjs server/test/concept-delta-mcp.test.mjs
+      - name: Build an immutable runtime archive
+        env:
+          PRISM_NATIVE_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/build-native-runtime.mjs
+      - name: Test the packaged runtime without external indexers
+        run: |
+          node scripts/native-build/smoke.mjs dist/native
+          node scripts/native-build/mcp-smoke.mjs dist/native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}
+          path: |
+            dist/native/*.tar.gz
+            dist/native/${{ matrix.platform }}.json
+          compression-level: 0
+  publish:
+    if: (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && github.ref == 'refs/heads/codex/native-runtime-assets')
+    needs: runtime
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: assets
+          merge-multiple: true
+      - name: Publish assets before manifest promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: gh release create "$RELEASE_TAG" assets/* --target "$SOURCE_COMMIT" --prerelease --title "$RELEASE_TAG" --notes "Pinned native semantic runtime assets. Platform parser and packaged inference checks passed before publication."
+  verify-default:
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin-arm64
+          - os: macos-15-intel
+            platform: darwin-x64
+          - os: ubuntu-24.04
+            platform: linux-x64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+          - os: windows-2025
+            platform: win32-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.16.0'
+      - name: Prepare the default manifest from published metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          gh release download "$RELEASE_TAG" --pattern '*.json' --dir published
+          node scripts/native-build/published-manifest.mjs published "https://github.com/$GH_REPO/releases/download/$RELEASE_TAG"
+      - name: Verify default discovery and managed addition readiness
+        run: node scripts/native-build/mcp-smoke.mjs --default
+      - uses: actions/upload-artifact@v4
+        with:
+          name: default-manifest-${{ matrix.platform }}
+          path: vendor/native-runtime/manifest.json
+  verified-manifest:
+    needs: verify-default
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: default-manifest-linux-x64
+          path: verified
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-native-manifest
+          path: verified/manifest.json

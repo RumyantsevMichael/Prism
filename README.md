@@ -47,6 +47,8 @@ It then writes `.prism/workflow.md` and creates the configured documentation str
 Start with `prism:ideate` to shape an idea, or `prism:orchestrate` for a roadmap initiative with Approved requirement links.
 Use `prism:design` directly for one Approved outcome.
 Use `prism:workflow` for workflow guidance.
+Use `prism:refactor` to analyze or simplify existing code, skills, documents, or configuration while preserving behavior.
+See [Refactoring](docs/user-guide/refactoring.md) for focused cleanup and reuse analysis.
 
 ## How the workflow works
 
@@ -56,6 +58,7 @@ Use `prism:workflow` for workflow guidance.
 | Shape | `prism:ideate` | Approved EARS requirement files, or a decision to stop |
 | Start an initiative | `prism:orchestrate` | One provisional root slice and a short resume note |
 | Design | `prism:design` | A fit decision, Gherkin acceptance scenarios, architectural ADRs, and executable boundary artifacts when needed |
+| Refactor | `prism:refactor` | Relationship analysis, a desired conceptual model, and proposed or verified behavior-preserving changes |
 | Map accepted state | `prism:write-map` | An authoritative `map.puml` with accepted topology and structural statuses |
 | Design audit | `prism:review` in `design-audit` mode | Complete requirements, boundary, contract, security, and verification findings |
 | Implement | `prism:implement` | Failing tests, working code, step definitions, and verification |

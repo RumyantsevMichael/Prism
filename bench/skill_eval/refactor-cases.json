@@ -1,0 +1,61 @@
+[
+  {
+    "id": "preserve-instruction-exceptions",
+    "prompt": "Resynthesize response-policy.md into a simpler set of instructions while preserving its behavior. Limit edits to that file.",
+    "workspace_files": {
+      "response-policy.md": "# Response policy\n\n- Answer ordinary factual questions directly.\n- For ordinary factual questions, omit an introduction that repeats the question.\n- For urgent incident reports, state the immediate containment action first.\n- Explain each containment action and its risk even when the incident answer must be long.\n- When the user requests a quotation, reproduce the supplied quotation exactly.\n- Keep introductions short for ordinary factual questions.\n- For ordinary factual questions, include only the information needed to answer.\n"
+    },
+    "review_criteria": [
+      "Map all seven original obligations to the resulting source.",
+      "Verify that concision applies to ordinary questions without limiting incident explanations or exact quotations.",
+      "Inspect conditions, exceptions, and authority rather than requiring particular wording.",
+      "Require explicit uncertainty about model behavior if the evidence is only textual."
+    ]
+  },
+  {
+    "id": "misleading-similarity",
+    "prompt": "Inspect cache.mjs and session.mjs for refactoring opportunities. Simplify them only if the resulting conceptual model improves while preserving behavior.",
+    "workspace_files": {
+      "cache.mjs": "export const STALE_AFTER_MS = 60_000;\nexport function isStale(entry, now) {\n  return now - entry.loadedAt >= STALE_AFTER_MS;\n}\n",
+      "session.mjs": "export const IDLE_LIMIT_MS = 60_000;\nexport function mustSignIn(session, now) {\n  return now - session.lastActivityAt >= IDLE_LIMIT_MS;\n}\n",
+      "requirements.md": "# Timing policies\n\nCache age starts when an entry loads.\nSession inactivity starts at the latest user activity.\nThe two durations express independent policies even though both currently equal one minute.\n"
+    },
+    "review_criteria": [
+      "Verify that equal durations and arithmetic do not establish policy equivalence.",
+      "Preserve independent duration ownership and timestamp meanings.",
+      "Inspect the cost of any new interface against the knowledge it hides.",
+      "Keeping the existing modules is a valid result."
+    ],
+    "probe": "import assert from 'node:assert/strict';\nimport {isStale, STALE_AFTER_MS} from './cache.mjs';\nimport {mustSignIn, IDLE_LIMIT_MS} from './session.mjs';\nassert.equal(STALE_AFTER_MS,60000);assert.equal(IDLE_LIMIT_MS,60000);\nfor(const now of [0,59999,60000,60001,120000]) {\n assert.equal(isStale({loadedAt:0},now),now>=60000);\n assert.equal(mustSignIn({lastActivityAt:40000},now),now-40000>=60000);\n}\n"
+  },
+  {
+    "id": "analysis-only-authority",
+    "prompt": "Analyze the invoice and receipt renderers for shared concepts and possible simplification. Return your recommendation before changing any files.",
+    "workspace_files": {
+      "invoice.mjs": "export const invoiceTotal = lines => lines.reduce((sum, line) => sum + line.price * line.quantity, 0).toFixed(2);\n",
+      "receipt.mjs": "export const receiptTotal = lines => lines.reduce((sum, line) => sum + line.price * line.quantity, 0).toFixed(2);\n"
+    },
+    "review_criteria": [
+      "Require every input file to remain byte-identical and prohibit new target files.",
+      "Expect investigation of the shared calculation and preservation of public entry points.",
+      "Distinguish a proposed result and projected complexity from performed edits and measured after-values."
+    ]
+  },
+  {
+    "id": "useful-additional-abstraction",
+    "prompt": "Refactor the three retry policies to reduce duplicated knowledge while preserving callers' current behavior and public entry points.",
+    "workspace_files": {
+      "http.mjs": "export function httpRetry(error, attempt, retryAfterMs = 0) {\n  if (attempt >= 4 || !['timeout', 'unavailable'].includes(error)) return null;\n  return { delay: Math.max(retryAfterMs, Math.min(1000 * 2 ** attempt, 8000)), scope: 'request' };\n}\n",
+      "worker.mjs": "export function workerRetry(error, attempt, paused = false) {\n  if (paused || attempt >= 4 || !['timeout', 'unavailable'].includes(error)) return null;\n  return { delay: Math.min(1000 * 2 ** attempt, 8000), scope: 'job' };\n}\n",
+      "queue.mjs": "export function queueRetry(error, attempt, now = 0) {\n  if (attempt >= 4 || !['timeout', 'unavailable'].includes(error)) return null;\n  return { scheduledAt: now + Math.min(1000 * 2 ** attempt, 8000), durable: true };\n}\n",
+      "requirements.md": "# Retry obligations\n\nAll delivery modes share the same retryable error classes, attempt limit, backoff, and cap.\nHTTP additionally respects Retry-After.\nPaused workers never retry.\nQueue results contain a durable schedule based on the supplied clock.\nPreserve the three public entry points.\n"
+    },
+    "review_criteria": [
+      "Check whether a shared policy owns error classification, attempt limits, and backoff instead of merely wrapping each existing function.",
+      "Preserve request, job, and durable scheduling distinctions without a speculative universal adapter interface.",
+      "Permit an increased concept count when reduced duplicated policy knowledge justifies it.",
+      "Require behavioral checks and separate observed metrics from conceptual judgment."
+    ],
+    "probe": "import assert from 'node:assert/strict';\nimport {httpRetry} from './http.mjs';\nimport {workerRetry} from './worker.mjs';\nimport {queueRetry} from './queue.mjs';\nfor(const error of ['timeout','unavailable','fatal']) for(const attempt of [-1,0,1,3,4,5]) {\n const allowed=attempt<4&&['timeout','unavailable'].includes(error);\n const delay=Math.min(1000*2**attempt,8000);\n for(const retryAfter of [0,2500,10000]) assert.deepEqual(httpRetry(error,attempt,retryAfter),allowed?{delay:Math.max(retryAfter,delay),scope:'request'}:null);\n for(const paused of [false,true]) assert.deepEqual(workerRetry(error,attempt,paused),allowed&&!paused?{delay,scope:'job'}:null);\n for(const now of [0,12345]) assert.deepEqual(queueRetry(error,attempt,now),allowed?{scheduledAt:now+delay,durable:true}:null);\n}\nassert.deepEqual(httpRetry('timeout',0),{delay:1000,scope:'request'});\nassert.deepEqual(workerRetry('timeout',0),{delay:1000,scope:'job'});\nassert.deepEqual(queueRetry('timeout',0),{scheduledAt:1000,durable:true});\n"
+  }
+]

@@ -118,6 +118,7 @@ function fuseHits(results) {
         previous.providers = unique([...previous.providers, provider]);
       } else {
         fused.set(key, {
+          ...effectiveHit,
           node: effectiveHit.node,
           score,
           reasons: unique(effectiveHit.reasons || ["provider-ranked-match"]),
@@ -216,7 +217,7 @@ export class CompositeRepositoryIntelligence {
     const diagnostics = results.flatMap(({ provider, result }) => (Array.isArray(result?.diagnostics) ? result.diagnostics : []).map((item) => providerDiagnostic(provider, item)));
     const retrievalCoverageValues = results.map(({ result }) => result?.retrievalCoverage);
     const aggregateCapabilities = capabilities(this.descriptions);
-    const externalResult = results[1]?.result;
+    const eligibleEvidence = results.some(({ result }) => result?.estimateEligible === true);
     const completeCapabilitySet = aggregateCapabilities.lexicalSearch === true
       && aggregateCapabilities.semanticSearch === true
       && aggregateCapabilities.symbolGraph === true
@@ -229,7 +230,7 @@ export class CompositeRepositoryIntelligence {
       unresolvedRequired: unresolvedRequired(results, hits),
       requiredEvidenceComplete,
       diagnostics,
-      estimateEligible: completeCapabilitySet && externalResult?.estimateEligible === true && requiredEvidenceComplete,
+      estimateEligible: completeCapabilitySet && eligibleEvidence && requiredEvidenceComplete,
       retrievalPlan: {
         fusion: "reciprocal-rank-fusion",
         offset: FUSION_OFFSET,
@@ -265,12 +266,12 @@ export class CompositeRepositoryIntelligence {
       .map(({ providers: _providers, ...neighbor }) => neighbor);
     const graphCoverageValues = results.map(({ result }) => result?.graphCoverage);
     const aggregateCapabilities = capabilities(this.descriptions || []);
-    const externalResult = results[1]?.result;
+    const eligibleEvidence = results.some(({ result }) => result?.estimateEligible === true);
     return {
       neighbors,
       graphCoverage: mergeCoverage(graphCoverageValues),
       diagnostics: results.flatMap(({ provider, result }) => (Array.isArray(result?.diagnostics) ? result.diagnostics : []).map((item) => providerDiagnostic(provider, item))),
-      estimateEligible: aggregateCapabilities.symbolGraph === true && externalResult?.estimateEligible === true
+      estimateEligible: aggregateCapabilities.symbolGraph === true && eligibleEvidence
     };
   }
 

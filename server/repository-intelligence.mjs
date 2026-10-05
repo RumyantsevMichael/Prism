@@ -324,6 +324,11 @@ export async function planRepositoryContext({ task, hints = {}, provider, tokenC
       upper: estimate(upper),
       method: { name: tokenCounter.name, exact: tokenCounter.exact === true }
     },
+    observedSource: {
+      verifiedRangeCount: items.filter(({ rangeComplete }) => rangeComplete).length,
+      approximateTokens: items.filter(({ rangeComplete }) => rangeComplete).reduce((sum, item) => sum + item.sourceTokens, 0),
+      method: tokenCounter.name
+    },
     diagnostics: {
       retrievalCoverage: search?.retrievalCoverage ?? null,
       graphCoverage: neighborResult?.graphCoverage ?? null,

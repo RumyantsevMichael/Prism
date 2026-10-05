@@ -6,17 +6,21 @@ It does not estimate generic task complexity or generated code size.
 ## Plan the context
 
 1. Use the repository-context planning capability when it is available.
-2. Pass the slice outcome, explicit files, explicit symbols, domain concepts, and expected modification targets as hints.
-3. Use automatic provider selection unless the user or repository policy requires `native`, `codegraph`, or `codenib` explicitly.
-4. Use `list_repository_intelligence_providers` before an explicit external selection when its availability is unknown.
-5. Confirm that the plan commit matches the source used for design.
-6. Inspect every `mustRead`, `likelyRead`, and `possibleRead` reason before the fit decision.
-7. Inspect provider contributors, capabilities, fallback, and diagnostics before using the estimate.
-8. Treat unresolved concepts, stale source, missing semantic retrieval, and incomplete graph coverage as uncertainty evidence.
+2. When recording is enabled, pass the session correlation key and plugin data directory when the host provides both.
+3. Pass the slice outcome, explicit files, explicit symbols, domain concepts, and expected modification targets as hints.
+4. Use `provider: auto` for bundled native analysis unless the user or repository policy requires an explicit external provider.
+5. Use `list_repository_intelligence_providers` before an explicit external selection when its availability is unknown.
+6. Confirm that the plan commit matches the source used for design.
+7. Inspect every `mustRead`, `likelyRead`, and `possibleRead` reason before the fit decision.
+8. Inspect provider contributors, capabilities, fallback, and diagnostics before using the estimate.
+9. Treat unresolved concepts, stale source, missing semantic retrieval, and incomplete graph coverage as uncertainty evidence.
 
 The native provider is always the live-source baseline.
 An external provider is optional and can add semantic or structural evidence.
-A native-only or CodeGraph plan cannot claim semantic coverage and therefore cannot support a numeric `FIT` result.
+A native plan can support numeric `FIT` when semantic retrieval, applicable structure, source freshness, required hints, and source ranges are complete.
+An external CodeGraph plan has no semantic retrieval and cannot support numeric `FIT` by itself.
+For preparation, degraded retrieval, and stale snapshots, follow the [semantic reuse procedure](concept-delta.md#semantic-reuse-search).
+The observed verified-source size is an approximate count of returned ranges, not a fit-eligible estimate.
 
 ## Calculate the repository read budget
 

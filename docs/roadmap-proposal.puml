@@ -1,0 +1,38 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment center
+skinparam wrapWidth 190
+skinparam rectangle {
+  BackgroundColor #FFFFFF
+  BorderColor #5B6573
+  FontColor #1D2733
+}
+skinparam rectangle<<envisioned>> {
+  BackgroundColor #FFF6D7
+  BorderColor #8B6F22
+  BorderStyle dashed
+}
+
+package "Shipped" {
+  note "No prior roadmap was available to\nreconstruct initiative-level history." as shipped_note
+}
+
+package "Parked" {
+  note "No parked decisions surfaced, and\nno prior roadmap is available." as parked_note
+}
+
+package "Later" {
+  note "No other Approved initiative\nsurfaced in the bounded survey." as later_note
+}
+
+package "Next" {
+  rectangle "Agent execution evidence\nand continuity" as agent_workflow <<envisioned>>
+}
+
+package "Now" {
+  rectangle "Repository intelligence" as repository_intelligence <<in-progress>>
+}
+
+@enduml

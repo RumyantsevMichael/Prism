@@ -9,7 +9,7 @@ sdm: "0.3"
 A fresh `Review <slice>` worker starts with artifacts and evidence without the `Develop <slice>` worker's conversation.
 `design-audit` checks implementability before production behavior exists.
 `implementation-review` checks verified code against Approved intent.
-Each review writes only its assigned lane findings file, except permitted implementation review probes.
+Each reviewer changes only its assigned lanes through `update_review`, except permitted implementation review probes.
 
 In `multi` flow, the `Review <slice>` worker remains available after returning findings and enters a [resolution exchange](../workflow/SKILL.md#common-terms) with the same `Develop <slice>` worker before a replacement reviewer starts.
 A reviewer in a resolution exchange cannot return final `CLEAN` or mark findings `VERIFIED` for that correction.
@@ -18,10 +18,11 @@ A reviewer in a resolution exchange cannot return final `CLEAN` or mark findings
 
 1. Read `.prism/workflow.md`, project instructions, and [review-format.md](references/review-format.md).
 2. Read the assigned mode, reporting slice, lane focus, findings path, and applicable review base.
-3. Read or create the complete assigned findings file.
+3. Read the complete assigned lane through `get_review` using [review-format.md](references/review-format.md).
 4. Read the requirements, relevant ADRs, tests, feature files, diagrams, contract decisions, and verification evidence for the lane.
 5. If code or correction evidence is outdated, request the current result before deciding findings or closure.
-6. Review the assigned scope through the applicable mode below.
+6. Read the complete [concept delta](../design/references/concept-delta.md) through MCP at the submitted or audited revision.
+7. Review the assigned scope through the applicable mode below.
 
 ## Contracts
 
@@ -52,14 +53,18 @@ Implementation review requires actual consumption and its verification evidence.
 - Check applicable lifecycle, cancellation, deadlines, cleanup, retries, resource ownership, and authority changes.
 - Check applicable concurrency, ordering, replay identity, quotas, atomicity, and idempotency.
 - Check that a new component, dependency, or design approach has a recorded search for existing solutions and a reuse or rejection reason.
+- For refactoring, apply the shared [review criteria](../refactor/references/analysis.md#review-criteria) to its relationship, model, complexity, and preservation evidence.
 - For `design-audit`:
   1. Trace every assigned requirement to planned behavior and an observable verification path.
   2. Check that boundaries, consequential decisions, consumers, and verification support one safe, complete atomic outcome.
   3. Check the shared concerns against diagrams and ADRs.
-  4. Check feature scenarios for requirement links, meaningful boundary cases, and domain language without implementation detail.
-  5. Check the red checkpoint reaches the starting surface and fails for missing behavior, or has a documentation-only exemption.
-  6. Record defects in fit, design, requirements, or verification as findings.
-  7. Route implementation-only gaps to delivery without opening design findings.
+  4. Check diagram counts and readability, and record a finding when an unreadable diagram lacks a split assessment.
+  5. Check feature scenarios for requirement links, meaningful boundary cases, and domain language without implementation detail.
+  6. Check the red checkpoint reaches the starting surface and fails for missing behavior, or has a documentation-only exemption.
+  7. Record defects in fit, design, requirements, or verification as findings.
+  8. Route implementation-only gaps to delivery without opening design findings.
+  9. Check delta readiness, scope, concept coverage, and reuse evidence against the design.
+  10. For `CLEAN`, record the exact delta path and revision in the review result.
 - For `implementation-review`:
   1. Read the complete diff against the supplied review base and recorded verification results.
   2. Trace assigned requirements and architectural constraints through changed code and observable tests.
@@ -69,7 +74,8 @@ Implementation review requires actual consumption and its verification evidence.
   6. Inspect changed trust boundaries for untrusted inputs, secrets, authorization, privilege, storage, network access, and IPC.
   7. If the declared security surface is `none`, verify that classification and record the security audit exemption.
   8. Check unrelated edits, generated files, temporary files, and stale user or operator guidance.
-  9. When a concrete finding needs executable proof:
+  9. Review the immutable B→F comparison and [conservation procedure](../design/references/concept-delta.md#compare-and-measure), recording discrepancies through MCP.
+  10. When a concrete finding needs executable proof:
      1. Add one minimal regression probe in the canonical test location through a public or system surface.
      2. Base assertions on requirements, ADRs, features, contracts, or verified behavior.
      3. Use existing fixtures or local setup.
@@ -86,7 +92,7 @@ Delivery owns probe corrections and preserves or promotes verified coverage.
 A finding identifies an actionable defect, its affected path, evidence, failure condition, and reviewer-verifiable closing condition.
 The reporting lane retains cross-slice evidence and records its escalation target.
 
-1. For each new defect, append an `OPEN` finding using the review format.
+1. For each new defect, call `update_review` with `open_finding` using the review format.
 2. For each earlier finding, inspect its current evidence and closing condition without deleting history.
 3. For each `FIXED` finding:
    1. Check the implementer evidence and affected artifacts.
@@ -94,7 +100,7 @@ The reporting lane retains cross-slice evidence and records its escalation targe
    3. If the closing condition passes, mark it `VERIFIED`.
    4. If the closing condition fails, mark it `REOPENED` with the remaining failure evidence.
 4. If a previously `VERIFIED` defect returns, reuse its ID with `REOPENED` status.
-5. Append status and review history for each finding change.
+5. Use typed review operations so the server preserves status and review history.
 
 During a resolution exchange:
 
@@ -109,8 +115,9 @@ Only `VERIFIED` findings are resolved.
 ## Return the result
 
 1. Update the lane result using the review format, including scope, coverage, findings, artifact paths, and verification evidence.
-2. Include the contract decisions and design red checkpoint or exemption when applicable.
-3. Return `CLEAN` only when no actionable finding remains, otherwise return `FINDINGS` with unresolved IDs and the lane path.
+2. When recording is enabled, submit review phase, status, finding identifiers, dispositions, and evidence paths through the decision capability.
+3. Include the contract decisions and design red checkpoint or exemption when applicable.
+4. Return `CLEAN` only when no actionable finding remains, otherwise return `FINDINGS` with unresolved IDs and the lane path.
 
 An expected design red checkpoint does not prevent `CLEAN`.
 The result contains actionable evidence without an implementation summary or praise.

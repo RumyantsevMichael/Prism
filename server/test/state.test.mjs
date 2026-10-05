@@ -28,7 +28,7 @@ test("creates and updates a validated coordination state atomically", async (con
     expectedRevision: null,
     changes: {
       settings: { autonomy: "full", agentFlow: "mono", commit: "off", push: "off", continuation: "stepwise", models: "defaults" },
-      active: active("download"),
+      activeOperations: active("download").map(entry => ({ op: "start", entry })),
       pending: ["User decision: retention"],
       next: ["Run the design audit"],
       evidence: ["download/recovery.md"]
@@ -42,7 +42,7 @@ test("creates and updates a validated coordination state atomically", async (con
   const updated = await updateCoordinationState({
     ...fixture,
     expectedRevision: created.revision,
-    changes: { active: active("download", "review-worker"), next: [] }
+    changes: { activeOperations: [{ op: "update", slice: "download", set: { workers: ["review-worker"] } }], next: [] }
   });
   assert.equal(updated.created, false);
   assert.deepEqual(updated.changedFields, ["active", "next"]);
@@ -83,7 +83,7 @@ test("accepts every autonomy and agent flow value", async (context) => {
 
 test("keeps legacy state valid without the additive settings", async (context) => {
   const fixture = await stateFixture(context);
-  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { active: active("legacy") } });
+  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { activeOperations: active("legacy").map(entry => ({ op: "start", entry })) } });
   assert.deepEqual(created.state.settings, {});
   assert.equal(created.valid, true);
   const loaded = await readCoordinationState(fixture);
@@ -93,11 +93,11 @@ test("keeps legacy state valid without the additive settings", async (context) =
 
 test("rejects a stale update without changing the state", async (context) => {
   const fixture = await stateFixture(context);
-  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { active: active("first") } });
+  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { activeOperations: active("first").map(entry => ({ op: "start", entry })) } });
   const before = await readFile(path.join(fixture.projectRoot, fixture.statePath), "utf8");
 
   await assert.rejects(
-    updateCoordinationState({ ...fixture, expectedRevision: "stale", changes: { active: active("second") } }),
+    updateCoordinationState({ ...fixture, expectedRevision: "stale", changes: { activeOperations: active("second").map(entry => ({ op: "start", entry })) } }),
     (caught) => caught.code === "revision_conflict"
   );
   assert.equal(await readFile(path.join(fixture.projectRoot, fixture.statePath), "utf8"), before);
@@ -106,14 +106,14 @@ test("rejects a stale update without changing the state", async (context) => {
 
 test("rejects invalid state changes without changing the state", async (context) => {
   const fixture = await stateFixture(context);
-  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { active: active("first") } });
+  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { activeOperations: active("first").map(entry => ({ op: "start", entry })) } });
   const before = await readFile(path.join(fixture.projectRoot, fixture.statePath), "utf8");
 
   await assert.rejects(
     updateCoordinationState({
       ...fixture,
       expectedRevision: created.revision,
-      changes: { active: [{ slice: "first", activity: "design", workers: ["same", "same"], workspace: "/work/first" }] }
+      changes: { activeOperations: [{ op: "update", slice: "first", set: { workers: ["same", "same"] } }] }
     }),
     (caught) => caught.code === "invalid_state" && caught.errors.some((item) => item.includes("workers[1]"))
   );
@@ -122,10 +122,10 @@ test("rejects invalid state changes without changing the state", async (context)
 
 test("allows only one concurrent writer with the same revision", async (context) => {
   const fixture = await stateFixture(context);
-  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { active: active("initial") } });
+  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { activeOperations: active("initial").map(entry => ({ op: "start", entry })) } });
   const results = await Promise.allSettled([
-    updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { active: active("left") } }),
-    updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { active: active("right") } })
+    updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { activeOperations: [{ op: "release", slice: "initial" }, ...active("left").map(entry => ({ op: "start", entry }))] } }),
+    updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { activeOperations: [{ op: "release", slice: "initial" }, ...active("right").map(entry => ({ op: "start", entry }))] } })
   ]);
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
   assert.equal(results.filter((result) => result.status === "rejected" && result.reason.code === "revision_conflict").length, 1);

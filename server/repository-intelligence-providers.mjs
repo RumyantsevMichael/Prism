@@ -1,9 +1,8 @@
 import { CODENIB_CAPABILITIES, CODENIB_SUPPORTED_VERSION, CodeNibRepositoryIntelligence, openCodeNibClient } from "./codenib-provider.mjs";
 import { CODEGRAPH_CAPABILITIES, CODEGRAPH_SUPPORTED_VERSION, openCodeGraphRepositoryIntelligence } from "./codegraph-provider.mjs";
-import { CompositeRepositoryIntelligence, ExternalRepositoryIntelligenceError } from "./composite-repository-intelligence.mjs";
+import { CompositeRepositoryIntelligence } from "./composite-repository-intelligence.mjs";
 import { openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 
-const EXTERNAL_PROVIDER_ORDER = ["codegraph", "codenib"];
 const NATIVE_CAPABILITIES = Object.freeze({
   lexicalSearch: true,
   semanticSearch: false,
@@ -71,30 +70,11 @@ async function normalizedSession(descriptor, projectRoot, context) {
   }
 }
 
-function capabilityRank(session) {
-  const value = session.description?.capabilities || {};
-  return [
-    value.verifiedSource === true ? 1 : 0,
-    value.hybridSearch === true ? 1 : 0,
-    value.semanticSearch === true ? 1 : 0,
-    value.symbolGraph === true ? 1 : 0
-  ];
-}
-
 function descriptorMetadata(descriptor) {
   return {
     version: String(descriptor.metadata?.version || "unknown"),
     capabilities: { ...(descriptor.metadata?.capabilities || {}) }
   };
-}
-
-function compareSessions(left, right) {
-  const leftRank = capabilityRank(left);
-  const rightRank = capabilityRank(right);
-  for (let index = 0; index < leftRank.length; index += 1) {
-    if (leftRank[index] !== rightRank[index]) return rightRank[index] - leftRank[index];
-  }
-  return left.descriptor.id.localeCompare(right.descriptor.id);
 }
 
 function availableRecord(session) {
@@ -224,11 +204,6 @@ export async function listRepositoryIntelligenceProviders(projectRoot, options =
   }
 }
 
-function fallbackOf(session, error) {
-  const code = failureCode(error);
-  return { provider: session.descriptor.id, code, message: sanitizedMessage(session.descriptor.id, code) };
-}
-
 export async function withRepositoryIntelligence(projectRoot, action, options = {}) {
   if (typeof action !== "function") throw new TypeError("A repository intelligence action is required.");
   const requestedSelection = options.selection || "auto";
@@ -239,31 +214,14 @@ export async function withRepositoryIntelligence(projectRoot, action, options = 
   }
   const nativeSession = await openNativeSession(projectRoot, descriptors);
   let selectedSession = null;
-  const openedExternal = [];
   try {
-    if (requestedSelection !== "native") {
-      const candidates = requestedSelection === "auto"
-        ? EXTERNAL_PROVIDER_ORDER.map((id) => byId.get(id)).filter(Boolean)
-        : [byId.get(requestedSelection)];
-      for (const descriptor of candidates) {
-        if (descriptor.kind !== "external") continue;
-        try {
-          openedExternal.push(await openExternalSession(descriptor, projectRoot, nativeSession));
-        } catch (error) {
-          if (requestedSelection !== "auto") {
-            const code = failureCode(error);
-            throw new RepositoryIntelligenceSelectionError(descriptor.id, code, sanitizedMessage(descriptor.id, code), { cause: error });
-          }
-        }
-      }
-      if (requestedSelection === "auto") {
-        openedExternal.sort(compareSessions);
-        selectedSession = openedExternal[0] || null;
-      } else {
-        selectedSession = openedExternal[0] || null;
-      }
-      for (const session of openedExternal) {
-        if (session !== selectedSession) await closeSession(session);
+    if (!["native", "auto"].includes(requestedSelection)) {
+      const descriptor = byId.get(requestedSelection);
+      try { selectedSession = await openExternalSession(descriptor, projectRoot, nativeSession); }
+      catch (error) {
+        const code = failureCode(error);
+        options.onExclusion?.({ provider: descriptor.id, reasonCode: code });
+        throw new RepositoryIntelligenceSelectionError(descriptor.id, code, sanitizedMessage(descriptor.id, code), { cause: error });
       }
     }
 
@@ -271,19 +229,7 @@ export async function withRepositoryIntelligence(projectRoot, action, options = 
       requestedSelection,
       selectedExternal: selectedSession?.descriptor.id || null
     });
-    try {
-      return await action(composite);
-    } catch (error) {
-      const externalFailure = error instanceof ExternalRepositoryIntelligenceError
-        && error.provider === selectedSession?.descriptor.id
-        && error.recoverable === true;
-      if (requestedSelection !== "auto" || !selectedSession || !externalFailure) throw error;
-      const fallback = fallbackOf(selectedSession, error);
-      await closeSession(selectedSession);
-      selectedSession = null;
-      const nativeOnly = new CompositeRepositoryIntelligence(nativeSession.provider, null, { requestedSelection, fallback });
-      return action(nativeOnly);
-    }
+    return await action(composite);
   } finally {
     await closeSession(selectedSession);
     await closeSession(nativeSession);

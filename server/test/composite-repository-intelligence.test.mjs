@@ -21,7 +21,7 @@ function provider(name, {
   estimateEligible = true,
   commit = "snapshot:abc",
   sourceFingerprint = "source-abc",
-  snapshotScheme = "prism-native-sha256-v1"
+  snapshotScheme = "prism-native-sha256-v2"
 } = {}) {
   const reads = [];
   return {
