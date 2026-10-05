@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/RumyantsevMichael/Prism/compare/v0.8.0...v0.9.0) (2026-10-05)
+
+
+### Added
+
+* add native semantic discovery and verified refactoring workflows ([67c30e4](https://github.com/RumyantsevMichael/Prism/commit/67c30e431f07f365b01ba8c92ae59c641e99c638))
+
+
+### Fixed
+
+* raise PlantUML browser render limit ([b86f126](https://github.com/RumyantsevMichael/Prism/commit/b86f126a18b48bd6d6c614a23c2a75bdb234938d))
+* separate orchestration flow from invariants ([604c2ef](https://github.com/RumyantsevMichael/Prism/commit/604c2ef7e1287360f25024cd25b86ea7bc74dd36))
+* verify refactoring flows and automate complete releases ([aa12522](https://github.com/RumyantsevMichael/Prism/commit/aa125220c2cd5833fbe6622688245fcdc365c636))
+
 ## [0.8.0](https://github.com/RumyantsevMichael/Prism/compare/v0.7.0...v0.8.0) (2026-09-24)
 
 
