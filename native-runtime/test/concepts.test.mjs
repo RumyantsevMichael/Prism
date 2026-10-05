@@ -37,11 +37,26 @@ test("fragments cover all Unicode text and respect model token budgets including
   const fragments = fragmentConcept(concept, file, count, 128);
   assert.ok(fragments.length > 10);
   assert.ok(fragments.every(fragment => count(fragment.text) <= 128 && fragment.parentId === concept.id));
+  assert.ok(fragments.every(fragment => count(fragment.embeddingText) <= 128));
   assert.equal(fragments[0].sourceStart, 0);
   assert.equal(fragments.at(-1).sourceEnd, file.content.length);
   for (let i = 1; i < fragments.length; i++) assert.equal(fragments[i].sourceStart, fragments[i - 1].sourceEnd);
   const recovered = fragments.map(fragment => file.content.slice(fragment.sourceStart, fragment.sourceEnd)).join("");
   assert.equal(recovered, file.content);
+});
+
+test("file fragments share model inputs while preserving lexical paths and exact source", () => {
+  const fragments = ["src/example.mts", "generated/example.mjs"].map(file => {
+    const input = { file, content: "const local = 1;\n", hash: "verified" };
+    return fragmentConcept(extractTextConcepts(input).units[0], input, text => text.length)[0];
+  });
+  assert.equal(fragments[0].embeddingText, fragments[1].embeddingText);
+  assert.notEqual(fragments[0].text, fragments[1].text);
+  for (const fragment of fragments) {
+    assert.ok(fragment.text.startsWith(fragment.file));
+    assert.equal(fragment.text.slice(fragment.prefixLength), "const local = 1;\n");
+    assert.equal(fragment.embeddingText, "file\nconst local = 1;\n");
+  }
 });
 
 test("minified configuration fragments contain only their exact key source", () => {

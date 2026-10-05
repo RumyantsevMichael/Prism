@@ -236,7 +236,12 @@ class NativeSemanticRuntime {
       indexRevision: job?.revision || published?.revision || null,
       progress: job?.progress || null,
       coverage: job?.coverage || published?.coverage || null,
-      versions: { runtime: manifest.assetVersion, model: `${manifest.model.id}@${manifest.model.revision}`, graph: "1.6.0", chunker: "concepts-4-exact-fragments" },
+      versions: {
+        runtime: manifest.assetVersion,
+        model: `${manifest.model.id}@${manifest.model.revision}`,
+        graph: "1.6.0",
+        chunker: job?.prepared?.index.chunkerVersion || published?.chunkerVersion || null
+      },
       runtime: { supported: supported.has(`${process.platform}-${process.arch}`), published: Boolean(manifest.bundles[`${process.platform}-${process.arch}`]) },
       structuralCapabilities: { code: ["JavaScript", "TypeScript", "Python", "Go", "Rust", "Java", "C#", "C", "C++"], documents: ["Markdown", "JSON", "YAML"] },
       limits: { files: 2e4, sourceBytes: 64 * 1024 * 1024, fileBytes: 2 * 1024 * 1024, sdkFileBytes: 1024 * 1024, modelTokens: 512 },
@@ -387,7 +392,7 @@ class NativeSemanticRuntime {
         if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The concept index exceeds 512 MiB.");
         await writeAtomically(indexPath, contents, { mode: 384 });
         const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
-        const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, coverage, diagnostics: index.diagnostics });
+        const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics });
         await writeAtomically(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`), pointerContents, { mode: 384 });
         await writeAtomically(path.join(directory, "current.json"), pointerContents, { mode: 384 });
         job.revision = revision;

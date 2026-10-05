@@ -31,7 +31,8 @@ try {
   }
   const mirror = path.join(directory, "mirror"); await mkdir(mirror);
   const source = "export function retryRequest() { return 1; }\n";
-  await writeFile(path.join(mirror, "retry.ts"), source);
+  const files = ["retry.ts", "retry-copy.ts"].map(file => ({ file, hash: hash(source) }));
+  for (const { file } of files) await writeFile(path.join(mirror, file), source);
   const env = { ...process.env, PATH: "", PRISM_EMBEDDED: "1", CODEGRAPH_NO_STORE_WORKER: "1", CODEGRAPH_NO_PARALLEL_RESOLVE: "1", CODEGRAPH_NO_WAL_DEFER: "1", CODEGRAPH_NO_FAST_INIT: "1", CODEGRAPH_KERNEL: "0", NODE_DISABLE_COMPILE_CACHE: "1" };
   delete env.NODE_OPTIONS; delete env.NODE_PATH;
   const executable = path.join(runtime, process.platform === "win32" ? "node.exe" : "node");
@@ -45,10 +46,20 @@ try {
   });
   child.once("exit", code => { for (const pending of requests.values()) pending.reject(new Error(`Worker exited ${code}.`)); });
   const call = (method, args) => new Promise((resolve, reject) => { requests.set(++id, { resolve, reject }); child.stdin.write(JSON.stringify({ id, method, args }) + "\n"); });
-  const index = await call("build", { mirror, files: [{ file: "retry.ts", hash: hash(source) }], snapshot: "smoke", modelDirectory, modelIdentity: "smoke-pinned-model" });
-  if (!index.chunks.length || index.diagnostics.length || !index.fileCoverage["retry.ts"]) throw new Error(`Incomplete packaged graph: ${JSON.stringify(index.diagnostics)}.`);
+  const index = await call("build", { mirror, files, snapshot: "smoke", modelDirectory, modelIdentity: "smoke-pinned-model" });
+  if (!index.chunks.length || index.diagnostics.length || files.some(({ file }) => !index.fileCoverage[file])) throw new Error(`Incomplete packaged graph: ${JSON.stringify(index.diagnostics)}.`);
+  const functions = index.chunks.filter(chunk => chunk.name === "retryRequest");
+  if (functions.length !== 2 || new Set(functions.map(chunk => chunk.id)).size !== 2 || new Set(functions.map(chunk => chunk.file)).size !== 2) throw new Error("Duplicate sources lost their candidate identities.");
+  if (new Set(functions.map(chunk => chunk.embeddingKey)).size !== 1 || index.counts.newEmbeddings >= index.counts.fragments) throw new Error("Duplicate model inputs were embedded more than once.");
   const indexPath = path.join(directory, "index.json"); await writeFile(indexPath, JSON.stringify(index));
   const results = await call("search", { query: "repeat failed request", limit: 10, snapshot: "smoke", modelDirectory, modelIdentity: "smoke-pinned-model", indexPath });
-  if (!results.length || results[0].file !== "retry.ts" || !Number.isFinite(results[0].cosineSimilarity)) throw new Error("Packaged local inference failed.");
-  process.stdout.write(JSON.stringify({ platform, semanticSearch: true, structuralCoverage: true, externalExecutables: false, fragments: index.chunks.length }) + "\n");
+  if (files.some(({ file }) => !results.some(result => result.file === file && Number.isFinite(result.cosineSimilarity)))) throw new Error("Packaged local inference failed.");
+  if (results.some(result => "embeddingText" in result)) throw new Error("Search returned internal model input.");
+  const previousEmbeddings = Object.fromEntries(index.chunks.map(chunk => [chunk.embeddingKey, chunk.embedding]));
+  // Each preparation uses a fresh source mirror, as the MCP host does.
+  const warmMirror = path.join(directory, "warm-mirror"); await mkdir(warmMirror);
+  for (const { file } of files) await writeFile(path.join(warmMirror, file), source);
+  const warm = await call("build", { mirror: warmMirror, files, snapshot: "warm", modelDirectory, modelIdentity: "smoke-pinned-model", previousEmbeddings });
+  if (warm.diagnostics.length || warm.counts.newEmbeddings !== 0 || warm.counts.reusedEmbeddings !== warm.counts.fragments || warm.counts.fragments !== index.counts.fragments) throw new Error(`The packaged runtime did not reuse cached embeddings: ${JSON.stringify(warm.counts)}.`);
+  process.stdout.write(JSON.stringify({ platform, semanticSearch: true, structuralCoverage: true, externalExecutables: false, fragments: index.chunks.length, newEmbeddings: index.counts.newEmbeddings, duplicateCandidatesPreserved: true, warmEmbeddingReuse: true }) + "\n");
 } finally { child?.kill(); if (child && child.exitCode === null) await new Promise(resolve => child.once("exit", resolve)); await rm(directory, { recursive: true, force: true }); }

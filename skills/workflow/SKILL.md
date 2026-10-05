@@ -82,6 +82,7 @@ Code establishes implemented behavior.
 | Workflow decision record | An opt-in local record of a structured decision, its reason codes, evidence paths, and identity coverage. |
 | Concept delta | MCP-managed version 2 design evidence binding the original baseline, requirements, native search receipts, planned transitions, and growth policy to an audited revision. |
 | Conservation evidence | Immutable private B, A, and F source snapshots, semantic receipts, observations, and measurements used by MCP review gates. |
+| Original baseline | Retained source before the first target edit, preserved for reuse discovery and later comparisons across corrections. |
 | Semantic reuse evidence | Snapshot-bound search candidates with model identity and reviewed reuse dispositions, recorded through the concept-delta MCP capability without treating similarity as equivalence. |
 | Refactoring | Behavior-preserving restructuring of existing concepts, with shared analysis for targeted cleanup and design reuse. |
 | Semantic concept | A unit of meaning or responsibility that can span several source units or share one with other concepts. |

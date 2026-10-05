@@ -1,6 +1,11 @@
 name: Validate plugin
 
 on:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
   push:
     branches: [main]
   pull_request:
@@ -10,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -26,6 +33,12 @@ jobs:
 
       - name: Validate Skill Definition Markdown
         run: npm run validate:sdm
+
+      - name: Test the server and release automation
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm test
+          node --test scripts/native-build/*.test.mjs scripts/release-automation.test.mjs
 
       - name: Check manifest versions
         run: |

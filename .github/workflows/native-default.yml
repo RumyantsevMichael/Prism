@@ -1,0 +1,77 @@
+name: Verify default native runtime
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
+      release_tag:
+        type: string
+        default: ''
+      manifest_artifact:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin-arm64
+          - os: macos-15-intel
+            platform: darwin-x64
+          - os: ubuntu-24.04
+            platform: linux-x64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+          - os: windows-2025
+            platform: win32-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.16.0'
+      - name: Prepare the candidate manifest from published metadata
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release download "$RELEASE_TAG" --pattern '*.json' --dir published
+          node scripts/native-build/published-manifest.mjs published "https://github.com/$GH_REPO/releases/download/$RELEASE_TAG"
+      - name: Check runtime inputs against the published source
+        run: node scripts/native-build/verify-release-source.mjs
+      - name: Verify default discovery and managed addition readiness
+        run: node scripts/native-build/mcp-smoke.mjs --default
+      - uses: actions/upload-artifact@v4
+        if: inputs.manifest_artifact != ''
+        with:
+          name: ${{ inputs.manifest_artifact }}-${{ matrix.platform }}
+          path: vendor/native-runtime/manifest.json
+  verified-manifest:
+    if: inputs.manifest_artifact != ''
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.manifest_artifact }}-linux-x64
+          path: verified
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.manifest_artifact }}
+          path: verified/manifest.json

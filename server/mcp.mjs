@@ -20,14 +20,13 @@ import {
 } from "./session-capacity.mjs";
 import { summarizeSessionConsumption } from "./session-trace-store.mjs";
 import { appendDecision, readDecisionHistory, setDecisionRecording } from "./decision-history.mjs";
-import { listArtifacts, startReviewServer } from "./review-server.mjs";
+import { listArtifacts } from "./review-server.mjs";
+import { createReviewServerPool } from "./review-server-pool.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./state.mjs";
 import { nativeSemanticRuntime } from "./native-semantic-runtime.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, prepareNativeProvider, searchRepositoryConcepts } from "./semantic-native-provider.mjs";
 
-const reviewServers = new Map();
-const taskRoots = new Map();
-const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1000;
+const reviewServers = createReviewServerPool();
 const pluginManifest = JSON.parse(await readFile(new URL("../.codex-plugin/plugin.json", import.meta.url), "utf8"));
 
 function decisionDataDirectory(argumentsValue) {
@@ -109,61 +108,10 @@ async function requestedProjectRoot(argumentsValue) {
   return resolvedRoot;
 }
 
-function refreshIdleTimeout(projectRoot, binding) {
-  clearTimeout(binding.idleTimeout);
-  const idleTimeout = setTimeout(async () => {
-    if (binding.idleTimeout !== idleTimeout || reviewServers.get(projectRoot) !== binding) {
-      return;
-    }
-    try {
-      const review = await binding.review;
-      if (review.viewerCount() > 0) {
-        refreshIdleTimeout(projectRoot, binding);
-        return;
-      }
-      reviewServers.delete(projectRoot);
-      for (const [task, boundRoot] of taskRoots) {
-        if (boundRoot === projectRoot) {
-          taskRoots.delete(task);
-        }
-      }
-      await review.close();
-    } catch {
-    }
-  }, REVIEW_SERVER_IDLE_MS);
-  binding.idleTimeout = idleTimeout;
-  idleTimeout.unref();
-}
-
 async function server(argumentsValue, metadata) {
   const id = taskId(metadata);
   const projectRoot = await requestedProjectRoot(argumentsValue);
-  const boundRoot = taskRoots.get(id);
-  if (boundRoot && boundRoot !== projectRoot) {
-    throw new Error(`This task is already bound to project root: ${boundRoot}`);
-  }
-  taskRoots.set(id, projectRoot);
-  const existing = reviewServers.get(projectRoot);
-  if (existing) {
-    refreshIdleTimeout(projectRoot, existing);
-    return existing.review;
-  }
-  const review = startReviewServer({ projectRoot });
-  const binding = { projectRoot, review };
-  reviewServers.set(projectRoot, binding);
-  refreshIdleTimeout(projectRoot, binding);
-  try {
-    return await review;
-  } catch (error) {
-    clearTimeout(binding.idleTimeout);
-    if (reviewServers.get(projectRoot) === binding) {
-      reviewServers.delete(projectRoot);
-    }
-    if (taskRoots.get(id) === projectRoot) {
-      taskRoots.delete(id);
-    }
-    throw error;
-  }
+  return reviewServers.get(projectRoot, id);
 }
 
 function result(id, value) {
@@ -931,11 +879,5 @@ input.on("line", async (line) => {
 
 input.on("close", async () => {
   nativeSemanticRuntime.close();
-  for (const binding of reviewServers.values()) {
-    clearTimeout(binding.idleTimeout);
-  }
-  const reviews = await Promise.allSettled([...reviewServers.values()].map(({ review }) => review));
-  await Promise.allSettled(reviews.filter(({ status }) => status === "fulfilled").map(({ value }) => value.close()));
-  reviewServers.clear();
-  taskRoots.clear();
+  await reviewServers.close();
 });

@@ -8,6 +8,39 @@ import { fragmentConcept } from "../concepts.mjs";
 Object.assign(process.env, { PRISM_EMBEDDED: "1", CODEGRAPH_NO_STORE_WORKER: "1", CODEGRAPH_NO_PARALLEL_RESOLVE: "1", CODEGRAPH_NO_WAL_DEFER: "1", CODEGRAPH_NO_FAST_INIT: "1", CODEGRAPH_KERNEL: "0", NODE_DISABLE_COMPILE_CACHE: "1" });
 const { extractGraph } = await import("../graph.mjs");
 const runtime = fileURLToPath(new URL("..", import.meta.url));
+for (const extension of ["js", "ts"]) test(`SDK keeps private nested ${extension} declarations out of module exports`, async t => {
+  const content = `export function factory() {
+    function privateHelper() { return 1; }
+    const privateArrow = () => 2;
+    return { privateHelper, privateArrow };
+  }
+  export const directArrow = () => { function innerArrow() { return 3; } return innerArrow(); };
+  export const parenthesizedArrow = (() => 4);
+  export class PublicClass {
+    method() { function innerMethod() { return 5; } return innerMethod(); }
+    #secret() { function innerSecret() { return 6; } return innerSecret(); }
+    ${extension === "ts" ? "private hidden() { return 7; } protected guarded() { return 8; }" : ""}
+  }
+  export const publicObject = { objectMethod() { function innerObject() { return 9; } return innerObject(); } };
+  export default function defaultFactory() { function innerDefault() { return 6; } return innerDefault(); }
+  function unexported() { return 7; }
+  export const publicValue = 8;
+`;
+  const { root, files } = await fixture(t, { [`exports.${extension}`]: content });
+  const graph = await extractGraph(root, files, runtime);
+  for (const name of ["factory", "directArrow", "parenthesizedArrow", "PublicClass", "method", "objectMethod", "defaultFactory", "publicValue"]) {
+    const declarations = graph.nodes.filter(node => node.name === name);
+    assert.ok(declarations.length, name);
+    assert.ok(declarations.every(node => node.isExported === true), JSON.stringify(declarations));
+  }
+  for (const name of ["privateHelper", "innerArrow", "innerMethod", "innerSecret", "innerObject", "innerDefault", "unexported", ...(extension === "ts" ? ["hidden", "guarded"] : [])]) {
+    const declarations = graph.nodes.filter(node => node.name === name);
+    assert.ok(declarations.length, name);
+    assert.ok(declarations.every(node => node.isExported === false), JSON.stringify(declarations));
+  }
+  const secret = graph.nodes.find(node => node.name.includes("secret"));
+  assert.equal(secret?.isExported, false);
+});
 const fixtures = {
   javascript: { "a.js": "export function base() { return 1; }", "b.js": "import { base } from './a.js'; export function caller() { return base(); }" },
   typescript: { "a.ts": "export function base(): number { return 1; }", "b.ts": "import { base } from './a'; export function caller() { return base(); }" },

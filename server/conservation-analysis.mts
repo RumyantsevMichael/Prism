@@ -3,6 +3,7 @@ import { readConceptDeltaDocument } from "./concept-delta.mjs";
 import { conservationStore, ConservationStore, conservationError, digest, canonical, withinScope } from "./conservation-store.mjs";
 import { nativeSemanticRuntime } from "./native-semantic-runtime.mjs";
 import { CODE_EXTENSIONS } from "../native-runtime/domains.mjs";
+import { CHUNKER_VERSION } from "../native-runtime/versions.mjs";
 import type { NativeSource, PreparedIndex, SemanticRuntime } from "./repository-concept-types.mjs";
 import type { Evidence, SnapshotEvidence, SearchReceipt, Reference, Resolution, ResolvedUnit, DeltaDocument, ComparisonEvidence, Measurement, Observation } from "./conservation-types.mjs";
 
@@ -29,7 +30,7 @@ export async function retainAnalysis(projectRoot: string, snapshotId: string, pr
 }
 export async function prepareAnalysis(projectRoot: string, snapshotId: string, options: Options = {}) {
   const store = options.store || conservationStore, existing = await store.analysis(projectRoot, snapshotId);
-  if (existing?.versions.extractor === "concepts-4-exact-fragments" && existing.versions.metrics === ANALYSIS_VERSION) return { status: "ready" as const, analysis: existing };
+  if (existing?.versions.extractor === CHUNKER_VERSION && existing.versions.metrics === ANALYSIS_VERSION) return { status: "ready" as const, analysis: existing };
   const runtime = options.runtime || nativeSemanticRuntime, source = await store.source(projectRoot, snapshotId);
   const prepared = await runtime.prepare(source);
   if (prepared.status === "preparing") return { status: "preparing" as const, preparationId: prepared.preparationId };

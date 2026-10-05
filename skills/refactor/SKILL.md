@@ -20,7 +20,8 @@ The [workflow terms](../workflow/SKILL.md#common-terms) define semantic concepts
 3. Identify the target concepts, discovery scope, permitted edits, and intended result from the request.
 4. For an analysis request, return recommendations without changing target artifacts.
 5. For an authorized transformation, preserve the initial source and available behavior evidence before edits.
-6. For a managed slice, follow [source evidence](../design/references/concept-delta.md#capture-source-evidence) and its existing gates.
+6. Reuse the caller's original baseline, or capture a retained repository snapshot when that capability is available.
+7. For a managed slice, follow [source evidence](../design/references/concept-delta.md#capture-source-evidence) and its existing gates.
 
 A focused invocation can inspect related consumers without authorizing changes to them.
 A repository-wide discovery request does not authorize a repository-wide rewrite.
@@ -29,11 +30,12 @@ Outside a managed slice, retained source and verification evidence do not requir
 ## 2. Discover candidates
 
 1. Reuse the caller's repository context and Prism repository intelligence for semantic discovery across applicable artifact types.
-2. Search by behavior and shared knowledge, including concepts with different names, locations, structures, or implementations.
-3. Inspect candidate source and available callers, dependencies, contracts, state, tests, references, and ownership.
-4. Use the [candidate signals and ranking](references/analysis.md#candidate-signals-and-ranking) to select a bounded investigation.
-5. When semantic indexing is unavailable or incomplete, report its coverage limits and use available structural and text evidence.
-6. For managed additions, follow the [semantic reuse procedure](../design/references/concept-delta.md#semantic-reuse-search) before accepting `ADD`.
+2. Follow [before-change discovery](references/analysis.md#before-change-discovery) to bind reuse searches to the original baseline.
+3. Search by behavior and shared knowledge, including concepts with different names, locations, structures, or implementations.
+4. Inspect candidate source and available callers, dependencies, contracts, state, tests, references, and ownership.
+5. Use the [candidate signals and ranking](references/analysis.md#candidate-signals-and-ranking) to select a bounded investigation.
+6. When semantic indexing is unavailable or incomplete, report its coverage limits and use available structural and text evidence.
+7. For managed additions, follow the [semantic reuse procedure](../design/references/concept-delta.md#semantic-reuse-search) before accepting `ADD`.
 
 Semantic similarity and design red flags identify candidates for investigation, not defects or equivalent concepts.
 Files, symbols, rules, sections, schemas, and paragraphs are evidence of concepts, not fixed conceptual boundaries.

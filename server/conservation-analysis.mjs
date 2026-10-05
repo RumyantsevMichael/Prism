@@ -4,6 +4,7 @@ import { readConceptDeltaDocument } from "./concept-delta.mjs";
 import { conservationStore, conservationError, digest, canonical, withinScope } from "./conservation-store.mjs";
 import { nativeSemanticRuntime } from "./native-semantic-runtime.mjs";
 import { CODE_EXTENSIONS } from "../native-runtime/domains.mjs";
+import { CHUNKER_VERSION } from "../native-runtime/versions.mjs";
 const keyFor = (file, kind, selector) => canonical([file, kind, selector]);
 const ANALYSIS_VERSION = "conservation-metrics-v2";
 const COMPARISON_VERSION = "conservation-comparison-v3";
@@ -31,7 +32,7 @@ async function retainAnalysis(projectRoot, snapshotId, prepared, store = conserv
 }
 async function prepareAnalysis(projectRoot, snapshotId, options = {}) {
   const store = options.store || conservationStore, existing = await store.analysis(projectRoot, snapshotId);
-  if (existing?.versions.extractor === "concepts-4-exact-fragments" && existing.versions.metrics === ANALYSIS_VERSION) return { status: "ready", analysis: existing };
+  if (existing?.versions.extractor === CHUNKER_VERSION && existing.versions.metrics === ANALYSIS_VERSION) return { status: "ready", analysis: existing };
   const runtime = options.runtime || nativeSemanticRuntime, source = await store.source(projectRoot, snapshotId);
   const prepared = await runtime.prepare(source);
   if (prepared.status === "preparing") return { status: "preparing", preparationId: prepared.preparationId };

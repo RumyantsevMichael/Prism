@@ -3,23 +3,170 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
+  issues: read
 
 jobs:
-  release-please:
+  plan:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      current: ${{ steps.plan.outputs.current }}
+      release_ref: ${{ steps.plan.outputs.release_ref }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/github-script@v7
+        id: plan
+        with:
+          script: |
+            const { mainIsCurrent, pendingRelease } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release-automation.mjs`);
+            const current = await mainIsCurrent(github, context, context.sha);
+            core.setOutput('current', current);
+            core.setOutput('release_ref', current ? await pendingRelease(github, context) : '');
+
+  verify-release:
+    needs: plan
+    if: needs.plan.outputs.release_ref != ''
+    uses: ./.github/workflows/native-default.yml
+    with:
+      source_ref: ${{ needs.plan.outputs.release_ref }}
+
+  validate-release:
+    needs: plan
+    if: needs.plan.outputs.release_ref != ''
+    uses: ./.github/workflows/validate.yml
+    with:
+      source_ref: ${{ needs.plan.outputs.release_ref }}
+
+  release-please:
+    needs: [plan, verify-release, validate-release]
+    if: >-
+      always() && !cancelled() && needs.plan.outputs.current == 'true' &&
+      (needs.plan.outputs.release_ref == '' ||
+      (needs.verify-release.result == 'success' && needs.validate-release.result == 'success'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      statuses: write
+    outputs:
+      pr_number: ${{ steps.pr.outputs.number }}
+      pr_sha: ${{ steps.pr.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Reject stale release plans
+        uses: actions/github-script@v7
+        env:
+          RELEASE_REF: ${{ needs.plan.outputs.release_ref }}
+        with:
+          script: |
+            const { assertReleasePlan } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release-automation.mjs`);
+            await assertReleasePlan(github, context, context.sha, process.env.RELEASE_REF);
       - uses: googleapis/release-please-action@v4
         with:
-          # A PAT, not the default GITHUB_TOKEN: pull requests opened by
-          # GITHUB_TOKEN do not trigger other workflows, so the release PR
-          # would never get validated. Needs Contents and Pull requests
-          # read/write on this repo. Falls back to GITHUB_TOKEN, which works
-          # only if "Allow GitHub Actions to create and approve pull requests"
-          # is enabled in the repository's Actions settings.
+          # The PAT lets promotion commits trigger ordinary pull request checks.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          target-branch: main
+          skip-github-release: ${{ needs.plan.outputs.release_ref == '' }}
+      - name: Select the release pull request
+        uses: actions/github-script@v7
+        id: pr
+        with:
+          script: |
+            const { releasePullRequest } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release-automation.mjs`);
+            const pr = await releasePullRequest(github, context);
+            if (!pr) return;
+            core.setOutput('number', pr.number);
+            core.setOutput('sha', pr.sha);
+            await github.rest.repos.createCommitStatus({
+              ...context.repo, sha: pr.sha, state: 'pending', context: 'Release readiness',
+              description: 'Build and verify the native runtime before merging.',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });
+
+  runtime:
+    needs: release-please
+    if: always() && !cancelled() && needs.release-please.result == 'success' && needs.release-please.outputs.pr_sha != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/native-runtime.yml
+    with:
+      source_ref: ${{ needs.release-please.outputs.pr_sha }}
+      publish: true
+
+  promote:
+    needs: [release-please, runtime]
+    if: always() && !cancelled() && needs.release-please.result == 'success' && needs.runtime.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+      issues: read
+    outputs:
+      sha: ${{ steps.promote.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-native-manifest
+          path: verified
+      - name: Add the verified manifest to the release pull request
+        id: promote
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ needs.release-please.outputs.pr_number }}
+          PR_SHA: ${{ needs.release-please.outputs.pr_sha }}
+        with:
+          github-token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const { readFile } = await import('node:fs/promises');
+            const { promoteManifest } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release-automation.mjs`);
+            const sha = await promoteManifest(github, context, {
+              number: Number(process.env.PR_NUMBER), sha: process.env.PR_SHA, mainSha: context.sha,
+              manifest: await readFile('verified/manifest.json', 'utf8')
+            });
+            core.setOutput('sha', sha);
+
+  validate-prepared:
+    needs: promote
+    if: always() && !cancelled() && needs.promote.result == 'success'
+    uses: ./.github/workflows/validate.yml
+    with:
+      source_ref: ${{ needs.promote.outputs.sha }}
+
+  readiness:
+    needs: [release-please, runtime, promote, validate-prepared]
+    if: always() && needs.release-please.outputs.pr_sha != ''
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          PR_SHA: ${{ needs.promote.outputs.sha || needs.release-please.outputs.pr_sha }}
+          READY: ${{ needs.runtime.result == 'success' && needs.promote.result == 'success' && needs.validate-prepared.result == 'success' }}
+        with:
+          script: |
+            const ready = process.env.READY === 'true';
+            await github.rest.repos.createCommitStatus({
+              ...context.repo, sha: process.env.PR_SHA, state: ready ? 'success' : 'failure', context: 'Release readiness',
+              description: ready ? 'The package and all five runtime platforms passed.' : 'Release preparation failed. Check the workflow run.',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });

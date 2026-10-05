@@ -101,9 +101,10 @@ The archive builder verifies generated files and copies pinned dependencies with
 ONNX Runtime stays pinned to `1.22.0` because the `1.30.0` package omits the Intel macOS binding.
 The smoke tests run the packaged Node helper without external executables.
 The MCP smoke test also checks native estimates, offline reuse, responsive discovery, and source changes.
-The runtime workflow builds and tests all five target platforms before optional publication.
-Push to `codex/native-runtime-assets` to publish verified bundles, or dispatch the workflow with `publish` enabled.
-Promote immutable asset hashes into `vendor/native-runtime/manifest.json` only after those platform checks pass.
+The release workflow builds and tests all five target platforms for the release pull request.
+It publishes immutable runtime bundles, verifies the default manifest, and commits that manifest to the release pull request.
+No separate publication branch or manual manifest copy is required for a plugin release.
+The standalone runtime workflow still supports `codex/native-runtime-assets` and manual publication for diagnostics.
 An empty bundle manifest leaves semantic preparation unavailable and preserves lexical results.
 Use a host-owned `PRISM_NATIVE_ASSET_MANIFEST` path for local archive tests.
 Project files cannot select that manifest.
@@ -111,7 +112,8 @@ Project files cannot select that manifest.
 The runtime publication workflow also tests the default manifest on all five platforms after publication.
 Those checks include semantic discovery, retained receipts, and managed-addition readiness without a manifest override.
 Only a successful run produces the `verified-native-manifest` artifact.
-Replace `vendor/native-runtime/manifest.json` with that artifact before distributing the default package.
+The release workflow promotes that artifact only when the release pull request and `main` still match the tested source.
+It changes only `vendor/native-runtime/manifest.json` during promotion.
 Run `node scripts/native-build/mcp-smoke.mjs --default` to verify the promoted manifest locally.
 
 ## Writing skills
@@ -183,25 +185,37 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
 On each push to `main`, it opens or updates a release pull request.
 The pull request updates both native manifest versions and writes the `CHANGELOG.md` section.
 Release-please computes the next version from commits since the last release.
+CI prepares the runtime bundles and adds their verified manifest to that pull request.
+The `Release readiness` status reports the result of runtime preparation and package validation.
 
 `CHANGELOG.md` is generated from commit messages, so do not edit it by hand.
 Anything you want to appear there belongs in a commit subject.
 
-To ship, review that pull request and merge it.
-Merging tags the commit and publishes a GitHub Release.
-Nothing is released until you merge, which is the point: the computed bump is a guess derived from commit prefixes, and semantic versioning for prompts is a judgment call.
+Wait for `Release readiness` to pass before you merge the release pull request.
+CI checks the merged package and its default runtime on all five platforms before it tags the commit and publishes a GitHub Release.
+The runtime source check permits version and manifest updates but rejects changes to runtime, server, build, or pinned model inputs.
+Failed checks prevent plugin publication.
+Plugin versions are published only after that merge.
+Release-please computes the version from commit prefixes, so the proposed version needs a review.
 Check that the proposed bump matches the actual behavior change before merging.
+Native asset prereleases can exist before the plugin release because CI must test their public download URLs.
+
+Release preparation never writes directly to `main` or merges the release pull request.
+Concurrent changes invalidate the older preparation run instead of overwriting newer source.
+To retry a failed preparation, dispatch the `Release` workflow on `main` or rerun all jobs in the failed run.
 
 To override the computed version, add a `Release-As: 1.0.0` footer to a commit on `main`.
 
 ### Release workflow setup
 
 The release workflow authenticates with a `RELEASE_PLEASE_TOKEN` repository secret, a fine-grained personal access token scoped to this repository with **Contents** and **Pull requests** set to read/write.
-It is used instead of the default `GITHUB_TOKEN` because pull requests opened by `GITHUB_TOKEN` do not trigger other workflows, which would leave the release pull request unvalidated by CI.
+It lets release pull requests and manifest promotion commits trigger normal pull request workflows.
 
-If that secret is missing or expired, the workflow falls back to `GITHUB_TOKEN`.
+If that secret is missing, the workflow falls back to `GITHUB_TOKEN`.
 That fallback only works when **Allow GitHub Actions to create and approve pull requests** is enabled under Settings, Actions, General, Workflow permissions.
 With neither in place the job fails with `GitHub Actions is not permitted to create or approve pull requests`.
+The release workflow also invokes package validation directly, so token fallback does not bypass those checks.
+The workflow uses its scoped `GITHUB_TOKEN` to report the `Release readiness` status.
 
 Run the Claude validator and the Codex installation smoke test before merging a release pull request.
 CI runs both checks on every push.

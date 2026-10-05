@@ -4,8 +4,39 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
-export const PATCH_VERSION = "prism-embedded-1";
+export const PATCH_VERSION = "prism-embedded-2";
 export const PATCHES = [
+  ...["javascript", "typescript"].map(language => ({
+    file: `extraction/languages/${language}.js`,
+    before: `        let current = node.parent;
+        while (current) {
+            if (current.type === 'export_statement')
+                return true;
+            current = current.parent;
+        }
+        return false;`,
+    after: `        const privateMember = item => item.childForFieldName('name')?.text.startsWith('#') ||
+            item.namedChildren.some(child => child.type === 'accessibility_modifier' &&
+                ['private', 'protected'].includes(child.text));
+        if (privateMember(node)) return false;
+        let current = node.parent;
+        while (current) {
+            if (privateMember(current)) return false;
+            if (current.type === 'export_statement')
+                return true;
+            // Public members inherit export status, but function bodies do not.
+            if (!['variable_declarator', 'lexical_declaration', 'variable_declaration',
+                'parenthesized_expression', 'as_expression', 'satisfies_expression',
+                'type_assertion', 'ambient_declaration', 'class_body', 'class_declaration',
+                'class', 'public_field_definition', 'field_definition', 'object', 'pair'].includes(current.type)) return false;
+            current = current.parent;
+        }
+        return false;`
+  })),
+  { file: "extraction/tree-sitter.js", before: "        const methodNode = this.createNode('method', name, node, extraProps);", after: `        if (['javascript', 'typescript'].includes(this.language)) {
+            extraProps.isExported = this.extractor.isExported?.(node, this.source);
+        }
+        const methodNode = this.createNode('method', name, node, extraProps);` },
   { file: "extraction/tree-sitter.js", before: `            if (!this.tree) {
                 throw new Error('Parser returned null tree');
             }`, after: `            if (!this.tree) {

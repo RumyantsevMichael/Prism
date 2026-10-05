@@ -14,7 +14,7 @@ type InputFile = { file: string; content: string; hash: string };
 interface Link { from: string; url?: string; identifier?: string }
 interface Group { units: Concept[]; edges: Relationship[]; links: Link[]; diagnostics: Diagnostic[]; supported: boolean; counts: Record<string, number> }
 
-export const CHUNKER_VERSION = "concepts-4-exact-fragments";
+export { CHUNKER_VERSION } from "./versions.mjs";
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const pointer = (parts: (string | number)[]) => "/" + parts.map(part => String(part).replace(/~/g, "~0").replace(/\//g, "~1")).join("/");
 const lineAt = (text: string, offset: number) => text.slice(0, offset).split("\n").length;
@@ -178,7 +178,11 @@ export function fragmentConcept(concept: Concept, file: InputFile, countTokens: 
   const sourceLine = lineAt(file.content, span.start);
   const prefix = `${concept.file}\n${concept.kind}: ${concept.name}\n${concept.docstring ? concept.docstring + "\n" : ""}`;
   const safePrefix = countTokens(prefix) <= 128 ? prefix : `${concept.kind}\n`;
-  if (countTokens(safePrefix + source) <= limit) return [{ ...concept, parentId: concept.id, prefixLength: safePrefix.length, text: safePrefix + source, sourceStart: span.start, sourceEnd: span.end }];
+  const embeddingPrefix = `${concept.kind}${concept.kind === "file" ? "" : ": " + concept.name}\n${concept.docstring ? concept.docstring + "\n" : ""}`;
+  const safeEmbeddingPrefix = countTokens(embeddingPrefix) <= 128 ? embeddingPrefix : `${concept.kind}\n`;
+  const fits = (part: string) => countTokens(safePrefix + part) <= limit && countTokens(safeEmbeddingPrefix + part) <= limit;
+  if (fits(source)) return [{ ...concept, parentId: concept.id, prefixLength: safePrefix.length, text: safePrefix + source,
+    embeddingText: safeEmbeddingPrefix + source, sourceStart: span.start, sourceEnd: span.end }];
   const fragments = [];
   const points = boundaries(source);
   let offset = 0;
@@ -187,13 +191,14 @@ export function fragmentConcept(concept: Concept, file: InputFile, countTokens: 
     while (low <= high) {
       const middle = Math.floor((low + high) / 2), candidate = points[middle];
       if (candidate <= offset) { low = middle + 1; continue; }
-      if (countTokens(safePrefix + source.slice(offset, candidate)) <= limit) { best = candidate; low = middle + 1; }
+      if (fits(source.slice(offset, candidate))) { best = candidate; low = middle + 1; }
       else high = middle - 1;
     }
     if (best <= offset) throw new Error("A concept fragment cannot fit the model input limit.");
     fragments.push({ ...concept, id: `${concept.id}:${fragments.length}`, parentId: concept.id, sourceStart: span.start + offset, sourceEnd: span.start + best,
       range: { startLine: sourceLine + lineAt(source, offset) - 1, endLine: sourceLine + lineAt(source, Math.max(offset, best - 1)) - 1 },
-      prefixLength: safePrefix.length, text: safePrefix + source.slice(offset, best) });
+      prefixLength: safePrefix.length, text: safePrefix + source.slice(offset, best),
+      embeddingText: safeEmbeddingPrefix + source.slice(offset, best) });
     offset = best;
   }
   return fragments;

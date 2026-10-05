@@ -16,7 +16,7 @@ interface Options { directory?: string; manifestPath?: string; idleMs?: number }
 interface Coverage extends Counts { structurallyCoveredFiles: number; complete: boolean }
 interface Job { id: string; snapshot: string; status: Preparation["status"]; diagnostics: Diagnostic[]; promise: Promise<void>; prepared?: PreparedIndex; revision?: string; progress?: Progress; coverage?: Coverage }
 interface Location { root: string; directory: string }
-interface IndexPointer { snapshot?: string; revision?: string; coverage?: Coverage; diagnostics?: Diagnostic[] }
+interface IndexPointer { snapshot?: string; revision?: string; chunkerVersion?: string; coverage?: Coverage; diagnostics?: Diagnostic[] }
 
 export const semanticError = (code: string, message: string) => Object.assign(new Error(message), { code });
 const sha = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
@@ -188,7 +188,8 @@ export class NativeSemanticRuntime implements SemanticRuntime {
     return { status: job?.status || (published?.snapshot ? "indexed" : "unprepared"), preparationId: job?.id || null,
       snapshot: job?.snapshot || published?.snapshot || null, indexRevision: job?.revision || published?.revision || null,
       progress: job?.progress || null, coverage: job?.coverage || published?.coverage || null,
-      versions: { runtime: manifest.assetVersion, model: `${manifest.model.id}@${manifest.model.revision}`, graph: "1.6.0", chunker: "concepts-4-exact-fragments" },
+      versions: { runtime: manifest.assetVersion, model: `${manifest.model.id}@${manifest.model.revision}`, graph: "1.6.0",
+        chunker: job?.prepared?.index.chunkerVersion || published?.chunkerVersion || null },
       runtime: { supported: supported.has(`${process.platform}-${process.arch}`), published: Boolean(manifest.bundles[`${process.platform}-${process.arch}`]) },
       structuralCapabilities: { code: ["JavaScript", "TypeScript", "Python", "Go", "Rust", "Java", "C#", "C", "C++"], documents: ["Markdown", "JSON", "YAML"] },
       limits: { files: 20000, sourceBytes: 64 * 1024 * 1024, fileBytes: 2 * 1024 * 1024, sdkFileBytes: 1024 * 1024, modelTokens: 512 },
@@ -301,7 +302,7 @@ export class NativeSemanticRuntime implements SemanticRuntime {
         if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The concept index exceeds 512 MiB.");
         await writeAtomically(indexPath, contents, { mode: 0o600 });
         const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
-        const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, coverage, diagnostics: index.diagnostics });
+        const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics });
         await writeAtomically(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`), pointerContents, { mode: 0o600 });
         await writeAtomically(path.join(directory, "current.json"), pointerContents, { mode: 0o600 });
         job.revision = revision; job.coverage = coverage; job.diagnostics = index.diagnostics;

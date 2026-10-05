@@ -5,7 +5,7 @@ export interface SourceSnapshot { root: string; sourceFingerprint: string; commi
 export interface Diagnostic { code: string; message: string; file?: string; count?: number; denied?: { path: string; write: boolean }[]; recovery?: string }
 export interface Concept { id: string; file: string; kind: string; name: string; selector?: string; domain?: Domain; range: SourceRange; sourceHash?: string; rangeComplete: boolean; qualifiedName?: string; signature?: string; docstring?: string; depth?: number; span?: { start: number; end: number }; contentHash?: string; isExported?: boolean; visibility?: string }
 export interface Relationship { source: string; target: string; kind: string; provenance?: string; line?: number; column?: number; metadata?: Record<string, unknown> }
-export interface Fragment extends Concept { parentId: string; sourceStart: number; sourceEnd: number; prefixLength: number; text: string; embeddingKey?: string; embedding?: number[] }
+export interface Fragment extends Concept { parentId: string; sourceStart: number; sourceEnd: number; prefixLength: number; text: string; embeddingText: string; embeddingKey?: string; embedding?: number[] }
 export interface SearchResult extends Concept { parentId?: string; sourceStart?: number; sourceEnd?: number; fusedScore?: number; fusedRank: number; lexicalScore: number | null; cosineSimilarity: number | null; excerpt: string }
 export interface SearchFilters { domains?: Domain[]; paths?: string[]; kinds?: string[] }
 export interface Counts { files: number; concepts: number; fragments: number; reusedEmbeddings: number; newEmbeddings: number }

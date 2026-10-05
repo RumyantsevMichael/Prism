@@ -68,11 +68,13 @@ When provider reads expand into overlapping ranges, Prism merges the ranges and 
 
 ### Search for reusable concepts
 
-Call `search_repository_concepts` before introducing a concept:
+Before changing targets, call `capture_repository_snapshot` or reuse the caller's original baseline.
+For before-change reuse searches, pass the returned `snapshotId` from the first `search_repository_concepts` request:
 
 ```json
 {
   "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
   "query": "retry temporary network failures within a total deadline",
   "filters": {"domains": ["code", "configuration"]},
   "limit": 10
@@ -81,6 +83,7 @@ Call `search_repository_concepts` before introducing a concept:
 
 Domains are `code`, `instruction`, `documentation`, and `configuration`.
 Optional path and kind filters restrict the candidate set.
+Preparation still scans the eligible snapshot before applying these result filters.
 Search defaults to ten results and permits at most fifty.
 Each result identifies its path, selector, source range, source hash, and bounded excerpt.
 Cosine similarity, lexical score, fused rank, model identity, and index revision have distinct meanings.
@@ -94,10 +97,14 @@ Relevant incomplete structure prevents a numeric fit estimate.
 If preparation exceeds ten seconds, search and planning return `preparing` with a stable preparation ID.
 Call `get_repository_intelligence_status` with `projectRoot` and optional `waitMs` up to 30000, then repeat the original request.
 Concurrent requests share preparation.
+A `preparing` response is unfinished discovery, not an empty search result.
+Keep the original `snapshotId` through retries and edits so new code cannot appear as preexisting reuse evidence.
 Use `discover_repository_intelligence` for native runtime, model, index, and coverage status without starting downloads or preparation.
 
-Pass a returned `snapshot` as `expectedSnapshot` to bind subsequent searches or native context planning to that source identity.
-On `stale_snapshot`, repeat the search against current source and reassess the candidates.
+For live-source searches and context planning, pass a returned `snapshot` as `expectedSnapshot` to bind the source fingerprint.
+This fingerprint differs from a retained evidence `snapshotId`.
+On `stale_snapshot` during live-source discovery, repeat the search against current source and reassess the candidates.
+Before-change discovery keeps its retained baseline instead of replacing it with current source.
 On `corrupt_asset`, replace the affected private cache from the pinned release and retry.
 On `unsupported_runtime` or `preparation_failed`, inspect the status diagnostic and retry after correcting the platform or download problem.
 Degraded analysis supplies lexical results and explicitly withholds semantic fit eligibility.
@@ -107,6 +114,8 @@ Assets, models, and indexes use the host plugin data directory when available, o
 They are never stored in the target repository.
 One helper runs per MCP server with two inference threads and exits after five idle minutes.
 Native source limits remain 20,000 files, 64 MiB total, and 2 MiB per file.
+Known omissions outside a managed change's scope limit coverage without blocking its affected-source gate.
+Missing affected source and unknown omissions block that gate.
 The SDK's stricter limits and omissions are reported independently of its completion flag.
 The supported platforms are macOS and Linux on x64 and arm64, plus Windows x64.
 

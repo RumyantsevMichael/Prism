@@ -1,8 +1,16 @@
 name: Native semantic runtime
 
 on:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
+      publish:
+        type: boolean
+        default: false
   pull_request:
-    paths: ['native-runtime/**', 'server/**', 'tsconfig.native.json', 'scripts/build-native-runtime.mjs', 'scripts/native-build/**', 'vendor/native-runtime/**', '.github/workflows/native-runtime.yml']
+    paths: ['native-runtime/**', 'server/**', 'tsconfig.native.json', 'scripts/build-native-runtime.mjs', 'scripts/native-build/**', 'vendor/native-runtime/**', '.github/workflows/native-runtime.yml', '.github/workflows/native-default.yml', '.github/workflows/release.yml']
   push:
     branches: ['codex/native-runtime-assets']
   workflow_dispatch:
@@ -38,6 +46,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24.16.0'
@@ -69,7 +79,7 @@ jobs:
             dist/native/${{ matrix.platform }}.json
           compression-level: 0
   publish:
-    if: (github.event_name == 'workflow_dispatch' && inputs.publish) || (github.event_name == 'push' && github.ref == 'refs/heads/codex/native-runtime-assets')
+    if: inputs.publish || (github.event_name == 'push' && github.ref == 'refs/heads/codex/native-runtime-assets')
     needs: runtime
     runs-on: ubuntu-24.04
     permissions:
@@ -85,57 +95,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
-          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_COMMIT: ${{ inputs.source_ref || github.sha }}
         run: gh release create "$RELEASE_TAG" assets/* --target "$SOURCE_COMMIT" --prerelease --title "$RELEASE_TAG" --notes "Pinned native semantic runtime assets. Platform parser and packaged inference checks passed before publication."
   verify-default:
     needs: publish
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            platform: darwin-arm64
-          - os: macos-15-intel
-            platform: darwin-x64
-          - os: ubuntu-24.04
-            platform: linux-x64
-          - os: ubuntu-24.04-arm
-            platform: linux-arm64
-          - os: windows-2025
-            platform: win32-x64
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.16.0'
-      - name: Prepare the default manifest from published metadata
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
-        run: |
-          gh release download "$RELEASE_TAG" --pattern '*.json' --dir published
-          node scripts/native-build/published-manifest.mjs published "https://github.com/$GH_REPO/releases/download/$RELEASE_TAG"
-      - name: Verify default discovery and managed addition readiness
-        run: node scripts/native-build/mcp-smoke.mjs --default
-      - uses: actions/upload-artifact@v4
-        with:
-          name: default-manifest-${{ matrix.platform }}
-          path: vendor/native-runtime/manifest.json
-  verified-manifest:
-    needs: verify-default
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: default-manifest-linux-x64
-          path: verified
-      - uses: actions/upload-artifact@v4
-        with:
-          name: verified-native-manifest
-          path: verified/manifest.json
+    uses: ./.github/workflows/native-default.yml
+    with:
+      source_ref: ${{ inputs.source_ref || github.sha }}
+      release_tag: native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+      manifest_artifact: verified-native-manifest

@@ -9,6 +9,7 @@ import { AutoTokenizer, AutoModel, env } from "@huggingface/transformers";
 import { Tokenizer } from "@huggingface/tokenizers";
 import { CHUNKER_VERSION, CODE_EXTENSIONS, extractTextConcepts, resolveTextLinks, fragmentConcept, bgeSourceBoundaries } from "./concepts.mjs";
 import { extractGraph } from "./graph.mjs";
+import { embedFragments } from "./embeddings.mjs";
 const runtimeDirectory = path.dirname(fileURLToPath(import.meta.url));
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const send = (value) => process.stdout.write(`${JSON.stringify(value)}
@@ -109,24 +110,7 @@ async function build(args, progress) {
     chunks.push(...fragmentConcept(concept, byFile.get(concept.file), countTokens, 512, boundaries));
     if (chunks.length > 1e5) throw Object.assign(new Error("The concept index exceeds 100,000 fragments."), { code: "resource_limit" });
   }
-  const previous = args.previousEmbeddings || {};
-  let reused = 0;
-  for (const chunk of chunks) {
-    chunk.embeddingKey = sha(`${modelIdentity}\0${CHUNKER_VERSION}\0${chunk.text}`);
-    const cached = previous[chunk.embeddingKey];
-    if (Array.isArray(cached) && cached.length === 384 && cached.every(Number.isFinite)) {
-      chunk.embedding = cached;
-      reused++;
-    }
-  }
-  const missing = chunks.filter((chunk) => !chunk.embedding);
-  for (let offset = 0; offset < missing.length; offset += 8) {
-    const batch = missing.slice(offset, offset + 8), vectors = await embed(batch.map((chunk) => chunk.text));
-    batch.forEach((chunk, i) => {
-      chunk.embedding = vectors[i];
-    });
-    progress({ phase: "embedding", current: Math.min(offset + 8, missing.length), total: missing.length });
-  }
+  const embeddingCounts = await embedFragments(chunks, modelIdentity, args.previousEmbeddings || {}, embed, progress);
   const index = {
     schemaVersion: 1,
     chunkerVersion: CHUNKER_VERSION,
@@ -140,7 +124,7 @@ async function build(args, progress) {
     syntaxCoverage,
     structureCounts: Object.fromEntries(groups.map((group) => [group.units[0].file, group.counts])),
     tokenCounts: Object.fromEntries(files.map((file) => [file.file, tokenizer.encode(file.content, { add_special_tokens: false }).length])),
-    counts: { files: files.length, concepts: units.length, fragments: chunks.length, reusedEmbeddings: reused, newEmbeddings: missing.length },
+    counts: { files: files.length, concepts: units.length, fragments: chunks.length, ...embeddingCounts },
     structureComplete: !diagnostics.some((item) => !item.file),
     resources: { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 }
   };
@@ -179,7 +163,7 @@ async function query(args) {
     return [chunk.file, chunk.name, chunk.qualifiedName, chunk.selector].includes(args.query.trim()) ? 1 : 0;
   };
   return [...fused.values()].sort((a, b) => exactHint(b.id) - exactHint(a.id) || b.fusedScore - a.fusedScore || a.id.localeCompare(b.id)).slice(0, args.limit).map((score, index) => {
-    const { text, embedding, embeddingKey, prefixLength, ...concept } = chunks.get(score.id);
+    const { text, embeddingText, embedding, embeddingKey, prefixLength, ...concept } = chunks.get(score.id);
     return { ...concept, ...score, fusedRank: index + 1, excerpt: text.slice(prefixLength, prefixLength + 600) };
   });
 }

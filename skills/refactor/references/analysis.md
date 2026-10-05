@@ -1,5 +1,18 @@
 # Refactoring analysis
 
+## Before-change discovery
+
+1. For a retained baseline, pass its identity as `snapshotId` to `search_repository_concepts` from the first reuse search.
+2. While search returns `preparing`, wait through bounded status requests and repeat the same snapshot-bound search.
+3. Inspect completed candidates before selecting a transformation.
+4. Preserve the same baseline through target edits, retries, and corrections.
+5. If retained search is unavailable, report that limitation with the fallback source identity and coverage.
+
+A `preparing` response supplies neither completed candidates nor successful semantic evidence.
+Live files cannot replace the original baseline after target edits.
+A known omission outside the affected scope limits repository coverage without implying missing affected source.
+Fallback discovery does not satisfy managed semantic gates.
+
 ## Candidate signals and ranking
 
 These signals justify investigation without prescribing a solution.

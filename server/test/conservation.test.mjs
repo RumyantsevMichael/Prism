@@ -12,6 +12,7 @@ import {updateCoordinationState,checkpointPause} from '../state.mjs';
 import {callConservationTool} from '../conservation-tools.mjs';
 import {applyActiveOperations} from '../active-operations.mjs';
 import {writeAtomically} from '../artifact-store.mjs';
+import {CHUNKER_VERSION} from '../../native-runtime/versions.mjs';
 const home=await realpath(await mkdtemp(path.join(os.tmpdir(),'prism-conservation-test-')));
 store.directory=path.join(home,'evidence');
 test.after(()=>rm(home,{recursive:true,force:true}));
@@ -26,7 +27,7 @@ async function fixture(files={}) {
 const ref=(path,value)=>({path,...(value?{selector:{type:'text',value}}:{})});
 const entry=(id,action,before,after,extra={})=>({id,kind:'rule',label:id,action,before,after,reason:'Satisfy the bound requirement.',...extra});
 async function analysis(root,snapshot,units=[]) {
- const record={kind:'analysis',schemaVersion:1,project:root,snapshotId:snapshot.snapshotId,units,fileCoverage:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,true])),diagnostics:[],tokenCounts:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,1])),structureCounts:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,{sections:0,paragraphs:0,listItems:0,links:0}])),versions:{extractor:'concepts-4-exact-fragments',metrics:'conservation-metrics-v2',tokenizer:'fixture'}};
+ const record={kind:'analysis',schemaVersion:1,project:root,snapshotId:snapshot.snapshotId,units,fileCoverage:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,true])),diagnostics:[],tokenCounts:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,1])),structureCounts:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,{sections:0,paragraphs:0,listItems:0,links:0}])),versions:{extractor:CHUNKER_VERSION,metrics:'conservation-metrics-v2',tokenizer:'fixture'}};
  const id=await store.put(root,record); await store.link(root,snapshot.snapshotId,id); return record;
 }
 async function compare(f,delta,result) {const response=await compareConceptDelta({projectRoot:f.root,deltaPath:f.deltaPath,expectedRevision:delta.revision,baselineId:f.b.snapshotId,resultSnapshotId:result.snapshotId},{runtime:degraded});return store.get(f.root,response.comparisonId,'comparison');}
@@ -312,6 +313,22 @@ test('MODIFY spans cannot relabel a new public identity and retained deletion sp
 test('a rejected parser version stays unavailable after failed preparation',async()=>{
  const f=await fixture({'code.ts':'export function x() {}'});const old=await analysis(f.root,f.b);old.versions.metrics='obsolete';await store.link(f.root,f.b.snapshotId,await store.put(f.root,old));
  const prepared=await prepareAnalysis(f.root,f.b.snapshotId,{runtime:degraded});assert.equal(prepared.status,'degraded');assert.equal(prepared.analysis,null);
+});
+
+test('obsolete retained parser evidence is replaced and current evidence is reused',async()=>{
+ const f=await fixture({'code.ts':'export function factory() {}'});
+ const old=await analysis(f.root,f.b);old.versions.extractor='concepts-4-exact-fragments';
+ await store.link(f.root,f.b.snapshotId,await store.put(f.root,old));
+ let preparations=0;
+ const runtime={prepare:async()=>{
+  preparations++;
+  return {status:'ready',prepared:{modelIdentity:'fixture',index:{chunkerVersion:CHUNKER_VERSION,units:[],fileCoverage:{'code.ts':true},diagnostics:[],tokenCounts:{'code.ts':5},structureCounts:{}}}};
+ }};
+ const refreshed=await prepareAnalysis(f.root,f.b.snapshotId,{runtime});
+ assert.equal(refreshed.status,'ready');assert.equal(preparations,1);
+ assert.equal(refreshed.analysis.versions.extractor,CHUNKER_VERSION);
+ const cached=await prepareAnalysis(f.root,f.b.snapshotId,{runtime});
+ assert.equal(preparations,1);assert.deepEqual(cached.analysis,refreshed.analysis);
 });
 
 test('convergence must cover changed source and growth cannot cite a nonexistent requirement',async()=>{
