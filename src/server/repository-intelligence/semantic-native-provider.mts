@@ -1,9 +1,9 @@
 import { openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
-import { domainFor } from "../native-runtime/domains.mjs";
-import { conservationStore } from "./conservation-store.mjs";
-import { retainAnalysis } from "./conservation-analysis.mjs";
-import type { SearchReceipt } from "./conservation-types.mjs";
+import { domainFor } from "../../native-runtime/domains.mjs";
+import { conservationStore } from "../conservation/conservation-store.mjs";
+import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
+import type { SearchReceipt } from "../conservation/conservation-types.mjs";
 import type { Concept, Domain, NativeSource, Neighbor, Preparation, PreparedIndex, RetrievalEvidence, SearchFilters, SearchHints, SearchHit, SearchResult, SemanticRuntime, SourceRange, StructuralEvidence } from "./repository-concept-types.mjs";
 
 interface ConceptSearchInput { projectRoot: string; query: string; filters?: SearchFilters; expectedSnapshot?: string; snapshotId?: string; limit?: number }

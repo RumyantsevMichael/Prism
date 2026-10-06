@@ -1,31 +1,31 @@
 import readline from "node:readline";
 import { pluginURL } from "./plugin-root.mjs";
-import { ACTIVE_OPERATIONS_SCHEMA } from "./active-operations.mjs";
-import { assertInput } from "./artifact-schema.mjs";
-import { CONSERVATION_TOOLS, callConservationTool } from "./conservation-tools.mjs";
-import { ConceptDeltaError, GET_CONCEPT_DELTA_SCHEMA, UPDATE_CONCEPT_DELTA_SCHEMA, getConceptDelta, updateConceptDelta } from "./concept-delta.mjs";
+import { ACTIVE_OPERATIONS_SCHEMA } from "./workflow/active-operations.mjs";
+import { assertInput } from "./workflow/artifact-schema.mjs";
+import { CONSERVATION_TOOLS, callConservationTool } from "./conservation/conservation-tools.mjs";
+import { ConceptDeltaError, GET_CONCEPT_DELTA_SCHEMA, UPDATE_CONCEPT_DELTA_SCHEMA, getConceptDelta, updateConceptDelta } from "./conservation/concept-delta.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence.mjs";
+import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
   RepositoryIntelligenceSelectionError,
   withRepositoryIntelligence
-} from "./repository-intelligence-providers.mjs";
+} from "./repository-intelligence/repository-intelligence-providers.mjs";
 import {
   createActiveSessionCapacityRequest,
   evaluateActiveRepositoryFit,
   evaluateRepositoryFit,
   resolveActiveSessionCapacity,
   resolveSessionCapacity
-} from "./session-capacity.mjs";
-import { summarizeSessionConsumption } from "./session-trace-store.mjs";
-import { appendDecision, readDecisionHistory, setDecisionRecording } from "./decision-history.mjs";
-import { listArtifacts } from "./review-server.mjs";
-import { createReviewServerPool } from "./review-server-pool.mjs";
-import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./state.mjs";
-import { nativeSemanticRuntime } from "./native-semantic-runtime.mjs";
-import { NATIVE_INTELLIGENCE_TOOLS, prepareNativeProvider, searchRepositoryConcepts } from "./semantic-native-provider.mjs";
+} from "./session/session-capacity.mjs";
+import { summarizeSessionConsumption } from "./session/session-trace-store.mjs";
+import { appendDecision, readDecisionHistory, setDecisionRecording } from "./workflow/decision-history.mjs";
+import { listArtifacts } from "./review/review-server.mjs";
+import { createReviewServerPool } from "./review/review-server-pool.mjs";
+import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
+import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
+import { NATIVE_INTELLIGENCE_TOOLS, prepareNativeProvider, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
 const reviewServers = createReviewServerPool();
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));

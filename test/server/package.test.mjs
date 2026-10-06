@@ -36,7 +36,7 @@ test("describes the shared design audit in both host manifests", async () => {
 
 test("packages compatible capacity and trace hooks at the default plugin path", async () => {
   const hookManifest = await json("hooks/hooks.json");
-  const traceBehaviorRegistry = await json("dist/server/session-trace-behavior-registry.json");
+  const traceBehaviorRegistry = await json("dist/server/session/session-trace-behavior-registry.json");
   const commands = (event) => hookManifest.hooks[event].flatMap((group) => group.hooks.map((hook) => hook.command));
   const factCommand = "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-facts.mjs\"";
   const traceCommand = "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"";

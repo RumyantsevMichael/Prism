@@ -8,14 +8,14 @@ import {
   SESSION_TRACE_GAP_REASONS,
   createSessionTraceEvent,
   validateSessionTraceEvent
-} from "../../dist/server/session-trace.mjs";
+} from "../../dist/server/session/session-trace.mjs";
 import {
   SESSION_TRACE_COVERAGE_REASON,
   SESSION_TRACE_REASON,
   appendSessionTraceEvent,
   readSessionTraceEvents,
   summarizeSessionConsumption
-} from "../../dist/server/session-trace-store.mjs";
+} from "../../dist/server/session/session-trace-store.mjs";
 
 const sessionId = "private-session-identifier";
 const projectRoot = "/workspace/private-project";

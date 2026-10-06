@@ -1,4 +1,4 @@
-import { startReviewServer } from "./review-server.mjs";
+import { startReviewServer } from "./review/review-server.mjs";
 
 const [command = "review", artifactPath] = process.argv.slice(2);
 if (command !== "review") {

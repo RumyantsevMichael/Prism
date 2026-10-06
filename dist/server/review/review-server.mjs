@@ -5,7 +5,7 @@ import { chmod, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PLUGIN_ROOT } from "./plugin-root.mjs";
+import { PLUGIN_ROOT } from "../plugin-root.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 

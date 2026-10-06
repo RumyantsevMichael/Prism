@@ -5,12 +5,12 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { NativeSemanticRuntime } from "../../dist/server/native-semantic-runtime.mjs";
-import { SemanticNativeRepositoryIntelligence, searchRepositoryConcepts, validateConceptSearch } from "../../dist/server/semantic-native-provider.mjs";
-import { openNativeRepositoryIntelligence } from "../../dist/server/native-repository-intelligence.mjs";
-import { CompositeRepositoryIntelligence } from "../../dist/server/composite-repository-intelligence.mjs";
-import { planRepositoryContext } from "../../dist/server/repository-intelligence.mjs";
-import { withFileLock } from "../../dist/server/artifact-store.mjs";
+import { NativeSemanticRuntime } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
+import { SemanticNativeRepositoryIntelligence, searchRepositoryConcepts, validateConceptSearch } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
+import { openNativeRepositoryIntelligence } from "../../dist/server/repository-intelligence/native-repository-intelligence.mjs";
+import { CompositeRepositoryIntelligence } from "../../dist/server/repository-intelligence/composite-repository-intelligence.mjs";
+import { planRepositoryContext } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
+import { withFileLock } from "../../dist/server/workflow/artifact-store.mjs";
 const manifestPath = fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url));
 
 async function fixture(t) {

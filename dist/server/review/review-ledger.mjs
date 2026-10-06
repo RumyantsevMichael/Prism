@@ -1,12 +1,12 @@
-// Generated from src/server/review-ledger.mts by scripts/native-build/compile.mjs.
+// Generated from src/server/review/review-ledger.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
-import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
-import { assertInput } from "./artifact-schema.mjs";
-import { resolveArtifactPath, readConceptDeltaDocument } from "./concept-delta.mjs";
-import { regularBytes } from "./native-semantic-runtime.mjs";
-import { conservationStore, canonical, digest, conservationError, withinScope } from "./conservation-store.mjs";
-import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "./conservation-analysis.mjs";
-import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "./conservation-schema.mjs";
+import { withArtifactLock, withFileLock } from "../workflow/artifact-store.mjs";
+import { assertInput } from "../workflow/artifact-schema.mjs";
+import { resolveArtifactPath, readConceptDeltaDocument } from "../conservation/concept-delta.mjs";
+import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { conservationStore, canonical, digest, conservationError, withinScope } from "../conservation/conservation-store.mjs";
+import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "../conservation/conservation-analysis.mjs";
+import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "../conservation/conservation-schema.mjs";
 const revisionField = { oneOf: [hashField, { type: "null" }] };
 const common = { projectRoot: str, reviewPath: str, expectedRevision: revisionField };
 const laneSchema = obj({ id: str, reviewer: str, coverage: arr(str) });

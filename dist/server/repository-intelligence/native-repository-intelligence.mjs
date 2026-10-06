@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { normalizeRepositorySourcePath, normalizeRepositorySourceRange } from "./repository-source-path.mjs";
-import { domainFor } from "../native-runtime/domains.mjs";
+import { domainFor } from "../../native-runtime/domains.mjs";
 
 const DEFAULT_MAX_FILES = 20000;
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
@@ -356,7 +356,7 @@ async function buildSnapshot(projectRoot, options) {
   if (!rootMetadata.isDirectory()) throw new TypeError("The native repository root must be a directory.");
   const enumeration = await enumerateFiles(root, options);
   // Evidence paths are registered by server mutations, never supplied as caller exclusion patterns.
-  const { conservationStore } = await import("./conservation-store.mjs");
+  const { conservationStore } = await import("../conservation/conservation-store.mjs");
   const evidenceOutputs = new Set(await conservationStore.outputs(root));
   enumeration.files = enumeration.files.filter(file => !evidenceOutputs.has(file));
   const diagnostics = [...enumeration.diagnostics];

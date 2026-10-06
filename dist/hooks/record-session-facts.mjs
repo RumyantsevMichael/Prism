@@ -1,8 +1,8 @@
 import path from "node:path";
 import { realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { createCodexHostAdapter } from "../server/host-adapters/codex.mjs";
-import { writeHostSessionFacts } from "../server/host-session-facts.mjs";
+import { createCodexHostAdapter } from "../server/session/host-adapters/codex.mjs";
+import { writeHostSessionFacts } from "../server/session/host-session-facts.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 const CONTEXT_EVENTS = new Set(["SessionStart", "UserPromptSubmit"]);

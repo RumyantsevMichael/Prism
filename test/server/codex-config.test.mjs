@@ -4,7 +4,7 @@ import {
   CODEX_CONFIG_REASON,
   inspectCodexEffectiveConfig,
   normalizeConfigResponse
-} from "../../dist/server/host-adapters/codex-config.mjs";
+} from "../../dist/server/session/host-adapters/codex-config.mjs";
 
 const verifiedAt = "2026-09-20T12:00:00.000Z";
 

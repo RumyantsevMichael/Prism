@@ -2,12 +2,12 @@ import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { realpath, lstat, readlink } from "node:fs/promises";
-import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
-import { privateDirectory, regularBytes, semanticError } from "./native-semantic-runtime.mjs";
-import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "../repository-intelligence/native-repository-intelligence.mjs";
+import { privateDirectory, regularBytes, semanticError } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { resolveArtifactPath } from "./concept-delta.mjs";
 import type { Evidence, SnapshotEvidence, InventoryEntry } from "./conservation-types.mjs";
-import type { NativeSource, SourceSnapshot, SourceFile, Diagnostic } from "./repository-concept-types.mjs";
+import type { NativeSource, SourceSnapshot, SourceFile, Diagnostic } from "../repository-intelligence/repository-concept-types.mjs";
 
 export const digest = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 export const conservationError = (code: string, message: string, details: Record<string, unknown> = {}) => Object.assign(semanticError(code, message), details);

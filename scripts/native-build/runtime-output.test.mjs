@@ -66,6 +66,14 @@ test("freshness checks reject missing, edited, obsolete, and wrong-mode output w
   }
 });
 
+test("builds remove directories left empty by moved sources", async t => {
+  const { root, write } = await fixture(t);
+  await write("dist/server/old-group/obsolete.mjs", "obsolete\n");
+  await generateRuntime(root);
+  await assert.rejects(access(path.join(root, "dist/server/old-group")), { code: "ENOENT" });
+  await access(path.join(root, "dist/server/public"));
+});
+
 test("builds preserve staged dependencies and archive output", async t => {
   const { root, write } = await fixture(t);
   await write("dist/native-runtime/node_modules/dependency/index.mjs", "dependency\n");

@@ -8,7 +8,7 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { recordSessionFacts } from "../../dist/hooks/record-session-facts.mjs";
-import { createCodexHostAdapter } from "../../dist/server/host-adapters/codex.mjs";
+import { createCodexHostAdapter } from "../../dist/server/session/host-adapters/codex.mjs";
 import {
   HOST_FACT_REASON,
   createHostSessionFactRecord,
@@ -16,7 +16,7 @@ import {
   readHostSessionFacts,
   validateHostSessionFacts,
   writeHostSessionFacts
-} from "../../dist/server/host-session-facts.mjs";
+} from "../../dist/server/session/host-session-facts.mjs";
 
 const observedAt = "2026-09-19T12:00:00.000Z";
 const sessionId = "thr_private_session_identifier";

@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:f
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { appendDecision, normalizeDecision, readDecisionHistory, setDecisionRecording } from "../../dist/server/decision-history.mjs";
-import { updateCoordinationState } from "../../dist/server/state.mjs";
+import { appendDecision, normalizeDecision, readDecisionHistory, setDecisionRecording } from "../../dist/server/workflow/decision-history.mjs";
+import { updateCoordinationState } from "../../dist/server/workflow/state.mjs";
 import { createHash } from "node:crypto";
 
 async function fixture(context) {

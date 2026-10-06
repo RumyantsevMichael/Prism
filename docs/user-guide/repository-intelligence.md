@@ -227,7 +227,7 @@ The first successful edit closes the pre-edit window.
 Failed edit attempts keep the window open.
 For Codex, only a root-correlated exact `apply_patch` `PostToolUse` event under a reviewed trace behavior profile proves success.
 The bundled trace behavior registry supports exact Codex versions `0.147.0` and `0.155.0-alpha.9.2` with provider `openai`.
-Each profile records the exact tagged upstream source used to verify its lifecycle and response-shape contract in `src/server/session-trace-behavior-registry.json`.
+Each profile records the exact tagged upstream source used to verify its lifecycle and response-shape contract in `src/server/session/session-trace-behavior-registry.json`.
 Codex versions without an exact profile and unknown host edits remain attempts even when response fields look successful.
 Claude `PostToolUse` events use the documented successful lifecycle after positive Claude project classification.
 Tool classification uses exact built-in and explicit provider names instead of suffix matching.
@@ -272,7 +272,7 @@ Override the implementation reserve when the registered default does not fit the
 }
 ```
 
-The bundled registry supports only the exact Codex host, version, provider, and model tuples recorded in `src/server/session-capacity-registry.json`.
+The bundled registry supports only the exact Codex host, version, provider, and model tuples recorded in `src/server/session/session-capacity-registry.json`.
 For the bundled 272000-token Codex profiles, the 95 percent usable input window is recorded separately from the default 90 percent automatic-compaction threshold of 244800 tokens.
 Supply both capacity overrides for an unregistered host, provider, model, or version combination.
 Prism returns `UNSUPPORTED` without a fit classification when neither path establishes exact capacity.

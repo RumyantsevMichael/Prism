@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { UPDATE_CONCEPT_DELTA_SCHEMA } from "../../dist/server/concept-delta.mjs";
-import { assertInput } from "../../dist/server/artifact-schema.mjs";
+import { UPDATE_CONCEPT_DELTA_SCHEMA } from "../../dist/server/conservation/concept-delta.mjs";
+import { assertInput } from "../../dist/server/workflow/artifact-schema.mjs";
 const source = (name) => readFile(new URL(`../../skills/${name}`, import.meta.url), "utf8");
 
 test("design authors concept transitions through MCP and returns a ready revision", async () => {

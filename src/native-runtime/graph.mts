@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { CODE_EXTENSIONS } from "./concepts.mjs";
 import { installFileBoundary } from "./fs-boundary.mjs";
-import type { Concept, Diagnostic, Progress, Relationship, SourceFile } from "../server/repository-concept-types.mjs";
+import type { Concept, Diagnostic, Progress, Relationship, SourceFile } from "../server/repository-intelligence/repository-concept-types.mjs";
 import type { CodeGraph, DatabaseConnection, FileRecord } from "@colbymchenry/codegraph";
 
 const boundary = installFileBoundary();

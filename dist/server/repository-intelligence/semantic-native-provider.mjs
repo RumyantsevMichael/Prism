@@ -1,9 +1,9 @@
-// Generated from src/server/semantic-native-provider.mts by scripts/native-build/compile.mjs.
+// Generated from src/server/repository-intelligence/semantic-native-provider.mts by scripts/native-build/compile.mjs.
 import { openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
-import { domainFor } from "../native-runtime/domains.mjs";
-import { conservationStore } from "./conservation-store.mjs";
-import { retainAnalysis } from "./conservation-analysis.mjs";
+import { domainFor } from "../../native-runtime/domains.mjs";
+import { conservationStore } from "../conservation/conservation-store.mjs";
+import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
 const domains = /* @__PURE__ */ new Set(["code", "instruction", "documentation", "configuration"]);
 const exact = (node, value) => [node.name, node.qualifiedName, node.selector].includes(value);
 const pinned = (hit) => hit.reasons?.some((reason) => ["explicit-design-reference", "expected-modification-target", "exact-symbol"].includes(reason));

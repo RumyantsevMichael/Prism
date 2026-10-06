@@ -2,20 +2,20 @@ import { createHash } from "node:crypto";
 import { realpath as defaultRealpath, stat as defaultStat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { inspectCodexTranscriptMetadata } from "../server/host-adapters/codex-transcript.mjs";
-import { approximateTokenCounter } from "../server/repository-intelligence.mjs";
-import { resolveSessionTraceBehavior } from "../server/session-trace-behavior.mjs";
+import { inspectCodexTranscriptMetadata } from "../server/session/host-adapters/codex-transcript.mjs";
+import { approximateTokenCounter } from "../server/repository-intelligence/repository-intelligence.mjs";
+import { resolveSessionTraceBehavior } from "../server/session/session-trace-behavior.mjs";
 import {
   SESSION_TRACE_COVERAGE,
   SESSION_TRACE_EVENT_TYPES,
   SESSION_TRACE_GAP_REASONS,
   SESSION_TRACE_HOST_EVENTS,
   createSessionTraceEvent
-} from "../server/session-trace.mjs";
+} from "../server/session/session-trace.mjs";
 import {
   SESSION_TRACE_REASON,
   appendSessionTraceEvent
-} from "../server/session-trace-store.mjs";
+} from "../server/session/session-trace-store.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 const MAX_ESTIMATED_RESPONSE_BYTES = 1024 * 1024;

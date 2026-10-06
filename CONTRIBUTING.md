@@ -17,7 +17,15 @@ A change to Markdown changes agent behavior at task time.
 skills/
   <name>/SKILL.md    # one directory per skill; the directory name is the skill name
 src/                 # editable server, native helper, and hook sources
-dist/                # committed executable runtime and browser assets
+  server/            # mcp.mjs, cli.mjs, plugin-root.mjs, and one directory per domain
+    workflow/        # coordination state, artifact storage, decision history
+    review/          # review server, review ledger, browser assets in public/
+    conservation/    # concept delta and conservation analysis
+    repository-intelligence/  # providers, native semantic runtime, concept types
+    session/         # host adapters, session facts, capacity, and tracing
+  native-runtime/    # native helper packaged into runtime archives
+  hooks/             # session hook entry points
+dist/                # committed executable runtime and browser assets, same layout as src/
 test/                # server and native helper tests
 vendor/plantuml/     # pinned MIT PlantUML browser runtime
 bin/                 # MCP and standalone review launchers
@@ -85,7 +93,7 @@ To validate `plugin.json` in isolation, copy the plugin into a scratch directory
 
 The new native subsystem uses strict TypeScript in `.mts` files.
 The existing server remains JavaScript.
-Shared concept and worker message types live in `src/server/repository-concept-types.mts`.
+Shared concept and worker message types live in `src/server/repository-intelligence/repository-concept-types.mts`.
 Edit runtime sources under `src/`, then regenerate the complete runtime tree under `dist/`.
 The build compiles TypeScript and copies handwritten JavaScript, browser assets, and runtime registries.
 Commit both the edited sources and generated output.

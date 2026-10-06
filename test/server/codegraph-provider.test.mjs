@@ -12,7 +12,7 @@ import {
   createCodeGraphCommandRunner,
   openCodeGraphRepositoryIntelligence,
   probeCodeGraphAvailability
-} from "../../dist/server/codegraph-provider.mjs";
+} from "../../dist/server/repository-intelligence/codegraph-provider.mjs";
 
 async function projectFixture(context, name = "project") {
   const parent = await mkdtemp(path.join(tmpdir(), "prism-codegraph-"));

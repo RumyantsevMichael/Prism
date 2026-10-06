@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createReviewServerPool } from "../../dist/server/review-server-pool.mjs";
+import { createReviewServerPool } from "../../dist/server/review/review-server-pool.mjs";
 
 const IDLE_MS = 30 * 60 * 1000;
 

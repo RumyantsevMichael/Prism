@@ -9,7 +9,7 @@ import { Tokenizer } from "@huggingface/tokenizers";
 import { CHUNKER_VERSION, CODE_EXTENSIONS, extractTextConcepts, resolveTextLinks, fragmentConcept, bgeSourceBoundaries } from "./concepts.mjs";
 import { extractGraph } from "./graph.mjs";
 import { embedFragments } from "./embeddings.mjs";
-import type { Concept, ConceptIndex, Fragment, BuildArguments, SearchArguments, SearchResult, Progress, WorkerRequest } from "../server/repository-concept-types.mjs";
+import type { Concept, ConceptIndex, Fragment, BuildArguments, SearchArguments, SearchResult, Progress, WorkerRequest } from "../server/repository-intelligence/repository-concept-types.mjs";
 
 const runtimeDirectory = path.dirname(fileURLToPath(import.meta.url));
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");

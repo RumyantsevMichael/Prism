@@ -59,7 +59,7 @@ Codex classification MUST use a correlated transcript before environment compati
 Codex-specific markers such as `CODEX_VERSION`, `turn_id`, or the Codex `subagent` field without a root-correlated transcript MUST fail closed.
 When no Codex marker or correlated Codex transcript exists, a canonical `CLAUDE_PROJECT_DIR` MUST establish Claude project identity without requiring `CLAUDE_VERSION`.
 Subagent action details MUST be excluded, and subagent exclusion or uncertain execution classification MUST reduce root-trace coverage when stable root identity remains provable and otherwise MUST be ignored.
-Codex edit completion MUST close the pre-edit window only for root-correlated `PostToolUse` events whose exact harness version, provider, and exact `apply_patch` tool name match `src/server/session-trace-behavior-registry.json`.
+Codex edit completion MUST close the pre-edit window only for root-correlated `PostToolUse` events whose exact harness version, provider, and exact `apply_patch` tool name match `src/server/session/session-trace-behavior-registry.json`.
 The initial trace behavior registry MUST support only Codex `0.147.0` and `0.155.0-alpha.9.2` with provider `openai` under the tagged upstream sources recorded in each profile.
 Unknown Codex versions and unknown host edit completion MUST fail closed regardless of response fields.
 Claude project identity MUST use the canonical `CLAUDE_PROJECT_DIR`, and Codex project identity MUST use the canonical root from correlated transcript metadata.
@@ -67,7 +67,7 @@ Prism MUST NOT hash an unresolved or noncanonical hook project root.
 Built-in and provider tool classification MUST use exact allowlisted names, and an available edit path MUST resolve beneath the canonical project root.
 When Codex omits a rendered token count and the exact supported behavior profile documents a string response within the one mebibyte bound, Prism MUST estimate a count in memory, MUST persist only the count, and MUST mark the observation partial.
 Object responses, oversized strings, and response shapes without an exact behavior profile MUST produce a missing-token coverage gap without serialization.
-The JavaScript event validator in `src/server/session-trace.mjs` MUST be the canonical persisted-event contract.
+The JavaScript event validator in `src/server/session/session-trace.mjs` MUST be the canonical persisted-event contract.
 Trace retention MUST remove files older than 30 days, remove owned stale temporary records, count owned active temporary records, and evict the oldest eligible traces before aggregate trace storage exceeds 64 MiB.
 Derived event identities MUST include the host event phase so pre-tool and post-tool observations do not suppress each other.
 Persisted events and summaries MUST use event time with a stable event-type and event-identity tie breaker before deriving the first edit.

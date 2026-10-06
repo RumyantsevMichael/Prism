@@ -1,4 +1,4 @@
-import type { Concept, Diagnostic } from "./repository-concept-types.mjs";
+import type { Concept, Diagnostic } from "../repository-intelligence/repository-concept-types.mjs";
 
 export type Selector = string | { type: "symbol" | "heading" | "text" | "json-pointer" | "yaml-key"; value: string }
   | { type: "span"; start: number; end: number; sourceHash: string };

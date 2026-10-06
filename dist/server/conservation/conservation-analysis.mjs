@@ -1,10 +1,10 @@
-// Generated from src/server/conservation-analysis.mts by scripts/native-build/compile.mjs.
+// Generated from src/server/conservation/conservation-analysis.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
 import { readConceptDeltaDocument } from "./concept-delta.mjs";
 import { conservationStore, conservationError, digest, canonical, withinScope } from "./conservation-store.mjs";
-import { nativeSemanticRuntime } from "./native-semantic-runtime.mjs";
-import { CODE_EXTENSIONS } from "../native-runtime/domains.mjs";
-import { CHUNKER_VERSION } from "../native-runtime/versions.mjs";
+import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
+import { CHUNKER_VERSION } from "../../native-runtime/versions.mjs";
 const keyFor = (file, kind, selector) => canonical([file, kind, selector]);
 const ANALYSIS_VERSION = "conservation-metrics-v2";
 const COMPARISON_VERSION = "conservation-comparison-v3";

@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { Domain } from "../server/repository-concept-types.mjs";
+import type { Domain } from "../server/repository-intelligence/repository-concept-types.mjs";
 
 export const CODE_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".py", ".go", ".rs", ".java", ".cs", ".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh"]);
 export function domainFor(file: string): Domain {

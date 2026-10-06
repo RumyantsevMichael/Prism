@@ -3,9 +3,9 @@ import { mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { CodeNibRepositoryIntelligence } from "../../dist/server/codenib-provider.mjs";
-import { CompositeRepositoryIntelligence, ExternalRepositoryIntelligenceError } from "../../dist/server/composite-repository-intelligence.mjs";
-import { planRepositoryContext } from "../../dist/server/repository-intelligence.mjs";
+import { CodeNibRepositoryIntelligence } from "../../dist/server/repository-intelligence/codenib-provider.mjs";
+import { CompositeRepositoryIntelligence, ExternalRepositoryIntelligenceError } from "../../dist/server/repository-intelligence/composite-repository-intelligence.mjs";
+import { planRepositoryContext } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
 
 function node(id, file, startLine, endLine, name, kind = "function") {
   return { id, file, range: { startLine, endLine }, name, kind, rangeComplete: true };

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { parseTree, getNodePath, getNodeValue } from "jsonc-parser";
 import { parseDocument, isMap, isSeq, isAlias, LineCounter } from "yaml";
-import type { Concept, Diagnostic, Fragment, Relationship } from "../server/repository-concept-types.mjs";
+import type { Concept, Diagnostic, Fragment, Relationship } from "../server/repository-intelligence/repository-concept-types.mjs";
 import { CODE_EXTENSIONS, domainFor } from "./domains.mjs";
 export { CODE_EXTENSIONS, domainFor } from "./domains.mjs";
 import type { Node as JsonNode, ParseError } from "jsonc-parser";

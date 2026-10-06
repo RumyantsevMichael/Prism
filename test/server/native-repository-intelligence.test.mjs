@@ -11,8 +11,8 @@ import {
   NativeRepositoryIntelligence,
   openNativeRepositoryIntelligence,
   withNativeRepositoryIntelligence
-} from "../../dist/server/native-repository-intelligence.mjs";
-import { planRepositoryContext } from "../../dist/server/repository-intelligence.mjs";
+} from "../../dist/server/repository-intelligence/native-repository-intelligence.mjs";
+import { planRepositoryContext } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
 
 const execFileAsync = promisify(execFile);
 

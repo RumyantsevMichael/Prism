@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { checkpointPause, readCoordinationState, updateCoordinationState } from "../../dist/server/state.mjs";
+import { checkpointPause, readCoordinationState, updateCoordinationState } from "../../dist/server/workflow/state.mjs";
 
 test("writes active recovery before state update and rejects stale revisions", async (context) => {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "prism-pause-"));

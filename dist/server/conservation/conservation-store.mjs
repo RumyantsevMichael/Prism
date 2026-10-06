@@ -1,11 +1,11 @@
-// Generated from src/server/conservation-store.mts by scripts/native-build/compile.mjs.
+// Generated from src/server/conservation/conservation-store.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { realpath, lstat, readlink } from "node:fs/promises";
-import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
-import { privateDirectory, regularBytes, semanticError } from "./native-semantic-runtime.mjs";
-import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "../repository-intelligence/native-repository-intelligence.mjs";
+import { privateDirectory, regularBytes, semanticError } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { resolveArtifactPath } from "./concept-delta.mjs";
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const conservationError = (code, message, details = {}) => Object.assign(semanticError(code, message), details);

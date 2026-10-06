@@ -1,10 +1,10 @@
 import path from "node:path";
 import { readConceptDeltaDocument } from "./concept-delta.mjs";
 import { conservationStore, ConservationStore, conservationError, digest, canonical, withinScope } from "./conservation-store.mjs";
-import { nativeSemanticRuntime } from "./native-semantic-runtime.mjs";
-import { CODE_EXTENSIONS } from "../native-runtime/domains.mjs";
-import { CHUNKER_VERSION } from "../native-runtime/versions.mjs";
-import type { NativeSource, PreparedIndex, SemanticRuntime } from "./repository-concept-types.mjs";
+import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
+import { CHUNKER_VERSION } from "../../native-runtime/versions.mjs";
+import type { NativeSource, PreparedIndex, SemanticRuntime } from "../repository-intelligence/repository-concept-types.mjs";
 import type { Evidence, SnapshotEvidence, SearchReceipt, Reference, Resolution, ResolvedUnit, DeltaDocument, ComparisonEvidence, Measurement, Observation } from "./conservation-types.mjs";
 
 type Analysis = Extract<Evidence, { kind: "analysis" }>;

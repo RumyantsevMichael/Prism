@@ -12,5 +12,5 @@
     "typeRoots": ["./scripts/native-build/node_modules/@types"],
     "useUnknownInCatchVariables": false
   },
-  "include": ["src/native-runtime/*.mts", "src/server/*.mts"]
+  "include": ["src/native-runtime/*.mts", "src/server/**/*.mts"]
 }

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { applyActiveOperations, withReviewGatesLocked } from "./active-operations.mjs";
-import { conservationStore } from "./conservation-store.mjs";
+import { conservationStore } from "../conservation/conservation-store.mjs";
 import { mkdir, readFile, realpath, rm, lstat } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";

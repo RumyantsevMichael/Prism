@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import test from "node:test";
-import { CODENIB_SUPPORTED_VERSION, CodeNibRepositoryIntelligence, CodeNibRuntimeError, McpStdioClient } from "../../dist/server/codenib-provider.mjs";
+import { CODENIB_SUPPORTED_VERSION, CodeNibRepositoryIntelligence, CodeNibRuntimeError, McpStdioClient } from "../../dist/server/repository-intelligence/codenib-provider.mjs";
 
 function childProcessStub() {
   const child = new EventEmitter();

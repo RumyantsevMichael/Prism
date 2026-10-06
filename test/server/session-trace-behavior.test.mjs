@@ -4,7 +4,7 @@ import {
   resolveSessionTraceBehavior,
   sessionTraceBehaviorRegistry,
   validateSessionTraceBehaviorRegistry
-} from "../../dist/server/session-trace-behavior.mjs";
+} from "../../dist/server/session/session-trace-behavior.mjs";
 
 test("recognizes only the reviewed Codex trace behavior versions", () => {
   const registry = sessionTraceBehaviorRegistry();

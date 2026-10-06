@@ -8,10 +8,10 @@ import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { createHostSessionFactRecord, writeHostSessionFacts } from "../../dist/server/host-session-facts.mjs";
-import { REPOSITORY_CONTEXT_INPUT_LIMITS } from "../../dist/server/repository-intelligence.mjs";
-import { createSessionTraceEvent } from "../../dist/server/session-trace.mjs";
-import { appendSessionTraceEvent } from "../../dist/server/session-trace-store.mjs";
+import { createHostSessionFactRecord, writeHostSessionFacts } from "../../dist/server/session/host-session-facts.mjs";
+import { REPOSITORY_CONTEXT_INPUT_LIMITS } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
+import { createSessionTraceEvent } from "../../dist/server/session/session-trace.mjs";
+import { appendSessionTraceEvent } from "../../dist/server/session/session-trace-store.mjs";
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
 const execFileAsync = promisify(execFile);

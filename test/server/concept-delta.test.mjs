@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { getConceptDelta, updateConceptDelta, CONCEPT_DELTA_LIMITS } from "../../dist/server/concept-delta.mjs";
-import { conservationStore } from "../../dist/server/conservation-store.mjs";
-import { writeAtomically } from "../../dist/server/artifact-store.mjs";
+import { getConceptDelta, updateConceptDelta, CONCEPT_DELTA_LIMITS } from "../../dist/server/conservation/concept-delta.mjs";
+import { conservationStore } from "../../dist/server/conservation/conservation-store.mjs";
+import { writeAtomically } from "../../dist/server/workflow/artifact-store.mjs";
 
 const examples = JSON.parse(await readFile(new URL("./fixtures/concept-delta.json", import.meta.url), "utf8"));
 const codeEntry = examples.concepts[0];
@@ -134,7 +134,7 @@ test("serializes concurrent writers within and across processes", async (t) => {
     let results;
     if (!external) results = await Promise.allSettled([updateConceptDelta(update("Left")), updateConceptDelta(update("Right"))]);
     else {
-      const script = `import {updateConceptDelta} from ${JSON.stringify(new URL("../../dist/server/concept-delta.mjs", import.meta.url).href)}; try { await updateConceptDelta(JSON.parse(process.argv[1])); console.log("success"); } catch (error) { console.log(error.code); }`;
+      const script = `import {updateConceptDelta} from ${JSON.stringify(new URL("../../dist/server/conservation/concept-delta.mjs", import.meta.url).href)}; try { await updateConceptDelta(JSON.parse(process.argv[1])); console.log("success"); } catch (error) { console.log(error.code); }`;
       const output = await Promise.all(["Left", "Right"].map((reason) => execFileAsync(process.execPath, ["--input-type=module", "-e", script, JSON.stringify(update(reason))])));
       assert.deepEqual(output.map((item) => item.stdout.trim()).sort(), ["revision_conflict", "success"]);
       continue;

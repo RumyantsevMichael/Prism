@@ -1,13 +1,13 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
-import { assertInput } from "./artifact-schema.mjs";
-import { resolveArtifactPath, readConceptDeltaDocument } from "./concept-delta.mjs";
-import { regularBytes } from "./native-semantic-runtime.mjs";
-import { conservationStore, canonical, digest, conservationError, withinScope } from "./conservation-store.mjs";
-import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "./conservation-analysis.mjs";
-import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "./conservation-schema.mjs";
-import type { ComparisonEvidence, DeltaDocument, Evidence, GrowthJustification, Observation, Reference, SnapshotEvidence } from "./conservation-types.mjs";
+import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
+import { assertInput } from "../workflow/artifact-schema.mjs";
+import { resolveArtifactPath, readConceptDeltaDocument } from "../conservation/concept-delta.mjs";
+import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { conservationStore, canonical, digest, conservationError, withinScope } from "../conservation/conservation-store.mjs";
+import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "../conservation/conservation-analysis.mjs";
+import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "../conservation/conservation-schema.mjs";
+import type { ComparisonEvidence, DeltaDocument, Evidence, GrowthJustification, Observation, Reference, SnapshotEvidence } from "../conservation/conservation-types.mjs";
 
 type Mode = "design-audit" | "implementation-review";
 type Status = "OPEN" | "IN PROGRESS" | "FIXED" | "VERIFIED" | "REOPENED";

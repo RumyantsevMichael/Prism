@@ -2,8 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, readdir, realpath, rename, rm, lstat, writeFile } from "node:fs/promises";
 import { readCoordinationState } from "./state.mjs";
 import path from "node:path";
-import { readHostSessionFacts } from "./host-session-facts.mjs";
-import { SESSION_TRACE_MAX_AGE_MS, SESSION_TRACE_MAX_DIRECTORY_BYTES } from "./session-trace-store.mjs";
+import { readHostSessionFacts } from "../session/host-session-facts.mjs";
+import { SESSION_TRACE_MAX_AGE_MS, SESSION_TRACE_MAX_DIRECTORY_BYTES } from "../session/session-trace-store.mjs";
 
 const DIRECTORY = "decision-history";
 const MAX_RECORD_BYTES = 8192;

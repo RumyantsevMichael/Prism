@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { readCoordinationState, updateCoordinationState } from "../../dist/server/state.mjs";
+import { readCoordinationState, updateCoordinationState } from "../../dist/server/workflow/state.mjs";
 
 async function stateFixture(context) {
   const root = await mkdtemp(path.join(os.tmpdir(), "prism-state-"));

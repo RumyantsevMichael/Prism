@@ -8,7 +8,7 @@ import {
   resolveActiveSessionCapacity,
   resolveSessionCapacity,
   validateCapacityRegistry
-} from "../../dist/server/session-capacity.mjs";
+} from "../../dist/server/session/session-capacity.mjs";
 
 const supportedSession = {
   harness: "codex-cli",
@@ -22,7 +22,7 @@ const baseCosts = {
   featureDesignContextTokens: 10000
 };
 const correlationKey = "a".repeat(64);
-const registry = JSON.parse(readFileSync(new URL("../../dist/server/session-capacity-registry.json", import.meta.url), "utf8"));
+const registry = JSON.parse(readFileSync(new URL("../../dist/server/session/session-capacity-registry.json", import.meta.url), "utf8"));
 
 test("keeps the usable window percentage separate from automatic compaction", () => {
   for (const profile of registry.profiles) {

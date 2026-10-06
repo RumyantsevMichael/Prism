@@ -1,8 +1,8 @@
-// Generated from src/server/conservation-tools.mts by scripts/native-build/compile.mjs.
-import { assertInput } from "./artifact-schema.mjs";
+// Generated from src/server/conservation/conservation-tools.mts by scripts/native-build/compile.mjs.
+import { assertInput } from "../workflow/artifact-schema.mjs";
 import { conservationStore, conservationError } from "./conservation-store.mjs";
 import { compareConceptDelta } from "./conservation-analysis.mjs";
-import { GET_REVIEW_SCHEMA, UPDATE_REVIEW_SCHEMA, CHECK_REVIEW_GATE_SCHEMA, getReview, updateReview, checkReviewGate } from "./review-ledger.mjs";
+import { GET_REVIEW_SCHEMA, UPDATE_REVIEW_SCHEMA, CHECK_REVIEW_GATE_SCHEMA, getReview, updateReview, checkReviewGate } from "../review/review-ledger.mjs";
 import { objectSchema as obj, textField as str, hashField } from "./conservation-schema.mjs";
 const captureSchema = obj({ projectRoot: str, deltaPath: str }, ["projectRoot"]);
 const evidenceSchema = obj({ projectRoot: str, evidenceId: hashField, section: { enum: ["files", "omissions", "diagnostics", "candidates", "observations", "measurements", "growth", "unitsBefore", "unitsAfter", "units", "requirements", "lines"] }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }, ["projectRoot", "evidenceId"]);

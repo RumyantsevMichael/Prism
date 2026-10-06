@@ -7,7 +7,7 @@ import test from "node:test";
 import {
   CODEX_TRANSCRIPT_REASON,
   inspectCodexTranscriptMetadata
-} from "../../dist/server/host-adapters/codex-transcript.mjs";
+} from "../../dist/server/session/host-adapters/codex-transcript.mjs";
 
 async function fixture(context) {
   const root = await mkdtemp(path.join(os.tmpdir(), "prism-codex-transcript-"));

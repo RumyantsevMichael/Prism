@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { CHUNKER_VERSION } from "./concepts.mjs";
-import type { Fragment, Progress } from "../server/repository-concept-types.mjs";
+import type { Fragment, Progress } from "../server/repository-intelligence/repository-concept-types.mjs";
 
 const validVector = (value: unknown): value is number[] => Array.isArray(value) && value.length === 384 && value.every(Number.isFinite);
 

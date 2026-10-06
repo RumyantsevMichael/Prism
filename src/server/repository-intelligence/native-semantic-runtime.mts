@@ -1,5 +1,5 @@
 import path from "node:path";
-import { pluginPath, pluginURL } from "./plugin-root.mjs";
+import { pluginPath, pluginURL } from "../plugin-root.mjs";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -7,7 +7,7 @@ import readline from "node:readline";
 import { constants } from "node:fs";
 import { mkdir, lstat, realpath, readFile, open, rename, rm, chmod } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { withFileLock, withArtifactLock, writeAtomically } from "./artifact-store.mjs";
+import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { NativeSource, SourceSnapshot, ConceptIndex, PreparedIndex, Preparation, Progress, Diagnostic, WorkerMethods, SearchFilters, SemanticRuntime, Counts } from "./repository-concept-types.mjs";
 

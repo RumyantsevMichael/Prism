@@ -5,7 +5,7 @@ import {
   createRepositoryIntelligenceDescriptors,
   listRepositoryIntelligenceProviders,
   withRepositoryIntelligence
-} from "../../dist/server/repository-intelligence-providers.mjs";
+} from "../../dist/server/repository-intelligence/repository-intelligence-providers.mjs";
 
 test("publishes the same external executable ranges that adapters enforce", () => {
   const descriptors = createRepositoryIntelligenceDescriptors();

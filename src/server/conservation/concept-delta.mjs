@@ -1,11 +1,11 @@
 import { referenceSchema, deltaMetadata } from "./conservation-schema.mjs";
-import { assertInput, checkSchema } from "./artifact-schema.mjs";
+import { assertInput, checkSchema } from "../workflow/artifact-schema.mjs";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { mkdir, open, realpath, lstat } from "node:fs/promises";
 import path from "node:path";
-import { normalizeRepositorySourcePath } from "./repository-source-path.mjs";
-import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { normalizeRepositorySourcePath } from "../repository-intelligence/repository-source-path.mjs";
+import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 
 export const CONCEPT_DELTA_LIMITS = Object.freeze({ operations: 100, bytes: 1024 * 1024, page: 100, defaultPage: 50 });
 export const CONCEPT_ACTIONS = ["KEEP", "MODIFY", "REPLACE", "DELETE", "ADD"];
@@ -249,7 +249,7 @@ export async function updateConceptDelta(input) {
     if (Buffer.byteLength(contents) > CONCEPT_DELTA_LIMITS.bytes) throw failure("artifact_too_large", "The concept delta exceeds 1 MiB.");
     let migrationEvidenceId;
     if (input.migrate && current.document?.schemaVersion === 1) {
-      const { regularBytes } = await import("./native-semantic-runtime.mjs");
+      const { regularBytes } = await import("../repository-intelligence/native-semantic-runtime.mjs");
       const bytes = await regularBytes(resolved.target, CONCEPT_DELTA_LIMITS.bytes);
       migrationEvidenceId = await conservationStore.put(resolved.root, { kind: "migration", schemaVersion: 1, project: resolved.root, artifactPath: resolved.deltaPath, revision: current.revision, lines: bytes.toString().split("\n") });
     }

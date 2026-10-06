@@ -2,8 +2,8 @@ import path from "node:path";
 import os from "node:os";
 import { readFile, writeFile, mkdir, readdir, lstat, realpath } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
-import { NativeSemanticRuntime } from "../dist/server/native-semantic-runtime.mjs";
-import { openNativeRepositoryIntelligence } from "../dist/server/native-repository-intelligence.mjs";
+import { NativeSemanticRuntime } from "../dist/server/repository-intelligence/native-semantic-runtime.mjs";
+import { openNativeRepositoryIntelligence } from "../dist/server/repository-intelligence/native-repository-intelligence.mjs";
 
 const [manifestPath, outputArgument] = process.argv.slice(2);
 if (!manifestPath || !outputArgument) throw new Error("Usage: node bench/native-semantics.mjs ASSET_MANIFEST OUTPUT_DIRECTORY");

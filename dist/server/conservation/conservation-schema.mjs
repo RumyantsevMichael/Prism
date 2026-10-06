@@ -1,4 +1,4 @@
-// Generated from src/server/conservation-schema.mts by scripts/native-build/compile.mjs.
+// Generated from src/server/conservation/conservation-schema.mts by scripts/native-build/compile.mjs.
 const textField = { type: "string", minLength: 1, maxLength: 8192 };
 const hashField = { type: "string", pattern: "^[a-f0-9]{64}$" };
 const objectSchema = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });

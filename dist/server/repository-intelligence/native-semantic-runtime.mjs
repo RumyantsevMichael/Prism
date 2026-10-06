@@ -1,6 +1,6 @@
-// Generated from src/server/native-semantic-runtime.mts by scripts/native-build/compile.mjs.
+// Generated from src/server/repository-intelligence/native-semantic-runtime.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
-import { pluginPath, pluginURL } from "./plugin-root.mjs";
+import { pluginPath, pluginURL } from "../plugin-root.mjs";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -8,7 +8,7 @@ import readline from "node:readline";
 import { constants } from "node:fs";
 import { mkdir, lstat, realpath, open, rename, rm, chmod } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { withFileLock, withArtifactLock, writeAtomically } from "./artifact-store.mjs";
+import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/artifact-store.mjs";
 const semanticError = (code, message) => Object.assign(new Error(message), { code });
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const supported = /* @__PURE__ */ new Set(["darwin-x64", "darwin-arm64", "linux-x64", "linux-arm64", "win32-x64"]);

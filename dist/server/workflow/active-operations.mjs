@@ -1,12 +1,12 @@
-// Generated from src/server/active-operations.mts by scripts/native-build/compile.mjs.
+// Generated from src/server/workflow/active-operations.mts by scripts/native-build/compile.mjs.
 import { assertInput } from "./artifact-schema.mjs";
 import path from "node:path";
 import { realpath } from "node:fs/promises";
-import { resolveArtifactPath } from "./concept-delta.mjs";
+import { resolveArtifactPath } from "../conservation/concept-delta.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
-import { checkReviewGate, loadReview } from "./review-ledger.mjs";
-import { conservationError } from "./conservation-store.mjs";
-import { objectSchema as obj, arraySchema as arr, textField as str } from "./conservation-schema.mjs";
+import { checkReviewGate, loadReview } from "../review/review-ledger.mjs";
+import { conservationError } from "../conservation/conservation-store.mjs";
+import { objectSchema as obj, arraySchema as arr, textField as str } from "../conservation/conservation-schema.mjs";
 const fields = { activity: { enum: ["design", "implementation", "review", "integration"] }, label: str, workers: { ...arr(str), minItems: 1 }, workspace: str, reviewPath: str, reviewLanes: arr(obj({ id: str, reviewer: str })), findingsPath: str };
 const ACTIVE_OPERATIONS_SCHEMA = arr({ oneOf: [
   obj({ op: { const: "start" }, entry: obj({ slice: str, ...fields }, ["slice", "activity", "workers", "workspace"]) }),

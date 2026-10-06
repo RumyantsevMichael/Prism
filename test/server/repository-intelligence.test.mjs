@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CodeNibRepositoryIntelligence } from "../../dist/server/codenib-provider.mjs";
-import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "../../dist/server/repository-intelligence.mjs";
+import { CodeNibRepositoryIntelligence } from "../../dist/server/repository-intelligence/codenib-provider.mjs";
+import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
 
 function node(id, file, startLine, endLine, name, kind = "function") {
   return { id, file, range: { startLine, endLine }, name, kind };

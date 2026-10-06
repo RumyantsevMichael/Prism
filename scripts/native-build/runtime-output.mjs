@@ -19,6 +19,14 @@ async function files(directory, source = false) {
   return result;
 }
 
+async function pruneEmptyDirectories(directory, isRoot = true) {
+  let entries;
+  try { entries = await readdir(directory, { withFileTypes: true }); }
+  catch (error) { if (error.code === "ENOENT") return; throw error; }
+  for (const entry of entries) if (entry.isDirectory() && entry.name !== "node_modules") await pruneEmptyDirectories(path.join(directory, entry.name), false);
+  if (!isRoot && (await readdir(directory)).length === 0) await rm(directory, { recursive: true });
+}
+
 export async function generateRuntime(root, { check = false } = {}) {
   for (const directory of directories) {
     const sourceRoot = path.join(root, "src", directory);
@@ -54,5 +62,6 @@ export async function generateRuntime(root, { check = false } = {}) {
       if (check) throw new Error(`Generated runtime file is obsolete: ${destination}`);
       await rm(destination);
     }
+    if (!check) await pruneEmptyDirectories(destinationRoot);
   }
 }

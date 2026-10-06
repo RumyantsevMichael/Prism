@@ -5,7 +5,7 @@ import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { startReviewServer } from "../../dist/server/review-server.mjs";
+import { startReviewServer } from "../../dist/server/review/review-server.mjs";
 
 async function fixture(context) {
   const root = await mkdtemp(path.join(os.tmpdir(), "prism-review-"));

@@ -13,7 +13,7 @@ import {
 import {
   readSessionTraceEvents,
   summarizeSessionConsumption
-} from "../../dist/server/session-trace-store.mjs";
+} from "../../dist/server/session/session-trace-store.mjs";
 
 const sessionId = "private-hook-session";
 const projectRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
