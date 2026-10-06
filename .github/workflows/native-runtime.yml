@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
   pull_request:
-    paths: ['src/**', 'dist/server/**', 'dist/native-runtime/**', 'dist/hooks/**', 'test/**', 'bin/**', 'hooks/**', '.mcp.json', '.codex-mcp.json', 'package.json', 'tsconfig.native.json', 'scripts/build-native-runtime.mjs', 'scripts/native-build/**', 'vendor/native-runtime/**', '.github/workflows/native-runtime.yml', '.github/workflows/native-default.yml', '.github/workflows/release.yml']
+    paths: ['src/**', 'dist/server/**', 'dist/native-runtime/**', 'dist/hooks/**', 'test/**', 'bin/**', 'hooks/**', '.claude-mcp.json', '.codex-mcp.json', 'package.json', 'tsconfig.native.json', 'scripts/build-native-runtime.mjs', 'scripts/native-build/**', 'vendor/native-runtime/**', '.github/workflows/native-runtime.yml', '.github/workflows/native-default.yml', '.github/workflows/release.yml']
   push:
     branches: ['codex/native-runtime-assets']
   workflow_dispatch:

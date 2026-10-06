@@ -37,7 +37,7 @@ Every file request MUST resolve inside the active project root.
 
 ## Mechanism
 
-The harness starts `prism-review` through the bundled `.mcp.json` definition.
+The harness starts `prism-review` through the bundled `.claude-mcp.json` or `.codex-mcp.json` definition.
 The MCP server starts the HTTP review server only after the first review request.
 The standalone `prism review` command starts the same server without a harness.
 The browser loads `.puml` source and renders SVG in memory with PlantUML TeaVM.

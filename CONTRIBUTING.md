@@ -29,7 +29,7 @@ dist/                # committed executable runtime and browser assets, same lay
 test/                # server and native helper tests
 vendor/plantuml/     # pinned MIT PlantUML browser runtime
 bin/                 # MCP and standalone review launchers
-.mcp.json            # bundled MCP server definition
+.claude-mcp.json     # Claude MCP server definition
 .codex-mcp.json      # native Codex MCP server definition
 ```
 
@@ -37,6 +37,9 @@ Only the Claude manifests live in `.claude-plugin/`.
 Only the Codex manifest lives in `.codex-plugin/`.
 Shared components such as `skills/`, `hooks/`, and assets stay at the repository root.
 Putting a shared component inside either manifest directory breaks one or both packages.
+Do not name the Claude MCP definition `.mcp.json`.
+Claude Code also reads a root `.mcp.json` as project config when a session runs in this repository.
+That project server has no `${CLAUDE_PLUGIN_ROOT}` value, so it fails to start.
 
 ## Local development
 

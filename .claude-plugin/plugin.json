@@ -23,5 +23,5 @@
     "architecture",
     "tdd"
   ],
-  "mcpServers": "./.mcp.json"
+  "mcpServers": "./.claude-mcp.json"
 }

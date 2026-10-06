@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function json(relativePath) {
@@ -8,11 +8,11 @@ async function json(relativePath) {
 
 test("uses host-specific portable MCP launch paths", async () => {
   const claudeManifest = await json(".claude-plugin/plugin.json");
-  const claudeMcp = await json(".mcp.json");
+  const claudeMcp = await json(".claude-mcp.json");
   const codexManifest = await json(".codex-plugin/plugin.json");
   const codexMcp = await json(".codex-mcp.json");
 
-  assert.equal(claudeManifest.mcpServers, "./.mcp.json");
+  assert.equal(claudeManifest.mcpServers, "./.claude-mcp.json");
   assert.deepEqual(claudeMcp.mcpServers["prism-review"], {
     command: "node",
     args: ["${CLAUDE_PLUGIN_ROOT}/dist/server/mcp.mjs"]
@@ -22,6 +22,10 @@ test("uses host-specific portable MCP launch paths", async () => {
     command: "./bin/prism-mcp",
     cwd: "."
   });
+});
+
+test("keeps the plugin MCP definition out of project MCP config", async () => {
+  await assert.rejects(access(new URL("../../.mcp.json", import.meta.url)), { code: "ENOENT" });
 });
 
 test("describes the shared design audit in both host manifests", async () => {

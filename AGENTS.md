@@ -17,7 +17,8 @@ This applies to subagents as well: if you are dispatched to work on a file here,
   Code blocks, YAML frontmatter, and tables are exempt and stay as they are.
   This keeps diffs sentence-scoped, which is what makes review of a prose codebase tractable.
 - **Only the manifests live in `.claude-plugin/`.**
-  `skills/`, and any future `agents/`, `hooks/`, or `.mcp.json`, sit at the repository root.
+  `skills/`, `hooks/`, any future `agents/`, and the MCP definitions `.claude-mcp.json` and `.codex-mcp.json` sit at the repository root.
+  Do not add a root `.mcp.json`: Claude Code also reads that file as project config in this repository, where `${CLAUDE_PLUGIN_ROOT}` has no value.
   Moving a component directory inside `.claude-plugin/` silently breaks the plugin, and validation does not reliably catch it.
 - **Run `claude plugin validate . --strict` before committing.**
   It parses both manifests and the frontmatter of every skill.
