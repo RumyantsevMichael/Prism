@@ -16,7 +16,9 @@ A change to Markdown changes agent behavior at task time.
   marketplace.json   # Codex marketplace
 skills/
   <name>/SKILL.md    # one directory per skill; the directory name is the skill name
-server/              # MCP server, review UI, and tests
+src/                 # editable server, native helper, and hook sources
+dist/                # committed executable runtime and browser assets
+test/                # server and native helper tests
 vendor/plantuml/     # pinned MIT PlantUML browser runtime
 bin/                 # MCP and standalone review launchers
 .mcp.json            # bundled MCP server definition
@@ -83,21 +85,33 @@ To validate `plugin.json` in isolation, copy the plugin into a scratch directory
 
 The new native subsystem uses strict TypeScript in `.mts` files.
 The existing server remains JavaScript.
-Shared concept and worker message types live in `server/repository-concept-types.mts`.
-Edit the TypeScript sources, then regenerate their adjacent `.mjs` files.
+Shared concept and worker message types live in `src/server/repository-concept-types.mts`.
+Edit runtime sources under `src/`, then regenerate the complete runtime tree under `dist/`.
+The build compiles TypeScript and copies handwritten JavaScript, browser assets, and runtime registries.
+Commit both the edited sources and generated output.
 The package ships generated JavaScript, so users do not need a TypeScript compiler.
 
 ```bash
-npm ci --prefix native-runtime --ignore-scripts
+npm ci --prefix src/native-runtime --ignore-scripts
 npm ci --prefix scripts/native-build --ignore-scripts
 npm run build:native
 npm run check:native
+node dist/native-runtime/patch-codegraph.mjs src/native-runtime/node_modules/@colbymchenry/codegraph-$(node -p "process.platform + '-' + process.arch")/lib/dist
+npm run stage:native
+node --liftoff-only --test test/native-runtime/*.test.mjs
 node scripts/build-native-runtime.mjs
 node scripts/native-build/smoke.mjs dist/native
 node scripts/native-build/mcp-smoke.mjs dist/native
 ```
 
-The archive builder verifies generated files and copies pinned dependencies without running installation scripts.
+The freshness check verifies the complete output file set, contents, and executable permissions.
+It rejects missing, changed, and obsolete output without changing files.
+CI runs this check before any build that could repair committed output.
+The dependency staging command copies installed helper dependencies into ignored `dist/native-runtime/node_modules`.
+Run staging after installing or patching helper dependencies.
+The build preserves staged dependencies and the ignored `dist/native` archive directory.
+Tests and plugin launchers run the generated output.
+The archive builder verifies generated files and copies pinned source dependencies without running installation scripts.
 ONNX Runtime stays pinned to `1.22.0` because the `1.30.0` package omits the Intel macOS binding.
 The smoke tests run the packaged Node helper without external executables.
 The MCP smoke test also checks native estimates, offline reuse, responsive discovery, and source changes.

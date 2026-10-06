@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
   pull_request:
-    paths: ['native-runtime/**', 'server/**', 'tsconfig.native.json', 'scripts/build-native-runtime.mjs', 'scripts/native-build/**', 'vendor/native-runtime/**', '.github/workflows/native-runtime.yml', '.github/workflows/native-default.yml', '.github/workflows/release.yml']
+    paths: ['src/**', 'dist/server/**', 'dist/native-runtime/**', 'dist/hooks/**', 'test/**', 'bin/**', 'hooks/**', '.mcp.json', '.codex-mcp.json', 'package.json', 'tsconfig.native.json', 'scripts/build-native-runtime.mjs', 'scripts/native-build/**', 'vendor/native-runtime/**', '.github/workflows/native-runtime.yml', '.github/workflows/native-default.yml', '.github/workflows/release.yml']
   push:
     branches: ['codex/native-runtime-assets']
   workflow_dispatch:
@@ -53,16 +53,19 @@ jobs:
           node-version: '24.16.0'
       - name: Install pinned build dependencies without scripts
         run: |
-          npm ci --prefix native-runtime --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
       - name: Check TypeScript and generated JavaScript
         run: npm run check:native
       - name: Patch the embedded SDK
-        run: node native-runtime/patch-codegraph.mjs native-runtime/node_modules/@colbymchenry/codegraph-${{ matrix.platform }}/lib/dist
+        run: node dist/native-runtime/patch-codegraph.mjs src/native-runtime/node_modules/@colbymchenry/codegraph-${{ matrix.platform }}/lib/dist
+      - name: Stage native dependencies
+        run: npm run stage:native
+
       - name: Test parsers, language relationships, and containment
         run: |
-          node --liftoff-only --test --test-reporter=tap --test-timeout=120000 native-runtime/test/*.test.mjs
-          node --test --test-reporter=tap --test-timeout=120000 scripts/native-build/*.test.mjs server/test/native-semantics.test.mjs server/test/conservation.test.mjs server/test/concept-delta-mcp.test.mjs
+          node --liftoff-only --test --test-reporter=tap --test-timeout=120000 test/native-runtime/*.test.mjs
+          node --test --test-reporter=tap --test-timeout=120000 scripts/native-build/*.test.mjs test/server/native-semantics.test.mjs test/server/conservation.test.mjs test/server/concept-delta-mcp.test.mjs
       - name: Build an immutable runtime archive
         env:
           PRISM_NATIVE_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
