@@ -37,6 +37,8 @@ jobs:
       - name: Test the server and release automation
         run: |
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run check:native
           npm test
           node --test scripts/native-build/*.test.mjs scripts/release-automation.test.mjs
 

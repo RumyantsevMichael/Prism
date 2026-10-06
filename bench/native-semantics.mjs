@@ -2,14 +2,14 @@ import path from "node:path";
 import os from "node:os";
 import { readFile, writeFile, mkdir, readdir, lstat, realpath } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
-import { NativeSemanticRuntime } from "../server/native-semantic-runtime.mjs";
-import { openNativeRepositoryIntelligence } from "../server/native-repository-intelligence.mjs";
+import { NativeSemanticRuntime } from "../dist/server/repository-intelligence/native-semantic-runtime.mjs";
+import { openNativeRepositoryIntelligence } from "../dist/server/repository-intelligence/native-repository-intelligence.mjs";
 
 const [manifestPath, outputArgument] = process.argv.slice(2);
 if (!manifestPath || !outputArgument) throw new Error("Usage: node bench/native-semantics.mjs ASSET_MANIFEST OUTPUT_DIRECTORY");
 const output = path.resolve(outputArgument); await mkdir(output, { recursive: true });
 const root = path.join(output, "fixture-project"); await mkdir(root, { recursive: true });
-const fixture = JSON.parse(await readFile(new URL("../native-runtime/test/fixtures/retrieval.json", import.meta.url), "utf8"));
+const fixture = JSON.parse(await readFile(new URL("../test/native-runtime/fixtures/retrieval.json", import.meta.url), "utf8"));
 const queries = [];
 for (const item of fixture.cases) {
   const extension = item.domain === "code" ? "ts" : item.domain === "configuration" ? "json" : "md";
@@ -68,7 +68,7 @@ try {
   }
   const disk = async directory => { let size = 0; for (const name of await readdir(directory)) { const file = path.join(directory, name), info = await lstat(file); size += info.isDirectory() ? await disk(file) : info.size; } return size; };
   const report = { schemaVersion: 1, date: new Date().toISOString(), platform: `${process.platform}-${process.arch}`, cpus: os.cpus().length,
-    fixture: "native-runtime/test/fixtures/retrieval.json", fixtureCases: fixture.cases.length, queries: queries.length, runsPerQuery: 3,
+    fixture: "test/native-runtime/fixtures/retrieval.json", fixtureCases: fixture.cases.length, queries: queries.length, runsPerQuery: 3,
     snapshot: prepared.index.snapshot, modelIdentity: prepared.modelIdentity, indexRevision: prepared.revision,
     preparationMilliseconds, indexMilliseconds, resources: prepared.index.resources, counts: prepared.index.counts,
     indexBytes: (await lstat(prepared.indexPath)).size, cacheBytes: await disk(cache), summaries, pairedComparisons, records,

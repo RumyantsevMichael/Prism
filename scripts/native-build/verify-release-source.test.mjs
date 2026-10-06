@@ -36,14 +36,14 @@ test("release metadata may change but runtime, server, build, and model inputs m
   git("config", "user.email", "prism-test@example.invalid");
   const model = { revision: "model-1", files: [{ path: "model.onnx", sha256: "a".repeat(64) }] };
   await write("vendor/native-runtime/manifest.json", JSON.stringify({ model, bundles: {} }));
-  await write("native-runtime/worker.mjs", "original runtime\n");
+  await write("dist/native-runtime/worker.mjs", "original runtime\n");
   const runtime = commit();
   await write("vendor/native-runtime/manifest.json", JSON.stringify({ model, assetVersion: "new-release", bundles: { tested: true } }));
   await write(".codex-plugin/plugin.json", '{"version":"1.2.3"}');
   await write("CHANGELOG.md", "A new version.\n");
   const promoted = commit();
   assert.deepEqual(verifyReleaseSource(directory, runtime), { runtime, source: promoted });
-  for (const file of ["native-runtime/worker.mjs", "server/mcp.mjs", "scripts/native-build/compile.mjs", "vendor/native-runtime/licenses/NOTICE", ".github/workflows/native-default.yml"]) {
+  for (const file of ["dist/native-runtime/worker.mjs", "src/native-runtime/worker.mts", "src/hooks/record-session-facts.mjs", "dist/server/mcp.mjs", "dist/hooks/record-session-facts.mjs", "scripts/native-build/compile.mjs", "vendor/native-runtime/licenses/NOTICE", ".github/workflows/native-default.yml"]) {
     await write(file, "changed\n");
     commit();
     assert.throws(() => verifyReleaseSource(directory, runtime), /does not match/);

@@ -8,8 +8,9 @@
   "scripts": {
     "build:native": "node scripts/native-build/compile.mjs",
     "check:native": "node scripts/native-build/compile.mjs --check",
-    "test": "node --test server/test/*.test.mjs",
+    "test": "node --test test/server/*.test.mjs",
     "validate:sdm": "node scripts/validate-sdm.mjs",
-    "render": "bun scripts/render-diagrams.ts"
+    "render": "bun scripts/render-diagrams.ts",
+    "stage:native": "node scripts/native-build/stage.mjs"
   }
 }

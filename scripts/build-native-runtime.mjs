@@ -4,12 +4,13 @@ import { mkdir, cp, readdir, readFile, writeFile, lstat, rm, chmod } from "node:
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { copyDependencies } from "./native-build/dependencies.mjs";
 
 const require = createRequire(new URL("./native-build/package.json", import.meta.url));
 const { c } = require("tar"), { build } = require("esbuild");
 const root = fileURLToPath(new URL("..", import.meta.url));
 execFileSync(process.execPath, [path.join(root, "scripts/native-build/compile.mjs"), "--check"], { stdio: "inherit" });
-const { patchCodeGraph, PATCH_VERSION } = await import("../native-runtime/patch-codegraph.mjs");
+const { patchCodeGraph, PATCH_VERSION } = await import("../dist/native-runtime/patch-codegraph.mjs");
 const output = path.resolve(process.argv[2] || path.join(root, "dist/native"));
 const platform = `${process.platform}-${process.arch}`;
 const staging = path.join(output, `prism-native-${platform}`);
@@ -18,8 +19,9 @@ await mkdir(output, { recursive: true });
 await rm(staging, { recursive: true, force: true });
 await mkdir(staging);
 await cp(path.join(root, "vendor/native-runtime/licenses"), path.join(staging, "licenses"), { recursive: true });
-await cp(path.join(root, "native-runtime/node_modules"), path.join(staging, "node_modules"), { recursive: true, filter: source => !source.split(path.sep).includes(".bin") });
-for (const entry of await readdir(path.join(root, "native-runtime"))) if (entry.endsWith(".mjs") || ["package.json", "package-lock.json"].includes(entry)) await cp(path.join(root, "native-runtime", entry), path.join(staging, entry));
+await copyDependencies(path.join(root, "src/native-runtime/node_modules"), path.join(staging, "node_modules"));
+for (const entry of await readdir(path.join(root, "dist/native-runtime"))) if (entry.endsWith(".mjs")) await cp(path.join(root, "dist/native-runtime", entry), path.join(staging, entry));
+for (const entry of ["package.json", "package-lock.json"]) await cp(path.join(root, "src/native-runtime", entry), path.join(staging, entry));
 const graphPackage = path.join(staging, `node_modules/@colbymchenry/codegraph-${platform}`);
 const nodeName = process.platform === "win32" ? "node.exe" : "node";
 await cp(path.join(graphPackage, nodeName), path.join(staging, nodeName));

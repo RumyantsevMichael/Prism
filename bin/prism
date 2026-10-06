@@ -1,2 +1,2 @@
 #!/usr/bin/env node
-import "../server/cli.mjs";
+import "../dist/server/cli.mjs";
