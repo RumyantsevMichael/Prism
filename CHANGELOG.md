@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/RumyantsevMichael/Prism/compare/v0.9.0...v0.9.1) (2026-10-06)
+
+
+### Changed
+
+* separate runtime sources from shipped output ([#12](https://github.com/RumyantsevMichael/Prism/issues/12)) ([ab2d44c](https://github.com/RumyantsevMichael/Prism/commit/ab2d44c6c48bfc8ba539b4893d38aa5fd7c12455))
+
 ## [0.9.0](https://github.com/RumyantsevMichael/Prism/compare/v0.8.0...v0.9.0) (2026-10-05)
 
 
