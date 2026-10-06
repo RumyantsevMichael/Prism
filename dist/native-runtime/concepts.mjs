@@ -225,20 +225,24 @@ ${concept.docstring ? concept.docstring + "\n" : ""}`;
   }];
   const fragments = [];
   const points = boundaries(source);
-  let offset = 0;
+  let offset = 0, first = 0;
   while (offset < source.length) {
-    let low = 0, high = points.length - 1, best = offset;
+    while (first < points.length && points[first] <= offset) first++;
+    let good = first - 1, bad = points.length, step = 1;
+    while (good + step < points.length && fits(source.slice(offset, points[good + step]))) {
+      good += step;
+      step *= 2;
+    }
+    if (good + step < points.length) bad = good + step;
+    let low = good + 1, high = bad - 1;
     while (low <= high) {
-      const middle = Math.floor((low + high) / 2), candidate = points[middle];
-      if (candidate <= offset) {
-        low = middle + 1;
-        continue;
-      }
-      if (fits(source.slice(offset, candidate))) {
-        best = candidate;
+      const middle = Math.floor((low + high) / 2);
+      if (fits(source.slice(offset, points[middle]))) {
+        good = middle;
         low = middle + 1;
       } else high = middle - 1;
     }
+    const best = good >= first ? points[good] : offset;
     if (best <= offset) throw new Error("A concept fragment cannot fit the model input limit.");
     fragments.push({
       ...concept,

@@ -8,7 +8,7 @@ export interface Relationship { source: string; target: string; kind: string; pr
 export interface Fragment extends Concept { parentId: string; sourceStart: number; sourceEnd: number; prefixLength: number; text: string; embeddingText: string; embeddingKey?: string; embedding?: number[] }
 export interface SearchResult extends Concept { parentId?: string; sourceStart?: number; sourceEnd?: number; fusedScore?: number; fusedRank: number; lexicalScore: number | null; cosineSimilarity: number | null; excerpt: string }
 export interface SearchFilters { domains?: Domain[]; paths?: string[]; kinds?: string[] }
-export interface Counts { files: number; concepts: number; fragments: number; reusedEmbeddings: number; newEmbeddings: number }
+export interface Counts { files: number; concepts: number; fragments: number; searchExcludedFiles?: number; reusedEmbeddings: number; newEmbeddings: number }
 export interface IndexMetadata { schemaVersion: 1; chunkerVersion: string; modelIdentity: string; snapshot: string; units: Concept[]; edges: Relationship[]; fileCoverage: Record<string, boolean>; syntaxCoverage?: Record<string, boolean>; diagnostics: Diagnostic[]; counts: Counts; structureComplete: boolean; assetIdentity?: string; tokenCounts?: Record<string, number>; structureCounts?: Record<string, Record<string, number>>; resources: { rssBytes: number; peakRssBytes: number; indexMilliseconds?: number } }
 export interface ConceptIndex extends IndexMetadata { chunks: Fragment[] }
 export interface RuntimeAssets { runtime: string; modelDirectory: string; modelIdentity: string; assetIdentity: string }

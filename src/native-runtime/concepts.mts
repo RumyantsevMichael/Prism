@@ -185,15 +185,20 @@ export function fragmentConcept(concept: Concept, file: InputFile, countTokens: 
     embeddingText: safeEmbeddingPrefix + source, sourceStart: span.start, sourceEnd: span.end }];
   const fragments = [];
   const points = boundaries(source);
-  let offset = 0;
+  let offset = 0, first = 0;
   while (offset < source.length) {
-    let low = 0, high = points.length - 1, best = offset;
+    while (first < points.length && points[first] <= offset) first++;
+    // Gallop from the offset so each probe tokenizes text near one fragment, not the whole remaining source.
+    let good = first - 1, bad = points.length, step = 1;
+    while (good + step < points.length && fits(source.slice(offset, points[good + step]))) { good += step; step *= 2; }
+    if (good + step < points.length) bad = good + step;
+    let low = good + 1, high = bad - 1;
     while (low <= high) {
-      const middle = Math.floor((low + high) / 2), candidate = points[middle];
-      if (candidate <= offset) { low = middle + 1; continue; }
-      if (fits(source.slice(offset, candidate))) { best = candidate; low = middle + 1; }
+      const middle = Math.floor((low + high) / 2);
+      if (fits(source.slice(offset, points[middle]))) { good = middle; low = middle + 1; }
       else high = middle - 1;
     }
+    const best = good >= first ? points[good] : offset;
     if (best <= offset) throw new Error("A concept fragment cannot fit the model input limit.");
     fragments.push({ ...concept, id: `${concept.id}:${fragments.length}`, parentId: concept.id, sourceStart: span.start + offset, sourceEnd: span.start + best,
       range: { startLine: sourceLine + lineAt(source, offset) - 1, endLine: sourceLine + lineAt(source, Math.max(offset, best - 1)) - 1 },

@@ -90,3 +90,12 @@ test("split fragments preserve absolute offsets within a nonzero Unicode span", 
     assert.deepEqual(piece.range, { startLine: 2, endLine: 2 });
   }
 });
+test("lockfiles, generated output, and minified bundles supply no search candidates", async () => {
+  const { searchExclusion } = await import("../../dist/native-runtime/domains.mjs");
+  assert.equal(searchExclusion("src/native-runtime/package-lock.json", "{}"), "lockfile");
+  assert.equal(searchExclusion("dist/server/mcp.mjs", "export {};\n"), "generated");
+  assert.equal(searchExclusion("assets/c4.min.js", "x"), "minified");
+  assert.equal(searchExclusion("assets/bundle.js", "x".repeat(30000)), "minified");
+  assert.equal(searchExclusion("src/server/mcp.mjs", "export {};\n".repeat(3000)), null);
+  assert.equal(searchExclusion("docs/dist.md", "# Dist\n"), null);
+});

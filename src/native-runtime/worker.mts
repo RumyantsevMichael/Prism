@@ -7,11 +7,17 @@ import { create, insertMultiple, search } from "@orama/orama";
 import { AutoTokenizer, AutoModel, env } from "@huggingface/transformers";
 import { Tokenizer } from "@huggingface/tokenizers";
 import { CHUNKER_VERSION, CODE_EXTENSIONS, extractTextConcepts, resolveTextLinks, fragmentConcept, bgeSourceBoundaries } from "./concepts.mjs";
+import { searchExclusion } from "./domains.mjs";
 import { extractGraph } from "./graph.mjs";
 import { embedFragments } from "./embeddings.mjs";
 import type { Concept, ConceptIndex, Fragment, BuildArguments, SearchArguments, SearchResult, Progress, WorkerRequest } from "../server/repository-intelligence/repository-concept-types.mjs";
 
 const runtimeDirectory = path.dirname(fileURLToPath(import.meta.url));
+// Lexical matches on common words rank long files above precise semantic matches.
+// Identifier-like queries keep more lexical weight, because rare exact tokens blur in dense vectors.
+const IDENTIFIER = /[A-Za-z\d][_-][A-Za-z\d]|[a-z\d][A-Z]|\b[A-Z\d]{3,}\b|["'`]/;
+const fusionWeights = (query: string) => ({ lexicalScore: IDENTIFIER.test(query) ? 0.5 : 0.25, cosineSimilarity: 1 });
+const STOP_WORDS = new Set(["a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from", "how", "in", "into", "is", "it", "its", "of", "on", "or", "that", "the", "their", "this", "to", "what", "when", "where", "which", "while", "who", "why", "with"]);
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const send = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
 console.log = (...args) => console.error(...args);
@@ -93,9 +99,13 @@ async function build(args: BuildArguments, progress: (value: Progress) => void):
   const byFile = new Map(files.map(file => [file.file, file]));
   const detailedFiles = new Set(units.filter(item => item.kind !== "file").map(item => item.file));
   const chunks: Fragment[] = [];
+  // Excluded files keep structural coverage for conservation evidence, but supply no search candidates.
+  const excluded = new Set(files.filter(file => searchExclusion(file.file, file.content)).map(file => file.file));
   for (const concept of units) {
     // File nodes preserve complete navigation. Smaller units supply search candidates.
-    if (concept.kind === "file" && detailedFiles.has(concept.file) && fileCoverage[concept.file]) continue;
+    // Unresolved references clear file coverage, but parsed symbols still represent the file without duplicate file fragments.
+    if (concept.kind === "file" && detailedFiles.has(concept.file) && syntaxCoverage[concept.file]) continue;
+    if (excluded.has(concept.file) || concept.kind === "import") continue;
     chunks.push(...fragmentConcept(concept, byFile.get(concept.file)!, countTokens, 512, boundaries));
     if (chunks.length > 100000) throw Object.assign(new Error("The concept index exceeds 100,000 fragments."), { code: "resource_limit" });
   }
@@ -103,7 +113,7 @@ async function build(args: BuildArguments, progress: (value: Progress) => void):
   const index: ConceptIndex = { schemaVersion: 1, chunkerVersion: CHUNKER_VERSION, modelIdentity, snapshot: args.snapshot, units, edges, chunks, fileCoverage, diagnostics,
     syntaxCoverage, structureCounts: Object.fromEntries(groups.map(group => [group.units[0].file, group.counts])),
     tokenCounts: Object.fromEntries(files.map(file => [file.file, tokenizer.encode(file.content, { add_special_tokens: false }).length])),
-    counts: { files: files.length, concepts: units.length, fragments: chunks.length, ...embeddingCounts },
+    counts: { files: files.length, concepts: units.length, fragments: chunks.length, searchExcludedFiles: excluded.size, ...embeddingCounts },
     structureComplete: !diagnostics.some(item => !item.file), resources: { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 } };
   current = { index, db: await database(index) };
   return index;
@@ -124,16 +134,19 @@ async function query(args: SearchArguments): Promise<SearchResult[]> {
   if (args.filters?.kinds?.length) where.kind = { in: args.filters.kinds };
   const candidateLimit = current.index.chunks.length;
   if (candidateLimit === 0) return [];
-  const lexical = await search(current.db, { term: args.query.replace(/([a-z])([A-Z])/g, "$1 $2"), limit: candidateLimit, where });
+  const words = args.query.replace(/([a-z])([A-Z])/g, "$1 $2").split(/\s+/);
+  const term = words.filter(word => !STOP_WORDS.has(word.toLowerCase())).join(" ") || words.join(" ");
+  const lexical = await search(current.db, { term, limit: candidateLimit, where });
   const dense = args.mode === "lexical" ? { hits: [] } : await search(current.db, { mode: "vector", vector: { property: "embedding", value: (await embed([prefix + args.query]))[0] }, similarity: -1, limit: candidateLimit, where });
   const chunks = new Map(current.index.chunks.map(chunk => [chunk.id, chunk]));
   const allowed = (id: string) => !args.filters?.paths?.length || args.filters.paths.some(prefix => chunks.get(id)!.file === prefix || chunks.get(id)!.file.startsWith(`${prefix}/`));
   const fused = new Map<string, { id: string; fusedScore: number; lexicalScore: number | null; cosineSimilarity: number | null }>();
+  const weights = fusionWeights(args.query);
   for (const [mode, hits] of [["lexicalScore", lexical.hits], ["cosineSimilarity", dense.hits]] as const) {
     for (const [rank, hit] of hits.filter(hit => allowed(hit.id)).entries()) {
       const item = fused.get(hit.id) || { id: hit.id, fusedScore: 0, lexicalScore: null, cosineSimilarity: null };
       item[mode] = hit.score;
-      item.fusedScore += 1 / (60 + rank + 1);
+      item.fusedScore += weights[mode] / (60 + rank + 1);
       fused.set(hit.id, item);
     }
   }
@@ -141,7 +154,16 @@ async function query(args: SearchArguments): Promise<SearchResult[]> {
     const chunk = chunks.get(id)!;
     return [chunk.file, chunk.name, chunk.qualifiedName, chunk.selector].includes(args.query.trim()) ? 1 : 0;
   };
-  return [...fused.values()].sort((a, b) => exactHint(b.id) - exactHint(a.id) || b.fusedScore - a.fusedScore || a.id.localeCompare(b.id)).slice(0, args.limit).map((score, index) => {
+  const ranked = [...fused.values()].sort((a, b) => exactHint(b.id) - exactHint(a.id) || b.fusedScore - a.fusedScore || a.id.localeCompare(b.id));
+  // Return distinct candidates: one fragment per concept, and no range that overlaps a better result in the same file.
+  const selected: typeof ranked = [];
+  for (const score of ranked) {
+    if (selected.length >= args.limit) break;
+    const chunk = chunks.get(score.id)!;
+    if (selected.some(item => { const other = chunks.get(item.id)!; return other.parentId === chunk.parentId || other.file === chunk.file && other.range.startLine <= chunk.range.endLine && chunk.range.startLine <= other.range.endLine; })) continue;
+    selected.push(score);
+  }
+  return selected.map((score, index) => {
     const { text, embeddingText, embedding, embeddingKey, prefixLength, ...concept } = chunks.get(score.id)!;
     return { ...concept, ...score, fusedRank: index + 1, excerpt: text.slice(prefixLength, prefixLength + 600) };
   });

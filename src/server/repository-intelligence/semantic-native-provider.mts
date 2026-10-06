@@ -103,7 +103,7 @@ export class SemanticNativeRepositoryIntelligence {
     return { ...lexical, hits: unique.slice(0, topK), unresolvedRequired, requiredEvidenceComplete,
       estimateEligible: requiredEvidenceComplete && index.structureComplete,
       diagnostics: [...lexical.diagnostics.filter(item => !["semantic_unavailable", "structural_unavailable"].includes(item.code)), ...index.diagnostics],
-      retrievalPlan: { fusion: "reciprocal-rank-fusion", offset: 60, weights: [1, 1], modelIdentity: this.prepared.modelIdentity, indexRevision: this.prepared.revision, snapshot: index.snapshot, semanticCandidatesResolveHints: false } };
+      retrievalPlan: { fusion: "reciprocal-rank-fusion", offset: 60, weights: { dense: 1, lexical: 0.25, identifierLexical: 0.5 }, modelIdentity: this.prepared.modelIdentity, indexRevision: this.prepared.revision, snapshot: index.snapshot, semanticCandidatesResolveHints: false } };
   }
   async neighbors(nodes: Concept[], options: { maxNodes?: number } = {}): Promise<StructuralEvidence> {
     if (!this.prepared) return this.source.neighbors();
