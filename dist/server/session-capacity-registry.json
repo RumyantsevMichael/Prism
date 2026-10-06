@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "profiles": [
+    {
+      "id": "codex-cli-0.147.0-openai-default",
+      "match": {
+        "harness": "codex-cli",
+        "harnessVersion": "0.147.0",
+        "provider": "openai",
+        "models": [
+          "gpt-5.6-sol",
+          "gpt-5.6-terra",
+          "gpt-5.6-luna",
+          "gpt-5.5",
+          "gpt-5.4",
+          "gpt-5.4-mini",
+          "gpt-5.2"
+        ],
+        "aliases": {
+          "gpt-5.6": "gpt-5.6-sol"
+        }
+      },
+      "capacity": {
+        "contextWindowTokens": 272000,
+        "effectiveContextWindowPercent": 95,
+        "autoCompactionPercent": 90,
+        "compactionThresholdTokens": 244800,
+        "implementationReserveTokens": 60000
+      },
+      "provenance": {
+        "contextWindow": {
+          "source": "codex debug models --bundled",
+          "sourceVersion": "codex-cli 0.147.0",
+          "verifiedAt": "2026-09-19",
+          "field": "context_window"
+        },
+        "compactionThreshold": {
+          "source": "openai/codex codex-rs/protocol/src/openai_models.rs ModelInfo::auto_compact_token_limit",
+          "sourceVersion": "codex-cli 0.147.0",
+          "verifiedAt": "2026-09-19",
+          "field": "default auto_compact_token_limit (90 percent)",
+          "derivation": "floor(context_window * auto_compaction_percent / 100)"
+        },
+        "implementationReserve": {
+          "source": "Prism session-fit policy",
+          "sourceVersion": "1",
+          "verifiedAt": "2026-09-19",
+          "field": "implementationReserveTokens"
+        }
+      }
+    },
+    {
+      "id": "codex-cli-0.155.0-alpha.2.6-openai-gpt-5.6-sol",
+      "match": {
+        "harness": "codex-cli",
+        "harnessVersion": "0.155.0-alpha.2.6",
+        "provider": "openai",
+        "models": [
+          "gpt-5.6-sol"
+        ],
+        "aliases": {}
+      },
+      "capacity": {
+        "contextWindowTokens": 272000,
+        "effectiveContextWindowPercent": 95,
+        "autoCompactionPercent": 90,
+        "compactionThresholdTokens": 244800,
+        "implementationReserveTokens": 60000
+      },
+      "provenance": {
+        "contextWindow": {
+          "source": "Codex bundled model catalog",
+          "sourceVersion": "codex-cli 0.155.0-alpha.2.6",
+          "verifiedAt": "2026-09-20",
+          "field": "context_window"
+        },
+        "compactionThreshold": {
+          "source": "openai/codex codex-rs/protocol/src/openai_models.rs ModelInfo::auto_compact_token_limit",
+          "sourceVersion": "codex-cli 0.155.0-alpha.2.6",
+          "verifiedAt": "2026-09-20",
+          "field": "default auto_compact_token_limit (90 percent)",
+          "derivation": "floor(context_window * auto_compaction_percent / 100)"
+        },
+        "implementationReserve": {
+          "source": "Prism session-fit policy",
+          "sourceVersion": "1",
+          "verifiedAt": "2026-09-20",
+          "field": "implementationReserveTokens"
+        }
+      }
+    },
+    {
+      "id": "codex-cli-0.155.0-alpha.9.2-openai-gpt-5.6-sol",
+      "match": {
+        "harness": "codex-cli",
+        "harnessVersion": "0.155.0-alpha.9.2",
+        "provider": "openai",
+        "models": [
+          "gpt-5.6-sol"
+        ],
+        "aliases": {}
+      },
+      "capacity": {
+        "contextWindowTokens": 272000,
+        "effectiveContextWindowPercent": 95,
+        "autoCompactionPercent": 90,
+        "compactionThresholdTokens": 244800,
+        "implementationReserveTokens": 60000
+      },
+      "provenance": {
+        "contextWindow": {
+          "source": "Codex bundled model catalog",
+          "sourceVersion": "codex-cli 0.155.0-alpha.9.2",
+          "verifiedAt": "2026-09-19",
+          "field": "context_window"
+        },
+        "compactionThreshold": {
+          "source": "openai/codex codex-rs/protocol/src/openai_models.rs ModelInfo::auto_compact_token_limit",
+          "sourceVersion": "codex-cli 0.155.0-alpha.9.2",
+          "verifiedAt": "2026-09-19",
+          "field": "default auto_compact_token_limit (90 percent)",
+          "derivation": "floor(context_window * auto_compaction_percent / 100)"
+        },
+        "implementationReserve": {
+          "source": "Prism session-fit policy",
+          "sourceVersion": "1",
+          "verifiedAt": "2026-09-19",
+          "field": "implementationReserveTokens"
+        }
+      }
+    }
+  ]
+}

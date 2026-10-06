@@ -7,7 +7,7 @@ import { PLATFORMS, publishedManifest } from "./published-manifest.mjs";
 
 // Version and manifest promotion commits do not change these runtime inputs.
 const INPUTS = [
-  "native-runtime", "server", "scripts/native-build", "scripts/build-native-runtime.mjs",
+  "src", "dist/server", "dist/native-runtime", "dist/hooks", "test", "bin", "hooks", ".mcp.json", ".codex-mcp.json", "package.json", "scripts/native-build", "scripts/build-native-runtime.mjs",
   "tsconfig.native.json", "vendor/native-runtime/extract.mjs", "vendor/native-runtime/licenses",
   "vendor/native-runtime/licenses.json", ".github/workflows/native-runtime.yml", ".github/workflows/native-default.yml"
 ];

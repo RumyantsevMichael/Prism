@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "profiles": [
+    {
+      "id": "codex-cli-0.147.0-openai-trace",
+      "match": {
+        "harness": "codex-cli",
+        "harnessVersion": "0.147.0",
+        "provider": "openai"
+      },
+      "postToolUseSuccessTools": [
+        "apply_patch"
+      ],
+      "modelFacingResponseShape": "bounded-string",
+      "provenance": {
+        "source": "https://github.com/openai/codex/tree/rust-v0.147.0/codex-rs/core/src/tools",
+        "sourceVersion": "codex-cli 0.147.0",
+        "verifiedAt": "2026-09-19"
+      }
+    },
+    {
+      "id": "codex-cli-0.155.0-alpha.9.2-openai-trace",
+      "match": {
+        "harness": "codex-cli",
+        "harnessVersion": "0.155.0-alpha.9.2",
+        "provider": "openai"
+      },
+      "postToolUseSuccessTools": [
+        "apply_patch"
+      ],
+      "modelFacingResponseShape": "bounded-string",
+      "provenance": {
+        "source": "https://github.com/openai/codex/tree/rust-v0.155.0-alpha.9.2/codex-rs/core/src/tools",
+        "sourceVersion": "codex-cli 0.155.0-alpha.9.2",
+        "verifiedAt": "2026-09-19"
+      }
+    }
+  ]
+}
