@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(new URL("../../dist/native-runtime/worker.mjs", import.meta.url));
 const { Tokenizer } = require("@huggingface/tokenizers");
-import { bgeSourceBoundaries, fragmentConcept } from "../../dist/native-runtime/concepts.mjs";
+import { bgeSourceBoundaries } from "../../dist/native-runtime/concepts.mjs";
+import { fragmentConcept } from "../../dist/native-runtime/fragments.mjs";
 
 const configuration = {
   added_tokens: [{ id: 1, content: "[MASK]", single_word: false, lstrip: false, rstrip: false, normalized: false, special: true }],

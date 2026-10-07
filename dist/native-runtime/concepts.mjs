@@ -197,74 +197,11 @@ function bgeSourceBoundaries(tokenizer, configuration) {
     return [...points].sort((a, b) => a - b);
   };
 }
-function fragmentConcept(concept, file, countTokens, limit = 512, boundaries = (source) => [...source.matchAll(/\s+|[^\s]+/gu)].map((match) => match.index + match[0].length)) {
-  const lines = file.content.match(/[^\n]*\n|[^\n]+$/g) || [""];
-  const start = Math.min(concept.range.startLine, lines.length), end = Math.min(concept.range.endLine, lines.length);
-  const span = concept.span || { start: lines.slice(0, start - 1).join("").length, end: lines.slice(0, end).join("").length };
-  if (!Number.isSafeInteger(span.start) || !Number.isSafeInteger(span.end) || span.start < 0 || span.end < span.start || span.end > file.content.length) throw new Error("The concept span is outside its source.");
-  const source = file.content.slice(span.start, span.end);
-  const sourceLine = lineAt(file.content, span.start);
-  const prefix = `${concept.file}
-${concept.kind}: ${concept.name}
-${concept.docstring ? concept.docstring + "\n" : ""}`;
-  const safePrefix = countTokens(prefix) <= 128 ? prefix : `${concept.kind}
-`;
-  const embeddingPrefix = `${concept.kind}${concept.kind === "file" ? "" : ": " + concept.name}
-${concept.docstring ? concept.docstring + "\n" : ""}`;
-  const safeEmbeddingPrefix = countTokens(embeddingPrefix) <= 128 ? embeddingPrefix : `${concept.kind}
-`;
-  const fits = (part) => countTokens(safePrefix + part) <= limit && countTokens(safeEmbeddingPrefix + part) <= limit;
-  if (fits(source)) return [{
-    ...concept,
-    parentId: concept.id,
-    prefixLength: safePrefix.length,
-    text: safePrefix + source,
-    embeddingText: safeEmbeddingPrefix + source,
-    sourceStart: span.start,
-    sourceEnd: span.end
-  }];
-  const fragments = [];
-  const points = boundaries(source);
-  let offset = 0, first = 0;
-  while (offset < source.length) {
-    while (first < points.length && points[first] <= offset) first++;
-    let good = first - 1, bad = points.length, step = 1;
-    while (good + step < points.length && fits(source.slice(offset, points[good + step]))) {
-      good += step;
-      step *= 2;
-    }
-    if (good + step < points.length) bad = good + step;
-    let low = good + 1, high = bad - 1;
-    while (low <= high) {
-      const middle = Math.floor((low + high) / 2);
-      if (fits(source.slice(offset, points[middle]))) {
-        good = middle;
-        low = middle + 1;
-      } else high = middle - 1;
-    }
-    const best = good >= first ? points[good] : offset;
-    if (best <= offset) throw new Error("A concept fragment cannot fit the model input limit.");
-    fragments.push({
-      ...concept,
-      id: `${concept.id}:${fragments.length}`,
-      parentId: concept.id,
-      sourceStart: span.start + offset,
-      sourceEnd: span.start + best,
-      range: { startLine: sourceLine + lineAt(source, offset) - 1, endLine: sourceLine + lineAt(source, Math.max(offset, best - 1)) - 1 },
-      prefixLength: safePrefix.length,
-      text: safePrefix + source.slice(offset, best),
-      embeddingText: safeEmbeddingPrefix + source.slice(offset, best)
-    });
-    offset = best;
-  }
-  return fragments;
-}
 export {
   CHUNKER_VERSION,
   CODE_EXTENSIONS2 as CODE_EXTENSIONS,
   bgeSourceBoundaries,
   domainFor2 as domainFor,
   extractTextConcepts,
-  fragmentConcept,
   resolveTextLinks
 };

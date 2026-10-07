@@ -1,0 +1,666 @@
+[
+ {
+  "group": "concept",
+  "query": "reject objects that contain keys outside an allowed set",
+  "expect": [
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/mcp.mjs",
+    "name": "assertExactToolArguments"
+   },
+   {
+    "file": "src/server/workflow/decision-history.mjs",
+    "name": "assertKeys"
+   },
+   {
+    "file": "src/server/session/session-capacity.mjs",
+    "name": "assertExactKeys"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "validate that a string is an ISO 8601 timestamp",
+  "expect": [
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "assertIsoDate"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "assertIsoDate"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "open a file without following symbolic links",
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs",
+    "name": "noFollowFlags"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "regularBytes"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "acquire an exclusive lock file and clean up locks left by dead processes",
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs"
+   },
+   {
+    "file": "src/server/workflow/artifact-store.mjs"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "write a file atomically through a temporary file and rename",
+  "expect": [
+   {
+    "file": "src/server/workflow/artifact-store.mjs"
+   },
+   {
+    "file": "src/server/workflow/decision-history.mjs",
+    "name": "atomicJson"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "download a pinned asset and verify its sha256 checksum",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "download"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "reciprocal rank fusion of lexical and vector search results",
+  "expect": [
+   {
+    "file": "src/native-runtime/worker.mts",
+    "name": "query"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "split a long text into fragments that fit the embedding model token limit",
+  "expect": [
+   {
+    "file": "src/native-runtime/fragments.mts",
+    "name": "fragmentConcept"
+   },
+   {
+    "file": "src/native-runtime/concepts.mts",
+    "name": "fragmentConcept"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "read the last token count from a Codex transcript",
+  "expect": [
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "check whether a path is inside a root directory",
+  "expect": [
+   {
+    "file": "src/server/workflow/state.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/conservation/concept-delta.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "isContained"
+   },
+   {
+    "file": "src/server/repository-intelligence/repository-intelligence-config.mjs",
+    "name": "isWithinDirectory"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "merge overlapping source ranges into one candidate",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/repository-intelligence.mjs"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "which skill writes Gherkin feature files",
+  "expect": [
+   {
+    "file": "skills/write-feature/SKILL.md"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "how is the plugin version bumped and released",
+  "expect": [
+   {
+    "file": "CONTRIBUTING.md"
+   },
+   {
+    "file": "release-please-config.json"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "review gate that blocks implementation until the design audit passes",
+  "expect": [
+   {
+    "file": "src/server/review/review-ledger.mts",
+    "name": "checkReviewGate"
+   },
+   {
+    "file": "skills/review/SKILL.md"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "spawn a git command with a timeout and bounded output",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "runCommand"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "render PlantUML diagram in the browser for human review",
+  "expect": [
+   {
+    "file": "src/server/review/review-server.mjs"
+   },
+   {
+    "file": "src/server/review/public/review.js"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "withFileLock renew timeout",
+  "expect": [
+   {
+    "file": "src/server/workflow/artifact-store.mjs",
+    "name": "withFileLock"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "CHUNKER_VERSION",
+  "expect": [
+   {
+    "file": "src/native-runtime/versions.mts"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "semanticError stale_snapshot",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/semantic-native-provider.mts"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "bgeSourceBoundaries tokenizer",
+  "expect": [
+   {
+    "file": "src/native-runtime/concepts.mts",
+    "name": "bgeSourceBoundaries"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "where does the MCP server dispatch repository tool calls",
+  "expect": [
+   {
+    "file": "src/server/mcp.mjs",
+    "name": "callRepositoryTool"
+   },
+   {
+    "file": "src/server/mcp.mjs",
+    "name": "callTool"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "compute the session context window capacity for a model",
+  "expect": [
+   {
+    "file": "src/server/session/session-capacity.mjs"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "hash a value with sha256 and return hex digest",
+  "expect": [
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/workflow/decision-history.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "sha256"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "normalize a project-relative path and reject dot segments",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/repository-source-path.mjs"
+   },
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "normalizeTraceSourcePath"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "Native preparation exceeded its 30 minute operation limit",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "The graph requested an excluded dependency",
+  "expect": [
+   {
+    "file": "src/native-runtime/graph.mts"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "CODEGRAPH_NO_STORE_WORKER",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "timeout-minutes",
+  "expect": [
+   {
+    "file": ".github/workflows/native-runtime.yml"
+   },
+   {
+    "file": ".github/workflows/release.yml"
+   },
+   {
+    "file": ".github/workflows/native-default.yml"
+   },
+   {
+    "file": ".github/workflows/ci.yml"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "ERR_ACCESS_DENIED",
+  "expect": [
+   {
+    "file": "src/native-runtime/graph.mts"
+   },
+   {
+    "file": "src/native-runtime/fs-boundary.mts"
+   }
+  ]
+ },
+ {
+  "group": "concept",
+  "query": "onnxruntime pinned version for Intel macOS",
+  "expect": [
+   {
+    "file": "CONTRIBUTING.md"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "persist an immutable evidence record and return its content hash id",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "put"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "point a snapshot at its retained analysis evidence",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "link"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "load retained source bytes and verify their size and digest",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "bytes"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "copy every source file into the blob store before recording a baseline snapshot",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "capture"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "split incoming stdout data into newline-delimited JSON messages and enforce a response size limit",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "receiveChunk"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "reject every pending request when the transport fails",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "failAll"
+   },
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "failTransport"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "send a JSON-RPC request and reject it after a timeout",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "request"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "request"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "verify the integrity hash of every runtime file",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "verifyRuntime"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "start a background preparation job or reuse the job for the same snapshot",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "prepare"
+   }
+  ]
+ },
+ {
+  "group": "members",
+  "query": "ConservationStore capture a baseline",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "capture"
+   }
+  ]
+ },
+ {
+  "group": "members",
+  "query": "McpStdioClient notify without waiting for a response",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "notify"
+   }
+  ]
+ },
+ {
+  "group": "members",
+  "query": "class that wraps a CodeNib MCP stdio child process",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "McpStdioClient"
+   }
+  ]
+ },
+ {
+  "group": "members",
+  "query": "class that stores immutable conservation evidence and retained source blobs",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "ConservationStore"
+   }
+  ]
+ },
+ {
+  "group": "members",
+  "query": "NativeSemanticRuntime search a prepared index",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "search"
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "how to run the native helper tests and regenerate the dist output",
+  "expect": [
+   {
+    "file": "CONTRIBUTING.md",
+    "name": "Native semantic runtime",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "which commit prefixes produce a release",
+  "expect": [
+   {
+    "file": "CONTRIBUTING.md",
+    "name": "Commit messages",
+    "within": true
+   },
+   {
+    "file": "CONTRIBUTING.md",
+    "name": "Versioning",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "how to benchmark a change before a release",
+  "expect": [
+   {
+    "file": "CONTRIBUTING.md",
+    "name": "Benchmarking a change",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "summarize token consumption before editing",
+  "expect": [
+   {
+    "file": "docs/user-guide/repository-intelligence.md",
+    "name": "Summarize pre-edit consumption",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "how the refactor skill finds reuse candidates",
+  "expect": [
+   {
+    "file": "skills/refactor/SKILL.md",
+    "name": "2. Discover candidates",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "set the context window for Claude Code on Bedrock",
+  "expect": [
+   {
+    "file": "docs/user-guide/repository-intelligence.md",
+    "name": "Claude Code on AWS Bedrock",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertIsoDate"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "assertIsoDate"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertExactKeys"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/session/session-capacity.mjs",
+    "name": "assertExactKeys"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/workflow/state.mjs",
+   "name": "isInside"
+  },
+  "expect": [
+   {
+    "file": "src/server/conservation/concept-delta.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "isContained"
+   },
+   {
+    "file": "src/server/repository-intelligence/repository-intelligence-config.mjs",
+    "name": "isWithinDirectory"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/workflow/decision-history.mjs",
+   "name": "digest"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "digest"
+   }
+  ]
+ }
+]

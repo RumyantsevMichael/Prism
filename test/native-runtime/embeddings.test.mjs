@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fragmentConcept } from "../../dist/native-runtime/concepts.mjs";
+import { fragmentConcept } from "../../dist/native-runtime/fragments.mjs";
 import { embedFragments } from "../../dist/native-runtime/embeddings.mjs";
 
 function fragment(file, value = 1, name = "example", docstring) {

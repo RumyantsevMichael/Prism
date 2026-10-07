@@ -86,6 +86,13 @@ Optional path and kind filters restrict the candidate set.
 Preparation still scans the eligible snapshot before applying these result filters.
 Search defaults to ten results and permits at most fifty.
 Each result identifies its path, selector, source range, source hash, and bounded excerpt.
+The excerpt always comes from the source text.
+Each result also gives its `ancestry`, the names of its containing classes or sections from the outermost one.
+A class, a section, or a configuration object is an `outline` result that lists its members, and each member is also a separate result.
+A concept longer than the model limit is split into `part` results, and its `parts` field gives their number.
+The `tokens` field gives the size of the complete concept, so a large value can show a refactoring candidate.
+When two or more results share a container, the search also returns that container with `groupedMembers`.
+Lockfiles, generated output, vendored code, and minified files are not search candidates.
 Cosine similarity, lexical score, fused rank, model identity, and index revision have distinct meanings.
 Similarity does not establish conceptual equivalence or approve an addition.
 

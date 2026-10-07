@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { fragmentConcept } from "../../dist/native-runtime/concepts.mjs";
+import { fragmentConcept } from "../../dist/native-runtime/fragments.mjs";
 Object.assign(process.env, { PRISM_EMBEDDED: "1", CODEGRAPH_NO_STORE_WORKER: "1", CODEGRAPH_NO_PARALLEL_RESOLVE: "1", CODEGRAPH_NO_WAL_DEFER: "1", CODEGRAPH_NO_FAST_INIT: "1", CODEGRAPH_KERNEL: "0", NODE_DISABLE_COMPILE_CACHE: "1" });
 const { extractGraph } = await import("../../dist/native-runtime/graph.mjs");
 const runtime = fileURLToPath(new URL("../../dist/native-runtime/", import.meta.url));

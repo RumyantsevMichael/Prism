@@ -3,10 +3,11 @@ export interface SourceRange { startLine: number; endLine: number }
 export interface SourceFile { file: string; absolutePath: string; content: string; hash: string }
 export interface SourceSnapshot { root: string; sourceFingerprint: string; commit: string; files: SourceFile[]; filesByPath: Map<string, SourceFile>; complete: boolean }
 export interface Diagnostic { code: string; message: string; file?: string; count?: number; denied?: { path: string; write: boolean }[]; recovery?: string }
-export interface Concept { id: string; file: string; kind: string; name: string; selector?: string; domain?: Domain; range: SourceRange; sourceHash?: string; rangeComplete: boolean; qualifiedName?: string; signature?: string; docstring?: string; depth?: number; span?: { start: number; end: number }; contentHash?: string; isExported?: boolean; visibility?: string }
+export interface Concept { id: string; file: string; kind: string; name: string; selector?: string; domain?: Domain; range: SourceRange; sourceHash?: string; rangeComplete: boolean; qualifiedName?: string; signature?: string; docstring?: string; depth?: number; span?: { start: number; end: number }; contentHash?: string; isExported?: boolean; visibility?: string; containerId?: string }
 export interface Relationship { source: string; target: string; kind: string; provenance?: string; line?: number; column?: number; metadata?: Record<string, unknown> }
-export interface Fragment extends Concept { parentId: string; sourceStart: number; sourceEnd: number; prefixLength: number; text: string; embeddingText: string; embeddingKey?: string; embedding?: number[] }
-export interface SearchResult extends Concept { parentId?: string; sourceStart?: number; sourceEnd?: number; fusedScore?: number; fusedRank: number; lexicalScore: number | null; cosineSimilarity: number | null; excerpt: string }
+export type FragmentRole = "whole" | "outline" | "part";
+export interface Fragment extends Concept { parentId: string; role: FragmentRole; sourceStart: number; sourceEnd: number; prefixLength: number; text: string; embeddingText: string; context: string; excerpt?: string; tokens?: number; parts?: number; embeddingKey?: string; embedding?: number[] }
+export interface SearchResult extends Concept { parentId?: string; role?: FragmentRole; tokens?: number; parts?: number; ancestry?: string[]; groupedMembers?: number; sourceStart?: number; sourceEnd?: number; fusedScore?: number; fusedRank: number; lexicalScore: number | null; cosineSimilarity: number | null; excerpt: string }
 export interface SearchFilters { domains?: Domain[]; paths?: string[]; kinds?: string[] }
 export interface Counts { files: number; concepts: number; fragments: number; searchExcludedFiles?: number; reusedEmbeddings: number; newEmbeddings: number }
 export interface IndexMetadata { schemaVersion: 1; chunkerVersion: string; modelIdentity: string; snapshot: string; units: Concept[]; edges: Relationship[]; fileCoverage: Record<string, boolean>; syntaxCoverage?: Record<string, boolean>; diagnostics: Diagnostic[]; counts: Counts; structureComplete: boolean; assetIdentity?: string; tokenCounts?: Record<string, number>; structureCounts?: Record<string, Record<string, number>>; resources: { rssBytes: number; peakRssBytes: number; indexMilliseconds?: number } }
@@ -15,7 +16,7 @@ export interface RuntimeAssets { runtime: string; modelDirectory: string; modelI
 export interface PreparedIndex extends RuntimeAssets { index: IndexMetadata; indexPath: string; revision: string }
 export interface Preparation { status: "preparing" | "ready" | "degraded"; preparationId: string; snapshot: string; diagnostics: Diagnostic[]; prepared?: PreparedIndex }
 export interface Progress { phase: string; current?: number; total?: number; file?: string }
-export interface BuildArguments { mirror: string; files: Pick<SourceFile, "file" | "hash">[]; snapshot: string; modelDirectory: string; modelIdentity: string; previousEmbeddings?: Record<string, number[]> }
+export interface BuildArguments { mirror: string; files: Pick<SourceFile, "file" | "hash">[]; snapshot: string; modelDirectory: string; modelIdentity: string; previousEmbeddings?: Record<string, number[]>; fragmentsOnly?: boolean }
 export interface SearchArguments { query: string; filters?: SearchFilters; limit: number; mode?: "lexical"; snapshot: string; modelDirectory: string; modelIdentity: string; indexPath: string }
 export type WorkerRequest = { id: number; method: "build"; args: BuildArguments } | { id: number; method: "search"; args: SearchArguments };
 export interface WorkerMethods { build: { input: BuildArguments; output: ConceptIndex }; search: { input: SearchArguments; output: SearchResult[] } }

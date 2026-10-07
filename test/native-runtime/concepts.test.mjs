@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractTextConcepts, resolveTextLinks, fragmentConcept, domainFor } from "../../dist/native-runtime/concepts.mjs";
+import { extractTextConcepts, resolveTextLinks, domainFor } from "../../dist/native-runtime/concepts.mjs";
+import { fragmentConcept } from "../../dist/native-runtime/fragments.mjs";
 
 const parse = (file, content) => extractTextConcepts({ file, content, hash: "verified-source" });
 test("Markdown units preserve headings, list items, links, and exact final line ranges", () => {
@@ -45,15 +46,15 @@ test("fragments cover all Unicode text and respect model token budgets including
   assert.equal(recovered, file.content);
 });
 
-test("file fragments share model inputs while preserving lexical paths and exact source", () => {
+test("file fragments share model inputs and keep the module name in the lexical context", () => {
   const fragments = ["src/example.mts", "generated/example.mjs"].map(file => {
     const input = { file, content: "const local = 1;\n", hash: "verified" };
     return fragmentConcept(extractTextConcepts(input).units[0], input, text => text.length)[0];
   });
   assert.equal(fragments[0].embeddingText, fragments[1].embeddingText);
-  assert.notEqual(fragments[0].text, fragments[1].text);
   for (const fragment of fragments) {
-    assert.ok(fragment.text.startsWith(fragment.file));
+    assert.equal(fragment.role, "whole");
+    assert.equal(fragment.context, "example");
     assert.equal(fragment.text.slice(fragment.prefixLength), "const local = 1;\n");
     assert.equal(fragment.embeddingText, "file\nconst local = 1;\n");
   }

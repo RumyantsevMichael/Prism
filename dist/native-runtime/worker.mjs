@@ -7,13 +7,15 @@ import { createHash } from "node:crypto";
 import { create, insertMultiple, search } from "@orama/orama";
 import { AutoTokenizer, AutoModel, env } from "@huggingface/transformers";
 import { Tokenizer } from "@huggingface/tokenizers";
-import { CHUNKER_VERSION, CODE_EXTENSIONS, extractTextConcepts, resolveTextLinks, fragmentConcept, bgeSourceBoundaries } from "./concepts.mjs";
+import { CHUNKER_VERSION, CODE_EXTENSIONS, extractTextConcepts, resolveTextLinks, bgeSourceBoundaries } from "./concepts.mjs";
+import { assignContainers, planFragments } from "./fragments.mjs";
 import { searchExclusion } from "./domains.mjs";
 import { extractGraph } from "./graph.mjs";
 import { embedFragments } from "./embeddings.mjs";
 const runtimeDirectory = path.dirname(fileURLToPath(import.meta.url));
 const IDENTIFIER = /[A-Za-z\d][_-][A-Za-z\d]|[a-z\d][A-Z]|\b[A-Z\d]{3,}\b|["'`]/;
 const fusionWeights = (query2) => ({ lexicalScore: IDENTIFIER.test(query2) ? 0.5 : 0.25, cosineSimilarity: 1 });
+const CONTEXT_BOOST = 0.5;
 const STOP_WORDS = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from", "how", "in", "into", "is", "it", "its", "of", "on", "or", "that", "the", "their", "this", "to", "what", "when", "where", "which", "while", "who", "why", "with"]);
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const send = (value) => process.stdout.write(`${JSON.stringify(value)}
@@ -62,14 +64,15 @@ async function embed(texts) {
 }
 async function database(index) {
   const db = create({
-    schema: { text: "string", domain: "enum", file: "string", kind: "enum", embedding: "vector[384]" },
+    schema: { text: "string", context: "string", domain: "enum", kind: "enum", embedding: "vector[384]" },
     components: { tokenizer: { stemming: false } }
   });
+  const split = (value) => value.replace(/([a-z])([A-Z])/g, "$1 $2");
   await insertMultiple(db, index.chunks.map((chunk) => ({
     id: chunk.id,
-    text: chunk.text.replace(/([a-z])([A-Z])/g, "$1 $2"),
+    text: split(chunk.text),
+    context: split(chunk.context || ""),
     domain: chunk.domain,
-    file: chunk.file,
     kind: chunk.kind,
     embedding: chunk.embedding
   })));
@@ -107,16 +110,17 @@ async function build(args, progress) {
   }
   for (const diagnostic of diagnostics) if (diagnostic.file) fileCoverage[diagnostic.file] = false;
   const byFile = new Map(files.map((file) => [file.file, file]));
-  const detailedFiles = new Set(units.filter((item) => item.kind !== "file").map((item) => item.file));
-  const chunks = [];
   const excluded = new Set(files.filter((file) => searchExclusion(file.file, file.content)).map((file) => file.file));
-  for (const concept of units) {
-    if (concept.kind === "file" && detailedFiles.has(concept.file) && syntaxCoverage[concept.file]) continue;
-    if (excluded.has(concept.file) || concept.kind === "import") continue;
-    chunks.push(...fragmentConcept(concept, byFile.get(concept.file), countTokens, 512, boundaries));
-    if (chunks.length > 1e5) throw Object.assign(new Error("The concept index exceeds 100,000 fragments."), { code: "resource_limit" });
-  }
-  const embeddingCounts = await embedFragments(chunks, modelIdentity, args.previousEmbeddings || {}, embed, progress);
+  assignContainers(units, edges, byFile);
+  const chunks = planFragments(units, byFile, {
+    countTokens,
+    boundaries,
+    limit: 512,
+    isCandidate: (concept) => !excluded.has(concept.file) && concept.kind !== "import",
+    isStructured: (file) => Boolean(syntaxCoverage[file])
+  });
+  if (chunks.length > 1e5) throw Object.assign(new Error("The concept index exceeds 100,000 fragments."), { code: "resource_limit" });
+  const embeddingCounts = args.fragmentsOnly ? { reusedEmbeddings: 0, newEmbeddings: 0 } : await embedFragments(chunks, modelIdentity, args.previousEmbeddings || {}, embed, progress);
   const index = {
     schemaVersion: 1,
     chunkerVersion: CHUNKER_VERSION,
@@ -134,7 +138,7 @@ async function build(args, progress) {
     structureComplete: !diagnostics.some((item) => !item.file),
     resources: { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 }
   };
-  current = { index, db: await database(index) };
+  if (!args.fragmentsOnly) current = { index, db: await database(index) };
   return index;
 }
 async function query(args) {
@@ -153,7 +157,7 @@ async function query(args) {
   if (candidateLimit === 0) return [];
   const words = args.query.replace(/([a-z])([A-Z])/g, "$1 $2").split(/\s+/);
   const term = words.filter((word) => !STOP_WORDS.has(word.toLowerCase())).join(" ") || words.join(" ");
-  const lexical = await search(current.db, { term, limit: candidateLimit, where });
+  const lexical = await search(current.db, { term, properties: ["text", "context"], boost: { context: CONTEXT_BOOST }, limit: candidateLimit, where });
   const dense = args.mode === "lexical" ? { hits: [] } : await search(current.db, { mode: "vector", vector: { property: "embedding", value: (await embed([prefix + args.query]))[0] }, similarity: -1, limit: candidateLimit, where });
   const chunks = new Map(current.index.chunks.map((chunk) => [chunk.id, chunk]));
   const allowed = (id) => !args.filters?.paths?.length || args.filters.paths.some((prefix2) => chunks.get(id).file === prefix2 || chunks.get(id).file.startsWith(`${prefix2}/`));
@@ -172,19 +176,45 @@ async function query(args) {
     return [chunk.file, chunk.name, chunk.qualifiedName, chunk.selector].includes(args.query.trim()) ? 1 : 0;
   };
   const ranked = [...fused.values()].sort((a, b) => exactHint(b.id) - exactHint(a.id) || b.fusedScore - a.fusedScore || a.id.localeCompare(b.id));
+  const units = new Map(current.index.units.map((unit) => [unit.id, unit]));
+  const containers = new Map(current.index.units.map((unit) => [unit.id, unit.containerId]));
+  const related = (a, b) => {
+    for (let id = containers.get(a); id; id = containers.get(id)) if (id === b) return true;
+    for (let id = containers.get(b); id; id = containers.get(id)) if (id === a) return true;
+    return false;
+  };
   const selected = [];
   for (const score of ranked) {
     if (selected.length >= args.limit) break;
     const chunk = chunks.get(score.id);
     if (selected.some((item) => {
       const other = chunks.get(item.id);
-      return other.parentId === chunk.parentId || other.file === chunk.file && other.range.startLine <= chunk.range.endLine && chunk.range.startLine <= other.range.endLine;
+      if (other.parentId === chunk.parentId) return true;
+      return other.file === chunk.file && other.range.startLine <= chunk.range.endLine && chunk.range.startLine <= other.range.endLine && !related(other.parentId, chunk.parentId);
     })) continue;
     selected.push(score);
   }
+  const parentOf = (id) => containers.get(chunks.get(id).parentId);
+  const members = /* @__PURE__ */ new Map();
+  for (const item of selected) {
+    const parent = parentOf(item.id);
+    if (parent && units.get(parent).kind !== "file") members.set(parent, (members.get(parent) || 0) + 1);
+  }
+  for (const [parent, count] of members) {
+    const outline = chunks.get(parent);
+    if (count < 2 || outline?.role !== "outline" || args.filters?.kinds?.length && !args.filters.kinds.includes(outline.kind) || selected.some((item) => chunks.get(item.id).parentId === parent)) continue;
+    const at = selected.findIndex((item) => parentOf(item.id) === parent);
+    selected.splice(at + 1, 0, { id: parent, fusedScore: selected[at].fusedScore, lexicalScore: null, cosineSimilarity: null, groupedMembers: count });
+  }
+  selected.length = Math.min(selected.length, args.limit);
+  const ancestry = (id) => {
+    const names = [];
+    for (let parent = containers.get(id); parent && units.get(parent).kind !== "file"; parent = containers.get(parent)) names.unshift(units.get(parent).name);
+    return names;
+  };
   return selected.map((score, index) => {
-    const { text, embeddingText, embedding, embeddingKey, prefixLength, ...concept } = chunks.get(score.id);
-    return { ...concept, ...score, fusedRank: index + 1, excerpt: text.slice(prefixLength, prefixLength + 600) };
+    const { text, embeddingText, embedding, embeddingKey, prefixLength, context, excerpt, ...concept } = chunks.get(score.id);
+    return { ...concept, ...score, ancestry: ancestry(concept.parentId), fusedRank: index + 1, excerpt: excerpt ?? text.slice(prefixLength, prefixLength + 600) };
   });
 }
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
