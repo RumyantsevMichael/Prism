@@ -1,6 +1,6 @@
 [
  {
-  "group": "concept",
+  "group": "description",
   "query": "reject objects that contain keys outside an allowed set",
   "expect": [
    {
@@ -22,11 +22,19 @@
    {
     "file": "src/server/session/session-capacity.mjs",
     "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/session/session-trace-behavior.mjs",
+    "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "exactKeys"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "validate that a string is an ISO 8601 timestamp",
   "expect": [
    {
@@ -40,7 +48,7 @@
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "open a file without following symbolic links",
   "expect": [
    {
@@ -53,11 +61,27 @@
    {
     "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
     "name": "regularBytes"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "noFollowFlags"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "openPrivateFile"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "openExistingRegularFile"
+   },
+   {
+    "file": "docs/plans/repository-intelligence/session-consumption-tracing/slice.md",
+    "contains": "Trace directories and records reject symbolic links and multiply linked files with no-follow opens where available."
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "acquire an exclusive lock file and clean up locks left by dead processes",
   "expect": [
    {
@@ -65,11 +89,19 @@
    },
    {
     "file": "src/server/workflow/artifact-store.mjs"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "acquireLock"
+   },
+   {
+    "file": "docs/plans/repository-intelligence/session-consumption-tracing/slice.md",
+    "contains": "Trace cleanup and commit use token-owned locks that reclaim only confirmed dead owners and fence a writer that loses ownership."
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "write a file atomically through a temporary file and rename",
   "expect": [
    {
@@ -78,11 +110,15 @@
    {
     "file": "src/server/workflow/decision-history.mjs",
     "name": "atomicJson"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "writeState"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "download a pinned asset and verify its sha256 checksum",
   "expect": [
    {
@@ -92,17 +128,25 @@
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "reciprocal rank fusion of lexical and vector search results",
   "expect": [
    {
     "file": "src/native-runtime/worker.mts",
     "name": "query"
+   },
+   {
+    "file": "docs/requirements/repository-intelligence-providers.md",
+    "contains": "Requirement: Prism shall combine independent lexical and vector rankings with equal-weight reciprocal-rank fusion at k = 60."
+   },
+   {
+    "file": "src/native-runtime/worker.mts",
+    "name": "fusionWeights"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "split a long text into fragments that fit the embedding model token limit",
   "expect": [
    {
@@ -110,22 +154,34 @@
     "name": "fragmentConcept"
    },
    {
-    "file": "src/native-runtime/concepts.mts",
-    "name": "fragmentConcept"
+    "file": "src/native-runtime/fragments.mts",
+    "name": "cut"
+   },
+   {
+    "file": "docs/requirements/repository-intelligence-providers.md",
+    "contains": "Requirement: Prism shall preserve source text across bounded model inputs and retain fragment parents and ranges."
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "read the last token count from a Codex transcript",
   "expect": [
    {
     "file": "src/server/session/host-adapters/codex-transcript.mjs"
+   },
+   {
+    "file": "docs/plans/repository-intelligence/active-session-capacity/slice.md",
+    "contains": "The latest bounded transcript token_count record supplies the effective context window after the first model call."
+   },
+   {
+    "file": "docs/plans/repository-intelligence/active-session-capacity/slice.md",
+    "contains": "Verified behavior: The transcript inspector exposes the latest bounded token_count context, the Codex adapter consumes effective configuration, and the registry"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "check whether a path is inside a root directory",
   "expect": [
    {
@@ -143,20 +199,44 @@
    {
     "file": "src/server/repository-intelligence/repository-intelligence-config.mjs",
     "name": "isWithinDirectory"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "inside"
+   },
+   {
+    "file": "src/server/review/review-server.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/native-runtime/fs-boundary.mts",
+    "name": "within"
+   },
+   {
+    "file": "src/server/workflow/state.mjs",
+    "name": "assertNearestExistingPathInside"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "merge overlapping source ranges into one candidate",
   "expect": [
    {
     "file": "src/server/repository-intelligence/repository-intelligence.mjs"
+   },
+   {
+    "file": "docs/plans/repository-intelligence/session-consumption-tracing/slice.md",
+    "name": "Overlapping source ranges are deduplicated before token totals are reported."
+   },
+   {
+    "file": "docs/requirements/repository-intelligence-providers.md",
+    "contains": "Requirement: Prism shall enforce consumer-side result limits, merge source ranges that overlap after provider expansion, and count only the final merged rendere"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "which skill writes Gherkin feature files",
   "expect": [
    {
@@ -165,7 +245,7 @@
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "how is the plugin version bumped and released",
   "expect": [
    {
@@ -173,11 +253,27 @@
    },
    {
     "file": "release-please-config.json"
+   },
+   {
+    "file": ".claude/CLAUDE.md",
+    "contains": "version lives in both native plugin manifests because both hosts require it."
+   },
+   {
+    "file": "AGENTS.md",
+    "contains": "version lives in both native plugin manifests because both hosts require it."
+   },
+   {
+    "file": ".claude/CLAUDE.md",
+    "contains": "Any commit touching skills/ is feat: or fix:, never docs:."
+   },
+   {
+    "file": "AGENTS.md",
+    "contains": "Any commit touching skills/ is feat: or fix:, never docs:."
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "review gate that blocks implementation until the design audit passes",
   "expect": [
    {
@@ -186,11 +282,27 @@
    },
    {
     "file": "skills/review/SKILL.md"
+   },
+   {
+    "file": "skills/design/SKILL.md",
+    "contains": "Implementation waits until the design audit is CLEAN and orchestration clears the implementation gate."
+   },
+   {
+    "file": "skills/design/references/concept-delta.md",
+    "contains": "Before implementation, use check_review_gate and a typed coordination start or update entering implementation."
+   },
+   {
+    "file": "skills/implement/SKILL.md",
+    "contains": "Read every assigned review lane through get_review and check the current implementation gate before edits."
+   },
+   {
+    "file": "src/server/workflow/active-operations.mts",
+    "name": "applyActiveOperations"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "spawn a git command with a timeout and bounded output",
   "expect": [
    {
@@ -200,7 +312,7 @@
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "render PlantUML diagram in the browser for human review",
   "expect": [
    {
@@ -208,6 +320,14 @@
    },
    {
     "file": "src/server/review/public/review.js"
+   },
+   {
+    "file": "docs/ADRs/plantuml-review/browser-rendered-plantuml.md"
+   },
+   {
+    "file": "README.md",
+    "name": "Review artifacts visually",
+    "within": true
    }
   ]
  },
@@ -218,6 +338,10 @@
    {
     "file": "src/server/workflow/artifact-store.mjs",
     "name": "withFileLock"
+   },
+   {
+    "file": "src/server/workflow/artifact-store.mjs",
+    "name": "acquireFileLock"
    }
   ]
  },
@@ -249,11 +373,14 @@
    {
     "file": "src/native-runtime/concepts.mts",
     "name": "bgeSourceBoundaries"
+   },
+   {
+    "file": "test/native-runtime/tokenizer.test.mjs"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "where does the MCP server dispatch repository tool calls",
   "expect": [
    {
@@ -263,20 +390,42 @@
    {
     "file": "src/server/mcp.mjs",
     "name": "callTool"
+   },
+   {
+    "file": "src/server/mcp.mjs",
+    "name": "repositoryTools"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "compute the session context window capacity for a model",
   "expect": [
    {
     "file": "src/server/session/session-capacity.mjs"
+   },
+   {
+    "file": "docs/requirements/session-fit.md",
+    "name": "1. Resolve supported session capacity",
+    "within": true
+   },
+   {
+    "file": "docs/requirements/active-session-capacity.md",
+    "name": "5. Refresh and resolve active Codex capacity",
+    "within": true
+   },
+   {
+    "file": "docs/user-guide/repository-intelligence.md",
+    "name": "Resolve active session capacity",
+    "within": true
+   },
+   {
+    "file": "docs/plans/repository-intelligence/active-session-capacity/slice.md"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "hash a value with sha256 and return hex digest",
   "expect": [
    {
@@ -294,11 +443,52 @@
    {
     "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
     "name": "sha256"
+   },
+   {
+    "file": "src/native-runtime/concepts.mts",
+    "name": "hash",
+    "kind": "function"
+   },
+   {
+    "file": "src/native-runtime/patch-codegraph.mts",
+    "name": "digest"
+   },
+   {
+    "file": "src/native-runtime/worker.mts",
+    "name": "sha"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "sha"
+   },
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/workflow/state.mjs",
+    "name": "revisionOf"
+   },
+   {
+    "file": "scripts/build-native-runtime.mjs",
+    "name": "sha"
+   },
+   {
+    "file": "scripts/native-build/smoke.mjs",
+    "name": "hash"
+   },
+   {
+    "file": "bench/skill_eval/run.py",
+    "name": "sha256_bytes"
+   },
+   {
+    "file": "test/server/native-repository-intelligence.test.mjs",
+    "name": "sha256"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "normalize a project-relative path and reject dot segments",
   "expect": [
    {
@@ -334,6 +524,10 @@
   "expect": [
    {
     "file": "src/server/repository-intelligence/native-semantic-runtime.mts"
+   },
+   {
+    "file": "scripts/native-build/smoke.mjs",
+    "name": "env"
    }
   ]
  },
@@ -345,13 +539,7 @@
     "file": ".github/workflows/native-runtime.yml"
    },
    {
-    "file": ".github/workflows/release.yml"
-   },
-   {
     "file": ".github/workflows/native-default.yml"
-   },
-   {
-    "file": ".github/workflows/ci.yml"
    }
   ]
  },
@@ -364,15 +552,24 @@
    },
    {
     "file": "src/native-runtime/fs-boundary.mts"
+   },
+   {
+    "file": "test/native-runtime/boundary.test.mjs"
    }
   ]
  },
  {
-  "group": "concept",
+  "group": "description",
   "query": "onnxruntime pinned version for Intel macOS",
   "expect": [
    {
-    "file": "CONTRIBUTING.md"
+    "file": "src/native-runtime/package.json",
+    "name": "onnxruntime-node"
+   },
+   {
+    "file": "CONTRIBUTING.md",
+    "name": "Native semantic runtime",
+    "within": true
    }
   ]
  },
@@ -423,6 +620,10 @@
    {
     "file": "src/server/repository-intelligence/codenib-provider.mjs",
     "name": "receiveChunk"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-config.mjs",
+    "name": "requestWithAppServer"
    }
   ]
  },
@@ -437,6 +638,10 @@
    {
     "file": "src/server/repository-intelligence/codenib-provider.mjs",
     "name": "failTransport"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "stop"
    }
   ]
  },
@@ -451,6 +656,10 @@
    {
     "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
     "name": "request"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-config.mjs",
+    "name": "requestWithAppServer"
    }
   ]
  },
@@ -471,6 +680,10 @@
    {
     "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
     "name": "prepare"
+   },
+   {
+    "file": "docs/user-guide/repository-intelligence.md",
+    "contains": "If preparation exceeds ten seconds, search and planning return preparing with a stable preparation ID."
    }
   ]
  },
@@ -548,6 +761,14 @@
     "file": "CONTRIBUTING.md",
     "name": "Versioning",
     "within": true
+   },
+   {
+    "file": ".claude/CLAUDE.md",
+    "contains": "Any commit touching skills/ is feat: or fix:, never docs:."
+   },
+   {
+    "file": "AGENTS.md",
+    "contains": "Any commit touching skills/ is feat: or fix:, never docs:."
    }
   ]
  },
@@ -558,6 +779,11 @@
    {
     "file": "CONTRIBUTING.md",
     "name": "Benchmarking a change",
+    "within": true
+   },
+   {
+    "file": "bench/README.md",
+    "name": "Commands",
     "within": true
    }
   ]
@@ -570,6 +796,11 @@
     "file": "docs/user-guide/repository-intelligence.md",
     "name": "Summarize pre-edit consumption",
     "within": true
+   },
+   {
+    "file": "docs/requirements/session-consumption-tracing.md",
+    "name": "3. Summarize pre-edit repository consumption",
+    "within": true
    }
   ]
  },
@@ -581,6 +812,20 @@
     "file": "skills/refactor/SKILL.md",
     "name": "2. Discover candidates",
     "within": true
+   },
+   {
+    "file": "skills/refactor/references/analysis.md",
+    "name": "Before-change discovery",
+    "within": true
+   },
+   {
+    "file": "skills/refactor/references/analysis.md",
+    "name": "Candidate signals and ranking",
+    "within": true
+   },
+   {
+    "file": "docs/user-guide/refactoring.md",
+    "contains": "Prism uses repository intelligence to find candidates, then checks their contracts, dependencies, state, ownership, and other available evidence."
    }
   ]
  },
@@ -622,6 +867,14 @@
    {
     "file": "src/server/session/session-capacity.mjs",
     "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/mcp.mjs",
+    "name": "assertExactToolArguments"
+   },
+   {
+    "file": "src/server/session/session-trace-behavior.mjs",
+    "name": "assertExactKeys"
    }
   ]
  },
@@ -643,6 +896,26 @@
    {
     "file": "src/server/repository-intelligence/repository-intelligence-config.mjs",
     "name": "isWithinDirectory"
+   },
+   {
+    "file": "src/server/review/review-server.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/native-runtime/fs-boundary.mts",
+    "name": "within"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "inside"
+   },
+   {
+    "file": "src/hooks/record-session-trace.mjs",
+    "name": "isSameOrDescendant"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs",
+    "name": "isSameOrDescendant"
    }
   ]
  },
@@ -660,6 +933,39 @@
    {
     "file": "src/server/session/host-session-facts.mjs",
     "name": "digest"
+   },
+   {
+    "file": "src/native-runtime/patch-codegraph.mts",
+    "name": "digest"
+   },
+   {
+    "file": "scripts/build-native-runtime.mjs",
+    "name": "sha"
+   },
+   {
+    "file": "src/native-runtime/concepts.mts",
+    "name": "hash",
+    "kind": "function"
+   },
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "digest"
+   },
+   {
+    "file": "src/native-runtime/worker.mts",
+    "name": "sha"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "sha256"
+   },
+   {
+    "file": "test/server/native-repository-intelligence.test.mjs",
+    "name": "sha256"
+   },
+   {
+    "file": "scripts/native-build/smoke.mjs",
+    "name": "hash"
    }
   ]
  }

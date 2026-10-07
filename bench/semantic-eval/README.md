@@ -40,24 +40,35 @@ The fragment statistics are:
 | --- | --- |
 | `fragments` and `roles` | The number of fragments for each role. |
 | `embeddedTokens` | The tokens that the model embeds, including special tokens. |
-| `repeatedShare` | The share of embedded tokens whose source a smaller concept also embeds. |
-| `lineEndCutShare` | The share of cuts inside a concept that fall at a line end. |
+| `repeatedShare` | The share of embedded tokens whose source a smaller unit also embeds. |
+| `lineEndCutShare` | The share of cuts inside a unit that fall at a line end. |
 | `smallFragments` | The number of fragments with fewer than 20 tokens. |
 
-The retrieval metrics are hit@5, hit@10, and MRR for each query group.
-`baseline30` is the original set of 30 queries, which contains the `concept` and `exact` groups.
+The retrieval metrics are hit@5, hit@10, MRR, and recall@10 for each query group.
+MRR uses the first correct result only.
+Recall@10 is the share of labeled answers in the top 10, which matters when a query has many correct answers.
+`baseline30` is the original set of 30 queries, which contains the `description` and `exact` groups.
 Each run writes `summary-<label>.json` in the output directory.
 
 ## Queries
 
 `queries/prism.json` labels queries for this repository.
-A query passes when a result matches an expected file and name.
-An expected entry with `within: true` also accepts any result inside the expected concept.
-A `queryFrom` entry uses the source of one concept as the query and ignores that concept in the results.
+A result is correct when it matches one expected entry.
+
+| Entry | Match |
+| --- | --- |
+| `{ "file", "name" }` | A unit with this name or qualified name in the file. |
+| `{ "file", "name", "kind" }` | The same, limited to one unit kind, when two units share a name. |
+| `{ "file", "name", "within": true }` | Any result inside the named unit, usually a Markdown section. |
+| `{ "file", "contains" }` | A result whose source lines contain the text. Markdown markup characters do not count. |
+| `{ "file" }` | Any result in the file. Use this only for a document or a small file that is entirely about the query. |
+
+Use `contains` with one complete sentence for a paragraph or a list item, because their stored names are cut at 160 characters.
+A `queryFrom` entry uses the source of one unit as the query and ignores that unit in the results.
 
 | Group | Purpose |
 | --- | --- |
-| `concept` | Natural-language descriptions of code and documents. |
+| `description` | Natural-language descriptions of code and documents. |
 | `exact` | Identifiers and exact strings. |
 | `sibling` | One method among the methods of one class. |
 | `members` | A class name with a member behavior, or a class description. |
@@ -65,4 +76,22 @@ A `queryFrom` entry uses the source of one concept as the query and ignores that
 | `code-to-code` | Similar code in a different file. |
 
 The benchmark never indexes its own folder, because the queries contain the expected answers.
-Update the labels when a labeled concept moves or changes its name.
+Update the labels when a labeled unit moves or changes its name.
+
+## Relevance rules
+
+A result is relevant when its unit implements, specifies, or documents the exact behavior that the query describes.
+Requirements, ADRs, user guides, skills, and plans that state the behavior are relevant, not only code.
+A unit that only shares words, only calls the behavior, or describes a broader topic is not relevant.
+
+| Group | Additional rule |
+| --- | --- |
+| `sibling` | Another method of the same class is relevant only when it performs the same behavior. |
+| `members` | A class-description query expects the class itself, not only its members. |
+| `section` | Other sections that give the same instructions are also relevant. |
+| `code-to-code` | Other implementations of the same behavior are relevant. |
+| `exact` | A unit must define, produce, or be about the exact string, not only mention it. |
+
+Label every relevant answer, not only the first one that you expect.
+To add labels, pool the top 10 results of every compared system for each query and judge the pooled results.
+Labels that come from only one system favor that system.

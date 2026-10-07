@@ -95,7 +95,7 @@ const tokens = new Map(chunks.map(chunk => [chunk.id, countTokens(chunk.embeddin
 const unique = new Map(chunks.map(chunk => [chunk.embeddingText, tokens.get(chunk.id)]));
 const roles = {};
 for (const chunk of chunks) roles[chunk.role || "whole"] = (roles[chunk.role || "whole"] || 0) + 1;
-// A source fragment repeats a child when a smaller concept embeds the same source text.
+// A source fragment repeats a child when a smaller unit embeds the same source text.
 const sourceChunks = chunks.filter(chunk => chunk.role !== "outline"), byFile = new Map();
 for (const chunk of sourceChunks) byFile.set(chunk.file, [...(byFile.get(chunk.file) || []), chunk]);
 let repeated = 0, embedded = 0;
@@ -126,6 +126,7 @@ console.log(JSON.stringify(stats, null, 1));
 const summary = { label: options.label, stats, groups: {} };
 if (!options["fragments-only"]) {
   const queries = JSON.parse(readFileSync(options.queries, "utf8"));
+  const plain = text => text.replace(/[`*_]/g, "");
   const sameName = (result, name) => result.name === name || result.qualifiedName === name || String(result.qualifiedName || "").endsWith(`::${name}`);
   const findUnit = spec => index.units.find(unit => unit.file === spec.file && sameName(unit, spec.name));
   const records = [];
@@ -134,26 +135,32 @@ if (!options["fragments-only"]) {
     if (query.queryFrom) { const unit = findUnit(query.queryFrom); text = contents.get(unit.file).slice(unit.span.start, unit.span.end); }
     const results = (await call("search", { query: text, limit: 10 + (query.queryFrom ? 1 : 0), snapshot: index.snapshot, indexPath, modelDirectory, modelIdentity: "m", filters: query.filters }))
       .filter(result => !(query.queryFrom && result.file === query.queryFrom.file && sameName(result, query.queryFrom.name))).slice(0, 10);
-    const match = result => query.expect.some(spec => {
-      if (result.file !== spec.file) return false;
+    const matches = (result, spec) => {
+      if (result.file !== spec.file || (spec.kind && result.kind !== spec.kind)) return false;
+      // Units store Markdown text without markup, so the comparison ignores markup characters on both sides.
+      if (spec.contains) return plain(contents.get(result.file).split("\n").slice(result.range.startLine - 1, result.range.endLine).join("\n")).includes(plain(spec.contains));
       if (!spec.name || sameName(result, spec.name)) return true;
       const expected = spec.within && findUnit(spec);
       return Boolean(expected && result.range.startLine >= expected.range.startLine && result.range.endLine <= expected.range.endLine);
-    });
+    };
+    const match = result => query.expect.some(spec => matches(result, spec));
     const rank = results.findIndex(match);
-    records.push({ group: query.group, query: query.query || `code of ${query.queryFrom.name}`, rank: rank < 0 ? null : rank + 1 });
+    // Recall counts the labeled answers that appear in the top 10, which matters when a query has many correct answers.
+    const recall = query.expect.filter(spec => results.some(result => matches(result, spec))).length / query.expect.length;
+    records.push({ group: query.group, query: query.query || `code of ${query.queryFrom.name}`, rank: rank < 0 ? null : rank + 1, recall });
     if (Number(options.show)) {
       console.log(`\n## [${query.group}] ${query.query || `code of ${query.queryFrom.file}:${query.queryFrom.name}`} -> ${rank < 0 ? "MISS" : rank + 1}`);
       for (const result of results.slice(0, Number(options.show))) console.log(`  ${match(result) ? "*" : " "} ${result.file}:${result.range.startLine}-${result.range.endLine} ${result.kind}${result.role && result.role !== "whole" ? `/${result.role}` : ""} ${String(result.qualifiedName || result.name).slice(0, 50).replace(/\n/g, " ")}`);
     }
   }
   const metrics = list => ({ queries: list.length, hitAt5: list.filter(r => r.rank && r.rank <= 5).length, hitAt10: list.filter(r => r.rank).length,
-    mrr: +(list.reduce((sum, r) => sum + (r.rank ? 1 / r.rank : 0), 0) / list.length).toFixed(3) });
+    mrr: +(list.reduce((sum, r) => sum + (r.rank ? 1 / r.rank : 0), 0) / list.length).toFixed(3),
+    recallAt10: +(list.reduce((sum, r) => sum + r.recall, 0) / list.length).toFixed(3) });
   for (const group of [...new Set(records.map(r => r.group))]) summary.groups[group] = metrics(records.filter(r => r.group === group));
   summary.groups.all = metrics(records);
-  summary.groups.baseline30 = metrics(records.filter(r => ["concept", "exact"].includes(r.group)));
+  summary.groups.baseline30 = metrics(records.filter(r => ["description", "exact"].includes(r.group)));
   summary.records = records;
-  console.log("\n" + Object.entries(summary.groups).map(([group, m]) => `${group.padEnd(14)} n=${String(m.queries).padStart(2)} hit@5 ${m.hitAt5} hit@10 ${m.hitAt10} MRR ${m.mrr}`).join("\n"));
+  console.log("\n" + Object.entries(summary.groups).map(([group, m]) => `${group.padEnd(14)} n=${String(m.queries).padStart(2)} hit@5 ${m.hitAt5} hit@10 ${m.hitAt10} MRR ${m.mrr} recall@10 ${m.recallAt10}`).join("\n"));
 }
 writeFileSync(path.join(out, `summary-${options.label}.json`), JSON.stringify(summary, null, 1));
 child.kill();
