@@ -118,3 +118,21 @@ The pairs come from a callee-name overlap analysis, and an agent judged each pai
 For each group limit, the script reports how many pairs of each verdict appear together in one reported group.
 More `same` and `related` pairs and fewer `unrelated` pairs is better.
 A large group can contain an `unrelated` pair and still be useful, so also judge the top groups as whole groups after a ranking change.
+
+## Module interface report
+
+`interfaces.mjs` prints the `report_module_interfaces` result for a saved index and a repository checkout.
+It reads every file that git tracks, as the server reads every snapshot file.
+
+```bash
+node bench/semantic-eval/interfaces.mjs --show 10
+```
+
+To measure another repository without embedding, build its structure first, then pass the index and the checkout.
+
+```bash
+node bench/semantic-eval/run.mjs --repo /path/to/repository --out /tmp/structure --fragments-only
+node bench/semantic-eval/interfaces.mjs --index /tmp/structure/structure.json --repo /path/to/repository
+```
+
+A fragment-only run writes `structure.json`, which holds the units, edges, and unresolved references without vectors.

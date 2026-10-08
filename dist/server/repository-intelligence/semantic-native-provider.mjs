@@ -3,6 +3,7 @@ import { openNativeRepositoryIntelligence } from "./native-repository-intelligen
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestFile, sharedDependencyGroups } from "./shared-dependencies.mjs";
+import { moduleInterfaceReport } from "./module-interfaces.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
 const domains = /* @__PURE__ */ new Set(["code", "instruction", "documentation", "configuration"]);
@@ -49,6 +50,22 @@ const NATIVE_INTELLIGENCE_TOOLS = [
       includeTests: { type: "boolean", default: false, description: "Include test files, which often repeat setup code on purpose." },
       filters: { type: "object", additionalProperties: false, properties: {
         paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when at least two of its members are inside these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "report_module_interfaces",
+    description: "Report JavaScript and TypeScript module exports with the modules that import each one, exports that no other module imports, exports that only tests import, and classes that forward most public methods to one field. Uses the same prepared index as search_repository_concepts. The report gives facts for interface design review and does not decide whether an interface is too shallow.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" },
+      expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      offset: { type: "integer", minimum: 0, default: 0 },
+      allModules: { type: "boolean", default: false, description: "Report every exporting module, not only modules with unused or test-only exports." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the modules and classes to report. Importers anywhere in the project still count.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
@@ -224,13 +241,14 @@ async function searchRepositoryConcepts(input, options = {}) {
     results
   };
 }
-function validateSharedDependencies(value) {
+function validateAnalysis(value, booleans, extra = []) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw semanticError("validation_failed", "Arguments must be an object.");
   const input = value;
-  for (const key of Object.keys(input)) if (!["projectRoot", "filters", "includeTests", "expectedSnapshot", "snapshotId", "limit"].includes(key)) throw semanticError("validation_failed", `Unknown field: ${key}.`);
+  for (const key of Object.keys(input)) if (!["projectRoot", "filters", "expectedSnapshot", "snapshotId", "limit", ...booleans, ...extra].includes(key)) throw semanticError("validation_failed", `Unknown field: ${key}.`);
   for (const key of ["snapshotId", "expectedSnapshot"]) if (input[key] !== void 0 && (typeof input[key] !== "string" || !/^[a-f\d]{64}$/.test(input[key]))) throw semanticError("validation_failed", `${key} must be a SHA-256 identity.`);
   if (input.limit !== void 0 && (typeof input.limit !== "number" || !Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100)) throw semanticError("validation_failed", "limit must be from 1 through 100.");
-  if (input.includeTests !== void 0 && typeof input.includeTests !== "boolean") throw semanticError("validation_failed", "includeTests must be a boolean.");
+  if (input.offset !== void 0 && (typeof input.offset !== "number" || !Number.isInteger(input.offset) || input.offset < 0)) throw semanticError("validation_failed", "offset must be a nonnegative integer.");
+  for (const key of booleans) if (input[key] !== void 0 && typeof input[key] !== "boolean") throw semanticError("validation_failed", `${key} must be a boolean.`);
   if (input.filters !== void 0) {
     const filters = input.filters;
     if (!filters || typeof filters !== "object" || Array.isArray(filters) || Object.keys(filters).some((key) => key !== "paths")) throw semanticError("validation_failed", "filters accepts only paths.");
@@ -239,12 +257,22 @@ function validateSharedDependencies(value) {
     if (Array.isArray(paths) && paths.some((value2) => value2.startsWith("/") || value2.includes("\\") || value2.includes(":") || value2.split("/").some((part) => ["", ".", ".."].includes(part)))) throw semanticError("invalid_path", "filters.paths must use project-relative paths such as 'server', without trailing slashes, empty segments, '.', '..', backslashes, or colons.");
   }
 }
-async function findSharedDependencies(input, options = {}) {
-  validateSharedDependencies(input);
+function validateSharedDependencies(value) {
+  validateAnalysis(value, ["includeTests"]);
+}
+function validateModuleInterfaces(value) {
+  validateAnalysis(value, ["allModules"], ["offset"]);
+}
+async function preparedAnalysis(input, options) {
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
-  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, groups: [] };
   const identity = { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot, snapshotId: input.snapshotId || null };
+  return { provider, preparation, identity };
+}
+async function findSharedDependencies(input, options = {}) {
+  validateSharedDependencies(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, groups: [] };
   if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
   const { index } = provider.prepared, files = (await provider.snapshot()).filesByPath, paths = input.filters?.paths || [];
   const include = (unit) => (input.includeTests || !isTestFile(unit.file)) && !searchExclusion(unit.file, files.get(unit.file)?.content || "");
@@ -266,12 +294,42 @@ async function findSharedDependencies(input, options = {}) {
     groups
   };
 }
+async function reportModuleInterfaces(input, options = {}) {
+  validateModuleInterfaces(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, modules: [], delegatingClasses: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, modules: [], delegatingClasses: [] };
+  const snapshot = await provider.snapshot(), paths = input.filters?.paths || [];
+  const contents = new Map(snapshot.files.map((file) => [file.file, file.content]));
+  const inside = (file) => !paths.length || paths.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
+  const report = moduleInterfaceReport(provider.prepared.index, contents, { include: inside, allModules: input.allModules });
+  await provider.verifySnapshot();
+  const offset = input.offset || 0, limit = input.limit || 20;
+  const diagnostics = [
+    ...report.coverage.unresolvedLocalImports ? [{ code: "unresolved_imports", count: report.coverage.unresolvedLocalImports, message: "Some local imports did not resolve, so an export can look unused although a module imports it." }] : [],
+    ...report.coverage.importAnalysisSkipped.length ? [{ code: "unsupported_language", message: `Import analysis covers JavaScript and TypeScript, not ${report.coverage.importAnalysisSkipped.join(", ")} files.` }] : [],
+    ...provider.preparation.diagnostics
+  ];
+  return {
+    ...identity,
+    indexRevision: provider.prepared.revision,
+    coverage: report.coverage,
+    diagnostics: diagnostics.slice(0, 20),
+    diagnosticCount: diagnostics.length,
+    totalModules: report.modules.length,
+    nextOffset: offset + limit < report.modules.length ? offset + limit : null,
+    modules: report.modules.slice(offset, offset + limit),
+    delegatingClasses: report.delegatingClasses.slice(0, 50)
+  };
+}
 export {
   NATIVE_INTELLIGENCE_TOOLS,
   SemanticNativeRepositoryIntelligence,
   findSharedDependencies,
   prepareNativeProvider,
+  reportModuleInterfaces,
   searchRepositoryConcepts,
   validateConceptSearch,
+  validateModuleInterfaces,
   validateSharedDependencies
 };

@@ -137,6 +137,40 @@ A function that only uses core operations has no dependency profile, so use sear
 `coverage` gives the number of profiled units, and a `dependency_names_unavailable` diagnostic means that the index was prepared without library call names.
 A shared dependency set identifies candidates for investigation and does not establish equivalent behavior.
 
+### Report module interfaces
+
+`report_module_interfaces` reports the exports of JavaScript and TypeScript modules and the modules that import each export.
+It gives facts for an interface design review and does not decide whether an interface is too shallow.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["packages/agent"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, and `expectedSnapshot` behavior as search.
+Each module entry lists its exports, with the number of importing modules and importing tests for each export.
+`unusedExports` lists exports that no other module or test imports, and `testOnlyExports` lists exports that only tests import.
+An unused export can be private or removed, unless it is a published API, an entry point, or a name that a framework loads by convention.
+A test-only export is often a deliberate test seam.
+`namesPerImporter` is the median number of exports that one importer uses, so a low value on a module with many exports shows that each caller needs only a small part of the interface.
+By default, only modules with unused or test-only exports appear, and `allModules` reports every exporting module.
+Use `offset` and `nextOffset` to page through modules.
+
+Imports resolve through relative paths, `package.json` names and `exports` maps of workspace packages, `tsconfig` path aliases, and built output that mirrors a `src/` file.
+Static imports, re-exports, dynamic `import()`, and `require` count, and a dynamic import or `require` counts as a use of every export.
+Only top-level declarations with the `export` keyword count as exports.
+Tests, design documents, examples, declaration files, and generated, vendored, or minified files are not reported as modules.
+An `unresolved_imports` diagnostic gives the number of local imports that did not resolve, because each one can hide an importer.
+An import from a file type that the tool does not read, such as a workflow YAML file, also stays hidden.
+
+`delegatingClasses` lists classes in which at least three public methods, and at least half of them, forward their parameters to one field.
+`unchangedNames` counts forwarded methods that keep the name of the delegate method.
+A delegating class can be a pass-through layer to remove, or an adapter, decorator, or access boundary with a purpose, so inspect it before you change it.
+
 For live-source searches and context planning, pass a returned `snapshot` as `expectedSnapshot` to bind the source fingerprint.
 This fingerprint differs from a retained evidence `snapshotId`.
 On `stale_snapshot` during live-source discovery, repeat the search against current source and reassess the candidates.

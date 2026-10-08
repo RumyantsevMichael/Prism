@@ -2,6 +2,7 @@ import { openNativeRepositoryIntelligence } from "./native-repository-intelligen
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestFile, sharedDependencyGroups } from "./shared-dependencies.mjs";
+import { moduleInterfaceReport } from "./module-interfaces.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
 import type { SearchReceipt } from "../conservation/conservation-types.mjs";
@@ -9,6 +10,7 @@ import type { SourceUnit, Domain, NativeSource, Neighbor, Preparation, PreparedI
 
 interface ConceptSearchInput { projectRoot: string; query: string; filters?: SearchFilters; expectedSnapshot?: string; snapshotId?: string; limit?: number }
 interface SharedDependencyInput { projectRoot: string; filters?: { paths?: string[] }; includeTests?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number }
+interface ModuleInterfaceInput { projectRoot: string; filters?: { paths?: string[] }; allModules?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number; offset?: number }
 interface ProviderOptions { source?: Record<string, unknown>; nativeSource?: NativeSource; runtime?: SemanticRuntime; expectedSnapshot?: string; waitMs?: number }
 
 const domains = new Set(["code", "instruction", "documentation", "configuration"]);
@@ -51,6 +53,18 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
       includeTests: { type: "boolean", default: false, description: "Include test files, which often repeat setup code on purpose." },
       filters: { type: "object", additionalProperties: false, properties: {
         paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when at least two of its members are inside these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "report_module_interfaces",
+    description: "Report JavaScript and TypeScript module exports with the modules that import each one, exports that no other module imports, exports that only tests import, and classes that forward most public methods to one field. Uses the same prepared index as search_repository_concepts. The report gives facts for interface design review and does not decide whether an interface is too shallow.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 }, offset: { type: "integer", minimum: 0, default: 0 },
+      allModules: { type: "boolean", default: false, description: "Report every exporting module, not only modules with unused or test-only exports." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the modules and classes to report. Importers anywhere in the project still count.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }
@@ -177,13 +191,15 @@ export async function searchRepositoryConcepts(input: ConceptSearchInput, option
     capabilities, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, results };
 }
 
-export function validateSharedDependencies(value: unknown): asserts value is SharedDependencyInput {
+// Both repository analyses take a snapshot, an optional path filter, a result limit, and their own boolean switches.
+function validateAnalysis(value: unknown, booleans: string[], extra: string[] = []) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw semanticError("validation_failed", "Arguments must be an object.");
   const input = value as Record<string, unknown>;
-  for (const key of Object.keys(input)) if (!["projectRoot", "filters", "includeTests", "expectedSnapshot", "snapshotId", "limit"].includes(key)) throw semanticError("validation_failed", `Unknown field: ${key}.`);
+  for (const key of Object.keys(input)) if (!["projectRoot", "filters", "expectedSnapshot", "snapshotId", "limit", ...booleans, ...extra].includes(key)) throw semanticError("validation_failed", `Unknown field: ${key}.`);
   for (const key of ["snapshotId", "expectedSnapshot"]) if (input[key] !== undefined && (typeof input[key] !== "string" || !/^[a-f\d]{64}$/.test(input[key] as string))) throw semanticError("validation_failed", `${key} must be a SHA-256 identity.`);
   if (input.limit !== undefined && (typeof input.limit !== "number" || !Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100)) throw semanticError("validation_failed", "limit must be from 1 through 100.");
-  if (input.includeTests !== undefined && typeof input.includeTests !== "boolean") throw semanticError("validation_failed", "includeTests must be a boolean.");
+  if (input.offset !== undefined && (typeof input.offset !== "number" || !Number.isInteger(input.offset) || input.offset < 0)) throw semanticError("validation_failed", "offset must be a nonnegative integer.");
+  for (const key of booleans) if (input[key] !== undefined && typeof input[key] !== "boolean") throw semanticError("validation_failed", `${key} must be a boolean.`);
   if (input.filters !== undefined) {
     const filters = input.filters as Record<string, unknown>;
     if (!filters || typeof filters !== "object" || Array.isArray(filters) || Object.keys(filters).some(key => key !== "paths")) throw semanticError("validation_failed", "filters accepts only paths.");
@@ -193,12 +209,21 @@ export function validateSharedDependencies(value: unknown): asserts value is Sha
   }
 }
 
-export async function findSharedDependencies(input: SharedDependencyInput, options: ProviderOptions = {}) {
-  validateSharedDependencies(input);
+export function validateSharedDependencies(value: unknown): asserts value is SharedDependencyInput { validateAnalysis(value, ["includeTests"]); }
+export function validateModuleInterfaces(value: unknown): asserts value is ModuleInterfaceInput { validateAnalysis(value, ["allModules"], ["offset"]); }
+
+// Prepare the snapshot that an analysis reads: the retained baseline when the caller names one, or the live project.
+async function preparedAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string }, options: ProviderOptions) {
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
-  if (preparation.status === "preparing") return { ...preparation, prepared: undefined, groups: [] };
   const identity = { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot, snapshotId: input.snapshotId || null };
+  return { provider, preparation, identity };
+}
+
+export async function findSharedDependencies(input: SharedDependencyInput, options: ProviderOptions = {}) {
+  validateSharedDependencies(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: undefined, groups: [] };
   if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
   const { index } = provider.prepared, files = (await provider.snapshot()).filesByPath, paths = input.filters?.paths || [];
   // Generated, vendored, and minified files repeat code by design, so they never form a group.
@@ -212,4 +237,24 @@ export async function findSharedDependencies(input: SharedDependencyInput, optio
     ...provider.preparation.diagnostics];
   return { ...identity, indexRevision: provider.prepared.revision, coverage: result.coverage,
     diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, groups };
+}
+
+export async function reportModuleInterfaces(input: ModuleInterfaceInput, options: ProviderOptions = {}) {
+  validateModuleInterfaces(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: undefined, modules: [], delegatingClasses: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, modules: [], delegatingClasses: [] };
+  const snapshot = await provider.snapshot(), paths = input.filters?.paths || [];
+  const contents = new Map(snapshot.files.map(file => [file.file, file.content]));
+  const inside = (file: string) => !paths.length || paths.some(prefix => file === prefix || file.startsWith(`${prefix}/`));
+  const report = moduleInterfaceReport(provider.prepared.index, contents, { include: inside, allModules: input.allModules });
+  await provider.verifySnapshot();
+  const offset = input.offset || 0, limit = input.limit || 20;
+  const diagnostics = [...(report.coverage.unresolvedLocalImports ? [{ code: "unresolved_imports", count: report.coverage.unresolvedLocalImports, message: "Some local imports did not resolve, so an export can look unused although a module imports it." }] : []),
+    ...(report.coverage.importAnalysisSkipped.length ? [{ code: "unsupported_language", message: `Import analysis covers JavaScript and TypeScript, not ${report.coverage.importAnalysisSkipped.join(", ")} files.` }] : []),
+    ...provider.preparation.diagnostics];
+  return { ...identity, indexRevision: provider.prepared.revision, coverage: report.coverage,
+    diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length,
+    totalModules: report.modules.length, nextOffset: offset + limit < report.modules.length ? offset + limit : null,
+    modules: report.modules.slice(offset, offset + limit), delegatingClasses: report.delegatingClasses.slice(0, 50) };
 }

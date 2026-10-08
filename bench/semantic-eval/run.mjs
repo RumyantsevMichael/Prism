@@ -79,7 +79,11 @@ else {
   const previousEmbeddings = options["fragments-only"] || !existsSync(cachePath) ? {} : JSON.parse(readFileSync(cachePath, "utf8"));
   index = await call("build", { mirror, files, snapshot, modelDirectory, modelIdentity: "m", previousEmbeddings, fragmentsOnly: options["fragments-only"] });
   if (phase) phases[phase] = (Date.now() - phaseStart) / 1000;
-  if (options["fragments-only"]) writeFileSync(path.join(out, "fragments.json"), JSON.stringify(index.chunks));
+  if (options["fragments-only"]) {
+    writeFileSync(path.join(out, "fragments.json"), JSON.stringify(index.chunks));
+    // Structure analyses need units, edges, and references, but not vectors.
+    writeFileSync(path.join(out, "structure.json"), JSON.stringify({ ...index, chunks: undefined }));
+  }
   else {
     writeFileSync(indexPath, JSON.stringify(index));
     // The cache keeps every vector seen, so variants that share fragment text skip embedding.

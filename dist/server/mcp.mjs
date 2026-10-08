@@ -25,7 +25,7 @@ import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
-import { NATIVE_INTELLIGENCE_TOOLS, findSharedDependencies, prepareNativeProvider, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
+import { NATIVE_INTELLIGENCE_TOOLS, findSharedDependencies, prepareNativeProvider, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
 const reviewServers = createReviewServerPool();
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));
@@ -691,8 +691,9 @@ async function callRepositoryTool(name, argumentsValue) {
     const projectRoot = await requestedProjectRoot(argumentsValue).catch(error => { error.code = "invalid_path"; throw error; });
     let value = name === "search_repository_concepts" ? await searchRepositoryConcepts({ ...argumentsValue, projectRoot })
       : name === "find_shared_dependencies" ? await findSharedDependencies({ ...argumentsValue, projectRoot })
+      : name === "report_module_interfaces" ? await reportModuleInterfaces({ ...argumentsValue, projectRoot })
       : await nativeSemanticRuntime.status(projectRoot, argumentsValue.waitMs);
-    if (!["search_repository_concepts", "find_shared_dependencies"].includes(name)) {
+    if (!["search_repository_concepts", "find_shared_dependencies", "report_module_interfaces"].includes(name)) {
       const diagnostics = value.diagnostics || [], offset = argumentsValue.offset || 0, limit = argumentsValue.limit || 20;
       value = { ...value, diagnostics: diagnostics.slice(offset, offset + limit), totalDiagnostics: diagnostics.length, nextOffset: offset + limit < diagnostics.length ? offset + limit : null };
     }

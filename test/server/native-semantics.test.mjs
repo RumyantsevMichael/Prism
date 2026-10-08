@@ -6,7 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { NativeSemanticRuntime } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
-import { SemanticNativeRepositoryIntelligence, findSharedDependencies, searchRepositoryConcepts, validateConceptSearch, validateSharedDependencies } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
+import { SemanticNativeRepositoryIntelligence, findSharedDependencies, reportModuleInterfaces, searchRepositoryConcepts, validateConceptSearch, validateModuleInterfaces, validateSharedDependencies } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
 import { openNativeRepositoryIntelligence } from "../../dist/server/repository-intelligence/native-repository-intelligence.mjs";
 import { CompositeRepositoryIntelligence } from "../../dist/server/repository-intelligence/composite-repository-intelligence.mjs";
 import { planRepositoryContext } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
@@ -42,6 +42,17 @@ test("shared dependency groups need the prepared index and report a degraded run
   assert.deepEqual(found.groups, []);
   assert.equal(found.coverage, null);
   assert.ok(found.diagnostics.some(item => item.code === "unsupported_runtime"));
+});
+test("module interface reports need the prepared index and report a degraded runtime without modules", async t => {
+  const { directory, root } = await fixture(t);
+  await writeFile(path.join(root, "a.mjs"), "export function a() { return 1; }\n");
+  const runtime = new NativeSemanticRuntime({ directory: path.join(directory, "cache"), manifestPath });
+  const found = await reportModuleInterfaces({ projectRoot: root }, { runtime });
+  assert.equal(found.status, "degraded");
+  assert.deepEqual([found.modules, found.delegatingClasses, found.coverage], [[], [], null]);
+  for (const input of [{ offset: -1 }, { offset: 1.5 }, { allModules: "yes" }, { includeTests: true }, { limit: 101 }, { filters: { paths: ["/abs"] } }])
+    assert.throws(() => validateModuleInterfaces({ projectRoot: "/tmp", ...input }), error => ["validation_failed", "invalid_path"].includes(error.code), JSON.stringify(input));
+  validateModuleInterfaces({ projectRoot: "/tmp", offset: 20, limit: 100, allModules: true, filters: { paths: ["src"] } });
 });
 test("shared dependency input limits, unknown fields, and path traversal fail before preparation", () => {
   for (const input of [{ limit: 0 }, { limit: 101 }, { includeTests: "yes" }, { filters: { domains: ["code"] } }, { filters: { paths: ["../outside"] } }, { query: "x" }, { snapshotId: "x" }])

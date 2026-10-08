@@ -5,9 +5,10 @@
 1. For a retained baseline, pass its identity as `snapshotId` to `search_repository_concepts` from the first reuse search.
 2. While search returns `preparing`, wait through bounded status requests and repeat the same snapshot-bound search.
 3. To find repeated sub-steps without a query, call `find_shared_dependencies` with the same `snapshotId`.
-4. Inspect completed candidates before selecting a transformation.
-5. Preserve the same baseline through target edits, retries, and corrections.
-6. If retained search is unavailable, report that limitation with the fallback source identity and coverage.
+4. To review interfaces, call `report_module_interfaces` with the same `snapshotId`.
+5. Inspect completed candidates before selecting a transformation.
+6. Preserve the same baseline through target edits, retries, and corrections.
+7. If retained search is unavailable, report that limitation with the fallback source identity and coverage.
 
 A `preparing` response supplies neither completed candidates nor successful semantic evidence.
 Live files cannot replace the original baseline after target edits.
@@ -22,7 +23,8 @@ These signals justify investigation without prescribing a solution.
 | --- | --- |
 | Semantic redundancy | Similar concepts, parallel behavior, repeated constraints, overlapping requirements, or units that share a rare set of dependencies. |
 | Specialization | Repeated special cases, caller-specific interfaces, narrow rules, exceptions, or overrides. |
-| Shallow abstraction | An interface exposes most implementation complexity or adds indirection without hiding knowledge. |
+| Shallow abstraction | An interface exposes most implementation complexity or adds indirection without hiding knowledge, for example a class that forwards most methods to one field. |
+| Overexposure | Exports that no other module uses, or an interface whose importers each need only a small part of it. |
 | Information leakage | Several consumers must understand the same internal fact or domain policy. |
 | Tactical accumulation | Historical exceptions, layered fallbacks, compatibility paths, or multiple mechanisms for related needs. |
 | Structural complexity | Excess dependencies, public surface, repeated state, branches, reference chains, or fragmented sections. |
