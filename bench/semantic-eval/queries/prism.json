@@ -688,6 +688,387 @@
   ]
  },
  {
+  "group": "sibling",
+  "query": "recapture the project and throw stale when files differ from the accepted baseline, ignoring newly managed outputs",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "assertCurrent"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "build a provider from retained blobs so line ranges come from verified stored bytes, not live files",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "source"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "filter rows by WHERE, sort with nulls first ascending and last descending, then cut to LIMIT",
+  "expect": [
+   {
+    "file": "bench/tasks/minidb/oracle/minidb.py",
+    "name": "_select"
+   },
+   {
+    "file": "bench/tasks/minidb/specs/stage2.md",
+    "contains": "`NULL` sorts before every value ascending, and after every value descending."
+   },
+   {
+    "file": "bench/tasks/minidb/specs/stage2.md",
+    "contains": "`LIMIT` applies after `WHERE` and `ORDER BY`."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "abort an open transaction by restoring the deep-copied tables saved when it began",
+  "expect": [
+   {
+    "file": "bench/tasks/minidb/oracle/minidb.py",
+    "name": "_rollback"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "consume the next token only when it matches a given keyword and return whether it did",
+  "expect": [
+   {
+    "file": "bench/tasks/minidb/oracle/minidb.py",
+    "name": "accept_keyword"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "raise an error when unparsed tokens remain at the end of a statement",
+  "expect": [
+   {
+    "file": "bench/tasks/minidb/oracle/minidb.py",
+    "name": "done"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "replay set and delete records from the log until a torn or undecodable line, returning valid byte length",
+  "expect": [
+   {
+    "file": "bench/tasks/kvstore/oracle/kvstore.py",
+    "name": "_recover"
+   },
+   {
+    "file": "bench/tasks/kvstore/brief.md",
+    "contains": "Recovery keeps every complete record and drops the torn tail."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "rewrite the append log with only live keys into a temp file, fsync, and atomically replace it",
+  "expect": [
+   {
+    "file": "bench/tasks/kvstore/oracle/kvstore.py",
+    "name": "compact"
+   },
+   {
+    "file": "bench/tasks/kvstore/brief.md",
+    "contains": "`compact` rewrites the log so it holds only the live state: one record per current key and no deleted keys."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "evaluate a cell, detecting circular formula references, and parse plain text as a number when possible",
+  "expect": [
+   {
+    "file": "bench/tasks/sheetcalc/oracle/sheetcalc.py",
+    "name": "_value"
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "Otherwise, if Python's `float()` accepts the raw string, the cell is a number."
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "name": "Evaluation: get",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "walk the formula tree, raise division by zero, and aggregate range functions over numeric cells only",
+  "expect": [
+   {
+    "file": "bench/tasks/sheetcalc/oracle/sheetcalc.py",
+    "name": "_eval"
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "Division by zero returns `#DIV/0!`."
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "`SUM` of a range with no numeric cells returns `0.0`."
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "`MIN` or `MAX` of a range with no numeric cells returns `#ERROR!`."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "expand a rectangular A1:B3 style range into every cell address, accepting corners in any order",
+  "expect": [
+   {
+    "file": "bench/tasks/sheetcalc/oracle/sheetcalc.py",
+    "name": "range_cells"
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "A range names two corner cells separated by `:` and covers the rectangle between them."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "parse a parenthesized group, number literal, SUM/MIN/MAX call over a range, or a cell reference",
+  "expect": [
+   {
+    "file": "bench/tasks/sheetcalc/oracle/sheetcalc.py",
+    "name": "primary"
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "Operands: decimal number literals and cell references."
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "Functions: `SUM`, `MIN`, and `MAX`."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "add tokens for the clock time elapsed since the last update, capped at capacity",
+  "expect": [
+   {
+    "file": "bench/tasks/ratelimit/oracle/ratelimit.py",
+    "name": "_refill"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "take the requested tokens if the balance allows, otherwise return false without waiting",
+  "expect": [
+   {
+    "file": "bench/tasks/ratelimit/oracle/ratelimit.py",
+    "name": "try_acquire"
+   },
+   {
+    "file": "bench/tasks/ratelimit/brief.md",
+    "contains": "If the balance is greater than or equal to `tokens`, it subtracts `tokens` and returns `True`."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "download and unpack the platform runtime archive into staging, then fetch each pinned model file",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "assets"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "copy snapshot files into a private mirror, embed with reused vectors, and publish the index pointer",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "build"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "spawn the bundled node worker with permission flags and an environment stripped of CODEGRAPH variables",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "start"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "perform the MCP handshake, check the server identity and pinned version, then notify readiness",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "initialize"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "end the child stdin and wait for exit, killing the process after one second",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "close"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "fill in a partial symbol range with a regex lookup, choosing the smallest match containing its start line",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "completeNodeRange"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "fetch a line range in 200-line pages, checking verified provenance and continuity of every page",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "read"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "expand dependency subgraphs for only the first three anchors, splitting the node budget between them",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "neighbors"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "run embedding retrieval and, on runtime or asset failure, mark preparation degraded and return null",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/semantic-native-provider.mts",
+    "name": "semanticSearch"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "expand related units from prepared index edges, seeding by units whose line ranges overlap the input",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/semantic-native-provider.mts",
+    "name": "neighbors"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "rerun the index status command and fail when the graph index changed since the provider opened",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "assertFreshSnapshot"
+   },
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "verifySnapshot"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "expand anchors over the graph cached by the previous query, refusing when no query has run",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "neighbors"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "run the context command with a budget-sized node limit, falling back to a symbol query for hints",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "search"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "re-hash the file on disk and refuse the range when bytes changed after the snapshot",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "read"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "rebuild the file snapshot and compare commit, fingerprint, and completeness to detect repository changes",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "verifySnapshot"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "score files lexically under domain, kind, and path filters, ranking explicit file and symbol hints first",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "search"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "fuse native and external hits by reciprocal rank, replacing native whole-file hits with external symbols",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+    "name": "search"
+   },
+   {
+    "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+    "name": "fuseHits"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "reject an external provider whose snapshot identity differs from native and merge capability flags",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+    "name": "describe"
+   }
+  ]
+ },
+ {
   "group": "members",
   "query": "ConservationStore capture a baseline",
   "expect": [
@@ -966,6 +1347,465 @@
    {
     "file": "scripts/native-build/smoke.mjs",
     "name": "hash"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "digest"
+  },
+  "expect": [
+   {
+    "file": "src/native-runtime/patch-codegraph.mts",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/workflow/decision-history.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "scripts/build-native-runtime.mjs",
+    "name": "sha"
+   },
+   {
+    "file": "src/native-runtime/worker.mts",
+    "name": "sha"
+   },
+   {
+    "file": "src/native-runtime/concepts.mts",
+    "name": "hash"
+   },
+   {
+    "file": "test/server/native-repository-intelligence.test.mjs",
+    "name": "sha256"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "sha"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "sha256"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "nonemptyString"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-adapters/codex-config.mjs",
+    "name": "nonemptyString"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs",
+    "name": "nonemptyString"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex.mjs",
+    "name": "nonemptyString"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "normalizedIdentifier"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "unique"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+    "name": "unique"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "unique"
+   },
+   {
+    "file": "src/server/repository-intelligence/repository-intelligence.mjs",
+    "name": "unique"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "unsupported"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-adapters/codex-config.mjs",
+    "name": "unsupported"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs",
+    "name": "unsupported"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "unsupported"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/repository-intelligence/codenib-provider.mjs",
+   "name": "positiveInteger"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "positiveInteger"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "positiveInteger"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "positiveSafeInteger"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "positiveSafeInteger"
+   },
+   {
+    "file": "src/server/repository-intelligence/repository-intelligence.mjs",
+    "name": "integer"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/host-adapters/codex-config.mjs",
+   "name": "positiveSafeInteger"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "positiveSafeInteger"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "positiveSafeInteger"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex.mjs",
+    "name": "validTokenCount"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/workflow/artifact-store.mjs",
+   "name": "wait"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "wait"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "wait"
+   },
+   {
+    "file": "test/server/mcp.test.mjs",
+    "name": "delay"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/hooks/record-session-facts.mjs",
+   "name": "readHookInput"
+  },
+  "expect": [
+   {
+    "file": "src/hooks/record-session-trace.mjs",
+    "name": "readHookInput"
+   },
+   {
+    "file": "src/server/review/review-server.mjs",
+    "name": "readJson"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/host-adapters/codex-transcript.mjs",
+   "name": "isSameOrDescendant"
+  },
+  "expect": [
+   {
+    "file": "src/hooks/record-session-trace.mjs",
+    "name": "isSameOrDescendant"
+   },
+   {
+    "file": "src/server/conservation/concept-delta.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/review/review-server.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "isContained"
+   },
+   {
+    "file": "src/server/workflow/state.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "inside"
+   },
+   {
+    "file": "src/native-runtime/fs-boundary.mts",
+    "name": "within"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "canonicalDirectory"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs",
+    "name": "canonicalDirectory"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/repository-intelligence/codenib-provider.mjs",
+   "name": "symbolIdentityMatches"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "symbolIdentityMatches"
+   },
+   {
+    "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+    "name": "exactSymbolMatch"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+   "name": "normalizedSnapshotIdentity"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "normalizedSnapshotIdentity"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-capacity.mjs",
+   "name": "assertTokenCount"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "assertTokenCount"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex.mjs",
+    "name": "validTokenCount"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "normalizedIdentifier"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "normalizedIdentifier"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "inspectRegularFile"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "inspectRegularFile"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "createOwnedLock"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "createOwnedLock"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "releaseOwnedLock"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "releaseOwnedLock"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "removeOwnedLock"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "bench/skill_eval/run.py",
+   "name": "parse_codex_jsonl"
+  },
+  "expect": [
+   {
+    "file": "bench/harness/bench.py",
+    "name": "parse_codex_jsonl"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "bench/skill_eval/run.py",
+   "name": "parse_claude_json"
+  },
+  "expect": [
+   {
+    "file": "bench/harness/bench.py",
+    "name": "parse_claude_json"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/repository-intelligence/repository-intelligence.mjs",
+   "name": "normalizeNode"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "normalizeNode"
+   },
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "sourceNode"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/review/review-server.mjs",
+   "name": "readJson"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "readJson"
+   },
+   {
+    "file": "src/hooks/record-session-facts.mjs",
+    "name": "readHookInput"
+   },
+   {
+    "file": "src/hooks/record-session-trace.mjs",
+    "name": "readHookInput"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "test/server/session-trace.test.mjs",
+   "name": "temporaryDirectory"
+  },
+  "expect": [
+   {
+    "file": "test/server/host-session-facts.test.mjs",
+    "name": "temporaryDirectory"
+   },
+   {
+    "file": "test/server/session-instrumentation.test.mjs",
+    "name": "temporaryDirectory"
+   },
+   {
+    "file": "test/server/composite-repository-intelligence.test.mjs",
+    "name": "projectFixture"
+   },
+   {
+    "file": "test/server/native-repository-intelligence.test.mjs",
+    "name": "fixture"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "processState"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "processState"
    }
   ]
  }

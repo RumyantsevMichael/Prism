@@ -65,6 +65,7 @@ A result is correct when it matches one expected entry.
 
 Use `contains` with one complete sentence for a paragraph or a list item, because their stored names are cut at 160 characters.
 A `queryFrom` entry uses the source of one unit as the query and ignores that unit in the results.
+The source of a `queryFrom` unit must fit in the 512-token query limit of the model.
 
 | Group | Purpose |
 | --- | --- |
