@@ -4,9 +4,10 @@
 
 1. For a retained baseline, pass its identity as `snapshotId` to `search_repository_concepts` from the first reuse search.
 2. While search returns `preparing`, wait through bounded status requests and repeat the same snapshot-bound search.
-3. Inspect completed candidates before selecting a transformation.
-4. Preserve the same baseline through target edits, retries, and corrections.
-5. If retained search is unavailable, report that limitation with the fallback source identity and coverage.
+3. To find repeated sub-steps without a query, call `find_shared_dependencies` with the same `snapshotId`.
+4. Inspect completed candidates before selecting a transformation.
+5. Preserve the same baseline through target edits, retries, and corrections.
+6. If retained search is unavailable, report that limitation with the fallback source identity and coverage.
 
 A `preparing` response supplies neither completed candidates nor successful semantic evidence.
 Live files cannot replace the original baseline after target edits.
@@ -19,7 +20,7 @@ These signals justify investigation without prescribing a solution.
 
 | Signal | Observable evidence |
 | --- | --- |
-| Semantic redundancy | Similar concepts, parallel behavior, repeated constraints, or overlapping requirements. |
+| Semantic redundancy | Similar concepts, parallel behavior, repeated constraints, overlapping requirements, or units that share a rare set of dependencies. |
 | Specialization | Repeated special cases, caller-specific interfaces, narrow rules, exceptions, or overrides. |
 | Shallow abstraction | An interface exposes most implementation complexity or adds indirection without hiding knowledge. |
 | Information leakage | Several consumers must understand the same internal fact or domain policy. |

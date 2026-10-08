@@ -96,3 +96,25 @@ A unit that only shares words, only calls the behavior, or describes a broader t
 Label every relevant answer, not only the first one that you expect.
 To add labels, pool the top 10 results of every compared system for each query and judge the pooled results.
 Labels that come from only one system favor that system.
+
+## Shared dependency groups
+
+`dependencies.mjs` measures the groups of `find_shared_dependencies` on the saved benchmark index.
+Run the retrieval benchmark first, so that `.work/index.json` exists.
+
+```bash
+node bench/semantic-eval/dependencies.mjs --limit 20,50 --show 5
+```
+
+`queries/prism-dependencies.json` holds judged pairs of functions and methods in different files.
+The pairs come from a callee-name overlap analysis, and an agent judged each pair from the source of both units.
+
+| Verdict | Meaning |
+| --- | --- |
+| `same` | Both units implement the same responsibility or domain knowledge. |
+| `related` | The units share a real sub-step inside different work. |
+| `unrelated` | The units only share generic library calls. |
+
+For each group limit, the script reports how many pairs of each verdict appear together in one reported group.
+More `same` and `related` pairs and fewer `unrelated` pairs is better.
+A large group can contain an `unrelated` pair and still be useful, so also judge the top groups as whole groups after a ranking change.

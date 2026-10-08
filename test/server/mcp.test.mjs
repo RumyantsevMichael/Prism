@@ -902,6 +902,10 @@ test("native semantic MCP discovery is passive and search exposes bounded struct
   assert.equal(search.annotations.readOnlyHint, false);
   assert.equal(search.annotations.openWorldHint, true);
   assert.equal(listed.find(tool => tool.name === "get_repository_intelligence_status").annotations.readOnlyHint, true);
+  const shared = listed.find(tool => tool.name === "find_shared_dependencies");
+  assert.equal(shared.inputSchema.properties.limit.maximum, 100);
+  assert.deepEqual(Object.keys(shared.inputSchema.properties.filters.properties), ["paths"]);
+  assert.equal(shared.annotations.destructiveHint, false);
   mcp.send({ id: 3, method: "tools/call", params: { name: "discover_repository_intelligence", arguments: { projectRoot: root } } });
   assert.equal((await mcp.next()).result.structuredContent.status, "unprepared");
   mcp.send({ id: 4, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: root, query: "network failures", filters: { paths: ["docs"], domains: ["documentation"] } } } });

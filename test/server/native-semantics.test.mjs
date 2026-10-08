@@ -6,7 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { NativeSemanticRuntime } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
-import { SemanticNativeRepositoryIntelligence, searchRepositoryConcepts, validateConceptSearch } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
+import { SemanticNativeRepositoryIntelligence, findSharedDependencies, searchRepositoryConcepts, validateConceptSearch, validateSharedDependencies } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
 import { openNativeRepositoryIntelligence } from "../../dist/server/repository-intelligence/native-repository-intelligence.mjs";
 import { CompositeRepositoryIntelligence } from "../../dist/server/repository-intelligence/composite-repository-intelligence.mjs";
 import { planRepositoryContext } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
@@ -32,6 +32,21 @@ test("discovery is passive and degraded lexical search retains filters and sourc
   assert.match(found.results[0].sourceHash, /^[a-f0-9]{64}$/);
   assert.equal(found.results[0].cosineSimilarity, null);
   assert.ok(found.diagnostics.some(item => item.code === "unsupported_runtime"));
+});
+test("shared dependency groups need the prepared index and report a degraded runtime without groups", async t => {
+  const { directory, root } = await fixture(t);
+  await writeFile(path.join(root, "a.mjs"), "export function a() { return 1; }\n");
+  const runtime = new NativeSemanticRuntime({ directory: path.join(directory, "cache"), manifestPath });
+  const found = await findSharedDependencies({ projectRoot: root }, { runtime });
+  assert.equal(found.status, "degraded");
+  assert.deepEqual(found.groups, []);
+  assert.equal(found.coverage, null);
+  assert.ok(found.diagnostics.some(item => item.code === "unsupported_runtime"));
+});
+test("shared dependency input limits, unknown fields, and path traversal fail before preparation", () => {
+  for (const input of [{ limit: 0 }, { limit: 101 }, { includeTests: "yes" }, { filters: { domains: ["code"] } }, { filters: { paths: ["../outside"] } }, { query: "x" }, { snapshotId: "x" }])
+    assert.throws(() => validateSharedDependencies({ projectRoot: "/tmp", ...input }), error => ["validation_failed", "invalid_path"].includes(error.code), JSON.stringify(input));
+  validateSharedDependencies({ projectRoot: "/tmp", limit: 100, includeTests: true, filters: { paths: ["src/server"] } });
 });
 test("search input limits, unknown fields, and path traversal fail before preparation", () => {
   for (const input of [{ query: "" }, { query: "x", limit: 51 }, { query: "x", limit: null }, { query: "x", limit: "10" }, { query: "x", filters: { domains: ["unknown"] } }, { query: "x", filters: { paths: ["../outside"] } }, { query: "x", filters: { surprise: [] } }, { query: "x", extra: true }]) assert.throws(() => validateConceptSearch(input));

@@ -86,6 +86,14 @@ test("dynamic calls and missing dependencies cannot claim complete structure", a
   const graph = await extractGraph(root, files, runtime);
   for (const file of files) assert.ok(graph.diagnostics.some(item => item.code === "incomplete_structure" && item.file === file.file), JSON.stringify(graph));
 });
+test("library calls without a target unit keep their names and calling unit", async t => {
+  const { root, files } = await fixture(t, { "a.js": "import fs from 'node:fs';\nexport function inspect(file) { const info = fs.lstatSync(file); return info.isSymbolicLink(); }\n" });
+  const graph = await extractGraph(root, files, runtime);
+  const inspect = graph.nodes.find(node => node.name === "inspect");
+  const names = graph.references.filter(reference => reference.source === inspect.id).map(reference => reference.name);
+  assert.ok(names.some(name => name.endsWith("lstatSync")), JSON.stringify(graph.references));
+  assert.ok(graph.references.every(reference => graph.nodes.some(node => node.id === reference.source) && ["calls", "instantiates"].includes(reference.kind)));
+});
 test('same-line Unicode declarations retain exact source spans and public provenance',async t=>{
   const content='const emoji = "🙂"; export function first() { return emoji; } export function second() { return 2; }\n';
   const {root,files}=await fixture(t,{'same.ts':content});

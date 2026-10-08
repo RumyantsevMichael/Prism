@@ -128,6 +128,7 @@ async function build(args, progress) {
     snapshot: args.snapshot,
     units,
     edges,
+    unresolvedReferences: graph.references,
     chunks,
     fileCoverage,
     diagnostics,

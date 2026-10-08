@@ -1,7 +1,8 @@
 // Generated from src/server/repository-intelligence/semantic-native-provider.mts by scripts/native-build/compile.mjs.
 import { openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
-import { domainFor } from "../../native-runtime/domains.mjs";
+import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
+import { isTestFile, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
 const domains = /* @__PURE__ */ new Set(["code", "instruction", "documentation", "configuration"]);
@@ -33,6 +34,21 @@ const NATIVE_INTELLIGENCE_TOOLS = [
         domains: { type: "array", maxItems: 50, items: { type: "string", enum: [...domains] } },
         paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes, such as server or server/mcp.mjs. Use forward slashes without trailing slashes, empty segments, dot segments, or colons.", items: { type: "string", minLength: 1, maxLength: 512 } },
         kinds: { type: "array", maxItems: 50, items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "find_shared_dependencies",
+    description: "Group functions and methods in different files that call the same rare set of operations, such as a repeated safety check, write protocol, or copied helper. Uses the same prepared index as search_repository_concepts. A shared dependency set identifies candidates for investigation and does not establish equivalent behavior.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" },
+      expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      includeTests: { type: "boolean", default: false, description: "Include test files, which often repeat setup code on purpose." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when at least two of its members are inside these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
@@ -208,10 +224,54 @@ async function searchRepositoryConcepts(input, options = {}) {
     results
   };
 }
+function validateSharedDependencies(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw semanticError("validation_failed", "Arguments must be an object.");
+  const input = value;
+  for (const key of Object.keys(input)) if (!["projectRoot", "filters", "includeTests", "expectedSnapshot", "snapshotId", "limit"].includes(key)) throw semanticError("validation_failed", `Unknown field: ${key}.`);
+  for (const key of ["snapshotId", "expectedSnapshot"]) if (input[key] !== void 0 && (typeof input[key] !== "string" || !/^[a-f\d]{64}$/.test(input[key]))) throw semanticError("validation_failed", `${key} must be a SHA-256 identity.`);
+  if (input.limit !== void 0 && (typeof input.limit !== "number" || !Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100)) throw semanticError("validation_failed", "limit must be from 1 through 100.");
+  if (input.includeTests !== void 0 && typeof input.includeTests !== "boolean") throw semanticError("validation_failed", "includeTests must be a boolean.");
+  if (input.filters !== void 0) {
+    const filters = input.filters;
+    if (!filters || typeof filters !== "object" || Array.isArray(filters) || Object.keys(filters).some((key) => key !== "paths")) throw semanticError("validation_failed", "filters accepts only paths.");
+    const paths = filters.paths;
+    if (paths !== void 0 && (!Array.isArray(paths) || paths.length > 50 || paths.some((value2) => typeof value2 !== "string" || !value2 || value2.length > 512))) throw semanticError("validation_failed", "Invalid filters.paths.");
+    if (Array.isArray(paths) && paths.some((value2) => value2.startsWith("/") || value2.includes("\\") || value2.includes(":") || value2.split("/").some((part) => ["", ".", ".."].includes(part)))) throw semanticError("invalid_path", "filters.paths must use project-relative paths such as 'server', without trailing slashes, empty segments, '.', '..', backslashes, or colons.");
+  }
+}
+async function findSharedDependencies(input, options = {}) {
+  validateSharedDependencies(input);
+  const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
+  const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
+  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, groups: [] };
+  const identity = { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot, snapshotId: input.snapshotId || null };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
+  const { index } = provider.prepared, files = (await provider.snapshot()).filesByPath, paths = input.filters?.paths || [];
+  const include = (unit) => (input.includeTests || !isTestFile(unit.file)) && !searchExclusion(unit.file, files.get(unit.file)?.content || "");
+  const inside = (file) => !paths.length || paths.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
+  const result = sharedDependencyGroups(index, { include, limit: 100 });
+  const groups = result.groups.filter((group) => group.members.filter((member) => inside(member.file)).length >= 2).slice(0, input.limit || 20);
+  await provider.verifySnapshot();
+  const diagnostics = [
+    ...index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a group can miss members." }],
+    ...result.coverage.unresolvedNames ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so groups use project calls only.", recovery: "Prepare the index again with the current native runtime." }],
+    ...provider.preparation.diagnostics
+  ];
+  return {
+    ...identity,
+    indexRevision: provider.prepared.revision,
+    coverage: result.coverage,
+    diagnostics: diagnostics.slice(0, 20),
+    diagnosticCount: diagnostics.length,
+    groups
+  };
+}
 export {
   NATIVE_INTELLIGENCE_TOOLS,
   SemanticNativeRepositoryIntelligence,
+  findSharedDependencies,
   prepareNativeProvider,
   searchRepositoryConcepts,
-  validateConceptSearch
+  validateConceptSearch,
+  validateSharedDependencies
 };

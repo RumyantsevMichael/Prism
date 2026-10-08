@@ -109,6 +109,34 @@ A `preparing` response is unfinished discovery, not an empty search result.
 Keep the original `snapshotId` through retries and edits so new code cannot appear as preexisting reuse evidence.
 Use `discover_repository_intelligence` for native runtime, model, index, and coverage status without starting downloads or preparation.
 
+### Find shared dependencies
+
+`find_shared_dependencies` groups functions and methods in different files that call the same rare set of operations.
+A group can show a copied helper, a repeated safety check, or a repeated write or lock protocol.
+Search finds units that look alike, and this tool finds units that work alike, without a query.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["src/server"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, and `expectedSnapshot` behavior as search.
+Each group lists its shared operations, with the number of units that use each operation, and its members.
+The `share` of a member is the part of its dependencies that the group covers.
+A share near 1 means that the member is mostly the shared step, and a low share means that the member does other work too.
+Operations match by name, so copies of one helper in different modules connect their callers.
+Core collection, string, and conversion operations do not count, and type references do not count.
+Test files are left out unless `includeTests` is true.
+Generated, vendored, and minified files are always left out.
+With `filters.paths`, a group is reported when at least two of its members are inside the paths.
+A function that only uses core operations has no dependency profile, so use search for small helpers.
+`coverage` gives the number of profiled units, and a `dependency_names_unavailable` diagnostic means that the index was prepared without library call names.
+A shared dependency set identifies candidates for investigation and does not establish equivalent behavior.
+
 For live-source searches and context planning, pass a returned `snapshot` as `expectedSnapshot` to bind the source fingerprint.
 This fingerprint differs from a retained evidence `snapshotId`.
 On `stale_snapshot` during live-source discovery, repeat the search against current source and reassess the candidates.

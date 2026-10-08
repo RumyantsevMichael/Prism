@@ -10,8 +10,8 @@ let sdk;
 async function extractGraph(mirror, files, runtimeDirectory, progress = () => {
 }) {
   const codeFiles = files.filter((file) => CODE_EXTENSIONS.has(path.extname(file.file).toLowerCase()));
-  if (!codeFiles.length) return { nodes: [], edges: [], diagnostics: [], files: [], parsedFiles: [] };
-  const diagnostics = [], nodes = [], edges = [];
+  if (!codeFiles.length) return { nodes: [], edges: [], references: [], diagnostics: [], files: [], parsedFiles: [] };
+  const diagnostics = [], nodes = [], edges = [], references = [];
   const failedFiles = /* @__PURE__ */ new Set();
   let graph = null, connection, indexedFiles = [];
   boundary.begin({ readRoots: [mirror, runtimeDirectory], writeRoots: [path.join(mirror, ".codegraph")] });
@@ -81,6 +81,8 @@ async function extractGraph(mirror, files, runtimeDirectory, progress = () => {
     for (const ref of queries.getUnresolvedReferences()) {
       const file = ref.filePath || nodes.find((node) => node.id === ref.fromNodeId)?.file;
       if (file && source.has(file)) unresolved.set(file, (unresolved.get(file) || 0) + 1);
+      if (ids.has(ref.fromNodeId) && ["calls", "instantiates"].includes(ref.referenceKind) && ref.referenceName)
+        references.push({ source: ref.fromNodeId, name: ref.referenceName, kind: ref.referenceKind });
     }
     for (const [file, count] of unresolved) diagnostics.push({ code: "incomplete_structure", file, count, message: "The graph has unresolved references in this file." });
   } catch (error) {
@@ -100,7 +102,7 @@ async function extractGraph(mirror, files, runtimeDirectory, progress = () => {
       message: "The graph requested files outside its snapshot, including suppressed access failures."
     });
   }
-  return { nodes, edges, diagnostics, files: indexedFiles.map((file) => file.path), parsedFiles: indexedFiles.filter((file) => !file.errors?.length && !failedFiles.has(file.path)).map((file) => file.path) };
+  return { nodes, edges, references, diagnostics, files: indexedFiles.map((file) => file.path), parsedFiles: indexedFiles.filter((file) => !file.errors?.length && !failedFiles.has(file.path)).map((file) => file.path) };
 }
 export {
   extractGraph

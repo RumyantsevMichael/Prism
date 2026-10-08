@@ -109,7 +109,7 @@ async function build(args: BuildArguments, progress: (value: Progress) => void):
     isCandidate: unit => !excluded.has(unit.file) && unit.kind !== "import", isStructured: file => Boolean(syntaxCoverage[file]) });
   if (chunks.length > 100000) throw Object.assign(new Error("The semantic index exceeds 100,000 fragments."), { code: "resource_limit" });
   const embeddingCounts = args.fragmentsOnly ? { reusedEmbeddings: 0, newEmbeddings: 0 } : await embedFragments(chunks, modelIdentity, args.previousEmbeddings || {}, embed, progress);
-  const index: UnitIndex = { schemaVersion: 1, chunkerVersion: CHUNKER_VERSION, modelIdentity, snapshot: args.snapshot, units, edges, chunks, fileCoverage, diagnostics,
+  const index: UnitIndex = { schemaVersion: 1, chunkerVersion: CHUNKER_VERSION, modelIdentity, snapshot: args.snapshot, units, edges, unresolvedReferences: graph.references, chunks, fileCoverage, diagnostics,
     syntaxCoverage, structureCounts: Object.fromEntries(groups.map(group => [group.units[0].file, group.counts])),
     tokenCounts: Object.fromEntries(files.map(file => [file.file, tokenizer.encode(file.content, { add_special_tokens: false }).length])),
     counts: { files: files.length, units: units.length, fragments: chunks.length, searchExcludedFiles: excluded.size, ...embeddingCounts },
