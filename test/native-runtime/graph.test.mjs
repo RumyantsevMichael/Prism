@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { fragmentConcept } from "../../dist/native-runtime/fragments.mjs";
+import { fragmentUnit } from "../../dist/native-runtime/fragments.mjs";
 Object.assign(process.env, { PRISM_EMBEDDED: "1", CODEGRAPH_NO_STORE_WORKER: "1", CODEGRAPH_NO_PARALLEL_RESOLVE: "1", CODEGRAPH_NO_WAL_DEFER: "1", CODEGRAPH_NO_FAST_INIT: "1", CODEGRAPH_KERNEL: "0", NODE_DISABLE_COMPILE_CACHE: "1" });
 const { extractGraph } = await import("../../dist/native-runtime/graph.mjs");
 const runtime = fileURLToPath(new URL("../../dist/native-runtime/", import.meta.url));
@@ -95,11 +95,11 @@ test('same-line Unicode declarations retain exact source spans and public proven
   assert.match(content.slice(first.span.start,first.span.end),/^function first\(\) \{ return emoji; \}$/);
   assert.match(content.slice(second.span.start,second.span.end),/^function second\(\) \{ return 2; \}$/);
   assert.equal(first.isExported,true);assert.equal(second.isExported,true);
-  for (const concept of [first, second]) {
-    const pieces = fragmentConcept(concept, files[0], text => text.length);
+  for (const unit of [first, second]) {
+    const pieces = fragmentUnit(unit, files[0], text => text.length);
     assert.equal(pieces.length, 1);
-    assert.equal(pieces[0].sourceStart, concept.span.start);
-    assert.equal(pieces[0].sourceEnd, concept.span.end);
-    assert.equal(pieces[0].text.slice(pieces[0].prefixLength), content.slice(concept.span.start, concept.span.end));
+    assert.equal(pieces[0].sourceStart, unit.span.start);
+    assert.equal(pieces[0].sourceEnd, unit.span.end);
+    assert.equal(pieces[0].text.slice(pieces[0].prefixLength), content.slice(unit.span.start, unit.span.end));
   }
 });

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractTextConcepts } from "../../dist/native-runtime/concepts.mjs";
-import { assignContainers, planFragments, fragmentConcept } from "../../dist/native-runtime/fragments.mjs";
+import { extractTextUnits } from "../../dist/native-runtime/units.mjs";
+import { assignContainers, planFragments, fragmentUnit } from "../../dist/native-runtime/fragments.mjs";
 
 const count = text => text.length;
 const plan = (units, files, limit = 512, isStructured = () => true) => planFragments(units, new Map(files.map(file => [file.file, file])), { countTokens: count, limit, isCandidate: () => true, isStructured });
@@ -24,7 +24,7 @@ const store = `export class Store {
 }
 `;
 
-test("containers come from the smallest containing concept in the same file", () => {
+test("containers come from the smallest containing unit in the same file", () => {
   const file = { file: "src/store.mjs", content: store, hash: "h" };
   const units = code(file.file, store, [["class", "Store", store.slice(7, -1)], ["method", "put", "put(record) {\n    return write(record);\n  }"], ["method", "link", "link(id) {\n    return pointer(id);\n  }"]]);
   // The worker links every symbol to its file. Span containment still finds the class.
@@ -33,7 +33,7 @@ test("containers come from the smallest containing concept in the same file", ()
   assert.equal(units[2].containerId, units[1].id);
   assert.equal(units[3].containerId, units[1].id);
   const markdown = { file: "guide.md", content: "# Guide\n\n## Search\n\nUse the index.\n", hash: "h" };
-  const group = extractTextConcepts(markdown);
+  const group = extractTextUnits(markdown);
   assignContainers(group.units, group.edges, new Map([[markdown.file, markdown]]));
   const [root, guide, search, paragraph] = group.units;
   assert.deepEqual([guide.containerId, search.containerId, paragraph.containerId], [root.id, guide.id, search.id]);
@@ -44,16 +44,16 @@ test("a container is one outline, and its members name their nearest container",
   const units = code(file.file, store, [["class", "Store", store.slice(7, -1)], ["method", "put", "put(record) {\n    return write(record);\n  }"], ["method", "link", "link(id) {\n    return pointer(id);\n  }"]]);
   assignContainers(units, [], new Map([[file.file, file]]));
   const fragments = plan(units, [file]);
-  const byConcept = id => fragments.filter(fragment => fragment.parentId === id);
-  const [outline] = byConcept(units[1].id);
+  const byUnit = id => fragments.filter(fragment => fragment.parentId === id);
+  const [outline] = byUnit(units[1].id);
   assert.equal(outline.role, "outline");
   assert.equal(outline.embeddingText, "class: Store\nclass Store {\n  put(record) {\n  link(id) {\n");
   assert.equal(outline.excerpt, file.content.slice(units[1].span.start, units[1].span.end));
-  const [put] = byConcept(units[2].id);
+  const [put] = byUnit(units[2].id);
   assert.equal(put.role, "whole");
   assert.equal(put.embeddingText, "method: Store.put\nput(record) {\n    return write(record);\n  }");
   assert.equal(put.context, "Store store");
-  // No source fragment repeats the source of a smaller concept.
+  // No source fragment repeats the source of a smaller unit.
   const sources = fragments.filter(fragment => fragment.role !== "outline");
   for (const fragment of sources) for (const other of sources) if (other !== fragment)
     assert.ok(other.sourceEnd <= fragment.sourceStart || other.sourceStart >= fragment.sourceEnd, `${fragment.id} overlaps ${other.id}`);
@@ -70,14 +70,14 @@ test("a file without complete structure keeps its full text", () => {
 test("tiny data leaves appear only in their parent outline, unless the outline omits them", () => {
   const content = JSON.stringify({ server: { port: 8080, host: "localhost" } }, null, 2);
   const file = { file: "config.json", content, hash: "h" };
-  const group = extractTextConcepts(file);
+  const group = extractTextUnits(file);
   assignContainers(group.units, group.edges, new Map([[file.file, file]]));
   const fragments = plan(group.units, [file]);
   // The file has one child, so the child outline represents the file.
   assert.deepEqual(fragments.map(fragment => fragment.name), ["server"]);
   assert.match(fragments.find(fragment => fragment.name === "server").embeddingText, /"port": 8080/);
   const wide = { file: "wide.json", content: JSON.stringify(Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`k${i}`, i])), null, 2), hash: "h" };
-  const keys = extractTextConcepts(wide);
+  const keys = extractTextUnits(wide);
   assignContainers(keys.units, keys.edges, new Map([[wide.file, wide]]));
   const limited = plan(keys.units, [wide], 120);
   const outline = limited.find(fragment => fragment.kind === "file");
@@ -109,8 +109,8 @@ test("long code splits at statement boundaries into parts of similar size, with 
 test("a part line longer than the budget still splits at tokenizer boundaries", () => {
   const content = "x ".repeat(400);
   const file = { file: "notes.md", content, hash: "h" };
-  const concept = { id: "p", file: file.file, kind: "paragraph", name: "p", range: { startLine: 1, endLine: 1 }, span: { start: 0, end: content.length } };
-  const parts = fragmentConcept(concept, file, count, 128);
+  const unit = { id: "p", file: file.file, kind: "paragraph", name: "p", range: { startLine: 1, endLine: 1 }, span: { start: 0, end: content.length } };
+  const parts = fragmentUnit(unit, file, count, 128);
   assert.equal(parts.map(part => content.slice(part.sourceStart, part.sourceEnd)).join(""), content);
   assert.ok(parts.every(part => part.text.length <= 128));
 });

@@ -151,7 +151,7 @@
   "expect": [
    {
     "file": "src/native-runtime/fragments.mts",
-    "name": "fragmentConcept"
+    "name": "fragmentUnit"
    },
    {
     "file": "src/native-runtime/fragments.mts",
@@ -371,7 +371,7 @@
   "query": "bgeSourceBoundaries tokenizer",
   "expect": [
    {
-    "file": "src/native-runtime/concepts.mts",
+    "file": "src/native-runtime/units.mts",
     "name": "bgeSourceBoundaries"
    },
    {
@@ -445,7 +445,7 @@
     "name": "sha256"
    },
    {
-    "file": "src/native-runtime/concepts.mts",
+    "file": "src/native-runtime/units.mts",
     "name": "hash",
     "kind": "function"
    },
@@ -1324,7 +1324,7 @@
     "name": "sha"
    },
    {
-    "file": "src/native-runtime/concepts.mts",
+    "file": "src/native-runtime/units.mts",
     "name": "hash",
     "kind": "function"
    },
@@ -1382,7 +1382,7 @@
     "name": "sha"
    },
    {
-    "file": "src/native-runtime/concepts.mts",
+    "file": "src/native-runtime/units.mts",
     "name": "hash"
    },
    {

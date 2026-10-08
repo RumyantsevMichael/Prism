@@ -1,6 +1,6 @@
 // Generated from src/native-runtime/embeddings.mts by scripts/native-build/compile.mjs.
 import { createHash } from "node:crypto";
-import { CHUNKER_VERSION } from "./concepts.mjs";
+import { CHUNKER_VERSION } from "./units.mjs";
 const validVector = (value) => Array.isArray(value) && value.length === 384 && value.every(Number.isFinite);
 async function embedFragments(chunks, modelIdentity, previous, embed, progress) {
   const groups = /* @__PURE__ */ new Map();

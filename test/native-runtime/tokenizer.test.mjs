@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(new URL("../../dist/native-runtime/worker.mjs", import.meta.url));
 const { Tokenizer } = require("@huggingface/tokenizers");
-import { bgeSourceBoundaries } from "../../dist/native-runtime/concepts.mjs";
-import { fragmentConcept } from "../../dist/native-runtime/fragments.mjs";
+import { bgeSourceBoundaries } from "../../dist/native-runtime/units.mjs";
+import { fragmentUnit } from "../../dist/native-runtime/fragments.mjs";
 
 const configuration = {
   added_tokens: [{ id: 1, content: "[MASK]", single_word: false, lstrip: false, rstrip: false, normalized: false, special: true }],
@@ -21,8 +21,8 @@ const boundaries = bgeSourceBoundaries(tokenizer, configuration);
 for (const source of ["hello.world();", "café\r\nworld", "中文hello", "[MASK]hello", "a".repeat(100), "a".repeat(101), "ab\vcd ab\fcd ab\uFEFFcd", "Ελλάδα🙂 hello"]) {
   test(`token boundaries preserve normalized tokens and raw source: ${JSON.stringify(source.slice(0, 24))}`, () => {
     const content = (source + " ").repeat(30), file = { file: "x.md", content, hash: "h" };
-    const concept = { id: "x", file: "x.md", kind: "paragraph", name: "notes", range: { startLine: 1, endLine: content.split("\n").length } };
-    const pieces = fragmentConcept(concept, file, text => ids(text).length + 2, 128, boundaries);
+    const unit = { id: "x", file: "x.md", kind: "paragraph", name: "notes", range: { startLine: 1, endLine: content.split("\n").length } };
+    const pieces = fragmentUnit(unit, file, text => ids(text).length + 2, 128, boundaries);
     assert.ok(pieces.every(piece => ids(piece.text).length + 2 <= 128));
     const raw = pieces.map(piece => content.slice(piece.sourceStart, piece.sourceEnd));
     assert.equal(raw.join(""), content);

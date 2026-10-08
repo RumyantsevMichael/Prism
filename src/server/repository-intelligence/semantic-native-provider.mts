@@ -4,13 +4,13 @@ import { domainFor } from "../../native-runtime/domains.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
 import type { SearchReceipt } from "../conservation/conservation-types.mjs";
-import type { Concept, Domain, NativeSource, Neighbor, Preparation, PreparedIndex, RetrievalEvidence, SearchFilters, SearchHints, SearchHit, SearchResult, SemanticRuntime, SourceRange, StructuralEvidence } from "./repository-concept-types.mjs";
+import type { SourceUnit, Domain, NativeSource, Neighbor, Preparation, PreparedIndex, RetrievalEvidence, SearchFilters, SearchHints, SearchHit, SearchResult, SemanticRuntime, SourceRange, StructuralEvidence } from "./repository-unit-types.mjs";
 
 interface ConceptSearchInput { projectRoot: string; query: string; filters?: SearchFilters; expectedSnapshot?: string; snapshotId?: string; limit?: number }
 interface ProviderOptions { source?: Record<string, unknown>; nativeSource?: NativeSource; runtime?: SemanticRuntime; expectedSnapshot?: string; waitMs?: number }
 
 const domains = new Set(["code", "instruction", "documentation", "configuration"]);
-const exact = (node: Concept, value: string) => [node.name, node.qualifiedName, node.selector].includes(value);
+const exact = (node: SourceUnit, value: string) => [node.name, node.qualifiedName, node.selector].includes(value);
 const pinned = (hit: SearchHit) => hit.reasons?.some(reason => ["explicit-design-reference", "expected-modification-target", "exact-symbol"].includes(reason));
 
 export const NATIVE_INTELLIGENCE_TOOLS = [
@@ -105,7 +105,7 @@ export class SemanticNativeRepositoryIntelligence {
       diagnostics: [...lexical.diagnostics.filter(item => !["semantic_unavailable", "structural_unavailable"].includes(item.code)), ...index.diagnostics],
       retrievalPlan: { fusion: "reciprocal-rank-fusion", offset: 60, weights: { dense: 1, lexical: 0.25, identifierLexical: 0.5 }, modelIdentity: this.prepared.modelIdentity, indexRevision: this.prepared.revision, snapshot: index.snapshot, semanticCandidatesResolveHints: false } };
   }
-  async neighbors(nodes: Concept[], options: { maxNodes?: number } = {}): Promise<StructuralEvidence> {
+  async neighbors(nodes: SourceUnit[], options: { maxNodes?: number } = {}): Promise<StructuralEvidence> {
     if (!this.prepared) return this.source.neighbors();
     const { index } = this.prepared, byId = new Map(index.units.map(node => [node.id, node]));
     const seeds = new Set(nodes.flatMap(node => byId.has(node.id) ? [node.id] : index.units.filter(item => item.file === node.file && item.range.startLine <= node.range.endLine && item.range.endLine >= node.range.startLine).map(item => item.id)));

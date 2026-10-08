@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { parseTree, getNodePath, getNodeValue } from "jsonc-parser";
 import { parseDocument, isMap, isSeq, isAlias, LineCounter } from "yaml";
-import type { Concept, Diagnostic, Relationship } from "../server/repository-intelligence/repository-concept-types.mjs";
+import type { SourceUnit, Diagnostic, Relationship } from "../server/repository-intelligence/repository-unit-types.mjs";
 import { CODE_EXTENSIONS, domainFor } from "./domains.mjs";
 export { CODE_EXTENSIONS, domainFor } from "./domains.mjs";
 import type { Node as JsonNode, ParseError } from "jsonc-parser";
@@ -12,7 +12,7 @@ import type { Tokenizer } from "@huggingface/tokenizers";
 
 type InputFile = { file: string; content: string; hash: string };
 interface Link { from: string; url?: string; identifier?: string }
-interface Group { units: Concept[]; edges: Relationship[]; links: Link[]; diagnostics: Diagnostic[]; supported: boolean; counts: Record<string, number> }
+interface Group { units: SourceUnit[]; edges: Relationship[]; links: Link[]; diagnostics: Diagnostic[]; supported: boolean; counts: Record<string, number> }
 
 export { CHUNKER_VERSION } from "./versions.mjs";
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -20,7 +20,7 @@ const pointer = (parts: (string | number)[]) => "/" + parts.map(part => String(p
 const lineAt = (text: string, offset: number) => text.slice(0, offset).split("\n").length;
 const slug = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "").trim().replace(/\s+/g, "-");
 
-function unit(file: InputFile, kind: string, name: string, startLine: number, endLine: number, selector = name, exactSpan?: { start: number; end: number }): Concept {
+function unit(file: InputFile, kind: string, name: string, startLine: number, endLine: number, selector = name, exactSpan?: { start: number; end: number }): SourceUnit {
   endLine = Math.min(endLine, Math.max(1, (file.content.match(/[^\n]*\n|[^\n]+$/g) || []).length));
   const id = hash(`${file.file}\0${kind}\0${selector}\0${startLine}\0${endLine}`);
   const lines = file.content.match(/[^\n]*\n|[^\n]+$/g) || [""];
@@ -29,12 +29,12 @@ function unit(file: InputFile, kind: string, name: string, startLine: number, en
     span, contentHash: hash(file.content.slice(span.start, span.end)), rangeComplete: true };
 }
 
-export function extractTextConcepts(file: InputFile): Group {
-  const units: Concept[] = [], edges: Relationship[] = [], links: Link[] = [], diagnostics: Diagnostic[] = [];
+export function extractTextUnits(file: InputFile): Group {
+  const units: SourceUnit[] = [], edges: Relationship[] = [], links: Link[] = [], diagnostics: Diagnostic[] = [];
   const text = file.content;
   const root = unit(file, "file", file.file, 1, Math.max(1, text.split("\n").length), "");
   units.push(root);
-  const add = (node: Concept, parent = root) => { units.push(node); edges.push({ source: parent.id, target: node.id, kind: "contains", provenance: "parser" }); return node; };
+  const add = (node: SourceUnit, parent = root) => { units.push(node); edges.push({ source: parent.id, target: node.id, kind: "contains", provenance: "parser" }); return node; };
   const extension = path.extname(file.file).toLowerCase();
   let supported = false;
   const counts: Record<string, number> = { sections: 0, paragraphs: 0, listItems: 0, links: 0, configurationKeys: 0, configurationReferences: 0 };

@@ -1,9 +1,9 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { CODE_EXTENSIONS } from "./concepts.mjs";
+import { CODE_EXTENSIONS } from "./units.mjs";
 import { installFileBoundary } from "./fs-boundary.mjs";
-import type { Concept, Diagnostic, Progress, Relationship, SourceFile } from "../server/repository-intelligence/repository-concept-types.mjs";
+import type { SourceUnit, Diagnostic, Progress, Relationship, SourceFile } from "../server/repository-intelligence/repository-unit-types.mjs";
 import type { CodeGraph, DatabaseConnection, FileRecord } from "@colbymchenry/codegraph";
 
 const boundary = installFileBoundary();
@@ -13,7 +13,7 @@ let sdk: typeof import("@colbymchenry/codegraph") | undefined;
 export async function extractGraph(mirror: string, files: Pick<SourceFile, "file" | "content" | "hash">[], runtimeDirectory: string, progress: (value: Progress) => void = () => {}) {
   const codeFiles = files.filter(file => CODE_EXTENSIONS.has(path.extname(file.file).toLowerCase()));
   if (!codeFiles.length) return { nodes: [], edges: [], diagnostics: [], files: [], parsedFiles: [] };
-  const diagnostics: Diagnostic[] = [], nodes: Concept[] = [], edges: Relationship[] = [];
+  const diagnostics: Diagnostic[] = [], nodes: SourceUnit[] = [], edges: Relationship[] = [];
   const failedFiles = new Set<string>();
   let graph: CodeGraph | null = null, connection: DatabaseConnection | undefined, indexedFiles: FileRecord[] = [];
   boundary.begin({ readRoots: [mirror, runtimeDirectory], writeRoots: [path.join(mirror, ".codegraph")] });

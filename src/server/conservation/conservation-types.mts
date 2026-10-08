@@ -1,4 +1,4 @@
-import type { Concept, Diagnostic } from "../repository-intelligence/repository-concept-types.mjs";
+import type { SourceUnit, Diagnostic } from "../repository-intelligence/repository-unit-types.mjs";
 
 export type Selector = string | { type: "symbol" | "heading" | "text" | "json-pointer" | "yaml-key"; value: string }
   | { type: "span"; start: number; end: number; sourceHash: string };
@@ -12,7 +12,7 @@ export interface SearchReceipt {
   kind: "search"; schemaVersion: 1; project: string; snapshotId: string | null; snapshot: string; query: string;
   filters: unknown; limit: number; status: string; capabilities: Record<string, boolean>; modelIdentity: string | null;
   indexRevision: string | null; versions: Record<string, string>; coverage: unknown; diagnostics: Diagnostic[];
-  candidates: (Concept & { excerpt: string; cosineSimilarity: number | null; lexicalScore: number | null; fusedRank: number })[];
+  candidates: (SourceUnit & { excerpt: string; cosineSimilarity: number | null; lexicalScore: number | null; fusedRank: number })[];
 }
 export interface GrowthJustification { dimensions: string[]; conceptIds: string[]; requirements: Reference[]; reason: string }
 export interface AdditionEvidence {
@@ -40,4 +40,4 @@ export interface ComparisonEvidence {
   observations: Observation[]; measurements: Measurement[]; growth: { id: string; dimension: string; increase: number; threshold: number }[];
   units: { before: ResolvedUnit[]; after: ResolvedUnit[] }; diagnostics: Diagnostic[];
 }
-export type Evidence = SnapshotEvidence | SearchReceipt | ComparisonEvidence | { kind: "migration"; schemaVersion: 1; project: string; artifactPath: string; revision: string; lines: string[] } | { kind: "analysis"; schemaVersion: 1; project: string; snapshotId: string; units: Concept[]; fileCoverage: Record<string, boolean>; diagnostics: Diagnostic[]; tokenCounts: Record<string, number>; structureCounts: Record<string, Record<string, number>>; versions: Record<string, string> };
+export type Evidence = SnapshotEvidence | SearchReceipt | ComparisonEvidence | { kind: "migration"; schemaVersion: 1; project: string; artifactPath: string; revision: string; lines: string[] } | { kind: "analysis"; schemaVersion: 1; project: string; snapshotId: string; units: SourceUnit[]; fileCoverage: Record<string, boolean>; diagnostics: Diagnostic[]; tokenCounts: Record<string, number>; structureCounts: Record<string, Record<string, number>>; versions: Record<string, string> };

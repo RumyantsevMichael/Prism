@@ -7,7 +7,7 @@ import { privateDirectory, regularBytes, semanticError } from "../repository-int
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { resolveArtifactPath } from "./concept-delta.mjs";
 import type { Evidence, SnapshotEvidence, InventoryEntry } from "./conservation-types.mjs";
-import type { NativeSource, SourceSnapshot, SourceFile, Diagnostic } from "../repository-intelligence/repository-concept-types.mjs";
+import type { NativeSource, SourceSnapshot, SourceFile, Diagnostic } from "../repository-intelligence/repository-unit-types.mjs";
 
 export const digest = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 export const conservationError = (code: string, message: string, details: Record<string, unknown> = {}) => Object.assign(semanticError(code, message), details);

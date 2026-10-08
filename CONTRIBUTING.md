@@ -21,7 +21,7 @@ src/                 # editable server, native helper, and hook sources
     workflow/        # coordination state, artifact storage, decision history
     review/          # review server, review ledger, browser assets in public/
     conservation/    # concept delta and conservation analysis
-    repository-intelligence/  # providers, native semantic runtime, concept types
+    repository-intelligence/  # providers, native semantic runtime, unit types
     session/         # host adapters, session facts, capacity, and tracing
   native-runtime/    # native helper packaged into runtime archives
   hooks/             # session hook entry points
@@ -96,7 +96,7 @@ To validate `plugin.json` in isolation, copy the plugin into a scratch directory
 
 The new native subsystem uses strict TypeScript in `.mts` files.
 The existing server remains JavaScript.
-Shared concept and worker message types live in `src/server/repository-intelligence/repository-concept-types.mts`.
+Shared source unit, index, and worker message types live in `src/server/repository-intelligence/repository-unit-types.mts`.
 Edit runtime sources under `src/`, then regenerate the complete runtime tree under `dist/`.
 The build compiles TypeScript and copies handwritten JavaScript, browser assets, and runtime registries.
 Commit both the edited sources and generated output.

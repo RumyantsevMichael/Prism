@@ -9,7 +9,7 @@ import { mkdir, lstat, realpath, readFile, open, rename, rm, chmod } from "node:
 import { fileURLToPath } from "node:url";
 import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import type { NativeSource, SourceSnapshot, ConceptIndex, PreparedIndex, Preparation, Progress, Diagnostic, WorkerMethods, SearchFilters, SemanticRuntime, Counts } from "./repository-concept-types.mjs";
+import type { NativeSource, SourceSnapshot, UnitIndex, PreparedIndex, Preparation, Progress, Diagnostic, WorkerMethods, SearchFilters, SemanticRuntime, Counts } from "./repository-unit-types.mjs";
 
 interface Asset { url: string; bytes: number; sha256: string; unpackedBytes?: number }
 interface AssetManifest { schemaVersion: 1; identity: string; assetVersion: string; bundles: Record<string, Asset>; model: { id: string; revision: string; files: (Omit<Asset, "url"> & { path: string; url?: string })[] } }
@@ -27,7 +27,7 @@ const boundedWait = (promise: Promise<void>, ms: number) => new Promise<void>((r
   promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
 });
 const inside = (root: string, file: string) => { const relative = path.relative(root, file); return !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`); };
-const indexMetadata = ({ chunks: _chunks, ...metadata }: ConceptIndex) => metadata;
+const indexMetadata = ({ chunks: _chunks, ...metadata }: UnitIndex) => metadata;
 const stableFailure = (error: Error & { code?: string }) => ["invalid_path", "lock_timeout", "stale_snapshot", "unsupported_runtime", "corrupt_asset", "resource_limit", "validation_failed"].includes(error.code || "") ? error.code! : error.code === "snapshot-changed" ? "stale_snapshot" : "preparation_failed";
 
 export async function privateDirectory(directory: string): Promise<string> {
@@ -264,14 +264,14 @@ export class NativeSemanticRuntime implements SemanticRuntime {
     const assets = await this.assets(value => { job.progress = value; });
     const directory = await privateDirectory(location.directory);
     return withArtifactLock(directory, () => withFileLock(directory, async () => {
-      let previous: ConceptIndex | undefined;
+      let previous: UnitIndex | undefined;
       try {
         const pointer = await readJson<IndexPointer>(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`))
           .catch(error => { if (error.code !== "ENOENT") throw error; return readJson<IndexPointer>(path.join(directory, "current.json")); });
         if (!pointer.revision || !/^[a-f\d]{64}$/.test(pointer.revision)) throw semanticError("corrupt_asset", "The index pointer has an invalid revision.");
         const indexPath = path.join(directory, `${pointer.revision}.json`), bytes = await regularBytes(indexPath);
-        if (sha(bytes) !== pointer.revision) throw semanticError("corrupt_asset", "The concept index failed its integrity check.");
-        previous = JSON.parse(bytes.toString("utf8")) as ConceptIndex;
+        if (sha(bytes) !== pointer.revision) throw semanticError("corrupt_asset", "The semantic index failed its integrity check.");
+        previous = JSON.parse(bytes.toString("utf8")) as UnitIndex;
         if (previous.snapshot === snapshot.sourceFingerprint && previous.assetIdentity === assets.assetIdentity) {
           await source.verifySnapshot(); job.revision = pointer.revision; job.coverage = pointer.coverage; job.diagnostics = previous.diagnostics;
           return { ...assets, index: indexMetadata(previous), indexPath, revision: pointer.revision };
@@ -300,7 +300,7 @@ export class NativeSemanticRuntime implements SemanticRuntime {
         index.assetIdentity = assets.assetIdentity;
         if (!snapshot.complete) { index.structureComplete = false; index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." }); }
         const contents = JSON.stringify(index), revision = sha(contents), indexPath = path.join(directory, `${revision}.json`);
-        if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The concept index exceeds 512 MiB.");
+        if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The semantic index exceeds 512 MiB.");
         await writeAtomically(indexPath, contents, { mode: 0o600 });
         const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
         const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics });

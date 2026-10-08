@@ -1,4 +1,4 @@
-// Generated from src/native-runtime/concepts.mts by scripts/native-build/compile.mjs.
+// Generated from src/native-runtime/units.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { fromMarkdown } from "mdast-util-from-markdown";
@@ -30,7 +30,7 @@ function unit(file, kind, name, startLine, endLine, selector = name, exactSpan) 
     rangeComplete: true
   };
 }
-function extractTextConcepts(file) {
+function extractTextUnits(file) {
   const units = [], edges = [], links = [], diagnostics = [];
   const text = file.content;
   const root = unit(file, "file", file.file, 1, Math.max(1, text.split("\n").length), "");
@@ -202,6 +202,6 @@ export {
   CODE_EXTENSIONS2 as CODE_EXTENSIONS,
   bgeSourceBoundaries,
   domainFor2 as domainFor,
-  extractTextConcepts,
+  extractTextUnits,
   resolveTextLinks
 };

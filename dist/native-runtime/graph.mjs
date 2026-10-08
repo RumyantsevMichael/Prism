@@ -2,7 +2,7 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { CODE_EXTENSIONS } from "./concepts.mjs";
+import { CODE_EXTENSIONS } from "./units.mjs";
 import { installFileBoundary } from "./fs-boundary.mjs";
 const boundary = installFileBoundary();
 const require2 = createRequire(import.meta.url);

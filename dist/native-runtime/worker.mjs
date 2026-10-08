@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { create, insertMultiple, search } from "@orama/orama";
 import { AutoTokenizer, AutoModel, env } from "@huggingface/transformers";
 import { Tokenizer } from "@huggingface/tokenizers";
-import { CHUNKER_VERSION, CODE_EXTENSIONS, extractTextConcepts, resolveTextLinks, bgeSourceBoundaries } from "./concepts.mjs";
+import { CHUNKER_VERSION, CODE_EXTENSIONS, extractTextUnits, resolveTextLinks, bgeSourceBoundaries } from "./units.mjs";
 import { assignContainers, planFragments } from "./fragments.mjs";
 import { searchExclusion } from "./domains.mjs";
 import { extractGraph } from "./graph.mjs";
@@ -87,7 +87,7 @@ async function build(args, progress) {
     files.push({ ...meta, content: text });
   }
   const graph = await extractGraph(args.mirror, files, runtimeDirectory, progress);
-  const groups = files.map(extractTextConcepts);
+  const groups = files.map(extractTextUnits);
   resolveTextLinks(groups);
   const units = [...graph.nodes];
   const edges = [...graph.edges];
@@ -116,10 +116,10 @@ async function build(args, progress) {
     countTokens,
     boundaries,
     limit: 512,
-    isCandidate: (concept) => !excluded.has(concept.file) && concept.kind !== "import",
+    isCandidate: (unit) => !excluded.has(unit.file) && unit.kind !== "import",
     isStructured: (file) => Boolean(syntaxCoverage[file])
   });
-  if (chunks.length > 1e5) throw Object.assign(new Error("The concept index exceeds 100,000 fragments."), { code: "resource_limit" });
+  if (chunks.length > 1e5) throw Object.assign(new Error("The semantic index exceeds 100,000 fragments."), { code: "resource_limit" });
   const embeddingCounts = args.fragmentsOnly ? { reusedEmbeddings: 0, newEmbeddings: 0 } : await embedFragments(chunks, modelIdentity, args.previousEmbeddings || {}, embed, progress);
   const index = {
     schemaVersion: 1,
@@ -134,7 +134,7 @@ async function build(args, progress) {
     syntaxCoverage,
     structureCounts: Object.fromEntries(groups.map((group) => [group.units[0].file, group.counts])),
     tokenCounts: Object.fromEntries(files.map((file) => [file.file, tokenizer.encode(file.content, { add_special_tokens: false }).length])),
-    counts: { files: files.length, concepts: units.length, fragments: chunks.length, searchExcludedFiles: excluded.size, ...embeddingCounts },
+    counts: { files: files.length, units: units.length, fragments: chunks.length, searchExcludedFiles: excluded.size, ...embeddingCounts },
     structureComplete: !diagnostics.some((item) => !item.file),
     resources: { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 }
   };
@@ -145,7 +145,7 @@ async function query(args) {
   await loadModel(args.modelDirectory, args.modelIdentity);
   if (!current || current.index.snapshot !== args.snapshot || current.index.modelIdentity !== args.modelIdentity) {
     const index = JSON.parse(await readFile(args.indexPath, "utf8"));
-    if (index.snapshot !== args.snapshot || index.modelIdentity !== args.modelIdentity) throw Object.assign(new Error("The concept index is stale."), { code: "stale_snapshot" });
+    if (index.snapshot !== args.snapshot || index.modelIdentity !== args.modelIdentity) throw Object.assign(new Error("The semantic index is stale."), { code: "stale_snapshot" });
     current = { index, db: await database(index) };
   }
   const prefix = "Represent this sentence for searching relevant passages: ";
@@ -213,8 +213,8 @@ async function query(args) {
     return names;
   };
   return selected.map((score, index) => {
-    const { text, embeddingText, embedding, embeddingKey, prefixLength, context, excerpt, ...concept } = chunks.get(score.id);
-    return { ...concept, ...score, ancestry: ancestry(concept.parentId), fusedRank: index + 1, excerpt: excerpt ?? text.slice(prefixLength, prefixLength + 600) };
+    const { text, embeddingText, embedding, embeddingKey, prefixLength, context, excerpt, ...unit } = chunks.get(score.id);
+    return { ...unit, ...score, ancestry: ancestry(unit.parentId), fusedRank: index + 1, excerpt: excerpt ?? text.slice(prefixLength, prefixLength + 600) };
   });
 }
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });

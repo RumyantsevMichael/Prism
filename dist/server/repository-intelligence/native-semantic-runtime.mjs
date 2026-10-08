@@ -342,7 +342,7 @@ class NativeSemanticRuntime {
         });
         if (!pointer.revision || !/^[a-f\d]{64}$/.test(pointer.revision)) throw semanticError("corrupt_asset", "The index pointer has an invalid revision.");
         const indexPath = path.join(directory, `${pointer.revision}.json`), bytes = await regularBytes(indexPath);
-        if (sha(bytes) !== pointer.revision) throw semanticError("corrupt_asset", "The concept index failed its integrity check.");
+        if (sha(bytes) !== pointer.revision) throw semanticError("corrupt_asset", "The semantic index failed its integrity check.");
         previous = JSON.parse(bytes.toString("utf8"));
         if (previous.snapshot === snapshot.sourceFingerprint && previous.assetIdentity === assets.assetIdentity) {
           await source.verifySnapshot();
@@ -390,7 +390,7 @@ class NativeSemanticRuntime {
           index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." });
         }
         const contents = JSON.stringify(index), revision = sha(contents), indexPath = path.join(directory, `${revision}.json`);
-        if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The concept index exceeds 512 MiB.");
+        if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The semantic index exceeds 512 MiB.");
         await writeAtomically(indexPath, contents, { mode: 384 });
         const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
         const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics });

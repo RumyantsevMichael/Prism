@@ -16,11 +16,11 @@ const shorten = (line) => {
   const text = line.trim();
   return text.length <= LINE_CHARACTERS ? text : text.slice(0, text.lastIndexOf(" ", LINE_CHARACTERS) > 40 ? text.lastIndexOf(" ", LINE_CHARACTERS) : LINE_CHARACTERS) + " \u2026";
 };
-function spanOf(concept, file) {
+function spanOf(unit, file) {
   const lines = file.content.match(/[^\n]*\n|[^\n]+$/g) || [""];
-  const start = Math.min(concept.range.startLine, lines.length), end = Math.min(concept.range.endLine, lines.length);
-  const span = concept.span || { start: lines.slice(0, start - 1).join("").length, end: lines.slice(0, end).join("").length };
-  if (!Number.isSafeInteger(span.start) || !Number.isSafeInteger(span.end) || span.start < 0 || span.end < span.start || span.end > file.content.length) throw new Error("The concept span is outside its source.");
+  const start = Math.min(unit.range.startLine, lines.length), end = Math.min(unit.range.endLine, lines.length);
+  const span = unit.span || { start: lines.slice(0, start - 1).join("").length, end: lines.slice(0, end).join("").length };
+  if (!Number.isSafeInteger(span.start) || !Number.isSafeInteger(span.end) || span.start < 0 || span.end < span.start || span.end > file.content.length) throw new Error("The unit span is outside its source.");
   return span;
 }
 function assignContainers(units, edges, files) {
@@ -44,31 +44,31 @@ function assignContainers(units, edges, files) {
     if (best) unit.containerId = best.id;
   }
 }
-function ancestors(concept, byId) {
+function ancestors(unit, byId) {
   const list = [];
-  for (let parent = concept.containerId && byId.get(concept.containerId); parent && parent.kind !== "file"; parent = parent.containerId && byId.get(parent.containerId)) list.push(parent);
+  for (let parent = unit.containerId && byId.get(unit.containerId); parent && parent.kind !== "file"; parent = parent.containerId && byId.get(parent.containerId)) list.push(parent);
   return list;
 }
-function labelsFor(concept, byId, countTokens) {
-  const name = CONTENT_NAMED.has(concept.kind) || concept.kind === "file" ? "" : concept.name;
-  const chain = ancestors(concept, byId).map((item) => item.name);
-  const code = isCode(concept.file);
-  const module = path.posix.basename(concept.file).replace(/\.[^.]+$/, "");
-  let line = `${concept.kind}${name ? `: ${name}` : ""}`;
+function labelsFor(unit, byId, countTokens) {
+  const name = CONTENT_NAMED.has(unit.kind) || unit.kind === "file" ? "" : unit.name;
+  const chain = ancestors(unit, byId).map((item) => item.name);
+  const code = isCode(unit.file);
+  const module = path.posix.basename(unit.file).replace(/\.[^.]+$/, "");
+  let line = `${unit.kind}${name ? `: ${name}` : ""}`;
   if (chain.length) {
-    const qualified = code ? `${concept.kind}: ${chain[0]}.${name}` : `${line} in: ${chain[0]}`;
+    const qualified = code ? `${unit.kind}: ${chain[0]}.${name}` : `${line} in: ${chain[0]}`;
     if (countTokens(qualified) <= HEADER_TOKENS) line = qualified;
   }
   const header = `${line}
-${concept.docstring ? concept.docstring + "\n" : ""}`;
-  return { header: countTokens(header) <= 128 ? header : `${concept.kind}
+${unit.docstring ? unit.docstring + "\n" : ""}`;
+  return { header: countTokens(header) <= 128 ? header : `${unit.kind}
 `, context: [...chain, module].join(" ") };
 }
-function fragment(concept, span, file, values, labels) {
+function fragment(unit, span, file, values, labels) {
   const start = lineAt(file.content, span.start), end = lineAt(file.content, Math.max(span.start, span.end - 1));
   return {
-    ...concept,
-    parentId: concept.id,
+    ...unit,
+    parentId: unit.id,
     prefixLength: labels.header.length,
     embeddingText: values.text,
     context: labels.context,
@@ -113,7 +113,7 @@ function cut(source, budget, countTokens, boundaries, code) {
         } else high = middle - 1;
       }
       const best = good >= first ? points[good] : offset;
-      if (best <= offset) throw new Error("A concept fragment cannot fit the model input limit.");
+      if (best <= offset) throw new Error("A fragment cannot fit the model input limit.");
       pieces.push({ start: line.start + offset, end: line.start + best, tokens: tokens(line.text.slice(offset, best)), priority: best === line.text.length ? priority : 4 });
       offset = best;
     }
@@ -132,33 +132,33 @@ function cut(source, budget, countTokens, boundaries, code) {
         key = candidate;
       }
     }
-    if (best < 0) throw new Error("A concept fragment cannot fit the model input limit.");
+    if (best < 0) throw new Error("A fragment cannot fit the model input limit.");
     cuts.push(best);
     start = best;
   }
   return [0, ...cuts].map((first, index) => ({ start: pieces[first].start, end: pieces[(cuts[index] ?? pieces.length) - 1].end }));
 }
-function fragmentConcept(concept, file, countTokens, limit = 512, boundaries = wordBoundaries, labels) {
-  labels ??= labelsFor(concept, /* @__PURE__ */ new Map(), countTokens);
-  const span = spanOf(concept, file), source = file.content.slice(span.start, span.end);
-  if (countTokens(labels.header + source) <= limit) return [fragment(concept, span, file, { id: concept.id, role: "whole", text: labels.header + source }, labels)];
+function fragmentUnit(unit, file, countTokens, limit = 512, boundaries = wordBoundaries, labels) {
+  labels ??= labelsFor(unit, /* @__PURE__ */ new Map(), countTokens);
+  const span = spanOf(unit, file), source = file.content.slice(span.start, span.end);
+  if (countTokens(labels.header + source) <= limit) return [fragment(unit, span, file, { id: unit.id, role: "whole", text: labels.header + source }, labels)];
   const [title, ...rest] = labels.header.split("\n");
   const shortened = shorten(source.split("\n")[0]);
   const firstLine = countTokens(shortened) - countTokens("") <= limit / 8 ? shortened + "\n" : "";
   const header = (index, total) => `${title} (part ${index + 1} of ${total})
 ${rest.join("\n")}${index ? firstLine : ""}`;
   const budget = limit - countTokens(header(99998, 99999));
-  if (budget < 16) throw new Error("A concept fragment cannot fit the model input limit.");
-  const parts = cut(source, budget, countTokens, boundaries, isCode(concept.file));
+  if (budget < 16) throw new Error("A fragment cannot fit the model input limit.");
+  const parts = cut(source, budget, countTokens, boundaries, isCode(unit.file));
   return parts.map((part, index) => {
     const prefix = header(index, parts.length), text = prefix + source.slice(part.start, part.end);
-    if (countTokens(text) > limit) throw new Error("A concept fragment exceeds the model input limit.");
-    return fragment(concept, { start: span.start + part.start, end: span.start + part.end }, file, { id: `${concept.id}:${index}`, role: "part", text, prefixLength: prefix.length }, labels);
+    if (countTokens(text) > limit) throw new Error("A fragment exceeds the model input limit.");
+    return fragment(unit, { start: span.start + part.start, end: span.start + part.end }, file, { id: `${unit.id}:${index}`, role: "part", text, prefixLength: prefix.length }, labels);
   });
 }
-function outline(concept, file, lines, labels, countTokens, limit, id) {
-  const span = spanOf(concept, file), source = file.content.slice(span.start, span.end);
-  const head = concept.kind === "file" ? "" : shorten(source.split("\n")[0]) + "\n";
+function outline(unit, file, lines, labels, countTokens, limit, id) {
+  const span = spanOf(unit, file), source = file.content.slice(span.start, span.end);
+  const head = unit.kind === "file" ? "" : shorten(source.split("\n")[0]) + "\n";
   const reserve = countTokens(`  \u2026 and ${lines.length} more
 `) - countTokens("");
   let text = labels.header + head;
@@ -176,7 +176,7 @@ function outline(concept, file, lines, labels, countTokens, limit, id) {
   }
   if (shown < lines.length) text += `  \u2026 and ${lines.length - shown} more
 `;
-  const value = fragment(concept, span, file, { id, role: "outline", text, excerpt: source.slice(0, 600) }, labels);
+  const value = fragment(unit, span, file, { id, role: "outline", text, excerpt: source.slice(0, 600) }, labels);
   return { fragment: value, included };
 }
 function childLine(child, file) {
@@ -188,8 +188,8 @@ function childLine(child, file) {
   const declared = new RegExp(`(^|[^\\w$])${child.name.replace(/[$]/g, "\\$")}($|[^\\w$])`).test(first.split(/[(=]/)[0]);
   return shorten(declared ? first : `${child.name} = ${first.trim()}`);
 }
-function statementLines(concept, file) {
-  const span = spanOf(concept, file);
+function statementLines(unit, file) {
+  const span = spanOf(unit, file);
   const lines = sourceLines(file.content.slice(span.start, span.end)).slice(1).map((line) => line.text);
   const body = lines.filter((line) => line.trim() && !/^\s*[)\]}]+[;,]?\s*$/.test(line));
   if (!body.length) return [];
@@ -226,7 +226,7 @@ function planFragments(units, files, options) {
     if (skipped.has(unit.id)) continue;
     if (TINY_KINDS.has(unit.kind) && tokens < TINY_TOKENS && shown.has(unit.id)) continue;
     const labels = labelsFor(unit, byId, countTokens);
-    const pieces = fragmentConcept(unit, file, countTokens, limit, boundaries, labels);
+    const pieces = fragmentUnit(unit, file, countTokens, limit, boundaries, labels);
     const statements = pieces.length > 1 && isCode(unit.file) && unit.kind !== "file" ? statementLines(unit, file) : [];
     const summary = statements.length >= 2 ? [outline(unit, file, statements, labels, countTokens, limit, `${unit.id}:outline`).fragment] : [];
     for (const piece of [...summary, ...pieces]) fragments.push({ ...piece, tokens, parts: pieces.length });
@@ -235,7 +235,7 @@ function planFragments(units, files, options) {
 }
 export {
   assignContainers,
-  fragmentConcept,
+  fragmentUnit,
   labelsFor,
   planFragments,
   spanOf
