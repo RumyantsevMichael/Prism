@@ -10,24 +10,66 @@ const DEPENDENCY_KINDS = new Set(["calls", "instantiates", "references"]);
 const TARGET_KINDS = new Set(["function", "method", "class", "constant", "variable"]);
 const MIN_SHARED = 3, MAX_MEMBERS = 50;
 
-const TEST_FILE = /(^|\/)(tests?|__tests__|specs?)\/|\.(test|spec)\.[^/]+$|(^|\/)test_[^/]+\.py$|_test\.(py|go)$/i;
-export const isTestFile = (file: string) => TEST_FILE.test(file);
+// Test files by layout and name in common languages: test directories, *.test.ts, test_x.py, x_test.go, FooTest.java, Foo.Tests/ projects, and x_unittest.cc.
+const TEST_FILE = /(^|\/)(tests?|__tests__|specs?)\/|\.(test|spec)\.[^/]+$|(^|\/)test_[^/]+\.(py|c|cc|cpp)$|_(test|unittest)\.(py|go|c|cc|cpp)$/i;
+// Java, Kotlin, and C# name test classes in PascalCase, so the case must match: StoreTest.java is a test, and Contest.java is not.
+const TEST_CLASS_FILE = /\wTests?\.(java|kt|cs)$|\.Tests?\//;
+export const isTestFile = (file: string) => TEST_FILE.test(file) || TEST_CLASS_FILE.test(file);
 
-// Core collection, string, and conversion operations appear in almost any work, so they never show a shared responsibility.
-// The list applies only to unresolved library calls. A project function with the same name still counts.
-const CORE_OPERATIONS = new Set([
-  // JavaScript and TypeScript
-  "Array", "Boolean", "Map", "Number", "Object", "Set", "String", "Symbol", "WeakMap", "WeakSet", "at", "concat", "entries", "every", "fill", "filter", "find",
-  "findIndex", "findLast", "flat", "flatMap", "forEach", "from", "fromEntries", "get", "has", "includes", "indexOf", "isArray", "join", "keys", "localeCompare",
-  "map", "max", "min", "padEnd", "padStart", "pop", "push", "reduce", "repeat", "replace", "replaceAll", "reverse", "set", "shift", "slice", "some", "sort",
-  "splice", "split", "startsWith", "endsWith", "toLowerCase", "toUpperCase", "toString", "trim", "trimEnd", "trimStart", "unshift", "values", "add", "delete", "clear",
-  // Python
-  "any", "all", "append", "bool", "dict", "enumerate", "extend", "float", "int", "isinstance", "items", "len", "list", "lower", "print", "range", "reversed",
-  "round", "setdefault", "sorted", "str", "strip", "sum", "tuple", "upper", "zip"
-]);
+// Rust keeps unit tests inside the source file, in a module marked #[cfg(test)], or in functions marked #[test].
+function rustTestSpans(content: string) {
+  const spans: { start: number; end: number }[] = [];
+  for (const match of content.matchAll(/#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{|#\[(?:\w+::)*test\][^\n]*\n(?:\s*#\[[^\n]*\n)*\s*(?:pub\s+)?(?:async\s+)?fn\s+\w+[^{]*\{/g)) {
+    let depth = 0, index = match.index! + match[0].length - 1;
+    for (; index < content.length; index++) { if (content[index] === "{") depth++; else if (content[index] === "}" && --depth === 0) break; }
+    spans.push({ start: match.index!, end: index });
+  }
+  return spans;
+}
+// Units arrive grouped by file, so the spans of the last file answer most requests.
+let lastSpans: { content: string; spans: { start: number; end: number }[] } | undefined;
+// A unit is test code when its file is a test file, or when it sits inside Rust test code in a source file.
+export function isTestUnit(unit: SourceUnit, content = "") {
+  if (isTestFile(unit.file)) return true;
+  if (!unit.file.endsWith(".rs") || !unit.span || !content.includes("test")) return false;
+  if (lastSpans?.content !== content) lastSpans = { content, spans: rustTestSpans(content) };
+  return lastSpans.spans.some(span => span.start <= unit.span!.start && unit.span!.end <= span.end + 1);
+}
+
+// Core collection, string, conversion, and error operations appear in almost any work, so they never show a shared responsibility.
+// Each list applies only to unresolved library calls in its language. A project function with the same name still counts.
+const words = (text: string) => new Set(text.split(/\s+/).filter(Boolean));
+const CORE_OPERATIONS: Record<string, Set<string>> = {
+  javascript: words(`Array Boolean Map Number Object Set String Symbol WeakMap WeakSet at concat entries every fill filter find findIndex findLast flat flatMap forEach from
+    fromEntries get has includes indexOf isArray join keys localeCompare map max min padEnd padStart pop push reduce repeat replace replaceAll reverse set shift slice
+    some sort splice split startsWith endsWith toLowerCase toUpperCase toString trim trimEnd trimStart unshift values add delete clear`),
+  python: words(`any all append bool dict enumerate extend float int isinstance items len list lower print range reversed round setdefault sorted str strip sum tuple upper zip
+    get keys values join split replace startswith endswith format pop update`),
+  go: words(`len cap append make new copy delete panic recover print println close Error String Errorf Sprintf Printf Println Sprint Fprintf New Is As Unwrap
+    Contains HasPrefix HasSuffix TrimSpace Split Join Itoa Atoi`),
+  rust: words(`Some None Ok Err Box Vec String Option Result clone cloned copied to_string to_owned into from try_from try_into as_ref as_mut as_str as_bytes as_slice as_deref
+    as_ptr borrow borrow_mut unwrap unwrap_or unwrap_or_else unwrap_or_default expect expect_err ok ok_or ok_or_else err map map_err and_then or_else is_some is_none
+    is_some_and is_ok is_err iter iter_mut into_iter collect filter filter_map find any all len is_empty push push_str pop insert remove get get_mut contains extend
+    extend_from_slice to_vec join split trim chars bytes format write writeln with_capacity default new drop lock first last next rev enumerate zip sum min max`),
+  jvm: words(`equals hashCode toString getClass valueOf of get set add put remove size isEmpty contains containsKey stream map filter collect forEach toList asList
+    length charAt substring append build builder orElse orElseThrow isPresent format trim split join println printf requireNonNull`),
+  csharp: words(`ToString Equals GetHashCode GetType Add Remove Contains ContainsKey TryGetValue Count Any All Select Where ToList ToArray ToDictionary First
+    FirstOrDefault Single SingleOrDefault OrderBy OrderByDescending Format Concat Join Split Trim ConfigureAwait Dispose WriteLine nameof`),
+  native: words(`size empty begin end cbegin cend push_back emplace_back pop_back insert erase find at c_str data move forward make_unique make_shared reset get
+    printf fprintf snprintf malloc calloc realloc free memcpy memset strlen strcmp assert`)
+};
+const LANGUAGE_BY_EXTENSION: Record<string, string> = { js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript", ts: "javascript", tsx: "javascript", mts: "javascript", cts: "javascript",
+  py: "python", go: "go", rs: "rust", java: "jvm", kt: "jvm", scala: "jvm", cs: "csharp", c: "native", h: "native", cc: "native", cpp: "native", cxx: "native", hpp: "native", hh: "native" };
+const coreOperations = (file: string) => CORE_OPERATIONS[LANGUAGE_BY_EXTENSION[file.split(".").pop()!.toLowerCase()]];
 
 // A member call such as fs.lstat or self._persist depends on the operation, not on the receiver name.
-const operation = (name: string) => name.split(/::|[.#:]/).filter(Boolean).pop() || name;
+// A path constructor such as Registry::new keeps its type, because "new" alone names no operation.
+const CONSTRUCTORS = new Set(["new", "default", "with_capacity", "from"]);
+const operation = (name: string) => {
+  const clean = name.replace(/\(\)/g, ""), parts = clean.split(/::|[.#:]/).filter(Boolean), last = parts.pop() || name;
+  const type = clean.match(/(\w+)::\w+$/)?.[1];
+  return CONSTRUCTORS.has(last) && type && /^[A-Z]/.test(type) ? `${type}::${last}` : last;
+};
 
 // The profile of a function or method is the set of operations it calls, instantiates, or references.
 // Names, not unit IDs, connect copied helpers, because each copy is a different unit with the same name.
@@ -40,7 +82,10 @@ export function dependencyProfiles(index: Pick<IndexMetadata, "units" | "edges" 
     (profiles.get(source) || profiles.set(source, new Set()).get(source)!).add(name);
   };
   for (const edge of index.edges) if (DEPENDENCY_KINDS.has(edge.kind) && edge.source !== edge.target && TARGET_KINDS.has(byId.get(edge.target)?.kind || "")) add(edge.source, operation(byId.get(edge.target)!.name));
-  for (const reference of index.unresolvedReferences || []) if (!CORE_OPERATIONS.has(operation(reference.name))) add(reference.source, operation(reference.name));
+  for (const reference of index.unresolvedReferences || []) {
+    const name = operation(reference.name), core = coreOperations(byId.get(reference.source)?.file || "");
+    if (!core?.has(name)) add(reference.source, name);
+  }
   return profiles;
 }
 

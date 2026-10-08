@@ -3,103 +3,79 @@ const CODE_KINDS = /* @__PURE__ */ new Set(["function", "method"]);
 const DEPENDENCY_KINDS = /* @__PURE__ */ new Set(["calls", "instantiates", "references"]);
 const TARGET_KINDS = /* @__PURE__ */ new Set(["function", "method", "class", "constant", "variable"]);
 const MIN_SHARED = 3, MAX_MEMBERS = 50;
-const TEST_FILE = /(^|\/)(tests?|__tests__|specs?)\/|\.(test|spec)\.[^/]+$|(^|\/)test_[^/]+\.py$|_test\.(py|go)$/i;
-const isTestFile = (file) => TEST_FILE.test(file);
-const CORE_OPERATIONS = /* @__PURE__ */ new Set([
-  // JavaScript and TypeScript
-  "Array",
-  "Boolean",
-  "Map",
-  "Number",
-  "Object",
-  "Set",
-  "String",
-  "Symbol",
-  "WeakMap",
-  "WeakSet",
-  "at",
-  "concat",
-  "entries",
-  "every",
-  "fill",
-  "filter",
-  "find",
-  "findIndex",
-  "findLast",
-  "flat",
-  "flatMap",
-  "forEach",
-  "from",
-  "fromEntries",
-  "get",
-  "has",
-  "includes",
-  "indexOf",
-  "isArray",
-  "join",
-  "keys",
-  "localeCompare",
-  "map",
-  "max",
-  "min",
-  "padEnd",
-  "padStart",
-  "pop",
-  "push",
-  "reduce",
-  "repeat",
-  "replace",
-  "replaceAll",
-  "reverse",
-  "set",
-  "shift",
-  "slice",
-  "some",
-  "sort",
-  "splice",
-  "split",
-  "startsWith",
-  "endsWith",
-  "toLowerCase",
-  "toUpperCase",
-  "toString",
-  "trim",
-  "trimEnd",
-  "trimStart",
-  "unshift",
-  "values",
-  "add",
-  "delete",
-  "clear",
-  // Python
-  "any",
-  "all",
-  "append",
-  "bool",
-  "dict",
-  "enumerate",
-  "extend",
-  "float",
-  "int",
-  "isinstance",
-  "items",
-  "len",
-  "list",
-  "lower",
-  "print",
-  "range",
-  "reversed",
-  "round",
-  "setdefault",
-  "sorted",
-  "str",
-  "strip",
-  "sum",
-  "tuple",
-  "upper",
-  "zip"
-]);
-const operation = (name) => name.split(/::|[.#:]/).filter(Boolean).pop() || name;
+const TEST_FILE = /(^|\/)(tests?|__tests__|specs?)\/|\.(test|spec)\.[^/]+$|(^|\/)test_[^/]+\.(py|c|cc|cpp)$|_(test|unittest)\.(py|go|c|cc|cpp)$/i;
+const TEST_CLASS_FILE = /\wTests?\.(java|kt|cs)$|\.Tests?\//;
+const isTestFile = (file) => TEST_FILE.test(file) || TEST_CLASS_FILE.test(file);
+function rustTestSpans(content) {
+  const spans = [];
+  for (const match of content.matchAll(/#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{|#\[(?:\w+::)*test\][^\n]*\n(?:\s*#\[[^\n]*\n)*\s*(?:pub\s+)?(?:async\s+)?fn\s+\w+[^{]*\{/g)) {
+    let depth = 0, index = match.index + match[0].length - 1;
+    for (; index < content.length; index++) {
+      if (content[index] === "{") depth++;
+      else if (content[index] === "}" && --depth === 0) break;
+    }
+    spans.push({ start: match.index, end: index });
+  }
+  return spans;
+}
+let lastSpans;
+function isTestUnit(unit, content = "") {
+  if (isTestFile(unit.file)) return true;
+  if (!unit.file.endsWith(".rs") || !unit.span || !content.includes("test")) return false;
+  if (lastSpans?.content !== content) lastSpans = { content, spans: rustTestSpans(content) };
+  return lastSpans.spans.some((span) => span.start <= unit.span.start && unit.span.end <= span.end + 1);
+}
+const words = (text) => new Set(text.split(/\s+/).filter(Boolean));
+const CORE_OPERATIONS = {
+  javascript: words(`Array Boolean Map Number Object Set String Symbol WeakMap WeakSet at concat entries every fill filter find findIndex findLast flat flatMap forEach from
+    fromEntries get has includes indexOf isArray join keys localeCompare map max min padEnd padStart pop push reduce repeat replace replaceAll reverse set shift slice
+    some sort splice split startsWith endsWith toLowerCase toUpperCase toString trim trimEnd trimStart unshift values add delete clear`),
+  python: words(`any all append bool dict enumerate extend float int isinstance items len list lower print range reversed round setdefault sorted str strip sum tuple upper zip
+    get keys values join split replace startswith endswith format pop update`),
+  go: words(`len cap append make new copy delete panic recover print println close Error String Errorf Sprintf Printf Println Sprint Fprintf New Is As Unwrap
+    Contains HasPrefix HasSuffix TrimSpace Split Join Itoa Atoi`),
+  rust: words(`Some None Ok Err Box Vec String Option Result clone cloned copied to_string to_owned into from try_from try_into as_ref as_mut as_str as_bytes as_slice as_deref
+    as_ptr borrow borrow_mut unwrap unwrap_or unwrap_or_else unwrap_or_default expect expect_err ok ok_or ok_or_else err map map_err and_then or_else is_some is_none
+    is_some_and is_ok is_err iter iter_mut into_iter collect filter filter_map find any all len is_empty push push_str pop insert remove get get_mut contains extend
+    extend_from_slice to_vec join split trim chars bytes format write writeln with_capacity default new drop lock first last next rev enumerate zip sum min max`),
+  jvm: words(`equals hashCode toString getClass valueOf of get set add put remove size isEmpty contains containsKey stream map filter collect forEach toList asList
+    length charAt substring append build builder orElse orElseThrow isPresent format trim split join println printf requireNonNull`),
+  csharp: words(`ToString Equals GetHashCode GetType Add Remove Contains ContainsKey TryGetValue Count Any All Select Where ToList ToArray ToDictionary First
+    FirstOrDefault Single SingleOrDefault OrderBy OrderByDescending Format Concat Join Split Trim ConfigureAwait Dispose WriteLine nameof`),
+  native: words(`size empty begin end cbegin cend push_back emplace_back pop_back insert erase find at c_str data move forward make_unique make_shared reset get
+    printf fprintf snprintf malloc calloc realloc free memcpy memset strlen strcmp assert`)
+};
+const LANGUAGE_BY_EXTENSION = {
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  ts: "javascript",
+  tsx: "javascript",
+  mts: "javascript",
+  cts: "javascript",
+  py: "python",
+  go: "go",
+  rs: "rust",
+  java: "jvm",
+  kt: "jvm",
+  scala: "jvm",
+  cs: "csharp",
+  c: "native",
+  h: "native",
+  cc: "native",
+  cpp: "native",
+  cxx: "native",
+  hpp: "native",
+  hh: "native"
+};
+const coreOperations = (file) => CORE_OPERATIONS[LANGUAGE_BY_EXTENSION[file.split(".").pop().toLowerCase()]];
+const CONSTRUCTORS = /* @__PURE__ */ new Set(["new", "default", "with_capacity", "from"]);
+const operation = (name) => {
+  const clean = name.replace(/\(\)/g, ""), parts = clean.split(/::|[.#:]/).filter(Boolean), last = parts.pop() || name;
+  const type = clean.match(/(\w+)::\w+$/)?.[1];
+  return CONSTRUCTORS.has(last) && type && /^[A-Z]/.test(type) ? `${type}::${last}` : last;
+};
 function dependencyProfiles(index, include = () => true) {
   const byId = new Map(index.units.map((unit) => [unit.id, unit]));
   const profiles = /* @__PURE__ */ new Map();
@@ -109,7 +85,10 @@ function dependencyProfiles(index, include = () => true) {
     (profiles.get(source) || profiles.set(source, /* @__PURE__ */ new Set()).get(source)).add(name);
   };
   for (const edge of index.edges) if (DEPENDENCY_KINDS.has(edge.kind) && edge.source !== edge.target && TARGET_KINDS.has(byId.get(edge.target)?.kind || "")) add(edge.source, operation(byId.get(edge.target).name));
-  for (const reference of index.unresolvedReferences || []) if (!CORE_OPERATIONS.has(operation(reference.name))) add(reference.source, operation(reference.name));
+  for (const reference of index.unresolvedReferences || []) {
+    const name = operation(reference.name), core = coreOperations(byId.get(reference.source)?.file || "");
+    if (!core?.has(name)) add(reference.source, name);
+  }
   return profiles;
 }
 function sharedDependencyGroups(index, options = {}) {
@@ -164,5 +143,6 @@ function sharedDependencyGroups(index, options = {}) {
 export {
   dependencyProfiles,
   isTestFile,
+  isTestUnit,
   sharedDependencyGroups
 };

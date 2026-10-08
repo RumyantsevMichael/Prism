@@ -129,8 +129,11 @@ Each group lists its shared operations, with the number of units that use each o
 The `share` of a member is the part of its dependencies that the group covers.
 A share near 1 means that the member is mostly the shared step, and a low share means that the member does other work too.
 Operations match by name, so copies of one helper in different modules connect their callers.
-Core collection, string, and conversion operations do not count, and type references do not count.
-Test files are left out unless `includeTests` is true.
+Core collection, string, conversion, and error operations of each language do not count, and type references do not count.
+The core operation lists cover JavaScript and TypeScript, Python, Go, Rust, Java and Kotlin, C#, and C and C++.
+A path constructor such as `Registry::new` keeps its type, so it does not match `Vec::new`.
+Test code is left out unless `includeTests` is true.
+Test code is a file in a test directory or with a test name, such as `store.test.ts`, `test_store.py`, `store_test.go`, or `StoreTest.java`, and a Rust `#[cfg(test)]` module or `#[test]` function.
 Generated, vendored, and minified files are always left out.
 With `filters.paths`, a group is reported when at least two of its members are inside the paths.
 A function that only uses core operations has no dependency profile, so use search for small helpers.

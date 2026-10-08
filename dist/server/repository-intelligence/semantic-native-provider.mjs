@@ -2,7 +2,7 @@
 import { openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
-import { isTestFile, sharedDependencyGroups } from "./shared-dependencies.mjs";
+import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { moduleInterfaceReport } from "./module-interfaces.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
@@ -275,7 +275,7 @@ async function findSharedDependencies(input, options = {}) {
   if (preparation.status === "preparing") return { ...preparation, prepared: void 0, groups: [] };
   if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
   const { index } = provider.prepared, files = (await provider.snapshot()).filesByPath, paths = input.filters?.paths || [];
-  const include = (unit) => (input.includeTests || !isTestFile(unit.file)) && !searchExclusion(unit.file, files.get(unit.file)?.content || "");
+  const include = (unit) => (input.includeTests || !isTestUnit(unit, files.get(unit.file)?.content)) && !searchExclusion(unit.file, files.get(unit.file)?.content || "");
   const inside = (file) => !paths.length || paths.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
   const result = sharedDependencyGroups(index, { include, limit: 100 });
   const groups = result.groups.filter((group) => group.members.filter((member) => inside(member.file)).length >= 2).slice(0, input.limit || 20);

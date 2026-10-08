@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { dependencyProfiles, sharedDependencyGroups, isTestFile } from "../../dist/server/repository-intelligence/shared-dependencies.mjs";
+import { dependencyProfiles, sharedDependencyGroups, isTestFile, isTestUnit } from "../../dist/server/repository-intelligence/shared-dependencies.mjs";
 
 const unit = (file, name, kind = "function") => ({ id: `${file}#${name}`, file, kind, name, range: { startLine: 1, endLine: 2 }, rangeComplete: true });
 const calls = (source, ...names) => names.map(name => ({ source: source.id, name, kind: "calls" }));
@@ -65,6 +65,26 @@ test("units in one file alone do not form a group, and a missing name list is di
 });
 
 test("test file detection covers common layouts", () => {
-  for (const file of ["test/a.mjs", "src/tests/a.py", "src/a.test.ts", "src/a.spec.js", "pkg/test_a.py", "pkg/a_test.go", "src/__tests__/a.js"]) assert.equal(isTestFile(file), true, file);
-  for (const file of ["src/testing.mjs", "src/contest.py", "src/attest.ts"]) assert.equal(isTestFile(file), false, file);
+  for (const file of ["test/a.mjs", "src/tests/a.py", "src/a.test.ts", "src/a.spec.js", "pkg/test_a.py", "pkg/a_test.go", "src/__tests__/a.js",
+    "src/test/java/StoreTest.java", "app/StoreTests.cs", "App.Tests/Store.cs", "lib/store_unittest.cc", "lib/test_store.c"]) assert.equal(isTestFile(file), true, file);
+  for (const file of ["src/testing.mjs", "src/contest.py", "src/attest.ts", "src/Contest.java", "src/latest.cs"]) assert.equal(isTestFile(file), false, file);
+});
+
+test("Rust test modules and test functions inside a source file count as test code", () => {
+  const content = "pub fn serve() { run(); }\n#[cfg(test)]\nmod tests {\n    fn helper() { setup(); }\n    #[test]\n    fn works() { helper(); }\n}\n#[tokio::test]\nasync fn async_case() { { nested(); } }\npub fn after() {}\n";
+  const unit = name => { const start = content.indexOf(`fn ${name}`); return { id: name, file: "src/lib.rs", kind: "function", name, range: { startLine: 1, endLine: 1 }, span: { start, end: content.indexOf("}", start) + 1 } }; };
+  assert.deepEqual(["serve", "helper", "works", "async_case", "after"].map(name => isTestUnit(unit(name), content)), [false, true, true, true, false]);
+});
+
+test("each language ignores its own core operations, and path constructors keep their type", () => {
+  const units = [unit("src/a.rs", "first"), unit("src/b.rs", "second"), unit("src/c.ts", "third"), unit("src/d.ts", "fourth")];
+  const unresolvedReferences = [
+    // The graph reports a chained call as the whole chain and as its first call.
+    ...calls(units[0], "x.unwrap", "fs::canonicalize().unwrap", "fs::canonicalize", "Registry::new", "Vec::new", "map_err"),
+    ...calls(units[2], "Array.from", "items.map", "unwrap", "Buffer.from")
+  ];
+  const profiles = dependencyProfiles({ units, edges: [], unresolvedReferences });
+  assert.deepEqual([...profiles.get("src/a.rs#first")].sort(), ["Registry::new", "Vec::new", "canonicalize"]);
+  // A Rust core name is not a JavaScript core name, and a JavaScript member call never becomes a path constructor.
+  assert.deepEqual([...profiles.get("src/c.ts#third")].sort(), ["unwrap"]);
 });
