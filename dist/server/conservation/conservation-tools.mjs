@@ -5,7 +5,7 @@ import { compareConceptDelta } from "./conservation-analysis.mjs";
 import { GET_REVIEW_SCHEMA, UPDATE_REVIEW_SCHEMA, CHECK_REVIEW_GATE_SCHEMA, getReview, updateReview, checkReviewGate } from "../review/review-ledger.mjs";
 import { objectSchema as obj, textField as str, hashField } from "./conservation-schema.mjs";
 const captureSchema = obj({ projectRoot: str, deltaPath: str }, ["projectRoot"]);
-const evidenceSchema = obj({ projectRoot: str, evidenceId: hashField, section: { enum: ["files", "omissions", "diagnostics", "candidates", "observations", "measurements", "growth", "unitsBefore", "unitsAfter", "units", "requirements", "lines", "groups", "modules", "delegatingClasses", "containers"] }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }, ["projectRoot", "evidenceId"]);
+const evidenceSchema = obj({ projectRoot: str, evidenceId: hashField, section: { enum: ["files", "omissions", "diagnostics", "candidates", "observations", "measurements", "growth", "unitsBefore", "unitsAfter", "units", "requirements", "lines", "groups", "modules", "delegatingClasses", "containers", "shapes"] }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }, ["projectRoot", "evidenceId"]);
 const compareSchema = obj({ projectRoot: str, deltaPath: str, expectedRevision: hashField, baselineId: hashField, resultSnapshotId: hashField });
 const annotations = (readOnlyHint, openWorldHint = false) => ({ readOnlyHint, destructiveHint: false, idempotentHint: readOnlyHint, openWorldHint });
 const CONSERVATION_TOOLS = [

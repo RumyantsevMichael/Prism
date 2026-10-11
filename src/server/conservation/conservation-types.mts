@@ -19,7 +19,7 @@ export interface AnalysisReceipt {
   kind: "repository-analysis"; schemaVersion: 1; project: string; tool: "find_shared_dependencies" | "find_shared_literals" | "find_same_name_units" | "report_module_interfaces" | "report_cohesion_clusters" | "report_complex_units";
   snapshotId: string | null; snapshot: string; indexRevision: string; versions: Record<string, string>; scope: Record<string, unknown>;
   coverage: unknown; diagnostics: Diagnostic[]; files: { file: string; hash: string }[];
-  groups?: unknown[]; modules?: unknown[]; delegatingClasses?: unknown[]; containers?: unknown[]; units?: unknown[];
+  groups?: unknown[]; modules?: unknown[]; delegatingClasses?: unknown[]; containers?: unknown[]; units?: unknown[]; shapes?: unknown[];
 }
 export interface GrowthJustification { dimensions: string[]; conceptIds: string[]; requirements: Reference[]; reason: string }
 export interface AdditionEvidence {

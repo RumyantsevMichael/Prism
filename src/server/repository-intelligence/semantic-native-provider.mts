@@ -5,6 +5,7 @@ import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { moduleInterfaceReport } from "./module-interfaces.mjs";
 import { cohesionReport } from "./cohesion.mjs";
 import { sharedLiteralGroups } from "./shared-literals.mjs";
+import { sharedShapes } from "./shared-shapes.mjs";
 import { sameNameGroups } from "./same-name-units.mjs";
 import { complexUnits } from "./complex-units.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
@@ -75,7 +76,7 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
   },
   {
     name: "find_shared_literals",
-    description: "Group functions, methods, classes, and constants in different files that spell the same rare set of identifier-like string literals, such as ids, states, keys, event names, or method names. Uses the same prepared index as search_repository_concepts. A shared literal set shows values that several units must know and does not establish that one owner is better.",
+    description: "Group functions, methods, classes, constants, and instruction list items or paragraphs in different files that spell the same rare set of identifier-like literals, such as ids, states, keys, event names, method names, or tool names in backticks. Also report key sets that several objects, interfaces, or schemas repeat. Uses the same prepared index as search_repository_concepts. A shared literal set or shape shows names that several places must know and does not establish that one owner is better.",
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
@@ -323,7 +324,7 @@ export async function reportModuleInterfaces(input: ModuleInterfaceInput, option
 // Retain the complete result of an analysis, before the response limit, so that a report or a review view can cite it by receiptId.
 // The hash of each file that the result names lets a reader detect results that a later edit made stale.
 async function retainResult(input: { projectRoot: string; snapshotId?: string }, provider: SemanticNativeRepositoryIntelligence, tool: AnalysisReceipt["tool"],
-  scope: Record<string, unknown>, coverage: unknown, diagnostics: AnalysisReceipt["diagnostics"], results: Pick<AnalysisReceipt, "groups" | "modules" | "delegatingClasses" | "containers" | "units">) {
+  scope: Record<string, unknown>, coverage: unknown, diagnostics: AnalysisReceipt["diagnostics"], results: Pick<AnalysisReceipt, "groups" | "modules" | "delegatingClasses" | "containers" | "units" | "shapes">) {
   const snapshot = await provider.snapshot(), prepared = provider.prepared!, named = new Set<string>();
   const collect = (value: unknown) => {
     if (Array.isArray(value)) value.forEach(collect);
@@ -349,17 +350,22 @@ function analysisScope(input: { includeTests?: boolean; filters?: { paths?: stri
 export async function findSharedLiterals(input: SharedDependencyInput, options: ProviderOptions = {}) {
   validateSharedLiterals(input);
   const { provider, preparation, identity } = await preparedAnalysis(input, options);
-  if (preparation.status === "preparing") return { ...preparation, prepared: undefined, groups: [] };
-  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
+  if (preparation.status === "preparing") return { ...preparation, prepared: undefined, groups: [], shapes: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [], shapes: [] };
   const contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
   const result = sharedLiteralGroups(provider.prepared.index, contents, { include, limit: 100 });
-  const groups = result.groups.filter(group => group.members.filter(member => inside(member.file)).length >= 2);
+  const groups = result.groups.filter(group => [...group.members, ...group.clients].filter(member => inside(member.file)).length >= 2);
+  const shaped = sharedShapes(provider.prepared.index, contents, { include, limit: 100 });
+  const shapes = shaped.shapes.filter(shape => shape.locations.some(location => inside(location.file)));
   await provider.verifySnapshot();
-  const diagnostics = provider.preparation.diagnostics;
-  const receiptId = await retainResult(input, provider, "find_shared_literals", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
-  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: result.coverage,
-    diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalGroups: groups.length, groups: groups.slice(0, input.limit || 20) };
+  const diagnostics = provider.preparation.diagnostics, coverage = { ...result.coverage, objects: shaped.coverage.objects };
+  const receiptId = await retainResult(input, provider, "find_shared_literals", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, coverage, diagnostics, { groups, shapes });
+  // A host can move a long tool result out of the conversation, so the response keeps the strongest facts and the receipt keeps all of them.
+  const brief = groups.slice(0, input.limit || 20).map(group => ({ ...group, literals: group.literals.slice(0, 10), literalCount: group.literals.length }));
+  const briefShapes = shapes.slice(0, Math.min(input.limit || 20, 8)).map(shape => ({ ...shape, locations: shape.locations.slice(0, 4) }));
+  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage,
+    diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalGroups: groups.length, groups: brief, totalShapes: shapes.length, shapes: briefShapes };
 }
 
 export async function reportCohesionClusters(input: ScopedAnalysisInput, options: ProviderOptions = {}) {

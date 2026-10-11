@@ -179,6 +179,8 @@ A delegating class can be a pass-through layer to remove, or an adapter, decorat
 ### Find shared literals
 
 `find_shared_literals` groups functions, methods, classes, and constants in different files that spell the same rare set of string literals.
+Instructions such as skills are clients too: a list item or paragraph in an instruction file that names identifiers in backticks uses those names together.
+The tool also reports shapes: key sets that several objects, interfaces, or schemas repeat.
 A group can show a value set that several units must know, such as states, capability ids, event names, error codes, or method names.
 Shared dependencies find units that do the same work, and this tool finds units that know the same values.
 
@@ -196,6 +198,14 @@ Each group lists its shared literals, with the number of units that spell each l
 Only identifier-like literals count: a letter or underscore, then letters, digits, `_`, `.`, `:`, `/`, or `-`, from 3 through 81 characters.
 Prose, format strings, and module specifiers in `import`, `export ... from`, `require`, and `import()` do not count.
 The smallest function, method, class, or constant that contains a literal owns it.
+In an instruction file, the smallest list item or paragraph that contains a backtick name owns it.
+A table describes one item per row, so the names in a table do not count, and documentation files only describe names, so they do not count either.
+When a group has code members, its instruction members appear in `clients`, because they use the names that the code defines.
+A group of instruction members only is repeated prose, so those members stay in `members`.
+For a group with clients, `entryShape` gives the key set of at least four keys that most definitions of the names share, with the number of definitions that have it.
+A definition is the smallest object literal in a code member that contains the name, such as one entry of a tool list.
+Of the key sets that more than half of the definitions share, the one with the rarest keys is reported.
+Several entry points that clients use together and that share an input shape can be one task split across several interfaces.
 A literal that many units spell, or that only one unit spells, does not count.
 When a group member is a constant or variable, a member that imports the module of that constant uses its values and does not keep its own copy.
 Such members move from `members` to `users`, and a group whose remaining members sit in one file is not reported, because the set has one owner.
@@ -204,6 +214,14 @@ Import analysis covers JavaScript and TypeScript, so in other languages every me
 A type declaration does not count as an owner, because units that import a union type can still copy the logic that derives its values.
 A literal set can also be values of a type that the compiler checks, such as the members of a string union in a `switch`.
 Check whether one owner, such as a constant or a type, would let the other units stop spelling the values.
+
+`shapes` lists key sets of at least four keys that at least three objects, interfaces, structs, or schemas share, also inside one file.
+Each shape gives its keys, the number of occurrences and files, the number of `declarations` inside an interface, type alias, or struct, and the location and unit of each occurrence.
+Only the largest key set that the same objects share is reported, and nested keys and import or export lists do not count.
+A shape repeated without one declared owner is a data clump: the same parameters or fields travel together and can become one type or one entry point.
+With `filters.paths`, a shape is reported when one of its occurrences is inside the paths.
+The response lists at most 10 literals for each group, with `literalCount`, and at most 8 shapes with 4 locations each, so that it stays short enough for an agent to read in full.
+The receipt keeps every group, literal, shape, and location, with the shapes in its `shapes` section, and `totalShapes` gives their number.
 
 ### Report cohesion clusters
 

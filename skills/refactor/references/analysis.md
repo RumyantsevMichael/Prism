@@ -10,7 +10,7 @@ Each tool reports facts for investigation, not defects.
 | `search_repository_concepts` | Units that look alike, for one query that describes a behavior or responsibility. |
 | `find_shared_dependencies` | Units in different files that work alike: repeated sub-steps, copied helpers, and repeated protocols. |
 | `report_module_interfaces` | Exports that no module uses, exports that only tests use, the part of each interface that its importers use, and classes that forward most methods to one field. |
-| `find_shared_literals` | Units in different files that spell the same rare values: states, ids, keys, event names, and error codes that several units must know. |
+| `find_shared_literals` | Units and instruction steps in different files that spell the same rare values or names, and key sets that several objects or schemas repeat. |
 | `find_same_name_units` | Functions in different files with one name: identical copies, and diverged variants that differ in throwing or in the dependencies they use. |
 | `report_cohesion_clusters` | Large classes, types, and modules whose members fall into separate clusters of shared state and calls, which can show mixed responsibilities. |
 | `report_complex_units` | Long or branchy functions and methods, with their nesting, parameters, and the value they dispatch on. |
@@ -39,7 +39,7 @@ These signals justify investigation without prescribing a solution.
 | --- | --- |
 | Semantic redundancy | Similar concepts, parallel behavior, repeated constraints, overlapping requirements, or units that share a rare set of dependencies. |
 | Specialization | Repeated special cases, caller-specific interfaces, narrow rules, exceptions, overrides, or variants of one name with different contracts. |
-| Shallow abstraction | An interface exposes most implementation complexity or adds indirection without hiding knowledge, for example a class that forwards most methods to one field. |
+| Shallow abstraction | An interface exposes most implementation complexity or adds indirection without hiding knowledge, for example a class that forwards most methods to one field, or several entry points that clients use together and that share an input shape. |
 | Overexposure | Exports that no other module uses, or an interface whose importers each need only a small part of it. |
 | Information leakage | Several consumers must understand the same internal fact or domain policy, or spell the same rare set of values. |
 | Tactical accumulation | Historical exceptions, layered fallbacks, compatibility paths, or multiple mechanisms for related needs. |

@@ -5,10 +5,10 @@ import { literalProfiles, sharedLiteralGroups } from "../../dist/server/reposito
 // Each declaration becomes a unit that spans from its start text through the end of its end text.
 function project(files, declarations) {
   const contents = new Map(Object.entries(files)), units = [];
-  for (const { file, name, kind = "function", from, to } of declarations) {
+  for (const { file, name, kind = "function", domain = "code", from, to } of declarations) {
     const text = contents.get(file), start = text.indexOf(from), end = text.indexOf(to, start) + to.length;
     const line = offset => text.slice(0, offset).split("\n").length;
-    units.push({ id: `${file}#${name}`, file, kind, name, domain: "code", range: { startLine: line(start), endLine: line(end) }, span: { start, end } });
+    units.push({ id: `${file}#${name}`, file, kind, name, domain, range: { startLine: line(start), endLine: line(end) }, span: { start, end } });
   }
   return { index: { units }, contents };
 }
@@ -65,4 +65,39 @@ test("members that import the module of a constant in their group use its values
   files = { "src/states.mjs": states, "src/order.mjs": `import { PHASES } from "./states.mjs";\nexport const PHASES = ["applying", "available", "awaiting-consent"];\n` };
   ({ index, contents } = project(files, declarations(files)));
   assert.deepEqual(sharedLiteralGroups(index, contents).groups[0].members.map(member => member.file).sort(), ["src/order.mjs", "src/states.mjs"]);
+});
+
+test("instruction list items that name identifiers in backticks are clients, and tables and documentation are not", () => {
+  const tools = `export const TOOLS = [{ name: "find_shared_dependencies" }, { name: "find_shared_literals" }, { name: "report_cohesion_clusters" }];\n`;
+  const skill = "## Discovery\n\n3. Call `find_shared_dependencies`, `find_shared_literals`, and `report_cohesion_clusters` for the scope.\n\n| Tool | Finds |\n| --- | --- |\n| `find_shared_dependencies` | x |\n| `find_shared_literals` | y |\n| `report_cohesion_clusters` | z |\n";
+  const guide = "Use `find_shared_dependencies`, `find_shared_literals`, and `report_cohesion_clusters` together.\n";
+  const { index, contents } = project({ "src/tools.mjs": tools, "skills/refactor/analysis.md": skill, "docs/guide.md": guide }, [
+    { file: "src/tools.mjs", name: "TOOLS", kind: "constant", from: "export const", to: "];" },
+    { file: "skills/refactor/analysis.md", name: "step", kind: "list-item", domain: "instruction", from: "3. Call", to: "scope." },
+    { file: "skills/refactor/analysis.md", name: "table", kind: "paragraph", domain: "instruction", from: "| Tool", to: "| z |" },
+    { file: "docs/guide.md", name: "guide", kind: "paragraph", domain: "documentation", from: "Use", to: "together." }
+  ]);
+  const { profiles } = literalProfiles(index, contents);
+  assert.deepEqual([...profiles.keys()].sort(), ["skills/refactor/analysis.md#step", "src/tools.mjs#TOOLS"]);
+  // The instruction that names the values together is a client of the code that defines them.
+  const [group] = sharedLiteralGroups(index, contents).groups;
+  assert.deepEqual([group.members.map(member => member.selector), group.clients.map(client => client.selector)], [["TOOLS"], ["step"]]);
+});
+
+test("clients that use several entry points together report the input shape that most entry definitions share", () => {
+  const entry = (name, extra = "") => `  { name: "${name}", inputSchema: { type: "object", properties: { projectRoot: { type: "string" }, snapshotId: { type: "string" }, limit: { type: "integer" }, filters: { type: "object" }${extra} } } }`;
+  const tools = `export const TOOLS = [\n${[entry("find_alpha"), entry("find_beta", ", offset: { type: \"integer\" }"), `  { name: "find_gamma", inputSchema: { type: "object", properties: { query: { type: "string" } } } }`].join(",\n")}\n];\n`;
+  const skill = "1. Call `find_alpha`, `find_beta`, and `find_gamma` for the scope.\n";
+  const { index, contents } = project({ "src/tools.mjs": tools, "skills/a/SKILL.md": skill }, [
+    { file: "src/tools.mjs", name: "TOOLS", kind: "constant", from: "export const", to: "];" },
+    { file: "skills/a/SKILL.md", name: "step", kind: "list-item", domain: "instruction", from: "1. Call", to: "scope." }
+  ]);
+  const [group] = sharedLiteralGroups(index, contents).groups;
+  assert.deepEqual(group.entryShape, { keys: ["filters", "limit", "projectRoot", "snapshotId"], entries: 2, of: 3 });
+  // A group without clients reports no entry shape.
+  const plain = project({ "src/tools.mjs": tools, "src/other.mjs": `export const NAMES = ["find_alpha", "find_beta", "find_gamma"];\n` }, [
+    { file: "src/tools.mjs", name: "TOOLS", kind: "constant", from: "export const", to: "];" },
+    { file: "src/other.mjs", name: "NAMES", kind: "constant", from: "export const", to: "];" }
+  ]);
+  assert.equal(sharedLiteralGroups(plain.index, plain.contents).groups[0].entryShape, null);
 });

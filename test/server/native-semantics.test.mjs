@@ -60,7 +60,7 @@ test("shared literal groups and cohesion clusters need the prepared index and re
   await writeFile(path.join(root, "a.mjs"), "export function a() { return 'alpha'; }\n");
   const runtime = new NativeSemanticRuntime({ directory: path.join(directory, "cache"), manifestPath });
   const literals = await findSharedLiterals({ projectRoot: root }, { runtime });
-  assert.deepEqual([literals.status, literals.groups, literals.coverage], ["degraded", [], null]);
+  assert.deepEqual([literals.status, literals.groups, literals.shapes, literals.coverage], ["degraded", [], [], null]);
   const cohesion = await reportCohesionClusters({ projectRoot: root }, { runtime });
   assert.deepEqual([cohesion.status, cohesion.containers, cohesion.coverage], ["degraded", [], null]);
   assert.ok(cohesion.diagnostics.some(item => item.code === "unsupported_runtime"));
@@ -101,7 +101,9 @@ test("prepared shared literal groups read snapshot files, leave out tests by def
   // Each analysis retains its complete result, with the hash of every file that the result names.
   const receipt = await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: found.receiptId });
   assert.deepEqual([receipt.kind, receipt.tool, receipt.section, receipt.totalCount, receipt.snapshot], ["repository-analysis", "find_shared_literals", "groups", 1, found.snapshot]);
-  assert.deepEqual(receipt.entries, found.groups);
+  // The response shortens long literal lists, and the receipt keeps the complete groups.
+  assert.deepEqual(receipt.entries, found.groups.map(({ literalCount, ...group }) => group));
+  assert.equal(found.groups[0].literalCount, 3);
   assert.deepEqual(receipt.scope, { paths: [], includeTests: false });
   const named = await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: found.receiptId, section: "files" });
   assert.deepEqual(named.entries.map(entry => entry.file), ["src/panel.mjs", "src/states.mjs"]);
