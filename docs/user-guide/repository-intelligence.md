@@ -6,6 +6,8 @@ Prism can plan repository context and compare that plan with the capacity of a t
 
 Use `list_repository_intelligence_providers` to inspect the registered native, CodeGraph, and CodeNib providers for one project.
 Discovery is read-only and never creates or updates an external index.
+The native provider reports semantic search, hybrid ranking, and the symbol graph when its runtime supports the platform, because search prepares the index on first use.
+`native.status` gives the preparation state, and `native.diagnostics` holds the first 20 of `native.totalDiagnostics` diagnostics.
 
 | Provider | Role | Numeric `FIT` |
 |---|---|---|

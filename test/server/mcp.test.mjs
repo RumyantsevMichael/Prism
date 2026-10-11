@@ -456,6 +456,9 @@ test("lists repository intelligence providers without starting the review server
   assert.equal(codenib.diagnosticCode, "not-installed");
   assert.equal(codenib.capabilities.semanticSearch, true);
   assert.match(response.result.content[0].text, /native: available/);
+  const { native } = response.result.structuredContent;
+  assert.equal(typeof native.totalDiagnostics, "number");
+  assert.ok(native.diagnostics.length <= 20);
   await assert.rejects(access(path.join(root, ".prism-review-cert")), (caught) => caught.code === "ENOENT");
 });
 
@@ -914,7 +917,7 @@ test("native semantic MCP discovery is passive and search exposes bounded struct
   }
   mcp.send({ id: 3, method: "tools/call", params: { name: "discover_repository_intelligence", arguments: { projectRoot: root } } });
   assert.equal((await mcp.next()).result.structuredContent.status, "unprepared");
-  mcp.send({ id: 4, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: root, query: "network failures", filters: { paths: ["docs"], domains: ["documentation"] } } } });
+  mcp.send({ id: 4, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: root, query: "network failures", filters: { paths: ["docs/"], domains: ["documentation"] } } } });
   const result = (await mcp.next()).result;
   assert.equal(result.structuredContent.status, "degraded");
   assert.equal(result.structuredContent.results[0].file, "docs/retry.md");

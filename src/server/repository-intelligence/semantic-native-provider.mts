@@ -97,6 +97,10 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
   }
 ];
 
+// Path filters are project-relative prefixes. Absolute paths, backslashes, colons, and empty or dot segments could leave the project or match nothing.
+const unsafePath = (value: string) => value.startsWith("/") || value.includes("\\") || value.includes(":") || value.split("/").some(part => ["", ".", ".."].includes(part));
+const pathError = () => semanticError("invalid_path", "filters.paths must use project-relative paths such as 'server', without trailing slashes, empty segments, '.', '..', backslashes, or colons.");
+
 export function validateConceptSearch(value: unknown): asserts value is ConceptSearchInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw semanticError("validation_failed", "Search arguments must be an object.");
   const input = value as Record<string, unknown>;
@@ -110,7 +114,7 @@ export function validateConceptSearch(value: unknown): asserts value is ConceptS
     for (const [key, values] of Object.entries(input.filters)) {
       if (!["domains", "paths", "kinds"].includes(key) || !Array.isArray(values) || values.length > 50 || values.some(value => typeof value !== "string" || !value || value.length > 512)) throw semanticError("validation_failed", `Invalid filters.${key}.`);
       if (key === "domains" && values.some(value => !domains.has(value))) throw semanticError("validation_failed", "filters.domains contains an unsupported domain.");
-      if (key === "paths" && values.some((value: string) => value.startsWith("/") || value.includes("\\") || value.includes(":") || value.split("/").some(part => ["", ".", ".."].includes(part)))) throw semanticError("invalid_path", "filters.paths must use project-relative paths such as 'server', without trailing slashes, empty segments, '.', '..', backslashes, or colons.");
+      if (key === "paths" && values.some(unsafePath)) throw pathError();
     }
   }
 }
@@ -232,7 +236,7 @@ function validateAnalysis(value: unknown, booleans: string[], extra: string[] = 
     if (!filters || typeof filters !== "object" || Array.isArray(filters) || Object.keys(filters).some(key => key !== "paths")) throw semanticError("validation_failed", "filters accepts only paths.");
     const paths = filters.paths;
     if (paths !== undefined && (!Array.isArray(paths) || paths.length > 50 || paths.some(value => typeof value !== "string" || !value || value.length > 512))) throw semanticError("validation_failed", "Invalid filters.paths.");
-    if (Array.isArray(paths) && paths.some((value: string) => value.startsWith("/") || value.includes("\\") || value.includes(":") || value.split("/").some(part => ["", ".", ".."].includes(part)))) throw semanticError("invalid_path", "filters.paths must use project-relative paths such as 'server', without trailing slashes, empty segments, '.', '..', backslashes, or colons.");
+    if (Array.isArray(paths) && paths.some(unsafePath)) throw pathError();
   }
 }
 

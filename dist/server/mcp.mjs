@@ -10,6 +10,7 @@ import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./reposi
 import {
   listRepositoryIntelligenceProviders,
   RepositoryIntelligenceSelectionError,
+  withNativeSemanticCapabilities,
   withRepositoryIntelligence
 } from "./repository-intelligence/repository-intelligence-providers.mjs";
 import {
@@ -683,6 +684,8 @@ async function callStateTool(name, argumentsValue) {
 }
 
 async function callRepositoryTool(name, argumentsValue) {
+  // Agents often write a directory as "src/", so a trailing slash is dropped before the strict path checks.
+  if (Array.isArray(argumentsValue?.filters?.paths)) argumentsValue = { ...argumentsValue, filters: { ...argumentsValue.filters, paths: argumentsValue.filters.paths.map(value => typeof value === "string" && value.length > 1 ? value.replace(/\/+$/, "") : value) } };
   if (NATIVE_INTELLIGENCE_TOOLS.some(tool => tool.name === name)) {
     const schema = NATIVE_INTELLIGENCE_TOOLS.find(tool => tool.name === name).inputSchema;
     assertInput(schema, argumentsValue);
@@ -774,8 +777,11 @@ async function callRepositoryTool(name, argumentsValue) {
   }
   if (name === "list_repository_intelligence_providers") {
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const providers = await listRepositoryIntelligenceProviders(projectRoot);
-    return { content: [{ type: "text", text: providerListContent(providers) }], structuredContent: { providers, native: await nativeSemanticRuntime.status(projectRoot) } };
+    const native = await nativeSemanticRuntime.status(projectRoot), diagnostics = native.diagnostics || [];
+    const providers = withNativeSemanticCapabilities(await listRepositoryIntelligenceProviders(projectRoot), native);
+    // get_repository_intelligence_status pages the complete diagnostics.
+    return { content: [{ type: "text", text: providerListContent(providers) }],
+      structuredContent: { providers, native: { ...native, diagnostics: diagnostics.slice(0, 20), totalDiagnostics: diagnostics.length } } };
   }
   if (name === "plan_repository_context") {
     const projectRoot = await requestedProjectRoot(argumentsValue);

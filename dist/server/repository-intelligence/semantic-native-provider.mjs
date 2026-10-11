@@ -103,6 +103,8 @@ const NATIVE_INTELLIGENCE_TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }
 ];
+const unsafePath = (value) => value.startsWith("/") || value.includes("\\") || value.includes(":") || value.split("/").some((part) => ["", ".", ".."].includes(part));
+const pathError = () => semanticError("invalid_path", "filters.paths must use project-relative paths such as 'server', without trailing slashes, empty segments, '.', '..', backslashes, or colons.");
 function validateConceptSearch(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw semanticError("validation_failed", "Search arguments must be an object.");
   const input = value;
@@ -116,7 +118,7 @@ function validateConceptSearch(value) {
     for (const [key, values] of Object.entries(input.filters)) {
       if (!["domains", "paths", "kinds"].includes(key) || !Array.isArray(values) || values.length > 50 || values.some((value2) => typeof value2 !== "string" || !value2 || value2.length > 512)) throw semanticError("validation_failed", `Invalid filters.${key}.`);
       if (key === "domains" && values.some((value2) => !domains.has(value2))) throw semanticError("validation_failed", "filters.domains contains an unsupported domain.");
-      if (key === "paths" && values.some((value2) => value2.startsWith("/") || value2.includes("\\") || value2.includes(":") || value2.split("/").some((part) => ["", ".", ".."].includes(part)))) throw semanticError("invalid_path", "filters.paths must use project-relative paths such as 'server', without trailing slashes, empty segments, '.', '..', backslashes, or colons.");
+      if (key === "paths" && values.some(unsafePath)) throw pathError();
     }
   }
 }
@@ -286,7 +288,7 @@ function validateAnalysis(value, booleans, extra = []) {
     if (!filters || typeof filters !== "object" || Array.isArray(filters) || Object.keys(filters).some((key) => key !== "paths")) throw semanticError("validation_failed", "filters accepts only paths.");
     const paths = filters.paths;
     if (paths !== void 0 && (!Array.isArray(paths) || paths.length > 50 || paths.some((value2) => typeof value2 !== "string" || !value2 || value2.length > 512))) throw semanticError("validation_failed", "Invalid filters.paths.");
-    if (Array.isArray(paths) && paths.some((value2) => value2.startsWith("/") || value2.includes("\\") || value2.includes(":") || value2.split("/").some((part) => ["", ".", ".."].includes(part)))) throw semanticError("invalid_path", "filters.paths must use project-relative paths such as 'server', without trailing slashes, empty segments, '.', '..', backslashes, or colons.");
+    if (Array.isArray(paths) && paths.some(unsafePath)) throw pathError();
   }
 }
 function validateSharedDependencies(value) {

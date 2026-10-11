@@ -11,6 +11,14 @@ const NATIVE_CAPABILITIES = Object.freeze({
   verifiedSource: true
 });
 
+// The static native capabilities cover the lexical source layer only. The semantic layer adds search, hybrid ranking, and the symbol graph
+// whenever its runtime can run, because search prepares the index on first use. A degraded preparation withdraws them until a retry succeeds.
+export function withNativeSemanticCapabilities(providers, nativeStatus) {
+  const semantic = Boolean(nativeStatus?.runtime?.supported && nativeStatus.runtime.published && nativeStatus.status !== "degraded");
+  return providers.map(provider => provider.id === "native" && semantic
+    ? { ...provider, capabilities: { ...provider.capabilities, semanticSearch: true, hybridSearch: true, symbolGraph: true } } : provider);
+}
+
 function availabilityStatus(code) {
   return String(code || "").includes("incompatible") ? "incompatible" : "unavailable";
 }
