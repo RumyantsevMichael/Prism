@@ -136,3 +136,34 @@ node bench/semantic-eval/interfaces.mjs --index /tmp/structure/structure.json --
 ```
 
 A fragment-only run writes `structure.json`, which holds the units, edges, and unresolved references without vectors.
+
+## Design signals
+
+`design-signals.mjs` prototypes design detectors on a saved index with vectors.
+Each mode prints its top results, and `--json` writes them for scoring.
+
+| Mode | Reports |
+| --- | --- |
+| `families` | Groups of near-identical units, constants included. |
+| `pairs` | Similar units in different files, with the dependencies that only one side uses. |
+| `cohesion` | Large classes and modules whose members fall into separate clusters of shared state and calls. |
+| `literals` | Units in different files that spell the same rare set of identifier-like string literals. |
+| `groups` | The `find_shared_dependencies` groups, as a baseline. |
+
+```bash
+node bench/semantic-eval/design-signals.mjs --mode cohesion --show 10
+node bench/semantic-eval/design-signals.mjs --index /tmp/index/index.json --mode pairs --json /tmp/pairs.json
+```
+
+To measure another repository, run the retrieval benchmark with `--repo` and an empty query file, so that the index keeps its vectors.
+The file contents come from the `mirror` folder next to the index, or from `--repo`.
+
+`score-design.mjs` counts the labeled design targets that each detector touches in its top results.
+A target is a JSON array of problems, each with the locations of every unit that takes part in it.
+
+```bash
+node bench/semantic-eval/score-design.mjs --targets targets.json --pairs /tmp/pairs.json --cohesion /tmp/cohesion.json --top 10,20
+```
+
+This overlap count is an upper bound, because a result that touches a large target counts even when it does not show the problem.
+Judge the top results blindly, with random controls, before you accept a change.
