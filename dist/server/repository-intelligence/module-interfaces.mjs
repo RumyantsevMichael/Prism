@@ -127,6 +127,11 @@ function importEdges(contents, resolve) {
   }
   return { edges, statements, unresolved, unresolvedSamples };
 }
+function moduleImports(contents) {
+  const imports = /* @__PURE__ */ new Map();
+  for (const edge of importEdges(contents, resolver(contents)).edges) (imports.get(edge.from) || imports.set(edge.from, /* @__PURE__ */ new Set()).get(edge.from)).add(edge.to);
+  return imports;
+}
 const parameterNames = (signature) => {
   const match = (signature || "").match(/^\s*\((.*)\)/s);
   if (!match) return [];
@@ -227,5 +232,6 @@ function moduleInterfaceReport(index, contents, options = {}) {
 }
 export {
   delegatingClasses,
+  moduleImports,
   moduleInterfaceReport
 };

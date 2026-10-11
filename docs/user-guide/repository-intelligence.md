@@ -197,6 +197,11 @@ Only identifier-like literals count: a letter or underscore, then letters, digit
 Prose, format strings, and module specifiers in `import`, `export ... from`, `require`, and `import()` do not count.
 The smallest function, method, class, or constant that contains a literal owns it.
 A literal that many units spell, or that only one unit spells, does not count.
+When a group member is a constant or variable, a member that imports the module of that constant uses its values and does not keep its own copy.
+Such members move from `members` to `users`, and a group whose remaining members sit in one file is not reported, because the set has one owner.
+`coverage.ownedGroups` counts these groups.
+Import analysis covers JavaScript and TypeScript, so in other languages every member stays in `members`.
+A type declaration does not count as an owner, because units that import a union type can still copy the logic that derives its values.
 A literal set can also be values of a type that the compiler checks, such as the members of a string union in a `switch`.
 Check whether one owner, such as a constant or a type, would let the other units stop spelling the values.
 

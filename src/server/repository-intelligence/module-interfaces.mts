@@ -130,6 +130,13 @@ function importEdges(contents: Map<string, string>, resolve: Resolver) {
   return { edges, statements, unresolved, unresolvedSamples };
 }
 
+// The files that each file imports through static imports, re-exports, dynamic imports, or require calls.
+export function moduleImports(contents: Map<string, string>) {
+  const imports = new Map<string, Set<string>>();
+  for (const edge of importEdges(contents, resolver(contents)).edges) (imports.get(edge.from) || imports.set(edge.from, new Set()).get(edge.from)!).add(edge.to);
+  return imports;
+}
+
 const parameterNames = (signature?: string) => {
   const match = (signature || "").match(/^\s*\((.*)\)/s);
   if (!match) return [];

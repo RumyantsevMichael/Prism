@@ -1,6 +1,8 @@
 // Generated from src/server/repository-intelligence/shared-literals.mts by scripts/native-build/compile.mjs.
 import { sharedNameGroups } from "./shared-dependencies.mjs";
+import { moduleImports } from "./module-interfaces.mjs";
 const OWNER_KINDS = /* @__PURE__ */ new Set(["function", "method", "constant", "variable", "class"]);
+const LIST_KINDS = /* @__PURE__ */ new Set(["constant", "variable"]);
 const LITERAL = /(["'`])([A-Za-z_][\w.:/-]{2,80})\1/g;
 const MODULE_LINE = /^\s*import\b|^\s*export\b.*\bfrom\s*["'`]|\brequire\(|\bimport\(/;
 function literalProfiles(index, contents, include = () => true) {
@@ -25,8 +27,19 @@ function literalProfiles(index, contents, include = () => true) {
 }
 function sharedLiteralGroups(index, contents, options = {}) {
   const { profiles, literals } = literalProfiles(index, contents, options.include);
-  const groups = sharedNameGroups(index.units, profiles, options.limit).map(({ names, weight, members }) => ({ literals: names, weight, members }));
-  return { groups, coverage: { profiledUnits: profiles.size, literals } };
+  const imports = moduleImports(contents);
+  let ownedGroups = 0;
+  const groups = sharedNameGroups(index.units, profiles, options.limit).flatMap(({ names, weight, members }) => {
+    const lists = members.filter((member) => LIST_KINDS.has(member.kind));
+    const users = members.filter((member) => !LIST_KINDS.has(member.kind) && lists.some((list) => list.file !== member.file && imports.get(member.file)?.has(list.file)));
+    const kept = members.filter((member) => !users.includes(member));
+    if (new Set(kept.map((member) => member.file)).size < 2) {
+      ownedGroups++;
+      return [];
+    }
+    return [{ literals: names, weight, members: kept, users: users.map(({ file, selector }) => ({ file, selector })) }];
+  });
+  return { groups, coverage: { profiledUnits: profiles.size, literals, ownedGroups } };
 }
 export {
   literalProfiles,

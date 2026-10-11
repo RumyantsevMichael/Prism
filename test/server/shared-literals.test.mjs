@@ -24,10 +24,11 @@ test("units in different files that spell the same rare literals form a group", 
     { file: "src/other.ts", name: "label", from: "export function", to: "}" }
   ]);
   const { groups, coverage } = sharedLiteralGroups(index, contents);
-  assert.deepEqual(coverage, { profiledUnits: 3, literals: 9 });
+  assert.deepEqual(coverage, { profiledUnits: 3, literals: 9, ownedGroups: 0 });
   assert.equal(groups.length, 1);
   assert.deepEqual(groups[0].literals.map(literal => literal.name).sort(), ["applying", "available", "awaiting-consent", "idle"]);
   assert.deepEqual(groups[0].members.map(member => member.selector).sort(), ["PHASES", "render"]);
+  assert.deepEqual(groups[0].users, []);
 });
 
 test("module specifiers, prose, and literals outside units are ignored, and the innermost unit owns a literal", () => {
@@ -41,4 +42,27 @@ test("module specifiers, prose, and literals outside units are ignored, and the 
   assert.deepEqual([...profiles.get("src/a.ts#outer")], ["gamma"]);
   assert.deepEqual([...profiles.get("src/a.ts#inner")], ["alpha", "beta"]);
   assert.equal(profiles.size, 2);
+});
+
+test("members that import the module of a constant in their group use its values and move to users", () => {
+  const states = `export const PHASES = ["applying", "available", "awaiting-consent"];\n`;
+  const user = `import { PHASES } from "./states.mjs";\nexport function render(phase) {\n  return phase === "applying" ? "available" : "awaiting-consent";\n}\n`;
+  const copy = `export function label(phase) {\n  return { applying: "applying", available: "available", pending: "awaiting-consent" }[phase];\n}\n`;
+  const declarations = (files) => Object.keys(files).map(file => file.endsWith("states.mjs") || file.endsWith("order.mjs")
+    ? { file, name: "PHASES", kind: "constant", from: "export const", to: "];" } : { file, name: file.includes("panel") ? "render" : "label", from: "export function", to: "\n}" });
+  // The only other member imports the owner, so the set has one owner and no group remains.
+  let files = { "src/states.mjs": states, "src/panel.mjs": user };
+  let { index, contents } = project(files, declarations(files));
+  let result = sharedLiteralGroups(index, contents);
+  assert.deepEqual([result.groups, result.coverage.ownedGroups], [[], 1]);
+  // A member that spells the set without the import keeps the group, and the importing member is listed as a user.
+  files = { "src/states.mjs": states, "src/panel.mjs": user, "src/copy.mjs": copy };
+  ({ index, contents } = project(files, declarations(files)));
+  result = sharedLiteralGroups(index, contents);
+  assert.deepEqual(result.groups[0].members.map(member => member.file).sort(), ["src/copy.mjs", "src/states.mjs"]);
+  assert.deepEqual(result.groups[0].users, [{ file: "src/panel.mjs", selector: "render" }]);
+  // A second constant list is a copy that must stay in step, even when its module imports the first one.
+  files = { "src/states.mjs": states, "src/order.mjs": `import { PHASES } from "./states.mjs";\nexport const PHASES = ["applying", "available", "awaiting-consent"];\n` };
+  ({ index, contents } = project(files, declarations(files)));
+  assert.deepEqual(sharedLiteralGroups(index, contents).groups[0].members.map(member => member.file).sort(), ["src/order.mjs", "src/states.mjs"]);
 });
