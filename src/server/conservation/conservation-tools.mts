@@ -30,7 +30,7 @@ export async function callConservationTool(name: string, input: Record<string, u
       counts: { files: snapshot.files.length, bytes: snapshot.files.reduce((sum, file) => sum + file.bytes, 0), omissions: snapshot.omissions.length }, diagnostics: snapshot.diagnostics.slice(0, 20), totalDiagnostics: snapshot.diagnostics.length };
   }
   const evidence = await conservationStore.get(projectRoot, input.evidenceId as string);
-  const results = evidence.kind === "repository-analysis" ? ({ report_module_interfaces: "modules", report_cohesion_clusters: "containers" } as Record<string, string>)[evidence.tool] || "groups" : undefined;
+  const results = evidence.kind === "repository-analysis" ? ({ report_module_interfaces: "modules", report_cohesion_clusters: "containers", report_complex_units: "units" } as Record<string, string>)[evidence.tool] || "groups" : undefined;
   const section = (input.section || ({ snapshot: "files", search: "candidates", comparison: "observations", analysis: "units", migration: "lines", "repository-analysis": results } as Record<string, string | undefined>)[evidence.kind]) as string;
   const record = evidence as unknown as Record<string, unknown>;
   const values = section === "unitsBefore" || section === "unitsAfter" ? (record.units as Record<string, unknown> | undefined)?.[section === "unitsBefore" ? "before" : "after"] : record[section];

@@ -39,7 +39,7 @@ async function callConservationTool(name, input) {
     };
   }
   const evidence = await conservationStore.get(projectRoot, input.evidenceId);
-  const results = evidence.kind === "repository-analysis" ? { report_module_interfaces: "modules", report_cohesion_clusters: "containers" }[evidence.tool] || "groups" : void 0;
+  const results = evidence.kind === "repository-analysis" ? { report_module_interfaces: "modules", report_cohesion_clusters: "containers", report_complex_units: "units" }[evidence.tool] || "groups" : void 0;
   const section = input.section || { snapshot: "files", search: "candidates", comparison: "observations", analysis: "units", migration: "lines", "repository-analysis": results }[evidence.kind];
   const record = evidence;
   const values = section === "unitsBefore" || section === "unitsAfter" ? record.units?.[section === "unitsBefore" ? "before" : "after"] : record[section];

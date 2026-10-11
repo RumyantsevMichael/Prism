@@ -26,7 +26,7 @@ import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
-import { NATIVE_INTELLIGENCE_TOOLS, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
+import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
 const reviewServers = createReviewServerPool();
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));
@@ -697,8 +697,10 @@ async function callRepositoryTool(name, argumentsValue) {
       : name === "report_module_interfaces" ? await reportModuleInterfaces({ ...argumentsValue, projectRoot })
       : name === "find_shared_literals" ? await findSharedLiterals({ ...argumentsValue, projectRoot })
       : name === "report_cohesion_clusters" ? await reportCohesionClusters({ ...argumentsValue, projectRoot })
+      : name === "find_same_name_units" ? await findSameNameUnits({ ...argumentsValue, projectRoot })
+      : name === "report_complex_units" ? await reportComplexUnits({ ...argumentsValue, projectRoot })
       : await nativeSemanticRuntime.status(projectRoot, argumentsValue.waitMs);
-    if (!["search_repository_concepts", "find_shared_dependencies", "report_module_interfaces", "find_shared_literals", "report_cohesion_clusters"].includes(name)) {
+    if (!["search_repository_concepts", "find_shared_dependencies", "report_module_interfaces", "find_shared_literals", "report_cohesion_clusters", "find_same_name_units", "report_complex_units"].includes(name)) {
       const diagnostics = value.diagnostics || [], offset = argumentsValue.offset || 0, limit = argumentsValue.limit || 20;
       value = { ...value, diagnostics: diagnostics.slice(offset, offset + limit), totalDiagnostics: diagnostics.length, nextOffset: offset + limit < diagnostics.length ? offset + limit : null };
     }

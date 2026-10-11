@@ -11,11 +11,13 @@ Each tool reports facts for investigation, not defects.
 | `find_shared_dependencies` | Units in different files that work alike: repeated sub-steps, copied helpers, and repeated protocols. |
 | `report_module_interfaces` | Exports that no module uses, exports that only tests use, the part of each interface that its importers use, and classes that forward most methods to one field. |
 | `find_shared_literals` | Units in different files that spell the same rare values: states, ids, keys, event names, and error codes that several units must know. |
+| `find_same_name_units` | Functions in different files with one name: identical copies, and diverged variants that differ in throwing or in the dependencies they use. |
 | `report_cohesion_clusters` | Large classes, types, and modules whose members fall into separate clusters of shared state and calls, which can show mixed responsibilities. |
+| `report_complex_units` | Long or branchy functions and methods, with their nesting, parameters, and the value they dispatch on. |
 
 1. If a retained baseline exists, pass its identity as `snapshotId` to every discovery call.
 2. If no baseline exists and the request is analysis only, call the tools on the live project without `snapshotId`.
-3. Call `find_shared_dependencies`, `find_shared_literals`, `report_module_interfaces`, and `report_cohesion_clusters` for the discovery scope.
+3. Call `find_shared_dependencies`, `find_shared_literals`, `find_same_name_units`, `report_module_interfaces`, `report_cohesion_clusters`, and `report_complex_units` for the discovery scope.
 4. If the scope is part of the project, pass its directories as `filters.paths`.
 5. For each responsibility that the scope implements, call `search_repository_concepts` with a query that describes it.
 6. While a call returns `preparing`, wait through bounded `get_repository_intelligence_status` requests and repeat the same call.
@@ -36,12 +38,12 @@ These signals justify investigation without prescribing a solution.
 | Signal | Observable evidence |
 | --- | --- |
 | Semantic redundancy | Similar concepts, parallel behavior, repeated constraints, overlapping requirements, or units that share a rare set of dependencies. |
-| Specialization | Repeated special cases, caller-specific interfaces, narrow rules, exceptions, or overrides. |
+| Specialization | Repeated special cases, caller-specific interfaces, narrow rules, exceptions, overrides, or variants of one name with different contracts. |
 | Shallow abstraction | An interface exposes most implementation complexity or adds indirection without hiding knowledge, for example a class that forwards most methods to one field. |
 | Overexposure | Exports that no other module uses, or an interface whose importers each need only a small part of it. |
 | Information leakage | Several consumers must understand the same internal fact or domain policy, or spell the same rare set of values. |
 | Tactical accumulation | Historical exceptions, layered fallbacks, compatibility paths, or multiple mechanisms for related needs. |
-| Structural complexity | Excess dependencies, public surface, repeated state, branches, reference chains, fragmented sections, or members of one class or module that fall into separate clusters. |
+| Structural complexity | Excess dependencies, public surface, repeated state, branches, reference chains, fragmented sections, members of one class or module that fall into separate clusters, or long units that dispatch on many literal values. |
 
 1. Prioritize candidates using independent evidence dimensions and the caller's scope.
 2. Keep semantic overlap, duplicated knowledge, specialization, dependency overlap, interface burden, affected consumers, state duplication, and exceptions inspectable.

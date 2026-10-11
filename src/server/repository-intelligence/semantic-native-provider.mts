@@ -5,6 +5,8 @@ import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { moduleInterfaceReport } from "./module-interfaces.mjs";
 import { cohesionReport } from "./cohesion.mjs";
 import { sharedLiteralGroups } from "./shared-literals.mjs";
+import { sameNameGroups } from "./same-name-units.mjs";
+import { complexUnits } from "./complex-units.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
 import type { AnalysisReceipt, SearchReceipt } from "../conservation/conservation-types.mjs";
@@ -13,7 +15,7 @@ import type { SourceUnit, Domain, NativeSource, Neighbor, Preparation, PreparedI
 interface ConceptSearchInput { projectRoot: string; query: string; filters?: SearchFilters; expectedSnapshot?: string; snapshotId?: string; limit?: number }
 interface SharedDependencyInput { projectRoot: string; filters?: { paths?: string[] }; includeTests?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number }
 interface ModuleInterfaceInput { projectRoot: string; filters?: { paths?: string[] }; allModules?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number; offset?: number }
-interface CohesionInput { projectRoot: string; filters?: { paths?: string[] }; includeTests?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number }
+interface ScopedAnalysisInput { projectRoot: string; filters?: { paths?: string[] }; includeTests?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number }
 interface ProviderOptions { source?: Record<string, unknown>; nativeSource?: NativeSource; runtime?: SemanticRuntime; expectedSnapshot?: string; waitMs?: number }
 
 const domains = new Set(["code", "instruction", "documentation", "configuration"]);
@@ -92,6 +94,30 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
       includeTests: { type: "boolean", default: false, description: "Include test classes and modules." },
       filters: { type: "object", additionalProperties: false, properties: {
         paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the classes, types, and modules to report.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "find_same_name_units",
+    description: "Group functions in different files that have the same name: identical copies, and diverged variants with the dependencies that only each variant uses and its throw count. Uses the same prepared index as search_repository_concepts. A diverged name shows candidates for one contract and does not establish that the variants should behave alike.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      includeTests: { type: "boolean", default: false, description: "Include test code, which often repeats small helpers on purpose." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when at least two of its functions are inside these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "report_complex_units",
+    description: "Report long or branchy functions and methods with their lines, branches, nesting depth, parameters, nested functions, and the expression that they compare with the most literal values. Uses the same prepared index as search_repository_concepts. The facts identify candidates for a split and do not decide that a unit is too complex.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      includeTests: { type: "boolean", default: false, description: "Include test code." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the units to report.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }
@@ -243,7 +269,9 @@ function validateAnalysis(value: unknown, booleans: string[], extra: string[] = 
 export function validateSharedDependencies(value: unknown): asserts value is SharedDependencyInput { validateAnalysis(value, ["includeTests"]); }
 export function validateModuleInterfaces(value: unknown): asserts value is ModuleInterfaceInput { validateAnalysis(value, ["allModules"], ["offset"]); }
 export function validateSharedLiterals(value: unknown): asserts value is SharedDependencyInput { validateAnalysis(value, ["includeTests"]); }
-export function validateCohesion(value: unknown): asserts value is CohesionInput { validateAnalysis(value, ["includeTests"]); }
+export function validateCohesion(value: unknown): asserts value is ScopedAnalysisInput { validateAnalysis(value, ["includeTests"]); }
+export function validateSameNameUnits(value: unknown): asserts value is ScopedAnalysisInput { validateAnalysis(value, ["includeTests"]); }
+export function validateComplexUnits(value: unknown): asserts value is ScopedAnalysisInput { validateAnalysis(value, ["includeTests"]); }
 
 // Prepare the snapshot that an analysis reads: the retained baseline when the caller names one, or the live project.
 async function preparedAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string }, options: ProviderOptions) {
@@ -295,7 +323,7 @@ export async function reportModuleInterfaces(input: ModuleInterfaceInput, option
 // Retain the complete result of an analysis, before the response limit, so that a report or a review view can cite it by receiptId.
 // The hash of each file that the result names lets a reader detect results that a later edit made stale.
 async function retainResult(input: { projectRoot: string; snapshotId?: string }, provider: SemanticNativeRepositoryIntelligence, tool: AnalysisReceipt["tool"],
-  scope: Record<string, unknown>, coverage: unknown, diagnostics: AnalysisReceipt["diagnostics"], results: Pick<AnalysisReceipt, "groups" | "modules" | "delegatingClasses" | "containers">) {
+  scope: Record<string, unknown>, coverage: unknown, diagnostics: AnalysisReceipt["diagnostics"], results: Pick<AnalysisReceipt, "groups" | "modules" | "delegatingClasses" | "containers" | "units">) {
   const snapshot = await provider.snapshot(), prepared = provider.prepared!, named = new Set<string>();
   const collect = (value: unknown) => {
     if (Array.isArray(value)) value.forEach(collect);
@@ -334,7 +362,7 @@ export async function findSharedLiterals(input: SharedDependencyInput, options: 
     diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalGroups: groups.length, groups: groups.slice(0, input.limit || 20) };
 }
 
-export async function reportCohesionClusters(input: CohesionInput, options: ProviderOptions = {}) {
+export async function reportCohesionClusters(input: ScopedAnalysisInput, options: ProviderOptions = {}) {
   validateCohesion(input);
   const { provider, preparation, identity } = await preparedAnalysis(input, options);
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, containers: [] };
@@ -348,4 +376,35 @@ export async function reportCohesionClusters(input: CohesionInput, options: Prov
   const receiptId = await retainResult(input, provider, "report_cohesion_clusters", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, report.coverage, diagnostics, { containers: report.containers });
   return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: report.coverage,
     diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalContainers: report.containers.length, containers: report.containers.slice(0, input.limit || 20) };
+}
+
+export async function findSameNameUnits(input: ScopedAnalysisInput, options: ProviderOptions = {}) {
+  validateSameNameUnits(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: undefined, groups: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
+  const contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
+  const { include, inside } = analysisScope(input, contents);
+  const result = sameNameGroups(provider.prepared.index, contents, { include });
+  const groups = result.groups.filter(group => group.variants.flatMap(variant => variant.members).filter(member => inside(member.file)).length >= 2);
+  await provider.verifySnapshot();
+  const diagnostics = [...(provider.prepared.index.unresolvedReferences ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so variants compare project calls only.", recovery: "Prepare the index again with the current native runtime." }]), ...provider.preparation.diagnostics];
+  const receiptId = await retainResult(input, provider, "find_same_name_units", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
+  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: result.coverage,
+    diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalGroups: groups.length, groups: groups.slice(0, input.limit || 20) };
+}
+
+export async function reportComplexUnits(input: ScopedAnalysisInput, options: ProviderOptions = {}) {
+  validateComplexUnits(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: undefined, units: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, units: [] };
+  const contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
+  const { include, inside } = analysisScope(input, contents);
+  const result = complexUnits(provider.prepared.index, contents, { include: unit => include(unit) && inside(unit.file) });
+  await provider.verifySnapshot();
+  const diagnostics = provider.preparation.diagnostics;
+  const receiptId = await retainResult(input, provider, "report_complex_units", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { units: result.units });
+  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: result.coverage,
+    diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalUnits: result.units.length, units: result.units.slice(0, input.limit || 20) };
 }

@@ -234,14 +234,64 @@ Each cluster lists its lines, its members, and the state that its members use, a
 Mixed responsibilities inside one long function do not appear, because the tool groups members, not statements.
 Clusters identify candidate responsibilities for investigation and do not decide whether a split is better.
 
+### Find same-name units
+
+`find_same_name_units` groups functions in different files that have the same name.
+Identical copies show a helper that one module could own, and diverged variants of one name can carry different contracts.
+For example, one variant can throw on bad input while another returns `null`.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["src"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, `includeTests`, and `filters.paths` behavior as `find_shared_dependencies`.
+Each group has a `kind` of `identical` or `diverged` and lists its variants.
+Each variant lists its members, its lines and signature, its `throws` count of `throw`, `raise`, and `panic!`, and `onlyHere`, the dependencies that not every variant uses.
+Bodies that differ only in whitespace or an `export` or `pub` keyword are one variant.
+Only functions with at least three lines count, and methods are left out, because the same method name in several classes is usually polymorphism.
+A name with more than 20 functions is too generic to compare.
+`similarity` is the smallest identifier overlap between two variants, and groups below 0.3 are unrelated functions that only share a name, so they are not reported.
+When every variant has at most three lines, the floor is 0.5, because a few shared identifiers make short wrappers look alike.
+Diverged groups whose variants differ in throwing come first, then diverged groups with different dependencies, then other diverged groups, and then identical copies.
+A diverged name identifies candidates for one contract and does not establish that the variants should behave alike.
+
+### Report complex units
+
+`report_complex_units` reports long or branchy functions and methods.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["src/server"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, and `includeTests` behavior as `find_shared_dependencies`.
+With `filters.paths`, only units inside the paths are reported.
+A unit is reported when it has at least 80 lines, at least 25 branches, or a dispatch on at least 8 literal values, and the longest units come first.
+`branches` counts `if`, loops, `case`, `catch`, and the `&&`, `||`, and ternary operators, with comments and string contents left out.
+Python counts `elif`, `except`, `and`, and `or`, and Rust counts match arms.
+`maxDepth` is the deepest nesting below the body, and `parameters` counts the top-level parameters of the signature.
+`nestedFunctions` counts the functions inside the unit, because their code also counts toward the unit.
+`dispatch` names the expression that the unit compares with the most distinct literal values, through equality or inequality comparisons, `case` labels, or Rust match arms, when it has at least three.
+A long chain on one subject can be a table of handlers.
+The facts identify candidates for a split and do not decide that a unit is too complex.
+
 ### Analysis receipts
 
-`find_shared_dependencies`, `find_shared_literals`, `report_module_interfaces`, and `report_cohesion_clusters` retain each complete result as immutable private evidence and return its `receiptId`.
-The receipt keeps every result before the response `limit`, so `totalGroups` or `totalContainers` can be larger than the returned list.
+`find_shared_dependencies`, `find_shared_literals`, `find_same_name_units`, `report_module_interfaces`, `report_cohesion_clusters`, and `report_complex_units` retain each complete result as immutable private evidence and return its `receiptId`.
+The receipt keeps every result before the response `limit`, so `totalGroups`, `totalContainers`, or `totalUnits` can be larger than the returned list.
 The receipt also records the tool, the scope, the snapshot, the index revision, coverage, diagnostics, and the hash of every file that the result names.
 A file hash that differs from the current file shows a result that a later edit made stale.
 Read a receipt in pages with `get_conservation_evidence`.
-The default section is `groups`, `modules`, or `containers`, and the `delegatingClasses` and `files` sections are also available.
+The default section is `groups`, `modules`, `containers`, or `units`, and the `delegatingClasses` and `files` sections are also available.
 Cite the `receiptId` in a refactoring report, so that a reviewer can open the exact result that supports a candidate.
 An identical result gives the same `receiptId`, and a `preparing` or degraded response has no receipt.
 

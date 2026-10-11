@@ -6,7 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { NativeSemanticRuntime } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
-import { SemanticNativeRepositoryIntelligence, findSharedDependencies, findSharedLiterals, reportCohesionClusters, reportModuleInterfaces, searchRepositoryConcepts, validateConceptSearch, validateCohesion, validateModuleInterfaces, validateSharedDependencies, validateSharedLiterals } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
+import { SemanticNativeRepositoryIntelligence, findSameNameUnits, findSharedDependencies, findSharedLiterals, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts, validateConceptSearch, validateCohesion, validateComplexUnits, validateModuleInterfaces, validateSameNameUnits, validateSharedDependencies, validateSharedLiterals } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
 import { openNativeRepositoryIntelligence } from "../../dist/server/repository-intelligence/native-repository-intelligence.mjs";
 import { CompositeRepositoryIntelligence } from "../../dist/server/repository-intelligence/composite-repository-intelligence.mjs";
 import { planRepositoryContext } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
@@ -64,7 +64,11 @@ test("shared literal groups and cohesion clusters need the prepared index and re
   const cohesion = await reportCohesionClusters({ projectRoot: root }, { runtime });
   assert.deepEqual([cohesion.status, cohesion.containers, cohesion.coverage], ["degraded", [], null]);
   assert.ok(cohesion.diagnostics.some(item => item.code === "unsupported_runtime"));
-  for (const validate of [validateSharedLiterals, validateCohesion]) {
+  for (const [name, call] of [["groups", findSameNameUnits], ["units", reportComplexUnits]]) {
+    const found = await call({ projectRoot: root }, { runtime });
+    assert.deepEqual([found.status, found[name], found.coverage], ["degraded", [], null], name);
+  }
+  for (const validate of [validateSharedLiterals, validateCohesion, validateSameNameUnits, validateComplexUnits]) {
     for (const input of [{ limit: 0 }, { offset: 1 }, { allModules: true }, { includeTests: "yes" }, { filters: { paths: ["../outside"] } }])
       assert.throws(() => validate({ projectRoot: "/tmp", ...input }), error => ["validation_failed", "invalid_path"].includes(error.code), JSON.stringify(input));
     validate({ projectRoot: "/tmp", limit: 100, includeTests: true, filters: { paths: ["src"] } });
@@ -107,6 +111,28 @@ test("prepared shared literal groups read snapshot files, leave out tests by def
   assert.equal(limited.totalGroups, 1);
   assert.notEqual(limited.receiptId, found.receiptId);
   assert.equal((await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: cohesion.receiptId })).section, "containers");
+});
+test("prepared same-name groups and complex units read snapshot files and retain receipts", async t => {
+  const { root } = await fixture(t);
+  const isObject = "function isObject(value) {\n  return value !== null && typeof value === 'object';\n}\n";
+  const dispatch = `function handle(name) {\n${Array.from({ length: 9 }, (_, index) => `  if (name === "tool_${index}") return ${index};`).join("\n")}\n}\n`;
+  const files = { "src/a.mjs": isObject, "src/b.mjs": isObject, "src/mcp.mjs": dispatch };
+  const units = [];
+  for (const [file, content] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), content);
+    units.push({ id: file, file, kind: "function", name: file.endsWith("mcp.mjs") ? "handle" : "isObject", domain: "code", range: { startLine: 1, endLine: content.split("\n").length - 1 }, span: { start: 0, end: content.length - 1 } });
+  }
+  const runtime = { prepare: async source => ({ status: "ready", snapshot: (await source.snapshot()).sourceFingerprint, preparationId: "test", diagnostics: [],
+    prepared: { index: { units, edges: [], unresolvedReferences: [], structureComplete: true }, revision: "test", modelIdentity: "test" } }) };
+  const same = await findSameNameUnits({ projectRoot: root }, { runtime });
+  assert.deepEqual(same.groups.map(group => [group.name, group.kind, group.files]), [["isObject", "identical", 2]]);
+  assert.deepEqual((await findSameNameUnits({ projectRoot: root, filters: { paths: ["src/a.mjs"] } }, { runtime })).groups, []);
+  const complex = await reportComplexUnits({ projectRoot: root }, { runtime });
+  assert.deepEqual(complex.units.map(unit => [unit.selector, unit.dispatch]), [["handle", { subject: "name", values: 9 }]]);
+  const receipt = await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: complex.receiptId });
+  assert.deepEqual([receipt.tool, receipt.section, receipt.totalCount], ["report_complex_units", "units", 1]);
+  assert.equal((await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: same.receiptId })).section, "groups");
 });
 test("shared dependency input limits, unknown fields, and path traversal fail before preparation", () => {
   for (const input of [{ limit: 0 }, { limit: 101 }, { includeTests: "yes" }, { filters: { domains: ["code"] } }, { filters: { paths: ["../outside"] } }, { query: "x" }, { snapshotId: "x" }])
