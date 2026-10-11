@@ -6,7 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { constants } from "node:fs";
-import { mkdir, lstat, realpath, open, rename, rm, chmod } from "node:fs/promises";
+import { mkdir, lstat, realpath, readdir, open, rename, rm, chmod, utimes } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/artifact-store.mjs";
 const semanticError = (code, message) => Object.assign(new Error(message), { code });
@@ -116,6 +116,16 @@ async function download(asset, destination, allowFile) {
     await handle.close().catch(() => {
     });
     await rm(temporary, { force: true });
+  }
+}
+const STALE_ASSET_MS = 14 * 24 * 60 * 60 * 1e3;
+async function pruneAssets(directory, keep, maxAgeMs = STALE_ASSET_MS, now = Date.now()) {
+  const entries = await readdir(directory);
+  for (const name of entries) {
+    if (keep.has(name) || name.endsWith(".lock")) continue;
+    const archive = name.endsWith(".tar.gz") && entries.includes(name.slice(0, -".tar.gz".length));
+    const info = await lstat(path.join(directory, name)).catch(() => null);
+    if (info && (archive || now - info.mtimeMs > maxAgeMs)) await rm(path.join(directory, name), { recursive: true, force: true });
   }
 }
 class Helper {
@@ -276,6 +286,7 @@ class NativeSemanticRuntime {
         await rename(staging, runtime);
       } finally {
         await rm(staging, { recursive: true, force: true });
+        await rm(archive, { force: true });
       }
     }, semanticError, { renew: true, timeoutMs: 12e4 }));
     await privateDirectory(modelDirectory);
@@ -288,6 +299,11 @@ class NativeSemanticRuntime {
         await download({ ...file, url: file.url || `https://huggingface.co/${manifest.model.id}/resolve/${manifest.model.revision}/${file.path}` }, target, allowFile);
       }
     }, semanticError, { renew: true, timeoutMs: 12e4 }));
+    const used = /* @__PURE__ */ new Date();
+    for (const directory of [runtime, modelDirectory]) await utimes(directory, used, used).catch(() => {
+    });
+    await pruneAssets(assets, /* @__PURE__ */ new Set([path.basename(runtime), path.basename(modelDirectory)])).catch(() => {
+    });
     return { runtime, modelDirectory, modelIdentity: sha(JSON.stringify(manifest.model)), assetIdentity: manifest.identity };
   }
   async verifyRuntime(directory, platform) {
@@ -436,6 +452,7 @@ export {
   assertSafeAncestors,
   nativeSemanticRuntime,
   privateDirectory,
+  pruneAssets,
   regularBytes,
   semanticError
 };

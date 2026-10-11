@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { NativeSemanticRuntime } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
+import { NativeSemanticRuntime, pruneAssets } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
 import { SemanticNativeRepositoryIntelligence, findSameNameUnits, findSharedDependencies, findSharedLiterals, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts, validateConceptSearch, validateCohesion, validateComplexUnits, validateModuleInterfaces, validateSameNameUnits, validateSharedDependencies, validateSharedLiterals } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
 import { openNativeRepositoryIntelligence } from "../../dist/server/repository-intelligence/native-repository-intelligence.mjs";
 import { CompositeRepositoryIntelligence } from "../../dist/server/repository-intelligence/composite-repository-intelligence.mjs";
@@ -273,6 +273,31 @@ test("a concurrent source edit prevents generation publication", async t => {
   assert.equal(result.status, "degraded"); assert.equal(result.diagnostics[0].code, "stale_snapshot");
   await assert.rejects(readFile(path.join((await runtime.location(root)).directory, "current.json")), { code: "ENOENT" });
 });
+test("a downloaded archive is removed after extraction ends, including when extraction fails", async t => {
+  const { directory, root } = await fixture(t), localManifest = path.join(directory, "manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")), bytes = Buffer.from("not a tar");
+  manifest.bundles[`${process.platform}-${process.arch}`] = { url: "https://example.invalid/pinned.tar.gz", bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), unpackedBytes: 100 };
+  await writeFile(localManifest, JSON.stringify(manifest));
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async () => ({ ok: true, body: { async *[Symbol.asyncIterator]() { yield bytes; } } });
+  const cache = path.join(directory, "cache"), runtime = new NativeSemanticRuntime({ directory: cache, manifestPath: localManifest });
+  const result = await runtime.prepare(await openNativeRepositoryIntelligence(root));
+  assert.equal(result.status, "degraded");
+  assert.deepEqual(await readdir(path.join(cache, "assets")), []);
+});
+
+test("asset pruning keeps current and recent assets and removes stale assets and extracted archives", async t => {
+  const { directory } = await fixture(t), assets = path.join(directory, "assets"), day = 24 * 60 * 60 * 1000, old = new Date(Date.now() - 20 * day);
+  for (const name of ["current", "recent", "stale", "current.tar.gz", "stale.tar.gz", "orphan.tar.gz", "stale.123.tmp", "stale.lock"]) {
+    const target = path.join(assets, name);
+    if (name.includes(".")) { await mkdir(assets, { recursive: true }); await writeFile(target, name); } else { await mkdir(path.join(target, "inner"), { recursive: true }); await writeFile(path.join(target, "inner", "file"), name); }
+  }
+  for (const name of ["stale", "stale.tar.gz", "orphan.tar.gz", "stale.123.tmp", "current"]) await utimes(path.join(assets, name), old, old);
+  await pruneAssets(assets, new Set(["current"]));
+  assert.deepEqual((await readdir(assets)).sort(), ["current", "recent", "stale.lock"]);
+});
+
 test("invalid checksums and interrupted downloads publish no runtime and remove temporary files", async t => {
   const { directory, root } = await fixture(t), localManifest = path.join(directory, "manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));

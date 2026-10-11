@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { constants } from "node:fs";
-import { mkdir, lstat, realpath, readFile, open, rename, rm, chmod } from "node:fs/promises";
+import { mkdir, lstat, realpath, readFile, readdir, open, rename, rm, chmod, utimes } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
@@ -104,6 +104,20 @@ async function download(asset: Asset, destination: string, allowFile: boolean) {
     await handle.sync(); await handle.close();
     await rename(temporary, destination);
   } finally { await handle.close().catch(() => {}); await rm(temporary, { force: true }); }
+}
+
+const STALE_ASSET_MS = 14 * 24 * 60 * 60 * 1000;
+
+// Remove assets that no plugin version has used recently, and downloaded archives whose runtime is already extracted.
+// Each version marks its own runtime and model as used, so a session on an older plugin version keeps its assets.
+export async function pruneAssets(directory: string, keep: Set<string>, maxAgeMs = STALE_ASSET_MS, now = Date.now()) {
+  const entries = await readdir(directory);
+  for (const name of entries) {
+    if (keep.has(name) || name.endsWith(".lock")) continue;
+    const archive = name.endsWith(".tar.gz") && entries.includes(name.slice(0, -".tar.gz".length));
+    const info = await lstat(path.join(directory, name)).catch(() => null);
+    if (info && (archive || now - info.mtimeMs > maxAgeMs)) await rm(path.join(directory, name), { recursive: true, force: true });
+  }
 }
 
 class Helper {
@@ -215,7 +229,7 @@ export class NativeSemanticRuntime implements SemanticRuntime {
         await this.verifyRuntime(staging, platform);
         await chmod(path.join(staging, process.platform === "win32" ? "node.exe" : "node"), 0o700);
         await rename(staging, runtime);
-      } finally { await rm(staging, { recursive: true, force: true }); }
+      } finally { await rm(staging, { recursive: true, force: true }); await rm(archive, { force: true }); }
     }, semanticError, { renew: true, timeoutMs: 120000 })) ;
     await privateDirectory(modelDirectory);
     await withArtifactLock(modelDirectory, () => withFileLock(modelDirectory, async () => {
@@ -226,6 +240,9 @@ export class NativeSemanticRuntime implements SemanticRuntime {
         await download({ ...file, url: file.url || `https://huggingface.co/${manifest.model.id}/resolve/${manifest.model.revision}/${file.path}` }, target, allowFile);
       }
     }, semanticError, { renew: true, timeoutMs: 120000 }));
+    const used = new Date();
+    for (const directory of [runtime, modelDirectory]) await utimes(directory, used, used).catch(() => {});
+    await pruneAssets(assets, new Set([path.basename(runtime), path.basename(modelDirectory)])).catch(() => {});
     return { runtime, modelDirectory, modelIdentity: sha(JSON.stringify(manifest.model)), assetIdentity: manifest.identity };
   }
   async verifyRuntime(directory: string, platform: string) {
