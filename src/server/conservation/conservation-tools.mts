@@ -4,12 +4,12 @@ import { compareConceptDelta } from "./conservation-analysis.mjs";
 import { GET_REVIEW_SCHEMA, UPDATE_REVIEW_SCHEMA, CHECK_REVIEW_GATE_SCHEMA, getReview, updateReview, checkReviewGate } from "../review/review-ledger.mjs";
 import { objectSchema as obj, textField as str, hashField } from "./conservation-schema.mjs";
 const captureSchema = obj({ projectRoot: str, deltaPath: str }, ["projectRoot"]);
-const evidenceSchema = obj({ projectRoot: str, evidenceId: hashField, section: { enum: ["files", "omissions", "diagnostics", "candidates", "observations", "measurements", "growth", "unitsBefore", "unitsAfter", "units", "requirements", "lines"] }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }, ["projectRoot", "evidenceId"]);
+const evidenceSchema = obj({ projectRoot: str, evidenceId: hashField, section: { enum: ["files", "omissions", "diagnostics", "candidates", "observations", "measurements", "growth", "unitsBefore", "unitsAfter", "units", "requirements", "lines", "groups", "modules", "delegatingClasses", "containers"] }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }, ["projectRoot", "evidenceId"]);
 const compareSchema = obj({ projectRoot: str, deltaPath: str, expectedRevision: hashField, baselineId: hashField, resultSnapshotId: hashField });
 const annotations = (readOnlyHint: boolean, openWorldHint = false) => ({ readOnlyHint, destructiveHint: false, idempotentHint: readOnlyHint, openWorldHint });
 export const CONSERVATION_TOOLS = [
   { name: "capture_repository_snapshot", description: "Retain immutable source evidence before edits, including dirty, untracked, opaque and symlink identities. Pass deltaPath to register exact slice evidence outputs before creating them. Returns the baseline or result snapshot identity.", inputSchema: captureSchema, annotations: annotations(false) },
-  { name: "get_conservation_evidence", description: "Read an immutable snapshot, search receipt, comparison, or analysis in bounded pages. Evidence IDs bind every page without revision drift.", inputSchema: evidenceSchema, annotations: annotations(true) },
+  { name: "get_conservation_evidence", description: "Read an immutable snapshot, search receipt, repository analysis receipt, comparison, or analysis in bounded pages. Evidence IDs bind every page without revision drift.", inputSchema: evidenceSchema, annotations: annotations(true) },
   { name: "compare_concept_delta", description: "Compare an exact concept plan with retained B and A/F snapshots. Prepare native extraction automatically and retain immutable observed facts and measurements. Similarity never proves equivalence.", inputSchema: compareSchema, annotations: annotations(false, true) },
   { name: "get_review", description: "Read the authoritative MCP review ledger and report stale Markdown projections. Page findings, waves, assessments, conflicts, migration history or operation history.", inputSchema: GET_REVIEW_SCHEMA, annotations: annotations(true) },
   { name: "update_review", description: "Apply typed revision-checked review operations. Enforce finding ownership, independent verification, lane evidence and acceptance prerequisites. JSON commits survive Markdown projection failures.", inputSchema: UPDATE_REVIEW_SCHEMA, annotations: annotations(false) },
@@ -30,7 +30,8 @@ export async function callConservationTool(name: string, input: Record<string, u
       counts: { files: snapshot.files.length, bytes: snapshot.files.reduce((sum, file) => sum + file.bytes, 0), omissions: snapshot.omissions.length }, diagnostics: snapshot.diagnostics.slice(0, 20), totalDiagnostics: snapshot.diagnostics.length };
   }
   const evidence = await conservationStore.get(projectRoot, input.evidenceId as string);
-  const section = (input.section || ({ snapshot: "files", search: "candidates", comparison: "observations", analysis: "units", migration: "lines" }[evidence.kind])) as string;
+  const results = evidence.kind === "repository-analysis" ? ({ report_module_interfaces: "modules", report_cohesion_clusters: "containers" } as Record<string, string>)[evidence.tool] || "groups" : undefined;
+  const section = (input.section || ({ snapshot: "files", search: "candidates", comparison: "observations", analysis: "units", migration: "lines", "repository-analysis": results } as Record<string, string | undefined>)[evidence.kind]) as string;
   const record = evidence as unknown as Record<string, unknown>;
   const values = section === "unitsBefore" || section === "unitsAfter" ? (record.units as Record<string, unknown> | undefined)?.[section === "unitsBefore" ? "before" : "after"] : record[section];
   if (!Array.isArray(values)) throw conservationError("validation_failed", "The requested section is not present in this evidence kind.");

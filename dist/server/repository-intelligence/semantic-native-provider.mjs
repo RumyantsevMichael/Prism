@@ -315,20 +315,23 @@ async function findSharedDependencies(input, options = {}) {
   const { index } = provider.prepared, contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
   const result = sharedDependencyGroups(index, { include, limit: 100 });
-  const groups = result.groups.filter((group) => group.members.filter((member) => inside(member.file)).length >= 2).slice(0, input.limit || 20);
+  const groups = result.groups.filter((group) => group.members.filter((member) => inside(member.file)).length >= 2);
   await provider.verifySnapshot();
   const diagnostics = [
     ...index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a group can miss members." }],
     ...result.coverage.unresolvedNames ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so groups use project calls only.", recovery: "Prepare the index again with the current native runtime." }],
     ...provider.preparation.diagnostics
   ];
+  const receiptId = await retainResult(input, provider, "find_shared_dependencies", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
   return {
     ...identity,
+    receiptId,
     indexRevision: provider.prepared.revision,
     coverage: result.coverage,
     diagnostics: diagnostics.slice(0, 20),
     diagnosticCount: diagnostics.length,
-    groups
+    totalGroups: groups.length,
+    groups: groups.slice(0, input.limit || 20)
   };
 }
 async function reportModuleInterfaces(input, options = {}) {
@@ -346,8 +349,18 @@ async function reportModuleInterfaces(input, options = {}) {
     ...report.coverage.importAnalysisSkipped.length ? [{ code: "unsupported_language", message: `Import analysis covers JavaScript and TypeScript, not ${report.coverage.importAnalysisSkipped.join(", ")} files.` }] : [],
     ...provider.preparation.diagnostics
   ];
+  const receiptId = await retainResult(
+    input,
+    provider,
+    "report_module_interfaces",
+    { paths: input.filters?.paths || [], allModules: Boolean(input.allModules) },
+    report.coverage,
+    diagnostics,
+    { modules: report.modules, delegatingClasses: report.delegatingClasses }
+  );
   return {
     ...identity,
+    receiptId,
     indexRevision: provider.prepared.revision,
     coverage: report.coverage,
     diagnostics: diagnostics.slice(0, 20),
@@ -357,6 +370,31 @@ async function reportModuleInterfaces(input, options = {}) {
     modules: report.modules.slice(offset, offset + limit),
     delegatingClasses: report.delegatingClasses.slice(0, 50)
   };
+}
+async function retainResult(input, provider, tool, scope, coverage, diagnostics, results) {
+  const snapshot = await provider.snapshot(), prepared = provider.prepared, named = /* @__PURE__ */ new Set();
+  const collect = (value) => {
+    if (Array.isArray(value)) value.forEach(collect);
+    else if (value && typeof value === "object") for (const [key, item] of Object.entries(value)) key === "file" && typeof item === "string" ? named.add(item) : collect(item);
+  };
+  collect(results);
+  const files = [...named].sort().flatMap((file) => snapshot.filesByPath.has(file) ? [{ file, hash: snapshot.filesByPath.get(file).hash }] : []);
+  const receipt = {
+    kind: "repository-analysis",
+    schemaVersion: 1,
+    project: (await conservationStore.location(input.projectRoot)).root,
+    tool,
+    snapshotId: input.snapshotId || null,
+    snapshot: provider.preparation.snapshot,
+    indexRevision: prepared.revision,
+    versions: { extractor: prepared.index.chunkerVersion || "unavailable", runtime: prepared.assetIdentity || "unavailable" },
+    scope,
+    coverage,
+    diagnostics,
+    files,
+    ...results
+  };
+  return conservationStore.put(input.projectRoot, receipt);
 }
 function analysisScope(input, contents) {
   const include = (unit) => (input.includeTests || !isTestUnit(unit, contents.get(unit.file))) && !searchExclusion(unit.file, contents.get(unit.file) || "");
@@ -372,16 +410,19 @@ async function findSharedLiterals(input, options = {}) {
   const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
   const result = sharedLiteralGroups(provider.prepared.index, contents, { include, limit: 100 });
-  const groups = result.groups.filter((group) => group.members.filter((member) => inside(member.file)).length >= 2).slice(0, input.limit || 20);
+  const groups = result.groups.filter((group) => group.members.filter((member) => inside(member.file)).length >= 2);
   await provider.verifySnapshot();
   const diagnostics = provider.preparation.diagnostics;
+  const receiptId = await retainResult(input, provider, "find_shared_literals", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
   return {
     ...identity,
+    receiptId,
     indexRevision: provider.prepared.revision,
     coverage: result.coverage,
     diagnostics: diagnostics.slice(0, 20),
     diagnosticCount: diagnostics.length,
-    groups
+    totalGroups: groups.length,
+    groups: groups.slice(0, input.limit || 20)
   };
 }
 async function reportCohesionClusters(input, options = {}) {
@@ -395,12 +436,15 @@ async function reportCohesionClusters(input, options = {}) {
   await provider.verifySnapshot();
   const { index } = provider.prepared;
   const diagnostics = [...index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a cluster can miss members or calls." }], ...provider.preparation.diagnostics];
+  const receiptId = await retainResult(input, provider, "report_cohesion_clusters", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, report.coverage, diagnostics, { containers: report.containers });
   return {
     ...identity,
+    receiptId,
     indexRevision: provider.prepared.revision,
     coverage: report.coverage,
     diagnostics: diagnostics.slice(0, 20),
     diagnosticCount: diagnostics.length,
+    totalContainers: report.containers.length,
     containers: report.containers.slice(0, input.limit || 20)
   };
 }

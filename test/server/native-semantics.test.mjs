@@ -11,6 +11,7 @@ import { openNativeRepositoryIntelligence } from "../../dist/server/repository-i
 import { CompositeRepositoryIntelligence } from "../../dist/server/repository-intelligence/composite-repository-intelligence.mjs";
 import { planRepositoryContext } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
 import { withFileLock } from "../../dist/server/workflow/artifact-store.mjs";
+import { callConservationTool } from "../../dist/server/conservation/conservation-tools.mjs";
 const manifestPath = fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url));
 
 async function fixture(t) {
@@ -93,6 +94,19 @@ test("prepared shared literal groups read snapshot files, leave out tests by def
   assert.deepEqual((await findSharedLiterals({ projectRoot: root, filters: { paths: ["src/panel.mjs"] } }, { runtime })).groups, []);
   const cohesion = await reportCohesionClusters({ projectRoot: root }, { runtime });
   assert.deepEqual([cohesion.status, cohesion.containers, cohesion.coverage], ["ready", [], { examinedContainers: 0, reportedContainers: 0 }]);
+  // Each analysis retains its complete result, with the hash of every file that the result names.
+  const receipt = await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: found.receiptId });
+  assert.deepEqual([receipt.kind, receipt.tool, receipt.section, receipt.totalCount, receipt.snapshot], ["repository-analysis", "find_shared_literals", "groups", 1, found.snapshot]);
+  assert.deepEqual(receipt.entries, found.groups);
+  assert.deepEqual(receipt.scope, { paths: [], includeTests: false });
+  const named = await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: found.receiptId, section: "files" });
+  assert.deepEqual(named.entries.map(entry => entry.file), ["src/panel.mjs", "src/states.mjs"]);
+  assert.ok(named.entries.every(entry => /^[a-f0-9]{64}$/.test(entry.hash)));
+  // The receipt keeps every group, and the response applies the limit.
+  const limited = await findSharedLiterals({ projectRoot: root, includeTests: true, limit: 1 }, { runtime });
+  assert.equal(limited.totalGroups, 1);
+  assert.notEqual(limited.receiptId, found.receiptId);
+  assert.equal((await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: cohesion.receiptId })).section, "containers");
 });
 test("shared dependency input limits, unknown fields, and path traversal fail before preparation", () => {
   for (const input of [{ limit: 0 }, { limit: 101 }, { includeTests: "yes" }, { filters: { domains: ["code"] } }, { filters: { paths: ["../outside"] } }, { query: "x" }, { snapshotId: "x" }])

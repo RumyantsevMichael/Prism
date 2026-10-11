@@ -145,7 +145,9 @@ export function sharedNameGroups(units: SourceUnit[], profiles: Map<string, Set<
     weight: Number(group.weight.toFixed(2)),
     members: group.members.slice(0, MAX_MEMBERS).map(id => {
       const unit = byId.get(id)!;
-      return { file: unit.file, selector: unit.selector || unit.qualifiedName || unit.name, kind: unit.kind, range: unit.range, share: Number((group.weight / profileWeight(id)).toFixed(2)) };
+      // When every name has zero weight, because each one is used by every profiled unit, the share counts names instead.
+      const total = profileWeight(id), share = total > 0 ? group.weight / total : group.names.length / profiles.get(id)!.size;
+      return { file: unit.file, selector: unit.selector || unit.qualifiedName || unit.name, kind: unit.kind, range: unit.range, share: Number(share.toFixed(2)) };
     })
   }));
 }

@@ -7,7 +7,7 @@ import { cohesionReport } from "./cohesion.mjs";
 import { sharedLiteralGroups } from "./shared-literals.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
-import type { SearchReceipt } from "../conservation/conservation-types.mjs";
+import type { AnalysisReceipt, SearchReceipt } from "../conservation/conservation-types.mjs";
 import type { SourceUnit, Domain, NativeSource, Neighbor, Preparation, PreparedIndex, RetrievalEvidence, SearchFilters, SearchHints, SearchHit, SearchResult, SemanticRuntime, SourceRange, StructuralEvidence } from "./repository-unit-types.mjs";
 
 interface ConceptSearchInput { projectRoot: string; query: string; filters?: SearchFilters; expectedSnapshot?: string; snapshotId?: string; limit?: number }
@@ -257,13 +257,14 @@ export async function findSharedDependencies(input: SharedDependencyInput, optio
   const { index } = provider.prepared, contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
   const result = sharedDependencyGroups(index, { include, limit: 100 });
-  const groups = result.groups.filter(group => group.members.filter(member => inside(member.file)).length >= 2).slice(0, input.limit || 20);
+  const groups = result.groups.filter(group => group.members.filter(member => inside(member.file)).length >= 2);
   await provider.verifySnapshot();
   const diagnostics = [...(index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a group can miss members." }]),
     ...(result.coverage.unresolvedNames ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so groups use project calls only.", recovery: "Prepare the index again with the current native runtime." }]),
     ...provider.preparation.diagnostics];
-  return { ...identity, indexRevision: provider.prepared.revision, coverage: result.coverage,
-    diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, groups };
+  const receiptId = await retainResult(input, provider, "find_shared_dependencies", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
+  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: result.coverage,
+    diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalGroups: groups.length, groups: groups.slice(0, input.limit || 20) };
 }
 
 export async function reportModuleInterfaces(input: ModuleInterfaceInput, options: ProviderOptions = {}) {
@@ -279,10 +280,30 @@ export async function reportModuleInterfaces(input: ModuleInterfaceInput, option
   const diagnostics = [...(report.coverage.unresolvedLocalImports ? [{ code: "unresolved_imports", count: report.coverage.unresolvedLocalImports, message: "Some local imports did not resolve, so an export can look unused although a module imports it." }] : []),
     ...(report.coverage.importAnalysisSkipped.length ? [{ code: "unsupported_language", message: `Import analysis covers JavaScript and TypeScript, not ${report.coverage.importAnalysisSkipped.join(", ")} files.` }] : []),
     ...provider.preparation.diagnostics];
-  return { ...identity, indexRevision: provider.prepared.revision, coverage: report.coverage,
+  const receiptId = await retainResult(input, provider, "report_module_interfaces", { paths: input.filters?.paths || [], allModules: Boolean(input.allModules) }, report.coverage, diagnostics,
+    { modules: report.modules, delegatingClasses: report.delegatingClasses });
+  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: report.coverage,
     diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length,
     totalModules: report.modules.length, nextOffset: offset + limit < report.modules.length ? offset + limit : null,
     modules: report.modules.slice(offset, offset + limit), delegatingClasses: report.delegatingClasses.slice(0, 50) };
+}
+
+// Retain the complete result of an analysis, before the response limit, so that a report or a review view can cite it by receiptId.
+// The hash of each file that the result names lets a reader detect results that a later edit made stale.
+async function retainResult(input: { projectRoot: string; snapshotId?: string }, provider: SemanticNativeRepositoryIntelligence, tool: AnalysisReceipt["tool"],
+  scope: Record<string, unknown>, coverage: unknown, diagnostics: AnalysisReceipt["diagnostics"], results: Pick<AnalysisReceipt, "groups" | "modules" | "delegatingClasses" | "containers">) {
+  const snapshot = await provider.snapshot(), prepared = provider.prepared!, named = new Set<string>();
+  const collect = (value: unknown) => {
+    if (Array.isArray(value)) value.forEach(collect);
+    else if (value && typeof value === "object") for (const [key, item] of Object.entries(value)) key === "file" && typeof item === "string" ? named.add(item) : collect(item);
+  };
+  collect(results);
+  const files = [...named].sort().flatMap(file => snapshot.filesByPath.has(file) ? [{ file, hash: snapshot.filesByPath.get(file)!.hash }] : []);
+  const receipt: AnalysisReceipt = { kind: "repository-analysis", schemaVersion: 1, project: (await conservationStore.location(input.projectRoot)).root, tool,
+    snapshotId: input.snapshotId || null, snapshot: provider.preparation.snapshot, indexRevision: prepared.revision,
+    versions: { extractor: prepared.index.chunkerVersion || "unavailable", runtime: prepared.assetIdentity || "unavailable" },
+    scope, coverage, diagnostics, files, ...results };
+  return conservationStore.put(input.projectRoot, receipt);
 }
 
 // Production code by default: test code, and generated, vendored, or minified files repeat values and grow large by design.
@@ -301,11 +322,12 @@ export async function findSharedLiterals(input: SharedDependencyInput, options: 
   const contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
   const result = sharedLiteralGroups(provider.prepared.index, contents, { include, limit: 100 });
-  const groups = result.groups.filter(group => group.members.filter(member => inside(member.file)).length >= 2).slice(0, input.limit || 20);
+  const groups = result.groups.filter(group => group.members.filter(member => inside(member.file)).length >= 2);
   await provider.verifySnapshot();
   const diagnostics = provider.preparation.diagnostics;
-  return { ...identity, indexRevision: provider.prepared.revision, coverage: result.coverage,
-    diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, groups };
+  const receiptId = await retainResult(input, provider, "find_shared_literals", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
+  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: result.coverage,
+    diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalGroups: groups.length, groups: groups.slice(0, input.limit || 20) };
 }
 
 export async function reportCohesionClusters(input: CohesionInput, options: ProviderOptions = {}) {
@@ -319,6 +341,7 @@ export async function reportCohesionClusters(input: CohesionInput, options: Prov
   await provider.verifySnapshot();
   const { index } = provider.prepared;
   const diagnostics = [...(index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a cluster can miss members or calls." }]), ...provider.preparation.diagnostics];
-  return { ...identity, indexRevision: provider.prepared.revision, coverage: report.coverage,
-    diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, containers: report.containers.slice(0, input.limit || 20) };
+  const receiptId = await retainResult(input, provider, "report_cohesion_clusters", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, report.coverage, diagnostics, { containers: report.containers });
+  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: report.coverage,
+    diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalContainers: report.containers.length, containers: report.containers.slice(0, input.limit || 20) };
 }

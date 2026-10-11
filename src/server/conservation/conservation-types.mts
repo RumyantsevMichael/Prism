@@ -14,6 +14,13 @@ export interface SearchReceipt {
   indexRevision: string | null; versions: Record<string, string>; coverage: unknown; diagnostics: Diagnostic[];
   candidates: (SourceUnit & { excerpt: string; cosineSimilarity: number | null; lexicalScore: number | null; fusedRank: number })[];
 }
+// The result of a repository analysis tool, retained so that a report or a review view can cite it and detect stale results.
+export interface AnalysisReceipt {
+  kind: "repository-analysis"; schemaVersion: 1; project: string; tool: "find_shared_dependencies" | "find_shared_literals" | "report_module_interfaces" | "report_cohesion_clusters";
+  snapshotId: string | null; snapshot: string; indexRevision: string; versions: Record<string, string>; scope: Record<string, unknown>;
+  coverage: unknown; diagnostics: Diagnostic[]; files: { file: string; hash: string }[];
+  groups?: unknown[]; modules?: unknown[]; delegatingClasses?: unknown[]; containers?: unknown[];
+}
 export interface GrowthJustification { dimensions: string[]; conceptIds: string[]; requirements: Reference[]; reason: string }
 export interface AdditionEvidence {
   method?: string; receiptIds?: string[]; candidates: { reference: Reference; candidateId?: string; receiptId?: string; disposition: "REUSE" | "REJECT" | "PARTIAL"; reason: string }[];
@@ -40,4 +47,4 @@ export interface ComparisonEvidence {
   observations: Observation[]; measurements: Measurement[]; growth: { id: string; dimension: string; increase: number; threshold: number }[];
   units: { before: ResolvedUnit[]; after: ResolvedUnit[] }; diagnostics: Diagnostic[];
 }
-export type Evidence = SnapshotEvidence | SearchReceipt | ComparisonEvidence | { kind: "migration"; schemaVersion: 1; project: string; artifactPath: string; revision: string; lines: string[] } | { kind: "analysis"; schemaVersion: 1; project: string; snapshotId: string; units: SourceUnit[]; fileCoverage: Record<string, boolean>; diagnostics: Diagnostic[]; tokenCounts: Record<string, number>; structureCounts: Record<string, Record<string, number>>; versions: Record<string, string> };
+export type Evidence = SnapshotEvidence | SearchReceipt | AnalysisReceipt | ComparisonEvidence | { kind: "migration"; schemaVersion: 1; project: string; artifactPath: string; revision: string; lines: string[] } | { kind: "analysis"; schemaVersion: 1; project: string; snapshotId: string; units: SourceUnit[]; fileCoverage: Record<string, boolean>; diagnostics: Diagnostic[]; tokenCounts: Record<string, number>; structureCounts: Record<string, Record<string, number>>; versions: Record<string, string> };

@@ -227,6 +227,17 @@ Each cluster lists its lines, its members, and the state that its members use, a
 Mixed responsibilities inside one long function do not appear, because the tool groups members, not statements.
 Clusters identify candidate responsibilities for investigation and do not decide whether a split is better.
 
+### Analysis receipts
+
+`find_shared_dependencies`, `find_shared_literals`, `report_module_interfaces`, and `report_cohesion_clusters` retain each complete result as immutable private evidence and return its `receiptId`.
+The receipt keeps every result before the response `limit`, so `totalGroups` or `totalContainers` can be larger than the returned list.
+The receipt also records the tool, the scope, the snapshot, the index revision, coverage, diagnostics, and the hash of every file that the result names.
+A file hash that differs from the current file shows a result that a later edit made stale.
+Read a receipt in pages with `get_conservation_evidence`.
+The default section is `groups`, `modules`, or `containers`, and the `delegatingClasses` and `files` sections are also available.
+Cite the `receiptId` in a refactoring report, so that a reviewer can open the exact result that supports a candidate.
+An identical result gives the same `receiptId`, and a `preparing` or degraded response has no receipt.
+
 For live-source searches and context planning, pass a returned `snapshot` as `expectedSnapshot` to bind the source fingerprint.
 This fingerprint differs from a retained evidence `snapshotId`.
 On `stale_snapshot` during live-source discovery, repeat the search against current source and reassess the candidates.

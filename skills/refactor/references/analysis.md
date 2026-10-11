@@ -20,8 +20,9 @@ Each tool reports facts for investigation, not defects.
 5. For each responsibility that the scope implements, call `search_repository_concepts` with a query that describes it.
 6. While a call returns `preparing`, wait through bounded `get_repository_intelligence_status` requests and repeat the same call.
 7. Read the source of the reported units before you rank them.
-8. Preserve the same baseline through target edits, retries, and corrections.
-9. If a tool is unavailable, report that limitation with the fallback source identity and coverage.
+8. Cite the `receiptId` of each discovery result in the evidence of the candidates that it supports.
+9. Preserve the same baseline through target edits, retries, and corrections.
+10. If a tool is unavailable, report that limitation with the fallback source identity and coverage.
 
 A `preparing` response supplies neither completed candidates nor successful semantic evidence.
 Live files cannot replace the original baseline after target edits.
