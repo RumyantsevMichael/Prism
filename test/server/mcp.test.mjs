@@ -908,6 +908,10 @@ test("native semantic MCP discovery is passive and search exposes bounded struct
   assert.equal(shared.annotations.destructiveHint, false);
   const interfaces = listed.find(tool => tool.name === "report_module_interfaces");
   assert.deepEqual([interfaces.inputSchema.properties.limit.maximum, interfaces.inputSchema.properties.offset.minimum, interfaces.inputSchema.properties.allModules.default], [100, 0, false]);
+  for (const name of ["find_shared_literals", "report_cohesion_clusters"]) {
+    const tool = listed.find(item => item.name === name);
+    assert.deepEqual([tool.inputSchema.properties.limit.maximum, tool.inputSchema.properties.includeTests.default, Object.keys(tool.inputSchema.properties.filters.properties)], [100, false, ["paths"]], name);
+  }
   mcp.send({ id: 3, method: "tools/call", params: { name: "discover_repository_intelligence", arguments: { projectRoot: root } } });
   assert.equal((await mcp.next()).result.structuredContent.status, "unprepared");
   mcp.send({ id: 4, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: root, query: "network failures", filters: { paths: ["docs"], domains: ["documentation"] } } } });

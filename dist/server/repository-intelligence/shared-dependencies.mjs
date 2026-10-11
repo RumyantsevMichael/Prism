@@ -92,9 +92,13 @@ function dependencyProfiles(index, include = () => true) {
   return profiles;
 }
 function sharedDependencyGroups(index, options = {}) {
-  const byId = new Map(index.units.map((unit) => [unit.id, unit]));
   const profiles = dependencyProfiles(index, options.include);
   const total = index.units.filter((unit) => CODE_KINDS.has(unit.kind) && (options.include || (() => true))(unit)).length;
+  const groups = sharedNameGroups(index.units, profiles, options.limit).map(({ names, weight, members }) => ({ dependencies: names, weight, members }));
+  return { groups, coverage: { units: total, profiledUnits: profiles.size, unresolvedNames: Boolean(index.unresolvedReferences) } };
+}
+function sharedNameGroups(units, profiles, limit = 20) {
+  const byId = new Map(units.map((unit) => [unit.id, unit]));
   const users = /* @__PURE__ */ new Map();
   for (const [id, names] of profiles) for (const name of names) (users.get(name) || users.set(name, []).get(name)).push(id);
   const count = profiles.size, common = Math.min(200, Math.max(10, Math.ceil(count * 0.1)));
@@ -127,22 +131,22 @@ function sharedDependencyGroups(index, options = {}) {
   for (const group of ranked) {
     if (accepted.some((other) => overlap(group.members, other.members) >= 2 / 3 && overlap(group.names, other.names) >= 0.5)) continue;
     accepted.push(group);
-    if (accepted.length >= (options.limit || 20)) break;
+    if (accepted.length >= limit) break;
   }
   const profileWeight = (id) => [...profiles.get(id)].reduce((sum, name) => sum + (users.get(name).length >= 2 ? weight(name) : Math.log(count)), 0);
-  const groups = accepted.map((group) => ({
-    dependencies: [...group.names].sort((a, b) => weight(b) - weight(a)).map((name) => ({ name, users: users.get(name).length })),
+  return accepted.map((group) => ({
+    names: [...group.names].sort((a, b) => weight(b) - weight(a)).map((name) => ({ name, users: users.get(name).length })),
     weight: Number(group.weight.toFixed(2)),
     members: group.members.slice(0, MAX_MEMBERS).map((id) => {
       const unit = byId.get(id);
       return { file: unit.file, selector: unit.selector || unit.qualifiedName || unit.name, kind: unit.kind, range: unit.range, share: Number((group.weight / profileWeight(id)).toFixed(2)) };
     })
   }));
-  return { groups, coverage: { units: total, profiledUnits: count, unresolvedNames: Boolean(index.unresolvedReferences) } };
 }
 export {
   dependencyProfiles,
   isTestFile,
   isTestUnit,
-  sharedDependencyGroups
+  sharedDependencyGroups,
+  sharedNameGroups
 };

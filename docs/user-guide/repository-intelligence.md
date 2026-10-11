@@ -174,6 +174,59 @@ An import from a file type that the tool does not read, such as a workflow YAML 
 `unchangedNames` counts forwarded methods that keep the name of the delegate method.
 A delegating class can be a pass-through layer to remove, or an adapter, decorator, or access boundary with a purpose, so inspect it before you change it.
 
+### Find shared literals
+
+`find_shared_literals` groups functions, methods, classes, and constants in different files that spell the same rare set of string literals.
+A group can show a value set that several units must know, such as states, capability ids, event names, error codes, or method names.
+Shared dependencies find units that do the same work, and this tool finds units that know the same values.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["src"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, `includeTests`, and `filters.paths` behavior as `find_shared_dependencies`.
+Each group lists its shared literals, with the number of units that spell each literal, and its members with their `share`.
+Only identifier-like literals count: a letter or underscore, then letters, digits, `_`, `.`, `:`, `/`, or `-`, from 3 through 81 characters.
+Prose, format strings, and module specifiers in `import`, `export ... from`, `require`, and `import()` do not count.
+The smallest function, method, class, or constant that contains a literal owns it.
+A literal that many units spell, or that only one unit spells, does not count.
+A literal set can also be values of a type that the compiler checks, such as the members of a string union in a `switch`.
+Check whether one owner, such as a constant or a type, would let the other units stop spelling the values.
+
+### Report cohesion clusters
+
+`report_cohesion_clusters` reports large classes, Rust and Go types, and modules whose members fall into separate clusters.
+A cluster is a group of members that share fields or module constants, or call each other.
+Separate clusters can show separate responsibilities in one class or module.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["src/server"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, and `includeTests` behavior as `find_shared_dependencies`.
+With `filters.paths`, only classes, types, and modules inside the paths are examined.
+The members of a class are its methods, the members of a Rust or Go type are the methods with that type name, and the members of a module are its top-level functions.
+Fields come from `this.` and `self.` references, so Go receivers do not supply fields.
+Constructors are left out, because a constructor sets every field.
+A field or helper that n members share links each pair of them with weight 1/(n-1), so a logger that every member uses links them only weakly.
+Community detection then finds the clusters, and `modularity` measures how separate they are.
+
+A container is reported when it has at least six members and 120 lines, at least two clusters with two members and 30 lines each, a modularity of at least 0.3, and at least 300 lines outside its largest cluster.
+`separableLines` is that number of lines outside the largest cluster, and the report is ordered by it.
+Each cluster lists its lines, its members, and the state that its members use, and `smallClusters` counts the other clusters.
+Mixed responsibilities inside one long function do not appear, because the tool groups members, not statements.
+Clusters identify candidate responsibilities for investigation and do not decide whether a split is better.
+
 For live-source searches and context planning, pass a returned `snapshot` as `expectedSnapshot` to bind the source fingerprint.
 This fingerprint differs from a retained evidence `snapshotId`.
 On `stale_snapshot` during live-source discovery, repeat the search against current source and reassess the candidates.

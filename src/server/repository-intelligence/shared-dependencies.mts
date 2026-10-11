@@ -91,12 +91,18 @@ export function dependencyProfiles(index: Pick<IndexMetadata, "units" | "edges" 
 
 // Group units in different files that repeat the same rare set of operations, which often shows a repeated sub-step or a copied responsibility.
 export function sharedDependencyGroups(index: Pick<IndexMetadata, "units" | "edges" | "unresolvedReferences">, options: SharedDependencyOptions = {}) {
-  const byId = new Map(index.units.map(unit => [unit.id, unit]));
   const profiles = dependencyProfiles(index, options.include);
   const total = index.units.filter(unit => CODE_KINDS.has(unit.kind) && (options.include || (() => true))(unit)).length;
+  const groups: SharedDependencyGroup[] = sharedNameGroups(index.units, profiles, options.limit).map(({ names, weight, members }) => ({ dependencies: names, weight, members }));
+  return { groups, coverage: { units: total, profiledUnits: profiles.size, unresolvedNames: Boolean(index.unresolvedReferences) } };
+}
+
+// Group units in different files whose profiles share the same rare set of names, such as the operations they call or the literals they spell.
+export function sharedNameGroups(units: SourceUnit[], profiles: Map<string, Set<string>>, limit = 20) {
+  const byId = new Map(units.map(unit => [unit.id, unit]));
   const users = new Map<string, string[]>();
   for (const [id, names] of profiles) for (const name of names) (users.get(name) || users.set(name, []).get(name)!).push(id);
-  // Operations that many units use, such as push or join, are not evidence of a shared responsibility.
+  // Names that many units use, such as push or join, are not evidence of a shared responsibility.
   // The limit stays high, because a safety check that dozens of units repeat is itself a finding.
   const count = profiles.size, common = Math.min(200, Math.max(10, Math.ceil(count * 0.1)));
   const weight = (name: string) => Math.log(count / users.get(name)!.length);
@@ -125,22 +131,21 @@ export function sharedDependencyGroups(index: Pick<IndexMetadata, "units" | "edg
     if (!previous || group.weight > previous.weight) byMembers.set(memberKey, group);
   }
   const ranked = [...byMembers.values()].sort((a, b) => b.weight * Math.log2(b.members.length) - a.weight * Math.log2(a.members.length) || a.names.join().localeCompare(b.names.join()));
-  // A group that mostly repeats the members and the operations of a better group shows the same pattern again.
+  // A group that mostly repeats the members and the names of a better group shows the same pattern again.
   const overlap = (a: string[], b: string[]) => a.filter(item => b.includes(item)).length / Math.min(a.length, b.length);
   const accepted: typeof ranked = [];
   for (const group of ranked) {
     if (accepted.some(other => overlap(group.members, other.members) >= 2 / 3 && overlap(group.names, other.names) >= 0.5)) continue;
     accepted.push(group);
-    if (accepted.length >= (options.limit || 20)) break;
+    if (accepted.length >= limit) break;
   }
   const profileWeight = (id: string) => [...profiles.get(id)!].reduce((sum, name) => sum + (users.get(name)!.length >= 2 ? weight(name) : Math.log(count)), 0);
-  const groups: SharedDependencyGroup[] = accepted.map(group => ({
-    dependencies: [...group.names].sort((a, b) => weight(b) - weight(a)).map(name => ({ name, users: users.get(name)!.length })),
+  return accepted.map(group => ({
+    names: [...group.names].sort((a, b) => weight(b) - weight(a)).map(name => ({ name, users: users.get(name)!.length })),
     weight: Number(group.weight.toFixed(2)),
     members: group.members.slice(0, MAX_MEMBERS).map(id => {
       const unit = byId.get(id)!;
       return { file: unit.file, selector: unit.selector || unit.qualifiedName || unit.name, kind: unit.kind, range: unit.range, share: Number((group.weight / profileWeight(id)).toFixed(2)) };
     })
   }));
-  return { groups, coverage: { units: total, profiledUnits: count, unresolvedNames: Boolean(index.unresolvedReferences) } };
 }

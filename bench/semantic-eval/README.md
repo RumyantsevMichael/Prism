@@ -141,6 +141,7 @@ A fragment-only run writes `structure.json`, which holds the units, edges, and u
 
 `design-signals.mjs` prototypes design detectors on a saved index with vectors.
 Each mode prints its top results, and `--json` writes them for scoring.
+The `literals` and `cohesion` modes run the server analyses of `find_shared_literals` and `report_cohesion_clusters`.
 
 | Mode | Reports |
 | --- | --- |

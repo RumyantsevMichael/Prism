@@ -10,10 +10,12 @@ Each tool reports facts for investigation, not defects.
 | `search_repository_concepts` | Units that look alike, for one query that describes a behavior or responsibility. |
 | `find_shared_dependencies` | Units in different files that work alike: repeated sub-steps, copied helpers, and repeated protocols. |
 | `report_module_interfaces` | Exports that no module uses, exports that only tests use, the part of each interface that its importers use, and classes that forward most methods to one field. |
+| `find_shared_literals` | Units in different files that spell the same rare values: states, ids, keys, event names, and error codes that several units must know. |
+| `report_cohesion_clusters` | Large classes, types, and modules whose members fall into separate clusters of shared state and calls, which can show mixed responsibilities. |
 
 1. If a retained baseline exists, pass its identity as `snapshotId` to every discovery call.
 2. If no baseline exists and the request is analysis only, call the tools on the live project without `snapshotId`.
-3. Call `find_shared_dependencies` and `report_module_interfaces` for the discovery scope.
+3. Call `find_shared_dependencies`, `find_shared_literals`, `report_module_interfaces`, and `report_cohesion_clusters` for the discovery scope.
 4. If the scope is part of the project, pass its directories as `filters.paths`.
 5. For each responsibility that the scope implements, call `search_repository_concepts` with a query that describes it.
 6. While a call returns `preparing`, wait through bounded `get_repository_intelligence_status` requests and repeat the same call.
@@ -36,9 +38,9 @@ These signals justify investigation without prescribing a solution.
 | Specialization | Repeated special cases, caller-specific interfaces, narrow rules, exceptions, or overrides. |
 | Shallow abstraction | An interface exposes most implementation complexity or adds indirection without hiding knowledge, for example a class that forwards most methods to one field. |
 | Overexposure | Exports that no other module uses, or an interface whose importers each need only a small part of it. |
-| Information leakage | Several consumers must understand the same internal fact or domain policy. |
+| Information leakage | Several consumers must understand the same internal fact or domain policy, or spell the same rare set of values. |
 | Tactical accumulation | Historical exceptions, layered fallbacks, compatibility paths, or multiple mechanisms for related needs. |
-| Structural complexity | Excess dependencies, public surface, repeated state, branches, reference chains, or fragmented sections. |
+| Structural complexity | Excess dependencies, public surface, repeated state, branches, reference chains, fragmented sections, or members of one class or module that fall into separate clusters. |
 
 1. Prioritize candidates using independent evidence dimensions and the caller's scope.
 2. Keep semantic overlap, duplicated knowledge, specialization, dependency overlap, interface burden, affected consumers, state duplication, and exceptions inspectable.

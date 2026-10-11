@@ -6,7 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { NativeSemanticRuntime } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
-import { SemanticNativeRepositoryIntelligence, findSharedDependencies, reportModuleInterfaces, searchRepositoryConcepts, validateConceptSearch, validateModuleInterfaces, validateSharedDependencies } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
+import { SemanticNativeRepositoryIntelligence, findSharedDependencies, findSharedLiterals, reportCohesionClusters, reportModuleInterfaces, searchRepositoryConcepts, validateConceptSearch, validateCohesion, validateModuleInterfaces, validateSharedDependencies, validateSharedLiterals } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
 import { openNativeRepositoryIntelligence } from "../../dist/server/repository-intelligence/native-repository-intelligence.mjs";
 import { CompositeRepositoryIntelligence } from "../../dist/server/repository-intelligence/composite-repository-intelligence.mjs";
 import { planRepositoryContext } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
@@ -53,6 +53,46 @@ test("module interface reports need the prepared index and report a degraded run
   for (const input of [{ offset: -1 }, { offset: 1.5 }, { allModules: "yes" }, { includeTests: true }, { limit: 101 }, { filters: { paths: ["/abs"] } }])
     assert.throws(() => validateModuleInterfaces({ projectRoot: "/tmp", ...input }), error => ["validation_failed", "invalid_path"].includes(error.code), JSON.stringify(input));
   validateModuleInterfaces({ projectRoot: "/tmp", offset: 20, limit: 100, allModules: true, filters: { paths: ["src"] } });
+});
+test("shared literal groups and cohesion clusters need the prepared index and report a degraded runtime without results", async t => {
+  const { directory, root } = await fixture(t);
+  await writeFile(path.join(root, "a.mjs"), "export function a() { return 'alpha'; }\n");
+  const runtime = new NativeSemanticRuntime({ directory: path.join(directory, "cache"), manifestPath });
+  const literals = await findSharedLiterals({ projectRoot: root }, { runtime });
+  assert.deepEqual([literals.status, literals.groups, literals.coverage], ["degraded", [], null]);
+  const cohesion = await reportCohesionClusters({ projectRoot: root }, { runtime });
+  assert.deepEqual([cohesion.status, cohesion.containers, cohesion.coverage], ["degraded", [], null]);
+  assert.ok(cohesion.diagnostics.some(item => item.code === "unsupported_runtime"));
+  for (const validate of [validateSharedLiterals, validateCohesion]) {
+    for (const input of [{ limit: 0 }, { offset: 1 }, { allModules: true }, { includeTests: "yes" }, { filters: { paths: ["../outside"] } }])
+      assert.throws(() => validate({ projectRoot: "/tmp", ...input }), error => ["validation_failed", "invalid_path"].includes(error.code), JSON.stringify(input));
+    validate({ projectRoot: "/tmp", limit: 100, includeTests: true, filters: { paths: ["src"] } });
+  }
+});
+test("prepared shared literal groups read snapshot files, leave out tests by default, and apply path filters", async t => {
+  const { root } = await fixture(t);
+  const files = {
+    "src/states.mjs": "export const PHASES = ['applying', 'available', 'awaiting-consent'];\n",
+    "src/panel.mjs": "export function render(phase) {\n  return phase === 'applying' ? 'available' : 'awaiting-consent';\n}\n",
+    "test/panel.test.mjs": "test('phases', () => ['applying', 'available', 'awaiting-consent']);\n"
+  };
+  const units = [];
+  for (const [file, content] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), content);
+    units.push({ id: file, file, kind: file.startsWith("test/") ? "function" : file.includes("states") ? "constant" : "function", name: path.basename(file), domain: "code",
+      range: { startLine: 1, endLine: content.split("\n").length - 1 }, span: { start: 0, end: content.length } });
+  }
+  const runtime = { prepare: async source => ({ status: "ready", snapshot: (await source.snapshot()).sourceFingerprint, preparationId: "test", diagnostics: [],
+    prepared: { index: { units, edges: [], structureComplete: true }, revision: "test", modelIdentity: "test" } }) };
+  const found = await findSharedLiterals({ projectRoot: root }, { runtime });
+  assert.equal(found.status, "ready");
+  assert.deepEqual(found.groups.map(group => group.members.map(member => member.file).sort()), [["src/panel.mjs", "src/states.mjs"]]);
+  const withTests = await findSharedLiterals({ projectRoot: root, includeTests: true }, { runtime });
+  assert.deepEqual(withTests.groups[0].members.map(member => member.file).sort(), ["src/panel.mjs", "src/states.mjs", "test/panel.test.mjs"]);
+  assert.deepEqual((await findSharedLiterals({ projectRoot: root, filters: { paths: ["src/panel.mjs"] } }, { runtime })).groups, []);
+  const cohesion = await reportCohesionClusters({ projectRoot: root }, { runtime });
+  assert.deepEqual([cohesion.status, cohesion.containers, cohesion.coverage], ["ready", [], { examinedContainers: 0, reportedContainers: 0 }]);
 });
 test("shared dependency input limits, unknown fields, and path traversal fail before preparation", () => {
   for (const input of [{ limit: 0 }, { limit: 101 }, { includeTests: "yes" }, { filters: { domains: ["code"] } }, { filters: { paths: ["../outside"] } }, { query: "x" }, { snapshotId: "x" }])

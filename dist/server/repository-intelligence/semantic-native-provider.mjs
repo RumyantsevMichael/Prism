@@ -4,6 +4,8 @@ import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { moduleInterfaceReport } from "./module-interfaces.mjs";
+import { cohesionReport } from "./cohesion.mjs";
+import { sharedLiteralGroups } from "./shared-literals.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
 const domains = /* @__PURE__ */ new Set(["code", "instruction", "documentation", "configuration"]);
@@ -66,6 +68,36 @@ const NATIVE_INTELLIGENCE_TOOLS = [
       allModules: { type: "boolean", default: false, description: "Report every exporting module, not only modules with unused or test-only exports." },
       filters: { type: "object", additionalProperties: false, properties: {
         paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the modules and classes to report. Importers anywhere in the project still count.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "find_shared_literals",
+    description: "Group functions, methods, classes, and constants in different files that spell the same rare set of identifier-like string literals, such as ids, states, keys, event names, or method names. Uses the same prepared index as search_repository_concepts. A shared literal set shows values that several units must know and does not establish that one owner is better.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" },
+      expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      includeTests: { type: "boolean", default: false, description: "Include test files, which often repeat expected values on purpose." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when at least two of its members are inside these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "report_cohesion_clusters",
+    description: "Report large classes, Rust and Go types, and modules whose members fall into separate clusters of shared state and calls, with the members and state of each cluster. Uses the same prepared index as search_repository_concepts. Clusters identify candidate responsibilities for investigation and do not decide whether a split is better.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" },
+      expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      includeTests: { type: "boolean", default: false, description: "Include test classes and modules." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the classes, types, and modules to report.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
@@ -263,6 +295,12 @@ function validateSharedDependencies(value) {
 function validateModuleInterfaces(value) {
   validateAnalysis(value, ["allModules"], ["offset"]);
 }
+function validateSharedLiterals(value) {
+  validateAnalysis(value, ["includeTests"]);
+}
+function validateCohesion(value) {
+  validateAnalysis(value, ["includeTests"]);
+}
 async function preparedAnalysis(input, options) {
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
@@ -274,9 +312,8 @@ async function findSharedDependencies(input, options = {}) {
   const { provider, preparation, identity } = await preparedAnalysis(input, options);
   if (preparation.status === "preparing") return { ...preparation, prepared: void 0, groups: [] };
   if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
-  const { index } = provider.prepared, files = (await provider.snapshot()).filesByPath, paths = input.filters?.paths || [];
-  const include = (unit) => (input.includeTests || !isTestUnit(unit, files.get(unit.file)?.content)) && !searchExclusion(unit.file, files.get(unit.file)?.content || "");
-  const inside = (file) => !paths.length || paths.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
+  const { index } = provider.prepared, contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
+  const { include, inside } = analysisScope(input, contents);
   const result = sharedDependencyGroups(index, { include, limit: 100 });
   const groups = result.groups.filter((group) => group.members.filter((member) => inside(member.file)).length >= 2).slice(0, input.limit || 20);
   await provider.verifySnapshot();
@@ -299,9 +336,8 @@ async function reportModuleInterfaces(input, options = {}) {
   const { provider, preparation, identity } = await preparedAnalysis(input, options);
   if (preparation.status === "preparing") return { ...preparation, prepared: void 0, modules: [], delegatingClasses: [] };
   if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, modules: [], delegatingClasses: [] };
-  const snapshot = await provider.snapshot(), paths = input.filters?.paths || [];
-  const contents = new Map(snapshot.files.map((file) => [file.file, file.content]));
-  const inside = (file) => !paths.length || paths.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
+  const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
+  const { inside } = analysisScope(input, contents);
   const report = moduleInterfaceReport(provider.prepared.index, contents, { include: inside, allModules: input.allModules });
   await provider.verifySnapshot();
   const offset = input.offset || 0, limit = input.limit || 20;
@@ -322,14 +358,64 @@ async function reportModuleInterfaces(input, options = {}) {
     delegatingClasses: report.delegatingClasses.slice(0, 50)
   };
 }
+function analysisScope(input, contents) {
+  const include = (unit) => (input.includeTests || !isTestUnit(unit, contents.get(unit.file))) && !searchExclusion(unit.file, contents.get(unit.file) || "");
+  const paths = input.filters?.paths || [];
+  const inside = (file) => !paths.length || paths.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
+  return { include, inside };
+}
+async function findSharedLiterals(input, options = {}) {
+  validateSharedLiterals(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, groups: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
+  const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
+  const { include, inside } = analysisScope(input, contents);
+  const result = sharedLiteralGroups(provider.prepared.index, contents, { include, limit: 100 });
+  const groups = result.groups.filter((group) => group.members.filter((member) => inside(member.file)).length >= 2).slice(0, input.limit || 20);
+  await provider.verifySnapshot();
+  const diagnostics = provider.preparation.diagnostics;
+  return {
+    ...identity,
+    indexRevision: provider.prepared.revision,
+    coverage: result.coverage,
+    diagnostics: diagnostics.slice(0, 20),
+    diagnosticCount: diagnostics.length,
+    groups
+  };
+}
+async function reportCohesionClusters(input, options = {}) {
+  validateCohesion(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, containers: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, containers: [] };
+  const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
+  const { include, inside } = analysisScope(input, contents);
+  const report = cohesionReport(provider.prepared.index, contents, { include: (unit) => include(unit) && inside(unit.file) });
+  await provider.verifySnapshot();
+  const { index } = provider.prepared;
+  const diagnostics = [...index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a cluster can miss members or calls." }], ...provider.preparation.diagnostics];
+  return {
+    ...identity,
+    indexRevision: provider.prepared.revision,
+    coverage: report.coverage,
+    diagnostics: diagnostics.slice(0, 20),
+    diagnosticCount: diagnostics.length,
+    containers: report.containers.slice(0, input.limit || 20)
+  };
+}
 export {
   NATIVE_INTELLIGENCE_TOOLS,
   SemanticNativeRepositoryIntelligence,
   findSharedDependencies,
+  findSharedLiterals,
   prepareNativeProvider,
+  reportCohesionClusters,
   reportModuleInterfaces,
   searchRepositoryConcepts,
+  validateCohesion,
   validateConceptSearch,
   validateModuleInterfaces,
-  validateSharedDependencies
+  validateSharedDependencies,
+  validateSharedLiterals
 };
