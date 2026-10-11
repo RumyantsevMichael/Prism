@@ -103,7 +103,7 @@ async function requestedProjectRoot(argumentsValue) {
   if (hostProjectRoot && hasSuppliedProjectRoot) {
     const suppliedRoot = await realpath(argumentsValue.projectRoot);
     if (suppliedRoot !== resolvedRoot) {
-      throw new Error("The projectRoot argument does not match the host project root.");
+      throw new Error(`The projectRoot argument does not match the host project root ${resolvedRoot}. Pass that path, which is the directory where the session started.`);
     }
   }
   return resolvedRoot;

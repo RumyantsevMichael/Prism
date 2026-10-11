@@ -1,14 +1,25 @@
 # Refactoring analysis
 
-## Before-change discovery
+## Repository discovery
 
-1. For a retained baseline, pass its identity as `snapshotId` to `search_repository_concepts` from the first reuse search.
-2. While search returns `preparing`, wait through bounded status requests and repeat the same snapshot-bound search.
-3. To find repeated sub-steps without a query, call `find_shared_dependencies` with the same `snapshotId`.
-4. To review interfaces, call `report_module_interfaces` with the same `snapshotId`.
-5. Inspect completed candidates before selecting a transformation.
-6. Preserve the same baseline through target edits, retries, and corrections.
-7. If retained search is unavailable, report that limitation with the fallback source identity and coverage.
+Discovery tools cover the whole scope at once, so they find candidates that reading one file at a time misses.
+Each tool reports facts for investigation, not defects.
+
+| Tool | Finds |
+| --- | --- |
+| `search_repository_concepts` | Units that look alike, for one query that describes a behavior or responsibility. |
+| `find_shared_dependencies` | Units in different files that work alike: repeated sub-steps, copied helpers, and repeated protocols. |
+| `report_module_interfaces` | Exports that no module uses, exports that only tests use, the part of each interface that its importers use, and classes that forward most methods to one field. |
+
+1. If a retained baseline exists, pass its identity as `snapshotId` to every discovery call.
+2. If no baseline exists and the request is analysis only, call the tools on the live project without `snapshotId`.
+3. Call `find_shared_dependencies` and `report_module_interfaces` for the discovery scope.
+4. If the scope is part of the project, pass its directories as `filters.paths`.
+5. For each responsibility that the scope implements, call `search_repository_concepts` with a query that describes it.
+6. While a call returns `preparing`, wait through bounded `get_repository_intelligence_status` requests and repeat the same call.
+7. Read the source of the reported units before you rank them.
+8. Preserve the same baseline through target edits, retries, and corrections.
+9. If a tool is unavailable, report that limitation with the fallback source identity and coverage.
 
 A `preparing` response supplies neither completed candidates nor successful semantic evidence.
 Live files cannot replace the original baseline after target edits.
