@@ -25,7 +25,7 @@ node bench/semantic-eval/run.mjs --label after --show 3
 ```
 
 The first full run embeds every fragment and takes several minutes.
-Later runs reuse the vectors in `.work/embeddings.json` and embed only changed fragment text.
+Later runs reuse the vectors in `embeddings.json` in the benchmark state directory and embed only changed fragment text.
 To query a saved index again without a build, add `--reuse-index`.
 
 The benchmark finds the model in the plugin data directory.
@@ -100,7 +100,7 @@ Labels that come from only one system favor that system.
 ## Shared dependency groups
 
 `dependencies.mjs` measures the groups of `find_shared_dependencies` on the saved benchmark index.
-Run the retrieval benchmark first, so that `.work/index.json` exists.
+Run the retrieval benchmark first, so that `index.json` exists in the benchmark state directory.
 
 ```bash
 node bench/semantic-eval/dependencies.mjs --limit 20,50 --show 5

@@ -5,10 +5,11 @@ import path from "node:path";
 import { isTestUnit, dependencyProfiles, sharedDependencyGroups } from "../../dist/server/repository-intelligence/shared-dependencies.mjs";
 import { sharedLiteralGroups } from "../../dist/server/repository-intelligence/shared-literals.mjs";
 import { cohesionReport } from "../../dist/server/repository-intelligence/cohesion.mjs";
+import { benchStateDir } from "../state-dir.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const { values: options } = parseArgs({ options: {
-  index: { type: "string", default: path.join(here, ".work/index.json") },
+  index: { type: "string", default: path.join(benchStateDir(), "semantic-eval/index.json") },
   repo: { type: "string" },
   mode: { type: "string", default: "pairs" },
   show: { type: "string", default: "25" },

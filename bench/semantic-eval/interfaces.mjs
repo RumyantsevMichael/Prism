@@ -4,10 +4,11 @@ import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import path from "node:path";
 import { moduleInterfaceReport } from "../../dist/server/repository-intelligence/module-interfaces.mjs";
+import { benchStateDir } from "../state-dir.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const { values: options } = parseArgs({ options: {
-  index: { type: "string", default: path.join(here, ".work/index.json") },
+  index: { type: "string", default: path.join(benchStateDir(), "semantic-eval/index.json") },
   repo: { type: "string", default: path.resolve(here, "../..") },
   show: { type: "string", default: "10" },
 } });

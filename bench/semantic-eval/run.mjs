@@ -7,13 +7,14 @@ import { parseArgs } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { benchStateDir } from "../state-dir.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const repoRoot = path.resolve(here, "../..");
 const { values: options } = parseArgs({ options: {
   repo: { type: "string", default: repoRoot },
   queries: { type: "string", default: path.join(here, "queries/prism.json") },
-  out: { type: "string", default: path.join(here, ".work") },
+  out: { type: "string", default: path.join(benchStateDir(), "semantic-eval") },
   model: { type: "string" },
   worker: { type: "string", default: path.join(repoRoot, "dist/native-runtime") },
   label: { type: "string", default: "run" },

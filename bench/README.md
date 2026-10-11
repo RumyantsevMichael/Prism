@@ -88,7 +88,7 @@ Prepare Codex to load the native Prism package through a temporary marketplace:
 python3 bench/harness/bench.py setup-codex --plugin .
 ```
 
-The command copies the shipped Codex manifest and shared skills into `bench/.cache`.
+The command copies the shipped Codex manifest and shared skills into the benchmark state directory.
 It does not rewrite skill metadata or change released plugin files.
 
 Run one brownfield task with a Codex subscription:
@@ -138,7 +138,7 @@ If Sol is unavailable, use Terra for that role in both arms and disclose the sub
 Aggregate one or more runs:
 
 ```bash
-python3 bench/harness/bench.py report bench/results/<run-dir> --out bench/results/<run-dir>/report.md
+python3 bench/harness/bench.py report <state-dir>/results/<run-dir> --out <state-dir>/results/<run-dir>/report.md
 ```
 
 ## Reading the report
@@ -233,5 +233,11 @@ bench/
     specs/ or brief.md    the product owner's hidden reference, per stage
     tests/             hidden acceptance tests (pytest), per stage
     oracle/            reference solution that must score 100% at every stage
-  results/             run outputs (work/ subdirectories are git-ignored)
 ```
+
+## Generated state
+
+The benchmark writes its scoring venv, source caches, and run results outside the checkout.
+The default directory is `$XDG_CACHE_HOME/prism-bench`, or `~/.cache/prism-bench` when `XDG_CACHE_HOME` is not set.
+Set `PRISM_BENCH_HOME` to use a different directory.
+Hosts copy the whole plugin directory into their install cache, so state inside the checkout would ship to every local install.
