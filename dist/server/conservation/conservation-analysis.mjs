@@ -5,6 +5,7 @@ import { conservationStore, conservationError, digest, canonical, withinScope } 
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
 import { CHUNKER_VERSION } from "../../native-runtime/versions.mjs";
+import { sameNameGroups } from "../repository-intelligence/same-name-units.mjs";
 const keyFor = (file, kind, selector) => canonical([file, kind, selector]);
 const ANALYSIS_VERSION = "conservation-metrics-v2";
 const COMPARISON_VERSION = "conservation-comparison-v3";
@@ -96,7 +97,49 @@ async function resolveReference(projectRoot, snapshot, reference, analysis, stor
   }
   return { status: units.length === 1 ? "resolved" : units.length ? "ambiguous" : "missing", reference, units };
 }
-async function assessDeltaReadiness(projectRoot, document, store = conservationStore) {
+const DUPLICATE_MIN_LINES = 10;
+async function duplicationDiagnostics(projectRoot, document, baseline, analysis, options) {
+  const store = options.store || conservationStore, files = new Map(baseline.files.filter((file) => file.kind === "source").map((file) => [file.file, file]));
+  const additions = /* @__PURE__ */ new Map();
+  for (const entry of document.concepts) if (entry.action === "ADD") for (const reference of entry.after) {
+    if (reference.selector !== void 0 && files.has(reference.path)) additions.set(reference.path, [.../* @__PURE__ */ new Set([...additions.get(reference.path) || [], entry.id])]);
+  }
+  if (additions.size < 2) return [];
+  if (!analysis) {
+    const prepared = await prepareAnalysis(projectRoot, document.baselineId, options);
+    if (prepared.status === "preparing") return [{ code: "duplication_check_preparing", message: "Read the concept delta again after the baseline analysis is ready.", blocking: true }];
+    if (!prepared.analysis) return [{ code: "duplication_check_unavailable", message: "The baseline analysis is unavailable, so a review must check the additions for duplicated functions.", blocking: false }];
+    analysis = prepared.analysis;
+  }
+  const contents = /* @__PURE__ */ new Map();
+  for (const file of additions.keys()) contents.set(file, (await store.bytes(projectRoot, files.get(file))).toString("utf8"));
+  const { groups } = sameNameGroups({ units: analysis.units, edges: [], unresolvedReferences: [] }, contents, { include: (unit) => additions.has(unit.file) });
+  const duplicated = groups.filter((group) => group.variants.every((variant) => variant.lines >= DUPLICATE_MIN_LINES));
+  if (!duplicated.length) return [];
+  const consolidating = [], diagnostics = [];
+  const documents = [document];
+  for (const item of document.consolidations || []) {
+    try {
+      documents.push((await readConceptDeltaDocument(projectRoot, item.deltaPath)).document);
+    } catch {
+      diagnostics.push({ code: "consolidation_delta_invalid", message: `The consolidation delta ${item.deltaPath} is missing or invalid.`, blocking: true });
+    }
+  }
+  for (const delta of documents) for (const entry of delta.concepts) if (entry.action === "REPLACE" || entry.action === "DELETE") for (const reference of entry.before) {
+    consolidating.push(...(await resolveReference(projectRoot, baseline, reference, analysis, store)).units);
+  }
+  const span = (file, selector, line) => analysis.units.find((unit) => unit.file === file && (unit.selector || unit.name) === selector && unit.range.startLine === line)?.span;
+  const open = duplicated.filter((group) => group.variants.some((variant) => variant.members.some((member) => {
+    const source = span(member.file, member.selector, member.range.startLine);
+    return !source || !consolidating.some((unit) => unit.file === member.file && unit.start <= source.start && source.end <= unit.end);
+  })));
+  if (open.length) {
+    const entries = [...new Set([...additions.values()].flat())].sort(), names = open.map((group) => group.name);
+    diagnostics.push({ code: "duplication_growth", blocking: true, message: `The entries ${entries.join(", ")} add units to ${[...additions.keys()].sort().join(", ")}, which already repeat the functions ${names.join(", ")}. Consolidate these functions in this delta with REPLACE entries into one shared unit, and keep each file's differences as parameters of that unit, so observable behavior stays the same. If the consolidation and the outcome do not fit in one slice, return SPLIT with a child slice that consolidates these functions first, and name its delta in consolidations. Return BLOCKED only when a requirement forces one shared behavior where the files now differ, and name that behavior.` });
+  }
+  return diagnostics;
+}
+async function assessDeltaReadiness(projectRoot, document, store = conservationStore, options = {}) {
   const diagnostics = [];
   const add = (code, message, id, blocking = true) => diagnostics.push({ code, message, ...id ? { id } : {}, blocking });
   if (!document.baselineId) {
@@ -155,6 +198,7 @@ async function assessDeltaReadiness(projectRoot, document, store = conservationS
     for (const candidate of evidence.candidates) if (!known.has(`${candidate.receiptId}:${candidate.candidateId}`)) add("candidate_not_in_receipt", "A disposition must identify a returned search candidate.", entry.id);
     if (!count && !evidence.emptyResultReason?.trim()) add("empty_search_explanation_missing", "Explain the empty semantic search result.", entry.id);
   }
+  diagnostics.push(...await duplicationDiagnostics(projectRoot, document, baseline, analysis, { ...options, store }));
   return diagnostics;
 }
 async function measurements(projectRoot, before, after, a, b, document, store) {

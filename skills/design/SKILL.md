@@ -41,6 +41,8 @@ Incomplete dependency implementation does not block design when available eviden
 
 ## 3. Form the technical design
 
+The resulting structure shall match the [desired conceptual model](../workflow/SKILL.md#common-terms), as if the current requirements had existed from the start.
+
 1. Read [C4 code diagrams](references/c4-code-diagrams.md) before writing diagram source.
 2. Create or update PlantUML source in the current slice folder, showing components and relationships needed to assess this scope.
 3. Use existing architecture where it satisfies the requirements.

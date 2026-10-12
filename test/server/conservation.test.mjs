@@ -448,3 +448,30 @@ test('REPLACE consolidation may retain its explicit destination identity but not
  d=await f.update({expectedRevision:d.revision,operations:[{op:'update',id:'consolidate',set:{after:[reference(after[0])]}}]});
  const c=await compare(f,d,result);assert.deepEqual(c.observations.filter(item=>item.code==='retained_source').map(item=>item.unit.selector),['obsolete']);
 });
+test('readiness rejects additions that copy a change into functions that several files repeat',async()=>{
+ const body=name=>`function ${name}(lockPath) {\n  const text = readFileSync(lockPath, "utf8");\n  const owner = JSON.parse(text);\n  if (!owner.pid) return null;\n  if (owner.token.length !== 36) return null;\n  const alive = processState(owner.pid);\n  if (!alive) return null;\n  const age = Date.now() - owner.createdAt;\n  if (age > LOCK_STALE_MS) return null;\n  return { pid: owner.pid, token: owner.token };\n}\n`;
+ const small='function digest(text) {\n  return hash(text);\n}\n';
+ const files={'a.ts':body('readLockOwner')+small,'b.ts':body('readLockOwner').replace('return null;\n  const alive','throw new Error("bad");\n  const alive')+small,'requirements.md':'Requirement'};
+ const f=await fixture(files);
+ const units=[];
+ for(const [file,text] of Object.entries(files)) for(const match of text.matchAll(/function (\w+)\([^)]*\) \{[\s\S]*?\n\}/g)) {
+  const startLine=text.slice(0,match.index).split('\n').length,endLine=startLine+match[0].split('\n').length-1;
+  units.push({id:`${file}#${match[1]}`,file,domain:'code',kind:'function',name:match[1],selector:match[1],range:{startLine,endLine},rangeComplete:true,span:{start:match.index,end:match.index+match[0].length},sourceHash:f.b.snapshot.files.find(x=>x.file===file).hash,contentHash:digest(match[0])});
+ }
+ await analysis(f.root,f.b,units);
+ const symbol=(path,value)=>({path,selector:{type:'symbol',value}});
+ const additions=[entry('report-a','ADD',[],[symbol('a.ts','reportA')]),entry('report-b','ADD',[],[symbol('b.ts','reportB')])];
+ const base={schemaVersion:2,scope:['a.ts','b.ts','shared.ts'],baselineId:f.b.snapshotId,requirements:[ref('requirements.md')],concepts:additions};
+ const growth=async document=>(await assessDeltaReadiness(f.root,document)).filter(x=>x.code.startsWith('duplication')||x.code.startsWith('consolidation'));
+ const found=await growth(base);
+ assert.equal(found.length,1);assert.equal(found[0].code,'duplication_growth');assert.equal(found[0].blocking,true);
+ assert.match(found[0].message,/readLockOwner/);assert.doesNotMatch(found[0].message,/digest/);
+ assert.deepEqual(await growth({...base,concepts:[additions[0]]}),[]);
+ const consolidate=entry('lock-owner','REPLACE',[symbol('a.ts','readLockOwner'),symbol('b.ts','readLockOwner')],[symbol('shared.ts','readLockOwner')]);
+ assert.deepEqual(await growth({...base,concepts:[...additions,consolidate]}),[]);
+ assert.equal((await growth({...base,concepts:[...additions,{...consolidate,before:[symbol('a.ts','readLockOwner')]}]})).length,1);
+ const other='plan/consolidate/concept-delta.json';
+ await updateConceptDelta({projectRoot:f.root,deltaPath:other,expectedRevision:null,scope:['a.ts','b.ts','shared.ts'],baselineId:f.b.snapshotId,operations:[{op:'insert',entry:consolidate}]});
+ assert.deepEqual(await growth({...base,consolidations:[{deltaPath:other,reason:'The store slice consolidates the lock helpers first.'}]}),[]);
+ assert.deepEqual((await growth({...base,consolidations:[{deltaPath:'plan/missing/concept-delta.json',reason:'Missing.'}]})).map(x=>x.code).sort(),['consolidation_delta_invalid','duplication_growth']);
+});

@@ -35,6 +35,7 @@ export interface DeltaDocument {
   requirements?: Reference[]; growthJustifications?: GrowthJustification[];
   growthThresholds?: { dimension: string; maximumIncrease: number }[];
   expectedGrowth?: { dimension: string; increase: number | null; reason: string }[];
+  consolidations?: { deltaPath: string; reason: string }[];
 }
 export interface ResolvedUnit { key: string; file: string; kind: string; selector: string; start: number; end: number; hash: string; public: boolean | null }
 export interface Resolution { status: "resolved" | "missing" | "ambiguous" | "unsupported"; reference: Reference; units: ResolvedUnit[]; reason?: string }

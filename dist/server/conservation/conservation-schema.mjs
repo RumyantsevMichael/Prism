@@ -15,7 +15,9 @@ const deltaMetadata = {
   requirements: arraySchema(referenceSchema),
   growthJustifications: arraySchema(justificationSchema),
   growthThresholds: arraySchema(objectSchema({ dimension: textField, maximumIncrease: { type: "integer", minimum: 0 } })),
-  expectedGrowth: arraySchema(objectSchema({ dimension: textField, increase: { oneOf: [{ type: "number" }, { type: "null" }] }, reason: textField }))
+  expectedGrowth: arraySchema(objectSchema({ dimension: textField, increase: { oneOf: [{ type: "number" }, { type: "null" }] }, reason: textField })),
+  // Deltas of other slices whose REPLACE and DELETE entries consolidate functions that this delta's additions would otherwise copy.
+  consolidations: arraySchema(objectSchema({ deltaPath: textField, reason: textField }))
 };
 export {
   arraySchema,
