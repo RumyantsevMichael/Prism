@@ -1,7 +1,14 @@
 // Generated from src/server/repository-intelligence/semantic-native-provider.mts by scripts/native-build/compile.mjs.
 import { openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
-import { domainFor } from "../../native-runtime/domains.mjs";
+import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
+import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
+import { moduleInterfaceReport } from "./module-interfaces.mjs";
+import { cohesionReport } from "./cohesion.mjs";
+import { sharedLiteralGroups } from "./shared-literals.mjs";
+import { sharedShapes } from "./shared-shapes.mjs";
+import { sameNameGroups } from "./same-name-units.mjs";
+import { complexUnits } from "./complex-units.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
 const domains = /* @__PURE__ */ new Set(["code", "instruction", "documentation", "configuration"]);
@@ -36,8 +43,101 @@ const NATIVE_INTELLIGENCE_TOOLS = [
       } }
     } },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "find_shared_dependencies",
+    description: "Group functions and methods in different files that call the same rare set of operations, such as a repeated safety check, write protocol, or copied helper. Uses the same prepared index as search_repository_concepts. A shared dependency set identifies candidates for investigation and does not establish equivalent behavior.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" },
+      expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      includeTests: { type: "boolean", default: false, description: "Include test files, which often repeat setup code on purpose." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when at least two of its members are inside these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "report_module_interfaces",
+    description: "Report JavaScript and TypeScript module exports with the modules that import each one, exports that no other module imports, exports that only tests import, and classes that forward most public methods to one field. Uses the same prepared index as search_repository_concepts. The report gives facts for interface design review and does not decide whether an interface is too shallow.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" },
+      expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      offset: { type: "integer", minimum: 0, default: 0 },
+      allModules: { type: "boolean", default: false, description: "Report every exporting module, not only modules with unused or test-only exports." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the modules and classes to report. Importers anywhere in the project still count.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "find_shared_literals",
+    description: "Group functions, methods, classes, constants, and instruction list items or paragraphs in different files that spell the same rare set of identifier-like literals, such as ids, states, keys, event names, method names, or tool names in backticks. Also report key sets that several objects, interfaces, or schemas repeat. Uses the same prepared index as search_repository_concepts. A shared literal set or shape shows names that several places must know and does not establish that one owner is better.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" },
+      expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      includeTests: { type: "boolean", default: false, description: "Include test files, which often repeat expected values on purpose." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when at least two of its members are inside these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "report_cohesion_clusters",
+    description: "Report large classes, Rust and Go types, and modules whose members fall into separate clusters of shared state and calls, with the members and state of each cluster. Uses the same prepared index as search_repository_concepts. Clusters identify candidate responsibilities for investigation and do not decide whether a split is better.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" },
+      expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      includeTests: { type: "boolean", default: false, description: "Include test classes and modules." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the classes, types, and modules to report.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "find_same_name_units",
+    description: "Group functions in different files that have the same name: identical copies, and diverged variants with the dependencies that only each variant uses and its throw count. Uses the same prepared index as search_repository_concepts. A diverged name shows candidates for one contract and does not establish that the variants should behave alike.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" },
+      expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      includeTests: { type: "boolean", default: false, description: "Include test code, which often repeats small helpers on purpose." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when at least two of its functions are inside these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  {
+    name: "report_complex_units",
+    description: "Report long or branchy functions and methods with their lines, branches, nesting depth, parameters, nested functions, and the expression that they compare with the most literal values. Uses the same prepared index as search_repository_concepts. The facts identify candidates for a split and do not decide that a unit is too complex.",
+    inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
+      projectRoot: { type: "string" },
+      expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      includeTests: { type: "boolean", default: false, description: "Include test code." },
+      filters: { type: "object", additionalProperties: false, properties: {
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the units to report.", items: { type: "string", minLength: 1, maxLength: 512 } }
+      } }
+    } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   }
 ];
+const unsafePath = (value) => value.startsWith("/") || value.includes("\\") || value.includes(":") || value.split("/").some((part) => ["", ".", ".."].includes(part));
+const pathError = () => semanticError("invalid_path", "filters.paths must use project-relative paths such as 'server', without trailing slashes, empty segments, '.', '..', backslashes, or colons.");
 function validateConceptSearch(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw semanticError("validation_failed", "Search arguments must be an object.");
   const input = value;
@@ -51,7 +151,7 @@ function validateConceptSearch(value) {
     for (const [key, values] of Object.entries(input.filters)) {
       if (!["domains", "paths", "kinds"].includes(key) || !Array.isArray(values) || values.length > 50 || values.some((value2) => typeof value2 !== "string" || !value2 || value2.length > 512)) throw semanticError("validation_failed", `Invalid filters.${key}.`);
       if (key === "domains" && values.some((value2) => !domains.has(value2))) throw semanticError("validation_failed", "filters.domains contains an unsupported domain.");
-      if (key === "paths" && values.some((value2) => value2.startsWith("/") || value2.includes("\\") || value2.includes(":") || value2.split("/").some((part) => ["", ".", ".."].includes(part)))) throw semanticError("invalid_path", "filters.paths must use project-relative paths such as 'server', without trailing slashes, empty segments, '.', '..', backslashes, or colons.");
+      if (key === "paths" && values.some(unsafePath)) throw pathError();
     }
   }
 }
@@ -125,7 +225,7 @@ class SemanticNativeRepositoryIntelligence {
       requiredEvidenceComplete,
       estimateEligible: requiredEvidenceComplete && index.structureComplete,
       diagnostics: [...lexical.diagnostics.filter((item) => !["semantic_unavailable", "structural_unavailable"].includes(item.code)), ...index.diagnostics],
-      retrievalPlan: { fusion: "reciprocal-rank-fusion", offset: 60, weights: [1, 1], modelIdentity: this.prepared.modelIdentity, indexRevision: this.prepared.revision, snapshot: index.snapshot, semanticCandidatesResolveHints: false }
+      retrievalPlan: { fusion: "reciprocal-rank-fusion", offset: 60, weights: { dense: 1, lexical: 0.25, identifierLexical: 0.5 }, modelIdentity: this.prepared.modelIdentity, indexRevision: this.prepared.revision, snapshot: index.snapshot, semanticCandidatesResolveHints: false }
     };
   }
   async neighbors(nodes, options = {}) {
@@ -208,10 +308,254 @@ async function searchRepositoryConcepts(input, options = {}) {
     results
   };
 }
+function validateAnalysis(value, booleans, extra = []) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw semanticError("validation_failed", "Arguments must be an object.");
+  const input = value;
+  for (const key of Object.keys(input)) if (!["projectRoot", "filters", "expectedSnapshot", "snapshotId", "limit", ...booleans, ...extra].includes(key)) throw semanticError("validation_failed", `Unknown field: ${key}.`);
+  for (const key of ["snapshotId", "expectedSnapshot"]) if (input[key] !== void 0 && (typeof input[key] !== "string" || !/^[a-f\d]{64}$/.test(input[key]))) throw semanticError("validation_failed", `${key} must be a SHA-256 identity.`);
+  if (input.limit !== void 0 && (typeof input.limit !== "number" || !Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100)) throw semanticError("validation_failed", "limit must be from 1 through 100.");
+  if (input.offset !== void 0 && (typeof input.offset !== "number" || !Number.isInteger(input.offset) || input.offset < 0)) throw semanticError("validation_failed", "offset must be a nonnegative integer.");
+  for (const key of booleans) if (input[key] !== void 0 && typeof input[key] !== "boolean") throw semanticError("validation_failed", `${key} must be a boolean.`);
+  if (input.filters !== void 0) {
+    const filters = input.filters;
+    if (!filters || typeof filters !== "object" || Array.isArray(filters) || Object.keys(filters).some((key) => key !== "paths")) throw semanticError("validation_failed", "filters accepts only paths.");
+    const paths = filters.paths;
+    if (paths !== void 0 && (!Array.isArray(paths) || paths.length > 50 || paths.some((value2) => typeof value2 !== "string" || !value2 || value2.length > 512))) throw semanticError("validation_failed", "Invalid filters.paths.");
+    if (Array.isArray(paths) && paths.some(unsafePath)) throw pathError();
+  }
+}
+function validateSharedDependencies(value) {
+  validateAnalysis(value, ["includeTests"]);
+}
+function validateModuleInterfaces(value) {
+  validateAnalysis(value, ["allModules"], ["offset"]);
+}
+function validateSharedLiterals(value) {
+  validateAnalysis(value, ["includeTests"]);
+}
+function validateCohesion(value) {
+  validateAnalysis(value, ["includeTests"]);
+}
+function validateSameNameUnits(value) {
+  validateAnalysis(value, ["includeTests"]);
+}
+function validateComplexUnits(value) {
+  validateAnalysis(value, ["includeTests"]);
+}
+async function preparedAnalysis(input, options) {
+  const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
+  const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
+  const identity = { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot, snapshotId: input.snapshotId || null };
+  return { provider, preparation, identity };
+}
+async function findSharedDependencies(input, options = {}) {
+  validateSharedDependencies(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, groups: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
+  const { index } = provider.prepared, contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
+  const { include, inside } = analysisScope(input, contents);
+  const result = sharedDependencyGroups(index, { include, limit: 100 });
+  const groups = result.groups.filter((group) => group.members.filter((member) => inside(member.file)).length >= 2);
+  await provider.verifySnapshot();
+  const diagnostics = [
+    ...index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a group can miss members." }],
+    ...result.coverage.unresolvedNames ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so groups use project calls only.", recovery: "Prepare the index again with the current native runtime." }],
+    ...provider.preparation.diagnostics
+  ];
+  const receiptId = await retainResult(input, provider, "find_shared_dependencies", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
+  return {
+    ...identity,
+    receiptId,
+    indexRevision: provider.prepared.revision,
+    coverage: result.coverage,
+    diagnostics: diagnostics.slice(0, 20),
+    diagnosticCount: diagnostics.length,
+    totalGroups: groups.length,
+    groups: groups.slice(0, input.limit || 20)
+  };
+}
+async function reportModuleInterfaces(input, options = {}) {
+  validateModuleInterfaces(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, modules: [], delegatingClasses: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, modules: [], delegatingClasses: [] };
+  const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
+  const { inside } = analysisScope(input, contents);
+  const report = moduleInterfaceReport(provider.prepared.index, contents, { include: inside, allModules: input.allModules });
+  await provider.verifySnapshot();
+  const offset = input.offset || 0, limit = input.limit || 20;
+  const diagnostics = [
+    ...report.coverage.unresolvedLocalImports ? [{ code: "unresolved_imports", count: report.coverage.unresolvedLocalImports, message: "Some local imports did not resolve, so an export can look unused although a module imports it." }] : [],
+    ...report.coverage.importAnalysisSkipped.length ? [{ code: "unsupported_language", message: `Import analysis covers JavaScript and TypeScript, not ${report.coverage.importAnalysisSkipped.join(", ")} files.` }] : [],
+    ...provider.preparation.diagnostics
+  ];
+  const receiptId = await retainResult(
+    input,
+    provider,
+    "report_module_interfaces",
+    { paths: input.filters?.paths || [], allModules: Boolean(input.allModules) },
+    report.coverage,
+    diagnostics,
+    { modules: report.modules, delegatingClasses: report.delegatingClasses }
+  );
+  return {
+    ...identity,
+    receiptId,
+    indexRevision: provider.prepared.revision,
+    coverage: report.coverage,
+    diagnostics: diagnostics.slice(0, 20),
+    diagnosticCount: diagnostics.length,
+    totalModules: report.modules.length,
+    nextOffset: offset + limit < report.modules.length ? offset + limit : null,
+    modules: report.modules.slice(offset, offset + limit),
+    delegatingClasses: report.delegatingClasses.slice(0, 50)
+  };
+}
+async function retainResult(input, provider, tool, scope, coverage, diagnostics, results) {
+  const snapshot = await provider.snapshot(), prepared = provider.prepared, named = /* @__PURE__ */ new Set();
+  const collect = (value) => {
+    if (Array.isArray(value)) value.forEach(collect);
+    else if (value && typeof value === "object") for (const [key, item] of Object.entries(value)) key === "file" && typeof item === "string" ? named.add(item) : collect(item);
+  };
+  collect(results);
+  const files = [...named].sort().flatMap((file) => snapshot.filesByPath.has(file) ? [{ file, hash: snapshot.filesByPath.get(file).hash }] : []);
+  const receipt = {
+    kind: "repository-analysis",
+    schemaVersion: 1,
+    project: (await conservationStore.location(input.projectRoot)).root,
+    tool,
+    snapshotId: input.snapshotId || null,
+    snapshot: provider.preparation.snapshot,
+    indexRevision: prepared.revision,
+    versions: { extractor: prepared.index.chunkerVersion || "unavailable", runtime: prepared.assetIdentity || "unavailable" },
+    scope,
+    coverage,
+    diagnostics,
+    files,
+    ...results
+  };
+  return conservationStore.put(input.projectRoot, receipt);
+}
+function analysisScope(input, contents) {
+  const include = (unit) => (input.includeTests || !isTestUnit(unit, contents.get(unit.file))) && !searchExclusion(unit.file, contents.get(unit.file) || "");
+  const paths = input.filters?.paths || [];
+  const inside = (file) => !paths.length || paths.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
+  return { include, inside };
+}
+async function findSharedLiterals(input, options = {}) {
+  validateSharedLiterals(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, groups: [], shapes: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [], shapes: [] };
+  const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
+  const { include, inside } = analysisScope(input, contents);
+  const result = sharedLiteralGroups(provider.prepared.index, contents, { include, limit: 100 });
+  const groups = result.groups.filter((group) => [...group.members, ...group.clients].filter((member) => inside(member.file)).length >= 2);
+  const shaped = sharedShapes(provider.prepared.index, contents, { include, limit: 100 });
+  const shapes = shaped.shapes.filter((shape) => shape.locations.some((location) => inside(location.file)));
+  await provider.verifySnapshot();
+  const diagnostics = provider.preparation.diagnostics, coverage = { ...result.coverage, objects: shaped.coverage.objects };
+  const receiptId = await retainResult(input, provider, "find_shared_literals", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, coverage, diagnostics, { groups, shapes });
+  const brief = groups.slice(0, input.limit || 20).map((group) => ({ ...group, literals: group.literals.slice(0, 10), literalCount: group.literals.length }));
+  const briefShapes = shapes.slice(0, Math.min(input.limit || 20, 8)).map((shape) => ({ ...shape, locations: shape.locations.slice(0, 4) }));
+  return {
+    ...identity,
+    receiptId,
+    indexRevision: provider.prepared.revision,
+    coverage,
+    diagnostics: diagnostics.slice(0, 20),
+    diagnosticCount: diagnostics.length,
+    totalGroups: groups.length,
+    groups: brief,
+    totalShapes: shapes.length,
+    shapes: briefShapes
+  };
+}
+async function reportCohesionClusters(input, options = {}) {
+  validateCohesion(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, containers: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, containers: [] };
+  const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
+  const { include, inside } = analysisScope(input, contents);
+  const report = cohesionReport(provider.prepared.index, contents, { include: (unit) => include(unit) && inside(unit.file) });
+  await provider.verifySnapshot();
+  const { index } = provider.prepared;
+  const diagnostics = [...index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a cluster can miss members or calls." }], ...provider.preparation.diagnostics];
+  const receiptId = await retainResult(input, provider, "report_cohesion_clusters", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, report.coverage, diagnostics, { containers: report.containers });
+  return {
+    ...identity,
+    receiptId,
+    indexRevision: provider.prepared.revision,
+    coverage: report.coverage,
+    diagnostics: diagnostics.slice(0, 20),
+    diagnosticCount: diagnostics.length,
+    totalContainers: report.containers.length,
+    containers: report.containers.slice(0, input.limit || 20)
+  };
+}
+async function findSameNameUnits(input, options = {}) {
+  validateSameNameUnits(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, groups: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
+  const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
+  const { include, inside } = analysisScope(input, contents);
+  const result = sameNameGroups(provider.prepared.index, contents, { include });
+  const groups = result.groups.filter((group) => group.variants.flatMap((variant) => variant.members).filter((member) => inside(member.file)).length >= 2);
+  await provider.verifySnapshot();
+  const diagnostics = [...provider.prepared.index.unresolvedReferences ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so variants compare project calls only.", recovery: "Prepare the index again with the current native runtime." }], ...provider.preparation.diagnostics];
+  const receiptId = await retainResult(input, provider, "find_same_name_units", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
+  return {
+    ...identity,
+    receiptId,
+    indexRevision: provider.prepared.revision,
+    coverage: result.coverage,
+    diagnostics: diagnostics.slice(0, 20),
+    diagnosticCount: diagnostics.length,
+    totalGroups: groups.length,
+    groups: groups.slice(0, input.limit || 20)
+  };
+}
+async function reportComplexUnits(input, options = {}) {
+  validateComplexUnits(input);
+  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  if (preparation.status === "preparing") return { ...preparation, prepared: void 0, units: [] };
+  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, units: [] };
+  const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
+  const { include, inside } = analysisScope(input, contents);
+  const result = complexUnits(provider.prepared.index, contents, { include: (unit) => include(unit) && inside(unit.file) });
+  await provider.verifySnapshot();
+  const diagnostics = provider.preparation.diagnostics;
+  const receiptId = await retainResult(input, provider, "report_complex_units", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { units: result.units });
+  return {
+    ...identity,
+    receiptId,
+    indexRevision: provider.prepared.revision,
+    coverage: result.coverage,
+    diagnostics: diagnostics.slice(0, 20),
+    diagnosticCount: diagnostics.length,
+    totalUnits: result.units.length,
+    units: result.units.slice(0, input.limit || 20)
+  };
+}
 export {
   NATIVE_INTELLIGENCE_TOOLS,
   SemanticNativeRepositoryIntelligence,
+  findSameNameUnits,
+  findSharedDependencies,
+  findSharedLiterals,
   prepareNativeProvider,
+  reportCohesionClusters,
+  reportComplexUnits,
+  reportModuleInterfaces,
   searchRepositoryConcepts,
-  validateConceptSearch
+  validateCohesion,
+  validateComplexUnits,
+  validateConceptSearch,
+  validateModuleInterfaces,
+  validateSameNameUnits,
+  validateSharedDependencies,
+  validateSharedLiterals
 };

@@ -1,0 +1,1812 @@
+[
+ {
+  "group": "description",
+  "query": "reject objects that contain keys outside an allowed set",
+  "expect": [
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/mcp.mjs",
+    "name": "assertExactToolArguments"
+   },
+   {
+    "file": "src/server/workflow/decision-history.mjs",
+    "name": "assertKeys"
+   },
+   {
+    "file": "src/server/session/session-capacity.mjs",
+    "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/session/session-trace-behavior.mjs",
+    "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "exactKeys"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "validate that a string is an ISO 8601 timestamp",
+  "expect": [
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "assertIsoDate"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "assertIsoDate"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "open a file without following symbolic links",
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs",
+    "name": "noFollowFlags"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "regularBytes"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "noFollowFlags"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "openPrivateFile"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "openExistingRegularFile"
+   },
+   {
+    "file": "docs/plans/repository-intelligence/session-consumption-tracing/slice.md",
+    "contains": "Trace directories and records reject symbolic links and multiply linked files with no-follow opens where available."
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "acquire an exclusive lock file and clean up locks left by dead processes",
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs"
+   },
+   {
+    "file": "src/server/workflow/artifact-store.mjs"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "acquireLock"
+   },
+   {
+    "file": "docs/plans/repository-intelligence/session-consumption-tracing/slice.md",
+    "contains": "Trace cleanup and commit use token-owned locks that reclaim only confirmed dead owners and fence a writer that loses ownership."
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "write a file atomically through a temporary file and rename",
+  "expect": [
+   {
+    "file": "src/server/workflow/artifact-store.mjs"
+   },
+   {
+    "file": "src/server/workflow/decision-history.mjs",
+    "name": "atomicJson"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "writeState"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "download a pinned asset and verify its sha256 checksum",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "download"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "reciprocal rank fusion of lexical and vector search results",
+  "expect": [
+   {
+    "file": "src/native-runtime/worker.mts",
+    "name": "query"
+   },
+   {
+    "file": "docs/requirements/repository-intelligence-providers.md",
+    "contains": "Requirement: Prism shall combine independent lexical and vector rankings with equal-weight reciprocal-rank fusion at k = 60."
+   },
+   {
+    "file": "src/native-runtime/worker.mts",
+    "name": "fusionWeights"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "split a long text into fragments that fit the embedding model token limit",
+  "expect": [
+   {
+    "file": "src/native-runtime/fragments.mts",
+    "name": "fragmentUnit"
+   },
+   {
+    "file": "src/native-runtime/fragments.mts",
+    "name": "cut"
+   },
+   {
+    "file": "docs/requirements/repository-intelligence-providers.md",
+    "contains": "Requirement: Prism shall preserve source text across bounded model inputs and retain fragment parents and ranges."
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "read the last token count from a Codex transcript",
+  "expect": [
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs"
+   },
+   {
+    "file": "docs/plans/repository-intelligence/active-session-capacity/slice.md",
+    "contains": "The latest bounded transcript token_count record supplies the effective context window after the first model call."
+   },
+   {
+    "file": "docs/plans/repository-intelligence/active-session-capacity/slice.md",
+    "contains": "Verified behavior: The transcript inspector exposes the latest bounded token_count context, the Codex adapter consumes effective configuration, and the registry"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "check whether a path is inside a root directory",
+  "expect": [
+   {
+    "file": "src/server/workflow/state.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/conservation/concept-delta.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "isContained"
+   },
+   {
+    "file": "src/server/repository-intelligence/repository-intelligence-config.mjs",
+    "name": "isWithinDirectory"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "inside"
+   },
+   {
+    "file": "src/server/review/review-server.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/native-runtime/fs-boundary.mts",
+    "name": "within"
+   },
+   {
+    "file": "src/server/workflow/state.mjs",
+    "name": "assertNearestExistingPathInside"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "merge overlapping source ranges into one candidate",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/repository-intelligence.mjs"
+   },
+   {
+    "file": "docs/plans/repository-intelligence/session-consumption-tracing/slice.md",
+    "name": "Overlapping source ranges are deduplicated before token totals are reported."
+   },
+   {
+    "file": "docs/requirements/repository-intelligence-providers.md",
+    "contains": "Requirement: Prism shall enforce consumer-side result limits, merge source ranges that overlap after provider expansion, and count only the final merged rendere"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "which skill writes Gherkin feature files",
+  "expect": [
+   {
+    "file": "skills/write-feature/SKILL.md"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "how is the plugin version bumped and released",
+  "expect": [
+   {
+    "file": "CONTRIBUTING.md"
+   },
+   {
+    "file": "release-please-config.json"
+   },
+   {
+    "file": ".claude/CLAUDE.md",
+    "contains": "version lives in both native plugin manifests because both hosts require it."
+   },
+   {
+    "file": "AGENTS.md",
+    "contains": "version lives in both native plugin manifests because both hosts require it."
+   },
+   {
+    "file": ".claude/CLAUDE.md",
+    "contains": "Any commit touching skills/ is feat: or fix:, never docs:."
+   },
+   {
+    "file": "AGENTS.md",
+    "contains": "Any commit touching skills/ is feat: or fix:, never docs:."
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "review gate that blocks implementation until the design audit passes",
+  "expect": [
+   {
+    "file": "src/server/review/review-ledger.mts",
+    "name": "checkReviewGate"
+   },
+   {
+    "file": "skills/review/SKILL.md"
+   },
+   {
+    "file": "skills/design/SKILL.md",
+    "contains": "Implementation waits until the design audit is CLEAN and orchestration clears the implementation gate."
+   },
+   {
+    "file": "skills/design/references/concept-delta.md",
+    "contains": "Before implementation, use check_review_gate and a typed coordination start or update entering implementation."
+   },
+   {
+    "file": "skills/implement/SKILL.md",
+    "contains": "Read every assigned review lane through get_review and check the current implementation gate before edits."
+   },
+   {
+    "file": "src/server/workflow/active-operations.mts",
+    "name": "applyActiveOperations"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "spawn a git command with a timeout and bounded output",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "runCommand"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "render PlantUML diagram in the browser for human review",
+  "expect": [
+   {
+    "file": "src/server/review/review-server.mjs"
+   },
+   {
+    "file": "src/server/review/public/review.js"
+   },
+   {
+    "file": "docs/ADRs/plantuml-review/browser-rendered-plantuml.md"
+   },
+   {
+    "file": "README.md",
+    "name": "Review artifacts visually",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "withFileLock renew timeout",
+  "expect": [
+   {
+    "file": "src/server/workflow/artifact-store.mjs",
+    "name": "withFileLock"
+   },
+   {
+    "file": "src/server/workflow/artifact-store.mjs",
+    "name": "acquireFileLock"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "CHUNKER_VERSION",
+  "expect": [
+   {
+    "file": "src/native-runtime/versions.mts"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "semanticError stale_snapshot",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/semantic-native-provider.mts"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "bgeSourceBoundaries tokenizer",
+  "expect": [
+   {
+    "file": "src/native-runtime/units.mts",
+    "name": "bgeSourceBoundaries"
+   },
+   {
+    "file": "test/native-runtime/tokenizer.test.mjs"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "where does the MCP server dispatch repository tool calls",
+  "expect": [
+   {
+    "file": "src/server/mcp.mjs",
+    "name": "callRepositoryTool"
+   },
+   {
+    "file": "src/server/mcp.mjs",
+    "name": "callTool"
+   },
+   {
+    "file": "src/server/mcp.mjs",
+    "name": "repositoryTools"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "compute the session context window capacity for a model",
+  "expect": [
+   {
+    "file": "src/server/session/session-capacity.mjs"
+   },
+   {
+    "file": "docs/requirements/session-fit.md",
+    "name": "1. Resolve supported session capacity",
+    "within": true
+   },
+   {
+    "file": "docs/requirements/active-session-capacity.md",
+    "name": "5. Refresh and resolve active Codex capacity",
+    "within": true
+   },
+   {
+    "file": "docs/user-guide/repository-intelligence.md",
+    "name": "Resolve active session capacity",
+    "within": true
+   },
+   {
+    "file": "docs/plans/repository-intelligence/active-session-capacity/slice.md"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "hash a value with sha256 and return hex digest",
+  "expect": [
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/workflow/decision-history.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "sha256"
+   },
+   {
+    "file": "src/native-runtime/units.mts",
+    "name": "hash",
+    "kind": "function"
+   },
+   {
+    "file": "src/native-runtime/patch-codegraph.mts",
+    "name": "digest"
+   },
+   {
+    "file": "src/native-runtime/worker.mts",
+    "name": "sha"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "sha"
+   },
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/workflow/state.mjs",
+    "name": "revisionOf"
+   },
+   {
+    "file": "scripts/build-native-runtime.mjs",
+    "name": "sha"
+   },
+   {
+    "file": "scripts/native-build/smoke.mjs",
+    "name": "hash"
+   },
+   {
+    "file": "bench/skill_eval/run.py",
+    "name": "sha256_bytes"
+   },
+   {
+    "file": "test/server/native-repository-intelligence.test.mjs",
+    "name": "sha256"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "normalize a project-relative path and reject dot segments",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/repository-source-path.mjs"
+   },
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "normalizeTraceSourcePath"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "Native preparation exceeded its 30 minute operation limit",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "The graph requested an excluded dependency",
+  "expect": [
+   {
+    "file": "src/native-runtime/graph.mts"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "CODEGRAPH_NO_STORE_WORKER",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts"
+   },
+   {
+    "file": "scripts/native-build/smoke.mjs",
+    "name": "env"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "timeout-minutes",
+  "expect": [
+   {
+    "file": ".github/workflows/native-runtime.yml"
+   },
+   {
+    "file": ".github/workflows/native-default.yml"
+   }
+  ]
+ },
+ {
+  "group": "exact",
+  "query": "ERR_ACCESS_DENIED",
+  "expect": [
+   {
+    "file": "src/native-runtime/graph.mts"
+   },
+   {
+    "file": "src/native-runtime/fs-boundary.mts"
+   },
+   {
+    "file": "test/native-runtime/boundary.test.mjs"
+   }
+  ]
+ },
+ {
+  "group": "description",
+  "query": "onnxruntime pinned version for Intel macOS",
+  "expect": [
+   {
+    "file": "src/native-runtime/package.json",
+    "name": "onnxruntime-node"
+   },
+   {
+    "file": "CONTRIBUTING.md",
+    "name": "Native semantic runtime",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "persist an immutable evidence record and return its content hash id",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "put"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "point a snapshot at its retained analysis evidence",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "link"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "load retained source bytes and verify their size and digest",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "bytes"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "copy every source file into the blob store before recording a baseline snapshot",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "capture"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "split incoming stdout data into newline-delimited JSON messages and enforce a response size limit",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "receiveChunk"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-config.mjs",
+    "name": "requestWithAppServer"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "reject every pending request when the transport fails",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "failAll"
+   },
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "failTransport"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "stop"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "send a JSON-RPC request and reject it after a timeout",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "request"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "request"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-config.mjs",
+    "name": "requestWithAppServer"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "verify the integrity hash of every runtime file",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "verifyRuntime"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "start a background preparation job or reuse the job for the same snapshot",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "prepare"
+   },
+   {
+    "file": "docs/user-guide/repository-intelligence.md",
+    "contains": "If preparation exceeds ten seconds, search and planning return preparing with a stable preparation ID."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "recapture the project and throw stale when files differ from the accepted baseline, ignoring newly managed outputs",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "assertCurrent"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "build a provider from retained blobs so line ranges come from verified stored bytes, not live files",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "source"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "filter rows by WHERE, sort with nulls first ascending and last descending, then cut to LIMIT",
+  "expect": [
+   {
+    "file": "bench/tasks/minidb/oracle/minidb.py",
+    "name": "_select"
+   },
+   {
+    "file": "bench/tasks/minidb/specs/stage2.md",
+    "contains": "`NULL` sorts before every value ascending, and after every value descending."
+   },
+   {
+    "file": "bench/tasks/minidb/specs/stage2.md",
+    "contains": "`LIMIT` applies after `WHERE` and `ORDER BY`."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "abort an open transaction by restoring the deep-copied tables saved when it began",
+  "expect": [
+   {
+    "file": "bench/tasks/minidb/oracle/minidb.py",
+    "name": "_rollback"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "consume the next token only when it matches a given keyword and return whether it did",
+  "expect": [
+   {
+    "file": "bench/tasks/minidb/oracle/minidb.py",
+    "name": "accept_keyword"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "raise an error when unparsed tokens remain at the end of a statement",
+  "expect": [
+   {
+    "file": "bench/tasks/minidb/oracle/minidb.py",
+    "name": "done"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "replay set and delete records from the log until a torn or undecodable line, returning valid byte length",
+  "expect": [
+   {
+    "file": "bench/tasks/kvstore/oracle/kvstore.py",
+    "name": "_recover"
+   },
+   {
+    "file": "bench/tasks/kvstore/brief.md",
+    "contains": "Recovery keeps every complete record and drops the torn tail."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "rewrite the append log with only live keys into a temp file, fsync, and atomically replace it",
+  "expect": [
+   {
+    "file": "bench/tasks/kvstore/oracle/kvstore.py",
+    "name": "compact"
+   },
+   {
+    "file": "bench/tasks/kvstore/brief.md",
+    "contains": "`compact` rewrites the log so it holds only the live state: one record per current key and no deleted keys."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "evaluate a cell, detecting circular formula references, and parse plain text as a number when possible",
+  "expect": [
+   {
+    "file": "bench/tasks/sheetcalc/oracle/sheetcalc.py",
+    "name": "_value"
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "Otherwise, if Python's `float()` accepts the raw string, the cell is a number."
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "name": "Evaluation: get",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "walk the formula tree, raise division by zero, and aggregate range functions over numeric cells only",
+  "expect": [
+   {
+    "file": "bench/tasks/sheetcalc/oracle/sheetcalc.py",
+    "name": "_eval"
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "Division by zero returns `#DIV/0!`."
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "`SUM` of a range with no numeric cells returns `0.0`."
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "`MIN` or `MAX` of a range with no numeric cells returns `#ERROR!`."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "expand a rectangular A1:B3 style range into every cell address, accepting corners in any order",
+  "expect": [
+   {
+    "file": "bench/tasks/sheetcalc/oracle/sheetcalc.py",
+    "name": "range_cells"
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "A range names two corner cells separated by `:` and covers the rectangle between them."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "parse a parenthesized group, number literal, SUM/MIN/MAX call over a range, or a cell reference",
+  "expect": [
+   {
+    "file": "bench/tasks/sheetcalc/oracle/sheetcalc.py",
+    "name": "primary"
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "Operands: decimal number literals and cell references."
+   },
+   {
+    "file": "bench/tasks/sheetcalc/brief.md",
+    "contains": "Functions: `SUM`, `MIN`, and `MAX`."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "add tokens for the clock time elapsed since the last update, capped at capacity",
+  "expect": [
+   {
+    "file": "bench/tasks/ratelimit/oracle/ratelimit.py",
+    "name": "_refill"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "take the requested tokens if the balance allows, otherwise return false without waiting",
+  "expect": [
+   {
+    "file": "bench/tasks/ratelimit/oracle/ratelimit.py",
+    "name": "try_acquire"
+   },
+   {
+    "file": "bench/tasks/ratelimit/brief.md",
+    "contains": "If the balance is greater than or equal to `tokens`, it subtracts `tokens` and returns `True`."
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "download and unpack the platform runtime archive into staging, then fetch each pinned model file",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "assets"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "copy snapshot files into a private mirror, embed with reused vectors, and publish the index pointer",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "build"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "spawn the bundled node worker with permission flags and an environment stripped of CODEGRAPH variables",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "start"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "perform the MCP handshake, check the server identity and pinned version, then notify readiness",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "initialize"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "end the child stdin and wait for exit, killing the process after one second",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "close"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "fill in a partial symbol range with a regex lookup, choosing the smallest match containing its start line",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "completeNodeRange"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "fetch a line range in 200-line pages, checking verified provenance and continuity of every page",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "read"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "expand dependency subgraphs for only the first three anchors, splitting the node budget between them",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "neighbors"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "run embedding retrieval and, on runtime or asset failure, mark preparation degraded and return null",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/semantic-native-provider.mts",
+    "name": "semanticSearch"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "expand related units from prepared index edges, seeding by units whose line ranges overlap the input",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/semantic-native-provider.mts",
+    "name": "neighbors"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "rerun the index status command and fail when the graph index changed since the provider opened",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "assertFreshSnapshot"
+   },
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "verifySnapshot"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "expand anchors over the graph cached by the previous query, refusing when no query has run",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "neighbors"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "run the context command with a budget-sized node limit, falling back to a symbol query for hints",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "search"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "re-hash the file on disk and refuse the range when bytes changed after the snapshot",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "read"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "rebuild the file snapshot and compare commit, fingerprint, and completeness to detect repository changes",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "verifySnapshot"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "score files lexically under domain, kind, and path filters, ranking explicit file and symbol hints first",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "search"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "fuse native and external hits by reciprocal rank, replacing native whole-file hits with external symbols",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+    "name": "search"
+   },
+   {
+    "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+    "name": "fuseHits"
+   }
+  ]
+ },
+ {
+  "group": "sibling",
+  "query": "reject an external provider whose snapshot identity differs from native and merge capability flags",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+    "name": "describe"
+   }
+  ]
+ },
+ {
+  "group": "members",
+  "query": "ConservationStore capture a baseline",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "capture"
+   }
+  ]
+ },
+ {
+  "group": "members",
+  "query": "McpStdioClient notify without waiting for a response",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "notify"
+   }
+  ]
+ },
+ {
+  "group": "members",
+  "query": "class that wraps a CodeNib MCP stdio child process",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "McpStdioClient"
+   }
+  ]
+ },
+ {
+  "group": "members",
+  "query": "class that stores immutable conservation evidence and retained source blobs",
+  "expect": [
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "ConservationStore"
+   }
+  ]
+ },
+ {
+  "group": "members",
+  "query": "NativeSemanticRuntime search a prepared index",
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "search"
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "how to run the native helper tests and regenerate the dist output",
+  "expect": [
+   {
+    "file": "CONTRIBUTING.md",
+    "name": "Native semantic runtime",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "which commit prefixes produce a release",
+  "expect": [
+   {
+    "file": "CONTRIBUTING.md",
+    "name": "Commit messages",
+    "within": true
+   },
+   {
+    "file": "CONTRIBUTING.md",
+    "name": "Versioning",
+    "within": true
+   },
+   {
+    "file": ".claude/CLAUDE.md",
+    "contains": "Any commit touching skills/ is feat: or fix:, never docs:."
+   },
+   {
+    "file": "AGENTS.md",
+    "contains": "Any commit touching skills/ is feat: or fix:, never docs:."
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "how to benchmark a change before a release",
+  "expect": [
+   {
+    "file": "CONTRIBUTING.md",
+    "name": "Benchmarking a change",
+    "within": true
+   },
+   {
+    "file": "bench/README.md",
+    "name": "Commands",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "summarize token consumption before editing",
+  "expect": [
+   {
+    "file": "docs/user-guide/repository-intelligence.md",
+    "name": "Summarize pre-edit consumption",
+    "within": true
+   },
+   {
+    "file": "docs/requirements/session-consumption-tracing.md",
+    "name": "3. Summarize pre-edit repository consumption",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "how the refactor skill finds reuse candidates",
+  "expect": [
+   {
+    "file": "skills/refactor/SKILL.md",
+    "name": "2. Discover candidates",
+    "within": true
+   },
+   {
+    "file": "skills/refactor/references/analysis.md",
+    "name": "Before-change discovery",
+    "within": true
+   },
+   {
+    "file": "skills/refactor/references/analysis.md",
+    "name": "Candidate signals and ranking",
+    "within": true
+   },
+   {
+    "file": "docs/user-guide/refactoring.md",
+    "contains": "Prism uses repository intelligence to find candidates, then checks their contracts, dependencies, state, ownership, and other available evidence."
+   }
+  ]
+ },
+ {
+  "group": "section",
+  "query": "set the context window for Claude Code on Bedrock",
+  "expect": [
+   {
+    "file": "docs/user-guide/repository-intelligence.md",
+    "name": "Claude Code on AWS Bedrock",
+    "within": true
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertIsoDate"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "assertIsoDate"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertExactKeys"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/session/session-capacity.mjs",
+    "name": "assertExactKeys"
+   },
+   {
+    "file": "src/server/mcp.mjs",
+    "name": "assertExactToolArguments"
+   },
+   {
+    "file": "src/server/session/session-trace-behavior.mjs",
+    "name": "assertExactKeys"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/workflow/state.mjs",
+   "name": "isInside"
+  },
+  "expect": [
+   {
+    "file": "src/server/conservation/concept-delta.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "isContained"
+   },
+   {
+    "file": "src/server/repository-intelligence/repository-intelligence-config.mjs",
+    "name": "isWithinDirectory"
+   },
+   {
+    "file": "src/server/review/review-server.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/native-runtime/fs-boundary.mts",
+    "name": "within"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "inside"
+   },
+   {
+    "file": "src/hooks/record-session-trace.mjs",
+    "name": "isSameOrDescendant"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs",
+    "name": "isSameOrDescendant"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/workflow/decision-history.mjs",
+   "name": "digest"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "src/native-runtime/patch-codegraph.mts",
+    "name": "digest"
+   },
+   {
+    "file": "scripts/build-native-runtime.mjs",
+    "name": "sha"
+   },
+   {
+    "file": "src/native-runtime/units.mts",
+    "name": "hash",
+    "kind": "function"
+   },
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "digest"
+   },
+   {
+    "file": "src/native-runtime/worker.mts",
+    "name": "sha"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "sha256"
+   },
+   {
+    "file": "test/server/native-repository-intelligence.test.mjs",
+    "name": "sha256"
+   },
+   {
+    "file": "scripts/native-build/smoke.mjs",
+    "name": "hash"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "digest"
+  },
+  "expect": [
+   {
+    "file": "src/native-runtime/patch-codegraph.mts",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/conservation/conservation-store.mts",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/session/session-trace.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "src/server/workflow/decision-history.mjs",
+    "name": "digest"
+   },
+   {
+    "file": "scripts/build-native-runtime.mjs",
+    "name": "sha"
+   },
+   {
+    "file": "src/native-runtime/worker.mts",
+    "name": "sha"
+   },
+   {
+    "file": "src/native-runtime/units.mts",
+    "name": "hash"
+   },
+   {
+    "file": "test/server/native-repository-intelligence.test.mjs",
+    "name": "sha256"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "sha"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "sha256"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "nonemptyString"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-adapters/codex-config.mjs",
+    "name": "nonemptyString"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs",
+    "name": "nonemptyString"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex.mjs",
+    "name": "nonemptyString"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "normalizedIdentifier"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "unique"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+    "name": "unique"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "unique"
+   },
+   {
+    "file": "src/server/repository-intelligence/repository-intelligence.mjs",
+    "name": "unique"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "unsupported"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-adapters/codex-config.mjs",
+    "name": "unsupported"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs",
+    "name": "unsupported"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "unsupported"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/repository-intelligence/codenib-provider.mjs",
+   "name": "positiveInteger"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "positiveInteger"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "positiveInteger"
+   },
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "positiveSafeInteger"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "positiveSafeInteger"
+   },
+   {
+    "file": "src/server/repository-intelligence/repository-intelligence.mjs",
+    "name": "integer"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/host-adapters/codex-config.mjs",
+   "name": "positiveSafeInteger"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "positiveSafeInteger"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "positiveSafeInteger"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex.mjs",
+    "name": "validTokenCount"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/workflow/artifact-store.mjs",
+   "name": "wait"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "wait"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "wait"
+   },
+   {
+    "file": "test/server/mcp.test.mjs",
+    "name": "delay"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/hooks/record-session-facts.mjs",
+   "name": "readHookInput"
+  },
+  "expect": [
+   {
+    "file": "src/hooks/record-session-trace.mjs",
+    "name": "readHookInput"
+   },
+   {
+    "file": "src/server/review/review-server.mjs",
+    "name": "readJson"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/host-adapters/codex-transcript.mjs",
+   "name": "isSameOrDescendant"
+  },
+  "expect": [
+   {
+    "file": "src/hooks/record-session-trace.mjs",
+    "name": "isSameOrDescendant"
+   },
+   {
+    "file": "src/server/conservation/concept-delta.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/review/review-server.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+    "name": "isContained"
+   },
+   {
+    "file": "src/server/workflow/state.mjs",
+    "name": "isInside"
+   },
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "inside"
+   },
+   {
+    "file": "src/native-runtime/fs-boundary.mts",
+    "name": "within"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "canonicalDirectory"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-adapters/codex-transcript.mjs",
+    "name": "canonicalDirectory"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/repository-intelligence/codenib-provider.mjs",
+   "name": "symbolIdentityMatches"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "symbolIdentityMatches"
+   },
+   {
+    "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+    "name": "exactSymbolMatch"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+   "name": "normalizedSnapshotIdentity"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "normalizedSnapshotIdentity"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-capacity.mjs",
+   "name": "assertTokenCount"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "assertTokenCount"
+   },
+   {
+    "file": "src/server/session/host-adapters/codex.mjs",
+    "name": "validTokenCount"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "normalizedIdentifier"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "normalizedIdentifier"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "inspectRegularFile"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "inspectRegularFile"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "createOwnedLock"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "createOwnedLock"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "releaseOwnedLock"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "releaseOwnedLock"
+   },
+   {
+    "file": "src/server/session/session-trace-store.mjs",
+    "name": "removeOwnedLock"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "bench/skill_eval/run.py",
+   "name": "parse_codex_jsonl"
+  },
+  "expect": [
+   {
+    "file": "bench/harness/bench.py",
+    "name": "parse_codex_jsonl"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "bench/skill_eval/run.py",
+   "name": "parse_claude_json"
+  },
+  "expect": [
+   {
+    "file": "bench/harness/bench.py",
+    "name": "parse_claude_json"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/repository-intelligence/repository-intelligence.mjs",
+   "name": "normalizeNode"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+    "name": "normalizeNode"
+   },
+   {
+    "file": "src/server/repository-intelligence/codenib-provider.mjs",
+    "name": "sourceNode"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/review/review-server.mjs",
+   "name": "readJson"
+  },
+  "expect": [
+   {
+    "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+    "name": "readJson"
+   },
+   {
+    "file": "src/hooks/record-session-facts.mjs",
+    "name": "readHookInput"
+   },
+   {
+    "file": "src/hooks/record-session-trace.mjs",
+    "name": "readHookInput"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "test/server/session-trace.test.mjs",
+   "name": "temporaryDirectory"
+  },
+  "expect": [
+   {
+    "file": "test/server/host-session-facts.test.mjs",
+    "name": "temporaryDirectory"
+   },
+   {
+    "file": "test/server/session-instrumentation.test.mjs",
+    "name": "temporaryDirectory"
+   },
+   {
+    "file": "test/server/composite-repository-intelligence.test.mjs",
+    "name": "projectFixture"
+   },
+   {
+    "file": "test/server/native-repository-intelligence.test.mjs",
+    "name": "fixture"
+   }
+  ]
+ },
+ {
+  "group": "code-to-code",
+  "queryFrom": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "processState"
+  },
+  "expect": [
+   {
+    "file": "src/server/session/host-session-facts.mjs",
+    "name": "processState"
+   }
+  ]
+ }
+]

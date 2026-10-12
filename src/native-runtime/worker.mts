@@ -6,12 +6,20 @@ import { createHash } from "node:crypto";
 import { create, insertMultiple, search } from "@orama/orama";
 import { AutoTokenizer, AutoModel, env } from "@huggingface/transformers";
 import { Tokenizer } from "@huggingface/tokenizers";
-import { CHUNKER_VERSION, CODE_EXTENSIONS, extractTextConcepts, resolveTextLinks, fragmentConcept, bgeSourceBoundaries } from "./concepts.mjs";
+import { CHUNKER_VERSION, CODE_EXTENSIONS, extractTextUnits, resolveTextLinks, bgeSourceBoundaries } from "./units.mjs";
+import { assignContainers, planFragments } from "./fragments.mjs";
+import { searchExclusion } from "./domains.mjs";
 import { extractGraph } from "./graph.mjs";
 import { embedFragments } from "./embeddings.mjs";
-import type { Concept, ConceptIndex, Fragment, BuildArguments, SearchArguments, SearchResult, Progress, WorkerRequest } from "../server/repository-intelligence/repository-concept-types.mjs";
+import type { UnitIndex, Fragment, BuildArguments, SearchArguments, SearchResult, Progress, WorkerRequest } from "../server/repository-intelligence/repository-unit-types.mjs";
 
 const runtimeDirectory = path.dirname(fileURLToPath(import.meta.url));
+// Lexical matches on common words rank long files above precise semantic matches.
+// Identifier-like queries keep more lexical weight, because rare exact tokens blur in dense vectors.
+const IDENTIFIER = /[A-Za-z\d][_-][A-Za-z\d]|[a-z\d][A-Z]|\b[A-Z\d]{3,}\b|["'`]/;
+const fusionWeights = (query: string) => ({ lexicalScore: IDENTIFIER.test(query) ? 0.5 : 0.25, cosineSimilarity: 1 });
+const CONTEXT_BOOST = 0.5;
+const STOP_WORDS = new Set(["a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from", "how", "in", "into", "is", "it", "its", "of", "on", "or", "that", "the", "their", "this", "to", "what", "when", "where", "which", "while", "who", "why", "with"]);
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const send = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
 console.log = (...args) => console.error(...args);
@@ -21,7 +29,7 @@ env.useFSCache = false;
 let tokenizer: Awaited<ReturnType<typeof AutoTokenizer.from_pretrained>>;
 let model: Awaited<ReturnType<typeof AutoModel.from_pretrained>> | undefined;
 let modelIdentity: string;
-let current: { index: ConceptIndex; db: Awaited<ReturnType<typeof database>> } | undefined;
+let current: { index: UnitIndex; db: Awaited<ReturnType<typeof database>> } | undefined;
 let boundaries: (text: string) => number[];
 
 async function loadModel(directory: string, identity: string) {
@@ -55,15 +63,17 @@ async function embed(texts: string[]): Promise<number[][]> {
   return vectors;
 }
 
-async function database(index: ConceptIndex) {
-  const db = create({ schema: { text: "string", domain: "enum", file: "string", kind: "enum", embedding: "vector[384]" },
+async function database(index: UnitIndex) {
+  // The file path is not a lexical field. The context field holds the logical path and module name with a lower weight.
+  const db = create({ schema: { text: "string", context: "string", domain: "enum", kind: "enum", embedding: "vector[384]" },
     components: { tokenizer: { stemming: false } } });
-  await insertMultiple(db, index.chunks.map(chunk => ({ id: chunk.id, text: chunk.text.replace(/([a-z])([A-Z])/g, "$1 $2"), domain: chunk.domain,
-    file: chunk.file, kind: chunk.kind, embedding: chunk.embedding! })));
+  const split = (value: string) => value.replace(/([a-z])([A-Z])/g, "$1 $2");
+  await insertMultiple(db, index.chunks.map(chunk => ({ id: chunk.id, text: split(chunk.text), context: split(chunk.context || ""), domain: chunk.domain,
+    kind: chunk.kind, embedding: chunk.embedding! })));
   return db;
 }
 
-async function build(args: BuildArguments, progress: (value: Progress) => void): Promise<ConceptIndex> {
+async function build(args: BuildArguments, progress: (value: Progress) => void): Promise<UnitIndex> {
   await loadModel(args.modelDirectory, args.modelIdentity);
   const files = [];
   for (const meta of args.files) {
@@ -72,7 +82,7 @@ async function build(args: BuildArguments, progress: (value: Progress) => void):
     files.push({ ...meta, content: text });
   }
   const graph = await extractGraph(args.mirror, files, runtimeDirectory, progress);
-  const groups = files.map(extractTextConcepts);
+  const groups = files.map(extractTextUnits);
   resolveTextLinks(groups);
   const units = [...graph.nodes];
   const edges = [...graph.edges];
@@ -91,29 +101,28 @@ async function build(args: BuildArguments, progress: (value: Progress) => void):
   }
   for (const diagnostic of diagnostics) if (diagnostic.file) fileCoverage[diagnostic.file] = false;
   const byFile = new Map(files.map(file => [file.file, file]));
-  const detailedFiles = new Set(units.filter(item => item.kind !== "file").map(item => item.file));
-  const chunks: Fragment[] = [];
-  for (const concept of units) {
-    // File nodes preserve complete navigation. Smaller units supply search candidates.
-    if (concept.kind === "file" && detailedFiles.has(concept.file) && fileCoverage[concept.file]) continue;
-    chunks.push(...fragmentConcept(concept, byFile.get(concept.file)!, countTokens, 512, boundaries));
-    if (chunks.length > 100000) throw Object.assign(new Error("The concept index exceeds 100,000 fragments."), { code: "resource_limit" });
-  }
-  const embeddingCounts = await embedFragments(chunks, modelIdentity, args.previousEmbeddings || {}, embed, progress);
-  const index: ConceptIndex = { schemaVersion: 1, chunkerVersion: CHUNKER_VERSION, modelIdentity, snapshot: args.snapshot, units, edges, chunks, fileCoverage, diagnostics,
+  // Excluded files keep structural coverage for conservation evidence, but supply no search candidates.
+  const excluded = new Set(files.filter(file => searchExclusion(file.file, file.content)).map(file => file.file));
+  assignContainers(units, edges, byFile);
+  // Unresolved references clear file coverage, but parsed symbols still represent the file.
+  const chunks: Fragment[] = planFragments(units, byFile, { countTokens, boundaries, limit: 512,
+    isCandidate: unit => !excluded.has(unit.file) && unit.kind !== "import", isStructured: file => Boolean(syntaxCoverage[file]) });
+  if (chunks.length > 100000) throw Object.assign(new Error("The semantic index exceeds 100,000 fragments."), { code: "resource_limit" });
+  const embeddingCounts = args.fragmentsOnly ? { reusedEmbeddings: 0, newEmbeddings: 0 } : await embedFragments(chunks, modelIdentity, args.previousEmbeddings || {}, embed, progress);
+  const index: UnitIndex = { schemaVersion: 1, chunkerVersion: CHUNKER_VERSION, modelIdentity, snapshot: args.snapshot, units, edges, unresolvedReferences: graph.references, chunks, fileCoverage, diagnostics,
     syntaxCoverage, structureCounts: Object.fromEntries(groups.map(group => [group.units[0].file, group.counts])),
     tokenCounts: Object.fromEntries(files.map(file => [file.file, tokenizer.encode(file.content, { add_special_tokens: false }).length])),
-    counts: { files: files.length, concepts: units.length, fragments: chunks.length, ...embeddingCounts },
+    counts: { files: files.length, units: units.length, fragments: chunks.length, searchExcludedFiles: excluded.size, ...embeddingCounts },
     structureComplete: !diagnostics.some(item => !item.file), resources: { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 } };
-  current = { index, db: await database(index) };
+  if (!args.fragmentsOnly) current = { index, db: await database(index) };
   return index;
 }
 
 async function query(args: SearchArguments): Promise<SearchResult[]> {
   await loadModel(args.modelDirectory, args.modelIdentity);
   if (!current || current.index.snapshot !== args.snapshot || current.index.modelIdentity !== args.modelIdentity) {
-    const index: ConceptIndex = JSON.parse(await readFile(args.indexPath, "utf8"));
-    if (index.snapshot !== args.snapshot || index.modelIdentity !== args.modelIdentity) throw Object.assign(new Error("The concept index is stale."), { code: "stale_snapshot" });
+    const index: UnitIndex = JSON.parse(await readFile(args.indexPath, "utf8"));
+    if (index.snapshot !== args.snapshot || index.modelIdentity !== args.modelIdentity) throw Object.assign(new Error("The semantic index is stale."), { code: "stale_snapshot" });
     current = { index, db: await database(index) };
   }
   const prefix = "Represent this sentence for searching relevant passages: ";
@@ -124,16 +133,19 @@ async function query(args: SearchArguments): Promise<SearchResult[]> {
   if (args.filters?.kinds?.length) where.kind = { in: args.filters.kinds };
   const candidateLimit = current.index.chunks.length;
   if (candidateLimit === 0) return [];
-  const lexical = await search(current.db, { term: args.query.replace(/([a-z])([A-Z])/g, "$1 $2"), limit: candidateLimit, where });
+  const words = args.query.replace(/([a-z])([A-Z])/g, "$1 $2").split(/\s+/);
+  const term = words.filter(word => !STOP_WORDS.has(word.toLowerCase())).join(" ") || words.join(" ");
+  const lexical = await search(current.db, { term, properties: ["text", "context"], boost: { context: CONTEXT_BOOST }, limit: candidateLimit, where });
   const dense = args.mode === "lexical" ? { hits: [] } : await search(current.db, { mode: "vector", vector: { property: "embedding", value: (await embed([prefix + args.query]))[0] }, similarity: -1, limit: candidateLimit, where });
   const chunks = new Map(current.index.chunks.map(chunk => [chunk.id, chunk]));
   const allowed = (id: string) => !args.filters?.paths?.length || args.filters.paths.some(prefix => chunks.get(id)!.file === prefix || chunks.get(id)!.file.startsWith(`${prefix}/`));
   const fused = new Map<string, { id: string; fusedScore: number; lexicalScore: number | null; cosineSimilarity: number | null }>();
+  const weights = fusionWeights(args.query);
   for (const [mode, hits] of [["lexicalScore", lexical.hits], ["cosineSimilarity", dense.hits]] as const) {
     for (const [rank, hit] of hits.filter(hit => allowed(hit.id)).entries()) {
       const item = fused.get(hit.id) || { id: hit.id, fusedScore: 0, lexicalScore: null, cosineSimilarity: null };
       item[mode] = hit.score;
-      item.fusedScore += 1 / (60 + rank + 1);
+      item.fusedScore += weights[mode] / (60 + rank + 1);
       fused.set(hit.id, item);
     }
   }
@@ -141,9 +153,46 @@ async function query(args: SearchArguments): Promise<SearchResult[]> {
     const chunk = chunks.get(id)!;
     return [chunk.file, chunk.name, chunk.qualifiedName, chunk.selector].includes(args.query.trim()) ? 1 : 0;
   };
-  return [...fused.values()].sort((a, b) => exactHint(b.id) - exactHint(a.id) || b.fusedScore - a.fusedScore || a.id.localeCompare(b.id)).slice(0, args.limit).map((score, index) => {
-    const { text, embeddingText, embedding, embeddingKey, prefixLength, ...concept } = chunks.get(score.id)!;
-    return { ...concept, ...score, fusedRank: index + 1, excerpt: text.slice(prefixLength, prefixLength + 600) };
+  const ranked = [...fused.values()].sort((a, b) => exactHint(b.id) - exactHint(a.id) || b.fusedScore - a.fusedScore || a.id.localeCompare(b.id));
+  // Return distinct candidates: one fragment per unit, and no range that overlaps a better unrelated result in the same file.
+  // An outline and its members answer different questions, so an ancestor and its descendant can both appear.
+  const units = new Map(current.index.units.map(unit => [unit.id, unit]));
+  const containers = new Map(current.index.units.map(unit => [unit.id, unit.containerId]));
+  const related = (a: string, b: string) => {
+    for (let id = containers.get(a); id; id = containers.get(id)) if (id === b) return true;
+    for (let id = containers.get(b); id; id = containers.get(id)) if (id === a) return true;
+    return false;
+  };
+  const selected: (typeof ranked[number] & { groupedMembers?: number })[] = [];
+  for (const score of ranked) {
+    if (selected.length >= args.limit) break;
+    const chunk = chunks.get(score.id)!;
+    if (selected.some(item => {
+      const other = chunks.get(item.id)!;
+      if (other.parentId === chunk.parentId) return true;
+      return other.file === chunk.file && other.range.startLine <= chunk.range.endLine && chunk.range.startLine <= other.range.endLine && !related(other.parentId, chunk.parentId);
+    })) continue;
+    selected.push(score);
+  }
+  // When several results share a class or section, that container is also a candidate, placed after its best member.
+  const parentOf = (id: string) => containers.get(chunks.get(id)!.parentId);
+  const members = new Map<string, number>();
+  for (const item of selected) { const parent = parentOf(item.id); if (parent && units.get(parent)!.kind !== "file") members.set(parent, (members.get(parent) || 0) + 1); }
+  for (const [parent, count] of members) {
+    const outline = chunks.get(parent);
+    if (count < 2 || outline?.role !== "outline" || (args.filters?.kinds?.length && !args.filters.kinds.includes(outline.kind)) || selected.some(item => chunks.get(item.id)!.parentId === parent)) continue;
+    const at = selected.findIndex(item => parentOf(item.id) === parent);
+    selected.splice(at + 1, 0, { id: parent, fusedScore: selected[at].fusedScore, lexicalScore: null, cosineSimilarity: null, groupedMembers: count });
+  }
+  selected.length = Math.min(selected.length, args.limit);
+  const ancestry = (id: string) => {
+    const names: string[] = [];
+    for (let parent = containers.get(id); parent && units.get(parent)!.kind !== "file"; parent = containers.get(parent)) names.unshift(units.get(parent)!.name);
+    return names;
+  };
+  return selected.map((score, index) => {
+    const { text, embeddingText, embedding, embeddingKey, prefixLength, context, excerpt, ...unit } = chunks.get(score.id)!;
+    return { ...unit, ...score, ancestry: ancestry(unit.parentId), fusedRank: index + 1, excerpt: excerpt ?? text.slice(prefixLength, prefixLength + 600) };
   });
 }
 

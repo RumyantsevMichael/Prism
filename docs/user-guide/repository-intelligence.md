@@ -6,6 +6,8 @@ Prism can plan repository context and compare that plan with the capacity of a t
 
 Use `list_repository_intelligence_providers` to inspect the registered native, CodeGraph, and CodeNib providers for one project.
 Discovery is read-only and never creates or updates an external index.
+The native provider reports semantic search, hybrid ranking, and the symbol graph when its runtime supports the platform, because search prepares the index on first use.
+`native.status` gives the preparation state, and `native.diagnostics` holds the first 20 of `native.totalDiagnostics` diagnostics.
 
 | Provider | Role | Numeric `FIT` |
 |---|---|---|
@@ -85,7 +87,15 @@ Domains are `code`, `instruction`, `documentation`, and `configuration`.
 Optional path and kind filters restrict the candidate set.
 Preparation still scans the eligible snapshot before applying these result filters.
 Search defaults to ten results and permits at most fifty.
+Each result is one source unit, for example a function, a class, a Markdown section, a paragraph, or a configuration key.
 Each result identifies its path, selector, source range, source hash, and bounded excerpt.
+The excerpt always comes from the source text.
+Each result also gives its `ancestry`, the names of its containing classes or sections from the outermost one.
+A class, a section, or a configuration object is an `outline` result that lists its members, and each member is also a separate result.
+A unit longer than the model limit is split into `part` results, and its `parts` field gives their number.
+The `tokens` field gives the size of the complete unit, so a large value can show a refactoring candidate.
+When two or more results share a container, the search also returns that container with `groupedMembers`.
+Lockfiles, generated output, vendored code, and minified files are not search candidates.
 Cosine similarity, lexical score, fused rank, model identity, and index revision have distinct meanings.
 Similarity does not establish conceptual equivalence or approve an addition.
 
@@ -100,6 +110,208 @@ Concurrent requests share preparation.
 A `preparing` response is unfinished discovery, not an empty search result.
 Keep the original `snapshotId` through retries and edits so new code cannot appear as preexisting reuse evidence.
 Use `discover_repository_intelligence` for native runtime, model, index, and coverage status without starting downloads or preparation.
+
+### Find shared dependencies
+
+`find_shared_dependencies` groups functions and methods in different files that call the same rare set of operations.
+A group can show a copied helper, a repeated safety check, or a repeated write or lock protocol.
+Search finds units that look alike, and this tool finds units that work alike, without a query.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["src/server"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, and `expectedSnapshot` behavior as search.
+Each group lists its shared operations, with the number of units that use each operation, and its members.
+The `share` of a member is the part of its dependencies that the group covers.
+A share near 1 means that the member is mostly the shared step, and a low share means that the member does other work too.
+Operations match by name, so copies of one helper in different modules connect their callers.
+Core collection, string, conversion, and error operations of each language do not count, and type references do not count.
+The core operation lists cover JavaScript and TypeScript, Python, Go, Rust, Java and Kotlin, C#, and C and C++.
+A path constructor such as `Registry::new` keeps its type, so it does not match `Vec::new`.
+Test code is left out unless `includeTests` is true.
+Test code is a file in a test directory or with a test name, such as `store.test.ts`, `test_store.py`, `store_test.go`, or `StoreTest.java`, and a Rust `#[cfg(test)]` module or `#[test]` function.
+Generated, vendored, and minified files are always left out.
+With `filters.paths`, a group is reported when at least two of its members are inside the paths.
+A function that only uses core operations has no dependency profile, so use search for small helpers.
+`coverage` gives the number of profiled units, and a `dependency_names_unavailable` diagnostic means that the index was prepared without library call names.
+A shared dependency set identifies candidates for investigation and does not establish equivalent behavior.
+
+### Report module interfaces
+
+`report_module_interfaces` reports the exports of JavaScript and TypeScript modules and the modules that import each export.
+It gives facts for an interface design review and does not decide whether an interface is too shallow.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["packages/agent"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, and `expectedSnapshot` behavior as search.
+Each module entry lists its exports, with the number of importing modules and importing tests for each export.
+`unusedExports` lists exports that no other module or test imports, and `testOnlyExports` lists exports that only tests import.
+An unused export can be private or removed, unless it is a published API, an entry point, or a name that a framework loads by convention.
+A test-only export is often a deliberate test seam.
+`namesPerImporter` is the median number of exports that one importer uses, so a low value on a module with many exports shows that each caller needs only a small part of the interface.
+By default, only modules with unused or test-only exports appear, and `allModules` reports every exporting module.
+Use `offset` and `nextOffset` to page through modules.
+
+Imports resolve through relative paths, `package.json` names and `exports` maps of workspace packages, `tsconfig` path aliases, and built output that mirrors a `src/` file.
+Static imports, re-exports, dynamic `import()`, and `require` count, and a dynamic import or `require` counts as a use of every export.
+Only top-level declarations with the `export` keyword count as exports.
+Tests, design documents, examples, declaration files, and generated, vendored, or minified files are not reported as modules.
+An `unresolved_imports` diagnostic gives the number of local imports that did not resolve, because each one can hide an importer.
+An import from a file type that the tool does not read, such as a workflow YAML file, also stays hidden.
+
+`delegatingClasses` lists classes in which at least three public methods, and at least half of them, forward their parameters to one field.
+`unchangedNames` counts forwarded methods that keep the name of the delegate method.
+A delegating class can be a pass-through layer to remove, or an adapter, decorator, or access boundary with a purpose, so inspect it before you change it.
+
+### Find shared literals
+
+`find_shared_literals` groups functions, methods, classes, and constants in different files that spell the same rare set of string literals.
+Instructions such as skills are clients too: a list item or paragraph in an instruction file that names identifiers in backticks uses those names together.
+The tool also reports shapes: key sets that several objects, interfaces, or schemas repeat.
+A group can show a value set that several units must know, such as states, capability ids, event names, error codes, or method names.
+Shared dependencies find units that do the same work, and this tool finds units that know the same values.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["src"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, `includeTests`, and `filters.paths` behavior as `find_shared_dependencies`.
+Each group lists its shared literals, with the number of units that spell each literal, and its members with their `share`.
+Only identifier-like literals count: a letter or underscore, then letters, digits, `_`, `.`, `:`, `/`, or `-`, from 3 through 81 characters.
+Prose, format strings, and module specifiers in `import`, `export ... from`, `require`, and `import()` do not count.
+The smallest function, method, class, or constant that contains a literal owns it.
+In an instruction file, the smallest list item or paragraph that contains a backtick name owns it.
+A table describes one item per row, so the names in a table do not count, and documentation files only describe names, so they do not count either.
+When a group has code members, its instruction members appear in `clients`, because they use the names that the code defines.
+A group of instruction members only is repeated prose, so those members stay in `members`.
+For a group with clients, `entryShape` gives the key set of at least four keys that most definitions of the names share, with the number of definitions that have it.
+A definition is the smallest object literal in a code member that contains the name, such as one entry of a tool list.
+Of the key sets that more than half of the definitions share, the one with the rarest keys is reported.
+Several entry points that clients use together and that share an input shape can be one task split across several interfaces.
+A literal that many units spell, or that only one unit spells, does not count.
+When a group member is a constant or variable, a member that imports the module of that constant uses its values and does not keep its own copy.
+Such members move from `members` to `users`, and a group whose remaining members sit in one file is not reported, because the set has one owner.
+`coverage.ownedGroups` counts these groups.
+Import analysis covers JavaScript and TypeScript, so in other languages every member stays in `members`.
+A type declaration does not count as an owner, because units that import a union type can still copy the logic that derives its values.
+A literal set can also be values of a type that the compiler checks, such as the members of a string union in a `switch`.
+Check whether one owner, such as a constant or a type, would let the other units stop spelling the values.
+
+`shapes` lists key sets of at least four keys that at least three objects, interfaces, structs, or schemas share, also inside one file.
+Each shape gives its keys, the number of occurrences and files, the number of `declarations` inside an interface, type alias, or struct, and the location and unit of each occurrence.
+Only the largest key set that the same objects share is reported, and nested keys and import or export lists do not count.
+A shape repeated without one declared owner is a data clump: the same parameters or fields travel together and can become one type or one entry point.
+With `filters.paths`, a shape is reported when one of its occurrences is inside the paths.
+The response lists at most 10 literals for each group, with `literalCount`, and at most 8 shapes with 4 locations each, so that it stays short enough for an agent to read in full.
+The receipt keeps every group, literal, shape, and location, with the shapes in its `shapes` section, and `totalShapes` gives their number.
+
+### Report cohesion clusters
+
+`report_cohesion_clusters` reports large classes, Rust and Go types, and modules whose members fall into separate clusters.
+A cluster is a group of members that share fields or module constants, or call each other.
+Separate clusters can show separate responsibilities in one class or module.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["src/server"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, and `includeTests` behavior as `find_shared_dependencies`.
+With `filters.paths`, only classes, types, and modules inside the paths are examined.
+The members of a class are its methods, the members of a Rust or Go type are the methods with that type name, and the members of a module are its top-level functions.
+Fields come from `this.` and `self.` references, so Go receivers do not supply fields.
+Constructors are left out, because a constructor sets every field.
+A field or helper that n members share links each pair of them with weight 1/(n-1), so a logger that every member uses links them only weakly.
+Community detection then finds the clusters, and `modularity` measures how separate they are.
+
+A container is reported when it has at least six members and 120 lines, at least two clusters with two members and 30 lines each, a modularity of at least 0.3, and at least 300 lines outside its largest cluster.
+`separableLines` is that number of lines outside the largest cluster, and the report is ordered by it.
+Each cluster lists its lines, its members, and the state that its members use, and `smallClusters` counts the other clusters.
+Mixed responsibilities inside one long function do not appear, because the tool groups members, not statements.
+Clusters identify candidate responsibilities for investigation and do not decide whether a split is better.
+
+### Find same-name units
+
+`find_same_name_units` groups functions in different files that have the same name.
+Identical copies show a helper that one module could own, and diverged variants of one name can carry different contracts.
+For example, one variant can throw on bad input while another returns `null`.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["src"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, `includeTests`, and `filters.paths` behavior as `find_shared_dependencies`.
+Each group has a `kind` of `identical` or `diverged` and lists its variants.
+Each variant lists its members, its lines and signature, its `throws` count of `throw`, `raise`, and `panic!`, and `onlyHere`, the dependencies that not every variant uses.
+Bodies that differ only in whitespace or an `export` or `pub` keyword are one variant.
+Only functions with at least three lines count, and methods are left out, because the same method name in several classes is usually polymorphism.
+A name with more than 20 functions is too generic to compare.
+`similarity` is the smallest identifier overlap between two variants, and groups below 0.3 are unrelated functions that only share a name, so they are not reported.
+When every variant has at most three lines, the floor is 0.5, because a few shared identifiers make short wrappers look alike.
+Diverged groups whose variants differ in throwing come first, then diverged groups with different dependencies, then other diverged groups, and then identical copies.
+A diverged name identifies candidates for one contract and does not establish that the variants should behave alike.
+
+### Report complex units
+
+`report_complex_units` reports long or branchy functions and methods.
+
+```json
+{
+  "projectRoot": "/absolute/project",
+  "snapshotId": "<retained snapshot ID>",
+  "filters": {"paths": ["src/server"]},
+  "limit": 20
+}
+```
+
+The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, and `includeTests` behavior as `find_shared_dependencies`.
+With `filters.paths`, only units inside the paths are reported.
+A unit is reported when it has at least 80 lines, at least 25 branches, or a dispatch on at least 8 literal values, and the longest units come first.
+`branches` counts `if`, loops, `case`, `catch`, and the `&&`, `||`, and ternary operators, with comments and string contents left out.
+Python counts `elif`, `except`, `and`, and `or`, and Rust counts match arms.
+`maxDepth` is the deepest nesting below the body, and `parameters` counts the top-level parameters of the signature.
+`nestedFunctions` counts the functions inside the unit, because their code also counts toward the unit.
+`dispatch` names the expression that the unit compares with the most distinct literal values, through equality or inequality comparisons, `case` labels, or Rust match arms, when it has at least three.
+A long chain on one subject can be a table of handlers.
+The facts identify candidates for a split and do not decide that a unit is too complex.
+
+### Analysis receipts
+
+`find_shared_dependencies`, `find_shared_literals`, `find_same_name_units`, `report_module_interfaces`, `report_cohesion_clusters`, and `report_complex_units` retain each complete result as immutable private evidence and return its `receiptId`.
+The receipt keeps every result before the response `limit`, so `totalGroups`, `totalContainers`, or `totalUnits` can be larger than the returned list.
+The receipt also records the tool, the scope, the snapshot, the index revision, coverage, diagnostics, and the hash of every file that the result names.
+A file hash that differs from the current file shows a result that a later edit made stale.
+Read a receipt in pages with `get_conservation_evidence`.
+The default section is `groups`, `modules`, `containers`, or `units`, and the `delegatingClasses` and `files` sections are also available.
+Cite the `receiptId` in a refactoring report, so that a reviewer can open the exact result that supports a candidate.
+An identical result gives the same `receiptId`, and a `preparing` or degraded response has no receipt.
 
 For live-source searches and context planning, pass a returned `snapshot` as `expectedSnapshot` to bind the source fingerprint.
 This fingerprint differs from a retained evidence `snapshotId`.

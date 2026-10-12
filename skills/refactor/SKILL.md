@@ -29,13 +29,14 @@ Outside a managed slice, retained source and verification evidence do not requir
 
 ## 2. Discover candidates
 
-1. Reuse the caller's repository context and Prism repository intelligence for semantic discovery across applicable artifact types.
-2. Follow [before-change discovery](references/analysis.md#before-change-discovery) to bind reuse searches to the original baseline.
+1. If the caller supplies repository context, reuse it.
+2. Before you read target files one by one, run [repository discovery](references/analysis.md#repository-discovery) over the discovery scope.
 3. Search by behavior and shared knowledge, including concepts with different names, locations, structures, or implementations.
 4. Inspect candidate source and available callers, dependencies, contracts, state, tests, references, and ownership.
 5. Use the [candidate signals and ranking](references/analysis.md#candidate-signals-and-ranking) to select a bounded investigation.
-6. When semantic indexing is unavailable or incomplete, report its coverage limits and use available structural and text evidence.
-7. For managed additions, follow the [semantic reuse procedure](../design/references/concept-delta.md#semantic-reuse-search) before accepting `ADD`.
+6. If you delegate reading to subagents, give each subagent the discovery results for its part of the scope and the candidate signals.
+7. When semantic indexing is unavailable or incomplete, report its coverage limits and use available structural and text evidence.
+8. For managed additions, follow the [semantic reuse procedure](../design/references/concept-delta.md#semantic-reuse-search) before accepting `ADD`.
 
 Semantic similarity and design red flags identify candidates for investigation, not defects or equivalent concepts.
 Files, symbols, rules, sections, schemas, and paragraphs are evidence of concepts, not fixed conceptual boundaries.

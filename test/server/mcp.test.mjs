@@ -456,6 +456,9 @@ test("lists repository intelligence providers without starting the review server
   assert.equal(codenib.diagnosticCode, "not-installed");
   assert.equal(codenib.capabilities.semanticSearch, true);
   assert.match(response.result.content[0].text, /native: available/);
+  const { native } = response.result.structuredContent;
+  assert.equal(typeof native.totalDiagnostics, "number");
+  assert.ok(native.diagnostics.length <= 20);
   await assert.rejects(access(path.join(root, ".prism-review-cert")), (caught) => caught.code === "ENOENT");
 });
 
@@ -902,9 +905,19 @@ test("native semantic MCP discovery is passive and search exposes bounded struct
   assert.equal(search.annotations.readOnlyHint, false);
   assert.equal(search.annotations.openWorldHint, true);
   assert.equal(listed.find(tool => tool.name === "get_repository_intelligence_status").annotations.readOnlyHint, true);
+  const shared = listed.find(tool => tool.name === "find_shared_dependencies");
+  assert.equal(shared.inputSchema.properties.limit.maximum, 100);
+  assert.deepEqual(Object.keys(shared.inputSchema.properties.filters.properties), ["paths"]);
+  assert.equal(shared.annotations.destructiveHint, false);
+  const interfaces = listed.find(tool => tool.name === "report_module_interfaces");
+  assert.deepEqual([interfaces.inputSchema.properties.limit.maximum, interfaces.inputSchema.properties.offset.minimum, interfaces.inputSchema.properties.allModules.default], [100, 0, false]);
+  for (const name of ["find_shared_literals", "report_cohesion_clusters", "find_same_name_units", "report_complex_units"]) {
+    const tool = listed.find(item => item.name === name);
+    assert.deepEqual([tool.inputSchema.properties.limit.maximum, tool.inputSchema.properties.includeTests.default, Object.keys(tool.inputSchema.properties.filters.properties)], [100, false, ["paths"]], name);
+  }
   mcp.send({ id: 3, method: "tools/call", params: { name: "discover_repository_intelligence", arguments: { projectRoot: root } } });
   assert.equal((await mcp.next()).result.structuredContent.status, "unprepared");
-  mcp.send({ id: 4, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: root, query: "network failures", filters: { paths: ["docs"], domains: ["documentation"] } } } });
+  mcp.send({ id: 4, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: root, query: "network failures", filters: { paths: ["docs/"], domains: ["documentation"] } } } });
   const result = (await mcp.next()).result;
   assert.equal(result.structuredContent.status, "degraded");
   assert.equal(result.structuredContent.results[0].file, "docs/retry.md");

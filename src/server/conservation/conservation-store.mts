@@ -7,7 +7,7 @@ import { privateDirectory, regularBytes, semanticError } from "../repository-int
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { resolveArtifactPath } from "./concept-delta.mjs";
 import type { Evidence, SnapshotEvidence, InventoryEntry } from "./conservation-types.mjs";
-import type { NativeSource, SourceSnapshot, SourceFile, Diagnostic } from "../repository-intelligence/repository-concept-types.mjs";
+import type { NativeSource, SourceSnapshot, SourceFile, Diagnostic } from "../repository-intelligence/repository-unit-types.mjs";
 
 export const digest = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 export const conservationError = (code: string, message: string, details: Record<string, unknown> = {}) => Object.assign(semanticError(code, message), details);
@@ -172,7 +172,11 @@ export class ConservationStore {
     return { snapshotId: await this.put(root, evidence), snapshot: evidence };
   }
   async source(projectRoot: string, snapshotId: string): Promise<NativeSource> {
-    const snapshot = await this.get<SnapshotEvidence>(projectRoot, snapshotId, "snapshot"), files: SourceFile[] = [];
+    // A caller can confuse a retained baseline with the fingerprint of the live index, so the error names both fields.
+    const snapshot = await this.get<SnapshotEvidence>(projectRoot, snapshotId, "snapshot").catch(error => {
+      if (error.code !== "evidence_missing") throw error;
+      throw conservationError("evidence_missing", "snapshotId does not name a retained baseline. Pass the snapshotId that capture_repository_snapshot returned, or pass the fingerprint of the live index as expectedSnapshot.", { evidenceId: snapshotId });
+    }), files: SourceFile[] = [];
     for (const entry of snapshot.files) if (entry.kind === "source") {
       const content = (await this.bytes(projectRoot, entry)).toString("utf8");
       files.push(Object.assign({ file: entry.file, hash: entry.hash,

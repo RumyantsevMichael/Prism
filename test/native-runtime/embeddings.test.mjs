@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fragmentConcept } from "../../dist/native-runtime/concepts.mjs";
+import { fragmentUnit } from "../../dist/native-runtime/fragments.mjs";
 import { embedFragments } from "../../dist/native-runtime/embeddings.mjs";
 
 function fragment(file, value = 1, name = "example", docstring) {
   const content = `function ${name}() { return ${value}; }`;
-  return fragmentConcept({ id: file, file, kind: "function", name, docstring, range: { startLine: 1, endLine: 1 } },
+  return fragmentUnit({ id: file, file, kind: "function", name, docstring, range: { startLine: 1, endLine: 1 } },
     { file, content, hash: "verified" }, text => text.length)[0];
 }
 const vector = value => Array(384).fill(value);

@@ -171,7 +171,10 @@ test("requires prior-art search and a compact worker lifetime reference", async 
   for (const source of [design, implement]) {
     assert.match(source, /[Uu]se `refactor`.*analysis/);
   }
-  assert.match(refactor, /Prism repository intelligence for semantic discovery/);
+  assert.match(refactor, /Before you read target files one by one, run \[repository discovery\]\(references\/analysis\.md#repository-discovery\)/);
+  const analysis = await reference("refactor", "analysis.md");
+  for (const tool of ["search_repository_concepts", "find_shared_dependencies", "find_shared_literals", "find_same_name_units", "report_module_interfaces", "report_cohesion_clusters", "report_complex_units"]) assert.match(analysis, new RegExp(`## Repository discovery[\\s\\S]*\`${tool}\``));
+  assert.match(analysis, /## Repository discovery[\s\S]*Cite the `receiptId` of each discovery result/);
   assert.match(refactor, /Record relevant matches and the reason to reuse or reject them/);
   assert.match(refactor, /semantic indexing is unavailable or incomplete.*available structural and text evidence/);
   assert.match(design, /semantic reuse procedure.*before accepting an `ADD` transition/);

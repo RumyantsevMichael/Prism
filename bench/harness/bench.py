@@ -9,7 +9,7 @@ Subcommands:
 
 The methodology lives in bench/README.md.
 The harness uses the Python standard library only.
-Scoring runs pytest from a private venv under bench/.venv.
+Scoring runs pytest from a private venv under the benchmark state directory.
 
 Tasks can be staged: a sequence of product requests implemented in fresh
 sessions over one persistent workspace, scored cumulatively after each stage.
@@ -35,6 +35,22 @@ SCHEMA_VERSION = 2
 BENCH_DIR = Path(__file__).resolve().parents[1]
 TASKS_DIR = BENCH_DIR / "tasks"
 REPO_ROOT = BENCH_DIR.parent
+
+
+def bench_state_dir():
+    """Generated state (venv, caches, results) lives outside the plugin root.
+
+    Hosts copy the whole plugin directory into their install cache,
+    so state inside the checkout would ship to every local install.
+    """
+    override = os.environ.get("PRISM_BENCH_HOME")
+    if override:
+        return Path(override).expanduser().resolve()
+    cache_home = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(cache_home) / "prism-bench"
+
+
+STATE_DIR = bench_state_dir()
 PYTEST_SPEC = "pytest>=8,<9"
 BOOTSTRAP_RESAMPLES = 10_000
 PHASE_DONE_MARKER = "PHASE COMPLETE"
@@ -255,7 +271,7 @@ def venv_python(venv_dir):
 
 
 def ensure_venv():
-    venv_dir = BENCH_DIR / ".venv"
+    venv_dir = STATE_DIR / "venv"
     py = venv_python(venv_dir)
     if py is None:
         log(f"creating scoring venv at {venv_dir}")
@@ -411,7 +427,7 @@ def make_workspace(dest, task, with_config):
         shutil.copytree(seed, dest, dirs_exist_ok=True)
     seed_repo = task.get("seed_repo")
     if seed_repo:
-        cache = BENCH_DIR / ".cache" / "seeds" / hashlib.sha256(
+        cache = STATE_DIR / "cache" / "seeds" / hashlib.sha256(
             seed_repo["url"].encode()
         ).hexdigest()[:16]
         if not cache.exists():
@@ -466,7 +482,7 @@ def external_source_text(source):
         candidates.append(Path(os.environ[env_name]).expanduser())
     if source.get("sibling"):
         candidates.append(REPO_ROOT.parent / source["sibling"])
-    cache = BENCH_DIR / ".cache" / "sources" / hashlib.sha256(
+    cache = STATE_DIR / "cache" / "sources" / hashlib.sha256(
         source["repo_url"].encode()
     ).hexdigest()[:16]
     candidates.append(cache)
@@ -663,7 +679,7 @@ def claude_call(prompt, cwd, model, extra_args, timeout):
 
 def prepare_codex_marketplace(plugin_dir):
     """Build a temporary marketplace from the shipped Codex package."""
-    root = BENCH_DIR / ".cache" / "codex-marketplace"
+    root = STATE_DIR / "cache" / "codex-marketplace"
     plugin = root / "plugin"
     if root.exists():
         shutil.rmtree(root)
@@ -1218,7 +1234,7 @@ def run_stage_phases(args, plugin_dir, task, stage_index, wdir, log_dir):
 def cmd_run(args):
     arms = parse_arms(args.arm)
     tasks = select_tasks(args.tasks)
-    out_dir = Path(args.out) if args.out else BENCH_DIR / "results" / datetime.now(timezone.utc).strftime("run-%Y%m%d-%H%M%S")
+    out_dir = Path(args.out) if args.out else STATE_DIR / "results" / datetime.now(timezone.utc).strftime("run-%Y%m%d-%H%M%S")
     out_dir.mkdir(parents=True, exist_ok=True)
     venv_py = ensure_venv()
     codex_was_installed = False
@@ -1573,18 +1589,18 @@ def arm_version(records):
 
 
 def cmd_summary(args):
-    results_root = BENCH_DIR / "results"
+    results_root = STATE_DIR / "results"
     run_dirs = sorted(
-        d for d in results_root.iterdir() if d.is_dir() and (d / "results.jsonl").exists()
+        d for d in (results_root.iterdir() if results_root.is_dir() else []) if d.is_dir() and (d / "results.jsonl").exists()
     )
     if not run_dirs:
-        sys.exit("no runs under bench/results/")
+        sys.exit(f"no runs under {results_root}")
     lines = []
     out = lines.append
     out("# prism benchmark results")
     out("")
     out("One row per arm per run, newest last.")
-    out(f"Regenerate with: `python3 bench/harness/bench.py summary --out bench/results/RESULTS.md`")
+    out(f"Regenerate with: `python3 bench/harness/bench.py summary --out <results-dir>/RESULTS.md`")
     out("The version column is the plugin commit the arm ran (`*` marks a dirty tree), or `baseline` for no plugin.")
     out("Stage cells are mean hidden-test pass fractions, cumulative per stage.")
     out("")

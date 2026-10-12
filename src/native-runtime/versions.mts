@@ -1,1 +1,1 @@
-export const CHUNKER_VERSION = "concepts-5-shared-embeddings";
+export const CHUNKER_VERSION = "concepts-6-structural";

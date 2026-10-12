@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { parseTree, getNodePath, getNodeValue } from "jsonc-parser";
 import { parseDocument, isMap, isSeq, isAlias, LineCounter } from "yaml";
-import type { Concept, Diagnostic, Fragment, Relationship } from "../server/repository-intelligence/repository-concept-types.mjs";
+import type { SourceUnit, Diagnostic, Relationship } from "../server/repository-intelligence/repository-unit-types.mjs";
 import { CODE_EXTENSIONS, domainFor } from "./domains.mjs";
 export { CODE_EXTENSIONS, domainFor } from "./domains.mjs";
 import type { Node as JsonNode, ParseError } from "jsonc-parser";
@@ -12,7 +12,7 @@ import type { Tokenizer } from "@huggingface/tokenizers";
 
 type InputFile = { file: string; content: string; hash: string };
 interface Link { from: string; url?: string; identifier?: string }
-interface Group { units: Concept[]; edges: Relationship[]; links: Link[]; diagnostics: Diagnostic[]; supported: boolean; counts: Record<string, number> }
+interface Group { units: SourceUnit[]; edges: Relationship[]; links: Link[]; diagnostics: Diagnostic[]; supported: boolean; counts: Record<string, number> }
 
 export { CHUNKER_VERSION } from "./versions.mjs";
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -20,7 +20,7 @@ const pointer = (parts: (string | number)[]) => "/" + parts.map(part => String(p
 const lineAt = (text: string, offset: number) => text.slice(0, offset).split("\n").length;
 const slug = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "").trim().replace(/\s+/g, "-");
 
-function unit(file: InputFile, kind: string, name: string, startLine: number, endLine: number, selector = name, exactSpan?: { start: number; end: number }): Concept {
+function unit(file: InputFile, kind: string, name: string, startLine: number, endLine: number, selector = name, exactSpan?: { start: number; end: number }): SourceUnit {
   endLine = Math.min(endLine, Math.max(1, (file.content.match(/[^\n]*\n|[^\n]+$/g) || []).length));
   const id = hash(`${file.file}\0${kind}\0${selector}\0${startLine}\0${endLine}`);
   const lines = file.content.match(/[^\n]*\n|[^\n]+$/g) || [""];
@@ -29,12 +29,12 @@ function unit(file: InputFile, kind: string, name: string, startLine: number, en
     span, contentHash: hash(file.content.slice(span.start, span.end)), rangeComplete: true };
 }
 
-export function extractTextConcepts(file: InputFile): Group {
-  const units: Concept[] = [], edges: Relationship[] = [], links: Link[] = [], diagnostics: Diagnostic[] = [];
+export function extractTextUnits(file: InputFile): Group {
+  const units: SourceUnit[] = [], edges: Relationship[] = [], links: Link[] = [], diagnostics: Diagnostic[] = [];
   const text = file.content;
   const root = unit(file, "file", file.file, 1, Math.max(1, text.split("\n").length), "");
   units.push(root);
-  const add = (node: Concept, parent = root) => { units.push(node); edges.push({ source: parent.id, target: node.id, kind: "contains", provenance: "parser" }); return node; };
+  const add = (node: SourceUnit, parent = root) => { units.push(node); edges.push({ source: parent.id, target: node.id, kind: "contains", provenance: "parser" }); return node; };
   const extension = path.extname(file.file).toLowerCase();
   let supported = false;
   const counts: Record<string, number> = { sections: 0, paragraphs: 0, listItems: 0, links: 0, configurationKeys: 0, configurationReferences: 0 };
@@ -166,40 +166,4 @@ export function bgeSourceBoundaries(tokenizer: Tokenizer, configuration: { model
     }
     return [...points].sort((a, b) => a - b);
   };
-}
-
-// Preserve raw source while splitting only between complete tokenizer pretokens.
-export function fragmentConcept(concept: Concept, file: InputFile, countTokens: (text: string) => number, limit = 512, boundaries: (text: string) => number[] = source => [...source.matchAll(/\s+|[^\s]+/gu)].map(match => match.index + match[0].length)): Fragment[] {
-  const lines = file.content.match(/[^\n]*\n|[^\n]+$/g) || [""];
-  const start = Math.min(concept.range.startLine, lines.length), end = Math.min(concept.range.endLine, lines.length);
-  const span = concept.span || { start: lines.slice(0, start - 1).join("").length, end: lines.slice(0, end).join("").length };
-  if (!Number.isSafeInteger(span.start) || !Number.isSafeInteger(span.end) || span.start < 0 || span.end < span.start || span.end > file.content.length) throw new Error("The concept span is outside its source.");
-  const source = file.content.slice(span.start, span.end);
-  const sourceLine = lineAt(file.content, span.start);
-  const prefix = `${concept.file}\n${concept.kind}: ${concept.name}\n${concept.docstring ? concept.docstring + "\n" : ""}`;
-  const safePrefix = countTokens(prefix) <= 128 ? prefix : `${concept.kind}\n`;
-  const embeddingPrefix = `${concept.kind}${concept.kind === "file" ? "" : ": " + concept.name}\n${concept.docstring ? concept.docstring + "\n" : ""}`;
-  const safeEmbeddingPrefix = countTokens(embeddingPrefix) <= 128 ? embeddingPrefix : `${concept.kind}\n`;
-  const fits = (part: string) => countTokens(safePrefix + part) <= limit && countTokens(safeEmbeddingPrefix + part) <= limit;
-  if (fits(source)) return [{ ...concept, parentId: concept.id, prefixLength: safePrefix.length, text: safePrefix + source,
-    embeddingText: safeEmbeddingPrefix + source, sourceStart: span.start, sourceEnd: span.end }];
-  const fragments = [];
-  const points = boundaries(source);
-  let offset = 0;
-  while (offset < source.length) {
-    let low = 0, high = points.length - 1, best = offset;
-    while (low <= high) {
-      const middle = Math.floor((low + high) / 2), candidate = points[middle];
-      if (candidate <= offset) { low = middle + 1; continue; }
-      if (fits(source.slice(offset, candidate))) { best = candidate; low = middle + 1; }
-      else high = middle - 1;
-    }
-    if (best <= offset) throw new Error("A concept fragment cannot fit the model input limit.");
-    fragments.push({ ...concept, id: `${concept.id}:${fragments.length}`, parentId: concept.id, sourceStart: span.start + offset, sourceEnd: span.start + best,
-      range: { startLine: sourceLine + lineAt(source, offset) - 1, endLine: sourceLine + lineAt(source, Math.max(offset, best - 1)) - 1 },
-      prefixLength: safePrefix.length, text: safePrefix + source.slice(offset, best),
-      embeddingText: safeEmbeddingPrefix + source.slice(offset, best) });
-    offset = best;
-  }
-  return fragments;
 }

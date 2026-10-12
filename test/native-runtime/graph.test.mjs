@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { fragmentConcept } from "../../dist/native-runtime/concepts.mjs";
+import { fragmentUnit } from "../../dist/native-runtime/fragments.mjs";
 Object.assign(process.env, { PRISM_EMBEDDED: "1", CODEGRAPH_NO_STORE_WORKER: "1", CODEGRAPH_NO_PARALLEL_RESOLVE: "1", CODEGRAPH_NO_WAL_DEFER: "1", CODEGRAPH_NO_FAST_INIT: "1", CODEGRAPH_KERNEL: "0", NODE_DISABLE_COMPILE_CACHE: "1" });
 const { extractGraph } = await import("../../dist/native-runtime/graph.mjs");
 const runtime = fileURLToPath(new URL("../../dist/native-runtime/", import.meta.url));
@@ -86,6 +86,14 @@ test("dynamic calls and missing dependencies cannot claim complete structure", a
   const graph = await extractGraph(root, files, runtime);
   for (const file of files) assert.ok(graph.diagnostics.some(item => item.code === "incomplete_structure" && item.file === file.file), JSON.stringify(graph));
 });
+test("library calls without a target unit keep their names and calling unit", async t => {
+  const { root, files } = await fixture(t, { "a.js": "import fs from 'node:fs';\nexport function inspect(file) { const info = fs.lstatSync(file); return info.isSymbolicLink(); }\n" });
+  const graph = await extractGraph(root, files, runtime);
+  const inspect = graph.nodes.find(node => node.name === "inspect");
+  const names = graph.references.filter(reference => reference.source === inspect.id).map(reference => reference.name);
+  assert.ok(names.some(name => name.endsWith("lstatSync")), JSON.stringify(graph.references));
+  assert.ok(graph.references.every(reference => graph.nodes.some(node => node.id === reference.source) && ["calls", "instantiates"].includes(reference.kind)));
+});
 test('same-line Unicode declarations retain exact source spans and public provenance',async t=>{
   const content='const emoji = "🙂"; export function first() { return emoji; } export function second() { return 2; }\n';
   const {root,files}=await fixture(t,{'same.ts':content});
@@ -95,11 +103,11 @@ test('same-line Unicode declarations retain exact source spans and public proven
   assert.match(content.slice(first.span.start,first.span.end),/^function first\(\) \{ return emoji; \}$/);
   assert.match(content.slice(second.span.start,second.span.end),/^function second\(\) \{ return 2; \}$/);
   assert.equal(first.isExported,true);assert.equal(second.isExported,true);
-  for (const concept of [first, second]) {
-    const pieces = fragmentConcept(concept, files[0], text => text.length);
+  for (const unit of [first, second]) {
+    const pieces = fragmentUnit(unit, files[0], text => text.length);
     assert.equal(pieces.length, 1);
-    assert.equal(pieces[0].sourceStart, concept.span.start);
-    assert.equal(pieces[0].sourceEnd, concept.span.end);
-    assert.equal(pieces[0].text.slice(pieces[0].prefixLength), content.slice(concept.span.start, concept.span.end));
+    assert.equal(pieces[0].sourceStart, unit.span.start);
+    assert.equal(pieces[0].sourceEnd, unit.span.end);
+    assert.equal(pieces[0].text.slice(pieces[0].prefixLength), content.slice(unit.span.start, unit.span.end));
   }
 });

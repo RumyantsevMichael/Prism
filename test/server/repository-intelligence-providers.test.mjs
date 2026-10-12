@@ -4,6 +4,7 @@ import {
   RepositoryIntelligenceSelectionError,
   createRepositoryIntelligenceDescriptors,
   listRepositoryIntelligenceProviders,
+  withNativeSemanticCapabilities,
   withRepositoryIntelligence
 } from "../../dist/server/repository-intelligence/repository-intelligence-providers.mjs";
 
@@ -243,4 +244,14 @@ test("rejects duplicate and unknown provider identifiers", async () => {
     withRepositoryIntelligence("/project", () => "unused", { descriptors: descriptors([]), selection: "other" }),
     (error) => error instanceof RepositoryIntelligenceSelectionError && error.code === "unknown-provider"
   );
+});
+
+test("the native provider reports semantic capabilities whenever its runtime can prepare an index", () => {
+  const providers = [{ id: "codenib", capabilities: { semanticSearch: true } }, { id: "native", capabilities: { lexicalSearch: true, semanticSearch: false, hybridSearch: false, symbolGraph: false } }];
+  const native = status => withNativeSemanticCapabilities(providers, status).find(provider => provider.id === "native").capabilities;
+  const runtime = { supported: true, published: true };
+  for (const status of ["indexed", "unprepared", "preparing", "ready"]) assert.deepEqual(native({ status, runtime }), { lexicalSearch: true, semanticSearch: true, hybridSearch: true, symbolGraph: true }, status);
+  for (const status of [{ status: "degraded", runtime }, { status: "indexed", runtime: { supported: true, published: false } }, { status: "unprepared", runtime: { supported: false, published: true } }])
+    assert.equal(native(status).semanticSearch, false, JSON.stringify(status));
+  assert.deepEqual(withNativeSemanticCapabilities(providers, { status: "indexed", runtime })[0], providers[0]);
 });

@@ -10,6 +10,7 @@ import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./reposi
 import {
   listRepositoryIntelligenceProviders,
   RepositoryIntelligenceSelectionError,
+  withNativeSemanticCapabilities,
   withRepositoryIntelligence
 } from "./repository-intelligence/repository-intelligence-providers.mjs";
 import {
@@ -25,7 +26,7 @@ import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
-import { NATIVE_INTELLIGENCE_TOOLS, prepareNativeProvider, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
+import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
 const reviewServers = createReviewServerPool();
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));
@@ -103,7 +104,7 @@ async function requestedProjectRoot(argumentsValue) {
   if (hostProjectRoot && hasSuppliedProjectRoot) {
     const suppliedRoot = await realpath(argumentsValue.projectRoot);
     if (suppliedRoot !== resolvedRoot) {
-      throw new Error("The projectRoot argument does not match the host project root.");
+      throw new Error(`The projectRoot argument does not match the host project root ${resolvedRoot}. Pass that path, which is the directory where the session started.`);
     }
   }
   return resolvedRoot;
@@ -683,14 +684,23 @@ async function callStateTool(name, argumentsValue) {
 }
 
 async function callRepositoryTool(name, argumentsValue) {
+  // Agents often write a directory as "src/", so a trailing slash is dropped before the strict path checks.
+  if (Array.isArray(argumentsValue?.filters?.paths)) argumentsValue = { ...argumentsValue, filters: { ...argumentsValue.filters, paths: argumentsValue.filters.paths.map(value => typeof value === "string" && value.length > 1 ? value.replace(/\/+$/, "") : value) } };
   if (NATIVE_INTELLIGENCE_TOOLS.some(tool => tool.name === name)) {
     const schema = NATIVE_INTELLIGENCE_TOOLS.find(tool => tool.name === name).inputSchema;
     assertInput(schema, argumentsValue);
     try { assertExactToolArguments(argumentsValue, Object.keys(schema.properties), schema.required, `${name} arguments`); }
     catch (error) { error.code = "validation_failed"; throw error; }
     const projectRoot = await requestedProjectRoot(argumentsValue).catch(error => { error.code = "invalid_path"; throw error; });
-    let value = name === "search_repository_concepts" ? await searchRepositoryConcepts({ ...argumentsValue, projectRoot }) : await nativeSemanticRuntime.status(projectRoot, argumentsValue.waitMs);
-    if (name !== "search_repository_concepts") {
+    let value = name === "search_repository_concepts" ? await searchRepositoryConcepts({ ...argumentsValue, projectRoot })
+      : name === "find_shared_dependencies" ? await findSharedDependencies({ ...argumentsValue, projectRoot })
+      : name === "report_module_interfaces" ? await reportModuleInterfaces({ ...argumentsValue, projectRoot })
+      : name === "find_shared_literals" ? await findSharedLiterals({ ...argumentsValue, projectRoot })
+      : name === "report_cohesion_clusters" ? await reportCohesionClusters({ ...argumentsValue, projectRoot })
+      : name === "find_same_name_units" ? await findSameNameUnits({ ...argumentsValue, projectRoot })
+      : name === "report_complex_units" ? await reportComplexUnits({ ...argumentsValue, projectRoot })
+      : await nativeSemanticRuntime.status(projectRoot, argumentsValue.waitMs);
+    if (!["search_repository_concepts", "find_shared_dependencies", "report_module_interfaces", "find_shared_literals", "report_cohesion_clusters", "find_same_name_units", "report_complex_units"].includes(name)) {
       const diagnostics = value.diagnostics || [], offset = argumentsValue.offset || 0, limit = argumentsValue.limit || 20;
       value = { ...value, diagnostics: diagnostics.slice(offset, offset + limit), totalDiagnostics: diagnostics.length, nextOffset: offset + limit < diagnostics.length ? offset + limit : null };
     }
@@ -769,8 +779,11 @@ async function callRepositoryTool(name, argumentsValue) {
   }
   if (name === "list_repository_intelligence_providers") {
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const providers = await listRepositoryIntelligenceProviders(projectRoot);
-    return { content: [{ type: "text", text: providerListContent(providers) }], structuredContent: { providers, native: await nativeSemanticRuntime.status(projectRoot) } };
+    const native = await nativeSemanticRuntime.status(projectRoot), diagnostics = native.diagnostics || [];
+    const providers = withNativeSemanticCapabilities(await listRepositoryIntelligenceProviders(projectRoot), native);
+    // get_repository_intelligence_status pages the complete diagnostics.
+    return { content: [{ type: "text", text: providerListContent(providers) }],
+      structuredContent: { providers, native: { ...native, diagnostics: diagnostics.slice(0, 20), totalDiagnostics: diagnostics.length } } };
   }
   if (name === "plan_repository_context") {
     const projectRoot = await requestedProjectRoot(argumentsValue);

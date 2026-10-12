@@ -1,4 +1,4 @@
-import type { Concept, Diagnostic } from "../repository-intelligence/repository-concept-types.mjs";
+import type { SourceUnit, Diagnostic, Relationship, UnresolvedReference } from "../repository-intelligence/repository-unit-types.mjs";
 
 export type Selector = string | { type: "symbol" | "heading" | "text" | "json-pointer" | "yaml-key"; value: string }
   | { type: "span"; start: number; end: number; sourceHash: string };
@@ -12,7 +12,14 @@ export interface SearchReceipt {
   kind: "search"; schemaVersion: 1; project: string; snapshotId: string | null; snapshot: string; query: string;
   filters: unknown; limit: number; status: string; capabilities: Record<string, boolean>; modelIdentity: string | null;
   indexRevision: string | null; versions: Record<string, string>; coverage: unknown; diagnostics: Diagnostic[];
-  candidates: (Concept & { excerpt: string; cosineSimilarity: number | null; lexicalScore: number | null; fusedRank: number })[];
+  candidates: (SourceUnit & { excerpt: string; cosineSimilarity: number | null; lexicalScore: number | null; fusedRank: number })[];
+}
+// The result of a repository analysis tool, retained so that a report or a review view can cite it and detect stale results.
+export interface AnalysisReceipt {
+  kind: "repository-analysis"; schemaVersion: 1; project: string; tool: "find_shared_dependencies" | "find_shared_literals" | "find_same_name_units" | "report_module_interfaces" | "report_cohesion_clusters" | "report_complex_units";
+  snapshotId: string | null; snapshot: string; indexRevision: string; versions: Record<string, string>; scope: Record<string, unknown>;
+  coverage: unknown; diagnostics: Diagnostic[]; files: { file: string; hash: string }[];
+  groups?: unknown[]; modules?: unknown[]; delegatingClasses?: unknown[]; containers?: unknown[]; units?: unknown[]; shapes?: unknown[];
 }
 export interface GrowthJustification { dimensions: string[]; conceptIds: string[]; requirements: Reference[]; reason: string }
 export interface AdditionEvidence {
@@ -28,6 +35,7 @@ export interface DeltaDocument {
   requirements?: Reference[]; growthJustifications?: GrowthJustification[];
   growthThresholds?: { dimension: string; maximumIncrease: number }[];
   expectedGrowth?: { dimension: string; increase: number | null; reason: string }[];
+  consolidations?: { deltaPath: string; reason: string }[];
 }
 export interface ResolvedUnit { key: string; file: string; kind: string; selector: string; start: number; end: number; hash: string; public: boolean | null }
 export interface Resolution { status: "resolved" | "missing" | "ambiguous" | "unsupported"; reference: Reference; units: ResolvedUnit[]; reason?: string }
@@ -40,4 +48,4 @@ export interface ComparisonEvidence {
   observations: Observation[]; measurements: Measurement[]; growth: { id: string; dimension: string; increase: number; threshold: number }[];
   units: { before: ResolvedUnit[]; after: ResolvedUnit[] }; diagnostics: Diagnostic[];
 }
-export type Evidence = SnapshotEvidence | SearchReceipt | ComparisonEvidence | { kind: "migration"; schemaVersion: 1; project: string; artifactPath: string; revision: string; lines: string[] } | { kind: "analysis"; schemaVersion: 1; project: string; snapshotId: string; units: Concept[]; fileCoverage: Record<string, boolean>; diagnostics: Diagnostic[]; tokenCounts: Record<string, number>; structureCounts: Record<string, Record<string, number>>; versions: Record<string, string> };
+export type Evidence = SnapshotEvidence | SearchReceipt | AnalysisReceipt | ComparisonEvidence | { kind: "migration"; schemaVersion: 1; project: string; artifactPath: string; revision: string; lines: string[] } | { kind: "analysis"; schemaVersion: 1; project: string; snapshotId: string; units: SourceUnit[]; edges?: Relationship[]; unresolvedReferences?: UnresolvedReference[]; fileCoverage: Record<string, boolean>; diagnostics: Diagnostic[]; tokenCounts: Record<string, number>; structureCounts: Record<string, Record<string, number>>; versions: Record<string, string> };

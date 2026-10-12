@@ -1,9 +1,9 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { CODE_EXTENSIONS } from "./concepts.mjs";
+import { CODE_EXTENSIONS } from "./units.mjs";
 import { installFileBoundary } from "./fs-boundary.mjs";
-import type { Concept, Diagnostic, Progress, Relationship, SourceFile } from "../server/repository-intelligence/repository-concept-types.mjs";
+import type { SourceUnit, Diagnostic, Progress, Relationship, SourceFile, UnresolvedReference } from "../server/repository-intelligence/repository-unit-types.mjs";
 import type { CodeGraph, DatabaseConnection, FileRecord } from "@colbymchenry/codegraph";
 
 const boundary = installFileBoundary();
@@ -12,8 +12,8 @@ let sdk: typeof import("@colbymchenry/codegraph") | undefined;
 
 export async function extractGraph(mirror: string, files: Pick<SourceFile, "file" | "content" | "hash">[], runtimeDirectory: string, progress: (value: Progress) => void = () => {}) {
   const codeFiles = files.filter(file => CODE_EXTENSIONS.has(path.extname(file.file).toLowerCase()));
-  if (!codeFiles.length) return { nodes: [], edges: [], diagnostics: [], files: [], parsedFiles: [] };
-  const diagnostics: Diagnostic[] = [], nodes: Concept[] = [], edges: Relationship[] = [];
+  if (!codeFiles.length) return { nodes: [], edges: [], references: [], diagnostics: [], files: [], parsedFiles: [] };
+  const diagnostics: Diagnostic[] = [], nodes: SourceUnit[] = [], edges: Relationship[] = [], references: UnresolvedReference[] = [];
   const failedFiles = new Set<string>();
   let graph: CodeGraph | null = null, connection: DatabaseConnection | undefined, indexedFiles: FileRecord[] = [];
   boundary.begin({ readRoots: [mirror, runtimeDirectory], writeRoots: [path.join(mirror, ".codegraph")] });
@@ -60,6 +60,9 @@ export async function extractGraph(mirror: string, files: Pick<SourceFile, "file
     for (const ref of queries.getUnresolvedReferences()) {
       const file = ref.filePath || nodes.find(node => node.id === ref.fromNodeId)?.file;
       if (file && source.has(file)) unresolved.set(file, (unresolved.get(file) || 0) + 1);
+      // Calls into libraries and unresolved helpers name the work that a unit depends on, even without a target unit.
+      if (ids.has(ref.fromNodeId) && ["calls", "instantiates"].includes(ref.referenceKind) && ref.referenceName)
+        references.push({ source: ref.fromNodeId, name: ref.referenceName, kind: ref.referenceKind });
     }
     for (const [file, count] of unresolved) diagnostics.push({ code: "incomplete_structure", file, count, message: "The graph has unresolved references in this file." });
   } catch (error) {
@@ -72,5 +75,5 @@ export async function extractGraph(mirror: string, files: Pick<SourceFile, "file
       denied: denied.map(item => ({ path: path.relative(mirror, item.path), write: item.write })),
       message: "The graph requested files outside its snapshot, including suppressed access failures." });
   }
-  return { nodes, edges, diagnostics, files: indexedFiles.map(file => file.path), parsedFiles: indexedFiles.filter(file => !file.errors?.length && !failedFiles.has(file.path)).map(file => file.path) };
+  return { nodes, edges, references, diagnostics, files: indexedFiles.map(file => file.path), parsedFiles: indexedFiles.filter(file => !file.errors?.length && !failedFiles.has(file.path)).map(file => file.path) };
 }

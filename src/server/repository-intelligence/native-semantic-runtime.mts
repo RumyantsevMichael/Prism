@@ -5,11 +5,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { constants } from "node:fs";
-import { mkdir, lstat, realpath, readFile, open, rename, rm, chmod } from "node:fs/promises";
+import { mkdir, lstat, realpath, readFile, readdir, open, rename, rm, chmod, utimes } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import type { NativeSource, SourceSnapshot, ConceptIndex, PreparedIndex, Preparation, Progress, Diagnostic, WorkerMethods, SearchFilters, SemanticRuntime, Counts } from "./repository-concept-types.mjs";
+import type { NativeSource, SourceSnapshot, UnitIndex, PreparedIndex, Preparation, Progress, Diagnostic, WorkerMethods, SearchFilters, SemanticRuntime, Counts } from "./repository-unit-types.mjs";
 
 interface Asset { url: string; bytes: number; sha256: string; unpackedBytes?: number }
 interface AssetManifest { schemaVersion: 1; identity: string; assetVersion: string; bundles: Record<string, Asset>; model: { id: string; revision: string; files: (Omit<Asset, "url"> & { path: string; url?: string })[] } }
@@ -27,7 +27,7 @@ const boundedWait = (promise: Promise<void>, ms: number) => new Promise<void>((r
   promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
 });
 const inside = (root: string, file: string) => { const relative = path.relative(root, file); return !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`); };
-const indexMetadata = ({ chunks: _chunks, ...metadata }: ConceptIndex) => metadata;
+const indexMetadata = ({ chunks: _chunks, ...metadata }: UnitIndex) => metadata;
 const stableFailure = (error: Error & { code?: string }) => ["invalid_path", "lock_timeout", "stale_snapshot", "unsupported_runtime", "corrupt_asset", "resource_limit", "validation_failed"].includes(error.code || "") ? error.code! : error.code === "snapshot-changed" ? "stale_snapshot" : "preparation_failed";
 
 export async function privateDirectory(directory: string): Promise<string> {
@@ -104,6 +104,20 @@ async function download(asset: Asset, destination: string, allowFile: boolean) {
     await handle.sync(); await handle.close();
     await rename(temporary, destination);
   } finally { await handle.close().catch(() => {}); await rm(temporary, { force: true }); }
+}
+
+const STALE_ASSET_MS = 14 * 24 * 60 * 60 * 1000;
+
+// Remove assets that no plugin version has used recently, and downloaded archives whose runtime is already extracted.
+// Each version marks its own runtime and model as used, so a session on an older plugin version keeps its assets.
+export async function pruneAssets(directory: string, keep: Set<string>, maxAgeMs = STALE_ASSET_MS, now = Date.now()) {
+  const entries = await readdir(directory);
+  for (const name of entries) {
+    if (keep.has(name) || name.endsWith(".lock")) continue;
+    const archive = name.endsWith(".tar.gz") && entries.includes(name.slice(0, -".tar.gz".length));
+    const info = await lstat(path.join(directory, name)).catch(() => null);
+    if (info && (archive || now - info.mtimeMs > maxAgeMs)) await rm(path.join(directory, name), { recursive: true, force: true });
+  }
 }
 
 class Helper {
@@ -215,7 +229,7 @@ export class NativeSemanticRuntime implements SemanticRuntime {
         await this.verifyRuntime(staging, platform);
         await chmod(path.join(staging, process.platform === "win32" ? "node.exe" : "node"), 0o700);
         await rename(staging, runtime);
-      } finally { await rm(staging, { recursive: true, force: true }); }
+      } finally { await rm(staging, { recursive: true, force: true }); await rm(archive, { force: true }); }
     }, semanticError, { renew: true, timeoutMs: 120000 })) ;
     await privateDirectory(modelDirectory);
     await withArtifactLock(modelDirectory, () => withFileLock(modelDirectory, async () => {
@@ -226,6 +240,9 @@ export class NativeSemanticRuntime implements SemanticRuntime {
         await download({ ...file, url: file.url || `https://huggingface.co/${manifest.model.id}/resolve/${manifest.model.revision}/${file.path}` }, target, allowFile);
       }
     }, semanticError, { renew: true, timeoutMs: 120000 }));
+    const used = new Date();
+    for (const directory of [runtime, modelDirectory]) await utimes(directory, used, used).catch(() => {});
+    await pruneAssets(assets, new Set([path.basename(runtime), path.basename(modelDirectory)])).catch(() => {});
     return { runtime, modelDirectory, modelIdentity: sha(JSON.stringify(manifest.model)), assetIdentity: manifest.identity };
   }
   async verifyRuntime(directory: string, platform: string) {
@@ -264,14 +281,14 @@ export class NativeSemanticRuntime implements SemanticRuntime {
     const assets = await this.assets(value => { job.progress = value; });
     const directory = await privateDirectory(location.directory);
     return withArtifactLock(directory, () => withFileLock(directory, async () => {
-      let previous: ConceptIndex | undefined;
+      let previous: UnitIndex | undefined;
       try {
         const pointer = await readJson<IndexPointer>(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`))
           .catch(error => { if (error.code !== "ENOENT") throw error; return readJson<IndexPointer>(path.join(directory, "current.json")); });
         if (!pointer.revision || !/^[a-f\d]{64}$/.test(pointer.revision)) throw semanticError("corrupt_asset", "The index pointer has an invalid revision.");
         const indexPath = path.join(directory, `${pointer.revision}.json`), bytes = await regularBytes(indexPath);
-        if (sha(bytes) !== pointer.revision) throw semanticError("corrupt_asset", "The concept index failed its integrity check.");
-        previous = JSON.parse(bytes.toString("utf8")) as ConceptIndex;
+        if (sha(bytes) !== pointer.revision) throw semanticError("corrupt_asset", "The semantic index failed its integrity check.");
+        previous = JSON.parse(bytes.toString("utf8")) as UnitIndex;
         if (previous.snapshot === snapshot.sourceFingerprint && previous.assetIdentity === assets.assetIdentity) {
           await source.verifySnapshot(); job.revision = pointer.revision; job.coverage = pointer.coverage; job.diagnostics = previous.diagnostics;
           return { ...assets, index: indexMetadata(previous), indexPath, revision: pointer.revision };
@@ -300,7 +317,7 @@ export class NativeSemanticRuntime implements SemanticRuntime {
         index.assetIdentity = assets.assetIdentity;
         if (!snapshot.complete) { index.structureComplete = false; index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." }); }
         const contents = JSON.stringify(index), revision = sha(contents), indexPath = path.join(directory, `${revision}.json`);
-        if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The concept index exceeds 512 MiB.");
+        if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The semantic index exceeds 512 MiB.");
         await writeAtomically(indexPath, contents, { mode: 0o600 });
         const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
         const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics });

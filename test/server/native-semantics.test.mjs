@@ -5,12 +5,13 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { NativeSemanticRuntime } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
-import { SemanticNativeRepositoryIntelligence, searchRepositoryConcepts, validateConceptSearch } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
+import { NativeSemanticRuntime, pruneAssets } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
+import { SemanticNativeRepositoryIntelligence, findSameNameUnits, findSharedDependencies, findSharedLiterals, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts, validateConceptSearch, validateCohesion, validateComplexUnits, validateModuleInterfaces, validateSameNameUnits, validateSharedDependencies, validateSharedLiterals } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
 import { openNativeRepositoryIntelligence } from "../../dist/server/repository-intelligence/native-repository-intelligence.mjs";
 import { CompositeRepositoryIntelligence } from "../../dist/server/repository-intelligence/composite-repository-intelligence.mjs";
 import { planRepositoryContext } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
 import { withFileLock } from "../../dist/server/workflow/artifact-store.mjs";
+import { callConservationTool } from "../../dist/server/conservation/conservation-tools.mjs";
 const manifestPath = fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url));
 
 async function fixture(t) {
@@ -32,6 +33,113 @@ test("discovery is passive and degraded lexical search retains filters and sourc
   assert.match(found.results[0].sourceHash, /^[a-f0-9]{64}$/);
   assert.equal(found.results[0].cosineSimilarity, null);
   assert.ok(found.diagnostics.some(item => item.code === "unsupported_runtime"));
+});
+test("shared dependency groups need the prepared index and report a degraded runtime without groups", async t => {
+  const { directory, root } = await fixture(t);
+  await writeFile(path.join(root, "a.mjs"), "export function a() { return 1; }\n");
+  const runtime = new NativeSemanticRuntime({ directory: path.join(directory, "cache"), manifestPath });
+  const found = await findSharedDependencies({ projectRoot: root }, { runtime });
+  assert.equal(found.status, "degraded");
+  assert.deepEqual(found.groups, []);
+  assert.equal(found.coverage, null);
+  assert.ok(found.diagnostics.some(item => item.code === "unsupported_runtime"));
+});
+test("module interface reports need the prepared index and report a degraded runtime without modules", async t => {
+  const { directory, root } = await fixture(t);
+  await writeFile(path.join(root, "a.mjs"), "export function a() { return 1; }\n");
+  const runtime = new NativeSemanticRuntime({ directory: path.join(directory, "cache"), manifestPath });
+  const found = await reportModuleInterfaces({ projectRoot: root }, { runtime });
+  assert.equal(found.status, "degraded");
+  assert.deepEqual([found.modules, found.delegatingClasses, found.coverage], [[], [], null]);
+  for (const input of [{ offset: -1 }, { offset: 1.5 }, { allModules: "yes" }, { includeTests: true }, { limit: 101 }, { filters: { paths: ["/abs"] } }])
+    assert.throws(() => validateModuleInterfaces({ projectRoot: "/tmp", ...input }), error => ["validation_failed", "invalid_path"].includes(error.code), JSON.stringify(input));
+  validateModuleInterfaces({ projectRoot: "/tmp", offset: 20, limit: 100, allModules: true, filters: { paths: ["src"] } });
+});
+test("shared literal groups and cohesion clusters need the prepared index and report a degraded runtime without results", async t => {
+  const { directory, root } = await fixture(t);
+  await writeFile(path.join(root, "a.mjs"), "export function a() { return 'alpha'; }\n");
+  const runtime = new NativeSemanticRuntime({ directory: path.join(directory, "cache"), manifestPath });
+  const literals = await findSharedLiterals({ projectRoot: root }, { runtime });
+  assert.deepEqual([literals.status, literals.groups, literals.shapes, literals.coverage], ["degraded", [], [], null]);
+  const cohesion = await reportCohesionClusters({ projectRoot: root }, { runtime });
+  assert.deepEqual([cohesion.status, cohesion.containers, cohesion.coverage], ["degraded", [], null]);
+  assert.ok(cohesion.diagnostics.some(item => item.code === "unsupported_runtime"));
+  for (const [name, call] of [["groups", findSameNameUnits], ["units", reportComplexUnits]]) {
+    const found = await call({ projectRoot: root }, { runtime });
+    assert.deepEqual([found.status, found[name], found.coverage], ["degraded", [], null], name);
+  }
+  for (const validate of [validateSharedLiterals, validateCohesion, validateSameNameUnits, validateComplexUnits]) {
+    for (const input of [{ limit: 0 }, { offset: 1 }, { allModules: true }, { includeTests: "yes" }, { filters: { paths: ["../outside"] } }])
+      assert.throws(() => validate({ projectRoot: "/tmp", ...input }), error => ["validation_failed", "invalid_path"].includes(error.code), JSON.stringify(input));
+    validate({ projectRoot: "/tmp", limit: 100, includeTests: true, filters: { paths: ["src"] } });
+  }
+});
+test("prepared shared literal groups read snapshot files, leave out tests by default, and apply path filters", async t => {
+  const { root } = await fixture(t);
+  const files = {
+    "src/states.mjs": "export const PHASES = ['applying', 'available', 'awaiting-consent'];\n",
+    "src/panel.mjs": "export function render(phase) {\n  return phase === 'applying' ? 'available' : 'awaiting-consent';\n}\n",
+    "test/panel.test.mjs": "test('phases', () => ['applying', 'available', 'awaiting-consent']);\n"
+  };
+  const units = [];
+  for (const [file, content] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), content);
+    units.push({ id: file, file, kind: file.startsWith("test/") ? "function" : file.includes("states") ? "constant" : "function", name: path.basename(file), domain: "code",
+      range: { startLine: 1, endLine: content.split("\n").length - 1 }, span: { start: 0, end: content.length } });
+  }
+  const runtime = { prepare: async source => ({ status: "ready", snapshot: (await source.snapshot()).sourceFingerprint, preparationId: "test", diagnostics: [],
+    prepared: { index: { units, edges: [], structureComplete: true }, revision: "test", modelIdentity: "test" } }) };
+  const found = await findSharedLiterals({ projectRoot: root }, { runtime });
+  assert.equal(found.status, "ready");
+  assert.deepEqual(found.groups.map(group => group.members.map(member => member.file).sort()), [["src/panel.mjs", "src/states.mjs"]]);
+  const withTests = await findSharedLiterals({ projectRoot: root, includeTests: true }, { runtime });
+  assert.deepEqual(withTests.groups[0].members.map(member => member.file).sort(), ["src/panel.mjs", "src/states.mjs", "test/panel.test.mjs"]);
+  assert.deepEqual((await findSharedLiterals({ projectRoot: root, filters: { paths: ["src/panel.mjs"] } }, { runtime })).groups, []);
+  const cohesion = await reportCohesionClusters({ projectRoot: root }, { runtime });
+  assert.deepEqual([cohesion.status, cohesion.containers, cohesion.coverage], ["ready", [], { examinedContainers: 0, reportedContainers: 0 }]);
+  // Each analysis retains its complete result, with the hash of every file that the result names.
+  const receipt = await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: found.receiptId });
+  assert.deepEqual([receipt.kind, receipt.tool, receipt.section, receipt.totalCount, receipt.snapshot], ["repository-analysis", "find_shared_literals", "groups", 1, found.snapshot]);
+  // The response shortens long literal lists, and the receipt keeps the complete groups.
+  assert.deepEqual(receipt.entries, found.groups.map(({ literalCount, ...group }) => group));
+  assert.equal(found.groups[0].literalCount, 3);
+  assert.deepEqual(receipt.scope, { paths: [], includeTests: false });
+  const named = await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: found.receiptId, section: "files" });
+  assert.deepEqual(named.entries.map(entry => entry.file), ["src/panel.mjs", "src/states.mjs"]);
+  assert.ok(named.entries.every(entry => /^[a-f0-9]{64}$/.test(entry.hash)));
+  // The receipt keeps every group, and the response applies the limit.
+  const limited = await findSharedLiterals({ projectRoot: root, includeTests: true, limit: 1 }, { runtime });
+  assert.equal(limited.totalGroups, 1);
+  assert.notEqual(limited.receiptId, found.receiptId);
+  assert.equal((await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: cohesion.receiptId })).section, "containers");
+});
+test("prepared same-name groups and complex units read snapshot files and retain receipts", async t => {
+  const { root } = await fixture(t);
+  const isObject = "function isObject(value) {\n  return value !== null && typeof value === 'object';\n}\n";
+  const dispatch = `function handle(name) {\n${Array.from({ length: 9 }, (_, index) => `  if (name === "tool_${index}") return ${index};`).join("\n")}\n}\n`;
+  const files = { "src/a.mjs": isObject, "src/b.mjs": isObject, "src/mcp.mjs": dispatch };
+  const units = [];
+  for (const [file, content] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), content);
+    units.push({ id: file, file, kind: "function", name: file.endsWith("mcp.mjs") ? "handle" : "isObject", domain: "code", range: { startLine: 1, endLine: content.split("\n").length - 1 }, span: { start: 0, end: content.length - 1 } });
+  }
+  const runtime = { prepare: async source => ({ status: "ready", snapshot: (await source.snapshot()).sourceFingerprint, preparationId: "test", diagnostics: [],
+    prepared: { index: { units, edges: [], unresolvedReferences: [], structureComplete: true }, revision: "test", modelIdentity: "test" } }) };
+  const same = await findSameNameUnits({ projectRoot: root }, { runtime });
+  assert.deepEqual(same.groups.map(group => [group.name, group.kind, group.files]), [["isObject", "identical", 2]]);
+  assert.deepEqual((await findSameNameUnits({ projectRoot: root, filters: { paths: ["src/a.mjs"] } }, { runtime })).groups, []);
+  const complex = await reportComplexUnits({ projectRoot: root }, { runtime });
+  assert.deepEqual(complex.units.map(unit => [unit.selector, unit.dispatch]), [["handle", { subject: "name", values: 9 }]]);
+  const receipt = await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: complex.receiptId });
+  assert.deepEqual([receipt.tool, receipt.section, receipt.totalCount], ["report_complex_units", "units", 1]);
+  assert.equal((await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: same.receiptId })).section, "groups");
+});
+test("shared dependency input limits, unknown fields, and path traversal fail before preparation", () => {
+  for (const input of [{ limit: 0 }, { limit: 101 }, { includeTests: "yes" }, { filters: { domains: ["code"] } }, { filters: { paths: ["../outside"] } }, { query: "x" }, { snapshotId: "x" }])
+    assert.throws(() => validateSharedDependencies({ projectRoot: "/tmp", ...input }), error => ["validation_failed", "invalid_path"].includes(error.code), JSON.stringify(input));
+  validateSharedDependencies({ projectRoot: "/tmp", limit: 100, includeTests: true, filters: { paths: ["src/server"] } });
 });
 test("search input limits, unknown fields, and path traversal fail before preparation", () => {
   for (const input of [{ query: "" }, { query: "x", limit: 51 }, { query: "x", limit: null }, { query: "x", limit: "10" }, { query: "x", filters: { domains: ["unknown"] } }, { query: "x", filters: { paths: ["../outside"] } }, { query: "x", filters: { surprise: [] } }, { query: "x", extra: true }]) assert.throws(() => validateConceptSearch(input));
@@ -167,6 +275,31 @@ test("a concurrent source edit prevents generation publication", async t => {
   assert.equal(result.status, "degraded"); assert.equal(result.diagnostics[0].code, "stale_snapshot");
   await assert.rejects(readFile(path.join((await runtime.location(root)).directory, "current.json")), { code: "ENOENT" });
 });
+test("a downloaded archive is removed after extraction ends, including when extraction fails", async t => {
+  const { directory, root } = await fixture(t), localManifest = path.join(directory, "manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")), bytes = Buffer.from("not a tar");
+  manifest.bundles[`${process.platform}-${process.arch}`] = { url: "https://example.invalid/pinned.tar.gz", bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), unpackedBytes: 100 };
+  await writeFile(localManifest, JSON.stringify(manifest));
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async () => ({ ok: true, body: { async *[Symbol.asyncIterator]() { yield bytes; } } });
+  const cache = path.join(directory, "cache"), runtime = new NativeSemanticRuntime({ directory: cache, manifestPath: localManifest });
+  const result = await runtime.prepare(await openNativeRepositoryIntelligence(root));
+  assert.equal(result.status, "degraded");
+  assert.deepEqual(await readdir(path.join(cache, "assets")), []);
+});
+
+test("asset pruning keeps current and recent assets and removes stale assets and extracted archives", async t => {
+  const { directory } = await fixture(t), assets = path.join(directory, "assets"), day = 24 * 60 * 60 * 1000, old = new Date(Date.now() - 20 * day);
+  for (const name of ["current", "recent", "stale", "current.tar.gz", "stale.tar.gz", "orphan.tar.gz", "stale.123.tmp", "stale.lock"]) {
+    const target = path.join(assets, name);
+    if (name.includes(".")) { await mkdir(assets, { recursive: true }); await writeFile(target, name); } else { await mkdir(path.join(target, "inner"), { recursive: true }); await writeFile(path.join(target, "inner", "file"), name); }
+  }
+  for (const name of ["stale", "stale.tar.gz", "orphan.tar.gz", "stale.123.tmp", "current"]) await utimes(path.join(assets, name), old, old);
+  await pruneAssets(assets, new Set(["current"]));
+  assert.deepEqual((await readdir(assets)).sort(), ["current", "recent", "stale.lock"]);
+});
+
 test("invalid checksums and interrupted downloads publish no runtime and remove temporary files", async t => {
   const { directory, root } = await fixture(t), localManifest = path.join(directory, "manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));

@@ -1,0 +1,1154 @@
+[
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "exactKeys"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "assertExactKeys"
+  },
+  "verdict": "same",
+  "reason": "Both check that an object has exactly the allowed keys and all required keys; exactKeys is a boolean copy of the throwing assertExactKeys."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "exactKeys"
+  },
+  "b": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertExactKeys"
+  },
+  "verdict": "same",
+  "reason": "Both check exact allowed and required object keys; exactKeys is the boolean form of the same validation."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "clockMilliseconds"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "assertIsoDate"
+  },
+  "verdict": "unrelated",
+  "reason": "One reads a clock value with a fallback; the other validates an ISO date string. Only Date parsing is shared."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "clockMilliseconds"
+  },
+  "b": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertIsoDate"
+  },
+  "verdict": "unrelated",
+  "reason": "One reads a clock value with a fallback; the other validates an ISO date string. Only Date parsing is shared."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "normalizeQueryResults"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/repository-intelligence.mjs",
+   "name": "candidate"
+  },
+  "verdict": "related",
+  "reason": "Both turn a raw node into a normalized result and map a non-finite score to null, but one validates a provider payload and the other builds a ranked candidate."
+ },
+ {
+  "a": {
+   "file": "scripts/native-build/runtime-output.mjs",
+   "name": "files"
+  },
+  "b": {
+   "file": "scripts/validate-sdm.mjs",
+   "name": "validateRepositorySkills"
+  },
+  "verdict": "unrelated",
+  "reason": "A recursive runtime-output file walk and a skill-document validator only share readdir and sorting."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "exactKeys"
+  },
+  "b": {
+   "file": "src/server/session/host-adapters/codex-config.mjs",
+   "name": "validateOriginShape"
+  },
+  "verdict": "unrelated",
+  "reason": "Different shape rules: exact key set versus optional capacity keys that must map to objects. Only isObject and hasOwn are shared."
+ },
+ {
+  "a": {
+   "file": "bench/harness/bench.py",
+   "name": "codex_call"
+  },
+  "b": {
+   "file": "bench/skill_eval/run.py",
+   "name": "run_command"
+  },
+  "verdict": "related",
+  "reason": "codex_call contains the same timed subprocess run with timeout output decoding that run_command implements, inside larger Codex command construction and parsing."
+ },
+ {
+  "a": {
+   "file": "scripts/build-native-runtime.mjs",
+   "name": "collectLicenses"
+  },
+  "b": {
+   "file": "bench/native-semantics.mjs",
+   "name": "disk"
+  },
+  "verdict": "unrelated",
+  "reason": "License collection in a build script and a disk-size sum in a benchmark only share a generic recursive readdir/lstat walk."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "clockMilliseconds"
+  },
+  "b": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertIsoDate"
+  },
+  "verdict": "unrelated",
+  "reason": "One reads a clock value; the other validates an ISO date string. Only Date parsing is shared."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "exactIndexExists"
+  },
+  "b": {
+   "file": "src/server/session/host-adapters/codex-transcript.mjs",
+   "name": "canonicalDirectory"
+  },
+  "verdict": "related",
+  "reason": "Both apply the same real-directory, no-symlink lstat check, but one tests for a .codegraph index and the other canonicalizes a caller path."
+ },
+ {
+  "a": {
+   "file": "src/server/review/review-server-pool.mjs",
+   "name": "close"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/codenib-provider.mjs",
+   "name": "failAll"
+  },
+  "verdict": "unrelated",
+  "reason": "Shutting down a review server pool and rejecting pending MCP requests only share Map clearing and clearTimeout."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "exactIndexExists"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+   "name": "assertSafeAncestors"
+  },
+  "verdict": "related",
+  "reason": "Both use the same lstat directory-and-not-symlink safety check, applied once versus to every ancestor."
+ },
+ {
+  "a": {
+   "file": "scripts/build-native-runtime.mjs",
+   "name": "inventory"
+  },
+  "b": {
+   "file": "scripts/validate-sdm.mjs",
+   "name": "validateRepositorySkills"
+  },
+  "verdict": "unrelated",
+  "reason": "Runtime package inventory with hashing and a skill-document validator only share directory listing."
+ },
+ {
+  "a": {
+   "file": "src/server/workflow/decision-history.mjs",
+   "name": "rootAndDirectory"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+   "name": "privateDirectory"
+  },
+  "verdict": "related",
+  "reason": "Both create a 0700 private directory and verify it is a non-symlink directory equal to its realpath, but rootAndDirectory also resolves the project root and digest."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+   "name": "openNativeRepositoryIntelligence"
+  },
+  "b": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "canonicalDirectory"
+  },
+  "verdict": "related",
+  "reason": "Both resolve a root path with realpath and confirm it is a directory before use; the shared sub-step is canonical directory resolution."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "assertTraceDirectory"
+  },
+  "b": {
+   "file": "src/server/session/host-adapters/codex-transcript.mjs",
+   "name": "canonicalDirectory"
+  },
+  "verdict": "related",
+  "reason": "Both use the realpath plus lstat no-symlink directory check, but one asserts a fixed store directory inside the data root and the other canonicalizes a caller path."
+ },
+ {
+  "a": {
+   "file": "scripts/build-native-runtime.mjs",
+   "name": "collectLicenses"
+  },
+  "b": {
+   "file": "scripts/validate-sdm.mjs",
+   "name": "validateRepositorySkills"
+  },
+  "verdict": "unrelated",
+  "reason": "License collection and a skill-document validator only share readdir and readFile."
+ },
+ {
+  "a": {
+   "file": "src/server/conservation/concept-delta.mjs",
+   "name": "loadDelta"
+  },
+  "b": {
+   "file": "src/server/session/host-adapters/codex-transcript.mjs",
+   "name": "readTranscriptTail"
+  },
+  "verdict": "related",
+  "reason": "Both perform a bounded, no-follow read of a regular file through an open handle, but for different file formats and purposes."
+ },
+ {
+  "a": {
+   "file": "src/server/workflow/decision-history.mjs",
+   "name": "rootAndDirectory"
+  },
+  "b": {
+   "file": "src/server/session/host-adapters/codex-transcript.mjs",
+   "name": "canonicalDirectory"
+  },
+  "verdict": "related",
+  "reason": "Both resolve and verify a non-symlink canonical directory, but rootAndDirectory also creates the store and computes the project digest."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "inspectLockPath"
+  },
+  "b": {
+   "file": "src/server/session/host-adapters/codex-transcript.mjs",
+   "name": "canonicalDirectory"
+  },
+  "verdict": "related",
+  "reason": "Both apply the realpath plus no-symlink lstat check, but one inspects a lock path and the other canonicalizes a directory."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex-transcript.mjs",
+   "name": "readSessionMetaLine"
+  },
+  "b": {
+   "file": "src/server/conservation/concept-delta.mjs",
+   "name": "loadDelta"
+  },
+  "verdict": "related",
+  "reason": "Both perform a bounded, no-follow, identity-checked read of a regular file through a handle, for different files and parsers."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex-transcript.mjs",
+   "name": "canonicalDirectory"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "inspectLockPath"
+  },
+  "verdict": "related",
+  "reason": "Both apply the realpath plus no-symlink lstat check, but one inspects a lock path and the other canonicalizes a directory."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "releaseOwnedLock"
+  },
+  "b": {
+   "file": "src/server/workflow/decision-history.mjs",
+   "name": "atomicJson"
+  },
+  "verdict": "unrelated",
+  "reason": "An ownership-checked lock release and an atomic JSON write only share rename and randomUUID."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+   "name": "filesystemFiles"
+  },
+  "b": {
+   "file": "scripts/validate-sdm.mjs",
+   "name": "validateRepositorySkills"
+  },
+  "verdict": "unrelated",
+  "reason": "A bounded fallback repository file walk and a skill-document validator only share readdir and sorting."
+ },
+ {
+  "a": {
+   "file": "src/server/review/review-server-pool.mjs",
+   "name": "close"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+   "name": "stop"
+  },
+  "verdict": "unrelated",
+  "reason": "Closing a review server pool and stopping a native helper process only share Map clearing and clearTimeout."
+ },
+ {
+  "a": {
+   "file": "bench/tasks/kvstore/oracle/kvstore.py",
+   "name": "_append"
+  },
+  "b": {
+   "file": "bench/tasks/minidb/oracle/minidb.py",
+   "name": "_persist"
+  },
+  "verdict": "unrelated",
+  "reason": "An append with fsync and a whole-file atomic replace in two independent benchmark oracle fixtures only share flush and fsync."
+ },
+ {
+  "a": {
+   "file": "bench/harness/bench.py",
+   "name": "prepare_codex_marketplace"
+  },
+  "b": {
+   "file": "bench/skill_eval/run.py",
+   "name": "write_json"
+  },
+  "verdict": "unrelated",
+  "reason": "Building a Codex marketplace directory and a generic JSON write helper only share pretty JSON output."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "exactIndexExists"
+  },
+  "b": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "assertTraceDirectory"
+  },
+  "verdict": "related",
+  "reason": "Both apply the lstat directory-and-not-symlink safety check, but one probes for an index and the other asserts the trace store directory and its containment."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "exactIndexExists"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "assertFactDirectory"
+  },
+  "verdict": "related",
+  "reason": "Both apply the lstat directory-and-not-symlink safety check, but one probes for an index and the other asserts the fact store directory and its containment."
+ },
+ {
+  "a": {
+   "file": "bench/tasks/kvstore/oracle/kvstore.py",
+   "name": "compact"
+  },
+  "b": {
+   "file": "bench/tasks/minidb/oracle/minidb.py",
+   "name": "_persist"
+  },
+  "verdict": "related",
+  "reason": "Both use the same temp-file write, fsync, and os.replace protocol, but in two independent benchmark oracle fixtures with different data."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+   "name": "runCommand"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/codenib-provider.mjs",
+   "name": "close"
+  },
+  "verdict": "related",
+  "reason": "Both wait on a child process with a kill-after-timeout fallback, but one runs a git command with output limits and the other closes an MCP client."
+ },
+ {
+  "a": {
+   "file": "scripts/native-build/extract.mjs",
+   "name": "extractRuntime"
+  },
+  "b": {
+   "file": "src/server/workflow/decision-history.mjs",
+   "name": "assessRecovery"
+  },
+  "verdict": "unrelated",
+  "reason": "Archive entry validation and recovery-note status assessment only share an incidental regular-file lstat check."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "exactIndexExists"
+  },
+  "b": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "inspectLockPath"
+  },
+  "verdict": "related",
+  "reason": "Both reject symlinks with lstat, but one probes for an index directory and the other validates a lock path in its storage directory."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "exactIndexExists"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "inspectLockPath"
+  },
+  "verdict": "related",
+  "reason": "Both reject symlinks with lstat, but one probes for an index directory and the other validates a lock path in its storage directory."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "inspectLockPath"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+   "name": "privateDirectory"
+  },
+  "verdict": "related",
+  "reason": "Both verify with lstat and realpath that a path is not a symlink and stays canonical, but one inspects a lock and the other creates a private directory."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+   "name": "privateDirectory"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "inspectLockPath"
+  },
+  "verdict": "related",
+  "reason": "Both verify with lstat and realpath that a path is not a symlink and stays canonical, but one creates a private directory and the other inspects a lock."
+ },
+ {
+  "a": {
+   "file": "src/server/workflow/decision-history.mjs",
+   "name": "assessRecovery"
+  },
+  "b": {
+   "file": "src/native-runtime/units.mts",
+   "name": "resolveTextLinks"
+  },
+  "verdict": "unrelated",
+  "reason": "Recovery-note status assessment and Markdown link resolution only share path string helpers."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "inspectLockPath"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "assertFactDirectory"
+  },
+  "verdict": "related",
+  "reason": "Both apply the same lstat no-symlink plus realpath containment check, to a lock path versus the fact store directory; the two stores duplicate this pattern."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "assertTraceDirectory"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "inspectLockPath"
+  },
+  "verdict": "related",
+  "reason": "Both apply the same lstat no-symlink plus realpath containment check, to the trace store directory versus a retention lock path."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "symbolIdentityMatches"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/codenib-provider.mjs",
+   "name": "symbolIdentityMatches"
+  },
+  "verdict": "same",
+  "reason": "Identical symbol-name matching logic duplicated in two providers."
+ },
+ {
+  "a": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "timestamp"
+  },
+  "b": {
+   "file": "src/server/session/host-adapters/codex-config.mjs",
+   "name": "isoNow"
+  },
+  "verdict": "related",
+  "reason": "timestamp's fallback branch is exactly isoNow's injectable-clock-to-ISO conversion, plus string parsing."
+ },
+ {
+  "a": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "timestamp"
+  },
+  "b": {
+   "file": "src/server/session/host-adapters/codex.mjs",
+   "name": "observedAt"
+  },
+  "verdict": "related",
+  "reason": "timestamp's fallback branch is exactly observedAt's injectable-clock-to-ISO conversion, plus string parsing."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex-config.mjs",
+   "name": "isoNow"
+  },
+  "b": {
+   "file": "src/server/session/host-adapters/codex.mjs",
+   "name": "observedAt"
+  },
+  "verdict": "same",
+  "reason": "Identical injectable-clock-to-ISO-string helpers under different names."
+ },
+ {
+  "a": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "readHookInput"
+  },
+  "b": {
+   "file": "src/hooks/record-session-facts.mjs",
+   "name": "readHookInput"
+  },
+  "verdict": "same",
+  "reason": "Identical bounded stdin reader copied in both hooks."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertIsoDate"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "assertIsoDate"
+  },
+  "verdict": "same",
+  "reason": "Identical strict ISO date assertion in two session modules."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "readLockOwner"
+  },
+  "b": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "readLockOwner"
+  },
+  "verdict": "same",
+  "reason": "Same lock-owner reading and validation; one returns null, the other throws on invalid metadata."
+ },
+ {
+  "a": {
+   "file": "bench/harness/bench.py",
+   "name": "parse_codex_jsonl"
+  },
+  "b": {
+   "file": "bench/skill_eval/run.py",
+   "name": "parse_codex_jsonl"
+  },
+  "verdict": "same",
+  "reason": "Both parse Codex JSONL events into the same result payload; differ in usage accounting and session id."
+ },
+ {
+  "a": {
+   "file": "bench/harness/bench.py",
+   "name": "load_results"
+  },
+  "b": {
+   "file": "bench/skill_eval/report.py",
+   "name": "load_records"
+  },
+  "verdict": "same",
+  "reason": "Both load JSONL result records from files or run directories and apply defaults."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertExactKeys"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "assertExactKeys"
+  },
+  "verdict": "same",
+  "reason": "Same exact-keys object assertion; only the error type for non-objects differs."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+   "name": "stop"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/codenib-provider.mjs",
+   "name": "failAll"
+  },
+  "verdict": "related",
+  "reason": "Both reject and clear all pending requests with timeout cleanup; stop also kills the child process."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "clockMilliseconds"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "clockMilliseconds"
+  },
+  "verdict": "same",
+  "reason": "Both normalize an injectable clock to epoch milliseconds; differ only in fallback behavior."
+ },
+ {
+  "a": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "timestamp"
+  },
+  "b": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "clockMilliseconds"
+  },
+  "verdict": "related",
+  "reason": "Both read an injectable clock and coerce it to a valid Date; one returns ISO text, the other milliseconds."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex-config.mjs",
+   "name": "isoNow"
+  },
+  "b": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "clockMilliseconds"
+  },
+  "verdict": "related",
+  "reason": "Both read an injectable clock and coerce it to a valid Date; one returns ISO text, the other milliseconds."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex.mjs",
+   "name": "observedAt"
+  },
+  "b": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "clockMilliseconds"
+  },
+  "verdict": "related",
+  "reason": "Both read an injectable clock and coerce it to a valid Date; one returns ISO text, the other milliseconds."
+ },
+ {
+  "a": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "timestamp"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "assertIsoDate"
+  },
+  "verdict": "related",
+  "reason": "Both parse a date string and check it is finite; timestamp normalizes what assertIsoDate validates."
+ },
+ {
+  "a": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "timestamp"
+  },
+  "b": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertIsoDate"
+  },
+  "verdict": "related",
+  "reason": "Both parse a date string and check it is finite; timestamp normalizes what assertIsoDate validates."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex-config.mjs",
+   "name": "isoNow"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "assertIsoDate"
+  },
+  "verdict": "unrelated",
+  "reason": "isoNow formats the current clock and assertIsoDate validates input; only generic Date calls overlap."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex-config.mjs",
+   "name": "isoNow"
+  },
+  "b": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertIsoDate"
+  },
+  "verdict": "unrelated",
+  "reason": "isoNow formats the current clock and assertIsoDate validates input; only generic Date calls overlap."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex.mjs",
+   "name": "observedAt"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "assertIsoDate"
+  },
+  "verdict": "unrelated",
+  "reason": "observedAt formats the current clock and assertIsoDate validates input; only generic Date calls overlap."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex.mjs",
+   "name": "observedAt"
+  },
+  "b": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "assertIsoDate"
+  },
+  "verdict": "unrelated",
+  "reason": "observedAt formats the current clock and assertIsoDate validates input; only generic Date calls overlap."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "openExistingRegularFile"
+  },
+  "b": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "openExistingRegularFile"
+  },
+  "verdict": "same",
+  "reason": "Identical no-follow open with inode recheck; only the error class and message differ."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "inspectLockPath"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "inspectLockPath"
+  },
+  "verdict": "same",
+  "reason": "Identical lock-path safety inspection; only the error class and message differ."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "traceFileRecords"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "storedFactFiles"
+  },
+  "verdict": "same",
+  "reason": "Both enumerate hashed JSON records in a store directory and remove stale temporary files."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "inspectRegularFile"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "inspectRegularFile"
+  },
+  "verdict": "same",
+  "reason": "Same regular-file safety inspection (direct child, no symlink, single link, realpath containment)."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "resolveTraceDirectory"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "resolveFactDirectory"
+  },
+  "verdict": "same",
+  "reason": "Same private store-directory creation and validation; only the directory constant and errors differ."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+   "name": "exactSymbolMatch"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "symbolIdentityMatches"
+  },
+  "verdict": "same",
+  "reason": "Both match a symbol identity by full name or terminal segment with the same normalization."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+   "name": "exactSymbolMatch"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/codenib-provider.mjs",
+   "name": "symbolIdentityMatches"
+  },
+  "verdict": "same",
+  "reason": "Both match a symbol identity by full name or terminal segment with the same normalization."
+ },
+ {
+  "a": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "timestamp"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "clockMilliseconds"
+  },
+  "verdict": "related",
+  "reason": "Both coerce an injectable clock value to a valid time; one returns ISO text, the other milliseconds."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex-config.mjs",
+   "name": "isoNow"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "clockMilliseconds"
+  },
+  "verdict": "related",
+  "reason": "Both coerce an injectable clock value to a valid time; one returns ISO text, the other milliseconds."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex.mjs",
+   "name": "observedAt"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "clockMilliseconds"
+  },
+  "verdict": "related",
+  "reason": "Both coerce an injectable clock value to a valid time; one returns ISO text, the other milliseconds."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "inspectLockPath"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "inspectRegularFile"
+  },
+  "verdict": "related",
+  "reason": "Both share the direct-child, no-symlink, realpath containment check, but inspect a lock versus a record file."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "inspectRegularFile"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "inspectLockPath"
+  },
+  "verdict": "related",
+  "reason": "Both share the direct-child, no-symlink, realpath containment check, but inspect a record file versus a lock."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "createOwnedLock"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "createOwnedLock"
+  },
+  "verdict": "same",
+  "reason": "Both create an owned lock directory with a private owner file; the facts version adds atomic rename publication."
+ },
+ {
+  "a": {
+   "file": "bench/harness/bench.py",
+   "name": "claude_call"
+  },
+  "b": {
+   "file": "bench/skill_eval/run.py",
+   "name": "run_command"
+  },
+  "verdict": "related",
+  "reason": "Both run a subprocess with timeout and decode partial output; claude_call also builds the command and parses JSON."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "exactKeys"
+  },
+  "b": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "exactCustomEvent"
+  },
+  "verdict": "related",
+  "reason": "Both check that an object has only allowed keys; exactKeys also requires every key."
+ },
+ {
+  "a": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "canonicalDirectory"
+  },
+  "b": {
+   "file": "src/server/session/host-adapters/codex-transcript.mjs",
+   "name": "canonicalDirectory"
+  },
+  "verdict": "same",
+  "reason": "Both canonicalize an absolute path to a real directory or return null; differ only in stat versus lstat."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "acquireLock"
+  },
+  "b": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "acquireLock"
+  },
+  "verdict": "same",
+  "reason": "Same retrying stale-lock acquisition protocol; the facts version adds stale-lock rename and cleanup."
+ },
+ {
+  "a": {
+   "file": "scripts/native-build/runtime-output.mjs",
+   "name": "files"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/native-repository-intelligence.mjs",
+   "name": "filesystemFiles"
+  },
+  "verdict": "related",
+  "reason": "Both walk a directory tree recursively in sorted order; purposes and symlink handling differ."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "enforceDirectoryLimits"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "enforceFactDirectoryLimits"
+  },
+  "verdict": "same",
+  "reason": "Same age and size retention eviction for a store directory; minor differences in target bytes."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace-store.mjs",
+   "name": "assertTraceDirectory"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "assertFactDirectory"
+  },
+  "verdict": "same",
+  "reason": "Identical store-directory recheck; only the directory constant and error class differ."
+ },
+ {
+  "a": {
+   "file": "scripts/native-build/mcp-smoke.mjs",
+   "name": "stop"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/codenib-provider.mjs",
+   "name": "close"
+  },
+  "verdict": "related",
+  "reason": "Both close an MCP stdio child by ending stdin and waiting for exit; close adds a kill timeout."
+ },
+ {
+  "a": {
+   "file": "bench/skill_eval/report.py",
+   "name": "bootstrap_interval"
+  },
+  "b": {
+   "file": "bench/harness/bench.py",
+   "name": "paired_bootstrap"
+  },
+  "verdict": "same",
+  "reason": "Both compute a percentile bootstrap confidence interval for a mean."
+ },
+ {
+  "a": {
+   "file": "src/native-runtime/units.mts",
+   "name": "unit"
+  },
+  "b": {
+   "file": "src/native-runtime/fragments.mts",
+   "name": "spanOf"
+  },
+  "verdict": "related",
+  "reason": "Both convert a line range to a character span with the same line split; unit also builds the whole source unit."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+   "name": "boundedWait"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/codenib-provider.mjs",
+   "name": "close"
+  },
+  "verdict": "related",
+  "reason": "close contains a timeout-bounded wait for exit, which is what boundedWait implements generically."
+ },
+ {
+  "a": {
+   "file": "src/server/session/host-adapters/codex-transcript.mjs",
+   "name": "canonicalDirectory"
+  },
+  "b": {
+   "file": "src/server/session/host-session-facts.mjs",
+   "name": "assertFactDirectory"
+  },
+  "verdict": "unrelated",
+  "reason": "One resolves a caller directory to null on failure, the other asserts a store directory; only generic lstat and realpath overlap."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "normalizeTraceSourcePath"
+  },
+  "b": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "rebaseAbsolutePath"
+  },
+  "verdict": "related",
+  "reason": "Both use the same path-inside-root containment check; one normalizes a source path, the other rebases across aliases."
+ },
+ {
+  "a": {
+   "file": "src/server/conservation/concept-delta.mjs",
+   "name": "resolveArtifactPath"
+  },
+  "b": {
+   "file": "src/server/workflow/state.mjs",
+   "name": "resolveStatePath"
+  },
+  "verdict": "same",
+  "reason": "Both resolve a project-relative artifact path safely inside the root, optionally create the parent, and reject symlink targets."
+ },
+ {
+  "a": {
+   "file": "scripts/native-build/mcp-smoke.mjs",
+   "name": "start"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+   "name": "start"
+  },
+  "verdict": "related",
+  "reason": "Both spawn a child process and route JSON-line responses to pending requests by id."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/repository-source-path.mjs",
+   "name": "normalizeRepositorySourcePath"
+  },
+  "b": {
+   "file": "src/hooks/record-session-trace.mjs",
+   "name": "rebaseAbsolutePath"
+  },
+  "verdict": "related",
+  "reason": "Both use the same relative-path escape check; one validates a repository path, the other rebases across aliases."
+ },
+ {
+  "a": {
+   "file": "src/server/conservation/concept-delta.mjs",
+   "name": "canonicalReference"
+  },
+  "b": {
+   "file": "src/server/conservation/conservation-store.mts",
+   "name": "canonical"
+  },
+  "verdict": "related",
+  "reason": "Both canonicalize objects by sorting keys; canonical is a generic stable JSON serializer."
+ },
+ {
+  "a": {
+   "file": "scripts/native-build/runtime-output.mjs",
+   "name": "files"
+  },
+  "b": {
+   "file": "scripts/build-native-runtime.mjs",
+   "name": "inventory"
+  },
+  "verdict": "related",
+  "reason": "Both walk native runtime output recursively and reject symlinks; inventory also hashes files and collects licenses."
+ },
+ {
+  "a": {
+   "file": "src/server/session/session-trace.mjs",
+   "name": "normalizeTraceSourcePath"
+  },
+  "b": {
+   "file": "src/server/repository-intelligence/repository-source-path.mjs",
+   "name": "normalizeRepositorySourcePath"
+  },
+  "verdict": "same",
+  "reason": "Both normalize a project-relative source path to portable POSIX form and reject paths that leave the root."
+ },
+ {
+  "a": {
+   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
+   "name": "exactIndexExists"
+  },
+  "b": {
+   "file": "src/server/workflow/decision-history.mjs",
+   "name": "rootAndDirectory"
+  },
+  "verdict": "unrelated",
+  "reason": "One checks for a CodeGraph index directory, the other resolves the decision-history store; only generic lstat calls overlap."
+ },
+ {
+  "a": {
+   "file": "src/server/workflow/decision-history.mjs",
+   "name": "withLock"
+  },
+  "b": {
+   "file": "src/server/workflow/artifact-store.mjs",
+   "name": "withArtifactLock"
+  },
+  "verdict": "related",
+  "reason": "Both use the same in-process promise-chain mutex keyed by path; withLock also adds a file lock."
+ },
+ {
+  "a": {
+   "file": "src/server/workflow/decision-history.mjs",
+   "name": "assessRecovery"
+  },
+  "b": {
+   "file": "src/server/workflow/state.mjs",
+   "name": "checkpointPause"
+  },
+  "verdict": "related",
+  "reason": "checkpointPause writes a recovery note and digest that assessRecovery later verifies; they share recovery-path and digest rules."
+ }
+]

@@ -21,7 +21,7 @@ src/                 # editable server, native helper, and hook sources
     workflow/        # coordination state, artifact storage, decision history
     review/          # review server, review ledger, browser assets in public/
     conservation/    # concept delta and conservation analysis
-    repository-intelligence/  # providers, native semantic runtime, concept types
+    repository-intelligence/  # providers, native semantic runtime, unit types
     session/         # host adapters, session facts, capacity, and tracing
   native-runtime/    # native helper packaged into runtime archives
   hooks/             # session hook entry points
@@ -29,7 +29,7 @@ dist/                # committed executable runtime and browser assets, same lay
 test/                # server and native helper tests
 vendor/plantuml/     # pinned MIT PlantUML browser runtime
 bin/                 # MCP and standalone review launchers
-.mcp.json            # bundled MCP server definition
+.claude-mcp.json     # Claude MCP server definition
 .codex-mcp.json      # native Codex MCP server definition
 ```
 
@@ -37,6 +37,9 @@ Only the Claude manifests live in `.claude-plugin/`.
 Only the Codex manifest lives in `.codex-plugin/`.
 Shared components such as `skills/`, `hooks/`, and assets stay at the repository root.
 Putting a shared component inside either manifest directory breaks one or both packages.
+Do not name the Claude MCP definition `.mcp.json`.
+Claude Code also reads a root `.mcp.json` as project config when a session runs in this repository.
+That project server has no `${CLAUDE_PLUGIN_ROOT}` value, so it fails to start.
 
 ## Local development
 
@@ -93,7 +96,7 @@ To validate `plugin.json` in isolation, copy the plugin into a scratch directory
 
 The new native subsystem uses strict TypeScript in `.mts` files.
 The existing server remains JavaScript.
-Shared concept and worker message types live in `src/server/repository-intelligence/repository-concept-types.mts`.
+Shared source unit, index, and worker message types live in `src/server/repository-intelligence/repository-unit-types.mts`.
 Edit runtime sources under `src/`, then regenerate the complete runtime tree under `dist/`.
 The build compiles TypeScript and copies handwritten JavaScript, browser assets, and runtime registries.
 Commit both the edited sources and generated output.
