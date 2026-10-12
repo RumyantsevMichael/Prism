@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants as fileConstants } from "node:fs";
 import * as defaultFileSystem from "node:fs/promises";
 import path from "node:path";
+import { createPrivateSessionStore, defaultIsProcessAlive } from "./private-session-store.mjs";
 
 const SCHEMA_VERSION = 1;
 const FACT_DIRECTORY = "session-capacity";
@@ -10,15 +10,6 @@ const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_AGE_MS = 30 * 60 * 1000;
 export const HOST_FACT_MAX_DIRECTORY_BYTES = 16 * 1024 * 1024;
 export const HOST_FACT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const LOCK_RETRY_COUNT = 20;
-const LOCK_STALE_MS = 30_000;
-const MAX_LOCK_OWNER_BYTES = 128;
-const LOCK_DIRECTORY_NAME = ".retention.lock";
-const LOCK_OWNER_PREFIX = "owner-";
-const LOCK_OWNER_PATTERN = /^owner-([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
-const PENDING_LOCK_PATTERN = /^\.retention\.lock\.pending\.([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
-const STALE_LOCK_PATTERN = /^\.retention\.lock\.stale\.([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
-const RELEASE_LOCK_PATTERN = /^\.retention\.lock\.release\.([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
 const HOST_VALUE_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._:/@\[\]-]{0,255}$/;
@@ -124,12 +115,13 @@ const SOURCE_VALUES = Object.freeze({
 });
 const REASON_CODES = new Set(Object.values(HOST_FACT_REASON));
 
-class UnsafeHostFactPathError extends Error {
-  constructor(message) {
-    super(message);
-    this.code = "UNSAFE_HOST_FACT_PATH";
-  }
-}
+const factStore = createPrivateSessionStore({
+  directoryName: FACT_DIRECTORY,
+  subject: "host-session fact",
+  unsafePathCode: "UNSAFE_HOST_FACT_PATH",
+  maxLockOwnerBytes: 128,
+  lockProtocol: "staged"
+});
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -207,134 +199,8 @@ function factPath(directory, sessionDigest) {
   return path.join(directory, `${sessionDigest}.json`);
 }
 
-function wait(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-function noFollowFlags(flags) {
-  return Number.isInteger(fileConstants.O_NOFOLLOW) ? flags | fileConstants.O_NOFOLLOW : flags;
-}
-
-function isDirectChild(directory, candidate) {
-  return path.dirname(candidate) === directory && path.basename(candidate) !== "";
-}
-
-function assertDirectChild(directory, candidate, name) {
-  if (!isDirectChild(directory, candidate)) {
-    throw new UnsafeHostFactPathError(`${name} escapes the host-session fact directory.`);
-  }
-}
-
-async function resolveFactDirectory(dataDirectory, { create, fileSystem }) {
-  if (create) {
-    await fileSystem.mkdir(dataDirectory, { recursive: true, mode: 0o700 });
-  }
-  const dataRoot = await fileSystem.realpath(dataDirectory);
-  const rootMetadata = await fileSystem.lstat(dataRoot);
-  if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) {
-    throw new UnsafeHostFactPathError("The plugin data directory is not a regular directory.");
-  }
-
-  const requestedDirectory = path.join(dataRoot, FACT_DIRECTORY);
-  if (create) {
-    try {
-      await fileSystem.mkdir(requestedDirectory, { mode: 0o700 });
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-    }
-  }
-  const directoryMetadata = await fileSystem.lstat(requestedDirectory);
-  if (directoryMetadata.isSymbolicLink()) {
-    throw new UnsafeHostFactPathError("The host-session fact directory cannot be a symbolic link.");
-  }
-  if (!directoryMetadata.isDirectory()) {
-    throw new UnsafeHostFactPathError("The host-session fact directory is not a directory.");
-  }
-  const directory = await fileSystem.realpath(requestedDirectory);
-  if (path.relative(dataRoot, directory) !== FACT_DIRECTORY) {
-    throw new UnsafeHostFactPathError("The host-session fact directory escapes the plugin data directory.");
-  }
-
-  if (create && process.platform !== "win32") {
-    const directoryFlags = noFollowFlags(
-      fileConstants.O_RDONLY | (Number.isInteger(fileConstants.O_DIRECTORY) ? fileConstants.O_DIRECTORY : 0)
-    );
-    const handle = await fileSystem.open(directory, directoryFlags);
-    try {
-      const openedMetadata = await handle.stat();
-      if (!openedMetadata.isDirectory()) {
-        throw new UnsafeHostFactPathError("The host-session fact directory changed during validation.");
-      }
-      if (typeof handle.chmod === "function") {
-        await handle.chmod(0o700);
-      }
-    } finally {
-      await handle.close();
-    }
-  }
-  return { dataRoot, directory };
-}
-
-async function assertFactDirectory(store, fileSystem) {
-  const metadata = await fileSystem.lstat(store.directory);
-  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-    throw new UnsafeHostFactPathError("The host-session fact directory changed during use.");
-  }
-  const canonical = await fileSystem.realpath(store.directory);
-  if (canonical !== store.directory || path.relative(store.dataRoot, canonical) !== FACT_DIRECTORY) {
-    throw new UnsafeHostFactPathError("The host-session fact directory escapes the plugin data directory.");
-  }
-  return metadata;
-}
-
-async function inspectRegularFile(target, directory, fileSystem, { missing = false } = {}) {
-  assertDirectChild(directory, target, "The host-session fact path");
-  let metadata;
-  try {
-    metadata = await fileSystem.lstat(target);
-  } catch (error) {
-    if (missing && error?.code === "ENOENT") return null;
-    throw error;
-  }
-  if (metadata.isSymbolicLink()) {
-    throw new UnsafeHostFactPathError("The host-session fact record cannot be a symbolic link.");
-  }
-  if (!metadata.isFile()) {
-    throw new UnsafeHostFactPathError("The host-session fact record is not a regular file.");
-  }
-  if (metadata.nlink !== 1) {
-    throw new UnsafeHostFactPathError("The host-session fact record cannot have multiple links.");
-  }
-  const canonical = await fileSystem.realpath(target);
-  if (canonical !== target || path.dirname(canonical) !== directory) {
-    throw new UnsafeHostFactPathError("The host-session fact record escapes its storage directory.");
-  }
-  return metadata;
-}
-
-async function openExistingRegularFile(target, directory, fileSystem, { missing = false } = {}) {
-  const expected = await inspectRegularFile(target, directory, fileSystem, { missing });
-  if (expected === null) return null;
-  const handle = await fileSystem.open(target, noFollowFlags(fileConstants.O_RDONLY));
-  try {
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== expected.dev || opened.ino !== expected.ino) {
-      throw new UnsafeHostFactPathError("The host-session fact record changed during validation.");
-    }
-    return { handle, metadata: opened };
-  } catch (error) {
-    await handle.close().catch(() => {});
-    throw error;
-  }
-}
-
-async function openPrivateFile(target, fileSystem) {
-  const flags = noFollowFlags(fileConstants.O_WRONLY | fileConstants.O_CREAT | fileConstants.O_EXCL);
-  return fileSystem.open(target, flags, 0o600);
-}
-
 async function readStoredFactRecord(target, directory, fileSystem) {
-  const opened = await openExistingRegularFile(target, directory, fileSystem, { missing: true });
+  const opened = await factStore.openExistingRegularFile(target, directory, fileSystem, { missing: true });
   if (!opened) return null;
   try {
     if (opened.metadata.size > MAX_FACT_BYTES) {
@@ -376,259 +242,6 @@ function materialFactText(record) {
   });
 }
 
-function lockOwnerName(token) {
-  return `${LOCK_OWNER_PREFIX}${token}`;
-}
-
-function lockOwnerText(token, pid) {
-  return `${JSON.stringify({ token, pid })}\n`;
-}
-
-function defaultIsProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error?.code === "ESRCH") return false;
-    return null;
-  }
-}
-
-async function createOwnedLock(lockPath, token, pid, fileSystem) {
-  const directory = path.dirname(lockPath);
-  const pendingPath = path.join(directory, `.retention.lock.pending.${token}`);
-  await fileSystem.mkdir(pendingPath, { mode: 0o700 });
-  const ownerName = lockOwnerName(token);
-  const ownerPath = path.join(pendingPath, ownerName);
-  let handle;
-  try {
-    handle = await openPrivateFile(ownerPath, fileSystem);
-    await handle.writeFile(lockOwnerText(token, pid), "utf8");
-    if (typeof handle.sync === "function") await handle.sync();
-    await handle.close();
-    handle = null;
-    try {
-      await fileSystem.lstat(lockPath);
-      const conflict = new Error("The host-session fact store is busy.");
-      conflict.code = "EEXIST";
-      throw conflict;
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-    }
-    try {
-      await fileSystem.rename(pendingPath, lockPath);
-    } catch (error) {
-      let published = false;
-      try {
-        const owner = await readLockOwner(lockPath, directory, fileSystem);
-        published = owner?.token === token && owner.pid === pid;
-      } catch {
-      }
-      if (!published) throw error;
-    }
-    return { lockPath, ownerName, token, pid };
-  } catch (error) {
-    if (handle) await handle.close().catch(() => {});
-    await fileSystem.unlink(ownerPath).catch(() => {});
-    await fileSystem.rmdir(pendingPath).catch(() => {});
-    if (error?.code === "ENOTEMPTY") error.code = "EEXIST";
-    throw error;
-  }
-}
-
-async function inspectLockPath(lockPath, directory, fileSystem) {
-  assertDirectChild(directory, lockPath, "The retention lock path");
-  const metadata = await fileSystem.lstat(lockPath);
-  if (metadata.isSymbolicLink()) {
-    throw new UnsafeHostFactPathError("The retention lock cannot be a symbolic link.");
-  }
-  if (!metadata.isDirectory() && !metadata.isFile()) {
-    throw new UnsafeHostFactPathError("The retention lock has an unsupported file type.");
-  }
-  const canonical = await fileSystem.realpath(lockPath);
-  if (canonical !== lockPath || path.dirname(canonical) !== directory) {
-    throw new UnsafeHostFactPathError("The retention lock escapes the host-session fact directory.");
-  }
-  return metadata;
-}
-
-async function readLockOwner(lockPath, directory, fileSystem) {
-  const metadata = await inspectLockPath(lockPath, directory, fileSystem);
-  if (!metadata.isDirectory()) return null;
-  const entries = await fileSystem.readdir(lockPath);
-  if (entries.length !== 1) return null;
-  const ownerName = entries[0];
-  const match = LOCK_OWNER_PATTERN.exec(ownerName);
-  if (!match) return null;
-  const ownerPath = path.join(lockPath, ownerName);
-  const opened = await openExistingRegularFile(ownerPath, lockPath, fileSystem);
-  try {
-    if (opened.metadata.size > MAX_LOCK_OWNER_BYTES) return null;
-    let value;
-    try {
-      value = JSON.parse(await opened.handle.readFile("utf8"));
-    } catch {
-      return null;
-    }
-    if (
-      !isObject(value)
-      || Object.keys(value).length !== 2
-      || value.token !== match[1]
-      || !Number.isSafeInteger(value.pid)
-      || value.pid < 1
-    ) {
-      return null;
-    }
-    return { lockPath, ownerName, token: value.token, pid: value.pid };
-  } finally {
-    await opened.handle.close();
-  }
-}
-
-async function processState(pid, isProcessAlive) {
-  try {
-    const result = await isProcessAlive(pid);
-    return result === true ? "active" : result === false ? "dead" : "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-
-async function removeOwnedLockArtifact(lock, directory, fileSystem) {
-  const current = await readLockOwner(lock.lockPath, directory, fileSystem);
-  if (!current || current.token !== lock.token || current.pid !== lock.pid) return false;
-  await fileSystem.unlink(path.join(lock.lockPath, current.ownerName));
-  await fileSystem.rmdir(lock.lockPath);
-  return true;
-}
-
-async function removeEmptyLockArtifact(lockPath, directory, fileSystem) {
-  const metadata = await inspectLockPath(lockPath, directory, fileSystem);
-  if (!metadata.isDirectory()) return false;
-  if ((await fileSystem.readdir(lockPath)).length !== 0) return false;
-  await fileSystem.rmdir(lockPath);
-  return true;
-}
-
-async function cleanupAbandonedLockArtifacts(directory, fileSystem, isProcessAlive, assertOwnership) {
-  const entries = await fileSystem.readdir(directory);
-  for (const entry of entries) {
-    const isStale = STALE_LOCK_PATTERN.test(entry);
-    const isRelease = RELEASE_LOCK_PATTERN.test(entry);
-    const isPending = PENDING_LOCK_PATTERN.test(entry);
-    if (!isStale && !isRelease && !isPending) continue;
-    const artifactPath = path.join(directory, entry);
-    const owner = await readLockOwner(artifactPath, directory, fileSystem);
-    if (!owner) {
-      await assertOwnership();
-      if (await removeEmptyLockArtifact(artifactPath, directory, fileSystem)) continue;
-      throw new Error("The host-session fact store is busy because an abandoned lock owner is unknown.");
-    }
-    if (!isRelease && await processState(owner.pid, isProcessAlive) !== "dead") {
-      if (isPending) continue;
-      throw new Error("The host-session fact store is busy because a stale lock owner is active or unknown.");
-    }
-    await assertOwnership();
-    if (!await removeOwnedLockArtifact(owner, directory, fileSystem)) {
-      throw new Error("The host-session fact store is busy because an abandoned lock owner changed during cleanup.");
-    }
-  }
-}
-
-async function assertOwnedLock(lock, directory, fileSystem) {
-  let owner;
-  try {
-    owner = await readLockOwner(lock.lockPath, directory, fileSystem);
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      throw new Error("The host-session fact store lock ownership was lost.");
-    }
-    throw error;
-  }
-  if (!owner || owner.token !== lock.token || owner.pid !== lock.pid) {
-    throw new Error("The host-session fact store lock ownership was lost.");
-  }
-  return true;
-}
-
-async function acquireLock(lockPath, directory, fileSystem, isProcessAlive) {
-  const token = randomUUID();
-  const pid = process.pid;
-  for (let attempt = 0; attempt < LOCK_RETRY_COUNT; attempt += 1) {
-    try {
-      const lock = await createOwnedLock(lockPath, token, pid, fileSystem);
-      const assertOwnership = () => assertOwnedLock(lock, directory, fileSystem);
-      try {
-        await assertOwnership();
-        await cleanupAbandonedLockArtifacts(directory, fileSystem, isProcessAlive, assertOwnership);
-        await assertOwnership();
-      } catch (error) {
-        await releaseOwnedLock(lock, directory, fileSystem).catch(() => {});
-        throw error;
-      }
-      return lock;
-    } catch (error) {
-      if (error?.code !== "EEXIST") {
-        throw error;
-      }
-      try {
-        const metadata = await inspectLockPath(lockPath, directory, fileSystem);
-        if (Date.now() - metadata.mtimeMs > LOCK_STALE_MS) {
-          const owner = await readLockOwner(lockPath, directory, fileSystem);
-          const empty = !owner && metadata.isDirectory() && (await fileSystem.readdir(lockPath)).length === 0;
-          if (empty || (owner && await processState(owner.pid, isProcessAlive) === "dead")) {
-            const stalePath = path.join(directory, `.retention.lock.stale.${randomUUID()}`);
-            await fileSystem.rename(lockPath, stalePath);
-            const movedOwner = await readLockOwner(stalePath, directory, fileSystem);
-            if (
-              (empty && !movedOwner && (await fileSystem.readdir(stalePath)).length === 0)
-              || (movedOwner && movedOwner.token === owner.token && movedOwner.pid === owner.pid)
-            ) {
-              continue;
-            }
-          }
-        }
-      } catch (lockError) {
-        if (lockError?.code === "ENOENT") {
-          continue;
-        }
-        throw lockError;
-      }
-      await wait(Math.min(5 * (attempt + 1), 50));
-    }
-  }
-  return null;
-}
-
-async function releaseOwnedLock(lock, directory, fileSystem) {
-  if (!lock) return false;
-  const releasePath = path.join(directory, `.retention.lock.release.${randomUUID()}`);
-  try {
-    const current = await readLockOwner(lock.lockPath, directory, fileSystem);
-    if (!current || current.token !== lock.token || current.pid !== lock.pid) return false;
-    try {
-      await fileSystem.rename(lock.lockPath, releasePath);
-    } catch (error) {
-      let movedOwner = null;
-      try {
-        movedOwner = await readLockOwner(releasePath, directory, fileSystem);
-      } catch {
-      }
-      if (!movedOwner || movedOwner.token !== lock.token || movedOwner.pid !== lock.pid) {
-        const publicOwner = await readLockOwner(lock.lockPath, directory, fileSystem).catch(() => null);
-        if (!publicOwner || publicOwner.token !== lock.token || publicOwner.pid !== lock.pid) throw error;
-        await fileSystem.rename(lock.lockPath, releasePath);
-      }
-    }
-    const movedOwner = await readLockOwner(releasePath, directory, fileSystem);
-    if (!movedOwner || movedOwner.token !== lock.token || movedOwner.pid !== lock.pid) return false;
-    return removeOwnedLockArtifact(movedOwner, directory, fileSystem);
-  } catch (error) {
-    if (error?.code === "ENOENT") return false;
-    throw error;
-  }
-}
-
 function positiveSafeInteger(value, fallback) {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
@@ -639,7 +252,7 @@ async function storedFactFiles(directory, target, fileSystem, assertOwnership) {
     const entryPath = path.join(directory, entry.name);
     if (entry.isFile() && /^[a-f0-9]{64}\.json\..+\.tmp$/.test(entry.name)) {
       try {
-        await inspectRegularFile(entryPath, directory, fileSystem);
+        await factStore.inspectRegularFile(entryPath, directory, fileSystem);
         await assertOwnership();
         await fileSystem.unlink(entryPath);
       } catch (error) {
@@ -651,7 +264,7 @@ async function storedFactFiles(directory, target, fileSystem, assertOwnership) {
       continue;
     }
     try {
-      const metadata = await inspectRegularFile(entryPath, directory, fileSystem);
+      const metadata = await factStore.inspectRegularFile(entryPath, directory, fileSystem);
       facts.push({
         name: entry.name,
         path: entryPath,
@@ -868,22 +481,21 @@ export async function writeHostSessionFacts(record, {
   if (recordBytes > MAX_FACT_BYTES) {
     throw new Error("The host-session fact record is too large.");
   }
-  const store = await resolveFactDirectory(dataDirectory, { create: true, fileSystem });
+  const store = await factStore.resolveDirectory(dataDirectory, { create: true, fileSystem });
   const target = factPath(store.directory, record.sessionDigest);
-  const directoryLockPath = path.join(store.directory, LOCK_DIRECTORY_NAME);
   const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
   const directoryByteLimit = positiveSafeInteger(maxDirectoryBytes, HOST_FACT_MAX_DIRECTORY_BYTES);
   const factAgeLimit = positiveSafeInteger(maxFactAgeMs, HOST_FACT_MAX_AGE_MS);
   let directoryLock = null;
   let handle;
   try {
-    directoryLock = await acquireLock(directoryLockPath, store.directory, fileSystem, isProcessAlive);
+    directoryLock = await factStore.acquireLock(store.directory, fileSystem, isProcessAlive);
     if (!directoryLock) {
       throw new Error("The host-session fact store is busy.");
     }
-    const assertOwnership = () => assertOwnedLock(directoryLock, store.directory, fileSystem);
+    const assertOwnership = () => factStore.assertOwnedLock(directoryLock, store.directory, fileSystem);
     await assertOwnership();
-    await assertFactDirectory(store, fileSystem);
+    await factStore.assertDirectory(store, fileSystem);
     const existing = await readStoredFactRecord(target, store.directory, fileSystem);
     if (existing) {
       const existingTime = Date.parse(existing.record.observedAt);
@@ -913,7 +525,7 @@ export async function writeHostSessionFacts(record, {
       throw new Error("The host-session fact store reached its storage limit.");
     }
     await assertOwnership();
-    handle = await openPrivateFile(temporary, fileSystem);
+    handle = await factStore.openPrivateFile(temporary, fileSystem);
     await handle.writeFile(recordText, "utf8");
     if (typeof handle.sync === "function") {
       await handle.sync();
@@ -921,8 +533,8 @@ export async function writeHostSessionFacts(record, {
     await handle.close();
     handle = null;
     await assertOwnership();
-    await assertFactDirectory(store, fileSystem);
-    const currentTarget = await inspectRegularFile(target, store.directory, fileSystem, { missing: true });
+    await factStore.assertDirectory(store, fileSystem);
+    const currentTarget = await factStore.inspectRegularFile(target, store.directory, fileSystem, { missing: true });
     if (
       (existing === null && currentTarget !== null)
       || (existing !== null && (
@@ -943,7 +555,7 @@ export async function writeHostSessionFacts(record, {
     }
     if (typeof fileSystem.unlink === "function") {
       try {
-        await assertFactDirectory(store, fileSystem);
+        await factStore.assertDirectory(store, fileSystem);
         const metadata = await fileSystem.lstat(temporary);
         if (!metadata.isDirectory()) await fileSystem.unlink(temporary);
       } catch {
@@ -953,7 +565,7 @@ export async function writeHostSessionFacts(record, {
     throw error;
   } finally {
     if (directoryLock) {
-      await releaseOwnedLock(directoryLock, store.directory, fileSystem).catch(() => {});
+      await factStore.releaseLock(directoryLock, store.directory, fileSystem).catch(() => {});
     }
   }
 }
@@ -995,7 +607,7 @@ export async function readHostSessionFacts({
   const sessionDigest = correlationKey;
   let store;
   try {
-    store = await resolveFactDirectory(dataDirectory, { create: false, fileSystem });
+    store = await factStore.resolveDirectory(dataDirectory, { create: false, fileSystem });
   } catch (error) {
     if (error?.code === "ENOENT") {
       return unsupported(HOST_FACT_REASON.NO_SESSION_FACTS);
@@ -1006,8 +618,8 @@ export async function readHostSessionFacts({
   let text;
   let opened;
   try {
-    await assertFactDirectory(store, fileSystem);
-    opened = await openExistingRegularFile(target, store.directory, fileSystem);
+    await factStore.assertDirectory(store, fileSystem);
+    opened = await factStore.openExistingRegularFile(target, store.directory, fileSystem);
     if (opened.metadata.size > MAX_FACT_BYTES) {
       return unsupported(HOST_FACT_REASON.INVALID_SESSION_FACTS);
     }

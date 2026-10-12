@@ -193,8 +193,8 @@
  },
  {
   "a": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "assertTraceDirectory"
+   "file": "src/server/session/private-session-store.mjs",
+   "name": "assertDirectory"
   },
   "b": {
    "file": "src/server/session/host-adapters/codex-transcript.mjs",
@@ -241,7 +241,7 @@
  },
  {
   "a": {
-   "file": "src/server/session/session-trace-store.mjs",
+   "file": "src/server/session/private-session-store.mjs",
    "name": "inspectLockPath"
   },
   "b": {
@@ -265,20 +265,8 @@
  },
  {
   "a": {
-   "file": "src/server/session/host-adapters/codex-transcript.mjs",
-   "name": "canonicalDirectory"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "inspectLockPath"
-  },
-  "verdict": "related",
-  "reason": "Both apply the realpath plus no-symlink lstat check, but one inspects a lock path and the other canonicalizes a directory."
- },
- {
-  "a": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "releaseOwnedLock"
+   "file": "src/server/session/private-session-store.mjs",
+   "name": "releaseStagedLock"
   },
   "b": {
    "file": "src/server/workflow/decision-history.mjs",
@@ -341,23 +329,11 @@
    "name": "exactIndexExists"
   },
   "b": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "assertTraceDirectory"
+   "file": "src/server/session/private-session-store.mjs",
+   "name": "assertDirectory"
   },
   "verdict": "related",
   "reason": "Both apply the lstat directory-and-not-symlink safety check, but one probes for an index and the other asserts the trace store directory and its containment."
- },
- {
-  "a": {
-   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
-   "name": "exactIndexExists"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "assertFactDirectory"
-  },
-  "verdict": "related",
-  "reason": "Both apply the lstat directory-and-not-symlink safety check, but one probes for an index and the other asserts the fact store directory and its containment."
  },
  {
   "a": {
@@ -401,7 +377,7 @@
    "name": "exactIndexExists"
   },
   "b": {
-   "file": "src/server/session/session-trace-store.mjs",
+   "file": "src/server/session/private-session-store.mjs",
    "name": "inspectLockPath"
   },
   "verdict": "related",
@@ -409,19 +385,7 @@
  },
  {
   "a": {
-   "file": "src/server/repository-intelligence/codegraph-provider.mjs",
-   "name": "exactIndexExists"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "inspectLockPath"
-  },
-  "verdict": "related",
-  "reason": "Both reject symlinks with lstat, but one probes for an index directory and the other validates a lock path in its storage directory."
- },
- {
-  "a": {
-   "file": "src/server/session/session-trace-store.mjs",
+   "file": "src/server/session/private-session-store.mjs",
    "name": "inspectLockPath"
   },
   "b": {
@@ -430,18 +394,6 @@
   },
   "verdict": "related",
   "reason": "Both verify with lstat and realpath that a path is not a symlink and stays canonical, but one inspects a lock and the other creates a private directory."
- },
- {
-  "a": {
-   "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
-   "name": "privateDirectory"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "inspectLockPath"
-  },
-  "verdict": "related",
-  "reason": "Both verify with lstat and realpath that a path is not a symlink and stays canonical, but one creates a private directory and the other inspects a lock."
  },
  {
   "a": {
@@ -454,30 +406,6 @@
   },
   "verdict": "unrelated",
   "reason": "Recovery-note status assessment and Markdown link resolution only share path string helpers."
- },
- {
-  "a": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "inspectLockPath"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "assertFactDirectory"
-  },
-  "verdict": "related",
-  "reason": "Both apply the same lstat no-symlink plus realpath containment check, to a lock path versus the fact store directory; the two stores duplicate this pattern."
- },
- {
-  "a": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "assertTraceDirectory"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "inspectLockPath"
-  },
-  "verdict": "related",
-  "reason": "Both apply the same lstat no-symlink plus realpath containment check, to the trace store directory versus a retention lock path."
  },
  {
   "a": {
@@ -550,18 +478,6 @@
   },
   "verdict": "same",
   "reason": "Identical strict ISO date assertion in two session modules."
- },
- {
-  "a": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "readLockOwner"
-  },
-  "b": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "readLockOwner"
-  },
-  "verdict": "same",
-  "reason": "Same lock-owner reading and validation; one returns null, the other throws on invalid metadata."
  },
  {
   "a": {
@@ -733,30 +649,6 @@
  },
  {
   "a": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "openExistingRegularFile"
-  },
-  "b": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "openExistingRegularFile"
-  },
-  "verdict": "same",
-  "reason": "Identical no-follow open with inode recheck; only the error class and message differ."
- },
- {
-  "a": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "inspectLockPath"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "inspectLockPath"
-  },
-  "verdict": "same",
-  "reason": "Identical lock-path safety inspection; only the error class and message differ."
- },
- {
-  "a": {
    "file": "src/server/session/session-trace-store.mjs",
    "name": "traceFileRecords"
   },
@@ -766,30 +658,6 @@
   },
   "verdict": "same",
   "reason": "Both enumerate hashed JSON records in a store directory and remove stale temporary files."
- },
- {
-  "a": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "inspectRegularFile"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "inspectRegularFile"
-  },
-  "verdict": "same",
-  "reason": "Same regular-file safety inspection (direct child, no symlink, single link, realpath containment)."
- },
- {
-  "a": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "resolveTraceDirectory"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "resolveFactDirectory"
-  },
-  "verdict": "same",
-  "reason": "Same private store-directory creation and validation; only the directory constant and errors differ."
  },
  {
   "a": {
@@ -853,42 +721,6 @@
  },
  {
   "a": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "inspectLockPath"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "inspectRegularFile"
-  },
-  "verdict": "related",
-  "reason": "Both share the direct-child, no-symlink, realpath containment check, but inspect a lock versus a record file."
- },
- {
-  "a": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "inspectRegularFile"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "inspectLockPath"
-  },
-  "verdict": "related",
-  "reason": "Both share the direct-child, no-symlink, realpath containment check, but inspect a record file versus a lock."
- },
- {
-  "a": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "createOwnedLock"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "createOwnedLock"
-  },
-  "verdict": "same",
-  "reason": "Both create an owned lock directory with a private owner file; the facts version adds atomic rename publication."
- },
- {
-  "a": {
    "file": "bench/harness/bench.py",
    "name": "claude_call"
   },
@@ -925,18 +757,6 @@
  },
  {
   "a": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "acquireLock"
-  },
-  "b": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "acquireLock"
-  },
-  "verdict": "same",
-  "reason": "Same retrying stale-lock acquisition protocol; the facts version adds stale-lock rename and cleanup."
- },
- {
-  "a": {
    "file": "scripts/native-build/runtime-output.mjs",
    "name": "files"
   },
@@ -958,18 +778,6 @@
   },
   "verdict": "same",
   "reason": "Same age and size retention eviction for a store directory; minor differences in target bytes."
- },
- {
-  "a": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "assertTraceDirectory"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "assertFactDirectory"
-  },
-  "verdict": "same",
-  "reason": "Identical store-directory recheck; only the directory constant and error class differ."
  },
  {
   "a": {
@@ -1018,18 +826,6 @@
   },
   "verdict": "related",
   "reason": "close contains a timeout-bounded wait for exit, which is what boundedWait implements generically."
- },
- {
-  "a": {
-   "file": "src/server/session/host-adapters/codex-transcript.mjs",
-   "name": "canonicalDirectory"
-  },
-  "b": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "assertFactDirectory"
-  },
-  "verdict": "unrelated",
-  "reason": "One resolves a caller directory to null on failure, the other asserts a store directory; only generic lstat and realpath overlap."
  },
  {
   "a": {

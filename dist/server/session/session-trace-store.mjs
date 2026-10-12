@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { constants as fileConstants } from "node:fs";
 import * as defaultFileSystem from "node:fs/promises";
 import path from "node:path";
 import {
@@ -8,6 +7,7 @@ import {
   hashSessionTraceValue,
   validateSessionTraceEvent
 } from "./session-trace.mjs";
+import { LOCK_STALE_MS, createPrivateSessionStore, defaultIsProcessAlive } from "./private-session-store.mjs";
 
 const TRACE_DIRECTORY = "session-traces";
 const MAX_TRACE_BYTES = 4 * 1024 * 1024;
@@ -15,12 +15,6 @@ const MAX_EVENT_BYTES = 16 * 1024;
 const MAX_TRACE_EVENTS = 4096;
 export const SESSION_TRACE_MAX_DIRECTORY_BYTES = 64 * 1024 * 1024;
 export const SESSION_TRACE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const LOCK_RETRY_COUNT = 20;
-const LOCK_STALE_MS = 30_000;
-const MAX_LOCK_OWNER_BYTES = 256;
-const LOCK_DIRECTORY_NAME = ".retention.lock";
-const LOCK_OWNER_PREFIX = "owner-";
-const LOCK_OWNER_PATTERN = /^owner-([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
 const STATE_KEYS = ["schemaVersion", "sessionDigest", "projectDigest", "limitReached", "events"];
 const EVENT_TYPE_ORDER = new Map([
   ["session_start", 0],
@@ -84,19 +78,20 @@ const REASON_MESSAGES = Object.freeze({
   [SESSION_TRACE_REASON.DIRECT_FIRST_EDIT]: "The trace store creates first_edit events from successful edit events."
 });
 
-class UnsafeSessionTracePathError extends Error {
-  constructor(message) {
-    super(message);
-    this.code = "UNSAFE_SESSION_TRACE_PATH";
-  }
-}
-
 class LostSessionTraceLockError extends Error {
   constructor(message) {
     super(message);
     this.code = "LOST_SESSION_TRACE_LOCK";
   }
 }
+
+const traceStore = createPrivateSessionStore({
+  directoryName: TRACE_DIRECTORY,
+  subject: "session trace",
+  unsafePathCode: "UNSAFE_SESSION_TRACE_PATH",
+  maxLockOwnerBytes: 256,
+  lockProtocol: "direct"
+});
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -127,123 +122,6 @@ function validDataDirectory(value) {
 
 function tracePath(directory, sessionDigest) {
   return path.join(directory, `${sessionDigest}.json`);
-}
-
-function noFollowFlags(flags) {
-  return Number.isInteger(fileConstants.O_NOFOLLOW) ? flags | fileConstants.O_NOFOLLOW : flags;
-}
-
-function assertDirectChild(directory, candidate, name) {
-  if (path.dirname(candidate) !== directory || path.basename(candidate) === "") {
-    throw new UnsafeSessionTracePathError(`${name} escapes the session trace directory.`);
-  }
-}
-
-async function resolveTraceDirectory(dataDirectory, { create, fileSystem }) {
-  if (create) {
-    await fileSystem.mkdir(dataDirectory, { recursive: true, mode: 0o700 });
-  }
-  const dataRoot = await fileSystem.realpath(dataDirectory);
-  const rootMetadata = await fileSystem.lstat(dataRoot);
-  if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) {
-    throw new UnsafeSessionTracePathError("The plugin data directory is not a regular directory.");
-  }
-
-  const requestedDirectory = path.join(dataRoot, TRACE_DIRECTORY);
-  if (create) {
-    try {
-      await fileSystem.mkdir(requestedDirectory, { mode: 0o700 });
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-    }
-  }
-  const directoryMetadata = await fileSystem.lstat(requestedDirectory);
-  if (directoryMetadata.isSymbolicLink()) {
-    throw new UnsafeSessionTracePathError("The session trace directory cannot be a symbolic link.");
-  }
-  if (!directoryMetadata.isDirectory()) {
-    throw new UnsafeSessionTracePathError("The session trace directory is not a directory.");
-  }
-  const directory = await fileSystem.realpath(requestedDirectory);
-  if (path.relative(dataRoot, directory) !== TRACE_DIRECTORY) {
-    throw new UnsafeSessionTracePathError("The session trace directory escapes the plugin data directory.");
-  }
-  if (create && process.platform !== "win32") {
-    const flags = noFollowFlags(
-      fileConstants.O_RDONLY | (Number.isInteger(fileConstants.O_DIRECTORY) ? fileConstants.O_DIRECTORY : 0)
-    );
-    const handle = await fileSystem.open(directory, flags);
-    try {
-      const opened = await handle.stat();
-      if (!opened.isDirectory()) {
-        throw new UnsafeSessionTracePathError("The session trace directory changed during validation.");
-      }
-      if (typeof handle.chmod === "function") {
-        await handle.chmod(0o700);
-      }
-    } finally {
-      await handle.close();
-    }
-  }
-  return { dataRoot, directory };
-}
-
-async function assertTraceDirectory(store, fileSystem) {
-  const metadata = await fileSystem.lstat(store.directory);
-  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-    throw new UnsafeSessionTracePathError("The session trace directory changed during use.");
-  }
-  const canonical = await fileSystem.realpath(store.directory);
-  if (canonical !== store.directory || path.relative(store.dataRoot, canonical) !== TRACE_DIRECTORY) {
-    throw new UnsafeSessionTracePathError("The session trace directory escapes the plugin data directory.");
-  }
-  return metadata;
-}
-
-async function inspectRegularFile(target, directory, fileSystem, { missing = false } = {}) {
-  assertDirectChild(directory, target, "The session trace path");
-  let metadata;
-  try {
-    metadata = await fileSystem.lstat(target);
-  } catch (error) {
-    if (missing && error?.code === "ENOENT") return null;
-    throw error;
-  }
-  if (metadata.isSymbolicLink()) {
-    throw new UnsafeSessionTracePathError("The session trace record cannot be a symbolic link.");
-  }
-  if (!metadata.isFile() || metadata.nlink !== 1) {
-    throw new UnsafeSessionTracePathError("The session trace record is not a regular file.");
-  }
-  const canonical = await fileSystem.realpath(target);
-  if (canonical !== target || path.dirname(canonical) !== directory) {
-    throw new UnsafeSessionTracePathError("The session trace record escapes its storage directory.");
-  }
-  return metadata;
-}
-
-async function openExistingRegularFile(target, directory, fileSystem, { missing = false } = {}) {
-  const expected = await inspectRegularFile(target, directory, fileSystem, { missing });
-  if (expected === null) return null;
-  const handle = await fileSystem.open(target, noFollowFlags(fileConstants.O_RDONLY));
-  try {
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== expected.dev || opened.ino !== expected.ino) {
-      throw new UnsafeSessionTracePathError("The session trace record changed during validation.");
-    }
-    return { handle, metadata: opened };
-  } catch (error) {
-    await handle.close().catch(() => {});
-    throw error;
-  }
-}
-
-async function openPrivateFile(target, fileSystem) {
-  return fileSystem.open(
-    target,
-    noFollowFlags(fileConstants.O_WRONLY | fileConstants.O_CREAT | fileConstants.O_EXCL),
-    0o600
-  );
 }
 
 function eventBytes(event) {
@@ -335,10 +213,10 @@ async function writeState(target, directory, state, fileSystem, { assertOwnershi
     throw new Error("The session trace is too large.");
   }
   const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
-  assertDirectChild(directory, temporary, "The temporary session trace path");
+  traceStore.assertDirectChild(directory, temporary, "The temporary session trace path");
   let handle;
   try {
-    handle = await openPrivateFile(temporary, fileSystem);
+    handle = await traceStore.openPrivateFile(temporary, fileSystem);
     await handle.writeFile(`${JSON.stringify(state)}\n`, "utf8");
     if (typeof handle.sync === "function") {
       await handle.sync();
@@ -348,7 +226,7 @@ async function writeState(target, directory, state, fileSystem, { assertOwnershi
     if (!await assertOwnership()) {
       throw new LostSessionTraceLockError("The session trace writer lost its lock before commit.");
     }
-    await inspectRegularFile(target, directory, fileSystem, { missing: true });
+    await traceStore.inspectRegularFile(target, directory, fileSystem, { missing: true });
     await fileSystem.rename(temporary, target);
   } catch (error) {
     if (handle) {
@@ -362,7 +240,7 @@ async function writeState(target, directory, state, fileSystem, { assertOwnershi
 }
 
 async function readState(target, directory, fileSystem, { missing = false } = {}) {
-  const opened = await openExistingRegularFile(target, directory, fileSystem, { missing });
+  const opened = await traceStore.openExistingRegularFile(target, directory, fileSystem, { missing });
   if (opened === null) return null;
   if (opened.metadata.size > MAX_TRACE_BYTES) {
     await opened.handle.close();
@@ -375,160 +253,6 @@ async function readState(target, directory, fileSystem, { missing = false } = {}
   } finally {
     await opened.handle.close();
   }
-}
-
-function wait(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-function lockOwnerName(token) {
-  return `${LOCK_OWNER_PREFIX}${token}`;
-}
-
-async function createOwnedLock(lockPath, token, fileSystem) {
-  await fileSystem.mkdir(lockPath, { mode: 0o700 });
-  const ownerName = lockOwnerName(token);
-  const ownerPath = path.join(lockPath, ownerName);
-  let handle;
-  try {
-    handle = await openPrivateFile(ownerPath, fileSystem);
-    await handle.writeFile(`${JSON.stringify({ token, pid: process.pid })}\n`, "utf8");
-    if (typeof handle.sync === "function") await handle.sync();
-    await handle.close();
-    handle = null;
-    return { lockPath, ownerName, token, pid: process.pid };
-  } catch (error) {
-    if (handle) await handle.close().catch(() => {});
-    await fileSystem.unlink(ownerPath).catch(() => {});
-    await fileSystem.rmdir(lockPath).catch(() => {});
-    throw error;
-  }
-}
-
-async function inspectLockPath(lockPath, directory, fileSystem) {
-  assertDirectChild(directory, lockPath, "The session trace lock path");
-  const metadata = await fileSystem.lstat(lockPath);
-  if (metadata.isSymbolicLink()) {
-    throw new UnsafeSessionTracePathError("The session trace lock cannot be a symbolic link.");
-  }
-  if (!metadata.isDirectory() && !metadata.isFile()) {
-    throw new UnsafeSessionTracePathError("The session trace lock has an unsupported file type.");
-  }
-  const canonical = await fileSystem.realpath(lockPath);
-  if (canonical !== lockPath || path.dirname(canonical) !== directory) {
-    throw new UnsafeSessionTracePathError("The session trace lock escapes its storage directory.");
-  }
-  return metadata;
-}
-
-async function readLockOwner(lockPath, directory, fileSystem) {
-  const metadata = await inspectLockPath(lockPath, directory, fileSystem);
-  if (!metadata.isDirectory()) return null;
-  const entries = await fileSystem.readdir(lockPath);
-  if (entries.length !== 1) {
-    throw new UnsafeSessionTracePathError("The session trace lock has invalid ownership metadata.");
-  }
-  const match = LOCK_OWNER_PATTERN.exec(entries[0]);
-  if (!match) {
-    throw new UnsafeSessionTracePathError("The session trace lock owner name is invalid.");
-  }
-  const ownerPath = path.join(lockPath, entries[0]);
-  const opened = await openExistingRegularFile(ownerPath, lockPath, fileSystem);
-  try {
-    if (opened.metadata.size > MAX_LOCK_OWNER_BYTES) {
-      throw new UnsafeSessionTracePathError("The session trace lock owner is too large.");
-    }
-    const owner = JSON.parse(await opened.handle.readFile("utf8"));
-    if (
-      !isObject(owner)
-      || Object.keys(owner).length !== 2
-      || owner.token !== match[1]
-      || !Number.isSafeInteger(owner.pid)
-      || owner.pid < 1
-    ) {
-      throw new UnsafeSessionTracePathError("The session trace lock owner is invalid.");
-    }
-    return { lockPath, ownerName: entries[0], token: owner.token, pid: owner.pid };
-  } finally {
-    await opened.handle.close();
-  }
-}
-
-function defaultIsProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error?.code === "ESRCH") return false;
-    return null;
-  }
-}
-
-async function processState(pid, isProcessAlive) {
-  try {
-    const result = await isProcessAlive(pid);
-    return result === true ? "active" : result === false ? "dead" : "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-
-async function acquireLock(lockPath, directory, fileSystem, isProcessAlive) {
-  const token = randomUUID();
-  for (let attempt = 0; attempt < LOCK_RETRY_COUNT; attempt += 1) {
-    try {
-      return await createOwnedLock(lockPath, token, fileSystem);
-    } catch (error) {
-      if (error?.code !== "EEXIST") {
-        throw error;
-      }
-      try {
-        const metadata = await inspectLockPath(lockPath, directory, fileSystem);
-        if (Date.now() - metadata.mtimeMs > LOCK_STALE_MS) {
-          const owner = metadata.isDirectory()
-            ? await readLockOwner(lockPath, directory, fileSystem)
-            : null;
-          if (owner && await processState(owner.pid, isProcessAlive) === "dead") {
-            const removed = await removeOwnedLock(owner, directory, fileSystem);
-            if (removed) continue;
-          }
-        }
-      } catch (lockError) {
-        if (lockError?.code === "ENOENT") {
-          continue;
-        }
-        throw lockError;
-      }
-      await wait(Math.min(5 * (attempt + 1), 50));
-    }
-  }
-  return null;
-}
-
-async function ownsLock(lock, directory, fileSystem) {
-  if (!lock) return false;
-  try {
-    const owner = await readLockOwner(lock.lockPath, directory, fileSystem);
-    return owner?.token === lock.token && owner.ownerName === lock.ownerName && owner.pid === lock.pid;
-  } catch (error) {
-    if (error?.code === "ENOENT") return false;
-    throw error;
-  }
-}
-
-async function removeOwnedLock(lock, directory, fileSystem) {
-  if (!await ownsLock(lock, directory, fileSystem)) return false;
-  await fileSystem.unlink(path.join(lock.lockPath, lock.ownerName));
-  try {
-    await fileSystem.rmdir(lock.lockPath);
-  } catch (error) {
-    if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error?.code)) throw error;
-  }
-  return true;
-}
-
-async function releaseOwnedLock(lock, directory, fileSystem) {
-  return removeOwnedLock(lock, directory, fileSystem);
 }
 
 function positiveSafeInteger(value, fallback) {
@@ -559,7 +283,7 @@ async function traceFileRecords(directory, target, nowMs, fileSystem, assertOwne
       continue;
     }
     try {
-      const metadata = await inspectRegularFile(filePath, directory, fileSystem);
+      const metadata = await traceStore.inspectRegularFile(filePath, directory, fileSystem);
       if (temporaryRecord && metadata.mtimeMs < staleTemporaryCutoff) {
         await assertOwnership();
         await fileSystem.unlink(filePath);
@@ -660,24 +384,23 @@ export async function appendSessionTraceEvent(event, {
 
   let store;
   try {
-    store = await resolveTraceDirectory(dataDirectory, { create: true, fileSystem });
+    store = await traceStore.resolveDirectory(dataDirectory, { create: true, fileSystem });
   } catch {
     return ignored(SESSION_TRACE_REASON.TRACE_UNAVAILABLE);
   }
 
   const target = tracePath(store.directory, event.sessionDigest);
-  const directoryLockPath = path.join(store.directory, LOCK_DIRECTORY_NAME);
   const directoryByteLimit = positiveSafeInteger(maxDirectoryBytes, SESSION_TRACE_MAX_DIRECTORY_BYTES);
   const traceAgeLimit = positiveSafeInteger(maxTraceAgeMs, SESSION_TRACE_MAX_AGE_MS);
   let directoryLock = null;
   try {
-    directoryLock = await acquireLock(directoryLockPath, store.directory, fileSystem, isProcessAlive);
+    directoryLock = await traceStore.acquireLock(store.directory, fileSystem, isProcessAlive);
     if (!directoryLock) {
       return ignored(SESSION_TRACE_REASON.LOCK_UNAVAILABLE);
     }
     const assertOwnership = async () => {
-      await assertTraceDirectory(store, fileSystem);
-      if (!await ownsLock(directoryLock, store.directory, fileSystem)) {
+      await traceStore.assertDirectory(store, fileSystem);
+      if (!await traceStore.ownsLock(directoryLock, store.directory, fileSystem)) {
         throw new LostSessionTraceLockError("The session trace writer lost its lock.");
       }
       return true;
@@ -685,12 +408,12 @@ export async function appendSessionTraceEvent(event, {
     if (!await assertOwnership()) {
       return ignored(SESSION_TRACE_REASON.LOCK_UNAVAILABLE);
     }
-    await assertTraceDirectory(store, fileSystem);
+    await traceStore.assertDirectory(store, fileSystem);
     let state;
     try {
       state = await readState(target, store.directory, fileSystem, { missing: true });
     } catch (error) {
-      if (error instanceof UnsafeSessionTracePathError) throw error;
+      if (traceStore.isUnsafePath(error)) throw error;
       return ignored(SESSION_TRACE_REASON.INVALID_SESSION_TRACE);
     }
     if (state === null) {
@@ -758,7 +481,7 @@ export async function appendSessionTraceEvent(event, {
     return ignored(SESSION_TRACE_REASON.TRACE_UNAVAILABLE);
   } finally {
     if (directoryLock) {
-      await releaseOwnedLock(directoryLock, store.directory, fileSystem).catch(() => {});
+      await traceStore.releaseLock(directoryLock, store.directory, fileSystem).catch(() => {});
     }
   }
 }
@@ -821,8 +544,8 @@ export async function readSessionTraceEvents(options = {}) {
   }
   let store;
   try {
-    store = await resolveTraceDirectory(dataDirectory, { create: false, fileSystem });
-    await assertTraceDirectory(store, fileSystem);
+    store = await traceStore.resolveDirectory(dataDirectory, { create: false, fileSystem });
+    await traceStore.assertDirectory(store, fileSystem);
   } catch (error) {
     return unsupported(error?.code === "ENOENT"
       ? SESSION_TRACE_REASON.NO_SESSION_TRACE
