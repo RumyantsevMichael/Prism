@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.10.0](https://github.com/RumyantsevMichael/Prism/compare/v0.9.0...v0.10.0) (2026-10-12)
+
+
+### Added
+
+* add repository analysis tools and duplication gates for concept deltas ([e5acca0](https://github.com/RumyantsevMichael/Prism/commit/e5acca079c886490bc5cd177f56a2f535313fa4a))
+* find same-name units and report complex units ([bc18fe9](https://github.com/RumyantsevMichael/Prism/commit/bc18fe94044e61186f781a858ee39a093af7af8b))
+* index repository units as a tree with structural fragments ([804c026](https://github.com/RumyantsevMichael/Prism/commit/804c026b40eb536589a8bf378bc75f089d6eb779))
+* move members that import an owned constant list out of shared literal groups ([85d2ca6](https://github.com/RumyantsevMichael/Prism/commit/85d2ca62d6f803bf31a71ac3e04f03b527dcedd6))
+* refuse concept delta readiness when additions copy a change into duplicated functions ([c6305a4](https://github.com/RumyantsevMichael/Prism/commit/c6305a4405dc4fc94d0acd45986a339c1035d787))
+* report analysis findings that a change adds in concept delta comparisons ([5add169](https://github.com/RumyantsevMichael/Prism/commit/5add169641646b789af124aae141d7a1b9a353dc))
+* report cohesion clusters and shared literal groups ([fece81a](https://github.com/RumyantsevMichael/Prism/commit/fece81a16e270eb129ef9451081e96e99034b848))
+* report functions that share rare dependencies across files ([49a2b4b](https://github.com/RumyantsevMichael/Prism/commit/49a2b4b860f05ea642f153ee5a81b00b31e68d15))
+* report instruction clients, entry shapes, and repeated key sets in shared literal groups ([c185f0b](https://github.com/RumyantsevMichael/Prism/commit/c185f0b7607c306df90feb9f3a3ef4acbdcbfdd1))
+* report module interfaces with unused exports and delegating classes ([16cf1d8](https://github.com/RumyantsevMichael/Prism/commit/16cf1d8f792b60a17bb216252a5e35b0b1675ce2))
+* retain repository analysis results as receipts ([51585f3](https://github.com/RumyantsevMichael/Prism/commit/51585f3d691ccb34213098a56d69b103976c8dd8))
+* tune shared dependency groups for Go, Rust, Java, C#, and C++ ([1b2026e](https://github.com/RumyantsevMichael/Prism/commit/1b2026e18f6488523fa62496a9c523c76b511145))
+
+
+### Fixed
+
+* improve native semantic retrieval quality and preparation time ([4f74276](https://github.com/RumyantsevMichael/Prism/commit/4f7427606c24e2a9f31121cb1a0ee2ad874c4f51))
+* keep the plugin MCP definition out of project config ([44249fd](https://github.com/RumyantsevMichael/Prism/commit/44249fd6057b6595ae8d9cc9e302d39eeacb3b4c))
+* lead refactoring discovery to the repository tools and name expected values in tool errors ([5a6caaa](https://github.com/RumyantsevMichael/Prism/commit/5a6caaa4f17efb694bd109e5e2bc021da674de38))
+* remove downloaded runtime archives after extraction and prune stale native assets ([07d4e48](https://github.com/RumyantsevMichael/Prism/commit/07d4e4893f76e97eca0f4a4e45c605c31696f7fc))
+* report native semantic capabilities, bound provider diagnostics, and accept trailing slashes in path filters ([ed86118](https://github.com/RumyantsevMichael/Prism/commit/ed86118792240ac08c23373f42dda0d820df65b3))
+
+
+### Changed
+
+* name structural source units separately from concepts ([1ba4e3c](https://github.com/RumyantsevMichael/Prism/commit/1ba4e3c38e75ddb8c02c9acf0fe1687618bcb291))
+* separate runtime sources from shipped output ([#12](https://github.com/RumyantsevMichael/Prism/issues/12)) ([ab2d44c](https://github.com/RumyantsevMichael/Prism/commit/ab2d44c6c48bfc8ba539b4893d38aa5fd7c12455))
+
 ## [0.9.0](https://github.com/RumyantsevMichael/Prism/compare/v0.8.0...v0.9.0) (2026-10-05)
 
 
