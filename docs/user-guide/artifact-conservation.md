@@ -17,6 +17,8 @@ The source baseline includes dirty and untracked files, so a Git commit alone is
 `check_review_gate` explains prerequisites; the write operations enforce the same checks.
 A missing semantic runtime can return lexical exploration results but cannot satisfy an addition's semantic evidence requirement.
 Preparation starts automatically when a search or comparison needs native analysis.
+Concept delta readiness fails when planned additions copy a change into functions that several files already repeat, until the delta or a delta named in `consolidations` consolidates them.
+Comparisons report only the analysis findings that the change adds: a new copy of a function is a failure, and new shared values, repeated key sets, complex units, cohesion splits, and unused exports need a review check.
 Known failures such as a retained deletion, scope escape, or stale source cannot be waived with a manual assessment.
 `release` and `checkpoint_pause` remove active coordination without claiming completion.
 Legacy version 1 deltas and Markdown findings remain readable; explicit migration preserves their content but never imports historical `CLEAN` as current acceptance.

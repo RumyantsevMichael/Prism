@@ -6,7 +6,7 @@ import os from 'node:os';
 import {conservationStore as store,canonical,digest} from '../../dist/server/conservation/conservation-store.mjs';
 import {privateDirectory,regularBytes} from '../../dist/server/repository-intelligence/native-semantic-runtime.mjs';
 import {updateConceptDelta,getConceptDelta} from '../../dist/server/conservation/concept-delta.mjs';
-import {compareConceptDelta,assessDeltaReadiness,prepareAnalysis} from '../../dist/server/conservation/conservation-analysis.mjs';
+import {compareConceptDelta,assessDeltaReadiness,prepareAnalysis,ANALYSIS_VERSION} from '../../dist/server/conservation/conservation-analysis.mjs';
 import {updateReview,getReview,checkReviewGate} from '../../dist/server/review/review-ledger.mjs';
 import {updateCoordinationState,checkpointPause} from '../../dist/server/workflow/state.mjs';
 import {callConservationTool} from '../../dist/server/conservation/conservation-tools.mjs';
@@ -27,7 +27,7 @@ async function fixture(files={}) {
 const ref=(path,value)=>({path,...(value?{selector:{type:'text',value}}:{})});
 const entry=(id,action,before,after,extra={})=>({id,kind:'rule',label:id,action,before,after,reason:'Satisfy the bound requirement.',...extra});
 async function analysis(root,snapshot,units=[]) {
- const record={kind:'analysis',schemaVersion:1,project:root,snapshotId:snapshot.snapshotId,units,fileCoverage:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,true])),diagnostics:[],tokenCounts:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,1])),structureCounts:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,{sections:0,paragraphs:0,listItems:0,links:0}])),versions:{extractor:CHUNKER_VERSION,metrics:'conservation-metrics-v2',tokenizer:'fixture'}};
+ const record={kind:'analysis',schemaVersion:1,project:root,snapshotId:snapshot.snapshotId,units,fileCoverage:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,true])),diagnostics:[],tokenCounts:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,1])),structureCounts:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,{sections:0,paragraphs:0,listItems:0,links:0}])),versions:{extractor:CHUNKER_VERSION,metrics:ANALYSIS_VERSION,tokenizer:'fixture'}};
  const id=await store.put(root,record); await store.link(root,snapshot.snapshotId,id); return record;
 }
 async function compare(f,delta,result) {const response=await compareConceptDelta({projectRoot:f.root,deltaPath:f.deltaPath,expectedRevision:delta.revision,baselineId:f.b.snapshotId,resultSnapshotId:result.snapshotId},{runtime:degraded});return store.get(f.root,response.comparisonId,'comparison');}

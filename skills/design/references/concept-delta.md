@@ -136,6 +136,9 @@ Measurements separate source size, supported code declarations, public surface, 
 Planned transition counts are informational and do not enter growth gates.
 Original source counts once; overlapping spans, embedding metadata, and fragments do not inflate measurements.
 Unsupported dimensions are unknown rather than zero.
+Comparisons also report what the change adds to the repository analysis findings in changed files.
+A new copy of a function of at least 10 lines is a failure.
+New shared dependencies, shared literals, repeated key sets, complex units, cohesion splits, and unused exports need a review check.
 Parser, tokenizer, and metric versions bind the comparison, which retains its exact analysis records.
 Markdown list items become identified obligations only through explicit source-bound classification and review.
 Default growth tolerance is zero; `expectedGrowth`, requirement-linked `growthJustifications`, and `growthThresholds` are audited design inputs, and every actual positive increase still needs reviewed justification.

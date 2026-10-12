@@ -6,8 +6,9 @@ import { nativeSemanticRuntime } from "../repository-intelligence/native-semanti
 import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
 import { CHUNKER_VERSION } from "../../native-runtime/versions.mjs";
 import { sameNameGroups } from "../repository-intelligence/same-name-units.mjs";
+import { detectorDiff, DUPLICATE_MIN_LINES } from "./detector-diff.mjs";
 const keyFor = (file, kind, selector) => canonical([file, kind, selector]);
-const ANALYSIS_VERSION = "conservation-metrics-v2";
+const ANALYSIS_VERSION = "conservation-metrics-v3";
 const COMPARISON_VERSION = "conservation-comparison-v3";
 function parsedUnitsForReference(units, target, match = "exact") {
   if (target.kind === "file") return [];
@@ -21,6 +22,8 @@ async function retainAnalysis(projectRoot, snapshotId, prepared, store = conserv
     project: (await store.location(projectRoot)).root,
     snapshotId,
     units: prepared.index.units,
+    edges: prepared.index.edges || [],
+    unresolvedReferences: prepared.index.unresolvedReferences || [],
     fileCoverage: prepared.index.syntaxCoverage || prepared.index.fileCoverage,
     diagnostics: prepared.index.diagnostics,
     tokenCounts: prepared.index.tokenCounts || {},
@@ -97,7 +100,6 @@ async function resolveReference(projectRoot, snapshot, reference, analysis, stor
   }
   return { status: units.length === 1 ? "resolved" : units.length ? "ambiguous" : "missing", reference, units };
 }
-const DUPLICATE_MIN_LINES = 10;
 async function duplicationDiagnostics(projectRoot, document, baseline, analysis, options) {
   const store = options.store || conservationStore, files = new Map(baseline.files.filter((file) => file.kind === "source").map((file) => [file.file, file]));
   const additions = /* @__PURE__ */ new Map();
@@ -113,7 +115,7 @@ async function duplicationDiagnostics(projectRoot, document, baseline, analysis,
   }
   const contents = /* @__PURE__ */ new Map();
   for (const file of additions.keys()) contents.set(file, (await store.bytes(projectRoot, files.get(file))).toString("utf8"));
-  const { groups } = sameNameGroups({ units: analysis.units, edges: [], unresolvedReferences: [] }, contents, { include: (unit) => additions.has(unit.file) });
+  const { groups } = sameNameGroups({ units: analysis.units.filter((unit) => unit.range), edges: analysis.edges || [], unresolvedReferences: analysis.unresolvedReferences }, contents, { include: (unit) => additions.has(unit.file) });
   const duplicated = groups.filter((group) => group.variants.every((variant) => variant.lines >= DUPLICATE_MIN_LINES));
   if (!duplicated.length) return [];
   const consolidating = [], diagnostics = [];
@@ -369,6 +371,15 @@ async function compareConceptDelta(input, options = {}) {
     const original = before.files.find((item) => item.file === file), final = after.files.find((item) => item.file === file);
     if (original && final && (original.mode !== final.mode || original.kind !== final.kind) && !sourceRefs.some((ref) => ref.unit.file === file && ref.unit.kind === "file" && ref.action !== "KEEP")) observe("unclassified_unit", "review_required", "Attribute the file kind or mode change to a planned concept.", { file, unit: right.find((unit) => unit.file === file && unit.kind === "file") });
   }
+  const changedSource = [...changedPaths].filter((file) => after.files.some((item) => item.file === file && item.kind === "source"));
+  if (changedSource.length && a && b) {
+    const side = async (snapshot, analysis) => {
+      const files = new Set(analysis.units.map((unit) => unit.file)), contents = /* @__PURE__ */ new Map();
+      for (const file of snapshot.files) if (file.kind === "source" && files.has(file.file) && !excluded.includes(file.file)) contents.set(file.file, (await store.bytes(input.projectRoot, file)).toString("utf8"));
+      return { index: { units: analysis.units.filter((unit) => contents.has(unit.file) && unit.range && unit.span), edges: analysis.edges || [], unresolvedReferences: analysis.unresolvedReferences }, contents };
+    };
+    for (const finding of detectorDiff(await side(before, a), await side(after, b), new Set(changedSource))) observe(finding.code, finding.severity, finding.message, { file: finding.file });
+  } else if (changedSource.length) observe("detector_diff_unknown", "review_required", "The structural analysis is unavailable, so a review must check the change for new duplication and complexity.");
   for (const snapshot of [before, after]) if (!snapshot.complete && (snapshot.unknownOmissions !== false || snapshot.omissions.some((item) => withinScope(item.file, document.scope)))) observe("source_inventory_incomplete", "failure", "The affected source inventory is incomplete.");
   const measured = await measurements(input.projectRoot, before, after, a, b, document, store);
   for (const metric of measured.filter((item) => item.increase === null)) observe("measurement_unknown", "review_required", `The ${metric.dimension} measurement is unsupported and needs a scoped review check.`);
