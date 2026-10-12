@@ -560,3 +560,38 @@ test("a writer that loses lock ownership neither commits nor acknowledges its ev
     `owner-${successorToken}`
   ]);
 });
+
+test("reports an aged lock with an invalid owner as an unavailable trace", async (context) => {
+  const dataDirectory = await temporaryDirectory(context, "prism-session-invalid-lock-");
+  const directory = path.join(dataDirectory, "session-traces");
+  const lockDirectory = path.join(directory, ".retention.lock");
+  await mkdir(lockDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(path.join(lockDirectory, "owner-invalid"), "{}\n", { mode: 0o600 });
+  const staleTime = new Date(Date.now() - 60_000);
+  await utimes(lockDirectory, staleTime, staleTime);
+
+  const result = await appendSessionTraceEvent(traceEvent("session_start"), {
+    dataDirectory,
+    isProcessAlive: async () => false
+  });
+  assert.equal(result.reasonCode, SESSION_TRACE_REASON.TRACE_UNAVAILABLE);
+  assert.deepEqual(await readdir(lockDirectory), ["owner-invalid"]);
+});
+
+test("reclaims a dead owner whose padded record fits the trace owner limit", async (context) => {
+  const dataDirectory = await temporaryDirectory(context, "prism-session-padded-lock-");
+  const directory = path.join(dataDirectory, "session-traces");
+  const lockDirectory = path.join(directory, ".retention.lock");
+  const token = "55555555-5555-4555-8555-555555555555";
+  const padded = `${JSON.stringify({ token, pid: 999999 })}${" ".repeat(180)}\n`;
+  await mkdir(lockDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(path.join(lockDirectory, `owner-${token}`), padded, { mode: 0o600 });
+  const staleTime = new Date(Date.now() - 60_000);
+  await utimes(lockDirectory, staleTime, staleTime);
+
+  const result = await appendSessionTraceEvent(traceEvent("session_start"), {
+    dataDirectory,
+    isProcessAlive: async () => false
+  });
+  assert.equal(result.status, "appended");
+});
