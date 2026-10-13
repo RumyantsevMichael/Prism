@@ -10,7 +10,10 @@ import { resolveArtifactPath } from "./concept-delta.mjs";
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const conservationError = (code, message, details = {}) => Object.assign(semanticError(code, message), details);
 const canonical = (value) => JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b, "en"))) : item);
-const withinScope = (file, scope) => scope.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
+const withinScope = (file, scope) => scope.some((entry) => {
+  const prefix = entry.replace(/\/+$/, "");
+  return prefix !== "" && (file === prefix || file.startsWith(`${prefix}/`));
+});
 const validId = (id) => {
   if (!/^[a-f\d]{64}$/.test(id)) throw conservationError("validation_failed", "Evidence IDs must be SHA-256 values.");
   return id;

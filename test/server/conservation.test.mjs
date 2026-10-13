@@ -477,3 +477,12 @@ test('readiness rejects additions that copy a change into functions that several
  assert.deepEqual(await growth({...base,consolidations:[{deltaPath:other,reason:'The store slice consolidates the lock helpers first.'}]}),[]);
  assert.deepEqual((await growth({...base,consolidations:[{deltaPath:'plan/missing/concept-delta.json',reason:'Missing.'}]})).map(x=>x.code).sort(),['consolidation_delta_invalid','duplication_growth']);
 });
+
+test('treats a scope with a trailing slash like the bare directory',async()=>{
+  const {withinScope}=await import('../../dist/server/conservation/conservation-store.mjs');
+  assert.equal(withinScope('sheetcalc/formula.py',['sheetcalc/']),true);
+  assert.equal(withinScope('sheetcalc/formula.py',['sheetcalc']),true);
+  assert.equal(withinScope('sheetcalc',['sheetcalc/']),true);
+  assert.equal(withinScope('sheetcalcx/a.py',['sheetcalc/']),false);
+  assert.equal(withinScope('a.py',['/']),false);
+});
