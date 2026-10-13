@@ -52,12 +52,14 @@ Code establishes implemented behavior.
 
 | Term | Definition |
 | --- | --- |
-| Initiative | A roadmap-owned item that groups related Approved outcomes. |
-| Initiative coordination | The initiative map, slice folders, design evidence, findings, and resume records. |
+| Initiative | A roadmap-owned item that groups related Approved outcomes, identified by a stable identifier that names its plans folder. |
+| Roadmap record | The MCP-managed `roadmap.json` beside the configured roadmap Markdown, owning initiative bands, order, required initiatives, rationale, open questions, and recorded ship and supersede decisions. |
+| Initiative lifecycle | `envisioned`, `planned`, and `in-progress` derived by `get_roadmap` from the initiative record and coordination state, plus recorded `shipped` and `superseded` decisions. |
+| Initiative coordination | The initiative record, slice folders, design evidence, findings, and resume records. |
 | Slice | One observable outcome across required layers, recursively split until it fits one `Develop <slice>` worker. |
-| `slice.md` | A slice folder's capability title, observable outcome, and Approved requirement links. |
+| `slice.md` | Optional slice design narrative that no other artifact owns, with title, outcome, and requirements kept in the initiative record. |
 | Atomic slice | An outcome that one `Develop <slice>` worker can design, implement, and verify within its remaining context and risk budget. |
-| Slice title | A concise human-readable capability name, stored separately from the stable slice slug and shown first on the map. |
+| Slice title | A concise human-readable capability name, stored separately from the stable slice slug in the initiative record. |
 | Provisional root slice | The initial candidate from the initiative outcome and Approved requirements before `design` returns `FIT` or `SPLIT`. |
 | Design frontier | Unstarted leaf candidates eligible for exploration, including those with incomplete implementation dependencies. |
 | Implementation frontier | Audited fitted leaves with complete effective dependencies and permission to implement. |
@@ -119,7 +121,8 @@ Code establishes implemented behavior.
 | Agent flow | An orchestration setting that selects inline or delegated delivery. |
 | Slice continuation | An orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input. |
 | `state.json` | Machine-managed coordination state with settings, active work, pending decisions, next actions, evidence paths, and a revision. |
-| `map.puml` | The authoritative initiative graph, with topology and dependencies owned by orchestration and written through `write-map`. |
+| `initiative.json` | The authoritative MCP-managed initiative record with slice titles, outcomes, topology, requirement assignments, dependencies, and status, read through `get_initiative` and changed through `update_initiative`; `initiative.md` is a generated view. |
+| `roadmap.json` | The roadmap record, read through `get_roadmap` and changed through `update_roadmap`; the configured roadmap Markdown is a generated view. |
 | `review.json` | The authoritative MCP-managed slice review containing lanes, waves, findings, assessments, disagreements, and evidence bindings. |
 | `findings.md` | Legacy review evidence that remains readable and can be imported through MCP without carrying historical acceptance forward. |
 | Lane findings file | A legacy name for a lane now read and changed through `review.json`; `review.md` is a generated human view. |

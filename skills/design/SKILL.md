@@ -18,7 +18,7 @@ An atomic slice delivers one observable outcome within the remaining context and
 
 1. Read `.prism/workflow.md`.
 2. Use the [workflow terms](../workflow/SKILL.md#common-terms).
-3. Read the initiative map, glossary, assigned Approved requirements, relevant ADRs, feature files, and current slice record.
+3. Read the initiative record through `get_initiative`, the glossary, assigned Approved requirements, relevant ADRs, feature files, and the current slice's `slice.md` narrative when present.
 4. Read the ancestor diagram source and ADRs supplied by orchestration before refining the current slice's design.
 5. Read [repository context planning](references/context-planning.md).
 6. Read [MCP-managed concept delta](references/concept-delta.md).
@@ -77,26 +77,24 @@ If that capability is unavailable, include these facts in the returned result.
 ## 5. Prepare the next stage
 
 Slice folders are flat under the initiative directory, and folder names identify slices.
-The orchestrator manages parent relationships and dependencies in the initiative's `map.puml`.
+The orchestrator manages parent relationships and dependencies in the initiative record.
+The initiative record owns each slice's title, outcome, and requirement assignment, so `slice.md` holds only design narrative.
 
 - If the scope is not atomic:
   1. Group required behavior into smaller outcomes, each verifiable through a starting surface across all necessary layers.
   2. Create `<configured plans>/<initiative>/<child-slug>/` for each outcome, using a slug unique within the initiative.
-  3. Write `slice.md` in each child folder using this shape:
+  3. Give each child an observable capability title, a one-sentence observable outcome, and its requirement references for the `SPLIT` result.
+  4. When a child needs design context that no other artifact owns, write it in the child folder's `slice.md` using this shape:
 
      ```markdown
      # <Observable capability>
 
-     ## Outcome
+     ## Context
 
-     <The observable result this slice must deliver.>
-
-     ## Requirements
-
-     - [Requirement reference](path/to/requirement.md#anchor)
+     <Constraints, decisions, or invariants a later worker needs and no other artifact owns.>
      ```
 
-  4. Check that child requirement references collectively equal the parent assignment, allowing shared references.
+  5. Check that child requirement references collectively equal the parent assignment, allowing shared references.
 - If the scope is atomic:
   1. For each changed boundary, record a [contract decision](../review/SKILL.md#contracts), reusing governing types or schemas before invoking `write-contracts`.
   2. If the slice changes only documentation, select its verification command and record the red-checkpoint exemption.
@@ -116,7 +114,7 @@ Finding evidence remains in its original lane file.
 ## 6. Return the result
 
 1. Assemble exactly one status with the applicable evidence:
-   - `SPLIT`: the unchanged parent title, parent diagram and ADR paths, and new child slice slugs with their folder paths.
+   - `SPLIT`: the unchanged parent title, parent diagram and ADR paths, and each new child's slug, folder path, title, outcome, and requirement references.
    - `FIT`: the capability title, starting surface, artifact paths, contract decisions, verification command, and security surface or `none`.
    - `BLOCKED`: the unresolved question or missing evidence.
 2. For `FIT`, include the ready concept delta path and exact revision.

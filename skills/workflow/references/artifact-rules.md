@@ -1,7 +1,7 @@
 # Artifact rules
 
 Requirements preserve obligations, ADRs preserve decisions, and feature files preserve acceptance examples.
-Slice records contain only the capability title, outcome, and requirement links.
+The initiative record owns slice titles, outcomes, and requirement links, and `slice.md` contains only design narrative that no other artifact owns.
 Review evidence belongs in MCP-managed records rather than duplicate handoff reports.
 
 ## Minimal persistence
@@ -12,6 +12,7 @@ Use `state.json` for current coordination facts and evidence paths, not copied r
 Call `get_coordination_state` to read `state.json` and its revision.
 Call `update_coordination_state` with that revision and typed `activeOperations` to change active work.
 Call `checkpoint_pause` to write active slice recovery and update state together before a pause.
+Manage `initiative.json` through `get_initiative` and `update_initiative`, and `roadmap.json` through `get_roadmap` and `update_roadmap`; retain `initiative.md` and the roadmap Markdown only as generated projections.
 Existing artifacts replace standalone exploration or verification reports when they preserve the required facts.
 When no existing artifact can own a fact required by a later context, create one focused artifact and state why it is needed.
 

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const productiveSkills = [
-  "design", "ideate", "implement", "orchestrate", "refactor", "review", "roadmap", "write-map",
+  "design", "ideate", "implement", "orchestrate", "refactor", "review", "roadmap",
   "workflow-init", "workflow", "write-adr", "write-contracts", "write-feature",
   "write-requirements", "write-step-definitions", "write-user-docs"
 ];
@@ -293,7 +293,7 @@ test("supports a continuous delivery benchmark phase", async () => {
 test("keeps visual review selection and procedure in its reference", async () => {
   const workflow = await skill("workflow");
   const visualReview = await reference("workflow", "visual-review.md");
-  const phaseSkills = await Promise.all(["write-map", "design", "roadmap"].map(skill));
+  const phaseSkills = await Promise.all(["design", "roadmap"].map(skill));
 
   assert.match(workflow, /\[visual-review\.md\]\(references\/visual-review\.md\)/);
   assert.match(visualReview, /Missing `Review browser` defaults to `auto`/);
@@ -302,7 +302,7 @@ test("keeps visual review selection and procedure in its reference", async () =>
   assert.match(visualReview, /For `external`, use the system browser/);
   assert.match(visualReview, /Explicit `internal` and `external` values override `auto`/);
   assert.match(visualReview, /Open one Prism artifact viewer session for all recorded ADRs and diagrams after a clean design audit/);
-  assert.match(visualReview, /each session opens the complete artifact tree/);
+  assert.match(visualReview, /each session opens the roadmap and its initiatives, slices, requirements, decisions, and glossary/);
   assert.match(visualReview, /Open one Prism artifact viewer session for all changed artifacts and diagrams before the final correctness gate/);
   assert.match(visualReview, /Use a browser-opening capability with no artifact argument/);
   assert.match(visualReview, /Treat a URL-only result or an unavailable opener as a fallback/);
@@ -338,7 +338,7 @@ test("keeps coordination state concise without an inline schema example", async 
   assert.doesNotMatch(orchestrate, /```json/);
   assert.match(orchestrate, /The `get_coordination_state` input includes the initiative path/);
   await assert.rejects(reference("orchestrate", "state-schema.md"), /ENOENT/);
-  for (const name of ["orchestrate", "design", "implement", "review", "write-map"]) {
+  for (const name of ["orchestrate", "design", "implement", "review", "roadmap"]) {
     assert.doesNotMatch(await skill(name), /worker-protocol\.md|baseRevision|preconditions|correction digest/);
   }
 });
@@ -381,7 +381,9 @@ test("preserves recursive design ownership and delivery gates", async () => {
   assert.match(design, /child requirement references collectively equal the parent assignment, allowing shared references/);
   assert.match(design, /orchestrator manages parent relationships and dependencies/);
   const shape = design.match(/```markdown\n([\s\S]*?)\n\s*```/)[1];
-  assert.deepEqual([...shape.matchAll(/^\s*## (.+)$/gm)].map(m => m[1]), ["Outcome", "Requirements"]);
+  assert.deepEqual([...shape.matchAll(/^\s*## (.+)$/gm)].map(m => m[1]), ["Context"]);
+  assert.match(design, /The initiative record owns each slice's title, outcome, and requirement assignment, so `slice.md` holds only design narrative/);
+  assert.match(design, /`SPLIT`: the unchanged parent title, parent diagram and ADR paths, and each new child's slug, folder path, title, outcome, and requirement references/);
   assert.match(orchestrate, /The design worker receives ancestor diagram and ADR paths, including inherited paths/);
   assert.match(deliveryRules, /Effective dependencies include inherited prerequisites/);
   assert.match(settings, /After required verification and fresh review, `conservative` asks for correctness confirmation/);
@@ -431,4 +433,36 @@ test("all local skill and README links resolve", async () => {
       assert.ok((await stat(resolve(dirname(path), target))).isFile(), path + ": " + target);
     }
   }
+});
+
+test("migration preserves legacy evidence and blocks missing facts", async () => {
+  const orchestrate = await skill("orchestrate");
+  assert.match(orchestrate, /Older coordination files remain until their required information has a durable home/);
+  const flow = orchestrate.match(/```plantuml\n([\s\S]*?)\n```/)[1];
+  assert.match(flow, /Worker records conflict\?[\s\S]*Ask the responsible worker to reconcile records\\nagainst actual artifacts[\s\S]*Re-read worker records and actual artifacts/);
+  assert.match(orchestrate, /Missing records establish neither approval nor completion/);
+  assert.match(orchestrate, /When a legacy `map.puml` exists without an initiative record, `update_initiative` receives an `import_map` operation/);
+});
+
+test("manages the roadmap and initiative graph only through MCP records", async () => {
+  const orchestrate = await skill("orchestrate");
+  const flow = orchestrate.match(/```plantuml\n([\s\S]*?)\n```/)[1];
+  const roadmap = await skill("roadmap");
+  const workflow = await skill("workflow");
+  const record = await reference("orchestrate", "initiative-record.md");
+  await assert.rejects(skill("write-map"), /ENOENT/);
+  assert.doesNotMatch(flow, /write-map|Run roadmap skill;/);
+  assert.match(flow, /Call get_initiative tool;[\s\S]*Initiative record missing\?[\s\S]*Call update_initiative tool to create or import the initiative record/);
+  assert.match(flow, /Design returned SPLIT\?[\s\S]*Call update_initiative tool to apply the split and dependencies/);
+  assert.match(flow, /All completion gates pass\?[\s\S]*Call update_initiative tool for the done transition/);
+  assert.match(flow, /All leaves and preserved finding lanes are done\?[\s\S]*Call update_roadmap tool to record the ship decision;\n\s*:Graduate durable information/);
+  assert.match(orchestrate, /`get_roadmap` derives the initiative's `planned` and `in-progress` states, so orchestration writes no roadmap state for them/);
+  assert.match(orchestrate, /\[initiative record\]\(references\/initiative-record\.md\)/);
+  assert.match(record, /A `done` status requires the slice's passing completion gate/);
+  assert.match(roadmap, /Read it with `get_roadmap` and change it with `update_roadmap`/);
+  assert.match(roadmap, /`update_roadmap` refuses `ship` until every leaf slice is done/);
+  assert.doesNotMatch(roadmap, /orchestrated state-change mode/);
+  assert.match(workflow, /\| `initiative.json` \| The authoritative MCP-managed initiative record/);
+  assert.match(workflow, /\| `roadmap.json` \| The roadmap record/);
+  assert.doesNotMatch(workflow, /\| `map.puml` \|/);
 });

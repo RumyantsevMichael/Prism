@@ -21,7 +21,7 @@ All persisted settings below are fields under `state.json.settings`.
 
 - `conservative` asks the user for requirements, decisions, conflicts, and correctness confirmation.
 - `broad` makes routine technical and workflow decisions within Approved intent, but pauses for new intent, requirement changes, or durable-source conflicts.
-- `full` resolves internal requirements, durable-source conflicts, roadmap state, splits, dependencies, ADR acceptance, correctness confirmation, and phase continuation.
+- `full` resolves internal requirements, durable-source conflicts, roadmap priority, splits, dependencies, ADR acceptance, correctness confirmation, and phase continuation.
 - After required verification and fresh review, `conservative` asks for correctness confirmation, while `broad` and `full` record it automatically.
 - No autonomy level invents external facts, overrides project constraints, bypasses independent review, or enables push automatically.
 
