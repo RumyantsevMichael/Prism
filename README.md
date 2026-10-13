@@ -75,7 +75,8 @@ Design discovery can precede dependency implementation, but implementation requi
 Review repeats after corrections until `CLEAN`, a user stop, or a real blocker.
 After integration, delivery verifies the result, with fresh review and confirmation when behavior changes or equivalence is uncertain.
 
-The [resume note](skills/orchestrate/SKILL.md#6-resume-note) records settings, active work, pending decisions, next actions, and evidence paths.
+The [resume note](skills/orchestrate/SKILL.md#6-resume-note) records settings, active work, pending user gates, next actions, and evidence paths.
+Each question that waits on the user is recorded as a user gate, and the review browser opens on Attention, which lists those gates with the artifacts to inspect.
 The authoritative [initiative record](skills/orchestrate/references/initiative-record.md) holds slice topology, titles, outcomes, requirement assignments, dependencies, and structural status.
 The MCP server validates coverage and the expanded dependency graph on every write, and refuses a `done` slice without a passing completion gate.
 The roadmap record holds initiative bands, order, required initiatives, and rationale, while initiative progress is derived from the initiative records.

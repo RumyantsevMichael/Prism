@@ -182,6 +182,15 @@ The [review and correction rules](references/review-rules.md) apply to design au
 The [delivery rules](references/delivery-rules.md) define implementation constraints.
 The [integration and completion rules](references/completion-rules.md) define integration and completion constraints.
 
+## User gate records
+
+The orchestrator records each user gate before asking the user and resolves it after the answer.
+The `update_coordination_state` input includes `changes.gateOperations` with one `ask` operation that supplies the gate kind, the slice slug when one applies, the question, and the project-relative artifact paths to inspect.
+Gate kinds are `visual-review` for design and final visual review, `correctness` for correctness confirmation, `decision` for requirement, decision, conflict, split, and dependency questions, and `assistance` for user actions such as a separate review task.
+After the user answers or the question is withdrawn, a `resolve` operation receives the gate id that the `ask` result returned.
+A gate that the autonomy setting settles automatically is not recorded.
+The review browser lists recorded gates as waiting on the user.
+
 ## State and recovery invariants
 
 The initiative's `state.json` records current coordination facts beside `initiative.json`.

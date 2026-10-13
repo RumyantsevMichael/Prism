@@ -302,7 +302,8 @@ test("keeps visual review selection and procedure in its reference", async () =>
   assert.match(visualReview, /For `external`, use the system browser/);
   assert.match(visualReview, /Explicit `internal` and `external` values override `auto`/);
   assert.match(visualReview, /Open one Prism artifact viewer session for all recorded ADRs and diagrams after a clean design audit/);
-  assert.match(visualReview, /each session opens the roadmap and its initiatives, slices, requirements, decisions, and glossary/);
+  assert.match(visualReview, /each session opens on Attention, which lists recorded user gates, and reaches the roadmap and its initiatives, slices, requirements, decisions, and glossary/);
+  assert.match(visualReview, /Before opening a session for a user gate, record the gate with the artifacts to inspect when coordination state exists/);
   assert.match(visualReview, /Open one Prism artifact viewer session for all changed artifacts and diagrams before the final correctness gate/);
   assert.match(visualReview, /Use a browser-opening capability with no artifact argument/);
   assert.match(visualReview, /Treat a URL-only result or an unavailable opener as a fallback/);
@@ -465,4 +466,19 @@ test("manages the roadmap and initiative graph only through MCP records", async 
   assert.match(workflow, /\| `initiative.json` \| The authoritative MCP-managed initiative record/);
   assert.match(workflow, /\| `roadmap.json` \| The roadmap record/);
   assert.doesNotMatch(workflow, /\| `map.puml` \|/);
+});
+
+test("records each user gate in coordination state while it waits on the user", async () => {
+  const orchestrate = await skill("orchestrate");
+  const runSettings = await reference("orchestrate", "run-settings.md");
+  const workflow = await skill("workflow");
+
+  assert.match(orchestrate, /The orchestrator records each user gate before asking the user and resolves it after the answer/);
+  assert.match(orchestrate, /`changes\.gateOperations` with one `ask` operation that supplies the gate kind, the slice slug when one applies, the question, and the project-relative artifact paths to inspect/);
+  assert.match(orchestrate, /Gate kinds are `visual-review` for design and final visual review, `correctness` for correctness confirmation, `decision` for requirement, decision, conflict, split, and dependency questions, and `assistance` for user actions/);
+  assert.match(orchestrate, /a `resolve` operation receives the gate id that the `ask` result returned/);
+  assert.match(orchestrate, /A gate that the autonomy setting settles automatically is not recorded/);
+  assert.match(runSettings, /Every question that waits on the user is recorded as a user gate in `state\.json` before it is asked/);
+  assert.match(workflow, /\| User gate record \| A pending `state\.json` entry that records a gate while it waits on the user/);
+  assert.match(workflow, /pending user gate records, next actions, evidence paths, and a revision/);
 });

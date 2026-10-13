@@ -80,6 +80,7 @@ Code establishes implemented behavior.
 | Design finding | A defect in approved intent, fit, boundaries, or planned verification that prevents a sound implementation gate. |
 | Implementation gap | Missing production behavior or implementation-owned wiring after design fit that does not reopen design unless it invalidates the design evidence. |
 | Gate | A user decision or correctness confirmation that controls progress. |
+| User gate record | A pending `state.json` entry that records a gate while it waits on the user, with its kind, slice, question, and artifacts. |
 | Fit checkpoint | The design decision that an outcome fits the remaining context and risk budget with settled architecture and end-to-end verification. |
 | Workflow decision record | An opt-in local record of a structured decision, its reason codes, evidence paths, and identity coverage. |
 | Concept delta | MCP-managed version 2 design evidence binding the original baseline, requirements, native search receipts, planned transitions, and growth policy to an audited revision. |
@@ -120,7 +121,7 @@ Code establishes implemented behavior.
 | Decision autonomy | An orchestration setting that controls automatic internal decisions. |
 | Agent flow | An orchestration setting that selects inline or delegated delivery. |
 | Slice continuation | An orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input. |
-| `state.json` | Machine-managed coordination state with settings, active work, pending decisions, next actions, evidence paths, and a revision. |
+| `state.json` | Machine-managed coordination state with settings, active work, pending user gate records, next actions, evidence paths, and a revision. |
 | `initiative.json` | The authoritative MCP-managed initiative record with slice titles, outcomes, topology, requirement assignments, dependencies, and status, read through `get_initiative` and changed through `update_initiative`; `initiative.md` is a generated view. |
 | `roadmap.json` | The roadmap record, read through `get_roadmap` and changed through `update_roadmap`; the configured roadmap Markdown is a generated view. |
 | `review.json` | The authoritative MCP-managed slice review containing lanes, waves, findings, assessments, disagreements, and evidence bindings. |
