@@ -27,6 +27,7 @@ import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
+import { DEFAULT_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, waitForUserGate } from "./workflow/gate-wait.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
@@ -595,6 +596,22 @@ const tools = [
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
+    name: "wait_for_user_gate",
+    description: "Wait until the user answers a recorded user gate in the review browser, then return the answer. Call it right after asking the user and recording the gate. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. It returns answered with the recorded answer, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, or unsupported_host when this host cannot wait in the background.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        statePath: { type: "string", description: "The project-relative path to the initiative state.json file that holds the gate." },
+        gateId: { type: "string", minLength: 1, description: "The gate id that the ask operation returned." },
+        maxWaitMinutes: { type: "number", exclusiveMinimum: 0, maximum: MAX_WAIT_MINUTES, description: `How long to wait before returning timeout. Defaults to ${DEFAULT_WAIT_MINUTES}.` }
+      },
+      required: ["projectRoot", "statePath", "gateId"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  },
+  {
     name: "update_coordination_state",
     description: "Apply a validated atomic update to an initiative state.json file, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision. Do not edit state.json directly when this tool is available.",
     inputSchema: {
@@ -699,6 +716,48 @@ const tools = [
 ];
 
 const stateTools = new Set(["get_coordination_state", "validate_coordination_state", "update_coordination_state", "checkpoint_pause"]);
+// Only Claude Code was shown to move a long call to the background and wake the session with its result; other hosts would block the turn.
+const BACKGROUND_WAIT_CLIENTS = /claude/i;
+const pendingWaits = new Map();
+let clientName = null;
+
+function progress(progressToken, value, message) {
+  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: value, message } })}\n`);
+}
+
+async function callGateWait(argumentsValue, metadata, requestId) {
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  let value;
+  if (!BACKGROUND_WAIT_CLIENTS.test(clientName ?? "")) {
+    value = { status: "unsupported_host", gateId: argumentsValue.gateId, client: clientName };
+  } else {
+    const controller = new AbortController();
+    if (requestId !== undefined) pendingWaits.set(requestId, controller);
+    const progressToken = metadata?.progressToken;
+    try {
+      value = await waitForUserGate({
+        projectRoot,
+        statePath: argumentsValue.statePath,
+        gateId: argumentsValue.gateId,
+        maxWaitMinutes: argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES,
+        signal: controller.signal,
+        heartbeatMs: Number(process.env.PRISM_GATE_WAIT_HEARTBEAT_MS) || 60000,
+        onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, "Waiting for the user's answer in the review browser")
+      });
+    } finally {
+      pendingWaits.delete(requestId);
+    }
+  }
+  const text = {
+    answered: () => answerText(value.gate),
+    resolved: () => `User gate ${value.gateId} was resolved without a browser answer; it was answered in the conversation or withdrawn.`,
+    timeout: () => `No answer arrived for user gate ${value.gateId} before the wait ended.`,
+    unknown_gate: () => `No pending user gate has the id ${value.gateId}.`,
+    unsupported_host: () => "This host does not run long tool calls in the background, so the wait returned at once; the user's next message delivers any browser answer.",
+    cancelled: () => `The wait for user gate ${value.gateId} was cancelled.`
+  }[value.status]();
+  return { content: [{ type: "text", text }], structuredContent: value };
+}
 const repositoryTools = new Set([...NATIVE_INTELLIGENCE_TOOLS.map(tool => tool.name), "list_repository_intelligence_providers", "plan_repository_context", "resolve_session_capacity", "evaluate_repository_fit", "summarize_session_consumption", "set_workflow_recording", "read_workflow_decisions", "record_workflow_decision"]);
 
 async function callStateTool(name, argumentsValue) {
@@ -868,7 +927,10 @@ async function callRepositoryTool(name, argumentsValue) {
   throw new Error(`Unknown repository-intelligence tool: ${name}`);
 }
 
-async function callTool(name, argumentsValue = {}, metadata) {
+async function callTool(name, argumentsValue = {}, metadata, requestId) {
+  if (name === "wait_for_user_gate") {
+    return callGateWait(argumentsValue, metadata, requestId);
+  }
   if (CONSERVATION_TOOLS.some(tool => tool.name === name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const value = await callConservationTool(name, { ...argumentsValue, projectRoot });
@@ -924,6 +986,7 @@ input.on("line", async (line) => {
   try {
     request = JSON.parse(line);
     if (request.method === "initialize") {
+      clientName = typeof request.params?.clientInfo?.name === "string" ? request.params.clientInfo.name : null;
       result(request.id, {
         protocolVersion: request.params?.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },
@@ -932,7 +995,13 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
-      result(request.id, await callTool(request.params?.name, request.params?.arguments, request.params?._meta));
+      const value = await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id);
+      // A cancelled request gets no response, as the MCP cancellation rules require.
+      if (value.structuredContent?.status !== "cancelled") {
+        result(request.id, value);
+      }
+    } else if (request.method === "notifications/cancelled") {
+      pendingWaits.get(request.params?.requestId)?.abort();
     } else if (request.id !== undefined) {
       failure(request.id, -32601, `Method not found: ${request.method}`);
     }
@@ -944,6 +1013,7 @@ input.on("line", async (line) => {
 });
 
 input.on("close", async () => {
+  for (const controller of pendingWaits.values()) controller.abort();
   nativeSemanticRuntime.close();
   await reviewServers.close();
 });

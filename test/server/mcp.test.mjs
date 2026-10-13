@@ -295,6 +295,9 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.match(tools.get_review_url.description, /URL only/);
   assert.match(tools.get_review_url.description, /does not open a browser/);
   assert.match(tools.present_review.description, /system browser/);
+  assert.deepEqual(tools.wait_for_user_gate.inputSchema.required, ["projectRoot", "statePath", "gateId"]);
+  assert.equal(tools.wait_for_user_gate.annotations.readOnlyHint, true);
+  assert.match(tools.wait_for_user_gate.description, /its result wakes the session when the user answers/);
   assert.match(tools.present_review.description, /the human's open tabs stay open/);
   assert.match(tools.present_review.description, /Omit artifact and artifacts to open Attention/);
   assert.deepEqual(tools.get_review_url.inputSchema.properties.artifacts.items, { type: "string" });
