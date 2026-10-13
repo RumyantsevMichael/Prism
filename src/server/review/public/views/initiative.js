@@ -89,7 +89,7 @@ export async function render(container, entity, ctx) {
   const edges = Object.entries(data.derived.effectiveDependencies).flatMap(([slug, targets]) => targets.map((target) => ({ from: target, to: slug, className: "requires-edge" })));
   const viewport = section.querySelector(".graph-viewport");
   if (nodes.length) {
-    await renderGraph(viewport, { label: "Slice dependencies", nodes, edges }, { onSelect: (slug) => ctx.openArtifact(`slice:${data.id}/${slug}`) });
+    await renderGraph(viewport, { label: "Slice dependencies", nodes, edges }, { onSelect: (slug, options) => ctx.openArtifact(`slice:${data.id}/${slug}`, options) });
     enablePanZoom(section, ctx.state.graph ??= {});
   } else {
     viewport.innerHTML = emptyNote("The initiative has no leaf slices.");

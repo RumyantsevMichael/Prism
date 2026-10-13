@@ -160,7 +160,8 @@ test("serves the browser runtime without an image endpoint", async (context) => 
     assert.match(page.headers["content-security-policy"], /wasm-unsafe-eval/);
     const pageSource = await page.text();
     assert.match(pageSource, /viz-global\.js/);
-    assert.match(pageSource, /id="artifact-filter"/);
+    assert.match(pageSource, /id="palette-input"/);
+    assert.match(pageSource, /id="jump"/);
     assert.match(pageSource, /aria-live="polite"/);
     assert.match(pageSource, /id="tabs"/);
     const stylesheet = await (await fetchReview(`${review.baseUrl}/review.css`)).text();
@@ -206,13 +207,13 @@ test("stores agent-selected tabs and exposes them to the viewer", async (context
     await review.setOpenTabs(["docs/roadmap.md", "docs/roadmap.puml"]);
     assert.deepEqual(review.getOpenTabs(), ["docs/roadmap.md", "docs/roadmap.puml"]);
     const session = await fetchReview(`${review.baseUrl}/api/session`);
-    assert.deepEqual(await session.json(), { openTabs: ["docs/roadmap.md", "docs/roadmap.puml"], activeTab: "docs/roadmap.md", revision: 1 });
+    assert.deepEqual(await session.json(), { openTabs: ["docs/roadmap.md", "docs/roadmap.puml"], activeTab: "docs/roadmap.md", previewTab: null, agentTabs: ["docs/roadmap.md", "docs/roadmap.puml"], revision: 1 });
     const updated = await fetchReview(`${review.baseUrl}/api/session`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ openTabs: ["docs/roadmap.puml"] })
     });
-    assert.deepEqual(await updated.json(), { openTabs: ["docs/roadmap.puml"], activeTab: "docs/roadmap.puml", revision: 2 });
+    assert.deepEqual(await updated.json(), { openTabs: ["docs/roadmap.puml"], activeTab: "docs/roadmap.puml", previewTab: null, agentTabs: ["docs/roadmap.puml"], revision: 2 });
     assert.deepEqual(review.getOpenTabs(), ["docs/roadmap.puml"]);
     const invalidActive = await fetchReview(`${review.baseUrl}/api/session`, {
       method: "PUT",
@@ -236,11 +237,11 @@ test("broadcasts session changes to every connected viewer page", async (context
     streams.push(first, second);
     assert.equal(first.status, 200);
     assert.match(first.headers["content-type"], /text\/event-stream/);
-    assert.deepEqual((await first.next()).data, { openTabs: [], activeTab: null, revision: 0 });
-    assert.deepEqual((await second.next()).data, { openTabs: [], activeTab: null, revision: 0 });
+    assert.deepEqual((await first.next()).data, { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 });
+    assert.deepEqual((await second.next()).data, { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 });
 
     await review.setOpenTabs(["docs/roadmap.md", "docs/roadmap.puml"]);
-    const update = { openTabs: ["docs/roadmap.md", "docs/roadmap.puml"], activeTab: "docs/roadmap.md", revision: 1 };
+    const update = { openTabs: ["docs/roadmap.md", "docs/roadmap.puml"], activeTab: "docs/roadmap.md", previewTab: null, agentTabs: ["docs/roadmap.md", "docs/roadmap.puml"], revision: 1 };
     assert.deepEqual((await first.next()).data, update);
     assert.deepEqual((await second.next()).data, update);
   } finally {

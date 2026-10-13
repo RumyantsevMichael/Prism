@@ -70,7 +70,19 @@ export function bindLinks(root, ctx) {
     const artifactLink = event.target.closest("[data-artifact]");
     if (artifactLink && root.contains(artifactLink)) {
       event.preventDefault();
-      ctx.openArtifact(artifactLink.dataset.artifact);
+      ctx.openArtifact(artifactLink.dataset.artifact, { keep: event.ctrlKey || event.metaKey });
+    }
+  });
+  // A single click previews a link; a double click or a middle click keeps it open, as in an editor.
+  root.addEventListener("dblclick", (event) => {
+    const artifactLink = event.target.closest("[data-artifact]");
+    if (artifactLink && root.contains(artifactLink)) ctx.openArtifact(artifactLink.dataset.artifact, { keep: true });
+  });
+  root.addEventListener("auxclick", (event) => {
+    const artifactLink = event.target.closest("[data-artifact]");
+    if (event.button === 1 && artifactLink && root.contains(artifactLink)) {
+      event.preventDefault();
+      ctx.openArtifact(artifactLink.dataset.artifact, { keep: true });
     }
   });
 }

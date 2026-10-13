@@ -36,18 +36,25 @@ function initiativeCard(item, titles) {
   </li>`;
 }
 
-function board(data, titles) {
-  const open = data.items.filter((item) => item.state !== "superseded");
-  const superseded = data.items.filter((item) => item.state === "superseded");
-  return `<div class="roadmap-board">${data.bands.map((band) => {
+const ARCHIVED = new Set(["shipped", "superseded"]);
+
+function visibleItems(data, archive) {
+  return archive ? data.items : data.items.filter((item) => !ARCHIVED.has(item.state));
+}
+
+function board(data, titles, archive) {
+  const open = visibleItems(data, archive).filter((item) => item.state !== "superseded");
+  const superseded = archive ? data.items.filter((item) => item.state === "superseded") : [];
+  const bands = archive ? data.bands : data.bands.filter((band) => band !== "Shipped");
+  return `<div class="roadmap-board${archive ? "" : " without-archive"}">${bands.map((band) => {
     const members = open.filter((item) => item.band === band);
     return `<section class="band-column band-${band.toLowerCase()}"><h2>${escapeHtml(band)} <span class="column-count">${members.length}</span></h2><ul>${members.map((item) => initiativeCard(item, titles)).join("") || '<li class="column-empty">—</li>'}</ul></section>`;
   }).join("")}</div>
   ${superseded.length ? `<details class="view-card superseded-card"><summary><span class="eyebrow">Superseded</span> ${plural(superseded.length, "initiative")}</summary><ul class="plain-list">${superseded.map((item) => `<li>${initiativeLink(item.id, item.title)} → ${initiativeLink(item.decision.by, titles.get(item.decision.by) ?? item.decision.by)}: ${escapeHtml(item.decision.reason ?? "")}</li>`).join("")}</ul></details>` : ""}`;
 }
 
-function list(data, titles) {
-  return card("All initiatives", `<div class="table-wrap"><table class="data-table"><thead><tr><th>Initiative</th><th>Band</th><th>State</th><th>Progress</th><th>Needs</th><th>Signals</th></tr></thead><tbody>${data.items.map((item) => `<tr>
+function list(data, titles, archive) {
+  return card(archive ? "All initiatives" : "Open initiatives", `<div class="table-wrap"><table class="data-table"><thead><tr><th>Initiative</th><th>Band</th><th>State</th><th>Progress</th><th>Needs</th><th>Signals</th></tr></thead><tbody>${visibleItems(data, archive).map((item) => `<tr>
     <td>${initiativeLink(item.id, item.title)}<br><span class="muted">${escapeHtml(item.intent)}</span></td>
     <td>${escapeHtml(item.band)}</td>
     <td>${stateBadge(item.state)}</td>
@@ -57,15 +64,17 @@ function list(data, titles) {
   </tr>`).join("")}</tbody></table></div>`, { eyebrow: "Ordered by band, then priority" });
 }
 
-async function graph(container, data, ctx, titles) {
-  const section = graphCard({ title: plural(data.items.length, "initiative"), eyebrow: "Prerequisite → dependent", legend: '<span class="legend-hint">Click an initiative to open it · Drag to pan</span>' });
+async function graph(container, data, ctx, titles, archive) {
+  const items = visibleItems(data, archive);
+  const shown = new Set(items.map((item) => item.id));
+  const section = graphCard({ title: plural(items.length, "initiative"), eyebrow: "Prerequisite → dependent", legend: '<span class="legend-hint">Click an initiative to open it · Drag to pan</span>' });
   container.appendChild(section);
   const viewport = section.querySelector(".graph-viewport");
-  if (!data.items.length) {
-    viewport.innerHTML = emptyNote("The roadmap has no initiatives.");
+  if (!items.length) {
+    viewport.innerHTML = emptyNote("The roadmap has no open initiatives.");
     return;
   }
-  const nodes = data.items.map((item) => ({
+  const nodes = items.map((item) => ({
     id: item.id,
     title: item.title,
     subtitle: `${item.band} · ${item.state}${item.progress ? ` · ${item.progress.done}/${item.progress.leaves}` : ""}`,
@@ -73,14 +82,16 @@ async function graph(container, data, ctx, titles) {
     cluster: item.state === "superseded" ? "Superseded" : item.band,
     className: `initiative-node state-${item.state}`
   }));
-  const edges = data.items.flatMap((item) => item.requires.map((target) => ({ from: target, to: item.id, className: "requires-edge" })));
-  await renderGraph(viewport, { label: "Initiative dependencies", nodes, edges }, { onSelect: (id) => ctx.openArtifact(`initiative:${id}`), clusterLabels: new Map([...data.bands, "Superseded"].map((band) => [band, band])) });
+  const edges = items.flatMap((item) => item.requires.filter((target) => shown.has(target)).map((target) => ({ from: target, to: item.id, className: "requires-edge" })));
+  await renderGraph(viewport, { label: "Initiative dependencies", nodes, edges }, { onSelect: (id, options) => ctx.openArtifact(`initiative:${id}`, options), clusterLabels: new Map([...data.bands, "Superseded"].map((band) => [band, band])) });
   enablePanZoom(section, ctx.state.graph ??= {});
 }
 
 export async function render(container, entity, ctx) {
   const data = entity.data;
   ctx.state.mode ??= "board";
+  ctx.state.archive ??= false;
+  const archived = data.items.filter((item) => ARCHIVED.has(item.state)).length;
   const titles = new Map(data.items.map((item) => [item.id, item.title]));
   const missing = data.error
     ? `<p class="error">${escapeHtml(data.error)}</p>`
@@ -100,7 +111,10 @@ export async function render(container, entity, ctx) {
           <div class="stat"><span class="stat-value">${counts.envisioned}</span><span class="stat-label">envisioned</span></div>
           <div class="stat is-good"><span class="stat-value">${counts.shipped}</span><span class="stat-label">shipped</span></div>
         </div>
-        <div class="segmented" role="group" aria-label="Roadmap view">${MODES.map(([mode, label]) => `<button type="button" data-roadmap-mode="${mode}" aria-pressed="${ctx.state.mode === mode}">${label}</button>`).join("")}</div>
+        <div class="roadmap-controls">
+          <button type="button" class="tool-button" data-roadmap-archive aria-pressed="${ctx.state.archive}" ${archived ? "" : "disabled"}>${ctx.state.archive ? "Hide" : "Show"} shipped and superseded (${archived})</button>
+          <div class="segmented" role="group" aria-label="Roadmap view">${MODES.map(([mode, label]) => `<button type="button" data-roadmap-mode="${mode}" aria-pressed="${ctx.state.mode === mode}">${label}</button>`).join("")}</div>
+        </div>
       </div>
       ${missing}
     </section>
@@ -109,10 +123,14 @@ export async function render(container, entity, ctx) {
     ${data.unlisted?.length ? card("Initiatives not on the roadmap", `<p class="muted">These plans folders have an initiative record but no roadmap entry.</p><ul class="plain-list">${data.unlisted.map((id) => `<li>${initiativeLink(id, id)}</li>`).join("")}</ul>`, { eyebrow: "Needs prioritization" }) : ""}`;
   const body = container.querySelector("[data-roadmap-body]");
   if (ctx.state.mode === "graph") {
-    await graph(body, data, ctx, titles);
+    await graph(body, data, ctx, titles, ctx.state.archive);
   } else {
-    body.innerHTML = ctx.state.mode === "list" ? list(data, titles) : board(data, titles);
+    body.innerHTML = ctx.state.mode === "list" ? list(data, titles, ctx.state.archive) : board(data, titles, ctx.state.archive);
   }
+  container.querySelector("[data-roadmap-archive]").addEventListener("click", () => {
+    ctx.state.archive = !ctx.state.archive;
+    ctx.rerender();
+  });
   for (const button of container.querySelectorAll("[data-roadmap-mode]")) {
     button.addEventListener("click", () => {
       ctx.state.mode = button.dataset.roadmapMode;

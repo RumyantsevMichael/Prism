@@ -339,13 +339,13 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open or update one local Prism HTTPS review page in the system browser for the human. Use artifacts to select the shared persistent tabs. Repeated calls update connected viewer pages without opening another tab. Omit artifact to show the complete artifact tree when artifacts is also omitted. The tool returns no rendered image data.",
+    description: "Open or update one local Prism HTTPS review page in the system browser for the human. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
         artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to open as persistent tabs. An empty array closes all tabs." }
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to add as agent tabs. An empty array opens Attention." }
       },
       required: ["projectRoot"],
       additionalProperties: false

@@ -1,6 +1,7 @@
 import { escapeHtml } from "./util.js";
 
 export const ENTITY_LABELS = Object.freeze({
+  attention: "Attention",
   roadmap: "Roadmap",
   requirements: "Requirements",
   decisions: "Decisions",
@@ -9,6 +10,7 @@ export const ENTITY_LABELS = Object.freeze({
 
 const SECTIONS = Object.keys(ENTITY_LABELS);
 const VIEWS = {
+  attention: () => import("./attention.js"),
   roadmap: () => import("./roadmap.js"),
   initiative: () => import("./initiative.js"),
   slice: () => import("./slice.js"),
@@ -29,6 +31,7 @@ export function parseEntityRef(ref) {
 
 export function entityLabel(entity) {
   const data = entity.data;
+  if (entity.kind === "attention") return { title: "What needs you", subtitle: null };
   if (entity.kind === "roadmap") return { eyebrow: "Roadmap", title: data.serves || "Roadmap", subtitle: data.recordPath ?? null };
   if (entity.kind === "initiative") return { eyebrow: "Initiative", title: data.roadmapItem?.title ?? data.id, subtitle: data.recordPath };
   if (entity.kind === "slice") return { eyebrow: `Slice · ${data.initiativeTitle}`, title: data.slice.title, subtitle: data.artifacts?.folder ?? null };

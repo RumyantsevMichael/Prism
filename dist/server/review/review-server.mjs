@@ -9,7 +9,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { getConceptDelta } from "../conservation/concept-delta.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { entityExists, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { entityContext, entityExists, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -378,12 +378,12 @@ export async function startReviewServer(options = {}) {
   const certificate = await localCertificate(options);
   const token = randomBytes(24).toString("base64url");
   const prefix = `/session/${token}`;
-  let session = { openTabs: [], activeTab: null, revision: 0 };
+  let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
   const viewers = new Map();
   let viewerOpenLease = null;
 
   function sessionSnapshot() {
-    return { openTabs: [...session.openTabs], activeTab: session.activeTab, revision: session.revision };
+    return { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], revision: session.revision };
   }
 
   function clearViewerOpenLease() {
@@ -450,42 +450,82 @@ export async function startReviewServer(options = {}) {
     writeSessionEvent(response);
   }
 
-  async function updateSession(tabs, activeTab, activeTabProvided) {
-    const requestedTabs = normalizeTabs(tabs);
+  async function assertAvailable(tabs) {
     const availableArtifacts = new Set(await listArtifacts(projectRoot));
-    let unknownTab;
-    for (const tab of requestedTabs) {
+    for (const tab of tabs) {
       if (!availableArtifacts.has(tab) && !(parseEntityRef(tab) && await entityExists(projectRoot, tab))) {
-        unknownTab = tab;
-        break;
+        throw new Error(`The artifact is not available for review: ${tab}`);
       }
     }
-    if (unknownTab) {
-      throw new Error(`The artifact is not available for review: ${unknownTab}`);
-    }
-    let nextActiveTab;
-    if (activeTabProvided) {
-      if (activeTab !== null && (typeof activeTab !== "string" || !requestedTabs.includes(activeTab))) {
-        throw new Error("The active tab must be null or one of the open tabs.");
-      }
-      nextActiveTab = activeTab;
-    } else {
-      nextActiveTab = session.activeTab && requestedTabs.includes(session.activeTab) ? session.activeTab : requestedTabs[0] ?? null;
-    }
-    if (requestedTabs.length === 0) {
-      nextActiveTab = null;
-    }
-    if (requestedTabs.length !== session.openTabs.length || requestedTabs.some((tab, index) => tab !== session.openTabs[index]) || nextActiveTab !== session.activeTab) {
-      session = { openTabs: requestedTabs, activeTab: nextActiveTab, revision: session.revision + 1 };
+  }
+
+  function commitSession(next) {
+    const changed = ["openTabs", "agentTabs"].some((key) => next[key].length !== session[key].length || next[key].some((tab, index) => tab !== session[key][index]))
+      || next.activeTab !== session.activeTab || next.previewTab !== session.previewTab;
+    if (changed) {
+      session = { ...next, revision: session.revision + 1 };
       broadcastSession();
     }
     return sessionSnapshot();
   }
 
+  // The browser owns the preview tab: one replaceable tab for browsing, while kept and agent tabs stay open.
+  async function updateSession(body) {
+    const requestedTabs = normalizeTabs(body.openTabs);
+    await assertAvailable(requestedTabs);
+    let nextActiveTab;
+    if (Object.hasOwn(body, "activeTab")) {
+      if (body.activeTab !== null && (typeof body.activeTab !== "string" || !requestedTabs.includes(body.activeTab))) {
+        throw new Error("The active tab must be null or one of the open tabs.");
+      }
+      nextActiveTab = body.activeTab;
+    } else {
+      nextActiveTab = session.activeTab && requestedTabs.includes(session.activeTab) ? session.activeTab : requestedTabs[0] ?? null;
+    }
+    let previewTab = session.previewTab && requestedTabs.includes(session.previewTab) ? session.previewTab : null;
+    if (Object.hasOwn(body, "previewTab")) {
+      if (body.previewTab !== null && (typeof body.previewTab !== "string" || !requestedTabs.includes(body.previewTab))) {
+        throw new Error("The preview tab must be null or one of the open tabs.");
+      }
+      previewTab = body.previewTab;
+    }
+    let agentTabs = session.agentTabs.filter((tab) => requestedTabs.includes(tab));
+    if (Object.hasOwn(body, "agentTabs")) {
+      const requestedAgentTabs = normalizeTabs(body.agentTabs);
+      if (requestedAgentTabs.some((tab) => !requestedTabs.includes(tab))) {
+        throw new Error("Agent tabs must be open tabs.");
+      }
+      agentTabs = requestedAgentTabs;
+    }
+    if (requestedTabs.length === 0) {
+      nextActiveTab = null;
+    }
+    return commitSession({ openTabs: requestedTabs, activeTab: nextActiveTab, previewTab: agentTabs.includes(previewTab) ? null : previewTab, agentTabs });
+  }
+
+  // get_review_url selects exactly the requested tabs, as its contract documents.
   async function setOpenTabs(tabs) {
     const requestedTabs = normalizeTabs(tabs);
-    const updated = await updateSession(requestedTabs, requestedTabs[0] ?? null, true);
-    return updated.openTabs;
+    await assertAvailable(requestedTabs);
+    return commitSession({ openTabs: requestedTabs, activeTab: requestedTabs[0] ?? null, previewTab: null, agentTabs: requestedTabs }).openTabs;
+  }
+
+  // present_review adds agent tabs beside the human's tabs and focuses the first one without replacing the preview.
+  async function presentTabs(tabs) {
+    const requestedTabs = normalizeTabs(tabs);
+    await assertAvailable(requestedTabs);
+    if (requestedTabs.length === 0) {
+      if (session.openTabs.includes("attention")) {
+        return commitSession({ ...session, activeTab: "attention" });
+      }
+      // Attention opens in the preview tab, replacing whatever the preview showed.
+      const openTabs = [...session.openTabs.filter((tab) => tab !== session.previewTab), "attention"];
+      return commitSession({ openTabs, activeTab: "attention", previewTab: "attention", agentTabs: session.agentTabs });
+    }
+    const openTabs = [...session.openTabs, ...requestedTabs.filter((tab) => !session.openTabs.includes(tab))];
+    const agentTabs = [...session.agentTabs, ...requestedTabs.filter((tab) => !session.agentTabs.includes(tab))];
+    const previewTab = requestedTabs.includes(session.previewTab) ? null : session.previewTab;
+    return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs });
   }
 
   function closeViewerStreams() {
@@ -525,7 +565,9 @@ export async function startReviewServer(options = {}) {
         send(response, 200, JSON.stringify(sessionSnapshot()), "application/json; charset=utf-8");
       } else if (route === "/api/session" && request.method === "PUT") {
         const body = await readJson(request);
-        send(response, 200, JSON.stringify(await updateSession(body.openTabs, body.activeTab, Object.hasOwn(body, "activeTab"))), "application/json; charset=utf-8");
+        send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
+      } else if (route === "/api/context") {
+        send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
       } else if (route === "/api/entity") {
         send(response, 200, JSON.stringify(await loadEntity(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
       } else if (route === "/api/evidence") {
@@ -574,7 +616,7 @@ export async function startReviewServer(options = {}) {
     },
     async open(artifactPaths) {
       const tabs = normalizeTabs(artifactPaths);
-      await setOpenTabs(tabs);
+      await presentTabs(tabs);
       const url = this.reviewUrl(tabs);
       if (viewers.size > 0 || viewerOpenLease) {
         return { url, opened: false, ...sessionSnapshot() };

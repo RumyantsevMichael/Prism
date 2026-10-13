@@ -188,7 +188,7 @@ export async function render(container, data, ctx) {
   if (visible.length === 0) {
     viewport.innerHTML = emptyNote("No concepts match the current filter.");
   } else {
-    graphView = await renderGraph(viewport, graph, { onSelect: (id) => select(state.selected === id ? null : id), selectedId: state.selected, clusterLabels });
+    graphView = await renderGraph(viewport, graph, { onSelect: (id, options) => options?.double ? undefined : select(state.selected === id ? null : id), selectedId: state.selected, clusterLabels });
     enablePanZoom(graphSection, state.graph);
   }
 

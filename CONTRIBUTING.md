@@ -90,7 +90,8 @@ Run a local human review from the repository root:
 ```
 
 To try the entity-first review browser, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
-The seed builds a temporary project whose roadmap, initiative records, concept delta, review ledger, coordination state, and evidence come from the real MCP tools.
+The seed builds a temporary project whose roadmap, initiative records, concept delta, review ledger, coordination state, recorded user gates, and evidence come from the real MCP tools.
+The browser opens on Attention, which lists the recorded user gates, and its sidebar expands only the path to the open initiative, slice, or library section.
 One shipped initiative record is written directly, because its completion gate needs accepted reviews that the offline demo cannot produce.
 
 With both manifests present the CLI validates the marketplace one.

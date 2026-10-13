@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { readInitiative } from "../workflow/initiative.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
@@ -9,7 +9,8 @@ import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-co
 const LIBRARY_LIMIT = 500;
 const SLICE_FILE_LIMIT = 200;
 const UNRESOLVED = new Set(["OPEN", "IN PROGRESS", "REOPENED"]);
-export const SECTION_REFS = Object.freeze(["roadmap", "requirements", "decisions", "glossary"]);
+export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary"]);
+const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary" });
 
 async function readText(root, relative) {
   try {
@@ -274,18 +275,231 @@ export async function loadGlossary(projectRoot) {
   return { path: glossaryPath, exists: content !== null, content };
 }
 
+async function planFolders(root, config) {
+  if (!config.paths.plans) return [];
+  try {
+    const entries = await readdir(path.join(root, config.paths.plans), { withFileTypes: true });
+    const ids = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !SLUG_PATTERN.test(entry.name)) continue;
+      const base = `${config.paths.plans}/${entry.name}`;
+      if ((await readText(root, `${base}/initiative.json`)) !== null || (await readText(root, `${base}/state.json`)) !== null) ids.push(entry.name);
+    }
+    return ids.sort();
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function isFile(root, relative) {
+  try {
+    return (await stat(path.join(root, relative))).isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function initiativeSnapshot(projectRoot, config, id, roadmapItem) {
+  const directory = initiativeDirectory(config, id);
+  const { loaded } = await readInitiative(projectRoot, id).catch(() => ({ loaded: { exists: false, valid: false, errors: [] } }));
+  let state = null;
+  try {
+    state = await readCoordinationState({ projectRoot, statePath: `${directory}/state.json` });
+  } catch {
+    state = null;
+  }
+  const slices = loaded.record?.slices ?? {};
+  return {
+    id,
+    directory,
+    title: roadmapItem?.title ?? slices[loaded.analysis?.root]?.title ?? id,
+    record: loaded,
+    state,
+    sliceTitle: (slug) => (slug && Object.hasOwn(slices, slug) ? slices[slug].title : slug ?? null)
+  };
+}
+
+function gateOrder(left, right) {
+  return String(left.askedAt ?? "").localeCompare(String(right.askedAt ?? ""));
+}
+
+export async function loadAttention(projectRoot) {
+  const config = await readWorkflowConfig(projectRoot);
+  const roadmap = await loadRoadmapView(projectRoot);
+  const items = new Map(roadmap.items.map((item) => [item.id, item]));
+  const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await planFolders(projectRoot, config))])];
+  const needsYou = [];
+  const watch = [];
+  for (const id of ids) {
+    const snapshot = await initiativeSnapshot(projectRoot, config, id, items.get(id));
+    const initiative = { id, title: snapshot.title };
+    const state = snapshot.state;
+    if (state?.exists && !state.valid) {
+      watch.push({ type: "record-problem", initiative, path: state.statePath, message: state.errors.join(" ") });
+    }
+    for (const entry of state?.state?.pending ?? []) {
+      if (entry && typeof entry === "object") {
+        const artifacts = [];
+        for (const artifact of entry.artifacts ?? []) artifacts.push({ path: artifact, available: await isFile(projectRoot, artifact) });
+        needsYou.push({ type: "gate", id: entry.id, kind: entry.kind, question: entry.question, askedAt: entry.askedAt, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts, statePath: state.statePath });
+      } else if (typeof entry === "string") {
+        needsYou.push({ type: "pending-note", text: entry, initiative, statePath: state.statePath });
+      }
+    }
+    if (snapshot.record.exists && !snapshot.record.valid) {
+      watch.push({ type: "record-problem", initiative, path: `${snapshot.directory}/initiative.json`, message: snapshot.record.errors.join(" ") });
+    }
+    const slices = snapshot.record.record?.slices ?? {};
+    for (const [slug, slice] of Object.entries(slices)) {
+      if (slice.status === "blocked") watch.push({ type: "blocked", initiative, slice: { slug, title: slice.title } });
+    }
+    for (const slug of Object.keys(slices)) {
+      const source = await readText(projectRoot, `${snapshot.directory}/${slug}/review.json`);
+      if (source === null) continue;
+      try {
+        const summary = reviewSummary(JSON.parse(source));
+        if (summary.unresolved || summary.blocking) watch.push({ type: "findings", initiative, slice: { slug, title: slices[slug].title }, unresolved: summary.unresolved, blocking: summary.blocking, path: `${snapshot.directory}/${slug}/review.json` });
+      } catch {
+        watch.push({ type: "record-problem", initiative, path: `${snapshot.directory}/${slug}/review.json`, message: "The review ledger is not valid JSON." });
+      }
+    }
+    for (const entry of state?.state?.active ?? []) {
+      watch.push({ type: "active", initiative, slice: { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) }, activity: entry.activity, label: entry.label ?? null, workers: entry.workers ?? [] });
+    }
+    const item = items.get(id);
+    if (item?.readyToShip && item.state !== "shipped") watch.push({ type: "ready-to-ship", initiative });
+  }
+  needsYou.sort((left, right) => (left.type === "gate") === (right.type === "gate") ? gateOrder(left, right) : left.type === "gate" ? -1 : 1);
+  if (roadmap.error) needsYou.push({ type: "roadmap-problem", path: config.paths.roadmap, message: roadmap.error });
+  else if (!roadmap.exists && config.paths.roadmap) needsYou.push({ type: "roadmap-missing", path: roadmap.recordPath });
+  else if (roadmap.exists && !roadmap.valid) needsYou.push({ type: "roadmap-problem", path: roadmap.recordPath, message: roadmap.errors.join(" ") });
+  for (const id of roadmap.unlisted) needsYou.push({ type: "unlisted", initiative: { id, title: id } });
+  for (const question of roadmap.openQuestions ?? []) needsYou.push({ type: "open-question", text: question });
+  for (const diagnostic of config.diagnostics) needsYou.push({ type: "config", code: diagnostic.code, message: diagnostic.message });
+  const blockingOrder = (entry) => ({ "record-problem": 0, blocked: 1, findings: entry.blocking ? 2 : 3, "ready-to-ship": 4, active: 5 })[entry.type] ?? 6;
+  watch.sort((left, right) => blockingOrder(left) - blockingOrder(right));
+  return { needsYou, watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
+}
+
+function glossaryTerms(content) {
+  const terms = [];
+  for (const line of (content ?? "").split("\n")) {
+    const heading = /^#{2,4}\s+(.+?)\s*$/.exec(line);
+    if (heading) terms.push(heading[1]);
+    const row = /^\|\s*([^|]+?)\s*\|/.exec(line);
+    if (row && !/^-+$/.test(row[1].replace(/[:\s]/g, "")) && !["term", "name"].includes(row[1].toLowerCase())) terms.push(row[1].replace(/\*\*/g, ""));
+  }
+  return [...new Set(terms)].slice(0, LIBRARY_LIMIT);
+}
+
+async function searchIndex(projectRoot, config, roadmap, glossary) {
+  const entries = [];
+  const titles = new Map(roadmap.items.map((item) => [item.id, item.title]));
+  for (const item of roadmap.items) entries.push({ ref: `initiative:${item.id}`, label: item.title, kind: "initiative", detail: `${item.band} · ${item.state}` });
+  for (const id of await initiativeFolders(projectRoot, config)) {
+    if (!titles.has(id)) entries.push({ ref: `initiative:${id}`, label: id, kind: "initiative", detail: "not on the roadmap" });
+    const { loaded } = await readInitiative(projectRoot, id).catch(() => ({ loaded: {} }));
+    for (const [slug, slice] of Object.entries(loaded.record?.slices ?? {})) entries.push({ ref: `slice:${id}/${slug}`, label: slice.title, kind: "slice", detail: `${titles.get(id) ?? id} · ${slice.status}` });
+  }
+  for (const kind of ["requirements", "decisions"]) {
+    for (const entry of (await loadLibrary(projectRoot, kind)).entries) entries.push({ ref: entry.path, label: entry.title, kind: kind === "requirements" ? "requirement" : "decision", detail: entry.status ?? entry.path });
+  }
+  for (const term of glossaryTerms(glossary.content)) entries.push({ ref: "glossary", label: term, kind: "term", detail: "Glossary" });
+  return entries;
+}
+
 export async function loadNavigation(projectRoot) {
+  const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
   const glossary = await loadGlossary(projectRoot);
+  const attention = await loadAttention(projectRoot);
   return {
     roadmap: { exists: roadmap.exists ?? false, error: roadmap.error ?? null, valid: roadmap.valid ?? false },
+    attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, watch: attention.watch.length },
     initiatives: [
       ...roadmap.items.map((item) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
       ...roadmap.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))
     ],
     glossary: { path: glossary.path, exists: glossary.exists },
-    diagnostics: roadmap.config.diagnostics
+    diagnostics: config.diagnostics,
+    index: await searchIndex(projectRoot, config, roadmap, glossary)
   };
+}
+
+function under(directory, file) {
+  return Boolean(directory) && file.startsWith(`${directory}/`);
+}
+
+async function initiativeTree(projectRoot, id) {
+  const view = await loadInitiativeView(projectRoot, id);
+  const title = view.roadmapItem?.title ?? view.record?.slices?.[view.derived?.root]?.title ?? id;
+  const scope = { kind: "initiative", id, title, state: view.roadmapItem?.state ?? (view.exists ? "unlisted" : "envisioned"), valid: view.valid, tree: [] };
+  if (!view.derived) return { scope, view };
+  const visit = (slug, depth) => {
+    const slice = view.record.slices[slug];
+    const children = view.derived.children[slug] ?? [];
+    const review = view.slices[slug]?.review;
+    scope.tree.push({ slug, title: slice.title, status: slice.status, depth, parent: slice.parent, hasChildren: children.length > 0, complete: Boolean(view.derived.complete[slug]), blocking: review && !review.invalid ? review.blocking : 0 });
+    for (const child of children) visit(child, depth + 1);
+  };
+  visit(view.derived.root, 0);
+  return { scope, view };
+}
+
+function sliceTrail(view, slug, id) {
+  const trail = [];
+  // The root slice is the initiative itself, so the initiative crumb already stands for it.
+  for (let owner = view.record.slices[slug]?.parent ?? null; owner !== null && owner !== view.derived?.root; owner = view.record.slices[owner].parent) trail.unshift({ ref: `slice:${id}/${owner}`, label: view.record.slices[owner].title });
+  trail.push({ ref: `slice:${id}/${slug}`, label: view.record.slices[slug].title });
+  return trail;
+}
+
+async function libraryScope(projectRoot, section) {
+  const library = await loadLibrary(projectRoot, section);
+  return { kind: "library", section, entries: library.entries.map((entry) => ({ path: entry.path, title: entry.title, status: entry.status, topic: entry.topic })) };
+}
+
+// Context gives every tab, including plain files, a breadcrumb trail and the sidebar scope it belongs to.
+export async function entityContext(projectRoot, ref) {
+  const parsed = parseEntityRef(ref);
+  const roadmapCrumb = { ref: "roadmap", label: "Roadmap" };
+  const libraryCrumb = { ref: null, label: "Library" };
+  if (parsed?.kind === "attention" || parsed?.kind === "roadmap") return { trail: [{ ref, label: SECTION_LABELS[parsed.kind] }], scope: { kind: "global" } };
+  if (parsed?.kind === "requirements" || parsed?.kind === "decisions") return { trail: [libraryCrumb, { ref, label: SECTION_LABELS[parsed.kind] }], scope: await libraryScope(projectRoot, parsed.kind) };
+  if (parsed?.kind === "glossary") return { trail: [libraryCrumb, { ref, label: "Glossary" }], scope: { kind: "global" } };
+  if (parsed?.kind === "initiative" || parsed?.kind === "slice") {
+    const { scope, view } = await initiativeTree(projectRoot, parsed.id);
+    const trail = [roadmapCrumb, { ref: `initiative:${parsed.id}`, label: scope.title }];
+    if (parsed.kind === "slice" && view.record && Object.hasOwn(view.record.slices, parsed.slug)) trail.push(...sliceTrail(view, parsed.slug, parsed.id));
+    return { trail, scope: { ...scope, current: parsed.kind === "slice" ? parsed.slug : null } };
+  }
+  if (typeof ref !== "string" || !ref) throw new Error("A tab reference is required.");
+  const config = await readWorkflowConfig(projectRoot);
+  const fileCrumb = { ref, label: path.posix.basename(ref) };
+  const plans = config.paths.plans;
+  if (under(plans, ref)) {
+    const [id, segment] = ref.slice(plans.length + 1).split("/");
+    if (SLUG_PATTERN.test(id ?? "") && (await readText(projectRoot, `${plans}/${id}/initiative.json`)) !== null) {
+      const { scope, view } = await initiativeTree(projectRoot, id);
+      const trail = [roadmapCrumb, { ref: `initiative:${id}`, label: scope.title }];
+      const slug = view.record && segment && Object.hasOwn(view.record.slices, segment) && ref !== `${plans}/${id}/${segment}` ? segment : null;
+      if (slug) trail.push(...sliceTrail(view, slug, id));
+      return { trail: [...trail, fileCrumb], scope: { ...scope, current: slug } };
+    }
+  }
+  for (const section of ["requirements", "decisions"]) {
+    const directory = section === "requirements" ? config.paths.requirements : config.paths.adrs;
+    if (under(directory, ref)) {
+      const scope = await libraryScope(projectRoot, section);
+      const entry = scope.entries.find((item) => item.path === ref);
+      return { trail: [libraryCrumb, { ref: section, label: SECTION_LABELS[section] }, { ref, label: entry?.title ?? path.posix.basename(ref) }], scope: { ...scope, current: ref } };
+    }
+  }
+  if (ref === config.paths.glossary) return { trail: [libraryCrumb, { ref: "glossary", label: "Glossary" }, fileCrumb], scope: { kind: "global" } };
+  const roadmapPaths = await readRoadmap(projectRoot).then(({ resolved }) => [resolved.recordPath, resolved.projectionPath]).catch(() => []);
+  if (roadmapPaths.includes(ref)) return { trail: [roadmapCrumb, fileCrumb], scope: { kind: "global" } };
+  return { trail: [{ ref: null, label: "Files" }, { ref, label: ref }], scope: { kind: "global" } };
 }
 
 // Entity tabs name Prism concepts rather than files, so they never collide with artifact paths, which always carry an extension.
@@ -314,6 +528,7 @@ export async function entityExists(projectRoot, ref) {
 export async function loadEntity(projectRoot, ref) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
+  if (parsed.kind === "attention") return { ref, kind: "attention", data: await loadAttention(projectRoot) };
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };

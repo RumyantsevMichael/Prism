@@ -12,6 +12,7 @@ const { startReviewServer } = await import("../../dist/server/review/review-serv
 const { parseEntityRef } = await import("../../dist/server/review/workspace-model.mjs");
 const { updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { updateRoadmap } = await import("../../dist/server/workflow/roadmap.mjs");
+const { updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
 async function fixture(context) {
@@ -42,6 +43,10 @@ async function fixture(context) {
     { op: "add_initiative", id: "reports", title: "Export reports", intent: "Signed exports.", band: "Now" },
     { op: "add_initiative", id: "search", title: "Search", intent: "Find activity.", band: "Later", requires: ["reports"] }
   ] });
+  await updateCoordinationState({ projectRoot: root, statePath: "docs/plans/reports/state.json", expectedRevision: null, changes: {
+    pending: ["Confirm retention window"],
+    gateOperations: [{ op: "ask", kind: "visual-review", slice: "download", question: "Review the download design before implementation.", artifacts: ["docs/plans/reports/download/slice.md", "docs/plans/reports/download/missing.md"] }]
+  } });
   return root;
 }
 
@@ -126,8 +131,76 @@ test("accepts entity tabs that resolve and rejects those that do not", async (co
       const rejected = await put(`${review.baseUrl}/api/session`, { openTabs: [tab] });
       assert.equal(rejected.status, 400, tab);
     }
-    const views = await Promise.all(["entities", "roadmap", "initiative", "slice", "library"].map((name) => get(`${review.baseUrl}/views/${name}.js`)));
-    assert.deepEqual(views.map((response) => response.status), [200, 200, 200, 200, 200]);
+    const views = await Promise.all(["entities", "attention", "roadmap", "initiative", "slice", "library", "palette"].map((name) => get(`${review.baseUrl}/views/${name}.js`)));
+    assert.deepEqual(views.map((response) => response.status), [200, 200, 200, 200, 200, 200, 200]);
+  } finally {
+    await review.close();
+  }
+});
+
+test("lists what waits on the user apart from agent-side state", async (context) => {
+  const projectRoot = await fixture(context);
+  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  try {
+    const attention = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json();
+    const needs = attention.data.needsYou;
+    assert.deepEqual(needs.map((item) => item.type), ["gate", "pending-note", "unlisted", "config"]);
+    assert.equal(needs[0].kind, "visual-review");
+    assert.deepEqual(needs[0].slice, { slug: "download", title: "Download signed reports" });
+    assert.deepEqual(needs[0].initiative, { id: "reports", title: "Export reports" });
+    assert.deepEqual(needs[0].artifacts, [{ path: "docs/plans/reports/download/slice.md", available: true }, { path: "docs/plans/reports/download/missing.md", available: false }]);
+    assert.deepEqual(attention.data.watch.map((item) => item.type), ["findings"]);
+    assert.deepEqual([attention.data.watch[0].unresolved, attention.data.watch[0].blocking], [1, 1]);
+    const index = (await get(`${review.baseUrl}/api/index`)).json();
+    assert.deepEqual(index.navigation.attention, { needsYou: 4, gates: 1, watch: 1 });
+    const refs = index.navigation.index.map((entry) => `${entry.kind}:${entry.ref}`);
+    for (const expected of ["initiative:initiative:reports", "initiative:initiative:orphan", "slice:slice:reports/download", "requirement:docs/requirements/reports.md", "decision:docs/ADRs/reporting/signed.md"]) assert.ok(refs.includes(expected), expected);
+  } finally {
+    await review.close();
+  }
+});
+
+test("gives every tab a breadcrumb trail and sidebar scope", async (context) => {
+  const projectRoot = await fixture(context);
+  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  try {
+    const contextOf = async (ref) => (await get(`${review.baseUrl}/api/context?ref=${encodeURIComponent(ref)}`)).json();
+    const labels = (value) => value.trail.map((crumb) => crumb.label);
+    const sliceFile = await contextOf("docs/plans/reports/download/review.json");
+    assert.deepEqual(labels(sliceFile), ["Roadmap", "Export reports", "Download signed reports", "review.json"]);
+    assert.equal(sliceFile.scope.kind, "initiative");
+    assert.equal(sliceFile.scope.current, "download");
+    assert.deepEqual(sliceFile.scope.tree.map((node) => [node.slug, node.depth, node.status]), [["reports", 0, "split"], ["authorize", 1, "not-started"], ["download", 1, "in-progress"]]);
+    const state = await contextOf("docs/plans/reports/state.json");
+    assert.deepEqual([labels(state), state.scope.current], [["Roadmap", "Export reports", "state.json"], null]);
+    const requirement = await contextOf("docs/requirements/reports.md");
+    assert.deepEqual(labels(requirement), ["Library", "Requirements", "Activity reports"]);
+    assert.deepEqual([requirement.scope.kind, requirement.scope.section, requirement.scope.current], ["library", "requirements", "docs/requirements/reports.md"]);
+    assert.deepEqual(labels(await contextOf("decisions")), ["Library", "Decisions"]);
+    assert.deepEqual((await contextOf("attention")).scope, { kind: "global" });
+    assert.deepEqual(labels(await contextOf("docs/requirements/README.md")), ["Library", "Requirements", "README.md"]);
+  } finally {
+    await review.close();
+  }
+});
+
+test("keeps the preview and the human's tabs when an agent presents artifacts", async (context) => {
+  const projectRoot = await fixture(context);
+  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot, openBrowser: async () => true });
+  try {
+    const browsed = await put(`${review.baseUrl}/api/session`, { openTabs: ["roadmap", "initiative:reports"], activeTab: "initiative:reports", previewTab: "initiative:reports" });
+    assert.equal(browsed.status, 200, browsed.text);
+    const presented = await review.open(["docs/requirements/reports.md", "slice:reports/download"]);
+    assert.deepEqual(presented.openTabs, ["roadmap", "initiative:reports", "docs/requirements/reports.md", "slice:reports/download"]);
+    assert.deepEqual([presented.activeTab, presented.previewTab], ["docs/requirements/reports.md", "initiative:reports"]);
+    assert.deepEqual(presented.agentTabs, ["docs/requirements/reports.md", "slice:reports/download"]);
+    const promoted = await review.open(["initiative:reports"]);
+    assert.deepEqual([promoted.previewTab, promoted.agentTabs.includes("initiative:reports")], [null, true]);
+    const landing = await review.open([]);
+    assert.deepEqual([landing.activeTab, landing.previewTab, landing.openTabs.at(-1)], ["attention", "attention", "attention"]);
+    for (const body of [{ openTabs: ["roadmap"], previewTab: "glossary" }, { openTabs: ["roadmap"], agentTabs: ["glossary"] }]) {
+      assert.equal((await put(`${review.baseUrl}/api/session`, body)).status, 400, JSON.stringify(body));
+    }
   } finally {
     await review.close();
   }

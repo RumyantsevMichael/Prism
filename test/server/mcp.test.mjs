@@ -295,7 +295,8 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.match(tools.get_review_url.description, /URL only/);
   assert.match(tools.get_review_url.description, /does not open a browser/);
   assert.match(tools.present_review.description, /system browser/);
-  assert.match(tools.present_review.description, /Omit artifact to show the complete artifact tree/);
+  assert.match(tools.present_review.description, /the human's open tabs stay open/);
+  assert.match(tools.present_review.description, /Omit artifact and artifacts to open Attention/);
   assert.deepEqual(tools.get_review_url.inputSchema.properties.artifacts.items, { type: "string" });
   assert.deepEqual(tools.present_review.inputSchema.properties.artifacts.items, { type: "string" });
   const settings = tools.update_coordination_state.inputSchema.properties.changes.properties.settings.properties;

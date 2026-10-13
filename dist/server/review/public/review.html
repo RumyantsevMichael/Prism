@@ -23,23 +23,14 @@
     </div>
   </header>
   <main class="app-shell">
-    <aside class="sidebar" aria-label="Artifact navigation">
-      <div class="sidebar-heading">
-        <div>
-          <p class="eyebrow">Workspace</p>
-          <h2>Initiatives</h2>
-        </div>
-        <span id="artifact-count" class="count-badge">0</span>
-      </div>
-      <label class="search-box">
+    <aside class="sidebar" aria-label="Workspace navigation">
+      <button id="jump" class="jump-button" type="button" aria-haspopup="dialog">
         <span class="search-icon" aria-hidden="true"></span>
-        <span class="sr-only">Filter initiatives and sections</span>
-        <input id="artifact-filter" type="search" placeholder="Filter initiatives and sections" autocomplete="off">
-        <kbd>/</kbd>
-      </label>
+        <span class="jump-label">Jump to…</span>
+        <kbd>Ctrl K</kbd>
+      </button>
       <nav aria-label="Prism workspace">
-        <ul id="artifacts" class="artifact-tree" role="tree"></ul>
-        <p id="empty-filter" class="empty-filter" hidden>Nothing matches the filter.</p>
+        <ul id="artifacts" class="nav-tree"></ul>
       </nav>
       <div class="sidebar-footer">
         <span class="live-indicator"><i aria-hidden="true"></i>Auto refresh</span>
@@ -52,8 +43,8 @@
         <div class="welcome-card">
           <span class="welcome-mark" aria-hidden="true"></span>
           <p class="eyebrow">Human review</p>
-          <h1>Open the roadmap</h1>
-          <p>Choose the roadmap, an initiative, or a library section.</p>
+          <h1>Loading the workspace</h1>
+          <p>Attention, the roadmap, and the library open here.</p>
         </div>
       </div>
     </section>
@@ -65,6 +56,17 @@
     </header>
     <div class="evidence-drawer-body" id="evidence-body"></div>
   </aside>
+  <div id="palette" class="palette" role="dialog" aria-modal="true" aria-label="Jump to" hidden>
+    <div class="palette-panel">
+      <label class="search-box palette-search">
+        <span class="search-icon" aria-hidden="true"></span>
+        <span class="sr-only">Jump to</span>
+        <input id="palette-input" type="search" placeholder="Initiative, slice, requirement, decision, term, or file" autocomplete="off" role="combobox" aria-controls="palette-results" aria-expanded="true">
+      </label>
+      <ul id="palette-results" class="palette-results" role="listbox" aria-label="Matches"></ul>
+      <p class="palette-hint">Enter opens in the preview tab · Ctrl+Enter keeps it open · Esc closes</p>
+    </div>
+  </div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   <script type="module" src="./review.js"></script>
 </body>

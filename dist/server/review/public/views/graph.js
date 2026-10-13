@@ -158,11 +158,12 @@ export async function renderGraph(target, graph, { onSelect, selectedId = null, 
     const box = svgElement("foreignObject", { x: center.x - nodeWidthPoints / 2, y: center.y - nodeHeightPoints / 2, width: nodeWidthPoints, height: nodeHeightPoints });
     box.innerHTML = `<div xmlns="http://www.w3.org/1999/xhtml" class="graph-node-box" title="${escapeHtml(node.tooltip ?? node.title)}"><strong>${escapeHtml(node.title)}</strong>${node.subtitle ? `<span>${escapeHtml(node.subtitle)}</span>` : ""}</div>`;
     group.append(box);
-    group.addEventListener("click", () => onSelect?.(id));
+    group.addEventListener("click", (event) => onSelect?.(id, { keep: event.ctrlKey || event.metaKey }));
+    group.addEventListener("dblclick", () => onSelect?.(id, { keep: true, double: true }));
     group.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        onSelect?.(id);
+        onSelect?.(id, { keep: event.ctrlKey || event.metaKey });
       }
     });
     group.addEventListener("mouseenter", () => highlight(id));

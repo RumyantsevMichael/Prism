@@ -149,7 +149,8 @@ try {
     { op: "set_dependencies", slug: "connection-retries", dependencies: ["timeout-retries"] },
     { op: "set_dependencies", slug: "retry-dashboard", dependencies: ["retry-metrics"] },
     { op: "set_status", slug: "timeout-retries", status: "in-progress" },
-    { op: "set_status", slug: "retry-metrics", status: "in-progress" }
+    { op: "set_status", slug: "retry-metrics", status: "in-progress" },
+    { op: "set_status", slug: "connection-retries", status: "blocked" }
   ] });
   await call("update_initiative", { projectRoot: realRoot, initiative: "activity-reports", expectedRevision: null, actor: "orchestrator", operations: [
     { op: "create", slug: "activity-reports", title: "Export activity reports", outcome: "Users export signed activity reports.", requirements: ["docs/requirements/reports.md#1", "docs/requirements/reports.md#2"] },
@@ -180,7 +181,19 @@ try {
     settings: { autonomy: "broad", agentFlow: "multi", commit: "on", push: "off", continuation: "stepwise", models: "host defaults" },
     activeOperations: [{ op: "start", entry: { slice: "timeout-retries", activity: "review", label: "Implementation review, wave 2", workers: ["independent", "security"], workspace: realRoot, reviewPath, reviewLanes: [{ id: "main", reviewer: "independent" }, { id: "security", reviewer: "security" }] } }]
   } });
-  await call("update_coordination_state", { projectRoot: realRoot, statePath, expectedRevision: state.revision, changes: { pending: ["connection-retries"], next: ["docs/plans/retry-hardening/connection-retries"], evidence: [`${slice}/slice.md`] } });
+  // User gates are recorded exactly as the orchestrator records a question before asking it.
+  await call("update_coordination_state", { projectRoot: realRoot, statePath, expectedRevision: state.revision, changes: {
+    next: ["docs/plans/retry-hardening/connection-retries"],
+    evidence: [`${slice}/slice.md`],
+    gateOperations: [
+      { op: "ask", kind: "visual-review", slice: "timeout-retries", question: "Review the concept delta and the total-deadline ADR before the corrected implementation is integrated.", artifacts: [deltaPath, "docs/ADRs/retries/total-retry-deadline.md", `${slice}/slice.md`] },
+      { op: "ask", kind: "decision", slice: "connection-retries", question: "The strategy now retries dropped connections (finding F2). Approve requirement 2 for this slice now, or remove the branch until the slice starts?", artifacts: [reviewPath, "docs/requirements/retries.md"] }
+    ]
+  } });
+  await call("update_coordination_state", { projectRoot: realRoot, statePath: "docs/plans/activity-reports/state.json", expectedRevision: null, changes: {
+    settings: { autonomy: "conservative", agentFlow: "multi" },
+    gateOperations: [{ op: "ask", kind: "decision", slice: "authorize", question: "Should a report download require a fresh login, or is an active session enough?", artifacts: ["docs/requirements/reports.md"] }]
+  } });
 
   process.stdout.write(`Demo project: ${realRoot}\nPrivate evidence: ${dataDir}\n\nStart the review browser with:\n  cd ${realRoot} && PLUGIN_DATA=${dataDir} ${path.join(ROOT, "bin/prism")} review\n`);
 } finally {
