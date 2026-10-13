@@ -156,6 +156,16 @@ async function assessmentValid(projectRoot, review, wave, assessment, comparison
     if (obligations.some((entry) => !assessment.conceptIds?.includes(entry.id))) throw conservationError("gate_blocked", "The convergence assessment must account for each identified obligation in the section.");
   }
 }
+function summarizeProblems(problems) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const problem of problems) {
+    const group = groups.get(problem.code) ?? { message: problem.message, ids: [], count: 0 };
+    group.count += 1;
+    if (problem.id && group.ids.length < 3) group.ids.push(problem.id);
+    groups.set(problem.code, group);
+  }
+  return [...groups].map(([code, group]) => `${code} x${group.count}: ${group.message}${group.ids.length ? ` (for example ${group.ids.join(", ")})` : ""}`).join("; ");
+}
 async function waveProblems(projectRoot, review, wave, requireLaneResults) {
   const problems = [];
   const add = (code, message, id) => problems.push({ code, message, ...id ? { id } : {} });
@@ -203,7 +213,11 @@ async function checkReviewGate(input) {
   const review = loaded.document;
   if (!review) return { ready: false, problems: [{ code: "evidence_missing", message: "The review record is missing." }] };
   const mode = input.gate === "implementation" ? "design-audit" : "implementation-review", wave = [...review.waves].reverse().find((item) => item.mode === mode);
-  if (!wave?.accepted) return { ready: false, revision: loaded.revision, problems: [{ code: "review_not_accepted", message: "The required review wave has no accepted result." }] };
+  if (!wave?.accepted) {
+    const blockers = wave ? await waveProblems(input.projectRoot, review, wave, true).catch(() => []) : [];
+    const message = blockers.length ? `The required review wave ${wave.id} has no accepted result, and accepting it now would fail on: ${summarizeProblems(blockers)}.` : "The required review wave has no accepted result.";
+    return { ready: false, revision: loaded.revision, problems: [{ code: "review_not_accepted", message }] };
+  }
   const problems = await waveProblems(input.projectRoot, review, wave, true);
   if (wave.accepted.evidenceDigest !== waveDigest(review, wave)) problems.push({ code: "review_result_stale", message: "The accepted review inputs changed." });
   if (input.gate === "completion") {
@@ -390,7 +404,7 @@ async function updateReview(input) {
           } else if (op === "accept_wave") {
             requireRole(review, input.actor, "coordinator");
             const problems = await waveProblems(input.projectRoot, review, wave2, true);
-            if (problems.length) throw conservationError("gate_blocked", "The review wave does not satisfy its acceptance gate.", { problems });
+            if (problems.length) throw conservationError("gate_blocked", `The review wave does not satisfy its acceptance gate: ${summarizeProblems(problems)}.`, { problems });
             wave2.accepted = { evidenceDigest: waveDigest(review, wave2), actor: input.actor.id, at: now() };
           }
         }
@@ -421,5 +435,6 @@ export {
   checkReviewGate,
   getReview,
   loadReview,
+  summarizeProblems,
   updateReview
 };

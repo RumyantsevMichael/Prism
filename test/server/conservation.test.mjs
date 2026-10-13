@@ -73,8 +73,10 @@ test('implementation review must cover deleted paths even when the result is emp
   assert.deepEqual(compared.observations,[]);
   await act('coord',[wave('incomplete','implementation-review',result,comparisonId,['unrelated.js'])]);
   await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);
-  await assert.rejects(act('coord',[{op:'accept_wave'}]),error=>error.code==='gate_blocked'&&error.problems.some(item=>item.code==='review_coverage_missing'&&item.id==='delete.js'));
-  assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,false);
+  await assert.rejects(act('coord',[{op:'accept_wave'}]),error=>error.code==='gate_blocked'&&error.problems.some(item=>item.code==='review_coverage_missing'&&item.id==='delete.js')&&/acceptance gate: .*review_coverage_missing x\d+: Assign each original and resulting target file to a review lane\. \(for example [^)]*delete\.js/.test(error.message));
+  const blocked=await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'});
+  assert.equal(blocked.ready,false);
+  assert.match(blocked.problems[0].message,/wave incomplete has no accepted result, and accepting it now would fail on: review_coverage_missing x\d+/);
   await act('coord',[wave('complete','implementation-review',result,comparisonId,scope)]);
   await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
   assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,true);
