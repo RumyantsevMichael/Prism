@@ -27,7 +27,7 @@ import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
-import { DEFAULT_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, waitForUserGate } from "./workflow/gate-wait.mjs";
+import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
@@ -597,16 +597,17 @@ const tools = [
   },
   {
     name: "wait_for_user_gate",
-    description: "Wait until the user answers a recorded user gate in the review browser, then return the answer. Call it right after asking the user and recording the gate. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. It returns answered with the recorded answer, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, or unsupported_host when this host cannot wait in the background.",
+    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. It returns answered with the recorded answer, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, or unsupported_host when this host cannot wait in the background.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
         statePath: { type: "string", description: "The project-relative path to the initiative state.json file that holds the gate." },
-        gateId: { type: "string", minLength: 1, description: "The gate id that the ask operation returned." },
+        gateIds: { type: "array", minItems: 1, maxItems: MAX_WAIT_GATES, items: { type: "string", minLength: 1 }, description: "The gate ids that the ask operations returned." },
+        gateId: { type: "string", minLength: 1, description: "One gate id; use gateIds for several." },
         maxWaitMinutes: { type: "number", exclusiveMinimum: 0, maximum: MAX_WAIT_MINUTES, description: `How long to wait before returning timeout. Defaults to ${DEFAULT_WAIT_MINUTES}.` }
       },
-      required: ["projectRoot", "statePath", "gateId"],
+      required: ["projectRoot", "statePath"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false }
@@ -750,35 +751,41 @@ function progress(progressToken, value, message) {
 
 async function callGateWait(argumentsValue, metadata, requestId) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
+  const gateIds = argumentsValue.gateIds ?? (argumentsValue.gateId === undefined ? undefined : [argumentsValue.gateId]);
+  if (!Array.isArray(gateIds) || !gateIds.length) {
+    throw new Error("Pass the recorded gate ids in gateIds.");
+  }
   let value;
   const unsupported = waitUnsupportedReason();
   if (unsupported) {
-    value = { status: "unsupported_host", gateId: argumentsValue.gateId, client: clientName, reason: unsupported };
+    value = { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
   } else {
     const controller = new AbortController();
     if (requestId !== undefined) pendingWaits.set(requestId, controller);
     const progressToken = metadata?.progressToken;
     try {
-      value = await waitForUserGate({
+      value = await waitForUserGates({
         projectRoot,
         statePath: argumentsValue.statePath,
-        gateId: argumentsValue.gateId,
+        gateIds,
         maxWaitMinutes: argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES,
         signal: controller.signal,
         heartbeatMs: Number(process.env.PRISM_GATE_WAIT_HEARTBEAT_MS) || 60000,
+        settleMs: process.env.PRISM_GATE_WAIT_SETTLE_MS === undefined ? undefined : Number(process.env.PRISM_GATE_WAIT_SETTLE_MS),
         onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, "Waiting for the user's answer in the review browser")
       });
     } finally {
       pendingWaits.delete(requestId);
     }
   }
+  const list = value.gateIds.join(", ");
   const text = {
-    answered: () => answerText(value.gate),
-    resolved: () => `User gate ${value.gateId} was resolved without a browser answer; it was answered in the conversation or withdrawn.`,
-    timeout: () => `No answer arrived for user gate ${value.gateId} before the wait ended.`,
-    unknown_gate: () => `No pending user gate has the id ${value.gateId}.`,
+    answered: () => [...value.answered.map(answerText), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n"),
+    resolved: () => `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
+    timeout: () => `No answer arrived for user gates ${list} before the wait ended.`,
+    unknown_gate: () => `No pending user gate has any of the ids ${list}.`,
     unsupported_host: () => `The wait returned at once because it cannot run in the background here: ${value.reason} The user's next message delivers any browser answer.`,
-    cancelled: () => `The wait for user gate ${value.gateId} was cancelled.`
+    cancelled: () => `The wait for user gates ${list} was cancelled.`
   }[value.status]();
   return { content: [{ type: "text", text }], structuredContent: value };
 }

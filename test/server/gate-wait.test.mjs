@@ -18,13 +18,15 @@ async function project(context) {
   await writeFile(path.join(root, ".prism/workflow.md"), "## Paths\n- Plans (scratch): docs/plans/\n");
   await mkdir(path.join(root, "docs/plans/reports"), { recursive: true });
   const created = await updateCoordinationState({ projectRoot: root, statePath: STATE_PATH, expectedRevision: null, changes: { gateOperations: [
-    { op: "ask", kind: "decision", question: "Fresh login or active session?", artifacts: [], options: [{ id: "fresh-login", label: "Require a fresh login" }] }
+    { op: "ask", kind: "decision", question: "Fresh login or active session?", artifacts: [], options: [{ id: "fresh-login", label: "Require a fresh login" }] },
+    { op: "ask", kind: "visual-review", question: "Review the design.", artifacts: [] },
+    { op: "ask", kind: "correctness", question: "Is it correct?", artifacts: [] }
   ] } });
-  return { root, gateId: created.openedGates[0].id };
+  return { root, gateId: created.openedGates[0].id, gateIds: created.openedGates.map((gate) => gate.id) };
 }
 
 function server(context, root, clientName, { version = "2.1.296", environment = {} } = {}) {
-  const env = { ...process.env, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_REVIEW_CERT_DIR: path.join(root, ".prism-review-cert"), PRISM_GATE_WAIT_HEARTBEAT_MS: "200", CLAUDE_PROJECT_DIR: root };
+  const env = { ...process.env, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_REVIEW_CERT_DIR: path.join(root, ".prism-review-cert"), PRISM_GATE_WAIT_HEARTBEAT_MS: "200", PRISM_GATE_WAIT_SETTLE_MS: "600", CLAUDE_PROJECT_DIR: root };
   for (const name of ["MCP_TOOL_TIMEOUT", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"]) delete env[name];
   Object.assign(env, environment);
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -79,7 +81,7 @@ test("returns the browser answer and sends progress while it waits", async (cont
   await answerUserGate({ projectRoot: root, statePath: STATE_PATH, id: gateId, choice: "fresh-login", note: "Downloads are sensitive." });
   const answered = await mcp.response(2);
   assert.equal(answered.result.structuredContent.status, "answered");
-  assert.equal(answered.result.structuredContent.gate.answer.choice, "fresh-login");
+  assert.equal(answered.result.structuredContent.answered[0].answer.choice, "fresh-login");
   assert.match(answered.result.content[0].text, /Answer: Require a fresh login\. Note: Downloads are sensitive\./);
 });
 
@@ -131,4 +133,23 @@ test("returns at once when the host would cancel the wait before backgrounding i
       assert.equal(response.result.structuredContent.status, "timeout", JSON.stringify(options));
     }
   }
+});
+
+test("waits on several gates and collects answers given in one visit", async (context) => {
+  const { root, gateIds } = await project(context);
+  const mcp = server(context, root, "claude-code");
+  await mcp.ready;
+  mcp.send({ id: 2, method: "tools/call", params: { name: "wait_for_user_gate", arguments: { projectRoot: root, statePath: STATE_PATH, gateIds } } });
+  await delay(300);
+  await answerUserGate({ projectRoot: root, statePath: STATE_PATH, id: gateIds[0], choice: "fresh-login" });
+  await delay(200);
+  await answerUserGate({ projectRoot: root, statePath: STATE_PATH, id: gateIds[1], choice: "approve" });
+  const response = await mcp.response(2);
+  const value = response.result.structuredContent;
+  assert.equal(value.status, "answered");
+  assert.deepEqual(value.answered.map((gate) => gate.id), gateIds.slice(0, 2));
+  assert.deepEqual(value.waiting, [gateIds[2]]);
+  assert.match(response.result.content[0].text, new RegExp(`Still waiting on: ${gateIds[2]}\\.`));
+  mcp.send({ id: 3, method: "tools/call", params: { name: "wait_for_user_gate", arguments: { projectRoot: root, statePath: STATE_PATH } } });
+  assert.match((await mcp.response(3)).error.message, /Pass the recorded gate ids in gateIds/);
 });

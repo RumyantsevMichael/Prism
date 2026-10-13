@@ -4,6 +4,7 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { mkdir, readFile, realpath, rm, lstat } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { revisionMismatch } from "./revision.mjs";
 
 const SCHEMA_VERSION = 1;
 
@@ -329,7 +330,7 @@ function validateGate(entry, entryPath, errors) {
   }
   if (entry.options !== undefined) {
     if (entry.kind !== "decision") {
-      addError(errors, `${entryPath}.options`, "is allowed only for decision gates");
+      addError(errors, `${entryPath}.options`, "is allowed only for decision gates; visual-review and correctness answers are approve or request-changes, and assistance answers are done");
     } else if (!Array.isArray(entry.options) || entry.options.length === 0 || entry.options.length > 8) {
       addError(errors, `${entryPath}.options`, "must list one to eight options");
     } else {
@@ -594,7 +595,7 @@ export async function updateCoordinationState({ projectRoot, statePath, expected
 async function applyStateChange(resolved, expectedRevision, changes) {
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision) {
-      throw error("revision_conflict", "The state changed since it was read. Read it again and retry with its current revision.", { current: publicStateResult(resolved, current) });
+      throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });
     }
     if (current.exists && !current.valid) {
       throw error("invalid_state", "The existing state is invalid and was not changed.", { validation: publicStateResult(resolved, current) });
@@ -685,7 +686,7 @@ export async function checkpointPause({ projectRoot, statePath, expectedRevision
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision) {
-      throw error("revision_conflict", "The state changed since it was read. Read it again and retry with its current revision.", { current: publicStateResult(resolved, current) });
+      throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });
     }
     if (!current.valid || !current.state?.active.some((item) => item.slice === activeSlice)) {
       throw error("invalid_pause", "The slice is not active in the current coordination state.");

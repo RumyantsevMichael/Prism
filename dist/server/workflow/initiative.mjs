@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { assertInput } from "./artifact-schema.mjs";
+import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { analyzeInitiative, LEAF_STATUSES, parseLegacyMap, SLUG_PATTERN } from "./initiative-graph.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { resolveArtifactPath } from "../conservation/concept-delta.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
+import { revisionMismatch } from "./revision.mjs";
 
 const RECORD_NAME = "initiative.json";
 const PROJECTION_NAME = "initiative.md";
@@ -51,7 +52,7 @@ function validateInput(schema, input) {
   try {
     assertInput(schema, input);
   } catch (error) {
-    throw fail("validation_failed", "The initiative arguments are invalid.", { errors: error.errors });
+    throw fail("validation_failed", `The initiative arguments are invalid: ${describeErrors(error.errors)}`, { errors: error.errors });
   }
 }
 
@@ -285,7 +286,7 @@ export async function updateInitiative(input) {
   return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
     const current = await loadRecord(resolved);
     if (current.revision !== input.expectedRevision) {
-      throw fail("revision_conflict", "The initiative record changed since it was read. Read it again and retry with its current revision.", { currentRevision: current.revision });
+      throw fail(input.expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("initiative record", input.expectedRevision, current.revision), { currentRevision: current.revision });
     }
     if (current.exists && !current.valid) {
       throw fail("invalid_initiative", "The existing initiative record is invalid and was not changed.", { errors: current.errors });

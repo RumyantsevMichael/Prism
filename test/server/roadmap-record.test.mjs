@@ -103,3 +103,18 @@ test("a disabled roadmap path refuses roadmap tools", async (context) => {
   const projectRoot = await project(context, "- Roadmap: n/a\n");
   await assert.rejects(getRoadmap({ projectRoot }), { code: "invalid_config" });
 });
+
+test("explains why a revision does not match", async (context) => {
+  const projectRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-roadmap-revision-")));
+  context.after(() => rm(projectRoot, { recursive: true, force: true }));
+  await mkdir(path.join(projectRoot, ".prism"), { recursive: true });
+  await writeFile(path.join(projectRoot, ".prism", "workflow.md"), "## Paths\n- Roadmap: docs/roadmap.md\n");
+  const add = [{ op: "add_initiative", id: "alpha", title: "Alpha", intent: "First.", band: "Now" }];
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: "null", operations: add }), (error) => error.code === "invalid_revision" && /string "null"\. Pass JSON null to create the roadmap record/.test(error.message));
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: "abc", operations: add }), /does not exist yet\. Pass expectedRevision null to create it/);
+  const created = await updateRoadmap({ projectRoot, expectedRevision: null, operations: add });
+  await assert.rejects(updateRoadmap({ projectRoot }), /The roadmap arguments are invalid: arguments\.expectedRevision: is required; arguments\.operations: is required\./);
+  const more = [{ op: "set_open_questions", questions: [] }];
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: null, operations: more }), new RegExp(`already exists, so expectedRevision cannot be null\\. Read it and pass its current revision ${created.revision}`));
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: "null", operations: more }), new RegExp(`or the current revision ${created.revision}`));
+});

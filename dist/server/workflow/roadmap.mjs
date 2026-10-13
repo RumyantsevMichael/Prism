@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { assertInput } from "./artifact-schema.mjs";
+import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { readInitiative } from "./initiative.mjs";
@@ -10,6 +10,7 @@ import { readCoordinationState } from "./state.mjs";
 import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 import { resolveArtifactPath } from "../conservation/concept-delta.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
+import { revisionMismatch } from "./revision.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
@@ -57,7 +58,7 @@ function validateInput(schema, input) {
   try {
     assertInput(schema, input);
   } catch (error) {
-    throw fail("validation_failed", "The roadmap arguments are invalid.", { errors: error.errors });
+    throw fail("validation_failed", `The roadmap arguments are invalid: ${describeErrors(error.errors)}`, { errors: error.errors });
   }
 }
 
@@ -302,7 +303,7 @@ export async function updateRoadmap(input) {
   return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
     const current = await loadRoadmap(resolved);
     if (current.revision !== input.expectedRevision) {
-      throw fail("revision_conflict", "The roadmap changed since it was read. Read it again and retry with its current revision.", { currentRevision: current.revision });
+      throw fail(input.expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("roadmap record", input.expectedRevision, current.revision), { currentRevision: current.revision });
     }
     if (current.exists && !current.valid) throw fail("invalid_roadmap", "The existing roadmap record is invalid and was not changed.", { errors: current.errors });
     const record = current.record ? structuredClone(current.record) : emptyRoadmap();
