@@ -79,6 +79,7 @@ The [resume note](skills/orchestrate/SKILL.md#6-resume-note) records settings, a
 Each question that waits on the user is recorded as a user gate, and the review browser opens on Attention, which lists those gates with the artifacts to inspect.
 The user can answer a gate on Attention instead of in the conversation.
 In Claude Code the orchestrator waits for that answer in a background tool call and resumes as soon as it arrives; other hosts receive the recorded answer with the user's next message.
+The background wait needs a tool timeout (`MCP_TOOL_TIMEOUT`) longer than Claude Code's background handoff, which is two minutes by default.
 The authoritative [initiative record](skills/orchestrate/references/initiative-record.md) holds slice topology, titles, outcomes, requirement assignments, dependencies, and structural status.
 The MCP server validates coverage and the expanded dependency graph on every write, and refuses a `done` slice without a passing completion gate.
 The roadmap record holds initiative bands, order, required initiatives, and rationale, while initiative progress is derived from the initiative records.

@@ -167,6 +167,7 @@ Leaf status changes reach `update_initiative` as `set_status` operations with `i
 The server refuses a `done` status until the slice's completion gate passes.
 The `update_roadmap` ship operation receives the initiative identifier and is refused until every leaf slice is done.
 `get_roadmap` derives the initiative's `planned` and `in-progress` states, so orchestration writes no roadmap state for them.
+A roadmap entry or priority change made during orchestration waits for user acceptance through a recorded `decision` gate unless `full` autonomy resolves roadmap priority.
 
 A valid `SPLIT` has unique child slugs, an unchanged parent title, and exact collective requirement coverage.
 Child dependencies follow the parent design and the initiative record, and require acceptance under the autonomy setting.
@@ -185,6 +186,7 @@ The [integration and completion rules](references/completion-rules.md) define in
 ## User gate records
 
 The orchestrator records each user gate before asking the user and resolves it after the answer.
+Every question to the user goes through a recorded gate, and related questions share one gate.
 The `update_coordination_state` input includes `changes.gateOperations` with one `ask` operation that supplies the gate kind, the slice slug when one applies, the question, and the project-relative artifact paths to inspect.
 Gate kinds are `visual-review` for design and final visual review, `correctness` for correctness confirmation, `decision` for requirement, decision, conflict, split, and dependency questions, and `assistance` for user actions such as a separate review task.
 A `decision` gate supplies `options` when its choices are known, so the user can pick one in the review browser.
@@ -193,6 +195,7 @@ After asking the user, the orchestrator calls `wait_for_user_gate` with the gate
 An `answered` wait result is the user's answer to that gate.
 A `resolved`, `timeout`, `unknown_gate`, or `unsupported_host` wait result, or an aborted wait, ends the turn, and the user's next message delivers the answer.
 A wait result for a gate that the orchestrator already resolved needs no action.
+After a wait times out, is aborted, or returns `unsupported_host`, later gates in the same session skip the wait.
 A recorded browser answer is the user's answer to that question.
 Before asking again, resuming, or continuing after a user message, read the pending gates and act on every recorded answer.
 An answered gate is never asked again.

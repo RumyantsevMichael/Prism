@@ -45,7 +45,7 @@ Code establishes implemented behavior.
 1. Read durable sources in this order: glossary, Approved requirements, relevant ADRs, and relevant feature files.
 
 - Stop and report conflicting durable sources for user resolution.
-- Keep every slice folder directly under the initiative directory.
+- Use the initiative directory as the root slice folder, and keep every other slice folder directly under it.
 - Read [artifact rules](references/artifact-rules.md) before creating or reviewing workflow artifacts.
 
 ## Common terms

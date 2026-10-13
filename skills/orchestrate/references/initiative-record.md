@@ -30,6 +30,8 @@ The server validates the whole candidate graph before writing, so an invalid bat
 
 Slugs use letters, digits, hyphens, and underscores, and each slug is unique within the initiative.
 There is exactly one root with the complete Approved initiative requirement assignment.
+Requirement references use `<requirements path>/<file>.md#<number>`, and a cited `<file>.md§<number>` is stored in that form.
+The done check reads `review.json` in the slice folder, which is the initiative directory for the root slice.
 Every slice has a nonempty title and requirement assignment.
 Each parent's direct children cover exactly its assignment, with shared references allowed.
 Only accepted splits add children.

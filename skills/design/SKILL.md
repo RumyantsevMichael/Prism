@@ -76,7 +76,7 @@ If that capability is unavailable, include these facts in the returned result.
 
 ## 5. Prepare the next stage
 
-Slice folders are flat under the initiative directory, and folder names identify slices.
+The initiative directory is the root slice folder, other slice folders are flat under it, and folder names identify slices.
 The orchestrator manages parent relationships and dependencies in the initiative record.
 The initiative record owns each slice's title, outcome, and requirement assignment, so `slice.md` holds only design narrative.
 
