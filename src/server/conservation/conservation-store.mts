@@ -76,7 +76,7 @@ export class ConservationStore {
     const { directory, root } = await this.location(projectRoot, true), registry = path.join(directory, "outputs.json");
     for (const output of outputs) {
       const name = path.posix.basename(output);
-      if (!["state.json", "recovery.md"].includes(name)) throw conservationError("invalid_path", "Only coordination evidence can be registered here.");
+      if (!["state.json", "recovery.md", "initiative.json", "initiative.md", "roadmap.json", "roadmap.md"].includes(name)) throw conservationError("invalid_path", "Only coordination evidence can be registered here.");
       await resolveArtifactPath(root, output, false, name);
     }
     await withArtifactLock(registry, () => withFileLock(registry, async () => {

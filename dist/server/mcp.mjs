@@ -25,6 +25,8 @@ import { appendDecision, readDecisionHistory, setDecisionRecording } from "./wor
 import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
+import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } from "./workflow/initiative.mjs";
+import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
@@ -238,6 +240,9 @@ function stateErrorData(error) {
   if (error instanceof ConceptDeltaError) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
+  if (error instanceof InitiativeError || error instanceof RoadmapError || error?.name === "InitiativeGraphError") {
+    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
+  }
   if (error?.name !== "CoordinationStateError") {
     if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
     return undefined;
@@ -300,6 +305,8 @@ const activeSessionInputSchema = {
 const sessionInputSchema = { oneOf: [explicitSessionInputSchema, activeSessionInputSchema] };
 
 const tools = [
+  ...ROADMAP_TOOLS,
+  ...INITIATIVE_TOOLS,
   ...CONSERVATION_TOOLS,
   ...NATIVE_INTELLIGENCE_TOOLS,
   {
@@ -839,6 +846,15 @@ async function callTool(name, argumentsValue = {}, metadata) {
   }
   if (stateTools.has(name)) {
     return callStateTool(name, argumentsValue);
+  }
+  if (["get_roadmap", "update_roadmap", "get_initiative", "update_initiative"].includes(name)) {
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const input = { ...argumentsValue, projectRoot };
+    const value = name === "get_roadmap" ? await getRoadmap(input)
+      : name === "update_roadmap" ? await updateRoadmap(input)
+      : name === "get_initiative" ? await getInitiative(input)
+      : await updateInitiative(input);
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (repositoryTools.has(name)) {
     return callRepositoryTool(name, argumentsValue);

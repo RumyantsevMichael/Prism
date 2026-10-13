@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { getConceptDelta } from "../conservation/concept-delta.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
+import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -57,14 +58,10 @@ async function readOptional(filePath) {
 
 function configuredRoots(config) {
   const roots = new Set(["docs"]);
-  const pathsSection = config.split(/^## Paths\s*$/m)[1]?.split(/^## /m)[0] ?? "";
-  for (const match of pathsSection.matchAll(/^\s*-\s+[^:]+:\s+(.+)\s*$/gm)) {
-    const value = match[1].trim().replace(/^['"]|['"]$/g, "");
-    if (value === "n/a" || path.isAbsolute(value)) {
-      continue;
+  for (const value of Object.values(config.paths)) {
+    if (value) {
+      roots.add(path.posix.extname(value) ? path.posix.dirname(value) : value);
     }
-    const normalized = value.replace(/\/$/, "");
-    roots.add(path.extname(normalized) ? path.dirname(normalized) : normalized);
   }
   return [...roots].filter((value) => value && value !== ".");
 }
@@ -97,7 +94,7 @@ async function walkArtifacts(projectRoot, relativeRoot, results) {
 }
 
 export async function listArtifacts(projectRoot) {
-  const config = (await readOptional(path.join(projectRoot, ".prism", "workflow.md"))) ?? "";
+  const config = await readWorkflowConfig(projectRoot);
   const results = new Set();
   for (const root of configuredRoots(config)) {
     await walkArtifacts(projectRoot, root, results);
