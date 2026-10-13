@@ -29,6 +29,8 @@ async function fixture(context) {
   await write("docs/plans/reports/download/slice.md", "# Download\n\n## Context\n\nNarrative.\n");
   await write("docs/plans/reports/download/review.json", JSON.stringify({ waves: [{ id: "audit", mode: "design-audit" }], findings: [{ status: "OPEN", severity: "high" }, { status: "VERIFIED", severity: "blocker" }, { status: "FIXED", severity: "low" }] }));
   await write("docs/plans/reports/download/notes/extra.md", "# Extra\n");
+  await write("docs/plans/reports/slice.md", "# Export reports\n\n## Context\n\nRoot narrative.\n");
+  await write("docs/plans/reports/review.json", JSON.stringify({ waves: [{ id: "audit", mode: "design-audit" }], findings: [{ status: "OPEN", severity: "low" }] }));
   await updateInitiative({ projectRoot: root, initiative: "reports", expectedRevision: null, operations: [
     { op: "create", slug: "reports", title: "Export reports", requirements: ["docs/requirements/reports.md#1", "docs/requirements/reports.md#2"] },
     { op: "split", parent: "reports", children: [
@@ -105,7 +107,7 @@ test("serves navigation and entity views built from Prism records", async (conte
     const entity = async (ref) => (await get(`${review.baseUrl}/api/entity?ref=${encodeURIComponent(ref)}`)).json();
     const roadmap = await entity("roadmap");
     const reports = roadmap.data.items.find((item) => item.id === "reports");
-    assert.deepEqual(reports.findings, { unresolved: 1, blocking: 1 });
+    assert.deepEqual(reports.findings, { unresolved: 2, blocking: 1 });
     assert.deepEqual(reports.requiredBy, ["search"]);
     assert.deepEqual(roadmap.data.unlisted, ["orphan"]);
     const initiative = await entity("initiative:reports");
@@ -161,10 +163,10 @@ test("lists what waits on the user apart from agent-side state", async (context)
     assert.deepEqual(needs[0].slice, { slug: "download", title: "Download signed reports" });
     assert.deepEqual(needs[0].initiative, { id: "reports", title: "Export reports" });
     assert.deepEqual(needs[0].artifacts, [{ path: "docs/plans/reports/download/slice.md", available: true }, { path: "docs/plans/reports/download/missing.md", available: false }]);
-    assert.deepEqual(attention.data.watch.map((item) => item.type), ["findings"]);
+    assert.deepEqual(attention.data.watch.map((item) => item.type), ["findings", "findings"]);
     assert.deepEqual([attention.data.watch[0].unresolved, attention.data.watch[0].blocking], [1, 1]);
     const index = (await get(`${review.baseUrl}/api/index`)).json();
-    assert.deepEqual(index.navigation.attention, { needsYou: 4, gates: 1, answered: 0, watch: 1 });
+    assert.deepEqual(index.navigation.attention, { needsYou: 4, gates: 1, answered: 0, watch: 2 });
     const refs = index.navigation.index.map((entry) => `${entry.kind}:${entry.ref}`);
     for (const expected of ["initiative:initiative:reports", "initiative:initiative:orphan", "slice:slice:reports/download", "requirement:docs/requirements/reports.md", "decision:docs/ADRs/reporting/signed.md"]) assert.ok(refs.includes(expected), expected);
   } finally {
@@ -241,7 +243,25 @@ test("records a browser answer and lists it apart from open questions", async (c
     assert.equal(after.needsYou.some((item) => item.type === "gate"), false);
     assert.deepEqual(after.answered.map((item) => [item.id, item.answer.note]), [[gate.id, "Looks right."]]);
     const index = (await get(`${review.baseUrl}/api/index`)).json();
-    assert.deepEqual(index.navigation.attention, { needsYou: 3, gates: 0, answered: 1, watch: 1 });
+    assert.deepEqual(index.navigation.attention, { needsYou: 3, gates: 0, answered: 1, watch: 2 });
+  } finally {
+    await review.close();
+  }
+});
+
+test("treats the initiative directory as the root slice folder", async (context) => {
+  const projectRoot = await fixture(context);
+  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  try {
+    const root = (await get(`${review.baseUrl}/api/entity?ref=${encodeURIComponent("slice:reports/reports")}`)).json();
+    assert.equal(root.data.artifacts.folder, "docs/plans/reports");
+    assert.equal(root.data.artifacts.narrative, "docs/plans/reports/slice.md");
+    assert.deepEqual(root.data.artifacts.files, ["docs/plans/reports/review.json", "docs/plans/reports/slice.md"]);
+    assert.equal(root.data.artifacts.review.unresolved, 1);
+    const roadmap = (await get(`${review.baseUrl}/api/entity?ref=roadmap`)).json();
+    assert.deepEqual(roadmap.data.items.find((item) => item.id === "reports").findings, { unresolved: 2, blocking: 1 });
+    const attention = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json();
+    assert.deepEqual(attention.data.watch.filter((item) => item.type === "findings").map((item) => item.path).sort(), ["docs/plans/reports/download/review.json", "docs/plans/reports/review.json"]);
   } finally {
     await review.close();
   }

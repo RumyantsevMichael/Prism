@@ -123,7 +123,12 @@ test("refuses a done transition without a passing completion gate", async (conte
   const created = await updateInitiative({ projectRoot, initiative: "solo", expectedRevision: null, operations: [{ op: "create", slug: "solo", title: "Solo", requirements: ["r.md#1"] }] });
   await assert.rejects(
     updateInitiative({ projectRoot, initiative: "solo", expectedRevision: created.revision, operations: [{ op: "set_status", slug: "solo", status: "done" }] }),
-    (error) => error.code === "gate_blocked" && error.problems.length > 0
+    (error) => error.code === "gate_blocked" && error.problems.length > 0 && error.reviewPath === "work/plans/solo/review.json" && error.message.includes("at work/plans/solo/review.json")
+  );
+  const split = await updateInitiative({ projectRoot, initiative: "solo", expectedRevision: created.revision, operations: [{ op: "split", parent: "solo", children: [{ slug: "child", title: "Child", requirements: ["r.md#1"] }] }] });
+  await assert.rejects(
+    updateInitiative({ projectRoot, initiative: "solo", expectedRevision: split.revision, operations: [{ op: "set_status", slug: "child", status: "done" }] }),
+    (error) => error.code === "gate_blocked" && error.reviewPath === "work/plans/solo/child/review.json"
   );
 });
 
@@ -144,4 +149,18 @@ test("imports a legacy map with outcomes from slice records and keeps hand-writt
 test("rejects identifiers that could leave the plans directory", async (context) => {
   const projectRoot = await project(context);
   await assert.rejects(getInitiative({ projectRoot, initiative: "../outside" }), { code: "invalid_path" });
+});
+
+test("stores requirement citations as configured requirement paths", async (context) => {
+  const projectRoot = await project(context);
+  const created = await updateInitiative({ projectRoot, initiative: "cited", expectedRevision: null, operations: [
+    { op: "create", slug: "cited", title: "Cited", requirements: ["token-bucket.md§1", "token-bucket.md§2"] },
+    { op: "split", parent: "cited", children: [{ slug: "one", title: "One", requirements: ["token-bucket.md§1"] }, { slug: "two", title: "Two", requirements: ["docs/requirements/token-bucket.md#2"] }] }
+  ] });
+  assert.deepEqual(created.record.slices.cited.requirements, ["docs/requirements/token-bucket.md#1", "docs/requirements/token-bucket.md#2"]);
+  assert.deepEqual(created.record.slices.one.requirements, ["docs/requirements/token-bucket.md#1"]);
+  await assert.rejects(
+    updateInitiative({ projectRoot, initiative: "other", expectedRevision: null, operations: [{ op: "create", slug: "other", title: "Other", requirements: ["token-bucket.md 1"] }] }),
+    /Invalid requirement reference "token-bucket\.md 1": use <requirements path>\.md#<number>, such as docs\/requirements\/capability\.md#1, or <file>\.md§<number>\./
+  );
 });

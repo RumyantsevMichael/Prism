@@ -66,7 +66,7 @@ export async function resolveInitiative(projectRoot, initiative, createParent = 
   }
   const record = await resolveArtifactPath(projectRoot, `${directory}/${RECORD_NAME}`, createParent, RECORD_NAME);
   const projection = await resolveArtifactPath(projectRoot, `${directory}/${PROJECTION_NAME}`, false, PROJECTION_NAME);
-  return { root: record.root, initiative, directory, recordPath: record.deltaPath, target: record.target, projectionPath: projection.deltaPath, projectionTarget: projection.target };
+  return { root: record.root, initiative, directory, requirementsDirectory: config.paths.requirements, recordPath: record.deltaPath, target: record.target, projectionPath: projection.deltaPath, projectionTarget: projection.target };
 }
 
 function revisionOf(contents) {
@@ -177,9 +177,26 @@ function markdown(record) {
   return `${lines.join("\n")}\n`;
 }
 
-async function sliceOutcome(resolved, slugValue) {
+// Requirement files cite obligations as <file>.md§<n>, so that form is accepted and stored as <requirements dir>/<file>.md#<n>.
+function normalizeRequirements(resolved, references) {
+  return references.map((reference) => {
+    const cited = /^([^\s/#§]+\.md)§([^\s#§]+)$/.exec(reference);
+    if (cited && resolved.requirementsDirectory) return `${resolved.requirementsDirectory}/${cited[1]}#${cited[2]}`;
+    if (!/^[^\s#]+#[^\s#]+$/.test(reference)) {
+      throw fail("validation_failed", `Invalid requirement reference ${JSON.stringify(reference)}: use <requirements path>.md#<number>, such as ${resolved.requirementsDirectory ?? "docs/requirements"}/capability.md#1, or <file>.md§<number>.`);
+    }
+    return reference;
+  });
+}
+
+// The initiative directory is the root slice's folder; every other slice folder sits directly under it.
+export function sliceFolder(directory, slices, slugValue) {
+  return slices?.[slugValue]?.parent === null ? directory : `${directory}/${slugValue}`;
+}
+
+async function sliceOutcome(resolved, slices, slugValue) {
   try {
-    const source = await readFile(path.join(resolved.root, resolved.directory, slugValue, "slice.md"), "utf8");
+    const source = await readFile(path.join(resolved.root, sliceFolder(resolved.directory, slices, slugValue), "slice.md"), "utf8");
     const section = source.split(/^## Outcome\s*$/m)[1]?.split(/^#{1,2} /m)[0] ?? "";
     const sentence = section.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
     return sentence || undefined;
@@ -188,13 +205,13 @@ async function sliceOutcome(resolved, slugValue) {
   }
 }
 
-async function completionGate(resolved, slugValue) {
+async function completionGate(resolved, slices, slugValue) {
   const { checkReviewGate } = await import("../review/review-ledger.mjs");
-  const reviewPath = `${resolved.directory}/${slugValue}/review.json`;
+  const reviewPath = `${sliceFolder(resolved.directory, slices, slugValue)}/review.json`;
   try {
-    return await checkReviewGate({ projectRoot: resolved.root, reviewPath, gate: "completion" });
+    return { reviewPath, ...(await checkReviewGate({ projectRoot: resolved.root, reviewPath, gate: "completion" })) };
   } catch (error) {
-    return { ready: false, problems: [{ code: error.code ?? "evidence_missing", message: error.message }] };
+    return { reviewPath, ready: false, problems: [{ code: error.code ?? "evidence_missing", message: error.message }] };
   }
 }
 
@@ -209,14 +226,14 @@ async function applyOperation(resolved, record, operation) {
   }
   switch (operation.op) {
     case "create":
-      slices[operation.slug] = { title: operation.title, ...(operation.outcome ? { outcome: operation.outcome } : {}), status: "not-started", parent: null, requirements: [...operation.requirements], dependencies: [] };
+      slices[operation.slug] = { title: operation.title, ...(operation.outcome ? { outcome: operation.outcome } : {}), status: "not-started", parent: null, requirements: normalizeRequirements(resolved, operation.requirements), dependencies: [] };
       break;
     case "import_map": {
       const source = await readFile((await resolveArtifactPath(resolved.root, operation.path, false, path.posix.basename(operation.path))).target, "utf8");
       const imported = parseLegacyMap(source);
       if (imported.id !== resolved.initiative) throw fail("validation_failed", `The map names initiative ${imported.id}, not ${resolved.initiative}.`);
       for (const [key, slice] of Object.entries(imported.slices)) {
-        const outcome = await sliceOutcome(resolved, key);
+        const outcome = await sliceOutcome(resolved, imported.slices, key);
         slices[key] = { ...slice, ...(outcome ? { outcome } : {}) };
       }
       break;
@@ -227,7 +244,7 @@ async function applyOperation(resolved, record, operation) {
       if (parent.status === "done") throw fail("validation_failed", "A done slice cannot split.");
       for (const child of operation.children) {
         if (Object.hasOwn(slices, child.slug)) throw fail("validation_failed", `The slice slug ${child.slug} is already used in this initiative.`);
-        slices[child.slug] = { title: child.title, ...(child.outcome ? { outcome: child.outcome } : {}), status: "not-started", parent: operation.parent, requirements: [...child.requirements], dependencies: [] };
+        slices[child.slug] = { title: child.title, ...(child.outcome ? { outcome: child.outcome } : {}), status: "not-started", parent: operation.parent, requirements: normalizeRequirements(resolved, child.requirements), dependencies: [] };
       }
       parent.status = "split";
       break;
@@ -236,8 +253,11 @@ async function applyOperation(resolved, record, operation) {
       const slice = requireSlice(operation.slug);
       if (slice.status === "split") throw fail("validation_failed", "A split parent keeps the split status permanently.");
       if (operation.status === "done" && slice.status !== "done") {
-        const gate = await completionGate(resolved, operation.slug);
-        if (!gate.ready) throw fail("gate_blocked", "The slice has no passing completion gate.", { problems: gate.problems });
+        const gate = await completionGate(resolved, slices, operation.slug);
+        if (!gate.ready) {
+          const reasons = (gate.problems ?? []).map((problem) => problem.message).filter(Boolean).join(" ");
+          throw fail("gate_blocked", `The slice has no passing completion gate at ${gate.reviewPath}.${reasons ? ` ${reasons}` : ""}`, { reviewPath: gate.reviewPath, problems: gate.problems });
+        }
       }
       slice.status = operation.status;
       break;

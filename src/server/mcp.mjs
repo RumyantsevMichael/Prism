@@ -718,8 +718,31 @@ const tools = [
 const stateTools = new Set(["get_coordination_state", "validate_coordination_state", "update_coordination_state", "checkpoint_pause"]);
 // Only Claude Code was shown to move a long call to the background and wake the session with its result; other hosts would block the turn.
 const BACKGROUND_WAIT_CLIENTS = /claude/i;
+const FIRST_BACKGROUND_VERSION = [2, 1, 212];
+const DEFAULT_BACKGROUND_MS = 120000;
 const pendingWaits = new Map();
 let clientName = null;
+let clientVersion = null;
+
+function olderThan(version, minimum) {
+  const parts = String(version ?? "").split(/[.-]/).slice(0, 3).map(Number);
+  if (parts.length < 3 || parts.some((part) => !Number.isInteger(part))) return false;
+  for (let index = 0; index < 3; index += 1) {
+    if (parts[index] !== minimum[index]) return parts[index] < minimum[index];
+  }
+  return false;
+}
+
+// A wait only helps when the host moves it to the background before its own tool timeout cancels it.
+function waitUnsupportedReason() {
+  if (!BACKGROUND_WAIT_CLIENTS.test(clientName ?? "")) return `The host ${clientName ?? "(unnamed)"} does not move long tool calls to the background.`;
+  if (olderThan(clientVersion, FIRST_BACKGROUND_VERSION)) return `Claude Code ${clientVersion} predates background tool calls (2.1.212).`;
+  const handoff = Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS ?? DEFAULT_BACKGROUND_MS);
+  if (["1", "true"].includes(String(process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toLowerCase()) || handoff === 0) return "Background tool calls are disabled in this Claude Code session.";
+  const timeout = Number(process.env.MCP_TOOL_TIMEOUT);
+  if (Number.isFinite(timeout) && timeout > 0 && timeout <= handoff) return `MCP_TOOL_TIMEOUT (${timeout} ms) ends the call before Claude Code moves it to the background (${handoff} ms).`;
+  return null;
+}
 
 function progress(progressToken, value, message) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: value, message } })}\n`);
@@ -728,8 +751,9 @@ function progress(progressToken, value, message) {
 async function callGateWait(argumentsValue, metadata, requestId) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   let value;
-  if (!BACKGROUND_WAIT_CLIENTS.test(clientName ?? "")) {
-    value = { status: "unsupported_host", gateId: argumentsValue.gateId, client: clientName };
+  const unsupported = waitUnsupportedReason();
+  if (unsupported) {
+    value = { status: "unsupported_host", gateId: argumentsValue.gateId, client: clientName, reason: unsupported };
   } else {
     const controller = new AbortController();
     if (requestId !== undefined) pendingWaits.set(requestId, controller);
@@ -753,7 +777,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
     resolved: () => `User gate ${value.gateId} was resolved without a browser answer; it was answered in the conversation or withdrawn.`,
     timeout: () => `No answer arrived for user gate ${value.gateId} before the wait ended.`,
     unknown_gate: () => `No pending user gate has the id ${value.gateId}.`,
-    unsupported_host: () => "This host does not run long tool calls in the background, so the wait returned at once; the user's next message delivers any browser answer.",
+    unsupported_host: () => `The wait returned at once because it cannot run in the background here: ${value.reason} The user's next message delivers any browser answer.`,
     cancelled: () => `The wait for user gate ${value.gateId} was cancelled.`
   }[value.status]();
   return { content: [{ type: "text", text }], structuredContent: value };
@@ -987,6 +1011,7 @@ input.on("line", async (line) => {
     request = JSON.parse(line);
     if (request.method === "initialize") {
       clientName = typeof request.params?.clientInfo?.name === "string" ? request.params.clientInfo.name : null;
+      clientVersion = typeof request.params?.clientInfo?.version === "string" ? request.params.clientInfo.version : null;
       result(request.id, {
         protocolVersion: request.params?.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },

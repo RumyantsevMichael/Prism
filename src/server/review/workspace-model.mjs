@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { readInitiative } from "../workflow/initiative.mjs";
+import { readInitiative, sliceFolder } from "../workflow/initiative.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
@@ -57,10 +57,14 @@ function reviewSummary(review) {
   };
 }
 
-async function sliceArtifacts(root, directory, slug) {
-  const folder = `${directory}/${slug}`;
+const COORDINATION_FILES = new Set(["state.json", "initiative.json", "initiative.md"]);
+
+async function sliceArtifacts(root, directory, slices, slug) {
+  const folder = sliceFolder(directory, slices, slug);
   const files = [];
-  await walk(root, folder, 3, () => true, files, SLICE_FILE_LIMIT);
+  // The root slice shares the initiative directory, so it lists only its own top-level files.
+  if (folder === directory) await walk(root, folder, 0, (name) => !COORDINATION_FILES.has(name), files, SLICE_FILE_LIMIT);
+  else await walk(root, folder, 3, () => true, files, SLICE_FILE_LIMIT);
   const reviewSource = files.includes(`${folder}/review.json`) ? await readText(root, `${folder}/review.json`) : null;
   let review = null;
   if (reviewSource !== null) {
@@ -104,9 +108,9 @@ async function initiativeFindings(root, config, id) {
   } catch {
     return totals;
   }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const source = await readText(root, `${directory}/${entry.name}/review.json`);
+  const ledgers = [`${directory}/review.json`, ...entries.filter((entry) => entry.isDirectory()).map((entry) => `${directory}/${entry.name}/review.json`)];
+  for (const ledger of ledgers) {
+    const source = await readText(root, ledger);
     if (source === null) continue;
     try {
       const summary = reviewSummary(JSON.parse(source));
@@ -184,7 +188,7 @@ export async function loadInitiativeView(projectRoot, id) {
   }
   const slices = {};
   if (loaded.record?.slices) {
-    for (const slug of Object.keys(loaded.record.slices)) slices[slug] = await sliceArtifacts(projectRoot, resolved.directory, slug);
+    for (const slug of Object.keys(loaded.record.slices)) slices[slug] = await sliceArtifacts(projectRoot, resolved.directory, loaded.record.slices, slug);
   }
   const analysis = loaded.analysis;
   return {
@@ -357,13 +361,14 @@ export async function loadAttention(projectRoot) {
       if (slice.status === "blocked") watch.push({ type: "blocked", initiative, slice: { slug, title: slice.title } });
     }
     for (const slug of Object.keys(slices)) {
-      const source = await readText(projectRoot, `${snapshot.directory}/${slug}/review.json`);
+      const ledger = `${sliceFolder(snapshot.directory, slices, slug)}/review.json`;
+      const source = await readText(projectRoot, ledger);
       if (source === null) continue;
       try {
         const summary = reviewSummary(JSON.parse(source));
-        if (summary.unresolved || summary.blocking) watch.push({ type: "findings", initiative, slice: { slug, title: slices[slug].title }, unresolved: summary.unresolved, blocking: summary.blocking, path: `${snapshot.directory}/${slug}/review.json` });
+        if (summary.unresolved || summary.blocking) watch.push({ type: "findings", initiative, slice: { slug, title: slices[slug].title }, unresolved: summary.unresolved, blocking: summary.blocking, path: ledger });
       } catch {
-        watch.push({ type: "record-problem", initiative, path: `${snapshot.directory}/${slug}/review.json`, message: "The review ledger is not valid JSON." });
+        watch.push({ type: "record-problem", initiative, path: ledger, message: "The review ledger is not valid JSON." });
       }
     }
     for (const entry of state?.state?.active ?? []) {

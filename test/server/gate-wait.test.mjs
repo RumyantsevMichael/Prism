@@ -23,8 +23,10 @@ async function project(context) {
   return { root, gateId: created.openedGates[0].id };
 }
 
-function server(context, root, clientName) {
+function server(context, root, clientName, { version = "2.1.296", environment = {} } = {}) {
   const env = { ...process.env, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_REVIEW_CERT_DIR: path.join(root, ".prism-review-cert"), PRISM_GATE_WAIT_HEARTBEAT_MS: "200", CLAUDE_PROJECT_DIR: root };
+  for (const name of ["MCP_TOOL_TIMEOUT", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"]) delete env[name];
+  Object.assign(env, environment);
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
   const messages = [];
   const listeners = new Set();
@@ -56,7 +58,7 @@ function server(context, root, clientName) {
     listeners.add(check);
     check();
   });
-  send({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: clientName, version: "1" } } });
+  send({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: clientName, version } } });
   return { send, response, messages, ready: response(1) };
 }
 
@@ -108,4 +110,25 @@ test("returns at once on hosts that cannot wait in the background", async (conte
   wait(mcp, 2, root, gateId);
   const response = await mcp.response(2, 3000);
   assert.deepEqual([response.result.structuredContent.status, response.result.structuredContent.client], ["unsupported_host", "codex-mcp-client"]);
+});
+
+test("returns at once when the host would cancel the wait before backgrounding it", async (context) => {
+  const { root, gateId } = await project(context);
+  for (const [options, reason] of [
+    [{ environment: { MCP_TOOL_TIMEOUT: "60000" } }, /MCP_TOOL_TIMEOUT \(60000 ms\) ends the call before Claude Code moves it to the background \(120000 ms\)/],
+    [{ environment: { MCP_TOOL_TIMEOUT: "60000", CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: "30000" } }, null],
+    [{ environment: { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" } }, /disabled/],
+    [{ version: "2.1.100" }, /predates background tool calls/]
+  ]) {
+    const mcp = server(context, root, "claude-code", options);
+    await mcp.ready;
+    wait(mcp, 2, root, gateId, reason ? {} : { maxWaitMinutes: 0.005 });
+    const response = await mcp.response(2, 5000);
+    if (reason) {
+      assert.equal(response.result.structuredContent.status, "unsupported_host", JSON.stringify(options));
+      assert.match(response.result.structuredContent.reason, reason);
+    } else {
+      assert.equal(response.result.structuredContent.status, "timeout", JSON.stringify(options));
+    }
+  }
 });
