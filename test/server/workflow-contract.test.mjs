@@ -482,6 +482,10 @@ test("records each user gate in coordination state while it waits on the user", 
   assert.match(orchestrate, /A recorded browser answer is the user's answer to that question/);
   assert.match(orchestrate, /Before asking again, resuming, or continuing after a user message, read the pending gates and act on every recorded answer/);
   assert.match(orchestrate, /An answered gate is never asked again/);
+  assert.match(orchestrate, /After asking the user, the orchestrator calls `wait_for_user_gate` with the gate id when the tool is available/);
+  assert.match(orchestrate, /An `answered` wait result is the user's answer to that gate/);
+  assert.match(orchestrate, /A `resolved`, `timeout`, `unknown_gate`, or `unsupported_host` wait result, or an aborted wait, ends the turn/);
+  assert.match(orchestrate, /A wait result for a gate that the orchestrator already resolved needs no action/);
   assert.match(orchestrate, /A gate that the autonomy setting settles automatically is not recorded/);
   assert.match(runSettings, /Every question that waits on the user is recorded as a user gate in `state\.json` before it is asked/);
   assert.match(workflow, /\| User gate record \| A pending `state\.json` entry that records a gate while it waits on the user/);

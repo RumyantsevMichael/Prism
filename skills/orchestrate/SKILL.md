@@ -189,6 +189,10 @@ The `update_coordination_state` input includes `changes.gateOperations` with one
 Gate kinds are `visual-review` for design and final visual review, `correctness` for correctness confirmation, `decision` for requirement, decision, conflict, split, and dependency questions, and `assistance` for user actions such as a separate review task.
 A `decision` gate supplies `options` when its choices are known, so the user can pick one in the review browser.
 The user answers either in the conversation or in the review browser, which records the answer on the pending gate.
+After asking the user, the orchestrator calls `wait_for_user_gate` with the gate id when the tool is available, so a browser answer returns as the tool result and resumes the run.
+An `answered` wait result is the user's answer to that gate.
+A `resolved`, `timeout`, `unknown_gate`, or `unsupported_host` wait result, or an aborted wait, ends the turn, and the user's next message delivers the answer.
+A wait result for a gate that the orchestrator already resolved needs no action.
 A recorded browser answer is the user's answer to that question.
 Before asking again, resuming, or continuing after a user message, read the pending gates and act on every recorded answer.
 An answered gate is never asked again.
