@@ -1,6 +1,7 @@
 import { renderToString } from "./vendor/plantuml.js";
 import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
+import { ENTITY_LABELS, entityLabel, parseEntityRef, renderEntity } from "./views/entities.js";
 
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
@@ -18,9 +19,9 @@ let sessionStream;
 let saveQueue = Promise.resolve();
 let lastSnapshot = "";
 let toastTimer;
-let expandedFolders = new Set();
 let availableArtifacts = new Set();
-const folderElements = new Map();
+let navigation = { initiatives: [], glossary: {}, diagnostics: [] };
+const sliceTitles = new Map();
 const viewStates = new Map();
 
 function samePaths(left, right) {
@@ -31,8 +32,8 @@ function welcome() {
   artifact.innerHTML = `<div class="welcome-card">
     <span class="welcome-mark" aria-hidden="true"></span>
     <p class="eyebrow">Human review</p>
-    <h1>Select an artifact</h1>
-    <p>Choose a source artifact to review its prose and diagrams together.</p>
+    <h1>Open the roadmap</h1>
+    <p>Choose the roadmap, an initiative, or a library section.</p>
   </div>`;
 }
 
@@ -58,7 +59,7 @@ function renderTabs() {
     select.setAttribute("role", "tab");
     select.setAttribute("aria-selected", String(path === selectedPath));
     select.title = path;
-    select.textContent = fileName(path);
+    select.textContent = tabLabel(path);
     select.addEventListener("click", () => selectTab(path));
     const close = document.createElement("button");
     close.className = "artifact-tab-close";
@@ -358,144 +359,143 @@ function fileType(path) {
   return path.split(".").pop().toUpperCase();
 }
 
-function treeNode(name, path = "") {
-  return { name, path, folders: new Map(), files: [] };
-}
+const BAND_ORDER = ["Now", "Next", "Later", "Parked", "Shipped"];
 
-function buildArtifactTree(paths) {
-  const root = treeNode("");
-  for (const path of paths) {
-    const parts = path.split("/");
-    let current = root;
-    for (let index = 0; index < parts.length - 1; index += 1) {
-      const name = parts[index];
-      const folderPath = parts.slice(0, index + 1).join("/");
-      if (!current.folders.has(name)) {
-        current.folders.set(name, treeNode(name, folderPath));
-      }
-      current = current.folders.get(name);
-    }
-    current.files.push(path);
-  }
-  return root;
-}
-
-function countTreeArtifacts(node) {
-  return node.files.length + [...node.folders.values()].reduce((total, folder) => total + countTreeArtifacts(folder), 0);
-}
-
-function treeEntries(node) {
-  const folders = [...node.folders.values()].sort((left, right) => left.name.localeCompare(right.name));
-  const files = [...node.files].sort((left, right) => fileName(left).localeCompare(fileName(right)));
-  return { folders, files };
-}
-
-function folderItem(node) {
+function navItem(ref, label, meta = "", extraClass = "") {
   const item = document.createElement("li");
-  item.className = "tree-folder";
-  item.dataset.folderPath = node.path;
-  item.setAttribute("role", "treeitem");
-  item.setAttribute("aria-expanded", "false");
-
-  const button = document.createElement("button");
-  button.className = "tree-folder-button";
-  button.type = "button";
-  button.setAttribute("aria-expanded", "false");
-  button.setAttribute("aria-label", `Expand ${node.path}`);
-  button.innerHTML = `<span class="tree-chevron" aria-hidden="true"></span><span class="folder-icon" aria-hidden="true"></span><span class="tree-folder-name">${escapeHtml(node.name)}</span><span class="tree-folder-count">${countTreeArtifacts(node)}</span>`;
-  button.addEventListener("click", () => {
-    if (expandedFolders.has(node.path)) {
-      expandedFolders.delete(node.path);
-    } else {
-      expandedFolders.add(node.path);
-    }
-    updateTreeState();
-  });
-
-  const children = document.createElement("ul");
-  children.className = "tree-children";
-  children.setAttribute("role", "group");
-  renderTreeNode(node, children);
-  item.append(button, children);
-  folderElements.set(node.path, item);
-  return item;
-}
-
-function fileItem(path) {
-  const item = document.createElement("li");
-  item.className = "tree-file";
-  item.dataset.artifactPath = path;
-  item.setAttribute("role", "treeitem");
-
+  item.className = `nav-item ${extraClass}`;
+  item.dataset.ref = ref;
+  item.dataset.filter = `${label} ${ref}`.toLowerCase();
   const link = document.createElement("a");
-  link.href = `./review?artifact=${encodeURIComponent(path)}`;
-  link.dataset.path = path;
-  link.title = path;
-  link.innerHTML = `<span class="file-icon" aria-hidden="true"></span><span class="file-name">${escapeHtml(fileName(path))}</span><span class="type-badge">${escapeHtml(fileType(path))}</span>`;
+  link.href = `./review?artifact=${encodeURIComponent(ref)}`;
+  link.dataset.path = ref;
+  link.innerHTML = `<span class="nav-label">${escapeHtml(label)}</span>${meta}`;
   link.addEventListener("click", (event) => {
     event.preventDefault();
-    selectTab(path);
+    selectTab(ref);
   });
   item.appendChild(link);
   return item;
 }
 
-function renderTreeNode(node, target) {
-  const { folders, files } = treeEntries(node);
-  for (const folder of folders) {
-    target.appendChild(folderItem(folder));
-  }
-  for (const path of files) {
-    target.appendChild(fileItem(path));
-  }
+function navGroup(title, items) {
+  const group = document.createElement("li");
+  group.className = "nav-group";
+  group.innerHTML = `<p class="nav-group-title">${escapeHtml(title)}</p>`;
+  const list = document.createElement("ul");
+  list.append(...items);
+  group.appendChild(list);
+  return group;
 }
 
-function expandArtifactParents(path) {
-  const parts = path.split("/");
-  for (let index = 1; index < parts.length; index += 1) {
-    expandedFolders.add(parts.slice(0, index).join("/"));
+function stateDot(state) {
+  return `<span class="state-dot state-${escapeHtml(state)}" title="${escapeHtml(state)}"></span>`;
+}
+
+function renderNavigation() {
+  const groups = [navGroup("Overview", [navItem("roadmap", "Roadmap", "", "nav-primary")])];
+  const initiatives = navigation.initiatives ?? [];
+  const bucket = (item) => item.state === "superseded" ? "Superseded" : item.state === "unlisted" ? "Not on the roadmap" : item.band;
+  for (const band of [...BAND_ORDER, "Superseded", "Not on the roadmap"]) {
+    const members = initiatives.filter((item) => bucket(item) === band);
+    if (members.length) {
+      groups.push(navGroup(band, members.map((item) => navItem(`initiative:${item.id}`, item.title, stateDot(item.state)))));
+    }
   }
+  const glossary = navigation.glossary ?? {};
+  groups.push(navGroup("Library", [
+    navItem("requirements", "Requirements"),
+    navItem("decisions", "Decisions"),
+    navItem("glossary", "Glossary", glossary.exists ? "" : '<span class="nav-note">missing</span>')
+  ]));
+  artifacts.replaceChildren(...groups);
+  if (navigation.diagnostics?.length) {
+    const warning = document.createElement("li");
+    warning.className = "nav-diagnostics";
+    warning.innerHTML = `<details><summary>${navigation.diagnostics.length} workflow config ${navigation.diagnostics.length === 1 ? "warning" : "warnings"}</summary><ul>${navigation.diagnostics.map((item) => `<li>${escapeHtml(item.message)}</li>`).join("")}</ul></details>`;
+    artifacts.appendChild(warning);
+  }
+  artifactCount.textContent = String(initiatives.length);
+  updateTreeState();
 }
 
 function updateTreeState() {
   const query = artifactFilter.value.trim().toLowerCase();
   let visible = 0;
-  for (const item of artifacts.querySelectorAll("[data-artifact-path]")) {
-    const matches = item.dataset.artifactPath.toLowerCase().includes(query);
+  for (const item of artifacts.querySelectorAll(".nav-item")) {
+    const matches = !query || item.dataset.filter.includes(query);
     item.hidden = !matches;
     visible += matches ? 1 : 0;
   }
-
-  const folders = [...folderElements.entries()].reverse();
-  for (const [path, item] of folders) {
-    const hasVisibleArtifact = [...item.querySelectorAll("[data-artifact-path]")].some((file) => !file.hidden);
-    const expanded = query ? hasVisibleArtifact : expandedFolders.has(path);
-    const button = item.querySelector(":scope > .tree-folder-button");
-    const children = item.querySelector(":scope > .tree-children");
-    item.hidden = query ? !hasVisibleArtifact : false;
-    item.setAttribute("aria-expanded", String(expanded));
-    button.setAttribute("aria-expanded", String(expanded));
-    button.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${path}`);
-    children.hidden = !expanded;
+  for (const group of artifacts.querySelectorAll(".nav-group")) {
+    group.hidden = ![...group.querySelectorAll(".nav-item")].some((item) => !item.hidden);
   }
-
-  artifactCount.textContent = String(visible);
   emptyFilter.hidden = visible !== 0;
 }
 
+function navigationKey(path) {
+  const parsed = parseEntityRef(path);
+  if (parsed?.kind === "slice") return `initiative:${parsed.id}`;
+  return path;
+}
+
 function selectNavigation(path) {
-  expandArtifactParents(path);
+  const key = navigationKey(path);
   for (const link of artifacts.querySelectorAll("a[data-path]")) {
-    if (link.dataset.path === path) {
+    if (link.dataset.path === key) {
       link.setAttribute("aria-current", "page");
     } else {
       link.removeAttribute("aria-current");
     }
   }
-  updateTreeState();
+}
+
+function tabLabel(path) {
+  const parsed = parseEntityRef(path);
+  if (!parsed) return fileName(path);
+  if (parsed.kind === "initiative") return navigation.initiatives.find((item) => item.id === parsed.id)?.title ?? parsed.id;
+  if (parsed.kind === "slice") return sliceTitles.get(path) ?? parsed.slug;
+  return ENTITY_LABELS[parsed.kind];
+}
+
+async function showEntity(path) {
+  const response = await fetch(`./api/entity?ref=${encodeURIComponent(path)}`, { cache: "no-store" });
+  if (!response.ok) {
+    artifact.innerHTML = `<div class="document-card"><p class="error">${escapeHtml(await response.text())}</p></div>`;
+    return;
+  }
+  const entity = await response.json();
+  const snapshot = JSON.stringify(entity);
+  if (snapshot === lastSnapshot) {
+    return;
+  }
+  lastSnapshot = snapshot;
+  selectNavigation(path);
+  if (entity.kind === "slice") {
+    sliceTitles.set(path, entity.data.slice.title);
+    renderTabs();
+  }
+  const label = entityLabel(entity);
+  artifact.innerHTML = `
+    <header class="artifact-header">
+      <div>
+        <p class="eyebrow">${escapeHtml(label.eyebrow)}</p>
+        <h1>${escapeHtml(label.title)}</h1>
+        ${label.subtitle ? `<p class="artifact-path">${escapeHtml(label.subtitle)}</p>` : ""}
+      </div>
+      <div class="artifact-meta"><span class="meta-pill live">Live</span></div>
+    </header>`;
+  const container = document.createElement("div");
+  container.className = "structured-view";
+  artifact.appendChild(container);
+  await renderEntity(container, entity, { ...viewContext(path, viewState(path)), renderMarkdown: (source) => renderText("document.md", source) });
 }
 
 async function showArtifact(path) {
+  if (parseEntityRef(path)) {
+    await showEntity(path);
+    return;
+  }
   const response = await fetch(`./api/artifact?path=${encodeURIComponent(path)}`, { cache: "no-store" });
   if (!response.ok) {
     artifact.innerHTML = `<div class="document-card"><p class="error">${escapeHtml(await response.text())}</p></div>`;
@@ -584,9 +584,9 @@ function viewContext(path, state) {
     showToast,
     fetchArtifact: (artifactPath) => fetchJson(`./api/artifact?path=${encodeURIComponent(artifactPath)}`),
     fetchEvidence: (id) => fetchJson(`./api/evidence?id=${encodeURIComponent(id)}`),
-    hasArtifact: (artifactPath) => availableArtifacts.has(artifactPath),
+    hasArtifact: (artifactPath) => availableArtifacts.has(artifactPath) || Boolean(parseEntityRef(artifactPath)),
     openArtifact(artifactPath) {
-      if (!availableArtifacts.has(artifactPath)) {
+      if (!availableArtifacts.has(artifactPath) && !parseEntityRef(artifactPath)) {
         showToast(`Not a reviewable artifact: ${artifactPath}`);
         return;
       }
@@ -627,13 +627,13 @@ async function initialize() {
   }
   project.textContent = data.projectRoot;
   availableArtifacts = new Set(data.artifacts);
-  artifactCount.textContent = String(data.artifacts.length);
-  const tree = buildArtifactTree(data.artifacts);
-  expandedFolders = new Set([...tree.folders.values()].map((folder) => folder.path));
-  folderElements.clear();
-  artifacts.replaceChildren();
-  renderTreeNode(tree, artifacts);
-  updateTreeState();
+  navigation = data.navigation;
+  renderNavigation();
+  if (!selectedPath && openTabs.length === 0) {
+    selectedPath = "roadmap";
+    openTabs = ["roadmap"];
+    await saveSession();
+  }
   renderTabs();
   connectSessionEvents();
   artifactFilter.addEventListener("input", filterArtifacts);
@@ -659,6 +659,12 @@ async function initialize() {
       if (refreshed.ok) {
         const snapshot = await refreshed.json();
         availableArtifacts = new Set(snapshot.artifacts);
+        if (JSON.stringify(snapshot.navigation) !== JSON.stringify(navigation)) {
+          navigation = snapshot.navigation;
+          renderNavigation();
+          selectNavigation(selectedPath ?? "");
+          renderTabs();
+        }
         if (!sessionConnected) {
           synchronizeSession(snapshot);
         }

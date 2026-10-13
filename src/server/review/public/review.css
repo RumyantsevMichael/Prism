@@ -2197,3 +2197,494 @@ th {
 .queue-list .link-chip code {
   max-width: 100%;
 }
+
+/* Entity navigation */
+
+:root {
+  --state-envisioned: #b6b2c4;
+  --state-planned: #8a8698;
+  --state-in-progress: #2a78d6;
+  --state-shipped: #15845f;
+  --state-superseded: #c9c5d4;
+  --status-not-started: #b6b2c4;
+  --status-in-progress: #2a78d6;
+  --status-blocked: #c6384f;
+  --status-deferred: #b26f00;
+  --status-done: #15845f;
+  --status-split: #6250d6;
+}
+
+.nav-group > ul {
+  display: grid;
+  gap: 0.15rem;
+  list-style: none;
+  margin: 0 0 0.7rem;
+  padding: 0;
+}
+
+.nav-group-title {
+  color: var(--ink-muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0.5rem 0.65rem 0.25rem;
+  text-transform: uppercase;
+}
+
+.nav-item a {
+  align-items: center;
+  border-radius: 0.6rem;
+  color: var(--ink-muted);
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+  padding: 0.5rem 0.65rem;
+  text-decoration: none;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.nav-item a:hover {
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
+.nav-item a[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.nav-primary a {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.nav-label {
+  font-size: 0.8rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-note {
+  color: var(--ink-muted);
+  font-size: 0.66rem;
+  font-style: italic;
+}
+
+.nav-diagnostics {
+  color: var(--warn);
+  font-size: 0.74rem;
+  padding: 0.4rem 0.65rem;
+}
+
+.nav-diagnostics ul {
+  padding-left: 1rem;
+}
+
+.state-dot {
+  background: var(--state-color, var(--line-strong));
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 0.55rem;
+  width: 0.55rem;
+}
+
+.state-envisioned { --state-color: var(--state-envisioned); }
+.state-planned { --state-color: var(--state-planned); }
+.state-in-progress { --state-color: var(--state-in-progress); }
+.state-shipped { --state-color: var(--state-shipped); }
+.state-superseded { --state-color: var(--state-superseded); }
+.state-unlisted { --state-color: var(--warn); }
+
+.state-envisioned .state-dot,
+.state-dot.state-envisioned {
+  background: transparent;
+  border: 1.5px dashed var(--state-envisioned);
+}
+
+.state-badge {
+  align-items: center;
+  border: 1px solid var(--state-color, var(--line-strong));
+  border-radius: 999px;
+  color: var(--ink);
+  display: inline-flex;
+  font-size: 0.66rem;
+  font-weight: 700;
+  gap: 0.35rem;
+  letter-spacing: 0.03em;
+  padding: 0.12rem 0.55rem;
+}
+
+.state-badge::before {
+  background: var(--state-color, var(--line-strong));
+  border-radius: 50%;
+  content: "";
+  height: 0.45rem;
+  width: 0.45rem;
+}
+
+.state-badge.state-envisioned {
+  border-style: dashed;
+}
+
+/* Roadmap */
+
+.roadmap-board {
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: repeat(5, minmax(13rem, 1fr));
+  overflow-x: auto;
+  padding-bottom: 0.4rem;
+}
+
+.band-column {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  min-width: 0;
+  padding: 0.7rem;
+}
+
+.band-column h2 {
+  align-items: center;
+  display: flex;
+  font-size: 0.82rem;
+  justify-content: space-between;
+  letter-spacing: 0.02em;
+  margin: 0.1rem 0.2rem 0.6rem;
+}
+
+.band-now h2 { color: var(--accent-strong); }
+
+.band-column > ul {
+  display: grid;
+  gap: 0.55rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.initiative-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--state-color, var(--line-strong));
+  border-radius: 0.7rem;
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.7rem 0.75rem;
+}
+
+.initiative-card.state-envisioned {
+  border-left-style: dashed;
+}
+
+.initiative-card.state-shipped {
+  opacity: 0.85;
+}
+
+.initiative-card h3 {
+  font-size: 0.9rem;
+  line-height: 1.3;
+  margin: 0;
+}
+
+.initiative-card h3 .text-button {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.initiative-card h3 .text-button:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+.initiative-card-head {
+  align-items: center;
+  display: flex;
+  gap: 0.4rem;
+  justify-content: space-between;
+}
+
+.pillar {
+  color: var(--ink-muted);
+  font-size: 0.66rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.initiative-intent {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  color: var(--ink-muted);
+  display: -webkit-box;
+  font-size: 0.78rem !important;
+  line-height: 1.45;
+  margin: 0 !important;
+  overflow: hidden;
+}
+
+.initiative-intent.large {
+  -webkit-line-clamp: unset;
+  color: var(--ink);
+  font-size: 0.95rem !important;
+  margin: 0.8rem 0 !important;
+}
+
+.card-signals,
+.relation-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.card-signals .status-pill {
+  font-size: 0.62rem;
+}
+
+.relation-chip {
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  border-radius: 0.4rem;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 0.66rem;
+  padding: 0.08rem 0.4rem;
+}
+
+.relation-chip.is-inverse {
+  border-style: solid;
+}
+
+.relation-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.progress {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.progress-track {
+  background: var(--line);
+  border-radius: 999px;
+  display: flex;
+  flex: 1;
+  gap: 2px;
+  height: 0.4rem;
+  min-width: 4rem;
+  overflow: hidden;
+}
+
+.progress-segment {
+  display: block;
+  height: 100%;
+}
+
+.segment-done { background: var(--status-done); }
+.segment-in-progress { background: var(--status-in-progress); }
+.segment-blocked { background: var(--status-blocked); }
+.segment-deferred { background: var(--status-deferred); }
+
+.progress-label {
+  color: var(--ink-muted);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.superseded-card summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.stat.is-info { border-color: var(--info); }
+
+/* Initiative and slice */
+
+.slice-tree {
+  display: grid;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.slice-tree .slice-tree {
+  border-left: 1px solid var(--line);
+  margin: 0.35rem 0 0 0.6rem;
+  padding-left: 0.9rem;
+}
+
+.slice-row-main {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.slice-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.slice-slug {
+  color: var(--ink-muted);
+}
+
+.slice-outcome {
+  color: var(--ink-muted);
+  font-size: 0.78rem !important;
+  margin: 0.1rem 0 0 0.2rem !important;
+}
+
+.slice-tags {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.slice-status {
+  border-radius: 0.3rem;
+  color: #ffffff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.06rem 0.45rem;
+  text-transform: uppercase;
+}
+
+.slice-status.status-not-started { background: var(--line-strong); color: var(--ink); }
+.slice-status.status-in-progress { background: var(--status-in-progress); }
+.slice-status.status-blocked { background: var(--status-blocked); }
+.slice-status.status-deferred { background: var(--status-deferred); }
+.slice-status.status-done { background: var(--status-done); }
+.slice-status.status-split { background: var(--status-split); }
+
+.artifact-tag {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 0.3rem;
+  color: var(--ink-muted);
+  font-size: 0.62rem;
+  padding: 0.02rem 0.35rem;
+}
+
+.artifact-tag.is-bad { border-color: var(--danger); color: var(--danger); }
+.artifact-tag.is-warn { border-color: var(--warn); color: var(--warn); }
+.artifact-tag.is-good { border-color: var(--good); color: var(--good); }
+
+.artifact-cards {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+}
+
+.legend-status {
+  border-radius: 3px;
+  height: 0.7rem;
+  width: 0.7rem;
+}
+
+.legend-status.status-done { background: var(--status-done); }
+.legend-status.status-in-progress { background: var(--status-in-progress); }
+.legend-status.status-blocked { background: var(--status-blocked); }
+.legend-status.status-not-started { background: var(--status-not-started); }
+
+.slice-node { --action-color: var(--status-not-started); }
+.slice-node.status-in-progress { --action-color: var(--status-in-progress); }
+.slice-node.status-blocked { --action-color: var(--status-blocked); }
+.slice-node.status-deferred { --action-color: var(--status-deferred); }
+.slice-node.status-done { --action-color: var(--status-done); }
+
+.slice-node .graph-node-box,
+.initiative-node .graph-node-box {
+  background: color-mix(in srgb, var(--action-color) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--action-color) 60%, transparent);
+  border-left: 5px solid var(--action-color);
+}
+
+.initiative-node { --action-color: var(--state-color, var(--line-strong)); }
+
+.initiative-node.state-envisioned .graph-node-box {
+  border-style: dashed;
+}
+
+.initiative-node.state-superseded {
+  opacity: 0.55;
+}
+
+.requires-edge {
+  --action-color: var(--ink-muted);
+}
+
+/* Library */
+
+.doc-status {
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--ink-muted);
+  font-size: 0.64rem;
+  font-weight: 700;
+  padding: 0.06rem 0.5rem;
+  white-space: nowrap;
+}
+
+.doc-approved,
+.doc-accepted { border-color: var(--good); color: var(--good); }
+.doc-draft,
+.doc-proposed { border-color: var(--info); color: var(--info); }
+.doc-superseded,
+.doc-withdrawn,
+.doc-declined { border-style: dashed; text-decoration: line-through; }
+
+.decision-list {
+  display: grid;
+  gap: 0.45rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.decision-list li {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --state-envisioned: #6e6a80;
+    --state-planned: #8f8aa3;
+    --state-in-progress: #3987e5;
+    --state-shipped: #3fbf8f;
+    --state-superseded: #4a4658;
+    --status-not-started: #5b5770;
+    --status-in-progress: #3987e5;
+    --status-blocked: #e05a6f;
+    --status-deferred: #e0a030;
+    --status-done: #3fbf8f;
+    --status-split: #9085e9;
+  }
+}
+
+@media (max-width: 1100px) {
+  .roadmap-board {
+    grid-template-columns: repeat(5, minmax(14rem, 1fr));
+  }
+}
+
+.decision-list li,
+.decision-list .muted {
+  font-size: 0.8rem;
+}
+
+.data-table td.dates {
+  font-size: 0.74rem;
+  white-space: nowrap;
+}

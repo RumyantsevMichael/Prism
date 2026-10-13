@@ -9,6 +9,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { getConceptDelta } from "../conservation/concept-delta.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { entityExists, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,17 +44,6 @@ async function resolveProjectFile(projectRoot, requestedPath) {
     throw new Error("The artifact resolves outside the project root.");
   }
   return resolved;
-}
-
-async function readOptional(filePath) {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
 }
 
 function configuredRoots(config) {
@@ -463,7 +453,13 @@ export async function startReviewServer(options = {}) {
   async function updateSession(tabs, activeTab, activeTabProvided) {
     const requestedTabs = normalizeTabs(tabs);
     const availableArtifacts = new Set(await listArtifacts(projectRoot));
-    const unknownTab = requestedTabs.find((tab) => !availableArtifacts.has(tab));
+    let unknownTab;
+    for (const tab of requestedTabs) {
+      if (!availableArtifacts.has(tab) && !(parseEntityRef(tab) && await entityExists(projectRoot, tab))) {
+        unknownTab = tab;
+        break;
+      }
+    }
     if (unknownTab) {
       throw new Error(`The artifact is not available for review: ${unknownTab}`);
     }
@@ -524,12 +520,14 @@ export async function startReviewServer(options = {}) {
       } else if (route === "/api/events" && request.method === "GET") {
         openViewerStream(response);
       } else if (route === "/api/index") {
-        send(response, 200, JSON.stringify({ projectRoot, artifacts: await listArtifacts(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
+        send(response, 200, JSON.stringify({ projectRoot, artifacts: await listArtifacts(projectRoot), navigation: await loadNavigation(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
       } else if (route === "/api/session" && request.method === "GET") {
         send(response, 200, JSON.stringify(sessionSnapshot()), "application/json; charset=utf-8");
       } else if (route === "/api/session" && request.method === "PUT") {
         const body = await readJson(request);
         send(response, 200, JSON.stringify(await updateSession(body.openTabs, body.activeTab, Object.hasOwn(body, "activeTab"))), "application/json; charset=utf-8");
+      } else if (route === "/api/entity") {
+        send(response, 200, JSON.stringify(await loadEntity(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
       } else if (route === "/api/evidence") {
         send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"))), "application/json; charset=utf-8");
       } else if (route === "/api/artifact") {

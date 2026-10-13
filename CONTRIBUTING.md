@@ -89,8 +89,9 @@ Run a local human review from the repository root:
 ./bin/prism review
 ```
 
-To try the structured JSON views, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
-The seed builds a temporary project whose concept delta, review ledger, coordination state, and evidence come from the real MCP tools.
+To try the entity-first review browser, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
+The seed builds a temporary project whose roadmap, initiative records, concept delta, review ledger, coordination state, and evidence come from the real MCP tools.
+One shipped initiative record is written directly, because its completion gate needs accepted reviews that the offline demo cannot produce.
 
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.
