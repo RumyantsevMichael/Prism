@@ -167,7 +167,10 @@ Leaf status changes reach `update_initiative` as `set_status` operations with `i
 The server refuses a `done` status until the slice's completion gate passes.
 The `update_roadmap` ship operation receives the initiative identifier and is refused until every leaf slice is done.
 `get_roadmap` derives the initiative's `planned` and `in-progress` states, so orchestration writes no roadmap state for them.
+A missing roadmap entry for the initiative is a missing initiative input, so its roadmap entry exists before the initiative record is created.
 A roadmap entry or priority change made during orchestration waits for user acceptance through a recorded `decision` gate unless `full` autonomy resolves roadmap priority.
+Graduation moves facts that later work needs from the initiative directory into durable sources under the [artifact rules](../workflow/references/artifact-rules.md).
+After the ship decision and graduation, coordination cleanup deletes the initiative directory, and the roadmap keeps the shipped record.
 
 A valid `SPLIT` has unique child slugs, an unchanged parent title, and exact collective requirement coverage.
 Child dependencies follow the parent design and the initiative record, and require acceptance under the autonomy setting.
@@ -191,8 +194,8 @@ The `update_coordination_state` input includes `changes.gateOperations` with one
 Gate kinds are `visual-review` for design and final visual review, `correctness` for correctness confirmation, `decision` for requirement, decision, conflict, split, and dependency questions, and `assistance` for user actions such as a separate review task.
 A `decision` gate supplies `options` when its choices are known, so the user can pick one in the review browser.
 The user answers either in the conversation or in the review browser, which records the answer on the pending gate.
-After asking the user, the orchestrator calls `wait_for_user_gate` with the gate id when the tool is available, so a browser answer returns as the tool result and resumes the run.
-An `answered` wait result is the user's answer to that gate.
+After asking the user, the orchestrator calls `wait_for_user_gate` once with the ids of every gate it just recorded when the tool is available, so browser answers return as the tool result and resume the run.
+An `answered` wait result holds the user's answers to the listed gates, and gates it reports as still waiting get a new wait after the answers are acted on.
 A `resolved`, `timeout`, `unknown_gate`, or `unsupported_host` wait result, or an aborted wait, ends the turn, and the user's next message delivers the answer.
 A wait result for a gate that the orchestrator already resolved needs no action.
 After a wait times out, is aborted, or returns `unsupported_host`, later gates in the same session skip the wait.

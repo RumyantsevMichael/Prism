@@ -482,12 +482,15 @@ test("records each user gate in coordination state while it waits on the user", 
   assert.match(orchestrate, /A recorded browser answer is the user's answer to that question/);
   assert.match(orchestrate, /Before asking again, resuming, or continuing after a user message, read the pending gates and act on every recorded answer/);
   assert.match(orchestrate, /An answered gate is never asked again/);
-  assert.match(orchestrate, /After asking the user, the orchestrator calls `wait_for_user_gate` with the gate id when the tool is available/);
-  assert.match(orchestrate, /An `answered` wait result is the user's answer to that gate/);
+  assert.match(orchestrate, /After asking the user, the orchestrator calls `wait_for_user_gate` once with the ids of every gate it just recorded when the tool is available/);
+  assert.match(orchestrate, /An `answered` wait result holds the user's answers to the listed gates, and gates it reports as still waiting get a new wait/);
   assert.match(orchestrate, /A `resolved`, `timeout`, `unknown_gate`, or `unsupported_host` wait result, or an aborted wait, ends the turn/);
   assert.match(orchestrate, /A wait result for a gate that the orchestrator already resolved needs no action/);
   assert.match(orchestrate, /After a wait times out, is aborted, or returns `unsupported_host`, later gates in the same session skip the wait/);
   assert.match(orchestrate, /Every question to the user goes through a recorded gate, and related questions share one gate/);
+  assert.match(orchestrate, /A missing roadmap entry for the initiative is a missing initiative input, so its roadmap entry exists before the initiative record is created/);
+  assert.match(orchestrate, /Graduation moves facts that later work needs from the initiative directory into durable sources/);
+  assert.match(orchestrate, /After the ship decision and graduation, coordination cleanup deletes the initiative directory, and the roadmap keeps the shipped record/);
   assert.match(orchestrate, /A roadmap entry or priority change made during orchestration waits for user acceptance through a recorded `decision` gate unless `full` autonomy resolves roadmap priority/);
   assert.match(workflow, /Use the initiative directory as the root slice folder, and keep every other slice folder directly under it/);
   assert.match(await skill("design"), /The initiative directory is the root slice folder, other slice folders are flat under it/);
@@ -496,5 +499,6 @@ test("records each user gate in coordination state while it waits on the user", 
   assert.match(runSettings, /Every question that waits on the user is recorded as a user gate in `state\.json` before it is asked/);
   assert.match(workflow, /\| User gate record \| A pending `state\.json` entry that records a gate while it waits on the user/);
   assert.match(workflow, /any answer the user recorded in the review browser/);
+  assert.match(workflow, /Change Prism records only through Prism MCP tools, never by importing, running, or editing the plugin's own files/);
   assert.match(workflow, /pending user gate records, next actions, evidence paths, and a revision/);
 });
