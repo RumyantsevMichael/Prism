@@ -6,12 +6,16 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
+import { getConceptDelta } from "../conservation/concept-delta.mjs";
+import { conservationStore } from "../conservation/conservation-store.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const PUBLIC_DIR = path.join(SERVER_DIR, "public");
 const VENDOR_DIR = path.join(PLUGIN_ROOT, "vendor", "plantuml");
-const TEXT_EXTENSIONS = new Set([".md", ".feature", ".puml"]);
+const VIEWS_DIR = path.join(PUBLIC_DIR, "views");
+const TEXT_EXTENSIONS = new Set([".md", ".feature", ".puml", ".json"]);
+const EVIDENCE_ARRAY_LIMIT = 200;
 const AUTHORITY_CERTIFICATE_NAME = "review-ca-cert.pem";
 const AUTHORITY_PRIVATE_KEY_NAME = "review-ca-key.pem";
 const SERVER_CERTIFICATE_NAME = "review-server-cert.pem";
@@ -116,9 +120,76 @@ function linkedDiagramPaths(artifactPath, content) {
   return [...links];
 }
 
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function artifactKind(artifactPath, data) {
+  const name = path.posix.basename(artifactPath.split(path.sep).join("/"));
+  if (!isRecord(data)) {
+    return "json";
+  }
+  if (name === "concept-delta.json" && Array.isArray(data.concepts)) {
+    return "concept-delta";
+  }
+  if (name === "review.json" && Array.isArray(data.waves) && Array.isArray(data.findings)) {
+    return "review-ledger";
+  }
+  if (name === "state.json" && Number.isInteger(data.schemaVersion) && (Array.isArray(data.active) || isRecord(data.settings))) {
+    return "coordination-state";
+  }
+  return "json";
+}
+
+async function loadJsonArtifact(projectRoot, artifactPath, content) {
+  let data;
+  try {
+    data = JSON.parse(content);
+  } catch (error) {
+    return { kind: "json", parseError: error.message };
+  }
+  const kind = artifactKind(artifactPath, data);
+  const result = { kind, data };
+  if (kind === "concept-delta") {
+    try {
+      const { concepts, selectedCount, nextOffset, ...summary } = await getConceptDelta({ projectRoot, deltaPath: artifactPath, limit: 1 });
+      result.summary = summary;
+    } catch (error) {
+      result.summaryError = error.message;
+    }
+  }
+  return result;
+}
+
+function truncateArrays(value, location, truncated) {
+  if (Array.isArray(value)) {
+    if (value.length > EVIDENCE_ARRAY_LIMIT) {
+      truncated[location || "/"] = value.length;
+    }
+    return value.slice(0, EVIDENCE_ARRAY_LIMIT).map((item, index) => truncateArrays(item, `${location}/${index}`, truncated));
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, truncateArrays(item, `${location}/${key}`, truncated)]));
+  }
+  return value;
+}
+
+export async function loadEvidence(projectRoot, evidenceId) {
+  if (typeof evidenceId !== "string" || !/^[a-f0-9]{64}$/.test(evidenceId)) {
+    throw new Error("The evidence ID must be a 64-character lowercase hexadecimal digest.");
+  }
+  const truncated = {};
+  const record = truncateArrays(await conservationStore.get(projectRoot, evidenceId), "", truncated);
+  return { id: evidenceId, kind: record.kind, record, truncated, arrayLimit: EVIDENCE_ARRAY_LIMIT };
+}
+
 export async function loadArtifact(projectRoot, artifactPath) {
   const absolutePath = await resolveProjectFile(projectRoot, artifactPath);
   const content = await readFile(absolutePath, "utf8");
+  if (path.extname(artifactPath).toLowerCase() === ".json") {
+    const metadata = await stat(absolutePath);
+    return { path: artifactPath, content, diagrams: [], modifiedAt: metadata.mtimeMs, ...(await loadJsonArtifact(projectRoot, artifactPath, content)) };
+  }
   const diagrams = [];
   for (const diagramPath of linkedDiagramPaths(artifactPath, content)) {
     try {
@@ -451,6 +522,8 @@ export async function startReviewServer(options = {}) {
         await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
       } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
         await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
+      } else if (/^\/views\/[a-z][a-z-]*\.js$/.test(route)) {
+        await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
       } else if (route === "/api/events" && request.method === "GET") {
         openViewerStream(response);
       } else if (route === "/api/index") {
@@ -460,6 +533,8 @@ export async function startReviewServer(options = {}) {
       } else if (route === "/api/session" && request.method === "PUT") {
         const body = await readJson(request);
         send(response, 200, JSON.stringify(await updateSession(body.openTabs, body.activeTab, Object.hasOwn(body, "activeTab"))), "application/json; charset=utf-8");
+      } else if (route === "/api/evidence") {
+        send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"))), "application/json; charset=utf-8");
       } else if (route === "/api/artifact") {
         const artifactPath = url.searchParams.get("path");
         send(response, 200, JSON.stringify(await loadArtifact(projectRoot, artifactPath)), "application/json; charset=utf-8");

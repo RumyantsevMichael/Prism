@@ -1,4 +1,6 @@
 import { renderToString } from "./vendor/plantuml.js";
+import { renderView } from "./views/registry.js";
+import { closeEvidence, openEvidence } from "./views/evidence.js";
 
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
@@ -17,7 +19,9 @@ let saveQueue = Promise.resolve();
 let lastSnapshot = "";
 let toastTimer;
 let expandedFolders = new Set();
+let availableArtifacts = new Set();
 const folderElements = new Map();
+const viewStates = new Map();
 
 function samePaths(left, right) {
   return left.length === right.length && left.every((path, index) => path === right[index]);
@@ -506,28 +510,94 @@ async function showArtifact(path) {
   selectNavigation(path);
   const diagramLabel = `${data.diagrams.length} diagram${data.diagrams.length === 1 ? "" : "s"}`;
   const refreshed = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  const documentCard = data.path.toLowerCase().endsWith(".puml")
+  const structured = Boolean(data.kind);
+  const documentCard = structured || data.path.toLowerCase().endsWith(".puml")
     ? ""
     : `<section class="document-card"><div class="document-content">${renderText(data.path, data.content)}</div></section>`;
+  const state = viewState(data.path);
   artifact.innerHTML = `
     <header class="artifact-header">
       <div>
-        <p class="eyebrow">Human review</p>
+        <p class="eyebrow">${structured ? escapeHtml(KIND_LABELS[data.kind] ?? "JSON") : "Human review"}</p>
         <h1>${escapeHtml(fileName(data.path))}</h1>
         <p class="artifact-path">${escapeHtml(data.path)}</p>
       </div>
       <div class="artifact-meta">
+        ${structured ? `<div class="segmented" role="group" aria-label="View mode">
+          <button type="button" data-mode="structured" aria-pressed="${!state.raw}">Structured</button>
+          <button type="button" data-mode="raw" aria-pressed="${Boolean(state.raw)}">Raw</button>
+        </div>` : ""}
         <span class="meta-pill">${escapeHtml(fileType(data.path))}</span>
-        <span class="meta-pill">${diagramLabel}</span>
+        ${structured ? "" : `<span class="meta-pill">${diagramLabel}</span>`}
         <span class="meta-pill live" title="Last refreshed at ${refreshed}">Live</span>
       </div>
     </header>
     ${documentCard}`;
+  if (structured) {
+    for (const button of artifact.querySelectorAll(".segmented button")) {
+      button.addEventListener("click", () => {
+        state.raw = button.dataset.mode === "raw";
+        lastSnapshot = "";
+        void showArtifact(path);
+      });
+    }
+    const container = document.createElement("div");
+    container.className = "structured-view";
+    artifact.appendChild(container);
+    await renderView(container, data, viewContext(data.path, state));
+    return;
+  }
   for (const diagram of data.diagrams) {
     const section = diagramCard(diagram);
     artifact.appendChild(section);
     await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section);
   }
+}
+
+const KIND_LABELS = {
+  "concept-delta": "Concept delta",
+  "review-ledger": "Review ledger",
+  "coordination-state": "Coordination state",
+  json: "JSON artifact"
+};
+
+function viewState(path) {
+  if (!viewStates.has(path)) {
+    viewStates.set(path, {});
+  }
+  return viewStates.get(path);
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+function viewContext(path, state) {
+  return {
+    path,
+    state,
+    escapeHtml,
+    showToast,
+    fetchArtifact: (artifactPath) => fetchJson(`./api/artifact?path=${encodeURIComponent(artifactPath)}`),
+    fetchEvidence: (id) => fetchJson(`./api/evidence?id=${encodeURIComponent(id)}`),
+    hasArtifact: (artifactPath) => availableArtifacts.has(artifactPath),
+    openArtifact(artifactPath) {
+      if (!availableArtifacts.has(artifactPath)) {
+        showToast(`Not a reviewable artifact: ${artifactPath}`);
+        return;
+      }
+      selectTab(artifactPath);
+    },
+    openEvidence: (id, label) => openEvidence(id, label, viewContext(path, state)),
+    rerender() {
+      lastSnapshot = "";
+      void showArtifact(path);
+    }
+  };
 }
 
 function filterArtifacts() {
@@ -556,6 +626,7 @@ async function initialize() {
     selectedPath = openTabs[0] ?? null;
   }
   project.textContent = data.projectRoot;
+  availableArtifacts = new Set(data.artifacts);
   artifactCount.textContent = String(data.artifacts.length);
   const tree = buildArtifactTree(data.artifacts);
   expandedFolders = new Set([...tree.folders.values()].map((folder) => folder.path));
@@ -566,8 +637,11 @@ async function initialize() {
   renderTabs();
   connectSessionEvents();
   artifactFilter.addEventListener("input", filterArtifacts);
+  document.getElementById("evidence-close").addEventListener("click", closeEvidence);
   document.addEventListener("keydown", (event) => {
-    if (event.key === "/" && document.activeElement !== artifactFilter) {
+    if (event.key === "Escape" && document.activeElement !== artifactFilter && !document.getElementById("evidence-drawer").hidden) {
+      closeEvidence();
+    } else if (event.key === "/" && document.activeElement !== artifactFilter) {
       event.preventDefault();
       artifactFilter.focus();
     } else if (event.key === "Escape" && document.activeElement === artifactFilter) {
@@ -584,6 +658,7 @@ async function initialize() {
       const refreshed = await fetch("./api/index", { cache: "no-store" });
       if (refreshed.ok) {
         const snapshot = await refreshed.json();
+        availableArtifacts = new Set(snapshot.artifacts);
         if (!sessionConnected) {
           synchronizeSession(snapshot);
         }
