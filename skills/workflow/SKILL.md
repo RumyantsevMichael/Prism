@@ -80,7 +80,7 @@ Code establishes implemented behavior.
 | Design finding | A defect in approved intent, fit, boundaries, or planned verification that prevents a sound implementation gate. |
 | Implementation gap | Missing production behavior or implementation-owned wiring after design fit that does not reopen design unless it invalidates the design evidence. |
 | Gate | A user decision or correctness confirmation that controls progress. |
-| User gate record | A pending `state.json` entry that records a gate while it waits on the user, with its kind, slice, question, and artifacts. |
+| User gate record | A pending `state.json` entry that records a gate while it waits on the user, with its kind, slice, question, artifacts, optional decision options, and any answer the user recorded in the review browser. |
 | Fit checkpoint | The design decision that an outcome fits the remaining context and risk budget with settled architecture and end-to-end verification. |
 | Workflow decision record | An opt-in local record of a structured decision, its reason codes, evidence paths, and identity coverage. |
 | Concept delta | MCP-managed version 2 design evidence binding the original baseline, requirements, native search receipts, planned transitions, and growth policy to an audited revision. |

@@ -303,6 +303,7 @@ test("keeps visual review selection and procedure in its reference", async () =>
   assert.match(visualReview, /Explicit `internal` and `external` values override `auto`/);
   assert.match(visualReview, /Open one Prism artifact viewer session for all recorded ADRs and diagrams after a clean design audit/);
   assert.match(visualReview, /each session opens on Attention, which lists recorded user gates, and reaches the roadmap and its initiatives, slices, requirements, decisions, and glossary/);
+  assert.match(visualReview, /The user can answer a recorded gate on Attention or in the conversation/);
   assert.match(visualReview, /Before opening a session for a user gate, record the gate with the artifacts to inspect when coordination state exists/);
   assert.match(visualReview, /Open one Prism artifact viewer session for all changed artifacts and diagrams before the final correctness gate/);
   assert.match(visualReview, /Use a browser-opening capability with no artifact argument/);
@@ -477,8 +478,13 @@ test("records each user gate in coordination state while it waits on the user", 
   assert.match(orchestrate, /`changes\.gateOperations` with one `ask` operation that supplies the gate kind, the slice slug when one applies, the question, and the project-relative artifact paths to inspect/);
   assert.match(orchestrate, /Gate kinds are `visual-review` for design and final visual review, `correctness` for correctness confirmation, `decision` for requirement, decision, conflict, split, and dependency questions, and `assistance` for user actions/);
   assert.match(orchestrate, /a `resolve` operation receives the gate id that the `ask` result returned/);
+  assert.match(orchestrate, /A `decision` gate supplies `options` when its choices are known/);
+  assert.match(orchestrate, /A recorded browser answer is the user's answer to that question/);
+  assert.match(orchestrate, /Before asking again, resuming, or continuing after a user message, read the pending gates and act on every recorded answer/);
+  assert.match(orchestrate, /An answered gate is never asked again/);
   assert.match(orchestrate, /A gate that the autonomy setting settles automatically is not recorded/);
   assert.match(runSettings, /Every question that waits on the user is recorded as a user gate in `state\.json` before it is asked/);
   assert.match(workflow, /\| User gate record \| A pending `state\.json` entry that records a gate while it waits on the user/);
+  assert.match(workflow, /any answer the user recorded in the review browser/);
   assert.match(workflow, /pending user gate records, next actions, evidence paths, and a revision/);
 });
