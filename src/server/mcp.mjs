@@ -142,7 +142,8 @@ function reviewContent(url, review) {
 function stateContent(result) {
   const validity = result.valid ? "valid" : "invalid";
   const revision = result.revision ?? "none";
-  return `Coordination state ${validity}: ${result.statePath}\nRevision: ${revision}`;
+  const gates = result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : "";
+  return `Coordination state ${validity}: ${result.statePath}\nRevision: ${revision}${gates}`;
 }
 
 function contextPlanContent(plan) {
@@ -550,7 +551,7 @@ const tools = [
           type: "object", additionalProperties: false,
           properties: {
             active: { type: "array", items: { type: "object" } },
-            pending: { type: "array", items: { type: "string" } },
+            pending: { type: "array", items: { oneOf: [{ type: "string" }, { type: "object" }] } },
             next: { type: "array", items: { type: "string" } },
             evidence: { type: "array", items: { type: "string" } }
           }
@@ -593,7 +594,7 @@ const tools = [
   },
   {
     name: "update_coordination_state",
-    description: "Apply a validated atomic update to an initiative state.json file. Read the current state first and pass its revision as expectedRevision. Do not edit state.json directly when this tool is available.",
+    description: "Apply a validated atomic update to an initiative state.json file, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision. Do not edit state.json directly when this tool is available.",
     inputSchema: {
       type: "object",
       properties: {
@@ -649,7 +650,33 @@ const tools = [
                 }
               }
             },
-            pending: { type: "array", items: { type: "string", minLength: 1 } },
+            gateOperations: {
+              type: "array",
+              description: "Record a user gate with ask before asking the user, and remove it with resolve after the user answers. The result lists the ids of opened gates.",
+              items: {
+                oneOf: [
+                  {
+                    type: "object",
+                    required: ["op", "kind", "question", "artifacts"],
+                    additionalProperties: false,
+                    properties: {
+                      op: { const: "ask" },
+                      kind: { type: "string", enum: ["visual-review", "correctness", "decision", "assistance"] },
+                      slice: { type: "string", minLength: 1 },
+                      question: { type: "string", minLength: 1, maxLength: 4000 },
+                      artifacts: { type: "array", maxItems: 50, items: { type: "string", minLength: 1 } }
+                    }
+                  },
+                  {
+                    type: "object",
+                    required: ["op", "id"],
+                    additionalProperties: false,
+                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 } }
+                  }
+                ]
+              }
+            },
+            pending: { type: "array", items: { oneOf: [{ type: "string", minLength: 1 }, { type: "object" }] } },
             next: { type: "array", items: { type: "string", minLength: 1 } },
             evidence: { type: "array", items: { type: "string", minLength: 1 } }
           }

@@ -32,8 +32,15 @@ function activeCard(entry, ctx) {
   </li>`;
 }
 
+function queueItem(item, ctx) {
+  if (item && typeof item === "object") {
+    return `<span class="gate-kind">${escapeHtml(item.kind)}</span>${item.slice ? ` <code>${escapeHtml(item.slice)}</code>` : ""} ${escapeHtml(item.question)}${item.artifacts?.length ? `<br>${item.artifacts.map((artifact) => pathChip(artifact, ctx)).join(" ")}` : ""}`;
+  }
+  return pathChip(item, ctx);
+}
+
 function queue(title, items, ctx) {
-  return `<div class="queue"><h3>${escapeHtml(title)} <span class="column-count">${items.length}</span></h3>${items.length ? `<ol class="queue-list">${items.map((item) => `<li>${pathChip(item, ctx)}</li>`).join("")}</ol>` : emptyNote("Empty")}</div>`;
+  return `<div class="queue"><h3>${escapeHtml(title)} <span class="column-count">${items.length}</span></h3>${items.length ? `<ol class="queue-list">${items.map((item) => `<li>${queueItem(item, ctx)}</li>`).join("")}</ol>` : emptyNote("Empty")}</div>`;
 }
 
 export function render(container, data, ctx) {

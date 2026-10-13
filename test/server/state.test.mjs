@@ -151,3 +151,41 @@ test("reports malformed state and rejects paths outside the project", async (con
     (caught) => caught.code === "ENOENT"
   );
 });
+
+test("records and resolves user gates beside legacy pending items", async (context) => {
+  const fixture = await stateFixture(context);
+  const created = await updateCoordinationState({
+    ...fixture,
+    expectedRevision: null,
+    changes: {
+      pending: ["User decision: retention"],
+      gateOperations: [{ op: "ask", kind: "visual-review", slice: "download", question: "Review the download design.", artifacts: ["docs/plans/demo/download/slice.md"] }]
+    }
+  });
+  assert.equal(created.openedGates.length, 1);
+  const [gate] = created.openedGates;
+  assert.match(gate.id, /^gate-[0-9a-f]{12}$/);
+  assert.equal(created.state.pending[0], "User decision: retention");
+  assert.deepEqual({ ...created.state.pending[1], askedAt: undefined }, { id: gate.id, kind: "visual-review", slice: "download", question: "Review the download design.", artifacts: ["docs/plans/demo/download/slice.md"], askedAt: undefined });
+  assert.ok(!Number.isNaN(Date.parse(created.state.pending[1].askedAt)));
+
+  const unknown = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "resolve", id: "gate-000000000000" }] } }).catch(error => error);
+  assert.equal(unknown.code, "unknown_gate");
+  for (const operation of [
+    { op: "ask", kind: "approval", question: "Approve?", artifacts: [] },
+    { op: "ask", kind: "decision", question: " ", artifacts: [] },
+    { op: "ask", kind: "decision", question: "Which store?", artifacts: ["../outside.md"] },
+    { op: "ask", kind: "decision", question: "Which store?", artifacts: ["/abs.md"] },
+    { op: "ask", kind: "decision", question: "Which store?", artifacts: [], id: "gate-abcdefabcdef" },
+    { op: "close", id: gate.id }
+  ]) {
+    const rejected = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [operation] } }).catch(error => error);
+    assert.equal(rejected.code, "invalid_changes", JSON.stringify(operation));
+  }
+  const forged = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { pending: [{ id: "not-a-gate", kind: "decision", question: "Q", artifacts: [], askedAt: "2026-10-13T00:00:00Z" }] } }).catch(error => error);
+  assert.equal(forged.code, "invalid_state");
+
+  const resolved = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "resolve", id: gate.id }] } });
+  assert.deepEqual(resolved.state.pending, ["User decision: retention"]);
+  assert.deepEqual(resolved.openedGates, []);
+});

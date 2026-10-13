@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { applyActiveOperations, withReviewGatesLocked } from "./active-operations.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { mkdir, readFile, realpath, rm, lstat } from "node:fs/promises";
@@ -10,6 +10,9 @@ const SCHEMA_VERSION = 1;
 const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence"]);
 const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "models"]);
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
+const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
+const GATE_KEYS = new Set(["id", "kind", "slice", "question", "artifacts", "askedAt"]);
+const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
 const SETTING_VALUES = {
   autonomy: new Set(["conservative", "broad", "full"]),
   agentFlow: new Set(["mono", "multi"]),
@@ -286,6 +289,113 @@ function validateActive(value, errors, warnings) {
   });
 }
 
+function validGatePath(value) {
+  if (typeof value !== "string" || !value.trim() || path.isAbsolute(value) || value.includes("\\")) {
+    return false;
+  }
+  const normalized = path.posix.normalize(value);
+  return normalized === value && normalized !== "." && !normalized.startsWith("../");
+}
+
+function validateGate(entry, entryPath, errors) {
+  for (const key of Object.keys(entry)) {
+    if (!GATE_KEYS.has(key)) {
+      addError(errors, `${entryPath}.${key}`, "is not a user gate field");
+    }
+  }
+  if (typeof entry.id !== "string" || !GATE_ID.test(entry.id)) {
+    addError(errors, `${entryPath}.id`, "must be a gate id assigned by the ask operation");
+  }
+  if (!GATE_KINDS.has(entry.kind)) {
+    addError(errors, `${entryPath}.kind`, `must be one of ${[...GATE_KINDS].join(", ")}`);
+  }
+  if (entry.slice !== undefined && (typeof entry.slice !== "string" || !entry.slice.trim())) {
+    addError(errors, `${entryPath}.slice`, "must be a non-empty slice slug when present");
+  }
+  if (typeof entry.question !== "string" || !entry.question.trim() || entry.question.length > 4000) {
+    addError(errors, `${entryPath}.question`, "must be a non-empty question of at most 4000 characters");
+  }
+  if (!Array.isArray(entry.artifacts) || entry.artifacts.length > 50) {
+    addError(errors, `${entryPath}.artifacts`, "must be an array of at most 50 project-relative paths");
+  } else {
+    entry.artifacts.forEach((item, index) => {
+      if (!validGatePath(item)) {
+        addError(errors, `${entryPath}.artifacts[${index}]`, "must be a normalized project-relative path");
+      }
+    });
+  }
+  if (typeof entry.askedAt !== "string" || Number.isNaN(Date.parse(entry.askedAt))) {
+    addError(errors, `${entryPath}.askedAt`, "must be an ISO timestamp");
+  }
+}
+
+function validatePending(value, errors) {
+  if (!Array.isArray(value)) {
+    addError(errors, "pending", "must be an array of strings or user gates");
+    return;
+  }
+  const seen = new Set();
+  value.forEach((item, index) => {
+    const entryPath = `pending[${index}]`;
+    if (isRecord(item)) {
+      validateGate(item, entryPath, errors);
+      if (seen.has(item.id)) {
+        addError(errors, `${entryPath}.id`, "must not duplicate another gate");
+      }
+      seen.add(item.id);
+      return;
+    }
+    if (typeof item !== "string" || !item.trim()) {
+      addError(errors, entryPath, "must be a non-empty string or a user gate");
+      return;
+    }
+    if (seen.has(item)) {
+      addError(errors, entryPath, "must not duplicate another item");
+    }
+    seen.add(item);
+  });
+}
+
+function applyGateOperations(pending, operations) {
+  const next = [...pending];
+  const opened = [];
+  operations.forEach((operation, index) => {
+    if (!isRecord(operation)) {
+      throw error("invalid_changes", `gateOperations[${index}] must be an object.`);
+    }
+    if (operation.op === "ask") {
+      const unknown = Object.keys(operation).filter((key) => !["op", "kind", "slice", "question", "artifacts"].includes(key));
+      if (unknown.length) {
+        throw error("invalid_changes", `gateOperations[${index}] has unsupported fields: ${unknown.join(", ")}.`);
+      }
+      const gate = {
+        id: `gate-${randomBytes(6).toString("hex")}`,
+        kind: operation.kind,
+        ...(operation.slice === undefined ? {} : { slice: operation.slice }),
+        question: operation.question,
+        artifacts: operation.artifacts ?? [],
+        askedAt: new Date().toISOString()
+      };
+      const errors = [];
+      validateGate(gate, `gateOperations[${index}]`, errors);
+      if (errors.length) {
+        throw error("invalid_changes", `The user gate is invalid: ${errors.join("; ")}.`, { errors });
+      }
+      next.push(gate);
+      opened.push({ id: gate.id, kind: gate.kind, slice: gate.slice ?? null });
+    } else if (operation.op === "resolve") {
+      const position = next.findIndex((item) => isRecord(item) && item.id === operation.id);
+      if (position === -1) {
+        throw error("unknown_gate", `No pending user gate has the id ${operation.id}.`);
+      }
+      next.splice(position, 1);
+    } else {
+      throw error("invalid_changes", `gateOperations[${index}].op must be ask or resolve.`);
+    }
+  });
+  return { pending: next, opened };
+}
+
 function validateStateValue(raw) {
   const errors = [];
   const warnings = [];
@@ -303,7 +413,10 @@ function validateStateValue(raw) {
   if (raw.active !== undefined) {
     validateActive(raw.active, errors, warnings);
   }
-  for (const key of ["pending", "next", "evidence"]) {
+  if (raw.pending !== undefined) {
+    validatePending(raw.pending, errors);
+  }
+  for (const key of ["next", "evidence"]) {
     if (raw[key] !== undefined) {
       validateStringArray(raw[key], key, errors);
     }
@@ -321,14 +434,14 @@ function validateChanges(changes) {
     throw error("invalid_changes", "The changes argument must contain at least one managed state field.");
   }
   for (const key of Object.keys(changes)) {
-    if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations") || key === "schemaVersion") {
+    if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations" && key !== "gateOperations") || key === "schemaVersion") {
       throw error("invalid_changes", `The state field ${key} cannot be changed through this capability.`);
     }
   }
   if (changes.settings !== undefined && !isRecord(changes.settings)) {
     throw error("invalid_changes", "The changes.settings field must be an object.");
   }
-  for (const key of ["active", "pending", "next", "evidence"]) {
+  for (const key of ["active", "pending", "next", "evidence", "gateOperations"]) {
     if (changes[key] !== undefined && !Array.isArray(changes[key])) {
       throw error("invalid_changes", `The changes.${key} field must be an array.`);
     }
@@ -428,11 +541,12 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(before.active)) throw error("gate_blocked", "Use typed activeOperations to change active work; array replacement cannot bypass review gates.");
     return withReviewGatesLocked(resolved.root, before.active, changes.activeOperations ?? [], async () => {
     const activeResult = await applyActiveOperations(resolved.root, before.active, changes.activeOperations ?? []);
+    const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
     const candidate = normalizeState({
       ...before,
       active: activeResult.active,
       ...(changes.settings === undefined ? {} : { settings: { ...before.settings, ...changes.settings } }),
-      ...(changes.pending === undefined ? {} : { pending: changes.pending }),
+      pending: gateResult.pending,
       ...(changes.next === undefined ? {} : { next: changes.next }),
       ...(changes.evidence === undefined ? {} : { evidence: changes.evidence })
     });
@@ -451,7 +565,8 @@ async function applyStateChange(resolved, expectedRevision, changes) {
       created: !current.exists,
       changedFields: changedFields(before, updated.state),
       previousRevision: current.revision
-      ,completions: activeResult.completions
+      ,completions: activeResult.completions,
+      openedGates: gateResult.opened
     };
     });
 }
