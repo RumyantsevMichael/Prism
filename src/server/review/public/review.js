@@ -757,6 +757,14 @@ function viewContext(path, state) {
       openRef(artifactPath, options);
     },
     openEvidence: (id, label) => openEvidence(id, label, viewContext(path, state)),
+    async answerGate(payload) {
+      const response = await fetch("./api/gates/answer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
+      if (!response.ok) {
+        throw Object.assign(new Error(result.message ?? "The answer was not recorded."), { code: result.code });
+      }
+      return result;
+    },
     rerender() {
       lastSnapshot = "";
       void showArtifact(path);

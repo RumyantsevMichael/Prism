@@ -142,7 +142,9 @@ function reviewContent(url, review) {
 function stateContent(result) {
   const validity = result.valid ? "valid" : "invalid";
   const revision = result.revision ?? "none";
-  const gates = result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : "";
+  const opened = result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : "";
+  const answered = (result.state?.pending ?? []).filter((gate) => gate?.answer);
+  const gates = `${opened}${answered.length ? `\nUser gates answered in the review browser: ${answered.map((gate) => gate.id).join(", ")}` : ""}`;
   return `Coordination state ${validity}: ${result.statePath}\nRevision: ${revision}${gates}`;
 }
 
@@ -652,7 +654,7 @@ const tools = [
             },
             gateOperations: {
               type: "array",
-              description: "Record a user gate with ask before asking the user, and remove it with resolve after the user answers. The result lists the ids of opened gates.",
+              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
               items: {
                 oneOf: [
                   {
@@ -664,7 +666,14 @@ const tools = [
                       kind: { type: "string", enum: ["visual-review", "correctness", "decision", "assistance"] },
                       slice: { type: "string", minLength: 1 },
                       question: { type: "string", minLength: 1, maxLength: 4000 },
-                      artifacts: { type: "array", maxItems: 50, items: { type: "string", minLength: 1 } }
+                      artifacts: { type: "array", maxItems: 50, items: { type: "string", minLength: 1 } },
+                      options: {
+                        type: "array",
+                        minItems: 1,
+                        maxItems: 8,
+                        description: "Choices the user can pick in the review browser; decision gates only.",
+                        items: { type: "object", required: ["id", "label"], additionalProperties: false, properties: { id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, label: { type: "string", minLength: 1, maxLength: 200 } } }
+                      }
                     }
                   },
                   {

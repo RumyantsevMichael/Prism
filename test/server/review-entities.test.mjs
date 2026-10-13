@@ -63,6 +63,18 @@ function get(url) {
   });
 }
 
+function post(url, body, headers = { "Content-Type": "application/json" }) {
+  return new Promise((resolve, reject) => {
+    const request = https.request(url, { method: "POST", rejectUnauthorized: false, headers }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => resolve({ status: response.statusCode, text: Buffer.concat(chunks).toString("utf8") }));
+    });
+    request.once("error", reject);
+    request.end(typeof body === "string" ? body : JSON.stringify(body));
+  });
+}
+
 function put(url, body) {
   return new Promise((resolve, reject) => {
     const request = https.request(url, { method: "PUT", rejectUnauthorized: false, headers: { "Content-Type": "application/json" } }, (response) => {
@@ -152,7 +164,7 @@ test("lists what waits on the user apart from agent-side state", async (context)
     assert.deepEqual(attention.data.watch.map((item) => item.type), ["findings"]);
     assert.deepEqual([attention.data.watch[0].unresolved, attention.data.watch[0].blocking], [1, 1]);
     const index = (await get(`${review.baseUrl}/api/index`)).json();
-    assert.deepEqual(index.navigation.attention, { needsYou: 4, gates: 1, watch: 1 });
+    assert.deepEqual(index.navigation.attention, { needsYou: 4, gates: 1, answered: 0, watch: 1 });
     const refs = index.navigation.index.map((entry) => `${entry.kind}:${entry.ref}`);
     for (const expected of ["initiative:initiative:reports", "initiative:initiative:orphan", "slice:slice:reports/download", "requirement:docs/requirements/reports.md", "decision:docs/ADRs/reporting/signed.md"]) assert.ok(refs.includes(expected), expected);
   } finally {
@@ -201,6 +213,35 @@ test("keeps the preview and the human's tabs when an agent presents artifacts", 
     for (const body of [{ openTabs: ["roadmap"], previewTab: "glossary" }, { openTabs: ["roadmap"], agentTabs: ["glossary"] }]) {
       assert.equal((await put(`${review.baseUrl}/api/session`, body)).status, 400, JSON.stringify(body));
     }
+  } finally {
+    await review.close();
+  }
+});
+
+test("records a browser answer and lists it apart from open questions", async (context) => {
+  const projectRoot = await fixture(context);
+  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  try {
+    const before = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
+    const gate = before.needsYou.find((item) => item.type === "gate");
+    const endpoint = `${review.baseUrl}/api/gates/answer`;
+    assert.equal((await post(endpoint, { initiative: "reports", id: gate.id, choice: "approve" }, { "Content-Type": "text/plain" })).status, 403);
+    assert.equal((await post(endpoint, { initiative: "reports", id: gate.id, choice: "approve" }, { "Content-Type": "application/json", Origin: "https://attacker.example" })).status, 403);
+    assert.equal((await post(endpoint, { initiative: "../reports", id: gate.id, choice: "approve" })).status, 400);
+    const invalid = await post(endpoint, { initiative: "reports", id: gate.id, choice: "request-changes" });
+    assert.deepEqual([invalid.status, JSON.parse(invalid.text).code], [400, "invalid_answer"]);
+    const answered = await post(endpoint, { initiative: "reports", id: gate.id, choice: "approve", note: "Looks right." });
+    assert.equal(answered.status, 200, answered.text);
+    assert.equal(JSON.parse(answered.text).gate.answer.choice, "approve");
+    const again = await post(endpoint, { initiative: "reports", id: gate.id, choice: "approve" });
+    assert.deepEqual([again.status, JSON.parse(again.text).code], [409, "gate_answered"]);
+    const missing = await post(endpoint, { initiative: "reports", id: "gate-000000000000", choice: "approve" });
+    assert.deepEqual([missing.status, JSON.parse(missing.text).code], [409, "unknown_gate"]);
+    const after = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
+    assert.equal(after.needsYou.some((item) => item.type === "gate"), false);
+    assert.deepEqual(after.answered.map((item) => [item.id, item.answer.note]), [[gate.id, "Looks right."]]);
+    const index = (await get(`${review.baseUrl}/api/index`)).json();
+    assert.deepEqual(index.navigation.attention, { needsYou: 3, gates: 0, answered: 1, watch: 1 });
   } finally {
     await review.close();
   }

@@ -192,7 +192,7 @@ try {
   } });
   await call("update_coordination_state", { projectRoot: realRoot, statePath: "docs/plans/activity-reports/state.json", expectedRevision: null, changes: {
     settings: { autonomy: "conservative", agentFlow: "multi" },
-    gateOperations: [{ op: "ask", kind: "decision", slice: "authorize", question: "Should a report download require a fresh login, or is an active session enough?", artifacts: ["docs/requirements/reports.md"] }]
+    gateOperations: [{ op: "ask", kind: "decision", slice: "authorize", question: "Should a report download require a fresh login, or is an active session enough?", artifacts: ["docs/requirements/reports.md"], options: [{ id: "fresh-login", label: "Require a fresh login" }, { id: "active-session", label: "Accept the active session" }] }]
   } });
 
   process.stdout.write(`Demo project: ${realRoot}\nPrivate evidence: ${dataDir}\n\nStart the review browser with:\n  cd ${realRoot} && PLUGIN_DATA=${dataDir} ${path.join(ROOT, "bin/prism")} review\n`);

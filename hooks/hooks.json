@@ -25,6 +25,12 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-facts.mjs\"",
             "timeout": 5,
             "additionalContextLimit": 512
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/deliver-gate-answers.mjs\"",
+            "timeout": 5,
+            "additionalContextLimit": 4000
           }
         ]
       }

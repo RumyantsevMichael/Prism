@@ -9,7 +9,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { getConceptDelta } from "../conservation/concept-delta.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { entityContext, entityExists, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { answerGate, entityContext, entityExists, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -566,6 +566,18 @@ export async function startReviewServer(options = {}) {
       } else if (route === "/api/session" && request.method === "PUT") {
         const body = await readJson(request);
         send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
+      } else if (route === "/api/gates/answer" && request.method === "POST") {
+        const origin = request.headers.origin;
+        if (!String(request.headers["content-type"] ?? "").startsWith("application/json") || (origin && new URL(origin).host !== request.headers.host)) {
+          send(response, 403, "Answers must come from the review page as JSON.");
+          return;
+        }
+        try {
+          send(response, 200, JSON.stringify(await answerGate(projectRoot, await readJson(request))), "application/json; charset=utf-8");
+        } catch (error) {
+          const status = { gate_answered: 409, unknown_gate: 409, invalid_answer: 400 }[error.code] ?? 400;
+          send(response, status, JSON.stringify({ code: error.code ?? "invalid_answer", message: error.message }), "application/json; charset=utf-8");
+        }
       } else if (route === "/api/context") {
         send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
       } else if (route === "/api/entity") {

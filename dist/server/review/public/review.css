@@ -3152,3 +3152,110 @@ th {
   cursor: default;
   opacity: 0.5;
 }
+
+/* Answering user gates */
+
+.gate-answer {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+}
+
+.gate-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.choice-button {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.3rem 0.8rem;
+}
+
+.choice-button:hover,
+.choice-button:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.choice-button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.choice-button.is-negative[aria-pressed="true"] {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.gate-note textarea {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  font-size: 0.82rem;
+  min-height: 2.6rem;
+  padding: 0.5rem 0.65rem;
+  resize: vertical;
+  width: 100%;
+}
+
+.gate-note textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: 0;
+}
+
+.gate-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.tool-button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.tool-button.primary:hover {
+  background: var(--accent-strong);
+}
+
+.gate-error {
+  color: var(--danger);
+  font-size: 0.76rem;
+  margin: 0;
+}
+
+.attention-card.is-answered {
+  border-left-color: var(--good);
+}
+
+.gate-given {
+  font-size: 0.84rem;
+  margin: 0.2rem 0 0;
+}
+
+.choice-given {
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  border-radius: 999px;
+  color: var(--good);
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-right: 0.35rem;
+  padding: 0.1rem 0.55rem;
+}
+
+.choice-given.is-negative {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}

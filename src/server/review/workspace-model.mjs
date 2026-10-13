@@ -3,7 +3,7 @@ import path from "node:path";
 import { readInitiative } from "../workflow/initiative.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
-import { readCoordinationState } from "../workflow/state.mjs";
+import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 
 const LIBRARY_LIMIT = 500;
@@ -330,6 +330,7 @@ export async function loadAttention(projectRoot) {
   const items = new Map(roadmap.items.map((item) => [item.id, item]));
   const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await planFolders(projectRoot, config))])];
   const needsYou = [];
+  const answered = [];
   const watch = [];
   for (const id of ids) {
     const snapshot = await initiativeSnapshot(projectRoot, config, id, items.get(id));
@@ -342,7 +343,8 @@ export async function loadAttention(projectRoot) {
       if (entry && typeof entry === "object") {
         const artifacts = [];
         for (const artifact of entry.artifacts ?? []) artifacts.push({ path: artifact, available: await isFile(projectRoot, artifact) });
-        needsYou.push({ type: "gate", id: entry.id, kind: entry.kind, question: entry.question, askedAt: entry.askedAt, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts, statePath: state.statePath });
+        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, options: entry.options ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts, statePath: state.statePath };
+        (gate.answer ? answered : needsYou).push(gate);
       } else if (typeof entry === "string") {
         needsYou.push({ type: "pending-note", text: entry, initiative, statePath: state.statePath });
       }
@@ -379,7 +381,24 @@ export async function loadAttention(projectRoot) {
   for (const diagnostic of config.diagnostics) needsYou.push({ type: "config", code: diagnostic.code, message: diagnostic.message });
   const blockingOrder = (entry) => ({ "record-problem": 0, blocked: 1, findings: entry.blocking ? 2 : 3, "ready-to-ship": 4, active: 5 })[entry.type] ?? 6;
   watch.sort((left, right) => blockingOrder(left) - blockingOrder(right));
-  return { needsYou, watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
+  answered.sort((left, right) => String(left.answer.answeredAt).localeCompare(String(right.answer.answeredAt)));
+  return { needsYou, answered, watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
+}
+
+// The browser names the initiative and gate; the state path always comes from the workflow config, never from the client.
+export async function answerGate(projectRoot, body) {
+  if (!body || typeof body !== "object" || !SLUG_PATTERN.test(body.initiative ?? "") || typeof body.id !== "string") {
+    throw Object.assign(new Error("An initiative and a gate id are required."), { code: "invalid_answer" });
+  }
+  const config = await readWorkflowConfig(projectRoot);
+  const directory = initiativeDirectory(config, body.initiative);
+  if (!directory) {
+    throw Object.assign(new Error("The workflow config disables plans, so no gate can be answered."), { code: "invalid_answer" });
+  }
+  const choice = typeof body.choice === "string" && body.choice ? body.choice : null;
+  const note = typeof body.note === "string" ? body.note : null;
+  const result = await answerUserGate({ projectRoot, statePath: `${directory}/state.json`, id: body.id, choice, note });
+  return { gate: result.gate, revision: result.revision };
 }
 
 function glossaryTerms(content) {
@@ -416,7 +435,7 @@ export async function loadNavigation(projectRoot) {
   const attention = await loadAttention(projectRoot);
   return {
     roadmap: { exists: roadmap.exists ?? false, error: roadmap.error ?? null, valid: roadmap.valid ?? false },
-    attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, watch: attention.watch.length },
+    attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
     initiatives: [
       ...roadmap.items.map((item) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
       ...roadmap.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))

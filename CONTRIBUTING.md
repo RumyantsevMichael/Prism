@@ -92,6 +92,8 @@ Run a local human review from the repository root:
 To try the entity-first review browser, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
 The seed builds a temporary project whose roadmap, initiative records, concept delta, review ledger, coordination state, recorded user gates, and evidence come from the real MCP tools.
 The browser opens on Attention, which lists the recorded user gates, and its sidebar expands only the path to the open initiative, slice, or library section.
+Answering a gate on Attention records the answer in `state.json`, and the `deliver-gate-answers` prompt hook passes answered gates to the agent with the next user message until the agent resolves them.
+The review page's secret session URL is the only credential for recording an answer, so anyone who can open that URL can answer for the user.
 One shipped initiative record is written directly, because its completion gate needs accepted reviews that the offline demo cannot produce.
 
 With both manifests present the CLI validates the marketplace one.

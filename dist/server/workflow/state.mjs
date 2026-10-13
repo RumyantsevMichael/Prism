@@ -11,8 +11,11 @@ const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending"
 const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "models"]);
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
-const GATE_KEYS = new Set(["id", "kind", "slice", "question", "artifacts", "askedAt"]);
+const GATE_KEYS = new Set(["id", "kind", "slice", "question", "artifacts", "options", "askedAt", "answer"]);
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
+const OPTION_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const ANSWER_KEYS = new Set(["choice", "note", "via", "answeredAt"]);
+const REVIEW_CHOICES = new Set(["approve", "request-changes"]);
 const SETTING_VALUES = {
   autonomy: new Set(["conservative", "broad", "full"]),
   agentFlow: new Set(["mono", "multi"]),
@@ -324,9 +327,57 @@ function validateGate(entry, entryPath, errors) {
       }
     });
   }
+  if (entry.options !== undefined) {
+    if (entry.kind !== "decision") {
+      addError(errors, `${entryPath}.options`, "is allowed only for decision gates");
+    } else if (!Array.isArray(entry.options) || entry.options.length === 0 || entry.options.length > 8) {
+      addError(errors, `${entryPath}.options`, "must list one to eight options");
+    } else {
+      const ids = new Set();
+      entry.options.forEach((option, index) => {
+        if (!isRecord(option) || Object.keys(option).some((key) => key !== "id" && key !== "label") || !OPTION_ID.test(option.id ?? "") || typeof option.label !== "string" || !option.label.trim() || option.label.length > 200) {
+          addError(errors, `${entryPath}.options[${index}]`, "must be { id, label } with a lowercase slug id and a label of at most 200 characters");
+        } else if (ids.has(option.id)) {
+          addError(errors, `${entryPath}.options[${index}].id`, "must not duplicate another option");
+        } else {
+          ids.add(option.id);
+        }
+      });
+    }
+  }
   if (typeof entry.askedAt !== "string" || Number.isNaN(Date.parse(entry.askedAt))) {
     addError(errors, `${entryPath}.askedAt`, "must be an ISO timestamp");
   }
+  if (entry.answer !== undefined) {
+    if (!isRecord(entry.answer) || Object.keys(entry.answer).some((key) => !ANSWER_KEYS.has(key))) {
+      addError(errors, `${entryPath}.answer`, "must contain only choice, note, via, and answeredAt");
+    } else {
+      const problem = answerProblem(entry, entry.answer.choice, entry.answer.note);
+      if (problem) addError(errors, `${entryPath}.answer`, problem);
+      if (entry.answer.via !== "browser") addError(errors, `${entryPath}.answer.via`, "must be browser");
+      if (typeof entry.answer.answeredAt !== "string" || Number.isNaN(Date.parse(entry.answer.answeredAt))) addError(errors, `${entryPath}.answer.answeredAt`, "must be an ISO timestamp");
+    }
+  }
+}
+
+// Each gate kind accepts its own choices; a note carries the reason whenever the answer is not a plain acceptance.
+function answerProblem(gate, choice, note) {
+  if (note !== null && (typeof note !== "string" || !note.trim() || note.length > 4000)) {
+    return "note must be null or a non-empty text of at most 4000 characters";
+  }
+  if (gate.kind === "visual-review" || gate.kind === "correctness") {
+    if (!REVIEW_CHOICES.has(choice)) return "choice must be approve or request-changes";
+    if (choice === "request-changes" && note === null) return "a request for changes needs a note";
+  } else if (gate.kind === "assistance") {
+    if (choice !== "done") return "choice must be done";
+  } else if (gate.kind === "decision") {
+    if (choice === null) {
+      if (note === null) return "an answer without a listed option needs a note";
+    } else if (!(gate.options ?? []).some((option) => option.id === choice)) {
+      return "choice must be one of the gate options or null";
+    }
+  }
+  return null;
 }
 
 function validatePending(value, errors) {
@@ -364,7 +415,7 @@ function applyGateOperations(pending, operations) {
       throw error("invalid_changes", `gateOperations[${index}] must be an object.`);
     }
     if (operation.op === "ask") {
-      const unknown = Object.keys(operation).filter((key) => !["op", "kind", "slice", "question", "artifacts"].includes(key));
+      const unknown = Object.keys(operation).filter((key) => !["op", "kind", "slice", "question", "artifacts", "options"].includes(key));
       if (unknown.length) {
         throw error("invalid_changes", `gateOperations[${index}] has unsupported fields: ${unknown.join(", ")}.`);
       }
@@ -374,6 +425,7 @@ function applyGateOperations(pending, operations) {
         ...(operation.slice === undefined ? {} : { slice: operation.slice }),
         question: operation.question,
         artifacts: operation.artifacts ?? [],
+        ...(operation.options === undefined ? {} : { options: operation.options }),
         askedAt: new Date().toISOString()
       };
       const errors = [];
@@ -394,6 +446,16 @@ function applyGateOperations(pending, operations) {
     }
   });
   return { pending: next, opened };
+}
+
+// Only the review browser records answers, so agent updates may keep an answer but never add or change one.
+function assertAnswersUnchanged(before, after) {
+  const previous = new Map(before.filter(isRecord).map((gate) => [gate.id, JSON.stringify(gate.answer ?? null)]));
+  for (const gate of after.filter(isRecord)) {
+    if (gate.answer !== undefined && previous.get(gate.id) !== JSON.stringify(gate.answer)) {
+      throw error("invalid_changes", `The user gate ${gate.id} has an answer that only the review browser can record.`);
+    }
+  }
 }
 
 function validateStateValue(raw) {
@@ -542,6 +604,7 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     return withReviewGatesLocked(resolved.root, before.active, changes.activeOperations ?? [], async () => {
     const activeResult = await applyActiveOperations(resolved.root, before.active, changes.activeOperations ?? []);
     const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
+    assertAnswersUnchanged(before.pending, gateResult.pending);
     const candidate = normalizeState({
       ...before,
       active: activeResult.active,
@@ -569,6 +632,40 @@ async function applyStateChange(resolved, expectedRevision, changes) {
       openedGates: gateResult.opened
     };
     });
+}
+
+export async function answerUserGate({ projectRoot, statePath, id, choice = null, note = null }) {
+  const resolved = await resolveStatePath(projectRoot, statePath);
+  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+    const current = await loadState(resolved.path);
+    if (!current.exists || !current.valid) {
+      throw error("invalid_state", "The coordination state is missing or invalid.");
+    }
+    const position = current.state.pending.findIndex((item) => isRecord(item) && item.id === id);
+    if (position === -1) {
+      throw error("unknown_gate", "The question is no longer open; the agent resolved or withdrew it.");
+    }
+    const gate = current.state.pending[position];
+    if (gate.answer) {
+      throw error("gate_answered", "The question already has an answer.");
+    }
+    const normalizedNote = typeof note === "string" && note.trim() ? note.trim() : null;
+    const problem = answerProblem(gate, choice, normalizedNote);
+    if (problem) {
+      throw error("invalid_answer", `The answer is invalid: ${problem}.`);
+    }
+    const pending = [...current.state.pending];
+    pending[position] = { ...gate, answer: { choice, note: normalizedNote, via: "browser", answeredAt: new Date().toISOString() } };
+    const candidate = normalizeState({ ...current.state, pending });
+    const validation = validateStateValue(candidate);
+    if (validation.errors.length > 0) {
+      throw error("invalid_state", "The answered state is invalid and was not written.", { errors: validation.errors });
+    }
+    await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.displayPath]);
+    await conservationStore.writeManaged(resolved.root, resolved.path, `${JSON.stringify(candidate, null, 2)}\n`);
+    const updated = await loadState(resolved.path);
+    return { ...publicStateResult(resolved, updated), gate: pending[position] };
+  }, error));
 }
 
 export async function checkpointPause({ projectRoot, statePath, expectedRevision, activeSlice, recoveryPath, recoveryContent, changes }) {
