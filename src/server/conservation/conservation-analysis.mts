@@ -75,7 +75,10 @@ export async function resolveReference(projectRoot: string, snapshot: SnapshotEv
     for (let offset = text.indexOf(selector.value); offset >= 0; offset = text.indexOf(selector.value, offset + 1)) units.push({ key: keyFor(file.file, "text", selector.value), file: file.file, kind: "text", selector: selector.value,
       start: offset, end: offset + selector.value.length, hash: digest(selector.value), public: null });
   } else {
-    if (!analysis?.fileCoverage[file.file]) return { status: "unsupported", reference, units: [], reason: "The required structural extraction is unavailable." };
+    if (!analysis?.fileCoverage[file.file]) {
+      const causes = [...new Set((analysis?.diagnostics || []).filter(item => item.file === file.file).map(item => item.message))];
+      return { status: "unsupported", reference, units: [], reason: `The structural extraction of ${file.file} is incomplete${causes.length ? `: ${causes.slice(0, 3).join(" ")}` : "."} Fix the file, or select an exact text span with a text selector.` };
+    }
     const candidates = analysis.units.filter(unit => unit.file === file.file && (unit.selector === selector.value || unit.name === selector.value || unit.qualifiedName === selector.value)
       && (selector.type === "heading" ? unit.kind === "heading" : ["json-pointer", "yaml-key"].includes(selector.type) ? unit.kind === "configuration-key" : unit.domain === "code"));
     units = candidates.flatMap(candidate => all.filter(unit => unit.key === keyFor(candidate.file, candidate.kind, candidate.selector || candidate.name)));

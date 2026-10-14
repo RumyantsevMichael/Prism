@@ -93,7 +93,10 @@ async function resolveReference(projectRoot, snapshot, reference, analysis, stor
       public: null
     });
   } else {
-    if (!analysis?.fileCoverage[file.file]) return { status: "unsupported", reference, units: [], reason: "The required structural extraction is unavailable." };
+    if (!analysis?.fileCoverage[file.file]) {
+      const causes = [...new Set((analysis?.diagnostics || []).filter((item) => item.file === file.file).map((item) => item.message))];
+      return { status: "unsupported", reference, units: [], reason: `The structural extraction of ${file.file} is incomplete${causes.length ? `: ${causes.slice(0, 3).join(" ")}` : "."} Fix the file, or select an exact text span with a text selector.` };
+    }
     const candidates = analysis.units.filter((unit) => unit.file === file.file && (unit.selector === selector.value || unit.name === selector.value || unit.qualifiedName === selector.value) && (selector.type === "heading" ? unit.kind === "heading" : ["json-pointer", "yaml-key"].includes(selector.type) ? unit.kind === "configuration-key" : unit.domain === "code"));
     units = candidates.flatMap((candidate) => all.filter((unit) => unit.key === keyFor(candidate.file, candidate.kind, candidate.selector || candidate.name)));
     if (candidates.length && !units.length) return { status: "unsupported", reference, units: [], reason: "The parser did not preserve an exact source span." };
