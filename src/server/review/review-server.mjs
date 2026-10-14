@@ -9,7 +9,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { getConceptDelta } from "../conservation/concept-delta.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { answerGate, entityContext, entityExists, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { answerGate, entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -573,7 +573,9 @@ export async function startReviewServer(options = {}) {
           return;
         }
         try {
-          send(response, 200, JSON.stringify(await answerGate(projectRoot, await readJson(request))), "application/json; charset=utf-8");
+          const answered = await answerGate(projectRoot, await readJson(request));
+          forgetWorkspace();
+          send(response, 200, JSON.stringify(answered), "application/json; charset=utf-8");
         } catch (error) {
           const status = { gate_answered: 409, unknown_gate: 409, invalid_answer: 400 }[error.code] ?? 400;
           send(response, status, JSON.stringify({ code: error.code ?? "invalid_answer", message: error.message }), "application/json; charset=utf-8");

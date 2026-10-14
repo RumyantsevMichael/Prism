@@ -9,6 +9,24 @@ import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-co
 const LIBRARY_LIMIT = 500;
 const SLICE_FILE_LIMIT = 200;
 const UNRESOLVED = new Set(["OPEN", "IN PROGRESS", "REOPENED"]);
+// Each open page polls every 1.5 s, and one poll reads every record several times, so results are shared for a second.
+// The review server clears the cache after its own writes; writes from agents show up within the window.
+const MEMO_MS = 1000;
+const memo = new Map();
+
+function remember(key, compute) {
+  const hit = memo.get(key);
+  if (hit && Date.now() - hit.at < MEMO_MS) return hit.value;
+  const value = compute();
+  memo.set(key, { at: Date.now(), value });
+  value.catch(() => memo.delete(key));
+  return value;
+}
+
+export function forgetWorkspace() {
+  memo.clear();
+}
+
 export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary"]);
 const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary" });
 
@@ -123,7 +141,11 @@ async function initiativeFindings(root, config, id) {
   return totals;
 }
 
-export async function loadRoadmapView(projectRoot) {
+export function loadRoadmapView(projectRoot) {
+  return remember(`roadmap:${projectRoot}`, () => computeRoadmapView(projectRoot));
+}
+
+async function computeRoadmapView(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   let roadmap;
   try {
@@ -175,7 +197,11 @@ export async function loadRoadmapView(projectRoot) {
   };
 }
 
-export async function loadInitiativeView(projectRoot, id) {
+export function loadInitiativeView(projectRoot, id) {
+  return remember(`initiative:${id}:${projectRoot}`, () => computeInitiativeView(projectRoot, id));
+}
+
+async function computeInitiativeView(projectRoot, id) {
   if (!SLUG_PATTERN.test(id ?? "")) throw new Error("The initiative identifier is invalid.");
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
@@ -247,7 +273,11 @@ async function initiativeReferences(projectRoot, config) {
   return references;
 }
 
-export async function loadLibrary(projectRoot, kind) {
+export function loadLibrary(projectRoot, kind) {
+  return remember(`library:${kind}:${projectRoot}`, () => computeLibrary(projectRoot, kind));
+}
+
+async function computeLibrary(projectRoot, kind) {
   const config = await readWorkflowConfig(projectRoot);
   const directory = kind === "requirements" ? config.paths.requirements : config.paths.adrs;
   if (!directory) return { kind, directory: null, entries: [] };
@@ -328,7 +358,11 @@ function gateOrder(left, right) {
   return String(left.askedAt ?? "").localeCompare(String(right.askedAt ?? ""));
 }
 
-export async function loadAttention(projectRoot) {
+export function loadAttention(projectRoot) {
+  return remember(`attention:${projectRoot}`, () => computeAttention(projectRoot));
+}
+
+async function computeAttention(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
   const items = new Map(roadmap.items.map((item) => [item.id, item]));
@@ -433,7 +467,11 @@ async function searchIndex(projectRoot, config, roadmap, glossary) {
   return entries;
 }
 
-export async function loadNavigation(projectRoot) {
+export function loadNavigation(projectRoot) {
+  return remember(`navigation:${projectRoot}`, () => computeNavigation(projectRoot));
+}
+
+async function computeNavigation(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
   const glossary = await loadGlossary(projectRoot);
