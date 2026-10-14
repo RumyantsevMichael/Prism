@@ -73,8 +73,10 @@ test('implementation review must cover deleted paths even when the result is emp
   assert.deepEqual(compared.observations,[]);
   await act('coord',[wave('incomplete','implementation-review',result,comparisonId,['unrelated.js'])]);
   await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);
-  await assert.rejects(act('coord',[{op:'accept_wave'}]),error=>error.code==='gate_blocked'&&error.problems.some(item=>item.code==='review_coverage_missing'&&item.id==='delete.js'));
-  assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,false);
+  await assert.rejects(act('coord',[{op:'accept_wave'}]),error=>error.code==='gate_blocked'&&error.problems.some(item=>item.code==='review_coverage_missing'&&item.id==='delete.js')&&/acceptance gate: .*review_coverage_missing x\d+: Assign each original and resulting target file to a review lane\. \(for example [^)]*delete\.js/.test(error.message));
+  const blocked=await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'});
+  assert.equal(blocked.ready,false);
+  assert.match(blocked.problems[0].message,/wave incomplete has no accepted result, and accepting it now would fail on: review_coverage_missing x\d+/);
   await act('coord',[wave('complete','implementation-review',result,comparisonId,scope)]);
   await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
   assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,true);
@@ -474,4 +476,13 @@ test('readiness rejects additions that copy a change into functions that several
  await updateConceptDelta({projectRoot:f.root,deltaPath:other,expectedRevision:null,scope:['a.ts','b.ts','shared.ts'],baselineId:f.b.snapshotId,operations:[{op:'insert',entry:consolidate}]});
  assert.deepEqual(await growth({...base,consolidations:[{deltaPath:other,reason:'The store slice consolidates the lock helpers first.'}]}),[]);
  assert.deepEqual((await growth({...base,consolidations:[{deltaPath:'plan/missing/concept-delta.json',reason:'Missing.'}]})).map(x=>x.code).sort(),['consolidation_delta_invalid','duplication_growth']);
+});
+
+test('treats a scope with a trailing slash like the bare directory',async()=>{
+  const {withinScope}=await import('../../dist/server/conservation/conservation-store.mjs');
+  assert.equal(withinScope('sheetcalc/formula.py',['sheetcalc/']),true);
+  assert.equal(withinScope('sheetcalc/formula.py',['sheetcalc']),true);
+  assert.equal(withinScope('sheetcalc',['sheetcalc/']),true);
+  assert.equal(withinScope('sheetcalcx/a.py',['sheetcalc/']),false);
+  assert.equal(withinScope('a.py',['/']),false);
 });

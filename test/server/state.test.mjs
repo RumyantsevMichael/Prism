@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { readCoordinationState, updateCoordinationState } from "../../dist/server/workflow/state.mjs";
+import { answerUserGate, readCoordinationState, updateCoordinationState } from "../../dist/server/workflow/state.mjs";
 
 async function stateFixture(context) {
   const root = await mkdtemp(path.join(os.tmpdir(), "prism-state-"));
@@ -150,4 +150,81 @@ test("reports malformed state and rejects paths outside the project", async (con
     access(path.join(fixture.projectRoot, "docs", "plans", "demo", "state.json.lock")),
     (caught) => caught.code === "ENOENT"
   );
+});
+
+test("records and resolves user gates beside legacy pending items", async (context) => {
+  const fixture = await stateFixture(context);
+  const created = await updateCoordinationState({
+    ...fixture,
+    expectedRevision: null,
+    changes: {
+      pending: ["User decision: retention"],
+      gateOperations: [{ op: "ask", kind: "visual-review", slice: "download", question: "Review the download design.", artifacts: ["docs/plans/demo/download/slice.md"] }]
+    }
+  });
+  assert.equal(created.openedGates.length, 1);
+  const [gate] = created.openedGates;
+  assert.match(gate.id, /^gate-[0-9a-f]{12}$/);
+  assert.equal(created.state.pending[0], "User decision: retention");
+  assert.deepEqual({ ...created.state.pending[1], askedAt: undefined }, { id: gate.id, kind: "visual-review", slice: "download", question: "Review the download design.", artifacts: ["docs/plans/demo/download/slice.md"], askedAt: undefined });
+  assert.ok(!Number.isNaN(Date.parse(created.state.pending[1].askedAt)));
+
+  const unknown = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "resolve", id: "gate-000000000000" }] } }).catch(error => error);
+  assert.equal(unknown.code, "unknown_gate");
+  for (const operation of [
+    { op: "ask", kind: "approval", question: "Approve?", artifacts: [] },
+    { op: "ask", kind: "decision", question: " ", artifacts: [] },
+    { op: "ask", kind: "decision", question: "Which store?", artifacts: ["../outside.md"] },
+    { op: "ask", kind: "decision", question: "Which store?", artifacts: ["/abs.md"] },
+    { op: "ask", kind: "decision", question: "Which store?", artifacts: [], id: "gate-abcdefabcdef" },
+    { op: "close", id: gate.id }
+  ]) {
+    const rejected = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [operation] } }).catch(error => error);
+    assert.equal(rejected.code, "invalid_changes", JSON.stringify(operation));
+  }
+  const forged = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { pending: [{ id: "not-a-gate", kind: "decision", question: "Q", artifacts: [], askedAt: "2026-10-13T00:00:00Z" }] } }).catch(error => error);
+  assert.equal(forged.code, "invalid_state");
+
+  const resolved = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "resolve", id: gate.id }] } });
+  assert.deepEqual(resolved.state.pending, ["User decision: retention"]);
+  assert.deepEqual(resolved.openedGates, []);
+});
+
+test("records one browser answer per gate and keeps agents from forging answers", async (context) => {
+  const fixture = await stateFixture(context);
+  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { gateOperations: [
+    { op: "ask", kind: "visual-review", slice: "download", question: "Review the design.", artifacts: [] },
+    { op: "ask", kind: "decision", question: "Which store?", artifacts: [], options: [{ id: "postgres", label: "Postgres" }, { id: "sqlite", label: "SQLite" }] },
+    { op: "ask", kind: "assistance", question: "Run review in a separate task.", artifacts: [] }
+  ] } });
+  const [review, decision, assistance] = created.openedGates.map((gate) => gate.id);
+  assert.deepEqual(created.state.pending[1].options.map((option) => option.id), ["postgres", "sqlite"]);
+  for (const options of [[], [{ id: "Bad Id", label: "x" }], [{ id: "a", label: "A" }, { id: "a", label: "B" }]]) {
+    const rejected = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question: "Q", artifacts: [], options }] } }).catch(error => error);
+    assert.equal(rejected.code, "invalid_changes", JSON.stringify(options));
+  }
+  const reviewOptions = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "ask", kind: "visual-review", question: "Q", artifacts: [], options: [{ id: "a", label: "A" }] }] } }).catch(error => error);
+  assert.equal(reviewOptions.code, "invalid_changes");
+
+  for (const [id, choice, note] of [[review, "maybe", null], [review, "request-changes", null], [decision, "mysql", null], [decision, null, null], [assistance, "approve", null], [review, "approve", "x".repeat(4001)]]) {
+    const rejected = await answerUserGate({ ...fixture, id, choice, note }).catch(error => error);
+    assert.equal(rejected.code, "invalid_answer", `${choice} ${note?.length}`);
+  }
+  const answered = await answerUserGate({ ...fixture, id: decision, choice: "sqlite", note: "  Keep it local.  " });
+  assert.deepEqual({ ...answered.gate.answer, answeredAt: undefined }, { choice: "sqlite", note: "Keep it local.", via: "browser", answeredAt: undefined });
+  assert.equal((await answerUserGate({ ...fixture, id: decision, choice: "postgres" }).catch(error => error)).code, "gate_answered");
+  await answerUserGate({ ...fixture, id: review, choice: "request-changes", note: "Name the deadline." });
+  await answerUserGate({ ...fixture, id: assistance, choice: "done" });
+
+  const current = await readCoordinationState(fixture);
+  const forged = current.state.pending.map((gate) => gate.id === decision ? { ...gate, answer: { ...gate.answer, choice: "postgres" } } : gate);
+  assert.equal((await updateCoordinationState({ ...fixture, expectedRevision: current.revision, changes: { pending: forged } }).catch(error => error)).code, "invalid_changes");
+  const invented = await updateCoordinationState({ ...fixture, expectedRevision: current.revision, changes: { pending: [...current.state.pending, { id: "gate-abcdefabcdef", kind: "assistance", question: "Q", artifacts: [], askedAt: "2026-10-13T00:00:00Z", answer: { choice: "done", note: null, via: "browser", answeredAt: "2026-10-13T00:00:00Z" } }] } }).catch(error => error);
+  assert.equal(invented.code, "invalid_changes");
+  const kept = await updateCoordinationState({ ...fixture, expectedRevision: current.revision, changes: { next: ["Apply the answers"] } });
+  assert.equal(kept.state.pending.filter((gate) => gate.answer).length, 3);
+
+  const resolved = await updateCoordinationState({ ...fixture, expectedRevision: kept.revision, changes: { gateOperations: [{ op: "resolve", id: decision }] } });
+  assert.equal(resolved.state.pending.some((gate) => gate.id === decision), false);
+  assert.equal((await answerUserGate({ ...fixture, id: decision, choice: "sqlite" }).catch(error => error)).code, "unknown_gate");
 });

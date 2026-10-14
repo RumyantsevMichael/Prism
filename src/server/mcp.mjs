@@ -25,6 +25,9 @@ import { appendDecision, readDecisionHistory, setDecisionRecording } from "./wor
 import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
+import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } from "./workflow/initiative.mjs";
+import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
+import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
@@ -140,7 +143,10 @@ function reviewContent(url, review) {
 function stateContent(result) {
   const validity = result.valid ? "valid" : "invalid";
   const revision = result.revision ?? "none";
-  return `Coordination state ${validity}: ${result.statePath}\nRevision: ${revision}`;
+  const opened = result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : "";
+  const answered = (result.state?.pending ?? []).filter((gate) => gate?.answer);
+  const gates = `${opened}${answered.length ? `\nUser gates answered in the review browser: ${answered.map((gate) => gate.id).join(", ")}` : ""}`;
+  return `Coordination state ${validity}: ${result.statePath}\nRevision: ${revision}${gates}`;
 }
 
 function contextPlanContent(plan) {
@@ -238,6 +244,9 @@ function stateErrorData(error) {
   if (error instanceof ConceptDeltaError) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
+  if (error instanceof InitiativeError || error instanceof RoadmapError || error?.name === "InitiativeGraphError") {
+    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
+  }
   if (error?.name !== "CoordinationStateError") {
     if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
     return undefined;
@@ -300,6 +309,8 @@ const activeSessionInputSchema = {
 const sessionInputSchema = { oneOf: [explicitSessionInputSchema, activeSessionInputSchema] };
 
 const tools = [
+  ...ROADMAP_TOOLS,
+  ...INITIATIVE_TOOLS,
   ...CONSERVATION_TOOLS,
   ...NATIVE_INTELLIGENCE_TOOLS,
   {
@@ -316,13 +327,13 @@ const tools = [
   },
   {
     name: "get_review_url",
-    description: "Start or update the local Prism HTTPS review server and return a human review URL only. Use artifacts to select the shared persistent tabs. This tool does not open a browser or return rendered image data.",
+    description: "Start or update the local Prism HTTPS review server and return a human review URL only. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open, and an empty array focuses Attention. This tool does not open a browser or return rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
         artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to open as persistent tabs. An empty array closes all tabs." }
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to add as agent tabs. An empty array focuses Attention." }
       },
       required: ["projectRoot"],
       additionalProperties: false
@@ -331,13 +342,13 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open or update one local Prism HTTPS review page in the system browser for the human. Use artifacts to select the shared persistent tabs. Repeated calls update connected viewer pages without opening another tab. Omit artifact to show the complete artifact tree when artifacts is also omitted. The tool returns no rendered image data.",
+    description: "Open or update one local Prism HTTPS review page in the system browser for the human. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
         artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to open as persistent tabs. An empty array closes all tabs." }
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to add as agent tabs. An empty array opens Attention." }
       },
       required: ["projectRoot"],
       additionalProperties: false
@@ -543,7 +554,7 @@ const tools = [
           type: "object", additionalProperties: false,
           properties: {
             active: { type: "array", items: { type: "object" } },
-            pending: { type: "array", items: { type: "string" } },
+            pending: { type: "array", items: { oneOf: [{ type: "string" }, { type: "object" }] } },
             next: { type: "array", items: { type: "string" } },
             evidence: { type: "array", items: { type: "string" } }
           }
@@ -585,8 +596,25 @@ const tools = [
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
+    name: "wait_for_user_gate",
+    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. It returns answered with the recorded answer, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, or unsupported_host when this host cannot wait in the background.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        statePath: { type: "string", description: "The project-relative path to the initiative state.json file that holds the gate." },
+        gateIds: { type: "array", minItems: 1, maxItems: MAX_WAIT_GATES, items: { type: "string", minLength: 1 }, description: "The gate ids that the ask operations returned." },
+        gateId: { type: "string", minLength: 1, description: "One gate id; use gateIds for several." },
+        maxWaitMinutes: { type: "number", exclusiveMinimum: 0, maximum: MAX_WAIT_MINUTES, description: `How long to wait before returning timeout. Defaults to ${DEFAULT_WAIT_MINUTES}.` }
+      },
+      required: ["projectRoot", "statePath"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  },
+  {
     name: "update_coordination_state",
-    description: "Apply a validated atomic update to an initiative state.json file. Read the current state first and pass its revision as expectedRevision. Do not edit state.json directly when this tool is available.",
+    description: "Apply a validated atomic update to an initiative state.json file, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision. Do not edit state.json directly when this tool is available.",
     inputSchema: {
       type: "object",
       properties: {
@@ -642,7 +670,40 @@ const tools = [
                 }
               }
             },
-            pending: { type: "array", items: { type: "string", minLength: 1 } },
+            gateOperations: {
+              type: "array",
+              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
+              items: {
+                oneOf: [
+                  {
+                    type: "object",
+                    required: ["op", "kind", "question", "artifacts"],
+                    additionalProperties: false,
+                    properties: {
+                      op: { const: "ask" },
+                      kind: { type: "string", enum: ["visual-review", "correctness", "decision", "assistance"] },
+                      slice: { type: "string", minLength: 1 },
+                      question: { type: "string", minLength: 1, maxLength: 4000 },
+                      artifacts: { type: "array", maxItems: 50, items: { type: "string", minLength: 1 } },
+                      options: {
+                        type: "array",
+                        minItems: 1,
+                        maxItems: 8,
+                        description: "Choices the user can pick in the review browser; decision gates only.",
+                        items: { type: "object", required: ["id", "label"], additionalProperties: false, properties: { id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, label: { type: "string", minLength: 1, maxLength: 200 } } }
+                      }
+                    }
+                  },
+                  {
+                    type: "object",
+                    required: ["op", "id"],
+                    additionalProperties: false,
+                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 } }
+                  }
+                ]
+              }
+            },
+            pending: { type: "array", items: { oneOf: [{ type: "string", minLength: 1 }, { type: "object" }] } },
             next: { type: "array", items: { type: "string", minLength: 1 } },
             evidence: { type: "array", items: { type: "string", minLength: 1 } }
           }
@@ -656,6 +717,78 @@ const tools = [
 ];
 
 const stateTools = new Set(["get_coordination_state", "validate_coordination_state", "update_coordination_state", "checkpoint_pause"]);
+// Only Claude Code was shown to move a long call to the background and wake the session with its result; other hosts would block the turn.
+const BACKGROUND_WAIT_CLIENTS = /claude/i;
+const FIRST_BACKGROUND_VERSION = [2, 1, 212];
+const DEFAULT_BACKGROUND_MS = 120000;
+const pendingWaits = new Map();
+let clientName = null;
+let clientVersion = null;
+
+function olderThan(version, minimum) {
+  const parts = String(version ?? "").split(/[.-]/).slice(0, 3).map(Number);
+  if (parts.length < 3 || parts.some((part) => !Number.isInteger(part))) return false;
+  for (let index = 0; index < 3; index += 1) {
+    if (parts[index] !== minimum[index]) return parts[index] < minimum[index];
+  }
+  return false;
+}
+
+// A wait only helps when the host moves it to the background before its own tool timeout cancels it.
+function waitUnsupportedReason() {
+  if (!BACKGROUND_WAIT_CLIENTS.test(clientName ?? "")) return `The host ${clientName ?? "(unnamed)"} does not move long tool calls to the background.`;
+  if (olderThan(clientVersion, FIRST_BACKGROUND_VERSION)) return `Claude Code ${clientVersion} predates background tool calls (2.1.212).`;
+  const handoff = Number(process.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS ?? DEFAULT_BACKGROUND_MS);
+  if (["1", "true"].includes(String(process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toLowerCase()) || handoff === 0) return "Background tool calls are disabled in this Claude Code session.";
+  const timeout = Number(process.env.MCP_TOOL_TIMEOUT);
+  if (Number.isFinite(timeout) && timeout > 0 && timeout <= handoff) return `MCP_TOOL_TIMEOUT (${timeout} ms) ends the call before Claude Code moves it to the background (${handoff} ms).`;
+  return null;
+}
+
+function progress(progressToken, value, message) {
+  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: value, message } })}\n`);
+}
+
+async function callGateWait(argumentsValue, metadata, requestId) {
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  const gateIds = argumentsValue.gateIds ?? (argumentsValue.gateId === undefined ? undefined : [argumentsValue.gateId]);
+  if (!Array.isArray(gateIds) || !gateIds.length) {
+    throw new Error("Pass the recorded gate ids in gateIds.");
+  }
+  let value;
+  const unsupported = waitUnsupportedReason();
+  if (unsupported) {
+    value = { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
+  } else {
+    const controller = new AbortController();
+    if (requestId !== undefined) pendingWaits.set(requestId, controller);
+    const progressToken = metadata?.progressToken;
+    try {
+      value = await waitForUserGates({
+        projectRoot,
+        statePath: argumentsValue.statePath,
+        gateIds,
+        maxWaitMinutes: argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES,
+        signal: controller.signal,
+        heartbeatMs: Number(process.env.PRISM_GATE_WAIT_HEARTBEAT_MS) || 60000,
+        settleMs: process.env.PRISM_GATE_WAIT_SETTLE_MS === undefined ? undefined : Number(process.env.PRISM_GATE_WAIT_SETTLE_MS),
+        onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, "Waiting for the user's answer in the review browser")
+      });
+    } finally {
+      pendingWaits.delete(requestId);
+    }
+  }
+  const list = value.gateIds.join(", ");
+  const text = {
+    answered: () => [...value.answered.map(answerText), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n"),
+    resolved: () => `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
+    timeout: () => `No answer arrived for user gates ${list} before the wait ended.`,
+    unknown_gate: () => `No pending user gate has any of the ids ${list}.`,
+    unsupported_host: () => `The wait returned at once because it cannot run in the background here: ${value.reason} The user's next message delivers any browser answer.`,
+    cancelled: () => `The wait for user gates ${list} was cancelled.`
+  }[value.status]();
+  return { content: [{ type: "text", text }], structuredContent: value };
+}
 const repositoryTools = new Set([...NATIVE_INTELLIGENCE_TOOLS.map(tool => tool.name), "list_repository_intelligence_providers", "plan_repository_context", "resolve_session_capacity", "evaluate_repository_fit", "summarize_session_consumption", "set_workflow_recording", "read_workflow_decisions", "record_workflow_decision"]);
 
 async function callStateTool(name, argumentsValue) {
@@ -825,7 +958,10 @@ async function callRepositoryTool(name, argumentsValue) {
   throw new Error(`Unknown repository-intelligence tool: ${name}`);
 }
 
-async function callTool(name, argumentsValue = {}, metadata) {
+async function callTool(name, argumentsValue = {}, metadata, requestId) {
+  if (name === "wait_for_user_gate") {
+    return callGateWait(argumentsValue, metadata, requestId);
+  }
   if (CONSERVATION_TOOLS.some(tool => tool.name === name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const value = await callConservationTool(name, { ...argumentsValue, projectRoot });
@@ -839,6 +975,15 @@ async function callTool(name, argumentsValue = {}, metadata) {
   }
   if (stateTools.has(name)) {
     return callStateTool(name, argumentsValue);
+  }
+  if (["get_roadmap", "update_roadmap", "get_initiative", "update_initiative"].includes(name)) {
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const input = { ...argumentsValue, projectRoot };
+    const value = name === "get_roadmap" ? await getRoadmap(input)
+      : name === "update_roadmap" ? await updateRoadmap(input)
+      : name === "get_initiative" ? await getInitiative(input)
+      : await updateInitiative(input);
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (repositoryTools.has(name)) {
     return callRepositoryTool(name, argumentsValue);
@@ -872,6 +1017,8 @@ input.on("line", async (line) => {
   try {
     request = JSON.parse(line);
     if (request.method === "initialize") {
+      clientName = typeof request.params?.clientInfo?.name === "string" ? request.params.clientInfo.name : null;
+      clientVersion = typeof request.params?.clientInfo?.version === "string" ? request.params.clientInfo.version : null;
       result(request.id, {
         protocolVersion: request.params?.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },
@@ -880,7 +1027,13 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
-      result(request.id, await callTool(request.params?.name, request.params?.arguments, request.params?._meta));
+      const value = await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id);
+      // A cancelled request gets no response, as the MCP cancellation rules require.
+      if (value.structuredContent?.status !== "cancelled") {
+        result(request.id, value);
+      }
+    } else if (request.method === "notifications/cancelled") {
+      pendingWaits.get(request.params?.requestId)?.abort();
     } else if (request.id !== undefined) {
       failure(request.id, -32601, `Method not found: ${request.method}`);
     }
@@ -892,6 +1045,7 @@ input.on("line", async (line) => {
 });
 
 input.on("close", async () => {
+  for (const controller of pendingWaits.values()) controller.abort();
   nativeSemanticRuntime.close();
   await reviewServers.close();
 });

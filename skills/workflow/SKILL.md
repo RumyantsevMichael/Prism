@@ -45,19 +45,22 @@ Code establishes implemented behavior.
 1. Read durable sources in this order: glossary, Approved requirements, relevant ADRs, and relevant feature files.
 
 - Stop and report conflicting durable sources for user resolution.
-- Keep every slice folder directly under the initiative directory.
+- Change Prism records only through Prism MCP tools, never by importing, running, or editing the plugin's own files, and report a refusal that the tool's message does not resolve.
+- Use the initiative directory as the root slice folder, and keep every other slice folder directly under it.
 - Read [artifact rules](references/artifact-rules.md) before creating or reviewing workflow artifacts.
 
 ## Common terms
 
 | Term | Definition |
 | --- | --- |
-| Initiative | A roadmap-owned item that groups related Approved outcomes. |
-| Initiative coordination | The initiative map, slice folders, design evidence, findings, and resume records. |
+| Initiative | A roadmap-owned item that groups related Approved outcomes, identified by a stable identifier that names its plans folder. |
+| Roadmap record | The MCP-managed `roadmap.json` beside the configured roadmap Markdown, owning initiative bands, order, required initiatives, rationale, open questions, and recorded ship and supersede decisions. |
+| Initiative lifecycle | `envisioned`, `planned`, and `in-progress` derived by `get_roadmap` from the initiative record and coordination state, plus recorded `shipped` and `superseded` decisions. |
+| Initiative coordination | The initiative record, slice folders, design evidence, findings, and resume records. |
 | Slice | One observable outcome across required layers, recursively split until it fits one `Develop <slice>` worker. |
-| `slice.md` | A slice folder's capability title, observable outcome, and Approved requirement links. |
+| `slice.md` | Optional slice design narrative that no other artifact owns, with title, outcome, and requirements kept in the initiative record. |
 | Atomic slice | An outcome that one `Develop <slice>` worker can design, implement, and verify within its remaining context and risk budget. |
-| Slice title | A concise human-readable capability name, stored separately from the stable slice slug and shown first on the map. |
+| Slice title | A concise human-readable capability name, stored separately from the stable slice slug in the initiative record. |
 | Provisional root slice | The initial candidate from the initiative outcome and Approved requirements before `design` returns `FIT` or `SPLIT`. |
 | Design frontier | Unstarted leaf candidates eligible for exploration, including those with incomplete implementation dependencies. |
 | Implementation frontier | Audited fitted leaves with complete effective dependencies and permission to implement. |
@@ -78,6 +81,7 @@ Code establishes implemented behavior.
 | Design finding | A defect in approved intent, fit, boundaries, or planned verification that prevents a sound implementation gate. |
 | Implementation gap | Missing production behavior or implementation-owned wiring after design fit that does not reopen design unless it invalidates the design evidence. |
 | Gate | A user decision or correctness confirmation that controls progress. |
+| User gate record | A pending `state.json` entry that records a gate while it waits on the user, with its kind, slice, question, artifacts, optional decision options, and any answer the user recorded in the review browser. |
 | Fit checkpoint | The design decision that an outcome fits the remaining context and risk budget with settled architecture and end-to-end verification. |
 | Workflow decision record | An opt-in local record of a structured decision, its reason codes, evidence paths, and identity coverage. |
 | Concept delta | MCP-managed version 2 design evidence binding the original baseline, requirements, native search receipts, planned transitions, and growth policy to an audited revision. |
@@ -118,8 +122,9 @@ Code establishes implemented behavior.
 | Decision autonomy | An orchestration setting that controls automatic internal decisions. |
 | Agent flow | An orchestration setting that selects inline or delegated delivery. |
 | Slice continuation | An orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input. |
-| `state.json` | Machine-managed coordination state with settings, active work, pending decisions, next actions, evidence paths, and a revision. |
-| `map.puml` | The authoritative initiative graph, with topology and dependencies owned by orchestration and written through `write-map`. |
+| `state.json` | Machine-managed coordination state with settings, active work, pending user gate records, next actions, evidence paths, and a revision. |
+| `initiative.json` | The authoritative MCP-managed initiative record with slice titles, outcomes, topology, requirement assignments, dependencies, and status, read through `get_initiative` and changed through `update_initiative`; `initiative.md` is a generated view. |
+| `roadmap.json` | The roadmap record, read through `get_roadmap` and changed through `update_roadmap`; the configured roadmap Markdown is a generated view. |
 | `review.json` | The authoritative MCP-managed slice review containing lanes, waves, findings, assessments, disagreements, and evidence bindings. |
 | `findings.md` | Legacy review evidence that remains readable and can be imported through MCP without carrying historical acceptance forward. |
 | Lane findings file | A legacy name for a lane now read and changed through `review.json`; `review.md` is a generated human view. |

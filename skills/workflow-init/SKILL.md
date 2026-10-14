@@ -95,8 +95,9 @@ Both styles follow the [workflow gate rules](../workflow/SKILL.md#supporting-pro
 
 1. Create missing configured documentation directories, including parent directories for configured files.
 2. If the glossary is absent, create its title and one-line purpose.
-3. If the roadmap or sibling `roadmap.puml` is absent, create the missing artifact using the `roadmap` format.
-4. Add a purpose README to each newly created requirements, ADR, feature, and user-guide directory.
+3. If the roadmap record is absent and no legacy roadmap exists, create it by calling `update_roadmap` with `expectedRevision: null` and the product purpose as what the roadmap serves.
+4. If a legacy roadmap or sibling `roadmap.puml` exists without a roadmap record, run `roadmap` to migrate it.
+5. Add a purpose README to each newly created requirements, ADR, feature, and user-guide directory.
 
 Existing documentation remains unchanged.
 Plans hold initiative coordination state, slice records, design diagrams, findings, and recovery evidence, with no seed file.

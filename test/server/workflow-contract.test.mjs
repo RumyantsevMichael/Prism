@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const productiveSkills = [
-  "design", "ideate", "implement", "orchestrate", "refactor", "review", "roadmap", "write-map",
+  "design", "ideate", "implement", "orchestrate", "refactor", "review", "roadmap",
   "workflow-init", "workflow", "write-adr", "write-contracts", "write-feature",
   "write-requirements", "write-step-definitions", "write-user-docs"
 ];
@@ -293,7 +293,7 @@ test("supports a continuous delivery benchmark phase", async () => {
 test("keeps visual review selection and procedure in its reference", async () => {
   const workflow = await skill("workflow");
   const visualReview = await reference("workflow", "visual-review.md");
-  const phaseSkills = await Promise.all(["write-map", "design", "roadmap"].map(skill));
+  const phaseSkills = await Promise.all(["design", "roadmap"].map(skill));
 
   assert.match(workflow, /\[visual-review\.md\]\(references\/visual-review\.md\)/);
   assert.match(visualReview, /Missing `Review browser` defaults to `auto`/);
@@ -302,7 +302,9 @@ test("keeps visual review selection and procedure in its reference", async () =>
   assert.match(visualReview, /For `external`, use the system browser/);
   assert.match(visualReview, /Explicit `internal` and `external` values override `auto`/);
   assert.match(visualReview, /Open one Prism artifact viewer session for all recorded ADRs and diagrams after a clean design audit/);
-  assert.match(visualReview, /each session opens the complete artifact tree/);
+  assert.match(visualReview, /each session opens on Attention, which lists recorded user gates, and reaches the roadmap and its initiatives, slices, requirements, decisions, and glossary/);
+  assert.match(visualReview, /The user can answer a recorded gate on Attention or in the conversation/);
+  assert.match(visualReview, /Before opening a session for a user gate, record the gate with the artifacts to inspect when coordination state exists/);
   assert.match(visualReview, /Open one Prism artifact viewer session for all changed artifacts and diagrams before the final correctness gate/);
   assert.match(visualReview, /Use a browser-opening capability with no artifact argument/);
   assert.match(visualReview, /Treat a URL-only result or an unavailable opener as a fallback/);
@@ -338,7 +340,7 @@ test("keeps coordination state concise without an inline schema example", async 
   assert.doesNotMatch(orchestrate, /```json/);
   assert.match(orchestrate, /The `get_coordination_state` input includes the initiative path/);
   await assert.rejects(reference("orchestrate", "state-schema.md"), /ENOENT/);
-  for (const name of ["orchestrate", "design", "implement", "review", "write-map"]) {
+  for (const name of ["orchestrate", "design", "implement", "review", "roadmap"]) {
     assert.doesNotMatch(await skill(name), /worker-protocol\.md|baseRevision|preconditions|correction digest/);
   }
 });
@@ -381,7 +383,9 @@ test("preserves recursive design ownership and delivery gates", async () => {
   assert.match(design, /child requirement references collectively equal the parent assignment, allowing shared references/);
   assert.match(design, /orchestrator manages parent relationships and dependencies/);
   const shape = design.match(/```markdown\n([\s\S]*?)\n\s*```/)[1];
-  assert.deepEqual([...shape.matchAll(/^\s*## (.+)$/gm)].map(m => m[1]), ["Outcome", "Requirements"]);
+  assert.deepEqual([...shape.matchAll(/^\s*## (.+)$/gm)].map(m => m[1]), ["Context"]);
+  assert.match(design, /The initiative record owns each slice's title, outcome, and requirement assignment, so `slice.md` holds only design narrative/);
+  assert.match(design, /`SPLIT`: the unchanged parent title, parent diagram and ADR paths, and each new child's slug, folder path, title, outcome, and requirement references/);
   assert.match(orchestrate, /The design worker receives ancestor diagram and ADR paths, including inherited paths/);
   assert.match(deliveryRules, /Effective dependencies include inherited prerequisites/);
   assert.match(settings, /After required verification and fresh review, `conservative` asks for correctness confirmation/);
@@ -431,4 +435,70 @@ test("all local skill and README links resolve", async () => {
       assert.ok((await stat(resolve(dirname(path), target))).isFile(), path + ": " + target);
     }
   }
+});
+
+test("migration preserves legacy evidence and blocks missing facts", async () => {
+  const orchestrate = await skill("orchestrate");
+  assert.match(orchestrate, /Older coordination files remain until their required information has a durable home/);
+  const flow = orchestrate.match(/```plantuml\n([\s\S]*?)\n```/)[1];
+  assert.match(flow, /Worker records conflict\?[\s\S]*Ask the responsible worker to reconcile records\\nagainst actual artifacts[\s\S]*Re-read worker records and actual artifacts/);
+  assert.match(orchestrate, /Missing records establish neither approval nor completion/);
+  assert.match(orchestrate, /When a legacy `map.puml` exists without an initiative record, `update_initiative` receives an `import_map` operation/);
+});
+
+test("manages the roadmap and initiative graph only through MCP records", async () => {
+  const orchestrate = await skill("orchestrate");
+  const flow = orchestrate.match(/```plantuml\n([\s\S]*?)\n```/)[1];
+  const roadmap = await skill("roadmap");
+  const workflow = await skill("workflow");
+  const record = await reference("orchestrate", "initiative-record.md");
+  await assert.rejects(skill("write-map"), /ENOENT/);
+  assert.doesNotMatch(flow, /write-map|Run roadmap skill;/);
+  assert.match(flow, /Call get_initiative tool;[\s\S]*Initiative record missing\?[\s\S]*Call update_initiative tool to create or import the initiative record/);
+  assert.match(flow, /Design returned SPLIT\?[\s\S]*Call update_initiative tool to apply the split and dependencies/);
+  assert.match(flow, /All completion gates pass\?[\s\S]*Call update_initiative tool for the done transition/);
+  assert.match(flow, /All leaves and preserved finding lanes are done\?[\s\S]*Call update_roadmap tool to record the ship decision;\n\s*:Graduate durable information/);
+  assert.match(orchestrate, /`get_roadmap` derives the initiative's `planned` and `in-progress` states, so orchestration writes no roadmap state for them/);
+  assert.match(orchestrate, /\[initiative record\]\(references\/initiative-record\.md\)/);
+  assert.match(record, /A `done` status requires the slice's passing completion gate/);
+  assert.match(roadmap, /Read it with `get_roadmap` and change it with `update_roadmap`/);
+  assert.match(roadmap, /`update_roadmap` refuses `ship` until every leaf slice is done/);
+  assert.doesNotMatch(roadmap, /orchestrated state-change mode/);
+  assert.match(workflow, /\| `initiative.json` \| The authoritative MCP-managed initiative record/);
+  assert.match(workflow, /\| `roadmap.json` \| The roadmap record/);
+  assert.doesNotMatch(workflow, /\| `map.puml` \|/);
+});
+
+test("records each user gate in coordination state while it waits on the user", async () => {
+  const orchestrate = await skill("orchestrate");
+  const runSettings = await reference("orchestrate", "run-settings.md");
+  const workflow = await skill("workflow");
+
+  assert.match(orchestrate, /The orchestrator records each user gate before asking the user and resolves it after the answer/);
+  assert.match(orchestrate, /`changes\.gateOperations` with one `ask` operation that supplies the gate kind, the slice slug when one applies, the question, and the project-relative artifact paths to inspect/);
+  assert.match(orchestrate, /Gate kinds are `visual-review` for design and final visual review, `correctness` for correctness confirmation, `decision` for requirement, decision, conflict, split, and dependency questions, and `assistance` for user actions/);
+  assert.match(orchestrate, /a `resolve` operation receives the gate id that the `ask` result returned/);
+  assert.match(orchestrate, /A `decision` gate supplies `options` when its choices are known/);
+  assert.match(orchestrate, /A recorded browser answer is the user's answer to that question/);
+  assert.match(orchestrate, /Before asking again, resuming, or continuing after a user message, read the pending gates and act on every recorded answer/);
+  assert.match(orchestrate, /An answered gate is never asked again/);
+  assert.match(orchestrate, /After asking the user, the orchestrator calls `wait_for_user_gate` once with the ids of every gate it just recorded when the tool is available/);
+  assert.match(orchestrate, /An `answered` wait result holds the user's answers to the listed gates, and gates it reports as still waiting get a new wait/);
+  assert.match(orchestrate, /A `resolved`, `timeout`, `unknown_gate`, or `unsupported_host` wait result, or an aborted wait, ends the turn/);
+  assert.match(orchestrate, /A wait result for a gate that the orchestrator already resolved needs no action/);
+  assert.match(orchestrate, /After a wait times out, is aborted, or returns `unsupported_host`, later gates in the same session skip the wait/);
+  assert.match(orchestrate, /Every question to the user goes through a recorded gate, and related questions share one gate/);
+  assert.match(orchestrate, /A missing roadmap entry for the initiative is a missing initiative input, so its roadmap entry exists before the initiative record is created/);
+  assert.match(orchestrate, /Graduation moves facts that later work needs from the initiative directory into durable sources/);
+  assert.match(orchestrate, /After the ship decision and graduation, coordination cleanup deletes the initiative directory, and the roadmap keeps the shipped record/);
+  assert.match(orchestrate, /A roadmap entry or priority change made during orchestration waits for user acceptance through a recorded `decision` gate unless `full` autonomy resolves roadmap priority/);
+  assert.match(workflow, /Use the initiative directory as the root slice folder, and keep every other slice folder directly under it/);
+  assert.match(await skill("design"), /The initiative directory is the root slice folder, other slice folders are flat under it/);
+  assert.match(await reference("orchestrate", "initiative-record.md"), /a cited `<file>\.md§<number>` is stored in that form/);
+  assert.match(orchestrate, /A gate that the autonomy setting settles automatically is not recorded/);
+  assert.match(runSettings, /Every question that waits on the user is recorded as a user gate in `state\.json` before it is asked/);
+  assert.match(workflow, /\| User gate record \| A pending `state\.json` entry that records a gate while it waits on the user/);
+  assert.match(workflow, /any answer the user recorded in the review browser/);
+  assert.match(workflow, /Change Prism records only through Prism MCP tools, never by importing, running, or editing the plugin's own files/);
+  assert.match(workflow, /pending user gate records, next actions, evidence paths, and a revision/);
 });

@@ -89,6 +89,14 @@ Run a local human review from the repository root:
 ./bin/prism review
 ```
 
+To try the entity-first review browser, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
+The seed builds a temporary project whose roadmap, initiative records, concept delta, review ledger, coordination state, recorded user gates, and evidence come from the real MCP tools.
+The browser opens on Attention, which lists the recorded user gates, and its sidebar expands only the path to the open initiative, slice, or library section.
+Answering a gate on Attention records the answer in `state.json`, and the `deliver-gate-answers` prompt hook passes answered gates to the agent with the next user message until the agent resolves them.
+In Claude Code the `wait_for_user_gate` tool also returns the answer: Claude Code moves the call to the background after about two minutes (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`), its result wakes the idle session, and progress notifications every minute keep the stdio idle window (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`) from cancelling it.
+The review page's secret session URL is the only credential for recording an answer, so anyone who can open that URL can answer for the user.
+One shipped initiative record is written directly, because its completion gate needs accepted reviews that the offline demo cannot produce.
+
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.
 

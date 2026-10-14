@@ -38,8 +38,13 @@ export function checkSchema(schema, value, field, errors) {
   else if (schema.type === "null" && value !== null) fail("must be null");
 }
 
+// The first few schema errors go into the message, because hosts show agents the message rather than the error data.
+export function describeErrors(errors = []) {
+  return `${errors.slice(0, 3).join("; ")}${errors.length > 3 ? `; and ${errors.length - 3} more` : ""}.`;
+}
+
 export function assertInput(schema, input) {
   const errors = [];
   checkSchema(schema, input, "arguments", errors);
-  if (errors.length) throw failure("validation_failed", "The concept delta arguments are invalid.", { errors });
+  if (errors.length) throw failure("validation_failed", `The concept delta arguments are invalid: ${describeErrors(errors)}`, { errors });
 }
