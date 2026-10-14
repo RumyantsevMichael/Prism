@@ -70,8 +70,6 @@ The instance opens existing records only after it confirms one link, a regular f
 The instance creates records and lock owners with exclusive no-follow opens and private permissions.
 The instance acquires, checks, and releases the retention lock through the configured protocol.
 
-The code view is [session-store-safety.puml](../../plans/session-store-safety/session-store-safety/session-store-safety.puml).
-
 ## Decision Log
 
 2026-10-12: Proposed one shared safety unit that keeps each store's lock protocol.
