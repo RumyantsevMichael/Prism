@@ -1,5 +1,76 @@
 # Changelog
 
+## [0.10.0](https://github.com/RumyantsevMichael/Prism/compare/v0.9.0...v0.10.0) (2026-10-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* map.puml and roadmap.puml are no longer read; initiatives use initiative.json and the roadmap uses roadmap.json, both managed through MCP tools, and the write-map skill no longer exists.
+
+### Added
+
+* act on user gate answers recorded in the review browser ([25718bd](https://github.com/RumyantsevMichael/Prism/commit/25718bd598b151291c203817278ce69e86cc69e2))
+* add agent tabs from get_review_url instead of replacing them ([a65bdbc](https://github.com/RumyantsevMichael/Prism/commit/a65bdbc32380ef81a76e90d3c035a4d017dc61ee))
+* add repository analysis tools and duplication gates for concept deltas ([e5acca0](https://github.com/RumyantsevMichael/Prism/commit/e5acca079c886490bc5cd177f56a2f535313fa4a))
+* answer user gates from the review browser ([e383613](https://github.com/RumyantsevMichael/Prism/commit/e383613bb4518ae7dddf892b5b27f55a6fc8c309))
+* drive roadmap and initiative changes through managed records ([0ecda5d](https://github.com/RumyantsevMichael/Prism/commit/0ecda5dd24cc1ef229203f63e9e989cd3ba3557a))
+* find same-name units and report complex units ([bc18fe9](https://github.com/RumyantsevMichael/Prism/commit/bc18fe94044e61186f781a858ee39a093af7af8b))
+* index repository units as a tree with structural fragments ([804c026](https://github.com/RumyantsevMichael/Prism/commit/804c026b40eb536589a8bf378bc75f089d6eb779))
+* manage roadmap and initiative records through MCP tools ([633624f](https://github.com/RumyantsevMichael/Prism/commit/633624fd5921fa98d4da87107eb649e34803d3aa))
+* move members that import an owned constant list out of shared literal groups ([85d2ca6](https://github.com/RumyantsevMichael/Prism/commit/85d2ca62d6f803bf31a71ac3e04f03b527dcedd6))
+* navigate the review browser by places, scoped trees, and preview tabs ([a11ee79](https://github.com/RumyantsevMichael/Prism/commit/a11ee79d235b2ceaee2c0fe84c3bf7fbf30704ee))
+* navigate the review browser by roadmap, initiative, and slice ([21ecc7b](https://github.com/RumyantsevMichael/Prism/commit/21ecc7bfdb8021a238e029f8298efc8c54253f67))
+* record orchestrator user gates while they wait on the user ([6c62e2d](https://github.com/RumyantsevMichael/Prism/commit/6c62e2d079cbeb611d3cf3582cf1a56b9a90a095))
+* record pending user gates in coordination state ([f2b23f9](https://github.com/RumyantsevMichael/Prism/commit/f2b23f9de57a7a4749480683c46eeb5aec880efa))
+* refuse concept delta readiness when additions copy a change into duplicated functions ([c6305a4](https://github.com/RumyantsevMichael/Prism/commit/c6305a4405dc4fc94d0acd45986a339c1035d787))
+* refuse concept delta readiness when modifications change copies of a duplicated function separately ([fe41461](https://github.com/RumyantsevMichael/Prism/commit/fe414616e2a23553294fed9349bbf24834100c36))
+* render concept deltas, review ledgers, coordination state, and evidence in the review browser ([14ae557](https://github.com/RumyantsevMichael/Prism/commit/14ae5575b69e1b3e9c8b8de260764a80a69fb0db))
+* report analysis findings that a change adds in concept delta comparisons ([5add169](https://github.com/RumyantsevMichael/Prism/commit/5add169641646b789af124aae141d7a1b9a353dc))
+* report cohesion clusters and shared literal groups ([fece81a](https://github.com/RumyantsevMichael/Prism/commit/fece81a16e270eb129ef9451081e96e99034b848))
+* report functions that share rare dependencies across files ([49a2b4b](https://github.com/RumyantsevMichael/Prism/commit/49a2b4b860f05ea642f153ee5a81b00b31e68d15))
+* report instruction clients, entry shapes, and repeated key sets in shared literal groups ([c185f0b](https://github.com/RumyantsevMichael/Prism/commit/c185f0b7607c306df90feb9f3a3ef4acbdcbfdd1))
+* report module interfaces with unused exports and delegating classes ([16cf1d8](https://github.com/RumyantsevMichael/Prism/commit/16cf1d8f792b60a17bb216252a5e35b0b1675ce2))
+* resume orchestration when the user answers a gate in the browser ([84fedd4](https://github.com/RumyantsevMichael/Prism/commit/84fedd49d675bbfa172e98f9946339be7a2dc482))
+* retain repository analysis results as receipts ([51585f3](https://github.com/RumyantsevMichael/Prism/commit/51585f3d691ccb34213098a56d69b103976c8dd8))
+* show project source files read-only in the review browser ([4c1b7d5](https://github.com/RumyantsevMichael/Prism/commit/4c1b7d5b0b40a8e92dc5a3b4785405ed4a88a687))
+* tune shared dependency groups for Go, Rust, Java, C#, and C++ ([1b2026e](https://github.com/RumyantsevMichael/Prism/commit/1b2026e18f6488523fa62496a9c523c76b511145))
+* wait for a browser gate answer in a background tool call ([b79a750](https://github.com/RumyantsevMichael/Prism/commit/b79a750380b9483c1bb9ba54dc2c0d3d779645e6))
+
+
+### Fixed
+
+* explain refused record writes and wait on several gates ([e7ccb42](https://github.com/RumyantsevMichael/Prism/commit/e7ccb4234b2a2383d1cd3222ab82e99c474a1d2e))
+* find the root slice in the initiative directory and gate waits on the host ([240b687](https://github.com/RumyantsevMichael/Prism/commit/240b687d8e310dff951344acd7ddf983d3d3e587))
+* improve native semantic retrieval quality and preparation time ([4f74276](https://github.com/RumyantsevMichael/Prism/commit/4f7427606c24e2a9f31121cb1a0ee2ad874c4f51))
+* keep agents on Prism tools and finish the initiative lifecycle ([8aaeef8](https://github.com/RumyantsevMichael/Prism/commit/8aaeef833c0908fd3960218f128048aa0e140a0d))
+* keep review batches on update_review and gate cleanup of uncommitted plans ([44b19f7](https://github.com/RumyantsevMichael/Prism/commit/44b19f74d9145525f7bbee28e4ca697c5cb6625d))
+* keep the plugin MCP definition out of project config ([44249fd](https://github.com/RumyantsevMichael/Prism/commit/44249fd6057b6595ae8d9cc9e302d39eeacb3b4c))
+* lead refactoring discovery to the repository tools and name expected values in tool errors ([5a6caaa](https://github.com/RumyantsevMichael/Prism/commit/5a6caaa4f17efb694bd109e5e2bc021da674de38))
+* list only the refused problems that the error message does not already state ([f93f08a](https://github.com/RumyantsevMichael/Prism/commit/f93f08ad080713525284cf5dae313e996ec39a1b))
+* list refused review problems, check lane coverage and reviewPath early, and keep snapshots stable when ignored files are force-added ([13babad](https://github.com/RumyantsevMichael/Prism/commit/13babad6280b156bb876b1c31c1aaa4eeee025b0))
+* match review scopes written with a trailing slash ([b727056](https://github.com/RumyantsevMichael/Prism/commit/b727056e7e7663267707038f81ae565314c7159d))
+* remove downloaded runtime archives after extraction and prune stale native assets ([07d4e48](https://github.com/RumyantsevMichael/Prism/commit/07d4e4893f76e97eca0f4a4e45c605c31696f7fc))
+* remove review harness friction and share one safety unit between the session stores ([568dc18](https://github.com/RumyantsevMichael/Prism/commit/568dc18542a041385db9b94aebb347570a2c2be8))
+* report native semantic capabilities, bound provider diagnostics, and accept trailing slashes in path filters ([ed86118](https://github.com/RumyantsevMichael/Prism/commit/ed86118792240ac08c23373f42dda0d820df65b3))
+* resolve Markdown links through explicit anchors and name unresolved structure ([257ac3f](https://github.com/RumyantsevMichael/Prism/commit/257ac3f19d46ebafe6edce0d042e0503a02e32b5))
+* say why a review wave cannot be accepted ([dab678b](https://github.com/RumyantsevMichael/Prism/commit/dab678b650b94a07ec4498fa53135ff22d868395))
+* share review browser reads across one refresh ([ee93332](https://github.com/RumyantsevMichael/Prism/commit/ee93332cd85c79df7313a637fd39b5c426e41c50))
+* state the root slice folder, roadmap acceptance, and wait fallbacks ([da46edf](https://github.com/RumyantsevMichael/Prism/commit/da46edff3f126253938228371e2cf04949d02dc6))
+* sync decision history records to disk before publishing them ([6ceabab](https://github.com/RumyantsevMichael/Prism/commit/6ceabab7e29250b5fd898b4090cbd58237d6c0f6))
+* sync decision history records to disk before publishing them ([b51b0d9](https://github.com/RumyantsevMichael/Prism/commit/b51b0d9db3adc7aab14c97d7b2ac784659124458))
+
+
+### Documentation
+
+* accept the records ADR, propose the user gate ADR, add an upgrade guide ([5754a9a](https://github.com/RumyantsevMichael/Prism/commit/5754a9a685434d0644af098d603f8be7cfe6921e))
+
+
+### Changed
+
+* name structural source units separately from concepts ([1ba4e3c](https://github.com/RumyantsevMichael/Prism/commit/1ba4e3c38e75ddb8c02c9acf0fe1687618bcb291))
+* separate runtime sources from shipped output ([#12](https://github.com/RumyantsevMichael/Prism/issues/12)) ([ab2d44c](https://github.com/RumyantsevMichael/Prism/commit/ab2d44c6c48bfc8ba539b4893d38aa5fd7c12455))
+* share one safety unit between the session stores ([0052a40](https://github.com/RumyantsevMichael/Prism/commit/0052a4008c5327c30cf5c3b257a94dadaf12cd3b))
+
 ## [0.9.0](https://github.com/RumyantsevMichael/Prism/compare/v0.8.0...v0.9.0) (2026-10-05)
 
 
