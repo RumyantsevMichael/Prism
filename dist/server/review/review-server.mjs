@@ -1,17 +1,23 @@
 import { createServer } from "node:https";
 import { randomBytes, X509Certificate } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
+import { getConceptDelta } from "../conservation/concept-delta.mjs";
+import { conservationStore } from "../conservation/conservation-store.mjs";
+import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { answerGate, entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const PUBLIC_DIR = path.join(SERVER_DIR, "public");
 const VENDOR_DIR = path.join(PLUGIN_ROOT, "vendor", "plantuml");
-const TEXT_EXTENSIONS = new Set([".md", ".feature", ".puml"]);
+const VIEWS_DIR = path.join(PUBLIC_DIR, "views");
+const TEXT_EXTENSIONS = new Set([".md", ".feature", ".puml", ".json"]);
+const EVIDENCE_ARRAY_LIMIT = 200;
 const AUTHORITY_CERTIFICATE_NAME = "review-ca-cert.pem";
 const AUTHORITY_PRIVATE_KEY_NAME = "review-ca-key.pem";
 const SERVER_CERTIFICATE_NAME = "review-server-cert.pem";
@@ -40,27 +46,12 @@ async function resolveProjectFile(projectRoot, requestedPath) {
   return resolved;
 }
 
-async function readOptional(filePath) {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
-}
-
 function configuredRoots(config) {
   const roots = new Set(["docs"]);
-  const pathsSection = config.split(/^## Paths\s*$/m)[1]?.split(/^## /m)[0] ?? "";
-  for (const match of pathsSection.matchAll(/^\s*-\s+[^:]+:\s+(.+)\s*$/gm)) {
-    const value = match[1].trim().replace(/^['"]|['"]$/g, "");
-    if (value === "n/a" || path.isAbsolute(value)) {
-      continue;
+  for (const value of Object.values(config.paths)) {
+    if (value) {
+      roots.add(path.posix.extname(value) ? path.posix.dirname(value) : value);
     }
-    const normalized = value.replace(/\/$/, "");
-    roots.add(path.extname(normalized) ? path.dirname(normalized) : normalized);
   }
   return [...roots].filter((value) => value && value !== ".");
 }
@@ -92,8 +83,44 @@ async function walkArtifacts(projectRoot, relativeRoot, results) {
   }
 }
 
+const SOURCE_SIZE_LIMIT = 512 * 1024;
+const SOURCE_CACHE_MS = 2000;
+const SECRET_NAME = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?)$|\.(pem|key|p12|pfx|jks|keystore|kdbx|gpg|asc)$/i;
+const BINARY_EXTENSION = /\.(png|jpe?g|gif|webp|ico|bmp|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|class|pyc|so|dylib|dll|exe|wasm|woff2?|ttf|otf|eot|mp3|mp4|mov|avi|sqlite|db)$/i;
+const sourceCache = new Map();
+
+function gitListFiles(projectRoot) {
+  return new Promise((resolve) => {
+    execFile("git", ["-C", projectRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => {
+      resolve(error ? [] : stdout.split("\0").filter(Boolean));
+    });
+  });
+}
+
+// Source files are shown read-only: tracked or unignored files only, without secrets, binaries, or very large files.
+export async function listSourceFiles(projectRoot) {
+  const hit = sourceCache.get(projectRoot);
+  if (hit && Date.now() - hit.at < SOURCE_CACHE_MS) return hit.value;
+  const value = (async () => {
+    const files = [];
+    for (const file of await gitListFiles(projectRoot)) {
+      const name = path.posix.basename(file);
+      if (SECRET_NAME.test(name) || BINARY_EXTENSION.test(name)) continue;
+      try {
+        const metadata = await stat(path.join(projectRoot, file));
+        if (metadata.isFile() && metadata.size <= SOURCE_SIZE_LIMIT) files.push(file);
+      } catch {
+        // A file deleted after git listed it is skipped.
+      }
+    }
+    return files.sort();
+  })();
+  sourceCache.set(projectRoot, { at: Date.now(), value });
+  return value;
+}
+
 export async function listArtifacts(projectRoot) {
-  const config = (await readOptional(path.join(projectRoot, ".prism", "workflow.md"))) ?? "";
+  const config = await readWorkflowConfig(projectRoot);
   const results = new Set();
   for (const root of configuredRoots(config)) {
     await walkArtifacts(projectRoot, root, results);
@@ -116,9 +143,82 @@ function linkedDiagramPaths(artifactPath, content) {
   return [...links];
 }
 
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function artifactKind(artifactPath, data) {
+  const name = path.posix.basename(artifactPath.split(path.sep).join("/"));
+  if (!isRecord(data)) {
+    return "json";
+  }
+  if (name === "concept-delta.json" && Array.isArray(data.concepts)) {
+    return "concept-delta";
+  }
+  if (name === "review.json" && Array.isArray(data.waves) && Array.isArray(data.findings)) {
+    return "review-ledger";
+  }
+  if (name === "state.json" && Number.isInteger(data.schemaVersion) && (Array.isArray(data.active) || isRecord(data.settings))) {
+    return "coordination-state";
+  }
+  return "json";
+}
+
+async function loadJsonArtifact(projectRoot, artifactPath, content) {
+  let data;
+  try {
+    data = JSON.parse(content);
+  } catch (error) {
+    return { kind: "json", parseError: error.message };
+  }
+  const kind = artifactKind(artifactPath, data);
+  const result = { kind, data };
+  if (kind === "concept-delta") {
+    try {
+      const { concepts, selectedCount, nextOffset, ...summary } = await getConceptDelta({ projectRoot, deltaPath: artifactPath, limit: 1 });
+      result.summary = summary;
+    } catch (error) {
+      result.summaryError = error.message;
+    }
+  }
+  return result;
+}
+
+function truncateArrays(value, location, truncated) {
+  if (Array.isArray(value)) {
+    if (value.length > EVIDENCE_ARRAY_LIMIT) {
+      truncated[location || "/"] = value.length;
+    }
+    return value.slice(0, EVIDENCE_ARRAY_LIMIT).map((item, index) => truncateArrays(item, `${location}/${index}`, truncated));
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, truncateArrays(item, `${location}/${key}`, truncated)]));
+  }
+  return value;
+}
+
+export async function loadEvidence(projectRoot, evidenceId) {
+  if (typeof evidenceId !== "string" || !/^[a-f0-9]{64}$/.test(evidenceId)) {
+    throw new Error("The evidence ID must be a 64-character lowercase hexadecimal digest.");
+  }
+  const truncated = {};
+  const record = truncateArrays(await conservationStore.get(projectRoot, evidenceId), "", truncated);
+  return { id: evidenceId, kind: record.kind, record, truncated, arrayLimit: EVIDENCE_ARRAY_LIMIT };
+}
+
 export async function loadArtifact(projectRoot, artifactPath) {
   const absolutePath = await resolveProjectFile(projectRoot, artifactPath);
+  if (!TEXT_EXTENSIONS.has(path.extname(artifactPath).toLowerCase())) {
+    const bytes = await readFile(absolutePath);
+    if (bytes.subarray(0, 8192).includes(0)) throw new Error("The file is binary and cannot be shown.");
+    const metadata = await stat(absolutePath);
+    return { path: artifactPath, kind: "source", content: bytes.toString("utf8"), diagrams: [], modifiedAt: metadata.mtimeMs };
+  }
   const content = await readFile(absolutePath, "utf8");
+  if (path.extname(artifactPath).toLowerCase() === ".json") {
+    const metadata = await stat(absolutePath);
+    return { path: artifactPath, content, diagrams: [], modifiedAt: metadata.mtimeMs, ...(await loadJsonArtifact(projectRoot, artifactPath, content)) };
+  }
   const diagrams = [];
   for (const diagramPath of linkedDiagramPaths(artifactPath, content)) {
     try {
@@ -320,12 +420,12 @@ export async function startReviewServer(options = {}) {
   const certificate = await localCertificate(options);
   const token = randomBytes(24).toString("base64url");
   const prefix = `/session/${token}`;
-  let session = { openTabs: [], activeTab: null, revision: 0 };
+  let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
   const viewers = new Map();
   let viewerOpenLease = null;
 
   function sessionSnapshot() {
-    return { openTabs: [...session.openTabs], activeTab: session.activeTab, revision: session.revision };
+    return { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], revision: session.revision };
   }
 
   function clearViewerOpenLease() {
@@ -392,36 +492,80 @@ export async function startReviewServer(options = {}) {
     writeSessionEvent(response);
   }
 
-  async function updateSession(tabs, activeTab, activeTabProvided) {
-    const requestedTabs = normalizeTabs(tabs);
-    const availableArtifacts = new Set(await listArtifacts(projectRoot));
-    const unknownTab = requestedTabs.find((tab) => !availableArtifacts.has(tab));
-    if (unknownTab) {
-      throw new Error(`The artifact is not available for review: ${unknownTab}`);
-    }
-    let nextActiveTab;
-    if (activeTabProvided) {
-      if (activeTab !== null && (typeof activeTab !== "string" || !requestedTabs.includes(activeTab))) {
-        throw new Error("The active tab must be null or one of the open tabs.");
+  async function assertAvailable(tabs) {
+    const availableArtifacts = new Set([...await listArtifacts(projectRoot), ...await listSourceFiles(projectRoot)]);
+    for (const tab of tabs) {
+      if (!availableArtifacts.has(tab) && !(parseEntityRef(tab) && await entityExists(projectRoot, tab))) {
+        throw new Error(`The artifact is not available for review: ${tab}`);
       }
-      nextActiveTab = activeTab;
-    } else {
-      nextActiveTab = session.activeTab && requestedTabs.includes(session.activeTab) ? session.activeTab : requestedTabs[0] ?? null;
     }
-    if (requestedTabs.length === 0) {
-      nextActiveTab = null;
-    }
-    if (requestedTabs.length !== session.openTabs.length || requestedTabs.some((tab, index) => tab !== session.openTabs[index]) || nextActiveTab !== session.activeTab) {
-      session = { openTabs: requestedTabs, activeTab: nextActiveTab, revision: session.revision + 1 };
+  }
+
+  function commitSession(next) {
+    const changed = ["openTabs", "agentTabs"].some((key) => next[key].length !== session[key].length || next[key].some((tab, index) => tab !== session[key][index]))
+      || next.activeTab !== session.activeTab || next.previewTab !== session.previewTab;
+    if (changed) {
+      session = { ...next, revision: session.revision + 1 };
       broadcastSession();
     }
     return sessionSnapshot();
   }
 
+  // The browser owns the preview tab: one replaceable tab for browsing, while kept and agent tabs stay open.
+  async function updateSession(body) {
+    const requestedTabs = normalizeTabs(body.openTabs);
+    await assertAvailable(requestedTabs);
+    let nextActiveTab;
+    if (Object.hasOwn(body, "activeTab")) {
+      if (body.activeTab !== null && (typeof body.activeTab !== "string" || !requestedTabs.includes(body.activeTab))) {
+        throw new Error("The active tab must be null or one of the open tabs.");
+      }
+      nextActiveTab = body.activeTab;
+    } else {
+      nextActiveTab = session.activeTab && requestedTabs.includes(session.activeTab) ? session.activeTab : requestedTabs[0] ?? null;
+    }
+    let previewTab = session.previewTab && requestedTabs.includes(session.previewTab) ? session.previewTab : null;
+    if (Object.hasOwn(body, "previewTab")) {
+      if (body.previewTab !== null && (typeof body.previewTab !== "string" || !requestedTabs.includes(body.previewTab))) {
+        throw new Error("The preview tab must be null or one of the open tabs.");
+      }
+      previewTab = body.previewTab;
+    }
+    let agentTabs = session.agentTabs.filter((tab) => requestedTabs.includes(tab));
+    if (Object.hasOwn(body, "agentTabs")) {
+      const requestedAgentTabs = normalizeTabs(body.agentTabs);
+      if (requestedAgentTabs.some((tab) => !requestedTabs.includes(tab))) {
+        throw new Error("Agent tabs must be open tabs.");
+      }
+      agentTabs = requestedAgentTabs;
+    }
+    if (requestedTabs.length === 0) {
+      nextActiveTab = null;
+    }
+    return commitSession({ openTabs: requestedTabs, activeTab: nextActiveTab, previewTab: agentTabs.includes(previewTab) ? null : previewTab, agentTabs });
+  }
+
+  // get_review_url adds tabs the same way present_review does, so neither tool closes the human's tabs.
   async function setOpenTabs(tabs) {
+    return (await presentTabs(tabs)).openTabs;
+  }
+
+  // present_review adds agent tabs beside the human's tabs and focuses the first one without replacing the preview.
+  async function presentTabs(tabs) {
     const requestedTabs = normalizeTabs(tabs);
-    const updated = await updateSession(requestedTabs, requestedTabs[0] ?? null, true);
-    return updated.openTabs;
+    await assertAvailable(requestedTabs);
+    if (requestedTabs.length === 0) {
+      if (session.openTabs.includes("attention")) {
+        return commitSession({ ...session, activeTab: "attention" });
+      }
+      // Attention opens in the preview tab, replacing whatever the preview showed.
+      const openTabs = [...session.openTabs.filter((tab) => tab !== session.previewTab), "attention"];
+      return commitSession({ openTabs, activeTab: "attention", previewTab: "attention", agentTabs: session.agentTabs });
+    }
+    const openTabs = [...session.openTabs, ...requestedTabs.filter((tab) => !session.openTabs.includes(tab))];
+    const agentTabs = [...session.agentTabs, ...requestedTabs.filter((tab) => !session.agentTabs.includes(tab))];
+    const previewTab = requestedTabs.includes(session.previewTab) ? null : session.previewTab;
+    return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs });
   }
 
   function closeViewerStreams() {
@@ -451,17 +595,45 @@ export async function startReviewServer(options = {}) {
         await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
       } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
         await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
+      } else if (/^\/views\/[a-z][a-z-]*\.js$/.test(route)) {
+        await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
       } else if (route === "/api/events" && request.method === "GET") {
         openViewerStream(response);
       } else if (route === "/api/index") {
-        send(response, 200, JSON.stringify({ projectRoot, artifacts: await listArtifacts(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
+        send(response, 200, JSON.stringify({ projectRoot, artifacts: await listArtifacts(projectRoot), sources: await listSourceFiles(projectRoot), navigation: await loadNavigation(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
       } else if (route === "/api/session" && request.method === "GET") {
         send(response, 200, JSON.stringify(sessionSnapshot()), "application/json; charset=utf-8");
       } else if (route === "/api/session" && request.method === "PUT") {
         const body = await readJson(request);
-        send(response, 200, JSON.stringify(await updateSession(body.openTabs, body.activeTab, Object.hasOwn(body, "activeTab"))), "application/json; charset=utf-8");
+        send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
+      } else if (route === "/api/gates/answer" && request.method === "POST") {
+        const origin = request.headers.origin;
+        if (!String(request.headers["content-type"] ?? "").startsWith("application/json") || (origin && new URL(origin).host !== request.headers.host)) {
+          send(response, 403, "Answers must come from the review page as JSON.");
+          return;
+        }
+        try {
+          const answered = await answerGate(projectRoot, await readJson(request));
+          forgetWorkspace();
+          send(response, 200, JSON.stringify(answered), "application/json; charset=utf-8");
+        } catch (error) {
+          const status = { gate_answered: 409, unknown_gate: 409, invalid_answer: 400 }[error.code] ?? 400;
+          send(response, status, JSON.stringify({ code: error.code ?? "invalid_answer", message: error.message }), "application/json; charset=utf-8");
+        }
+      } else if (route === "/api/context") {
+        send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
+      } else if (route === "/api/entity") {
+        send(response, 200, JSON.stringify(await loadEntity(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
+      } else if (route === "/api/evidence") {
+        send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"))), "application/json; charset=utf-8");
       } else if (route === "/api/artifact") {
         const artifactPath = url.searchParams.get("path");
+        // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.
+        await resolveProjectFile(projectRoot, artifactPath);
+        if (!(await listArtifacts(projectRoot)).includes(artifactPath) && !(await listSourceFiles(projectRoot)).includes(artifactPath)) {
+          send(response, 404, "The file is not available for review.");
+          return;
+        }
         send(response, 200, JSON.stringify(await loadArtifact(projectRoot, artifactPath)), "application/json; charset=utf-8");
       } else {
         send(response, 404, "Not found");
@@ -504,7 +676,7 @@ export async function startReviewServer(options = {}) {
     },
     async open(artifactPaths) {
       const tabs = normalizeTabs(artifactPaths);
-      await setOpenTabs(tabs);
+      await presentTabs(tabs);
       const url = this.reviewUrl(tabs);
       if (viewers.size > 0 || viewerOpenLease) {
         return { url, opened: false, ...sessionSnapshot() };

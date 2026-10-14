@@ -75,7 +75,10 @@ test('implementation review must cover deleted paths even when the result is emp
   assert.deepEqual(compared.observations,[]);
   await assert.rejects(act('coord',[wave('incomplete','implementation-review',result,comparisonId,['unrelated.js'])]),error=>error.code==='validation_failed'&&error.problems.some(item=>item.code==='review_coverage_missing'&&item.file==='delete.js'));
   await assert.rejects(act('coord',[wave('anchors','implementation-review',result,comparisonId,['requirements.txt#1'])]),error=>error.code==='validation_failed'&&/path prefixes/.test(error.message));
-  assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,false);
+  await act('coord',[wave('pending','implementation-review',result,comparisonId,scope)]);
+  const blocked=await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'});
+  assert.equal(blocked.ready,false);
+  assert.match(blocked.problems[0].message,/wave pending has no accepted result, and accepting it now would fail on: lane_result_stale x1/);
   await act('coord',[wave('complete','implementation-review',result,comparisonId,scope)]);
   await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
   assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,true);
@@ -493,4 +496,13 @@ test('readiness rejects additions and parallel modifications that copy a change 
  assert.deepEqual(await growth({...base,concepts:[modify('a.ts')]}),[]);
  assert.deepEqual(await growth({...base,concepts:[entry('digest-a','MODIFY',[symbol('a.ts','digest')],[symbol('a.ts','digest')]),entry('digest-b','MODIFY',[symbol('b.ts','digest')],[symbol('b.ts','digest')])]}),[]);
  assert.deepEqual(await growth({...base,concepts:[modify('a.ts'),modify('b.ts'),consolidate]}),[]);
+});
+
+test('treats a scope with a trailing slash like the bare directory',async()=>{
+  const {withinScope}=await import('../../dist/server/conservation/conservation-store.mjs');
+  assert.equal(withinScope('sheetcalc/formula.py',['sheetcalc/']),true);
+  assert.equal(withinScope('sheetcalc/formula.py',['sheetcalc']),true);
+  assert.equal(withinScope('sheetcalc',['sheetcalc/']),true);
+  assert.equal(withinScope('sheetcalcx/a.py',['sheetcalc/']),false);
+  assert.equal(withinScope('a.py',['/']),false);
 });

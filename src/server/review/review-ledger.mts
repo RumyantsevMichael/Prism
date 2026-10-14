@@ -158,6 +158,18 @@ async function assessmentValid(projectRoot: string, review: ReviewRecord, wave: 
   }
 }
 
+// Hosts show agents the error message, not its data, so refusals summarize their problems by code with example ids.
+export function summarizeProblems(problems: { code: string; message: string; id?: string }[]) {
+  const groups = new Map<string, { message: string; ids: string[]; count: number }>();
+  for (const problem of problems) {
+    const group = groups.get(problem.code) ?? { message: problem.message, ids: [], count: 0 };
+    group.count += 1;
+    if (problem.id && group.ids.length < 3) group.ids.push(problem.id);
+    groups.set(problem.code, group);
+  }
+  return [...groups].map(([code, group]) => `${code} x${group.count}: ${group.message}${group.ids.length ? ` (for example ${group.ids.join(", ")})` : ""}`).join("; ");
+}
+
 async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wave, requireLaneResults: boolean) {
   const problems: { code: string; message: string; id?: string }[] = [];
   const add = (code: string, message: string, id?: string) => problems.push({ code, message, ...(id ? { id } : {}) });
@@ -204,7 +216,11 @@ export async function checkReviewGate(input: { projectRoot: string; reviewPath: 
   const review = loaded.document;
   if (!review) return { ready: false, problems: [{ code: "evidence_missing", message: "The review record is missing." }] };
   const mode = input.gate === "implementation" ? "design-audit" : "implementation-review", wave = [...review.waves].reverse().find(item => item.mode === mode);
-  if (!wave?.accepted) return { ready: false, revision: loaded.revision, problems: [{ code: "review_not_accepted", message: "The required review wave has no accepted result." }] };
+  if (!wave?.accepted) {
+    const blockers = wave ? await waveProblems(input.projectRoot, review, wave, true).catch(() => []) : [];
+    const message = blockers.length ? `The required review wave ${wave!.id} has no accepted result, and accepting it now would fail on: ${summarizeProblems(blockers)}.` : "The required review wave has no accepted result.";
+    return { ready: false, revision: loaded.revision, problems: [{ code: "review_not_accepted", message }] };
+  }
   const problems = await waveProblems(input.projectRoot, review, wave, true);
   if (wave.accepted.evidenceDigest !== waveDigest(review, wave)) problems.push({ code: "review_result_stale", message: "The accepted review inputs changed." });
   if (input.gate === "completion") {
@@ -328,7 +344,7 @@ export async function updateReview(input: UpdateInput) {
         } else if (op === "accept_wave") {
           requireRole(review, input.actor, "coordinator");
           const problems = await waveProblems(input.projectRoot, review, wave, true);
-          if (problems.length) throw conservationError("gate_blocked", "The review wave does not satisfy its acceptance gate.", { problems });
+          if (problems.length) throw conservationError("gate_blocked", `The review wave does not satisfy its acceptance gate: ${summarizeProblems(problems)}.`, { problems });
           wave.accepted = { evidenceDigest: waveDigest(review, wave), actor: input.actor.id, at: now() };
         }
       }

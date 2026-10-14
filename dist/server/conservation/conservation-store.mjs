@@ -19,7 +19,10 @@ async function trackedIgnored(root) {
 }
 const conservationError = (code, message, details = {}) => Object.assign(semanticError(code, message), details);
 const canonical = (value) => JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b, "en"))) : item);
-const withinScope = (file, scope) => scope.some((prefix) => file === prefix || file.startsWith(`${prefix}/`));
+const withinScope = (file, scope) => scope.some((entry) => {
+  const prefix = entry.replace(/\/+$/, "");
+  return prefix !== "" && (file === prefix || file.startsWith(`${prefix}/`));
+});
 const validId = (id) => {
   if (!/^[a-f\d]{64}$/.test(id)) throw conservationError("validation_failed", "Evidence IDs must be SHA-256 values.");
   return id;
@@ -92,7 +95,7 @@ class ConservationStore {
     const { directory, root } = await this.location(projectRoot, true), registry = path.join(directory, "outputs.json");
     for (const output of outputs) {
       const name = path.posix.basename(output);
-      if (!["state.json", "recovery.md"].includes(name)) throw conservationError("invalid_path", "Only coordination evidence can be registered here.");
+      if (!["state.json", "recovery.md", "initiative.json", "initiative.md", "roadmap.json", "roadmap.md"].includes(name)) throw conservationError("invalid_path", "Only coordination evidence can be registered here.");
       await resolveArtifactPath(root, output, false, name);
     }
     await withArtifactLock(registry, () => withFileLock(registry, async () => {

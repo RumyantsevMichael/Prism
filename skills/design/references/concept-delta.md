@@ -174,7 +174,7 @@ Scripted assessment fixtures test enforcement; they do not prove semantic correc
 Implementation never rewrites the accepted plan to match its output.
 Coordination uses activities `design`, `implementation`, `review`, and `integration`; descriptive labels are separate.
 Typed `finish` verifies completion evidence; `release` and pause remove active coordination without claiming completion.
-The map writer checks current completion evidence before marking a slice done.
+`update_initiative` checks current completion evidence before marking a slice done.
 These gates control Prism records; they do not prevent direct filesystem edits.
 
 ## Migration

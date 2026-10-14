@@ -1,15 +1,22 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { applyActiveOperations, withReviewGatesLocked } from "./active-operations.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { mkdir, readFile, realpath, rm, lstat } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { revisionMismatch } from "./revision.mjs";
 
 const SCHEMA_VERSION = 1;
 
 const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence"]);
 const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "models"]);
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
+const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
+const GATE_KEYS = new Set(["id", "kind", "slice", "question", "artifacts", "options", "askedAt", "answer"]);
+const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
+const OPTION_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const ANSWER_KEYS = new Set(["choice", "note", "via", "answeredAt"]);
+const REVIEW_CHOICES = new Set(["approve", "request-changes"]);
 const SETTING_VALUES = {
   autonomy: new Set(["conservative", "broad", "full"]),
   agentFlow: new Set(["mono", "multi"]),
@@ -286,6 +293,172 @@ function validateActive(value, errors, warnings) {
   });
 }
 
+function validGatePath(value) {
+  if (typeof value !== "string" || !value.trim() || path.isAbsolute(value) || value.includes("\\")) {
+    return false;
+  }
+  const normalized = path.posix.normalize(value);
+  return normalized === value && normalized !== "." && !normalized.startsWith("../");
+}
+
+function validateGate(entry, entryPath, errors) {
+  for (const key of Object.keys(entry)) {
+    if (!GATE_KEYS.has(key)) {
+      addError(errors, `${entryPath}.${key}`, "is not a user gate field");
+    }
+  }
+  if (typeof entry.id !== "string" || !GATE_ID.test(entry.id)) {
+    addError(errors, `${entryPath}.id`, "must be a gate id assigned by the ask operation");
+  }
+  if (!GATE_KINDS.has(entry.kind)) {
+    addError(errors, `${entryPath}.kind`, `must be one of ${[...GATE_KINDS].join(", ")}`);
+  }
+  if (entry.slice !== undefined && (typeof entry.slice !== "string" || !entry.slice.trim())) {
+    addError(errors, `${entryPath}.slice`, "must be a non-empty slice slug when present");
+  }
+  if (typeof entry.question !== "string" || !entry.question.trim() || entry.question.length > 4000) {
+    addError(errors, `${entryPath}.question`, "must be a non-empty question of at most 4000 characters");
+  }
+  if (!Array.isArray(entry.artifacts) || entry.artifacts.length > 50) {
+    addError(errors, `${entryPath}.artifacts`, "must be an array of at most 50 project-relative paths");
+  } else {
+    entry.artifacts.forEach((item, index) => {
+      if (!validGatePath(item)) {
+        addError(errors, `${entryPath}.artifacts[${index}]`, "must be a normalized project-relative path");
+      }
+    });
+  }
+  if (entry.options !== undefined) {
+    if (entry.kind !== "decision") {
+      addError(errors, `${entryPath}.options`, "is allowed only for decision gates; visual-review and correctness answers are approve or request-changes, and assistance answers are done");
+    } else if (!Array.isArray(entry.options) || entry.options.length === 0 || entry.options.length > 8) {
+      addError(errors, `${entryPath}.options`, "must list one to eight options");
+    } else {
+      const ids = new Set();
+      entry.options.forEach((option, index) => {
+        if (!isRecord(option) || Object.keys(option).some((key) => key !== "id" && key !== "label") || !OPTION_ID.test(option.id ?? "") || typeof option.label !== "string" || !option.label.trim() || option.label.length > 200) {
+          addError(errors, `${entryPath}.options[${index}]`, "must be { id, label } with a lowercase slug id and a label of at most 200 characters");
+        } else if (ids.has(option.id)) {
+          addError(errors, `${entryPath}.options[${index}].id`, "must not duplicate another option");
+        } else {
+          ids.add(option.id);
+        }
+      });
+    }
+  }
+  if (typeof entry.askedAt !== "string" || Number.isNaN(Date.parse(entry.askedAt))) {
+    addError(errors, `${entryPath}.askedAt`, "must be an ISO timestamp");
+  }
+  if (entry.answer !== undefined) {
+    if (!isRecord(entry.answer) || Object.keys(entry.answer).some((key) => !ANSWER_KEYS.has(key))) {
+      addError(errors, `${entryPath}.answer`, "must contain only choice, note, via, and answeredAt");
+    } else {
+      const problem = answerProblem(entry, entry.answer.choice, entry.answer.note);
+      if (problem) addError(errors, `${entryPath}.answer`, problem);
+      if (entry.answer.via !== "browser") addError(errors, `${entryPath}.answer.via`, "must be browser");
+      if (typeof entry.answer.answeredAt !== "string" || Number.isNaN(Date.parse(entry.answer.answeredAt))) addError(errors, `${entryPath}.answer.answeredAt`, "must be an ISO timestamp");
+    }
+  }
+}
+
+// Each gate kind accepts its own choices; a note carries the reason whenever the answer is not a plain acceptance.
+function answerProblem(gate, choice, note) {
+  if (note !== null && (typeof note !== "string" || !note.trim() || note.length > 4000)) {
+    return "note must be null or a non-empty text of at most 4000 characters";
+  }
+  if (gate.kind === "visual-review" || gate.kind === "correctness") {
+    if (!REVIEW_CHOICES.has(choice)) return "choice must be approve or request-changes";
+    if (choice === "request-changes" && note === null) return "a request for changes needs a note";
+  } else if (gate.kind === "assistance") {
+    if (choice !== "done") return "choice must be done";
+  } else if (gate.kind === "decision") {
+    if (choice === null) {
+      if (note === null) return "an answer without a listed option needs a note";
+    } else if (!(gate.options ?? []).some((option) => option.id === choice)) {
+      return "choice must be one of the gate options or null";
+    }
+  }
+  return null;
+}
+
+function validatePending(value, errors) {
+  if (!Array.isArray(value)) {
+    addError(errors, "pending", "must be an array of strings or user gates");
+    return;
+  }
+  const seen = new Set();
+  value.forEach((item, index) => {
+    const entryPath = `pending[${index}]`;
+    if (isRecord(item)) {
+      validateGate(item, entryPath, errors);
+      if (seen.has(item.id)) {
+        addError(errors, `${entryPath}.id`, "must not duplicate another gate");
+      }
+      seen.add(item.id);
+      return;
+    }
+    if (typeof item !== "string" || !item.trim()) {
+      addError(errors, entryPath, "must be a non-empty string or a user gate");
+      return;
+    }
+    if (seen.has(item)) {
+      addError(errors, entryPath, "must not duplicate another item");
+    }
+    seen.add(item);
+  });
+}
+
+function applyGateOperations(pending, operations) {
+  const next = [...pending];
+  const opened = [];
+  operations.forEach((operation, index) => {
+    if (!isRecord(operation)) {
+      throw error("invalid_changes", `gateOperations[${index}] must be an object.`);
+    }
+    if (operation.op === "ask") {
+      const unknown = Object.keys(operation).filter((key) => !["op", "kind", "slice", "question", "artifacts", "options"].includes(key));
+      if (unknown.length) {
+        throw error("invalid_changes", `gateOperations[${index}] has unsupported fields: ${unknown.join(", ")}.`);
+      }
+      const gate = {
+        id: `gate-${randomBytes(6).toString("hex")}`,
+        kind: operation.kind,
+        ...(operation.slice === undefined ? {} : { slice: operation.slice }),
+        question: operation.question,
+        artifacts: operation.artifacts ?? [],
+        ...(operation.options === undefined ? {} : { options: operation.options }),
+        askedAt: new Date().toISOString()
+      };
+      const errors = [];
+      validateGate(gate, `gateOperations[${index}]`, errors);
+      if (errors.length) {
+        throw error("invalid_changes", `The user gate is invalid: ${errors.join("; ")}.`, { errors });
+      }
+      next.push(gate);
+      opened.push({ id: gate.id, kind: gate.kind, slice: gate.slice ?? null });
+    } else if (operation.op === "resolve") {
+      const position = next.findIndex((item) => isRecord(item) && item.id === operation.id);
+      if (position === -1) {
+        throw error("unknown_gate", `No pending user gate has the id ${operation.id}.`);
+      }
+      next.splice(position, 1);
+    } else {
+      throw error("invalid_changes", `gateOperations[${index}].op must be ask or resolve.`);
+    }
+  });
+  return { pending: next, opened };
+}
+
+// Only the review browser records answers, so agent updates may keep an answer but never add or change one.
+function assertAnswersUnchanged(before, after) {
+  const previous = new Map(before.filter(isRecord).map((gate) => [gate.id, JSON.stringify(gate.answer ?? null)]));
+  for (const gate of after.filter(isRecord)) {
+    if (gate.answer !== undefined && previous.get(gate.id) !== JSON.stringify(gate.answer)) {
+      throw error("invalid_changes", `The user gate ${gate.id} has an answer that only the review browser can record.`);
+    }
+  }
+}
+
 function validateStateValue(raw) {
   const errors = [];
   const warnings = [];
@@ -303,7 +476,10 @@ function validateStateValue(raw) {
   if (raw.active !== undefined) {
     validateActive(raw.active, errors, warnings);
   }
-  for (const key of ["pending", "next", "evidence"]) {
+  if (raw.pending !== undefined) {
+    validatePending(raw.pending, errors);
+  }
+  for (const key of ["next", "evidence"]) {
     if (raw[key] !== undefined) {
       validateStringArray(raw[key], key, errors);
     }
@@ -321,14 +497,14 @@ function validateChanges(changes) {
     throw error("invalid_changes", "The changes argument must contain at least one managed state field.");
   }
   for (const key of Object.keys(changes)) {
-    if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations") || key === "schemaVersion") {
+    if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations" && key !== "gateOperations") || key === "schemaVersion") {
       throw error("invalid_changes", `The state field ${key} cannot be changed through this capability.`);
     }
   }
   if (changes.settings !== undefined && !isRecord(changes.settings)) {
     throw error("invalid_changes", "The changes.settings field must be an object.");
   }
-  for (const key of ["active", "pending", "next", "evidence"]) {
+  for (const key of ["active", "pending", "next", "evidence", "gateOperations"]) {
     if (changes[key] !== undefined && !Array.isArray(changes[key])) {
       throw error("invalid_changes", `The changes.${key} field must be an array.`);
     }
@@ -419,7 +595,7 @@ export async function updateCoordinationState({ projectRoot, statePath, expected
 async function applyStateChange(resolved, expectedRevision, changes) {
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision) {
-      throw error("revision_conflict", "The state changed since it was read. Read it again and retry with its current revision.", { current: publicStateResult(resolved, current) });
+      throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });
     }
     if (current.exists && !current.valid) {
       throw error("invalid_state", "The existing state is invalid and was not changed.", { validation: publicStateResult(resolved, current) });
@@ -428,11 +604,13 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(before.active)) throw error("gate_blocked", "Use typed activeOperations to change active work; array replacement cannot bypass review gates.");
     return withReviewGatesLocked(resolved.root, before.active, changes.activeOperations ?? [], async () => {
     const activeResult = await applyActiveOperations(resolved.root, before.active, changes.activeOperations ?? []);
+    const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
+    assertAnswersUnchanged(before.pending, gateResult.pending);
     const candidate = normalizeState({
       ...before,
       active: activeResult.active,
       ...(changes.settings === undefined ? {} : { settings: { ...before.settings, ...changes.settings } }),
-      ...(changes.pending === undefined ? {} : { pending: changes.pending }),
+      pending: gateResult.pending,
       ...(changes.next === undefined ? {} : { next: changes.next }),
       ...(changes.evidence === undefined ? {} : { evidence: changes.evidence })
     });
@@ -451,9 +629,44 @@ async function applyStateChange(resolved, expectedRevision, changes) {
       created: !current.exists,
       changedFields: changedFields(before, updated.state),
       previousRevision: current.revision
-      ,completions: activeResult.completions
+      ,completions: activeResult.completions,
+      openedGates: gateResult.opened
     };
     });
+}
+
+export async function answerUserGate({ projectRoot, statePath, id, choice = null, note = null }) {
+  const resolved = await resolveStatePath(projectRoot, statePath);
+  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+    const current = await loadState(resolved.path);
+    if (!current.exists || !current.valid) {
+      throw error("invalid_state", "The coordination state is missing or invalid.");
+    }
+    const position = current.state.pending.findIndex((item) => isRecord(item) && item.id === id);
+    if (position === -1) {
+      throw error("unknown_gate", "The question is no longer open; the agent resolved or withdrew it.");
+    }
+    const gate = current.state.pending[position];
+    if (gate.answer) {
+      throw error("gate_answered", "The question already has an answer.");
+    }
+    const normalizedNote = typeof note === "string" && note.trim() ? note.trim() : null;
+    const problem = answerProblem(gate, choice, normalizedNote);
+    if (problem) {
+      throw error("invalid_answer", `The answer is invalid: ${problem}.`);
+    }
+    const pending = [...current.state.pending];
+    pending[position] = { ...gate, answer: { choice, note: normalizedNote, via: "browser", answeredAt: new Date().toISOString() } };
+    const candidate = normalizeState({ ...current.state, pending });
+    const validation = validateStateValue(candidate);
+    if (validation.errors.length > 0) {
+      throw error("invalid_state", "The answered state is invalid and was not written.", { errors: validation.errors });
+    }
+    await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.displayPath]);
+    await conservationStore.writeManaged(resolved.root, resolved.path, `${JSON.stringify(candidate, null, 2)}\n`);
+    const updated = await loadState(resolved.path);
+    return { ...publicStateResult(resolved, updated), gate: pending[position] };
+  }, error));
 }
 
 export async function checkpointPause({ projectRoot, statePath, expectedRevision, activeSlice, recoveryPath, recoveryContent, changes }) {
@@ -473,7 +686,7 @@ export async function checkpointPause({ projectRoot, statePath, expectedRevision
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision) {
-      throw error("revision_conflict", "The state changed since it was read. Read it again and retry with its current revision.", { current: publicStateResult(resolved, current) });
+      throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });
     }
     if (!current.valid || !current.state?.active.some((item) => item.slice === activeSlice)) {
       throw error("invalid_pause", "The slice is not active in the current coordination state.");

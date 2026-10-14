@@ -54,12 +54,11 @@ See [Refactoring](docs/user-guide/refactoring.md) for focused cleanup and reuse 
 
 | Stage | Skill | Result |
 |---|---|---|
-| Prioritize | `prism:roadmap` | An ordered Now, Next, and Later roadmap |
+| Prioritize | `prism:roadmap` | An ordered Now, Next, Later, and Parked roadmap record |
 | Shape | `prism:ideate` | Approved EARS requirement files, or a decision to stop |
 | Start an initiative | `prism:orchestrate` | One provisional root slice and a short resume note |
 | Design | `prism:design` | A fit decision, Gherkin acceptance scenarios, architectural ADRs, and executable boundary artifacts when needed |
 | Refactor | `prism:refactor` | Relationship analysis, a desired conceptual model, and proposed or verified behavior-preserving changes |
-| Map accepted state | `prism:write-map` | An authoritative `map.puml` with accepted topology and structural statuses |
 | Design audit | `prism:review` in `design-audit` mode | Complete requirements, boundary, contract, security, and verification findings |
 | Implement | `prism:implement` | Failing tests, working code, step definitions, and verification |
 | Review | `prism:review` in `implementation-review` mode | Exhaustive independent findings against the completed code and intent until `CLEAN` |
@@ -68,7 +67,7 @@ The roadmap owns the initiative name, intent, priority, and Approved requirement
 The orchestrator creates one provisional root slice after those inputs exist.
 Design explores documents and focused code paths, then returns `FIT`, `SPLIT`, or `BLOCKED`.
 On `SPLIT`, design proposes child slices and dependencies while preserving requirement coverage.
-The orchestrator applies the accepted proposal and runs `write-map`, then repeats design for each child.
+The orchestrator applies the accepted proposal to the initiative record through `update_initiative`, then repeats design for each child.
 It routes decisions while design owns boundaries, dependencies, and architecture.
 
 Each fitted leaf proceeds through design audit, implementation, review, and user correctness confirmation.
@@ -76,9 +75,14 @@ Design discovery can precede dependency implementation, but implementation requi
 Review repeats after corrections until `CLEAN`, a user stop, or a real blocker.
 After integration, delivery verifies the result, with fresh review and confirmation when behavior changes or equivalence is uncertain.
 
-The [resume note](skills/orchestrate/SKILL.md#6-resume-note) records settings, active work, pending decisions, next actions, and evidence paths.
-The authoritative [map](skills/write-map/references/map-format.md) records slice topology, titles, requirement assignments, dependencies, and structural status.
-A bundled validator checks the constrained map grammar, coverage, and expanded dependency graph.
+The [resume note](skills/orchestrate/SKILL.md#6-resume-note) records settings, active work, pending user gates, next actions, and evidence paths.
+Each question that waits on the user is recorded as a user gate, and the review browser opens on Attention, which lists those gates with the artifacts to inspect.
+The user can answer a gate on Attention instead of in the conversation.
+In Claude Code the orchestrator waits for that answer in a background tool call and resumes as soon as it arrives; other hosts receive the recorded answer with the user's next message.
+The background wait needs a tool timeout (`MCP_TOOL_TIMEOUT`) longer than Claude Code's background handoff, which is two minutes by default.
+The authoritative [initiative record](skills/orchestrate/references/initiative-record.md) holds slice topology, titles, outcomes, requirement assignments, dependencies, and structural status.
+The MCP server validates coverage and the expanded dependency graph on every write, and refuses a `done` slice without a passing completion gate.
+The roadmap record holds initiative bands, order, required initiatives, and rationale, while initiative progress is derived from the initiative records.
 Slice files retain findings and evidence needed to resume work.
 Agents reason about the next step within the workflow's ownership rules and human gates.
 
@@ -90,7 +94,7 @@ Full autonomy can resolve internal decisions and defaults missing commits to on,
 Design creates new artifacts only after fit passes.
 Requirements preserve intent, ADRs preserve decisions, and feature files preserve acceptance examples.
 Tests and consumed contracts enforce behavior, diagrams explain structure, and code supplies implementation details.
-The focused `write-requirements` and `write-map` skills support file authoring and accepted map changes.
+The focused `write-requirements` skill supports requirement file authoring.
 
 ## Review artifacts visually
 
@@ -111,8 +115,12 @@ Start a standalone review from a Prism checkout when no harness session is activ
 
 ```bash
 ./bin/prism review
-./bin/prism review docs/roadmap.md
+./bin/prism review docs/requirements/reports.md
 ```
+
+The review browser opens on the roadmap.
+It shows initiatives as a board, list, or dependency graph, each initiative as a slice graph, and each slice with its concept delta, review ledger, and documents.
+Requirements, decisions, and the glossary have their own sections.
 
 The review server creates a local Prism certificate authority and a separate server certificate.
 Trust the authority once in your login keychain when Prism prints its command, then restart the browser.
@@ -145,16 +153,19 @@ The default paths are:
 | Glossary | `docs/Glossary.md` |
 | User documentation | `docs/user-guide/` |
 
-Each initiative coordination directory has a `map.puml` file beside `state.json`.
-The `write-map` skill applies accepted design proposals and structural lifecycle changes to the map.
-The map shows meaningful slice titles, nested parent-child slices, dependency edges, and live status.
+The roadmap record `roadmap.json` sits beside the configured roadmap Markdown, which Prism generates from it.
+Each initiative coordination directory has an `initiative.json` record beside `state.json`, with a generated `initiative.md` view.
+Orchestration applies accepted design proposals and structural lifecycle changes to the record through MCP tools.
+The record holds meaningful slice titles, nested parent-child slices, dependency edges, and live status.
 Design supplies titles such as `Download signed reports`, while stable slugs identify slices and artifact paths.
 
-### Migrate an older initiative map
+### Migrate an older initiative map or roadmap
 
-On resume, Prism preserves legacy coordination files before converting their explicit topology to the constrained map format.
+On resume, orchestration imports a legacy `map.puml` into the initiative record, taking slice outcomes from existing `slice.md` files.
+The `roadmap` skill proposes a roadmap record from a legacy roadmap and `roadmap.puml`, and replaces the hand-written roadmap Markdown only after you accept it.
 It keeps needed evidence and records current work in the short `state.json` resume note.
 Missing or conflicting facts require recovery before scheduling.
+See [Upgrading to managed records](docs/user-guide/upgrading-to-managed-records.md) for everything that changed and what needs your confirmation.
 
 ### Migrate an older configuration
 

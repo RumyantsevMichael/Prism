@@ -9,7 +9,7 @@ The final gate requires [visual review](../../workflow/references/visual-review.
 Proposed ADRs become Accepted only after governed behavior is verified and confirmed across relevant children.
 Superseded originals link under project rules.
 Commit and push settings apply only to slice-owned changes and preserve unrelated changes.
-The `done` map transition uses `write-map` after every completion gate passes.
+The `done` slice transition uses `update_initiative` after every completion gate passes.
 The active resume entry is removed with `update_coordination_state` and the current revision from `get_coordination_state`.
 
 If confirmed behavior changes, repeat affected verification, review, and confirmation.

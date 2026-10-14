@@ -1,0 +1,13 @@
+@startuml
+title Initiative: reports
+hide empty description
+state "Export activity reports" as s_7265706f727473 <<split>> {
+  state "Download signed reports" as s_646f776e6c6f6164 <<not-started>>
+  state "Authorize report access" as s_61757468 <<done>>
+}
+s_7265706f727473 : requires "docs/requirements/reports.md#1"
+s_7265706f727473 : requires "docs/requirements/reports.md#2"
+s_646f776e6c6f6164 : requires "docs/requirements/reports.md#1"
+s_61757468 : requires "docs/requirements/reports.md#2"
+s_646f776e6c6f6164 --> s_61757468 : depends on
+@enduml
