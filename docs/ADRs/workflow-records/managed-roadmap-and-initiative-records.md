@@ -1,6 +1,6 @@
 # Managed roadmap and initiative records
 
-Status: Proposed
+Status: Accepted
 Created: 2026-10-13
 
 ## Requirements
@@ -22,6 +22,7 @@ The roadmap and every initiative slice graph MUST be structured records that onl
 Agents MUST NOT edit a record or its generated view directly.
 A generated view MUST NOT replace a hand-written file without an explicit replacement request.
 An initiative identifier MUST be stable and MUST name the initiative's plans folder.
+The initiative directory MUST be the root slice folder, and every other slice folder MUST sit directly under it.
 The roadmap MUST store only decisions: bands, order, required initiatives, rationale, open questions, and the recorded `shipped` and `superseded` outcomes.
 The `envisioned`, `planned`, and `in-progress` states MUST be derived from the initiative record and coordination state.
 A `shipped` decision MUST be refused until every leaf slice is done, and it MUST be recorded before coordination cleanup removes the initiative record.
@@ -52,7 +53,10 @@ Humans reading the repository without the review browser see generated Markdown 
 
 The roadmap record sits beside the configured roadmap Markdown and the initiative record sits beside the initiative's coordination state.
 Reads return the record with its revision and derived facts; writes take the expected revision and a batch of typed operations that apply atomically or not at all.
-Orchestration creates or imports the initiative record, applies accepted splits and dependency changes, sets leaf status, and records the ship decision at graduation.
+Orchestration creates the roadmap entry before the initiative record, creates or imports the initiative record, applies accepted splits and dependency changes, sets leaf status, records the ship decision, graduates durable facts, and then deletes the initiative directory.
 The roadmap skill applies accepted prioritization and supersede decisions and migrates legacy roadmaps.
 
 ## Decision Log
+
+2026-10-14: Accepted after three real orchestrated runs created, completed, and shipped initiatives only through the record tools, and the user approved the change for review.
+2026-10-14: Clarified that the initiative directory is the root slice folder, after a run showed the completion gate looking for the root slice's review in a subfolder.

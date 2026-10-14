@@ -165,6 +165,7 @@ On resume, orchestration imports a legacy `map.puml` into the initiative record,
 The `roadmap` skill proposes a roadmap record from a legacy roadmap and `roadmap.puml`, and replaces the hand-written roadmap Markdown only after you accept it.
 It keeps needed evidence and records current work in the short `state.json` resume note.
 Missing or conflicting facts require recovery before scheduling.
+See [Upgrading to managed records](docs/user-guide/upgrading-to-managed-records.md) for everything that changed and what needs your confirmation.
 
 ### Migrate an older configuration
 
