@@ -42,7 +42,7 @@ An invalid batch preserves existing artifact bytes, and a no-op preserves its re
 `remove` removes a planned entry rather than deleting its target.
 `ready` means ready for design audit, not approved for implementation.
 An empty delta can be ready when a retained baseline supports a design with no target changes.
-When `ADD` entries add units to several files that repeat the same functions, readiness reports `duplication_growth` until `REPLACE` or `DELETE` entries cover those functions in this delta or in a delta that `consolidations` names.
+When `ADD` entries add units to several files that repeat the same functions, or `MODIFY` entries change copies of one function in several files, readiness reports `duplication_growth` until `REPLACE` or `DELETE` entries cover those functions in this delta or in a delta that `consolidations` names.
 
 ## Entries and exact references
 

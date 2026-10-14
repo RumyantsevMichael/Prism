@@ -43,7 +43,10 @@ async function callConservationTool(name, input) {
   const section = input.section || { snapshot: "files", search: "candidates", comparison: "observations", analysis: "units", migration: "lines", "repository-analysis": results }[evidence.kind];
   const record = evidence;
   const values = section === "unitsBefore" || section === "unitsAfter" ? record.units?.[section === "unitsBefore" ? "before" : "after"] : record[section];
-  if (!Array.isArray(values)) throw conservationError("validation_failed", "The requested section is not present in this evidence kind.");
+  if (!Array.isArray(values)) {
+    const sections = [...Object.keys(record).filter((key) => Array.isArray(record[key])), ...record.units && !Array.isArray(record.units) ? ["unitsBefore", "unitsAfter"] : []];
+    throw conservationError("validation_failed", `The ${evidence.kind} evidence has no section ${section}. Its sections are ${sections.join(", ") || "none"}.`);
+  }
   const offset = input.offset || 0, limit = input.limit || 50;
   const metadata = Object.fromEntries(Object.entries(record).filter(([key, value]) => !Array.isArray(value) && !["units", "fileCoverage", "tokenCounts", "structureCounts", "project"].includes(key)));
   return { evidenceId: input.evidenceId, ...metadata, section, entries: values.slice(offset, offset + limit), totalCount: values.length, nextOffset: offset + limit < values.length ? offset + limit : null };

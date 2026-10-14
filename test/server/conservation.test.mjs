@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdtemp,realpath,writeFile,readFile,mkdir,rm,symlink,chmod,lstat,utimes} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {conservationStore as store,canonical,digest} from '../../dist/server/conservation/conservation-store.mjs';
 import {privateDirectory,regularBytes} from '../../dist/server/repository-intelligence/native-semantic-runtime.mjs';
 import {updateConceptDelta,getConceptDelta} from '../../dist/server/conservation/concept-delta.mjs';
@@ -71,16 +73,27 @@ test('implementation review must cover deleted paths even when the result is emp
   await rm(path.join(f.root,'delete.js'));const result=await store.capture(f.root);await analysis(f.root,result);
   const compared=await compare(f,d,result),comparisonId=await store.put(f.root,compared);
   assert.deepEqual(compared.observations,[]);
-  await act('coord',[wave('incomplete','implementation-review',result,comparisonId,['unrelated.js'])]);
-  await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);
-  await assert.rejects(act('coord',[{op:'accept_wave'}]),error=>error.code==='gate_blocked'&&error.problems.some(item=>item.code==='review_coverage_missing'&&item.id==='delete.js')&&/acceptance gate: .*review_coverage_missing x\d+: Assign each original and resulting target file to a review lane\. \(for example [^)]*delete\.js/.test(error.message));
+  await assert.rejects(act('coord',[wave('incomplete','implementation-review',result,comparisonId,['unrelated.js'])]),error=>error.code==='validation_failed'&&error.problems.some(item=>item.code==='review_coverage_missing'&&item.file==='delete.js'));
+  await assert.rejects(act('coord',[wave('anchors','implementation-review',result,comparisonId,['requirements.txt#1'])]),error=>error.code==='validation_failed'&&/path prefixes/.test(error.message));
+  await act('coord',[wave('pending','implementation-review',result,comparisonId,scope)]);
   const blocked=await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'});
   assert.equal(blocked.ready,false);
-  assert.match(blocked.problems[0].message,/wave incomplete has no accepted result, and accepting it now would fail on: review_coverage_missing x\d+/);
+  assert.match(blocked.problems[0].message,/wave pending has no accepted result, and accepting it now would fail on: lane_result_stale x1/);
   await act('coord',[wave('complete','implementation-review',result,comparisonId,scope)]);
   await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
   assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,true);
  });
+});
+
+test('force-adding an ignored file leaves the snapshot unchanged',async()=>{
+ const f=await fixture({'.gitignore':'plans/\n','src.js':'void 0;\n','plans/state.json':'{}'});
+ const git=(...args)=>promisify(execFile)('git',args,{cwd:f.root});
+ await git('init','-q');await git('add','.gitignore','src.js');
+ const before=await store.capture(f.root);
+ assert.ok(!before.snapshot.files.some(x=>x.file==='plans/state.json'));
+ await git('add','-f','plans/state.json');
+ await store.assertCurrent(f.root,before.snapshotId);
+ assert.equal((await store.capture(f.root)).snapshot.fingerprint,before.snapshot.fingerprint);
 });
 
 test('retains dirty source, binary identity and symlinks without following them; corrupt blobs block reads',async()=>{
@@ -92,7 +105,7 @@ test('retains dirty source, binary identity and symlinks without following them;
  await writeFile(path.join(f.root,'a.txt'),'changed');
  const old=b.snapshot.files.find(x=>x.file==='a.txt');
  assert.equal((await store.bytes(f.root,old)).toString(),'dirty untracked');
- await assert.rejects(store.assertCurrent(f.root,b.snapshotId),{code:'stale_snapshot'});
+ await assert.rejects(store.assertCurrent(f.root,b.snapshotId),error=>error.code==='stale_snapshot'&&error.problems.some(item=>item.code==='file_changed'&&item.file==='a.txt'));
  await writeFile(await store.blobPath(f.root,old.hash),'corrupt');
  await assert.rejects(store.bytes(f.root,old),{code:'evidence_missing'});
 });
@@ -450,7 +463,7 @@ test('REPLACE consolidation may retain its explicit destination identity but not
  d=await f.update({expectedRevision:d.revision,operations:[{op:'update',id:'consolidate',set:{after:[reference(after[0])]}}]});
  const c=await compare(f,d,result);assert.deepEqual(c.observations.filter(item=>item.code==='retained_source').map(item=>item.unit.selector),['obsolete']);
 });
-test('readiness rejects additions that copy a change into functions that several files repeat',async()=>{
+test('readiness rejects additions and parallel modifications that copy a change into functions that several files repeat',async()=>{
  const body=name=>`function ${name}(lockPath) {\n  const text = readFileSync(lockPath, "utf8");\n  const owner = JSON.parse(text);\n  if (!owner.pid) return null;\n  if (owner.token.length !== 36) return null;\n  const alive = processState(owner.pid);\n  if (!alive) return null;\n  const age = Date.now() - owner.createdAt;\n  if (age > LOCK_STALE_MS) return null;\n  return { pid: owner.pid, token: owner.token };\n}\n`;
  const small='function digest(text) {\n  return hash(text);\n}\n';
  const files={'a.ts':body('readLockOwner')+small,'b.ts':body('readLockOwner').replace('return null;\n  const alive','throw new Error("bad");\n  const alive')+small,'requirements.md':'Requirement'};
@@ -476,6 +489,13 @@ test('readiness rejects additions that copy a change into functions that several
  await updateConceptDelta({projectRoot:f.root,deltaPath:other,expectedRevision:null,scope:['a.ts','b.ts','shared.ts'],baselineId:f.b.snapshotId,operations:[{op:'insert',entry:consolidate}]});
  assert.deepEqual(await growth({...base,consolidations:[{deltaPath:other,reason:'The store slice consolidates the lock helpers first.'}]}),[]);
  assert.deepEqual((await growth({...base,consolidations:[{deltaPath:'plan/missing/concept-delta.json',reason:'Missing.'}]})).map(x=>x.code).sort(),['consolidation_delta_invalid','duplication_growth']);
+ const modify=file=>entry(`wait-${file}`,'MODIFY',[symbol(file,'readLockOwner')],[symbol(file,'readLockOwner')]);
+ const parallel=await growth({...base,concepts:[modify('a.ts'),modify('b.ts')]});
+ assert.equal(parallel.length,1);assert.equal(parallel[0].code,'duplication_growth');
+ assert.match(parallel[0].message,/wait-a\.ts, wait-b\.ts change the copies of the functions readLockOwner separately in a\.ts, b\.ts/);
+ assert.deepEqual(await growth({...base,concepts:[modify('a.ts')]}),[]);
+ assert.deepEqual(await growth({...base,concepts:[entry('digest-a','MODIFY',[symbol('a.ts','digest')],[symbol('a.ts','digest')]),entry('digest-b','MODIFY',[symbol('b.ts','digest')],[symbol('b.ts','digest')])]}),[]);
+ assert.deepEqual(await growth({...base,concepts:[modify('a.ts'),modify('b.ts'),consolidate]}),[]);
 });
 
 test('treats a scope with a trailing slash like the bare directory',async()=>{

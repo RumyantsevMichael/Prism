@@ -93,7 +93,10 @@ async function resolveReference(projectRoot, snapshot, reference, analysis, stor
       public: null
     });
   } else {
-    if (!analysis?.fileCoverage[file.file]) return { status: "unsupported", reference, units: [], reason: "The required structural extraction is unavailable." };
+    if (!analysis?.fileCoverage[file.file]) {
+      const causes = [...new Set((analysis?.diagnostics || []).filter((item) => item.file === file.file).map((item) => item.message))];
+      return { status: "unsupported", reference, units: [], reason: `The structural extraction of ${file.file} is incomplete${causes.length ? `: ${causes.slice(0, 3).join(" ")}` : "."} Fix the file, or select an exact text span with a text selector.` };
+    }
     const candidates = analysis.units.filter((unit) => unit.file === file.file && (unit.selector === selector.value || unit.name === selector.value || unit.qualifiedName === selector.value) && (selector.type === "heading" ? unit.kind === "heading" : ["json-pointer", "yaml-key"].includes(selector.type) ? unit.kind === "configuration-key" : unit.domain === "code"));
     units = candidates.flatMap((candidate) => all.filter((unit) => unit.key === keyFor(candidate.file, candidate.kind, candidate.selector || candidate.name)));
     if (candidates.length && !units.length) return { status: "unsupported", reference, units: [], reason: "The parser did not preserve an exact source span." };
@@ -102,22 +105,38 @@ async function resolveReference(projectRoot, snapshot, reference, analysis, stor
 }
 async function duplicationDiagnostics(projectRoot, document, baseline, analysis, options) {
   const store = options.store || conservationStore, files = new Map(baseline.files.filter((file) => file.kind === "source").map((file) => [file.file, file]));
-  const additions = /* @__PURE__ */ new Map();
-  for (const entry of document.concepts) if (entry.action === "ADD") for (const reference of entry.after) {
-    if (reference.selector !== void 0 && files.has(reference.path)) additions.set(reference.path, [.../* @__PURE__ */ new Set([...additions.get(reference.path) || [], entry.id])]);
-  }
-  if (additions.size < 2) return [];
+  const entryFiles = (action, side) => {
+    const result = /* @__PURE__ */ new Map();
+    for (const entry of document.concepts) if (entry.action === action) for (const reference of entry[side]) {
+      if (reference.selector !== void 0 && files.has(reference.path)) result.set(reference.path, [.../* @__PURE__ */ new Set([...result.get(reference.path) || [], entry.id])]);
+    }
+    return result;
+  };
+  const additions = entryFiles("ADD", "after"), modifications = entryFiles("MODIFY", "before");
+  if (additions.size < 2 && modifications.size < 2) return [];
   if (!analysis) {
     const prepared = await prepareAnalysis(projectRoot, document.baselineId, options);
     if (prepared.status === "preparing") return [{ code: "duplication_check_preparing", message: "Read the concept delta again after the baseline analysis is ready.", blocking: true }];
-    if (!prepared.analysis) return [{ code: "duplication_check_unavailable", message: "The baseline analysis is unavailable, so a review must check the additions for duplicated functions.", blocking: false }];
+    if (!prepared.analysis) return [{ code: "duplication_check_unavailable", message: "The baseline analysis is unavailable, so a review must check the additions and modifications for duplicated functions.", blocking: false }];
     analysis = prepared.analysis;
   }
-  const contents = /* @__PURE__ */ new Map();
-  for (const file of additions.keys()) contents.set(file, (await store.bytes(projectRoot, files.get(file))).toString("utf8"));
-  const { groups } = sameNameGroups({ units: analysis.units.filter((unit) => unit.range), edges: analysis.edges || [], unresolvedReferences: analysis.unresolvedReferences }, contents, { include: (unit) => additions.has(unit.file) });
+  const candidates = /* @__PURE__ */ new Set([...additions.keys(), ...modifications.keys()]), contents = /* @__PURE__ */ new Map();
+  for (const file of candidates) contents.set(file, (await store.bytes(projectRoot, files.get(file))).toString("utf8"));
+  const { groups } = sameNameGroups({ units: analysis.units.filter((unit) => unit.range), edges: analysis.edges || [], unresolvedReferences: analysis.unresolvedReferences }, contents, { include: (unit) => candidates.has(unit.file) });
   const duplicated = groups.filter((group) => group.variants.every((variant) => variant.lines >= DUPLICATE_MIN_LINES));
   if (!duplicated.length) return [];
+  const span = (file, selector, line) => analysis.units.find((unit) => unit.file === file && (unit.selector || unit.name) === selector && unit.range.startLine === line)?.span;
+  const members = (group) => group.variants.flatMap((variant) => variant.members).map((member) => ({ file: member.file, source: span(member.file, member.selector, member.range.startLine) }));
+  const covers = (units, member) => !!member.source && units.some((unit) => unit.file === member.file && unit.start <= member.source.start && member.source.end <= unit.end);
+  const modified = [];
+  for (const entry of document.concepts) if (entry.action === "MODIFY") {
+    for (const reference of entry.before) if (reference.selector !== void 0 && files.has(reference.path)) {
+      for (const unit of (await resolveReference(projectRoot, baseline, reference, analysis, store)).units) modified.push({ id: entry.id, unit });
+    }
+  }
+  const added = duplicated.filter((group) => new Set(members(group).map((member) => member.file).filter((file) => additions.has(file))).size >= 2);
+  const changed = duplicated.filter((group) => new Set(members(group).filter((member) => covers(modified.map((item) => item.unit), member)).map((member) => member.file)).size >= 2);
+  if (!added.length && !changed.length) return [];
   const consolidating = [], diagnostics = [];
   const documents = [document];
   for (const item of document.consolidations || []) {
@@ -130,15 +149,15 @@ async function duplicationDiagnostics(projectRoot, document, baseline, analysis,
   for (const delta of documents) for (const entry of delta.concepts) if (entry.action === "REPLACE" || entry.action === "DELETE") for (const reference of entry.before) {
     consolidating.push(...(await resolveReference(projectRoot, baseline, reference, analysis, store)).units);
   }
-  const span = (file, selector, line) => analysis.units.find((unit) => unit.file === file && (unit.selector || unit.name) === selector && unit.range.startLine === line)?.span;
-  const open = duplicated.filter((group) => group.variants.some((variant) => variant.members.some((member) => {
-    const source = span(member.file, member.selector, member.range.startLine);
-    return !source || !consolidating.some((unit) => unit.file === member.file && unit.start <= source.start && source.end <= unit.end);
-  })));
-  if (open.length) {
-    const entries = [...new Set([...additions.values()].flat())].sort(), names = open.map((group) => group.name);
-    diagnostics.push({ code: "duplication_growth", blocking: true, message: `The entries ${entries.join(", ")} add units to ${[...additions.keys()].sort().join(", ")}, which already repeat the functions ${names.join(", ")}. Consolidate these functions in this delta with REPLACE entries into one shared unit, and keep each file's differences as parameters of that unit, so observable behavior stays the same. If the consolidation and the outcome do not fit in one slice, return SPLIT with a child slice that consolidates these functions first, and name its delta in consolidations. Return BLOCKED only when a requirement forces one shared behavior where the files now differ, and name that behavior.` });
+  const open = (list) => list.filter((group) => members(group).some((member) => !covers(consolidating, member)));
+  const reasons = [], openAdded = open(added), openChanged = open(changed);
+  if (openAdded.length) reasons.push(`The entries ${[...new Set([...additions.values()].flat())].sort().join(", ")} add units to ${[...additions.keys()].sort().join(", ")}, which already repeat the functions ${openAdded.map((group) => group.name).join(", ")}.`);
+  if (openChanged.length) {
+    const ids = [...new Set(modified.filter((item) => openChanged.some((group) => members(group).some((member) => covers([item.unit], member)))).map((item) => item.id))].sort();
+    const where = [...new Set(openChanged.flatMap((group) => members(group).filter((member) => covers(modified.map((item) => item.unit), member)).map((member) => member.file)))].sort();
+    reasons.push(`The entries ${ids.join(", ")} change the copies of the functions ${openChanged.map((group) => group.name).join(", ")} separately in ${where.join(", ")}.`);
   }
+  if (reasons.length) diagnostics.push({ code: "duplication_growth", blocking: true, message: `${reasons.join(" ")} Consolidate these functions in this delta with REPLACE entries into one shared unit, and keep each file's differences as parameters of that unit, so observable behavior stays the same. If the consolidation and the outcome do not fit in one slice, return SPLIT with a child slice that consolidates these functions first, and name its delta in consolidations. Return BLOCKED only when a requirement forces one shared behavior where the files now differ, and name that behavior.` });
   return diagnostics;
 }
 async function assessDeltaReadiness(projectRoot, document, store = conservationStore, options = {}) {

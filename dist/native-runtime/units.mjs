@@ -31,7 +31,7 @@ function unit(file, kind, name, startLine, endLine, selector = name, exactSpan) 
   };
 }
 function extractTextUnits(file) {
-  const units = [], edges = [], links = [], diagnostics = [];
+  const units = [], edges = [], links = [], diagnostics = [], anchors = {};
   const text = file.content;
   const root = unit(file, "file", file.file, 1, Math.max(1, text.split("\n").length), "");
   units.push(root);
@@ -73,8 +73,15 @@ function extractTextUnits(file) {
         }
         if ("children" in node) for (const child of node.children) walk(child, parent);
       };
+      let pending = [];
       for (let i = 0; i < tree.children.length; i++) {
         const node = tree.children[i];
+        const raw = ["html", "paragraph"].includes(node.type) ? plain(node).trim() : "";
+        const explicit = /^(?:<a\s+(?:id|name)="[^"]+"\s*>\s*<\/a>\s*)+$/.test(raw) ? [...raw.matchAll(/(?:id|name)="([^"]+)"/g)].map((match) => match[1]) : [];
+        if (explicit.length) {
+          pending.push(...explicit);
+          continue;
+        }
         if (node.type === "heading") {
           const name = plain(node), base = slug(name), count = counts2.get(base) || 0;
           counts2.set(base, count + 1);
@@ -86,8 +93,13 @@ function extractTextUnits(file) {
           }
           while (stack.length > 1 && stack.at(-1).depth >= node.depth) stack.pop();
           const heading = add({ ...unit(file, "heading", name, node.position.start.line, end, selector), depth: node.depth }, stack.at(-1));
+          for (const anchor of pending) anchors[anchor] = selector;
+          pending = [];
           stack.push(heading);
-        } else walk(node);
+        } else {
+          pending = [];
+          walk(node);
+        }
       }
       for (const link of links) if (!link.url) link.url = definitions.get(link.identifier);
     } else if ([".json", ".jsonc"].includes(extension)) {
@@ -108,10 +120,10 @@ function extractTextUnits(file) {
       supported = true;
       const counter = new LineCounter(), document = parseDocument(text, { lineCounter: counter, keepSourceTokens: true });
       if (document.errors.length) throw new Error("The configuration is not valid YAML.");
-      const anchors = /* @__PURE__ */ new Map(), aliases = [];
+      const anchors2 = /* @__PURE__ */ new Map(), aliases = [];
       const walk = (node, parts = [], parent = root) => {
         if (!node) return;
-        if (typeof node === "object" && "anchor" in node && typeof node.anchor === "string") anchors.set(node.anchor, parent.id);
+        if (typeof node === "object" && "anchor" in node && typeof node.anchor === "string") anchors2.set(node.anchor, parent.id);
         if (isAlias(node)) {
           aliases.push({ source: parent.id, name: node.source });
           return;
@@ -128,7 +140,7 @@ function extractTextUnits(file) {
       };
       walk(document.contents);
       for (const alias of aliases) {
-        if (anchors.has(alias.name)) edges.push({ source: alias.source, target: anchors.get(alias.name), kind: "aliases", provenance: "parser" });
+        if (anchors2.has(alias.name)) edges.push({ source: alias.source, target: anchors2.get(alias.name), kind: "aliases", provenance: "parser" });
         else diagnostics.push({ code: "incomplete_structure", file: file.file, message: "A YAML alias has no anchor." });
       }
       counts.configurationReferences += aliases.length;
@@ -147,7 +159,7 @@ function extractTextUnits(file) {
   }
   counts.configurationKeys = units.filter((item) => item.kind === "configuration-key").length;
   if ([".json", ".jsonc", ".yaml", ".yml"].includes(extension)) counts.configurationReferences += links.length;
-  return { units, edges, links, supported, diagnostics, counts };
+  return { units, edges, links, supported, diagnostics, counts, anchors };
 }
 function resolveTextLinks(groups) {
   const files = new Map(groups.map((group) => [group.units[0].file, group]));
@@ -166,9 +178,9 @@ function resolveTextLinks(groups) {
     }
     const target = path.posix.normalize(path.posix.join(path.posix.dirname(group.units[0].file), name || path.posix.basename(group.units[0].file)));
     const destination = files.get(target);
-    const selected = fragment ? destination?.units.find((item) => item.selector === `#${fragment}` || item.selector === fragment) : destination?.units[0];
+    const selected = fragment ? destination?.units.find((item) => item.selector === `#${fragment}` || item.selector === fragment || item.selector === destination.anchors[fragment]) : destination?.units[0];
     if (selected) group.edges.push({ source: link.from, target: selected.id, kind: "references", provenance: "parser" });
-    else group.diagnostics.push({ code: "incomplete_structure", file: group.units[0].file, message: "A local document or configuration reference is unresolved." });
+    else group.diagnostics.push({ code: "incomplete_structure", file: group.units[0].file, message: `The local reference ${link.url} does not resolve to a file, heading, explicit anchor, or configuration key.` });
   }
 }
 function bgeSourceBoundaries(tokenizer, configuration) {

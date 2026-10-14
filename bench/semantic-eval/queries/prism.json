@@ -63,15 +63,15 @@
     "name": "regularBytes"
    },
    {
-    "file": "src/server/session/session-trace-store.mjs",
+    "file": "src/server/session/private-session-store.mjs",
     "name": "noFollowFlags"
    },
    {
-    "file": "src/server/session/session-trace-store.mjs",
+    "file": "src/server/session/private-session-store.mjs",
     "name": "openPrivateFile"
    },
    {
-    "file": "src/server/session/session-trace-store.mjs",
+    "file": "src/server/session/private-session-store.mjs",
     "name": "openExistingRegularFile"
    },
    {
@@ -85,13 +85,10 @@
   "query": "acquire an exclusive lock file and clean up locks left by dead processes",
   "expect": [
    {
-    "file": "src/server/session/host-session-facts.mjs"
-   },
-   {
     "file": "src/server/workflow/artifact-store.mjs"
    },
    {
-    "file": "src/server/session/session-trace-store.mjs",
+    "file": "src/server/session/private-session-store.mjs",
     "name": "acquireLock"
    },
    {
@@ -1524,11 +1521,7 @@
   },
   "expect": [
    {
-    "file": "src/server/session/host-session-facts.mjs",
-    "name": "wait"
-   },
-   {
-    "file": "src/server/session/session-trace-store.mjs",
+    "file": "src/server/session/private-session-store.mjs",
     "name": "wait"
    },
    {
@@ -1667,49 +1660,6 @@
  {
   "group": "code-to-code",
   "queryFrom": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "inspectRegularFile"
-  },
-  "expect": [
-   {
-    "file": "src/server/session/host-session-facts.mjs",
-    "name": "inspectRegularFile"
-   }
-  ]
- },
- {
-  "group": "code-to-code",
-  "queryFrom": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "createOwnedLock"
-  },
-  "expect": [
-   {
-    "file": "src/server/session/host-session-facts.mjs",
-    "name": "createOwnedLock"
-   }
-  ]
- },
- {
-  "group": "code-to-code",
-  "queryFrom": {
-   "file": "src/server/session/host-session-facts.mjs",
-   "name": "releaseOwnedLock"
-  },
-  "expect": [
-   {
-    "file": "src/server/session/session-trace-store.mjs",
-    "name": "releaseOwnedLock"
-   },
-   {
-    "file": "src/server/session/session-trace-store.mjs",
-    "name": "removeOwnedLock"
-   }
-  ]
- },
- {
-  "group": "code-to-code",
-  "queryFrom": {
    "file": "bench/skill_eval/run.py",
    "name": "parse_codex_jsonl"
   },
@@ -1793,19 +1743,6 @@
    {
     "file": "test/server/native-repository-intelligence.test.mjs",
     "name": "fixture"
-   }
-  ]
- },
- {
-  "group": "code-to-code",
-  "queryFrom": {
-   "file": "src/server/session/session-trace-store.mjs",
-   "name": "processState"
-  },
-  "expect": [
-   {
-    "file": "src/server/session/host-session-facts.mjs",
-    "name": "processState"
    }
   ]
  }

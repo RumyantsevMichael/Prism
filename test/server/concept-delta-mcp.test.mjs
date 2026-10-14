@@ -90,6 +90,8 @@ test("MCP failures expose stable codes and preserve rejected batch bytes", async
   ] });
   assert.equal(invalid.error.data.code, "validation_failed");
   assert.match(invalid.error.data.errors[0], /operations\[1\]\.id/);
+  assert.match(invalid.error.message, /operations\[1\]\.id/);
+  assert.equal(invalid.error.message.split(invalid.error.data.errors[0]).length, 2);
   assert.equal(await readFile(path.join(input.projectRoot, input.deltaPath), "utf8"), bytes);
   const unknown = await call("get_concept_delta", { ...input, extra: true });
   assert.equal(unknown.error.data.code, "validation_failed");
@@ -117,10 +119,13 @@ test('public conservation MCP captures, compares, accepts review and enforces mu
  const coordinator={id:'coordinator',role:'coordinator'},reviewer={id:'independent',role:'reviewer'};
  const blocked=await call('check_review_gate',{projectRoot:input.projectRoot,reviewPath,gate:'implementation'});assert.equal(blocked.result.structuredContent.ready,false);
  await mutate(coordinator,[{op:'start_wave',id:'audit',mode:'design-audit',deltaRevision:d.revision,snapshotId:b.snapshotId,comparisonId:c.comparisonId,lanes:[{id:'main',reviewer:'independent',coverage:['src']}]}]);
- const noLane=await mutate(coordinator,[{op:'accept_wave'}]);assert.equal(noLane.error.data.code,'gate_blocked');assert.ok(noLane.error.data.problems.some(x=>x.code==='lane_result_stale'));
+ const noLane=await mutate(coordinator,[{op:'accept_wave'}]);assert.equal(noLane.error.data.code,'gate_blocked');assert.ok(noLane.error.data.problems.some(x=>x.code==='lane_result_stale'));assert.match(noLane.error.message,/acceptance gate.*\n?.*lane_result_stale/);assert.equal(noLane.error.message.match(/Every assigned lane needs a current CLEAN result/g).length,1);
  await mutate(reviewer,[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await mutate(coordinator,[{op:'accept_wave'}]);
  const gate=(await call('check_review_gate',{projectRoot:input.projectRoot,reviewPath,gate:'implementation'})).result.structuredContent;assert.equal(gate.ready,true);
  const statePath='docs/plans/demo/state.json';
+ const relative=await call('update_coordination_state',{projectRoot:input.projectRoot,statePath,expectedRevision:null,changes:{activeOperations:[{op:'start',entry:{slice:'retry',activity:'design',workers:['delivery'],workspace:input.projectRoot,reviewPath:'retry/review.json'}}]}});
+ assert.equal(relative.error.data.code,'validation_failed');assert.match(relative.error.message,/resolves from the project root, and retry is not a directory there/);
+ const sections=await call('get_conservation_evidence',{projectRoot:input.projectRoot,evidenceId:c.comparisonId,section:'files'});assert.match(sections.error.message,/no section files\. Its sections are .*observations/);
  const started=await call('update_coordination_state',{projectRoot:input.projectRoot,statePath,expectedRevision:null,changes:{activeOperations:[{op:'start',entry:{slice:'retry',activity:'implementation',workers:['delivery'],workspace:input.projectRoot,reviewPath}}]}});assert.ok(started.result,JSON.stringify(started));
  const revisionState=started.result.structuredContent.revision;
  const bypass=await call('update_coordination_state',{projectRoot:input.projectRoot,statePath,expectedRevision:revisionState,changes:{active:[]}});assert.equal(bypass.error.data.code,'gate_blocked');

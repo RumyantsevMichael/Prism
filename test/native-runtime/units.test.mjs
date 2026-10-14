@@ -15,6 +15,16 @@ test("Markdown units preserve headings, list items, links, and exact final line 
   assert.ok(first.edges.some(edge => edge.kind === "references" && second.units.some(unit => unit.id === edge.target)));
   assert.deepEqual(first.diagnostics, []);
 });
+test("explicit anchors name the heading that follows them, and an unresolved link names its target", () => {
+  const group = parse("requirements.md", '# Store\n\n<a id="1"></a>\n## 1. Share one unit\n\nRelated: [§2](#2).\n\n<a id="2"></a>\n## 2. Keep behavior\n\nRelated: [§1](#1), [§3](#3).\n');
+  resolveTextLinks([group]);
+  const headings = Object.fromEntries(group.units.filter(unit => unit.kind === "heading").map(unit => [unit.selector, unit.id]));
+  assert.equal(group.anchors["1"], "#1-share-one-unit");
+  assert.ok(group.edges.some(edge => edge.kind === "references" && edge.target === headings["#2-keep-behavior"]));
+  assert.ok(group.edges.some(edge => edge.kind === "references" && edge.target === headings["#1-share-one-unit"]));
+  assert.deepEqual(group.diagnostics.map(item => item.message), ["The local reference #3 does not resolve to a file, heading, explicit anchor, or configuration key."]);
+  assert.equal(group.units.filter(unit => unit.kind === "paragraph" && unit.name.includes("<a")).length, 0);
+});
 test("JSON pointers and YAML aliases are configuration relationships", () => {
   const first = parse("schema.json", '{"deadline":{"type":"number"},"retry":{"$ref":"#/deadline"}}');
   const second = parse("config.yaml", "defaults: &defaults\n  timeout: 3\nretry: *defaults\n");

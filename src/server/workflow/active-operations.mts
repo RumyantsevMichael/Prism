@@ -1,6 +1,6 @@
 import { assertInput } from "./artifact-schema.mjs";
 import path from "node:path";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { resolveArtifactPath } from "../conservation/concept-delta.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { checkReviewGate, loadReview } from "../review/review-ledger.mjs";
@@ -13,12 +13,20 @@ export const ACTIVE_OPERATIONS_SCHEMA = arr({ oneOf: [
   obj({ op: { enum: ["finish", "release"] }, slice: str })
 ] });
 export interface ActiveEntry { slice: string; activity: string; workers: string[]; workspace: string; reviewPath?: string; [key: string]: unknown }
+// A reviewPath resolves from the project root and names review.json in the slice folder, which design creates before the first review wave.
+async function assertReviewPath(projectRoot: string, slice: string, reviewPath: string) {
+  const folder = path.posix.dirname(reviewPath), example = `<configured plans>/<initiative>/${slice}/review.json`;
+  if (path.posix.basename(reviewPath) !== "review.json" || path.posix.basename(folder) !== slice) throw conservationError("validation_failed", `The reviewPath ${reviewPath} must name review.json in the folder of the slice ${slice}, such as ${example}.`);
+  const directory = await stat(path.resolve(projectRoot, folder)).catch(() => null);
+  if (!directory?.isDirectory()) throw conservationError("validation_failed", `The reviewPath ${reviewPath} resolves from the project root, and ${folder} is not a directory there. Use the project-relative slice folder, such as ${example}.`);
+}
 export async function withReviewGatesLocked<T>(projectRoot: string, active: ActiveEntry[], operations: unknown, action: () => Promise<T>): Promise<T> {
   assertInput(ACTIVE_OPERATIONS_SCHEMA, operations);
   const simulated = new Map(active.map(entry => [entry.slice, entry])), paths = new Set<string>(), reviews = new Set<string>();
   for (const operation of operations as { op: string; entry?: ActiveEntry; slice?: string; set?: Partial<ActiveEntry> }[]) {
     const slice = operation.entry?.slice || operation.slice!, current = simulated.get(slice);
     const entry = operation.entry || (current ? { ...current, ...operation.set } : undefined);
+    if (entry?.reviewPath && operation.op !== "release") await assertReviewPath(projectRoot, slice, entry.reviewPath);
     if (entry?.reviewPath && (operation.op === "finish" || (operation.op !== "release" && ["implementation", "integration"].includes(entry.activity)))) { paths.add((await resolveArtifactPath(projectRoot, entry.reviewPath, false, "review.json")).target); reviews.add(entry.reviewPath); }
     if (["finish", "release"].includes(operation.op)) simulated.delete(slice); else if (entry) simulated.set(slice, entry);
   }

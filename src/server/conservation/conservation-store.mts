@@ -2,6 +2,8 @@ import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { realpath, lstat, readlink } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "../repository-intelligence/native-repository-intelligence.mjs";
 import { privateDirectory, regularBytes, semanticError } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
@@ -10,6 +12,12 @@ import type { Evidence, SnapshotEvidence, InventoryEntry } from "./conservation-
 import type { NativeSource, SourceSnapshot, SourceFile, Diagnostic } from "../repository-intelligence/repository-unit-types.mjs";
 
 export const digest = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
+// A snapshot follows the ignore rules even for tracked files, so force-adding an ignored workflow artifact does not change the source that evidence binds.
+async function trackedIgnored(root: string) {
+  try { return (await promisify(execFile)("git", ["ls-files", "-z", "--cached", "--ignored", "--exclude-standard"], { cwd: root, maxBuffer: 64 * 1024 * 1024 })).stdout.split("\0").filter(Boolean); }
+  catch { return []; }
+}
+
 export const conservationError = (code: string, message: string, details: Record<string, unknown> = {}) => Object.assign(semanticError(code, message), details);
 export const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item)
   ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b, "en"))) : item);
@@ -158,8 +166,8 @@ export class ConservationStore {
     if (deltaPath) await this.registerSlice(projectRoot, deltaPath);
     const { root, directory } = await this.location(projectRoot, true);
     const source = await openNativeRepositoryIntelligence(root, { retainOpaque: true });
-    const snapshot = await source.snapshot() as unknown as InventorySnapshot, exclusions = await this.outputs(root);
-    const selected = snapshot.inventory.filter(entry => !exclusions.includes(entry.file));
+    const snapshot = await source.snapshot() as unknown as InventorySnapshot, exclusions = await this.outputs(root), ignored = new Set(await trackedIgnored(root));
+    const selected = snapshot.inventory.filter(entry => !exclusions.includes(entry.file) && !ignored.has(entry.file));
     const blobs = await privateDirectory(path.join(directory, "blobs"));
     for (const entry of selected) {
       const bytes = entry.kind === "symlink" ? await readlink(path.join(root, entry.file), { encoding: "buffer" }) : await regularBytes(entry.absolutePath!, 2 * 1024 * 1024);
@@ -172,7 +180,7 @@ export class ConservationStore {
     const files = selected.map(({ file, kind, hash, bytes, mode, target }) => ({ file, kind, hash, bytes, mode, ...(target === undefined ? {} : { target }) }));
     const evidence: SnapshotEvidence = { kind: "snapshot", schemaVersion: 1, project: root, commit: snapshot.commit,
       capturePolicy: "conservation-source-v1", fingerprint: digest(canonical(files)), files, exclusions,
-      omissions: snapshot.omissions.filter(item => !exclusions.includes(item.file)), complete: snapshot.complete, unknownOmissions: snapshot.unknownOmissions, diagnostics: snapshot.diagnostics };
+      omissions: snapshot.omissions.filter(item => !exclusions.includes(item.file) && !ignored.has(item.file)), complete: snapshot.complete, unknownOmissions: snapshot.unknownOmissions, diagnostics: snapshot.diagnostics };
     return { snapshotId: await this.put(root, evidence), snapshot: evidence };
   }
   async source(projectRoot: string, snapshotId: string): Promise<NativeSource> {
@@ -215,7 +223,13 @@ export class ConservationStore {
     const current = await this.capture(projectRoot), exclusions = await this.outputs(projectRoot);
     const allowed = exclusions.filter(file => !before.files.some(entry => entry.file === file));
     const selected = (record: SnapshotEvidence) => canonical({ files: record.files.filter(file => !allowed.includes(file.file)), omissions: record.omissions, complete: record.complete });
-    if (selected(before) !== selected(current.snapshot)) throw conservationError("stale_snapshot", "The source changed after the accepted evidence.", { expectedSnapshot: snapshotId, currentSnapshot: current.snapshotId });
+    if (selected(before) !== selected(current.snapshot)) {
+      const hashes = (record: SnapshotEvidence) => new Map(record.files.filter(file => !allowed.includes(file.file)).map(file => [file.file, file.hash]));
+      const old = hashes(before), now = hashes(current.snapshot);
+      const changed = [...new Set([...old.keys(), ...now.keys()])].filter(file => old.get(file) !== now.get(file)).sort()
+        .map(file => ({ code: !old.has(file) ? "file_added" : !now.has(file) ? "file_removed" : "file_changed", file, message: "differs from the accepted evidence" }));
+      throw conservationError("stale_snapshot", "The source changed after the accepted evidence. Restore these files, or capture a new snapshot and repeat the review of the changed source.", { expectedSnapshot: snapshotId, currentSnapshot: current.snapshotId, problems: changed });
+    }
     return current.snapshotId;
   }
 }

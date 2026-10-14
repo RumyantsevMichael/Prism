@@ -1,1 +1,1 @@
-export const CHUNKER_VERSION = "concepts-6-structural";
+export const CHUNKER_VERSION = "concepts-7-explicit-anchors";

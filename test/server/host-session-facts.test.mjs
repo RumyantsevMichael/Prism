@@ -1020,3 +1020,47 @@ test("the canonical JavaScript validator rejects unknown properties and incomple
     /compactionScope value and source must be present together/
   );
 });
+
+test("keeps the store busy when an aged lock has an invalid owner", async (context) => {
+  const dataDirectory = await temporaryDirectory(context, "prism-host-facts-invalid-lock-");
+  const directory = path.join(dataDirectory, "session-capacity");
+  const lockPath = path.join(directory, ".retention.lock");
+  await mkdir(lockPath, { recursive: true, mode: 0o700 });
+  await writeFile(path.join(lockPath, "owner-invalid"), "{}\n", { mode: 0o600 });
+  const staleTime = new Date("2000-01-01T00:00:00.000Z");
+  await utimes(lockPath, staleTime, staleTime);
+
+  await assert.rejects(
+    writeHostSessionFacts(factRecord("invalid-lock-owner"), {
+      dataDirectory,
+      isProcessAlive() {
+        return false;
+      }
+    }),
+    /busy/
+  );
+  assert.deepEqual(await readdir(lockPath), ["owner-invalid"]);
+});
+
+test("keeps the store busy when an aged owner record exceeds the fact owner limit", async (context) => {
+  const dataDirectory = await temporaryDirectory(context, "prism-host-facts-padded-lock-");
+  const directory = path.join(dataDirectory, "session-capacity");
+  const lockPath = path.join(directory, ".retention.lock");
+  const token = "55555555-5555-4555-8555-555555555555";
+  const padded = `${JSON.stringify({ token, pid: 424242 })}${" ".repeat(180)}\n`;
+  await mkdir(lockPath, { recursive: true, mode: 0o700 });
+  await writeFile(path.join(lockPath, `owner-${token}`), padded, { mode: 0o600 });
+  const staleTime = new Date("2000-01-01T00:00:00.000Z");
+  await utimes(lockPath, staleTime, staleTime);
+
+  await assert.rejects(
+    writeHostSessionFacts(factRecord("padded-lock-owner"), {
+      dataDirectory,
+      isProcessAlive() {
+        return false;
+      }
+    }),
+    /busy/
+  );
+  assert.equal(await readFile(path.join(lockPath, `owner-${token}`), "utf8"), padded);
+});
