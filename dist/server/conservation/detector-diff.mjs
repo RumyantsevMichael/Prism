@@ -36,11 +36,12 @@ function detectorDiff(before, after, changed) {
       message: `The function ${group.name} now has copies in ${group.files} files: ${list(members)}. Consolidate the copies into one unit, or name the functions for their different contracts.`
     });
   }
-  const pairs = (groups) => new Set(groups.flatMap((group) => group.members.flatMap((a) => group.members.filter((b) => a.file !== b.file && key(a) < key(b)).map((b) => `${key(a)}|${key(b)}`))));
+  const pair = (a, b, id) => id(a) < id(b) ? `${id(a)}|${id(b)}` : `${id(b)}|${id(a)}`;
+  const pairs = (groups, id) => new Set(groups.flatMap((group) => group.members.flatMap((a) => group.members.filter((b) => a.file !== b.file).map((b) => pair(a, b, id)))));
   const grouped = (code, groups, baseline, what) => {
-    const known = pairs(baseline);
+    const known = pairs(baseline, key), knownNames = pairs(baseline, (member) => member.selector);
     for (const group of groups) {
-      const fresh = group.members.some((a) => changed.has(a.file) && group.members.some((b) => a.file !== b.file && !known.has(key(a) < key(b) ? `${key(a)}|${key(b)}` : `${key(b)}|${key(a)}`)));
+      const fresh = group.members.some((a) => changed.has(a.file) && group.members.some((b) => a.file !== b.file && !known.has(pair(a, b, key)) && !knownNames.has(pair(a, b, (member) => member.selector))));
       if (fresh) findings.push({ code, severity: "review_required", file: touches(group.members).file, message: `${what}: ${list(group.members)}.` });
     }
   };

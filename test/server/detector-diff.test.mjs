@@ -51,3 +51,24 @@ test("a unit that becomes complex in a changed file needs a review, and an uncha
   assert.ok(found.some(finding => finding.code === "complexity_introduced" && finding.severity === "review_required" && /route has 33 lines and 30 branches/.test(finding.message)));
   assert.deepEqual(detectorDiff(after, after, new Set(["src/router.mjs"])).filter(finding => finding.code === "complexity_introduced"), []);
 });
+
+// Each function calls the named operations through unresolved references, and filler functions make those operations rare.
+function calls(files) {
+  const result = side(Object.fromEntries(Object.entries(files).map(([file, functions]) => [file, Object.fromEntries(Object.keys(functions).map(name => [name, `function ${name}() {\n  return 1;\n}`]))])));
+  const fillers = side(Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`src/filler${index}.mjs`, { [`filler${index}`]: `function filler${index}() {\n  return 1;\n}` }])));
+  result.index.units.push(...fillers.index.units);
+  for (const [file, text] of fillers.contents) result.contents.set(file, text);
+  result.index.unresolvedReferences = Object.entries(files).flatMap(([file, functions]) => Object.entries(functions).flatMap(([name, operations]) => operations.map(operation => ({ source: `${file}#${name}`, name: operation }))))
+    .concat(fillers.index.units.map(unit => ({ source: unit.id, name: `own${unit.name}` })));
+  return result;
+}
+
+test("a function that moves to another file keeps its dependency pairs, and a new pairing is reported", () => {
+  const lock = ["openSync", "fstatSync", "renameSync", "linkSync"];
+  const before = calls({ "src/trace.mjs": { lockTrace: lock }, "src/facts.mjs": { lockFacts: lock } });
+  const moved = calls({ "src/shared.mjs": { lockTrace: lock }, "src/facts.mjs": { lockFacts: lock } });
+  const added = calls({ "src/trace.mjs": { lockTrace: lock }, "src/facts.mjs": { lockFacts: lock }, "src/report.mjs": { summarize: lock } });
+  const shared = findings => findings.filter(finding => finding.code === "shared_dependencies_introduced");
+  assert.equal(shared(detectorDiff(before, added, new Set(["src/report.mjs"]))).length, 1);
+  assert.deepEqual(shared(detectorDiff(before, moved, new Set(["src/shared.mjs", "src/trace.mjs"]))), []);
+});
