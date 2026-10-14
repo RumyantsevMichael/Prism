@@ -1,6 +1,6 @@
 # Share one safety unit between the session stores
 
-Status: Proposed
+Status: Accepted
 Created: 2026-10-12
 
 ## Requirements
@@ -40,6 +40,9 @@ Store configuration keeps the remaining differences visible in one place instead
 ### Move both stores to staged publication
 
 Declined because the requirement keeps each store's current lock protocol and the trace store reports a different reason code for an invalid owner.
+Two plugin versions can also use one store directory at the same time during an update.
+A staged rename replaces an empty lock directory that direct publication has just created, so mixed protocols in one store would let two holders own the lock.
+A protocol change for one store therefore needs a migration that keeps old and new versions mutually exclusive.
 
 ### Use one owner size limit for both stores
 
@@ -72,3 +75,4 @@ The code view is [session-store-safety.puml](../../plans/session-store-safety/se
 ## Decision Log
 
 2026-10-12: Proposed one shared safety unit that keeps each store's lock protocol.
+2026-10-14: Accepted after implementation verification, with the mixed-version lock risk as the reason to keep each store's protocol.
