@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -22,6 +22,21 @@ test("keeps decision recording disabled until a project opts in", async (context
   assert.deepEqual(history.records, []);
   assert.ok(history.coverageGaps.includes("recording_disabled"));
   await assert.rejects(readdir(path.join(options.dataDirectory, "decision-history")), { code: "ENOENT" });
+});
+
+test("writes private records through the shared atomic writer, which refuses a symbolic link target", async (context) => {
+  const options = await fixture(context);
+  await setDecisionRecording({ ...options, enabled: true });
+  const directory = path.join(options.dataDirectory, "decision-history");
+  const config = (await readdir(directory)).find((name) => name.endsWith(".config.json"));
+  assert.equal((await lstat(path.join(directory, config))).mode & 0o777, 0o600);
+  const outside = path.join(options.dataDirectory, "outside.json");
+  await writeFile(outside, "keep");
+  await rm(path.join(directory, config));
+  await symlink(outside, path.join(directory, config));
+  await assert.rejects(setDecisionRecording({ ...options, enabled: false }), { code: "invalid_path" });
+  assert.equal(await readFile(outside, "utf8"), "keep");
+  assert.deepEqual((await readdir(directory)).filter((name) => name.endsWith(".tmp")), []);
 });
 
 test("records a content-free CodeGraph null estimate and explicit coverage gaps", async (context) => {
