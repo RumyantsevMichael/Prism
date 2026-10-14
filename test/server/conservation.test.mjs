@@ -417,6 +417,27 @@ test('a changed DELETE identity blocks completion and cannot be attributed to a 
  });
 });
 
+test('a planned file reference covers new private units but never a new public declaration',async()=>{
+ const original='function existing() { return 1; }\n';const f=await fixture({'code.ts':original,'requirements.txt':'Change the code file.'});await analysis(f.root,f.b,privateFunctions(f.b,original));
+ const d=await f.update({expectedRevision:null,scope:['code.ts'],baselineId:f.b.snapshotId,requirements:[ref('requirements.txt')],operations:[{op:'insert',entry:entry('code','MODIFY',[ref('code.ts')],[ref('code.ts')],{kind:'module'})}]});
+ const changed='function existing() { return 2; }\nfunction helper() { return 5; }\nexport function api() { return 6; }\n';await writeFile(path.join(f.root,'code.ts'),changed);const result=await store.capture(f.root);
+ await analysis(f.root,result,privateFunctions(result,changed).map(unit=>unit.name==='api'?{...unit,isExported:true}:unit));
+ const c=await compare(f,d,result);
+ assert.equal(c.observations.some(item=>item.code==='unclassified_unit'&&['existing','helper'].includes(item.unit?.selector)),false);
+ assert.ok(c.observations.some(item=>item.code==='undeclared_public_concept'&&item.severity==='failure'&&item.unit.selector==='api'));
+});
+
+test('private units of a new file belong to the planned entries that create it',async()=>{
+ const f=await fixture({'code.ts':'function existing() { return 1; }\n','requirements.txt':'Add a shared module.'});await analysis(f.root,f.b,privateFunctions(f.b,'function existing() { return 1; }\n'));
+ const d=await f.update({expectedRevision:null,scope:['code.ts','shared.ts'],baselineId:f.b.snapshotId,requirements:[ref('requirements.txt')],operations:[{op:'insert',entry:entry('shared','REPLACE',[{path:'code.ts',selector:{type:'symbol',value:'existing'}}],[{path:'shared.ts',selector:{type:'symbol',value:'existing'}}],{kind:'function'})}]});
+ await writeFile(path.join(f.root,'code.ts'),'');const text='function existing() { return 1; }\nfunction helper() { return 2; }\n';await writeFile(path.join(f.root,'shared.ts'),text);
+ const result=await store.capture(f.root);
+ const units=[...text.matchAll(/function (\w+)\(\) \{ return \d; \}/g)].map(match=>({id:match[1],file:'shared.ts',domain:'code',kind:'function',name:match[1],selector:match[1],span:{start:match.index,end:match.index+match[0].length},sourceHash:result.snapshot.files.find(file=>file.file==='shared.ts').hash,contentHash:digest(match[0]),isExported:false}));
+ await analysis(f.root,result,units);
+ const c=await compare(f,d,result);
+ assert.equal(c.observations.some(item=>item.code==='unclassified_unit'&&item.unit?.selector==='helper'),false);
+});
+
 test('ADD rejects baseline identities for symbols, exact text, and final source spans while allowing a new function',async()=>{
  const original='function existing() { return 1; }\n';const f=await fixture({'code.ts':original,'requirements.txt':'Add a new function.'});const units=privateFunctions(f.b,original);await analysis(f.root,f.b,units);
  const receiptId=await store.put(f.root,{kind:'search',schemaVersion:1,project:f.root,snapshotId:f.b.snapshotId,snapshot:f.b.snapshot.fingerprint,query:'new function',filters:{},limit:10,status:'ready',capabilities:{semanticSearch:true},modelIdentity:'fixture',indexRevision:'fixture',versions:{},coverage:{},diagnostics:[],candidates:[]});

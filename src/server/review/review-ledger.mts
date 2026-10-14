@@ -195,7 +195,7 @@ async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wav
       const changed = comparison.units[side].filter(unit => unit.file === file && unit.kind !== "file" && !comparison.units[side === "before" ? "after" : "before"].some(other => other.key === unit.key && other.hash === unit.hash));
       const targets = changed.length ? changed.filter(unit => !changed.some(child => child !== unit && child.start >= unit.start && child.end <= unit.end && (child.start !== unit.start || child.end !== unit.end))) : comparison.units[side].filter(unit => unit.file === file && unit.kind === "file");
       const spans = (await Promise.all(assessments.map(item => resolveReference(projectRoot, snapshot, item.section!, analysis)))).filter(result => result.status === "resolved").flatMap(result => result.units);
-      for (const target of targets) if (!spans.some(span => span.start <= target.start && span.end >= target.end)) add("convergence_missing", "Each changed text section needs a reviewed convergence assessment that covers its exact source.", `${file}:${side}:${target.start}:${target.end}`);
+      for (const target of targets) if (!spans.some(span => span.start <= target.start && span.end >= target.end)) add("convergence_missing", "Each changed text section needs a reviewed convergence assessment that covers its exact source. A section that names only the file path covers the whole file.", `${file}:${side}:${target.start}:${target.end}`);
     }
   }
   for (const finding of review.findings.filter(item => item.mode === wave.mode && item.status !== "VERIFIED")) add("finding_unresolved", finding.title, finding.id);

@@ -332,7 +332,10 @@ export async function compareConceptDelta(input: { projectRoot: string; deltaPat
         && !(created && unit.public === true && ref.action === "MODIFY"));
       const covered = sourceRefs.some(ref => ref.side === side && ref.action !== "KEEP" && ref.unit.file === file && ref.unit.start <= unit.start && ref.unit.end >= unit.end);
       if (unit.kind === "file" && currentFile.kind === "source") continue;
-      if (exact || (covered && !created)) continue;
+      // A new private unit inside a planned span, or in a new file that planned entries create, is implementation detail of those entries.
+      // A new public unit always needs its own transition.
+      const plannedFile = !before.files.some(item => item.file === file) && sourceRefs.some(ref => ref.side === "after" && ref.action !== "KEEP" && ref.unit.file === file);
+      if (exact || ((covered || (created && plannedFile)) && (!created || unit.public !== true))) continue;
       observe(created && unit.public === true ? "undeclared_public_concept" : "unclassified_unit", created && unit.public === true ? "failure" : "review_required",
         created && unit.public === true ? "A new public declaration requires an explicit concept transition." : "Attribute the changed unit to a planned concept or revise the plan.", { file, unit });
     }
