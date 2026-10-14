@@ -673,10 +673,13 @@ async function showArtifact(path) {
   lastSnapshot = snapshot;
   const diagramLabel = `${data.diagrams.length} diagram${data.diagrams.length === 1 ? "" : "s"}`;
   const refreshed = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  const structured = Boolean(data.kind);
-  const documentCard = structured || data.path.toLowerCase().endsWith(".puml")
-    ? ""
-    : `<section class="document-card"><div class="document-content">${renderText(data.path, data.content)}</div></section>`;
+  const source = data.kind === "source";
+  const structured = Boolean(data.kind) && !source;
+  const documentCard = source
+    ? `<section class="document-card source-card"><ol class="source-lines">${data.content.replace(/\n$/, "").split(/\r?\n/).map((line) => `<li><code>${escapeHtml(line) || " "}</code></li>`).join("")}</ol></section>`
+    : structured || data.path.toLowerCase().endsWith(".puml")
+      ? ""
+      : `<section class="document-card"><div class="document-content">${renderText(data.path, data.content)}</div></section>`;
   const state = viewState(data.path);
   artifact.innerHTML = `
     <header class="artifact-header">
@@ -692,7 +695,7 @@ async function showArtifact(path) {
         </div>` : ""}
         ${structured ? `<span class="meta-pill">${escapeHtml(KIND_LABELS[data.kind] ?? "JSON")}</span>` : ""}
         <span class="meta-pill">${escapeHtml(fileType(data.path))}</span>
-        ${structured ? "" : `<span class="meta-pill">${diagramLabel}</span>`}
+        ${source ? '<span class="meta-pill">Read-only</span>' : structured ? "" : `<span class="meta-pill">${diagramLabel}</span>`}
         <span class="meta-pill live" title="Last refreshed at ${refreshed}">Live</span>
       </div>
     </header>
@@ -795,7 +798,7 @@ async function initialize() {
   const requestedPath = selectedPath;
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
   project.textContent = data.projectRoot;
-  availableArtifacts = new Set(data.artifacts);
+  availableArtifacts = new Set([...data.artifacts, ...(data.sources ?? [])]);
   navigation = data.navigation;
   palette = createPalette({
     dialog: document.getElementById("palette"),
@@ -847,7 +850,7 @@ async function initialize() {
       const refreshed = await fetch("./api/index", { cache: "no-store" });
       if (refreshed.ok) {
         const snapshot = await refreshed.json();
-        availableArtifacts = new Set(snapshot.artifacts);
+        availableArtifacts = new Set([...snapshot.artifacts, ...(snapshot.sources ?? [])]);
         if (JSON.stringify(snapshot.navigation) !== JSON.stringify(navigation)) {
           navigation = snapshot.navigation;
           renderNavigation();

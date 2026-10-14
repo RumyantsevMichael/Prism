@@ -1,6 +1,6 @@
 import { createServer } from "node:https";
 import { randomBytes, X509Certificate } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -81,6 +81,42 @@ async function walkArtifacts(projectRoot, relativeRoot, results) {
       results.add(relativePath);
     }
   }
+}
+
+const SOURCE_SIZE_LIMIT = 512 * 1024;
+const SOURCE_CACHE_MS = 2000;
+const SECRET_NAME = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?)$|\.(pem|key|p12|pfx|jks|keystore|kdbx|gpg|asc)$/i;
+const BINARY_EXTENSION = /\.(png|jpe?g|gif|webp|ico|bmp|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|class|pyc|so|dylib|dll|exe|wasm|woff2?|ttf|otf|eot|mp3|mp4|mov|avi|sqlite|db)$/i;
+const sourceCache = new Map();
+
+function gitListFiles(projectRoot) {
+  return new Promise((resolve) => {
+    execFile("git", ["-C", projectRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => {
+      resolve(error ? [] : stdout.split("\0").filter(Boolean));
+    });
+  });
+}
+
+// Source files are shown read-only: tracked or unignored files only, without secrets, binaries, or very large files.
+export async function listSourceFiles(projectRoot) {
+  const hit = sourceCache.get(projectRoot);
+  if (hit && Date.now() - hit.at < SOURCE_CACHE_MS) return hit.value;
+  const value = (async () => {
+    const files = [];
+    for (const file of await gitListFiles(projectRoot)) {
+      const name = path.posix.basename(file);
+      if (SECRET_NAME.test(name) || BINARY_EXTENSION.test(name)) continue;
+      try {
+        const metadata = await stat(path.join(projectRoot, file));
+        if (metadata.isFile() && metadata.size <= SOURCE_SIZE_LIMIT) files.push(file);
+      } catch {
+        // A file deleted after git listed it is skipped.
+      }
+    }
+    return files.sort();
+  })();
+  sourceCache.set(projectRoot, { at: Date.now(), value });
+  return value;
 }
 
 export async function listArtifacts(projectRoot) {
@@ -172,6 +208,12 @@ export async function loadEvidence(projectRoot, evidenceId) {
 
 export async function loadArtifact(projectRoot, artifactPath) {
   const absolutePath = await resolveProjectFile(projectRoot, artifactPath);
+  if (!TEXT_EXTENSIONS.has(path.extname(artifactPath).toLowerCase())) {
+    const bytes = await readFile(absolutePath);
+    if (bytes.subarray(0, 8192).includes(0)) throw new Error("The file is binary and cannot be shown.");
+    const metadata = await stat(absolutePath);
+    return { path: artifactPath, kind: "source", content: bytes.toString("utf8"), diagrams: [], modifiedAt: metadata.mtimeMs };
+  }
   const content = await readFile(absolutePath, "utf8");
   if (path.extname(artifactPath).toLowerCase() === ".json") {
     const metadata = await stat(absolutePath);
@@ -451,7 +493,7 @@ export async function startReviewServer(options = {}) {
   }
 
   async function assertAvailable(tabs) {
-    const availableArtifacts = new Set(await listArtifacts(projectRoot));
+    const availableArtifacts = new Set([...await listArtifacts(projectRoot), ...await listSourceFiles(projectRoot)]);
     for (const tab of tabs) {
       if (!availableArtifacts.has(tab) && !(parseEntityRef(tab) && await entityExists(projectRoot, tab))) {
         throw new Error(`The artifact is not available for review: ${tab}`);
@@ -560,7 +602,7 @@ export async function startReviewServer(options = {}) {
       } else if (route === "/api/events" && request.method === "GET") {
         openViewerStream(response);
       } else if (route === "/api/index") {
-        send(response, 200, JSON.stringify({ projectRoot, artifacts: await listArtifacts(projectRoot), navigation: await loadNavigation(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
+        send(response, 200, JSON.stringify({ projectRoot, artifacts: await listArtifacts(projectRoot), sources: await listSourceFiles(projectRoot), navigation: await loadNavigation(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
       } else if (route === "/api/session" && request.method === "GET") {
         send(response, 200, JSON.stringify(sessionSnapshot()), "application/json; charset=utf-8");
       } else if (route === "/api/session" && request.method === "PUT") {
@@ -588,6 +630,12 @@ export async function startReviewServer(options = {}) {
         send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"))), "application/json; charset=utf-8");
       } else if (route === "/api/artifact") {
         const artifactPath = url.searchParams.get("path");
+        // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.
+        await resolveProjectFile(projectRoot, artifactPath);
+        if (!(await listArtifacts(projectRoot)).includes(artifactPath) && !(await listSourceFiles(projectRoot)).includes(artifactPath)) {
+          send(response, 404, "The file is not available for review.");
+          return;
+        }
         send(response, 200, JSON.stringify(await loadArtifact(projectRoot, artifactPath)), "application/json; charset=utf-8");
       } else {
         send(response, 404, "Not found");
