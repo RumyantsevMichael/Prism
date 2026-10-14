@@ -251,6 +251,17 @@ function stateErrorData(error) {
   return data;
 }
 
+// Hosts show agents the error message but not the error data, so the message also lists the problems that the data holds.
+const LISTED_PROBLEMS = 20;
+function errorMessage(error, data) {
+  const items = [...(Array.isArray(data?.problems) ? data.problems : []), ...(Array.isArray(data?.errors) ? data.errors : [])];
+  if (!items.length) return error.message;
+  const line = (item) => typeof item === "string" ? item : [item.code, item.id || item.file || item.path || item.field, item.message].filter(Boolean).join(": ") || JSON.stringify(item);
+  const listed = items.slice(0, LISTED_PROBLEMS).map((item) => `- ${line(item)}`);
+  if (items.length > LISTED_PROBLEMS) listed.push(`- ${items.length - LISTED_PROBLEMS} more problems are in the error data.`);
+  return `${error.message}\n${listed.join("\n")}`;
+}
+
 const capacityOverridesInputSchema = {
   type: "object",
   additionalProperties: false,
@@ -886,7 +897,8 @@ input.on("line", async (line) => {
     }
   } catch (error) {
     if (request?.id !== undefined) {
-      failure(request.id, -32603, error.message, stateErrorData(error));
+      const data = stateErrorData(error);
+      failure(request.id, -32603, errorMessage(error, data), data);
     }
   }
 });

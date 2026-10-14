@@ -1,7 +1,7 @@
 // Generated from src/server/workflow/active-operations.mts by scripts/native-build/compile.mjs.
 import { assertInput } from "./artifact-schema.mjs";
 import path from "node:path";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { resolveArtifactPath } from "../conservation/concept-delta.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { checkReviewGate, loadReview } from "../review/review-ledger.mjs";
@@ -13,12 +13,19 @@ const ACTIVE_OPERATIONS_SCHEMA = arr({ oneOf: [
   obj({ op: { const: "update" }, slice: str, set: { ...obj(fields, []), minProperties: 1 } }),
   obj({ op: { enum: ["finish", "release"] }, slice: str })
 ] });
+async function assertReviewPath(projectRoot, slice, reviewPath) {
+  const folder = path.posix.dirname(reviewPath), example = `<configured plans>/<initiative>/${slice}/review.json`;
+  if (path.posix.basename(reviewPath) !== "review.json" || path.posix.basename(folder) !== slice) throw conservationError("validation_failed", `The reviewPath ${reviewPath} must name review.json in the folder of the slice ${slice}, such as ${example}.`);
+  const directory = await stat(path.resolve(projectRoot, folder)).catch(() => null);
+  if (!directory?.isDirectory()) throw conservationError("validation_failed", `The reviewPath ${reviewPath} resolves from the project root, and ${folder} is not a directory there. Use the project-relative slice folder, such as ${example}.`);
+}
 async function withReviewGatesLocked(projectRoot, active, operations, action) {
   assertInput(ACTIVE_OPERATIONS_SCHEMA, operations);
   const simulated = new Map(active.map((entry) => [entry.slice, entry])), paths = /* @__PURE__ */ new Set(), reviews = /* @__PURE__ */ new Set();
   for (const operation of operations) {
     const slice = operation.entry?.slice || operation.slice, current = simulated.get(slice);
     const entry = operation.entry || (current ? { ...current, ...operation.set } : void 0);
+    if (entry?.reviewPath && operation.op !== "release") await assertReviewPath(projectRoot, slice, entry.reviewPath);
     if (entry?.reviewPath && (operation.op === "finish" || operation.op !== "release" && ["implementation", "integration"].includes(entry.activity))) {
       paths.add((await resolveArtifactPath(projectRoot, entry.reviewPath, false, "review.json")).target);
       reviews.add(entry.reviewPath);

@@ -88,13 +88,17 @@ export async function loadReview(projectRoot: string, reviewPath: string) {
 async function comparisonFor(projectRoot: string, review: ReviewRecord, wave: Wave) {
   const comparison = await conservationStore.get<ComparisonEvidence>(projectRoot, wave.comparisonId, "comparison");
   if (comparison.versions.comparison !== COMPARISON_VERSION) throw conservationError("evidence_missing", "Regenerate comparison evidence with the current identity and growth checks.");
-  if (comparison.deltaPath !== review.deltaPath || comparison.deltaRevision !== wave.deltaRevision || comparison.baselineId !== wave.baselineId || comparison.resultSnapshotId !== wave.snapshotId) throw conservationError("evidence_missing", "The review inputs do not match the immutable comparison.");
+  const mismatched = ([["deltaPath", comparison.deltaPath, review.deltaPath], ["deltaRevision", comparison.deltaRevision, wave.deltaRevision], ["baselineId", comparison.baselineId, wave.baselineId], ["snapshotId", comparison.resultSnapshotId, wave.snapshotId]] as const)
+    .filter(([, compared, given]) => compared !== given).map(([field, compared, given]) => ({ code: "comparison_input_mismatch", field, message: `the comparison has ${compared}, and the review has ${given}` }));
+  if (mismatched.length) throw conservationError("evidence_missing", "The review inputs do not match the immutable comparison. Compare the concept delta again with the review inputs, or start the wave with the inputs of the comparison.", { problems: mismatched });
   for (const id of [wave.baselineId, wave.snapshotId]) {
     const snapshot = await conservationStore.get<SnapshotEvidence>(projectRoot, id, "snapshot");
     for (const file of snapshot.files.filter(file => withinScope(file.file, comparison.scope))) await conservationStore.bytes(projectRoot, file);
   }
   return comparison;
 }
+const targetFiles = (comparison: ComparisonEvidence) => [...new Set([...comparison.units.before, ...comparison.units.after].filter(unit => unit.kind === "file").map(unit => unit.file))];
+const describe = (reference: Reference) => reference.selector === undefined ? reference.path : `${reference.path} (${typeof reference.selector === "string" ? reference.selector : `${reference.selector.type} ${"value" in reference.selector ? JSON.stringify(reference.selector.value) : `${reference.selector.start}:${reference.selector.end}`}`})`;
 function deferredDesignObservation(wave: Wave, observation: Observation) { return wave.mode === "design-audit" && (observation.code === "retained_source" || observation.code === "deletion_unknown" || (observation.code === "missing_target" && observation.side === "after")); }
 async function boundAnalysis(projectRoot: string, comparison: ComparisonEvidence, side: "before" | "after") {
   const id = comparison.analysisIds?.[side];
@@ -106,7 +110,7 @@ async function assessmentValid(projectRoot: string, review: ReviewRecord, wave: 
   const a = await boundAnalysis(projectRoot, comparison, "before"), b = await boundAnalysis(projectRoot, comparison, "after");
   for (const reference of assessment.evidence) {
     const first = await resolveReference(projectRoot, after, reference, b), second = await resolveReference(projectRoot, before, reference, a);
-    if (first.status !== "resolved" && second.status !== "resolved") throw conservationError("evidence_missing", "A cited evidence reference must resolve in a bound snapshot.");
+    if (first.status !== "resolved" && second.status !== "resolved") throw conservationError("evidence_missing", `The cited evidence reference ${describe(reference)} does not resolve in the baseline or the result snapshot.`, { problems: [{ code: first.status, message: first.reason || second.reason || `The reference is ${first.status}.` }] });
   }
   if (["manual", "implementation-detail"].includes(assessment.kind)) {
     if (!assessment.observationIds?.length) throw conservationError("validation_failed", "Name the checks addressed by the assessment.");
@@ -119,19 +123,28 @@ async function assessmentValid(projectRoot: string, review: ReviewRecord, wave: 
           const deleted = await resolveReference(projectRoot, before, reference, a);
           if (deleted.units.some(target => target.key === observation.unit?.key || comparison.units.before.some(unit => unit.key === observation.unit?.key && unit.file === target.file && unit.start >= target.start && unit.end <= target.end))) throw conservationError("gate_blocked", "An explicitly deleted concept cannot become another concept's implementation detail.");
         }
-      } else if (observation.code === "unclassified_unit") throw conservationError("gate_blocked", "An unclassified unit requires a concept attribution or a design revision.");
+      } else if (observation.code === "unclassified_unit") throw conservationError("gate_blocked", `The observation ${id} reports the unclassified unit ${observation.unit ? `${observation.unit.file}:${observation.unit.selector}` : observation.file || "in the comparison"}. Record an implementation-detail assessment that names its changed concept, or revise the design so that a concept entry covers it.`);
     }
   }
   const boundRequirement = (reference: Reference) => document.requirements?.some(item => item.path === reference.path && (item.selector === undefined || canonical(item) === canonical(reference)));
   if (assessment.kind === "growth") {
     const justification = assessment.justification;
-    if (!assessment.growthIds?.length || !justification?.requirements.length || justification.requirements.some(ref => !boundRequirement(ref))
-      || !justification.conceptIds.length || justification.conceptIds.some(id => !document.concepts.some(entry => entry.id === id))) throw conservationError("gate_blocked", "Growth needs governing requirements and affected concepts.");
-    for (const id of assessment.growthIds) {
+    const missing = [
+      ...(assessment.growthIds?.length ? [] : ["growthIds is empty"]),
+      ...(justification?.requirements.length ? [] : ["justification.requirements is empty"]),
+      ...(justification?.requirements || []).filter(ref => !boundRequirement(ref)).map(ref => `the requirement ${describe(ref)} is not in the delta requirements`),
+      ...(justification?.conceptIds.length ? [] : ["justification.conceptIds is empty"]),
+      ...(justification?.conceptIds || []).filter(id => !document.concepts.some(entry => entry.id === id)).map(id => `the concept ${id} is not in the delta`)];
+    if (missing.length) throw conservationError("gate_blocked", "Growth needs governing requirements and affected concepts.", { problems: missing.map(message => ({ code: "growth_justification_invalid", message })) });
+    for (const id of assessment.growthIds!) {
       const growth = comparison.growth.find(item => item.id === id);
-      if (!growth || !justification.dimensions.includes(growth.dimension)) throw conservationError("validation_failed", "The growth justification does not cover the measured increase.");
+      if (!growth) throw conservationError("validation_failed", `The comparison has no growth ${id}.`);
+      if (!justification!.dimensions.includes(growth.dimension)) throw conservationError("validation_failed", `The growth justification does not cover the measured increase of ${growth.dimension}. Add it to justification.dimensions.`);
     }
-    for (const requirement of justification.requirements) if ((await resolveReference(projectRoot, after, requirement, b)).status !== "resolved") throw conservationError("evidence_missing", "Each growth requirement must resolve in the resulting source.");
+    for (const requirement of justification!.requirements) {
+      const resolved = await resolveReference(projectRoot, after, requirement, b);
+      if (resolved.status !== "resolved") throw conservationError("evidence_missing", `The growth requirement ${describe(requirement)} is ${resolved.status} in the resulting source.${resolved.reason ? ` ${resolved.reason}` : ""}`);
+    }
   }
   if (assessment.kind === "convergence") {
     if (!assessment.section || (await resolveReference(projectRoot, after, assessment.section, b)).status !== "resolved" && (await resolveReference(projectRoot, before, assessment.section, a)).status !== "resolved") throw conservationError("evidence_missing", "The convergence section must resolve without ambiguity in a bound snapshot.");
@@ -175,8 +188,7 @@ async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wav
   }
   for (const finding of review.findings.filter(item => item.mode === wave.mode && item.status !== "VERIFIED")) add("finding_unresolved", finding.title, finding.id);
   for (const conflict of review.conflicts.filter(item => !item.resolved)) add("review_conflict", conflict.reason, conflict.id);
-  const targetFiles = new Set([...comparison.units.before, ...comparison.units.after].filter(unit => unit.kind === "file").map(unit => unit.file));
-  for (const file of targetFiles) if (!wave.lanes.some(lane => withinScope(file, lane.coverage))) add("review_coverage_missing", "Assign each original and resulting target file to a review lane.", file);
+  for (const file of targetFiles(comparison)) if (!wave.lanes.some(lane => withinScope(file, lane.coverage))) add("review_coverage_missing", "Assign each original and resulting target file to a review lane.", file);
   if (requireLaneResults) for (const lane of wave.lanes) if (lane.result?.status !== "CLEAN" || lane.result.digest !== laneDigest(review, wave, lane)) add("lane_result_stale", "Every assigned lane needs a current CLEAN result.", lane.id);
   for (const lane of wave.lanes) if (lane.reviewer === review.coordinator || review.deliveryWorkers.includes(lane.reviewer) || review.exchangeWorkers.includes(lane.reviewer)) add("reviewer_not_independent", "A correction participant cannot verify the correction.", lane.id);
   const latestAudit = [...review.waves].reverse().find(item => item.mode === "design-audit");
@@ -247,7 +259,9 @@ export async function updateReview(input: UpdateInput) {
         const baselineId = (delta.document as DeltaDocument | null)?.baselineId;
         if (!baselineId || (review.baselineId && review.baselineId !== baselineId)) throw conservationError("gate_blocked", "A review must preserve its original retained baseline.");
         const created: Wave = { id: next.id, mode: next.mode, deltaRevision: next.deltaRevision, snapshotId: next.snapshotId, comparisonId: next.comparisonId, baselineId, lanes: next.lanes };
-        await comparisonFor(input.projectRoot, review, created);
+        const comparison = await comparisonFor(input.projectRoot, review, created);
+        const uncovered = targetFiles(comparison).filter(file => !created.lanes.some(lane => withinScope(file, lane.coverage)));
+        if (uncovered.length) throw conservationError("validation_failed", "Lane coverage holds project-relative path prefixes, such as src/server/session, and each target file of the comparison needs a lane.", { problems: uncovered.map(file => ({ code: "review_coverage_missing", file, message: "no lane covers this target file" })) });
         await conservationStore.assertCurrent(input.projectRoot, next.snapshotId);
         review.baselineId = baselineId; review.waves.push(created);
       } else if (op === "assign_delivery") { requireRole(review, input.actor, "coordinator"); if (review.waves.some(item => item.lanes.some(lane => lane.reviewer === operation.worker))) throw conservationError("gate_blocked", "A reviewer cannot become delivery for its own review."); review.delivery = operation.worker as string; review.deliveryWorkers = [...new Set([...review.deliveryWorkers, review.delivery])];

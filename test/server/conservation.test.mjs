@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdtemp,realpath,writeFile,readFile,mkdir,rm,symlink,chmod,lstat,utimes} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {conservationStore as store,canonical,digest} from '../../dist/server/conservation/conservation-store.mjs';
 import {privateDirectory,regularBytes} from '../../dist/server/repository-intelligence/native-semantic-runtime.mjs';
 import {updateConceptDelta,getConceptDelta} from '../../dist/server/conservation/concept-delta.mjs';
@@ -71,14 +73,24 @@ test('implementation review must cover deleted paths even when the result is emp
   await rm(path.join(f.root,'delete.js'));const result=await store.capture(f.root);await analysis(f.root,result);
   const compared=await compare(f,d,result),comparisonId=await store.put(f.root,compared);
   assert.deepEqual(compared.observations,[]);
-  await act('coord',[wave('incomplete','implementation-review',result,comparisonId,['unrelated.js'])]);
-  await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);
-  await assert.rejects(act('coord',[{op:'accept_wave'}]),error=>error.code==='gate_blocked'&&error.problems.some(item=>item.code==='review_coverage_missing'&&item.id==='delete.js'));
+  await assert.rejects(act('coord',[wave('incomplete','implementation-review',result,comparisonId,['unrelated.js'])]),error=>error.code==='validation_failed'&&error.problems.some(item=>item.code==='review_coverage_missing'&&item.file==='delete.js'));
+  await assert.rejects(act('coord',[wave('anchors','implementation-review',result,comparisonId,['requirements.txt#1'])]),error=>error.code==='validation_failed'&&/path prefixes/.test(error.message));
   assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,false);
   await act('coord',[wave('complete','implementation-review',result,comparisonId,scope)]);
   await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
   assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,true);
  });
+});
+
+test('force-adding an ignored file leaves the snapshot unchanged',async()=>{
+ const f=await fixture({'.gitignore':'plans/\n','src.js':'void 0;\n','plans/state.json':'{}'});
+ const git=(...args)=>promisify(execFile)('git',args,{cwd:f.root});
+ await git('init','-q');await git('add','.gitignore','src.js');
+ const before=await store.capture(f.root);
+ assert.ok(!before.snapshot.files.some(x=>x.file==='plans/state.json'));
+ await git('add','-f','plans/state.json');
+ await store.assertCurrent(f.root,before.snapshotId);
+ assert.equal((await store.capture(f.root)).snapshot.fingerprint,before.snapshot.fingerprint);
 });
 
 test('retains dirty source, binary identity and symlinks without following them; corrupt blobs block reads',async()=>{
@@ -90,7 +102,7 @@ test('retains dirty source, binary identity and symlinks without following them;
  await writeFile(path.join(f.root,'a.txt'),'changed');
  const old=b.snapshot.files.find(x=>x.file==='a.txt');
  assert.equal((await store.bytes(f.root,old)).toString(),'dirty untracked');
- await assert.rejects(store.assertCurrent(f.root,b.snapshotId),{code:'stale_snapshot'});
+ await assert.rejects(store.assertCurrent(f.root,b.snapshotId),error=>error.code==='stale_snapshot'&&error.problems.some(item=>item.code==='file_changed'&&item.file==='a.txt'));
  await writeFile(await store.blobPath(f.root,old.hash),'corrupt');
  await assert.rejects(store.bytes(f.root,old),{code:'evidence_missing'});
 });
