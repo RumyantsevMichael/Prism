@@ -448,7 +448,7 @@ test('REPLACE consolidation may retain its explicit destination identity but not
  d=await f.update({expectedRevision:d.revision,operations:[{op:'update',id:'consolidate',set:{after:[reference(after[0])]}}]});
  const c=await compare(f,d,result);assert.deepEqual(c.observations.filter(item=>item.code==='retained_source').map(item=>item.unit.selector),['obsolete']);
 });
-test('readiness rejects additions that copy a change into functions that several files repeat',async()=>{
+test('readiness rejects additions and parallel modifications that copy a change into functions that several files repeat',async()=>{
  const body=name=>`function ${name}(lockPath) {\n  const text = readFileSync(lockPath, "utf8");\n  const owner = JSON.parse(text);\n  if (!owner.pid) return null;\n  if (owner.token.length !== 36) return null;\n  const alive = processState(owner.pid);\n  if (!alive) return null;\n  const age = Date.now() - owner.createdAt;\n  if (age > LOCK_STALE_MS) return null;\n  return { pid: owner.pid, token: owner.token };\n}\n`;
  const small='function digest(text) {\n  return hash(text);\n}\n';
  const files={'a.ts':body('readLockOwner')+small,'b.ts':body('readLockOwner').replace('return null;\n  const alive','throw new Error("bad");\n  const alive')+small,'requirements.md':'Requirement'};
@@ -474,4 +474,11 @@ test('readiness rejects additions that copy a change into functions that several
  await updateConceptDelta({projectRoot:f.root,deltaPath:other,expectedRevision:null,scope:['a.ts','b.ts','shared.ts'],baselineId:f.b.snapshotId,operations:[{op:'insert',entry:consolidate}]});
  assert.deepEqual(await growth({...base,consolidations:[{deltaPath:other,reason:'The store slice consolidates the lock helpers first.'}]}),[]);
  assert.deepEqual((await growth({...base,consolidations:[{deltaPath:'plan/missing/concept-delta.json',reason:'Missing.'}]})).map(x=>x.code).sort(),['consolidation_delta_invalid','duplication_growth']);
+ const modify=file=>entry(`wait-${file}`,'MODIFY',[symbol(file,'readLockOwner')],[symbol(file,'readLockOwner')]);
+ const parallel=await growth({...base,concepts:[modify('a.ts'),modify('b.ts')]});
+ assert.equal(parallel.length,1);assert.equal(parallel[0].code,'duplication_growth');
+ assert.match(parallel[0].message,/wait-a\.ts, wait-b\.ts change the copies of the functions readLockOwner separately in a\.ts, b\.ts/);
+ assert.deepEqual(await growth({...base,concepts:[modify('a.ts')]}),[]);
+ assert.deepEqual(await growth({...base,concepts:[entry('digest-a','MODIFY',[symbol('a.ts','digest')],[symbol('a.ts','digest')]),entry('digest-b','MODIFY',[symbol('b.ts','digest')],[symbol('b.ts','digest')])]}),[]);
+ assert.deepEqual(await growth({...base,concepts:[modify('a.ts'),modify('b.ts'),consolidate]}),[]);
 });
