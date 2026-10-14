@@ -252,9 +252,11 @@ function stateErrorData(error) {
 }
 
 // Hosts show agents the error message but not the error data, so the message also lists the problems that the data holds.
+// A problem that the message already states is not listed again.
 const LISTED_PROBLEMS = 20;
 function errorMessage(error, data) {
-  const items = [...(Array.isArray(data?.problems) ? data.problems : []), ...(Array.isArray(data?.errors) ? data.errors : [])];
+  const stated = (item) => error.message.includes(typeof item === "string" ? item : item.message || "\0");
+  const items = [...(Array.isArray(data?.problems) ? data.problems : []), ...(Array.isArray(data?.errors) ? data.errors : [])].filter((item) => !stated(item));
   if (!items.length) return error.message;
   const line = (item) => typeof item === "string" ? item : [item.code, item.id || item.file || item.path || item.field, item.message].filter(Boolean).join(": ") || JSON.stringify(item);
   const listed = items.slice(0, LISTED_PROBLEMS).map((item) => `- ${line(item)}`);
