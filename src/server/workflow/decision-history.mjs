@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, realpath, rename, rm, lstat, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, realpath, rm, lstat } from "node:fs/promises";
 import { readCoordinationState } from "./state.mjs";
+import { writeAtomically } from "./artifact-store.mjs";
 import path from "node:path";
 import { readHostSessionFacts } from "../session/host-session-facts.mjs";
 import { SESSION_TRACE_MAX_AGE_MS, SESSION_TRACE_MAX_DIRECTORY_BYTES } from "../session/session-trace-store.mjs";
@@ -171,13 +172,7 @@ async function readJsonFile(file, fallback) {
 }
 
 async function atomicJson(file, value) {
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600, flag: "wx" });
-    await rename(temporary, file);
-  } finally {
-    await rm(temporary, { force: true }).catch(() => {});
-  }
+  await writeAtomically(file, `${JSON.stringify(value)}\n`, { mode: 0o600 });
 }
 
 async function withLock(directory, key, work) {
