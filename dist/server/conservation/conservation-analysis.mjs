@@ -366,7 +366,8 @@ async function compareConceptDelta(input, options = {}) {
       const exact = sourceRefs.some((ref) => ref.side === side && ref.unit.file === file && ref.unit.start === unit.start && ref.unit.end === unit.end && !(created && unit.public === true && ref.action === "MODIFY"));
       const covered = sourceRefs.some((ref) => ref.side === side && ref.action !== "KEEP" && ref.unit.file === file && ref.unit.start <= unit.start && ref.unit.end >= unit.end);
       if (unit.kind === "file" && currentFile.kind === "source") continue;
-      if (exact || covered && !created) continue;
+      const plannedFile = !before.files.some((item) => item.file === file) && sourceRefs.some((ref) => ref.side === "after" && ref.action !== "KEEP" && ref.unit.file === file);
+      if (exact || (covered || created && plannedFile) && (!created || unit.public !== true)) continue;
       observe(
         created && unit.public === true ? "undeclared_public_concept" : "unclassified_unit",
         created && unit.public === true ? "failure" : "review_required",

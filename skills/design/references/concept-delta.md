@@ -62,7 +62,9 @@ All target references fall inside declared scope; reuse candidates may be outsid
 Several sources can converge on one destination; one source can split into several destinations.
 Duplicate IDs, duplicate references, and conflicting ownership of the same exact source reference are invalid.
 A broad file-level `MODIFY` cannot authorize undeclared public concepts.
-Private implementation details require explicit attribution to their owning planned concept during review.
+A new private unit inside a resulting reference of a planned `ADD`, `MODIFY`, or `REPLACE` entry belongs to that concept without an assessment.
+The same holds for a new private unit in a new file that such an entry references.
+Other private implementation details require explicit attribution to their owning planned concept during review.
 
 References contain project-relative `path` and optional `selector`.
 Typed selectors use `{ "type": "symbol|heading|text|json-pointer|yaml-key", "value": "..." }` or `{ "type": "span", "start": 0, "end": 20, "sourceHash": "..." }`.
@@ -155,9 +157,10 @@ For each affected text section:
 5. Submit the assessment through `update_review`.
 6. Have an independent reviewer assess meaning, coverage, and preservation of the existing obligations.
 
+A `convergence` assessment whose `section` names only the file path covers every changed section of that file.
 An assessment binds to its review wave's source, requirement, comparison, and delta revisions.
 An unsupported check needs a `manual` assessment naming exact observation IDs, evidence, reason, and the assigned reviewer.
-Changed private helpers need an `implementation-detail` assessment naming their owning concept.
+A changed private helper outside a planned reference needs an `implementation-detail` assessment naming its owning concept, and a `manual` assessment cannot clear it.
 Manual evidence cannot override missing semantic search, stale or missing source evidence, scope violations, or demonstrably retained deletion targets.
 Scripted assessment fixtures test enforcement; they do not prove semantic correctness.
 

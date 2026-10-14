@@ -48,11 +48,13 @@ export function detectorDiff(before: DetectorSide, after: DetectorSide, changed:
       message: `The function ${group.name} now has copies in ${group.files} files: ${list(members)}. Consolidate the copies into one unit, or name the functions for their different contracts.` });
   }
   // A group of units in different files is new for the change when it pairs a unit in a changed file with a unit that the baseline did not pair it with.
-  const pairs = (groups: { members: Member[] }[]) => new Set(groups.flatMap(group => group.members.flatMap(a => group.members.filter(b => a.file !== b.file && key(a) < key(b)).map(b => `${key(a)}|${key(b)}`))));
+  // Pairs also match by name, so a function that moves to another file keeps the pairs it had.
+  const pair = (a: Member, b: Member, id: (member: Member) => string) => id(a) < id(b) ? `${id(a)}|${id(b)}` : `${id(b)}|${id(a)}`;
+  const pairs = (groups: { members: Member[] }[], id: (member: Member) => string) => new Set(groups.flatMap(group => group.members.flatMap(a => group.members.filter(b => a.file !== b.file).map(b => pair(a, b, id)))));
   const grouped = (code: string, groups: { members: Member[] }[], baseline: { members: Member[] }[], what: string) => {
-    const known = pairs(baseline);
+    const known = pairs(baseline, key), knownNames = pairs(baseline, member => member.selector);
     for (const group of groups) {
-      const fresh = group.members.some(a => changed.has(a.file) && group.members.some(b => a.file !== b.file && !known.has(key(a) < key(b) ? `${key(a)}|${key(b)}` : `${key(b)}|${key(a)}`)));
+      const fresh = group.members.some(a => changed.has(a.file) && group.members.some(b => a.file !== b.file && !known.has(pair(a, b, key)) && !knownNames.has(pair(a, b, member => member.selector))));
       if (fresh) findings.push({ code, severity: "review_required", file: touches(group.members)!.file, message: `${what}: ${list(group.members)}.` });
     }
   };
