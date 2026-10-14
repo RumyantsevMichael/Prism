@@ -171,6 +171,7 @@ A missing roadmap entry for the initiative is a missing initiative input, so its
 A roadmap entry or priority change made during orchestration waits for user acceptance through a recorded `decision` gate unless `full` autonomy resolves roadmap priority.
 Graduation moves facts that later work needs from the initiative directory into durable sources under the [artifact rules](../workflow/references/artifact-rules.md).
 After the ship decision and graduation, coordination cleanup deletes the initiative directory, and the roadmap keeps the shipped record.
+When the initiative directory holds uncommitted files, cleanup waits for a recorded `decision` gate, because the deletion cannot be undone.
 
 A valid `SPLIT` has unique child slugs, an unchanged parent title, and exact collective requirement coverage.
 Child dependencies follow the parent design and the initiative record, and require acceptance under the autonomy setting.
