@@ -327,13 +327,13 @@ const tools = [
   },
   {
     name: "get_review_url",
-    description: "Start or update the local Prism HTTPS review server and return a human review URL only. Use artifacts to select the shared persistent tabs. This tool does not open a browser or return rendered image data.",
+    description: "Start or update the local Prism HTTPS review server and return a human review URL only. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open, and an empty array focuses Attention. This tool does not open a browser or return rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
         artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to open as persistent tabs. An empty array closes all tabs." }
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to add as agent tabs. An empty array focuses Attention." }
       },
       required: ["projectRoot"],
       additionalProperties: false

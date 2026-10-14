@@ -545,11 +545,9 @@ export async function startReviewServer(options = {}) {
     return commitSession({ openTabs: requestedTabs, activeTab: nextActiveTab, previewTab: agentTabs.includes(previewTab) ? null : previewTab, agentTabs });
   }
 
-  // get_review_url selects exactly the requested tabs, as its contract documents.
+  // get_review_url adds tabs the same way present_review does, so neither tool closes the human's tabs.
   async function setOpenTabs(tabs) {
-    const requestedTabs = normalizeTabs(tabs);
-    await assertAvailable(requestedTabs);
-    return commitSession({ openTabs: requestedTabs, activeTab: requestedTabs[0] ?? null, previewTab: null, agentTabs: requestedTabs }).openTabs;
+    return (await presentTabs(tabs)).openTabs;
   }
 
   // present_review adds agent tabs beside the human's tabs and focuses the first one without replacing the preview.

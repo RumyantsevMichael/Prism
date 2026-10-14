@@ -294,6 +294,7 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.equal(tools.get_review_url.annotations.readOnlyHint, true);
   assert.match(tools.get_review_url.description, /URL only/);
   assert.match(tools.get_review_url.description, /does not open a browser/);
+  assert.match(tools.get_review_url.description, /the human's open tabs stay open/);
   assert.match(tools.present_review.description, /system browser/);
   assert.deepEqual(tools.wait_for_user_gate.inputSchema.required, ["projectRoot", "statePath"]);
   assert.equal(tools.wait_for_user_gate.inputSchema.properties.gateIds.maxItems, 10);
@@ -795,7 +796,8 @@ test("shares one review server across tasks with the same consumer root", async 
   const firstUrl = new URL(first.result.structuredContent.url);
   const secondUrl = new URL(second.result.structuredContent.url);
   assert.equal(`${firstUrl.origin}${firstUrl.pathname.replace(/\/review$/, "")}`, `${secondUrl.origin}${secondUrl.pathname.replace(/\/review$/, "")}`);
-  assert.deepEqual(second.result.structuredContent.openTabs, ["docs/second-only.md"]);
+  assert.deepEqual(second.result.structuredContent.openTabs, ["docs/first-only.md", "docs/second-only.md"]);
+  assert.equal(second.result.structuredContent.activeTab, "docs/second-only.md");
 });
 
 test("requires an absolute project root without a host root", async (context) => {
@@ -839,7 +841,10 @@ test("selects and updates persistent artifact tabs without opening a browser", a
   assert.match(selected.result.content[0].text, /Trust the Prism local development authority once/);
 
   const updated = await callTool(mcp, 3, "get_review_url", { projectRoot: root, artifacts: ["docs/second.md"] });
-  assert.deepEqual(updated.result.structuredContent.openTabs, ["docs/second.md"]);
+  assert.deepEqual(updated.result.structuredContent.openTabs, ["docs/first.md", "docs/second.md"]);
+  assert.equal(updated.result.structuredContent.activeTab, "docs/second.md");
+  const attention = await callTool(mcp, 4, "get_review_url", { projectRoot: root, artifacts: [] });
+  assert.deepEqual([attention.result.structuredContent.activeTab, attention.result.structuredContent.openTabs.length], ["attention", 3]);
   await delay(100);
   assert.equal(await markerContents(browser.marker), "");
 });
