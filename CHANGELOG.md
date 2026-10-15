@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.1](https://github.com/RumyantsevMichael/Prism/compare/v0.10.0...v0.10.1) (2026-10-15)
+
+
+### Fixed
+
+* give the review demo seed lanes for every target file ([b9b0233](https://github.com/RumyantsevMichael/Prism/commit/b9b0233031599bc0882da7f39764b0594fcc2f5c))
+* keep review browser summaries inside narrow windows and describe gate answer delivery for both hosts ([6ca5508](https://github.com/RumyantsevMichael/Prism/commit/6ca5508cdc87c7aba614602708b16132633397df))
+* make native indexing work in cloud sessions and prune stale indexes ([dc99347](https://github.com/RumyantsevMichael/Prism/commit/dc993474ad15653410dd36cd860e6756183d9690))
+* mirror the embedding model in the runtime release and prune stale indexes ([f60a3de](https://github.com/RumyantsevMichael/Prism/commit/f60a3dec405203247596acad79344141a0790a7c))
+* print usage for prism review --help and report errors without a stack trace ([8a9da8c](https://github.com/RumyantsevMichael/Prism/commit/8a9da8c3556555db4fe04d9eb31ec791883013bb))
+* route native asset downloads through the configured HTTPS proxy ([6c8c493](https://github.com/RumyantsevMichael/Prism/commit/6c8c49303ae20c43a3f3998fe4046505eb3c85c7))
+* stabilization polish for the review demo, CLI, browser layout, and docs ([09cc63b](https://github.com/RumyantsevMichael/Prism/commit/09cc63b7f136eeda21dfdda445b58d73a48b8ddb))
+
+
+### Documentation
+
+* correct the review browser start page, certificate trust, and resume note link ([f895215](https://github.com/RumyantsevMichael/Prism/commit/f89521569a1a77ff40abcd7cfd0978e5e9a8a6b6))
+
 ## [0.10.0](https://github.com/RumyantsevMichael/Prism/compare/v0.9.0...v0.10.0) (2026-10-14)
 
 
