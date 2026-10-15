@@ -20,6 +20,7 @@ Automatic selection prepares bundled native analysis without invoking external i
 The first analysis downloads pinned runtime and model assets, then inference runs locally.
 Both come from Prism's GitHub release, so a restricted network, such as a cloud session, needs to allow only `github.com`.
 When a release does not mirror the model, Prism downloads it from `huggingface.co`.
+Downloads use the `HTTPS_PROXY` and `NO_PROXY` environment variables when the MCP server runs on Node 22.21 or later.
 The default manifest contains published archives for all five supported platforms.
 Prism verifies each downloaded archive against its pinned size and hash.
 Subsequent analysis works offline when those verified assets remain cached.
