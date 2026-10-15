@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "serves": "Reliable planning and resumable work in Prism's spec-driven engineering workflow.",
+  "initiatives": [
+    {
+      "id": "repository-intelligence",
+      "title": "Repository intelligence",
+      "intent": "Give workflow agents deterministic repository evidence: providers, context planning, session capacity, structural analysis, and duplication gates.",
+      "band": "Now",
+      "requirements": [],
+      "requires": [],
+      "rationale": "Kept in Now while repository-intelligence work continues on main.",
+      "decision": null
+    },
+    {
+      "id": "agent-execution-evidence",
+      "title": "Agent execution evidence and continuity",
+      "intent": "Report observed context ranges, keep pause checkpoints current and recoverable, and assess diagram readability.",
+      "band": "Next",
+      "requirements": [
+        "docs/requirements/partial-context-estimates.md#1",
+        "docs/requirements/pause-recovery-checkpoints.md#1",
+        "docs/requirements/pause-recovery-checkpoints.md#2",
+        "docs/requirements/pause-recovery-checkpoints.md#3",
+        "docs/requirements/slice-complexity-assessment.md#1"
+      ],
+      "requires": [],
+      "rationale": "Next, because observed-range reporting consumes verified ranges from repository context planning, while pause checkpoints and diagram-readability assessment can proceed independently after design. The new work stays together until design shows that its outcomes need separate sequencing.",
+      "decision": null
+    }
+  ],
+  "openQuestions": [
+    "Should the three outcomes of agent-execution-evidence remain in one initiative after design assigns concrete slices?",
+    "Should shipped initiatives be backfilled after the first roadmap baseline is accepted and reviewed against repository history?"
+  ],
+  "history": [
+    {
+      "actor": "roadmap",
+      "operation": "set_serves",
+      "at": "2026-10-15T20:04:28.848Z"
+    },
+    {
+      "actor": "roadmap",
+      "operation": "add_initiative",
+      "id": "repository-intelligence",
+      "at": "2026-10-15T20:04:28.848Z"
+    },
+    {
+      "actor": "roadmap",
+      "operation": "add_initiative",
+      "id": "agent-execution-evidence",
+      "at": "2026-10-15T20:04:28.848Z"
+    },
+    {
+      "actor": "roadmap",
+      "operation": "set_open_questions",
+      "at": "2026-10-15T20:04:28.848Z"
+    }
+  ]
+}
