@@ -18,6 +18,9 @@ The native provider reports semantic search, hybrid ranking, and the symbol grap
 Use `provider: auto` with `plan_repository_context` for normal operation.
 Automatic selection prepares bundled native analysis without invoking external indexers.
 The first analysis downloads pinned runtime and model assets, then inference runs locally.
+Both come from Prism's GitHub release, so a restricted network, such as a cloud session, needs to allow only `github.com`.
+When a release does not mirror the model, Prism downloads it from `huggingface.co`.
+Downloads use the `HTTPS_PROXY` and `NO_PROXY` environment variables when the MCP server runs on Node 22.21 or later.
 The default manifest contains published archives for all five supported platforms.
 Prism verifies each downloaded archive against its pinned size and hash.
 Subsequent analysis works offline when those verified assets remain cached.
@@ -324,6 +327,8 @@ Degraded analysis supplies lexical results and explicitly withholds semantic fit
 Runtime archives include Node 24, so users do not need npm, Python, compilers, CodeNib, or a CodeGraph executable.
 Assets, models, and indexes use the host plugin data directory when available, or the user's private Prism cache.
 They are never stored in the target repository.
+Each source change produces a new index that reuses unchanged embeddings.
+Prism keeps the current index and the three most recently used earlier indexes, and removes older ones.
 One helper runs per MCP server with two inference threads and exits after five idle minutes.
 Native source limits remain 20,000 files, 64 MiB total, and 2 MiB per file.
 Known omissions outside a managed change's scope limit coverage without blocking its affected-source gate.

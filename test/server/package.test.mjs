@@ -15,12 +15,14 @@ test("uses host-specific portable MCP launch paths", async () => {
   assert.equal(claudeManifest.mcpServers, "./.claude-mcp.json");
   assert.deepEqual(claudeMcp.mcpServers["prism-review"], {
     command: "node",
-    args: ["${CLAUDE_PLUGIN_ROOT}/dist/server/mcp.mjs"]
+    args: ["${CLAUDE_PLUGIN_ROOT}/dist/server/mcp.mjs"],
+    env: { NODE_USE_ENV_PROXY: "1" }
   });
   assert.equal(codexManifest.mcpServers, "./.codex-mcp.json");
   assert.deepEqual(codexMcp.mcpServers["prism-review"], {
     command: "./bin/prism-mcp",
-    cwd: "."
+    cwd: ".",
+    env: { NODE_USE_ENV_PROXY: "1" }
   });
 });
 

@@ -21,7 +21,8 @@ export function publishedManifest(original, records, releaseBase) {
       || !Number.isSafeInteger(asset.unpackedBytes) || asset.unpackedBytes <= 0) throw new Error(`Invalid published asset metadata for ${platform}.`);
     bundles[platform] = { url: asset.url, bytes: asset.bytes, sha256: asset.sha256, unpackedBytes: asset.unpackedBytes };
   }
-  return { ...original, assetVersion: decodeURIComponent(base.pathname.split("/").at(-1)), bundles };
+  // The publish job uploads the pinned model files to the same release.
+  return { ...original, assetVersion: decodeURIComponent(base.pathname.split("/").at(-1)), bundles, modelMirror: base.href };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

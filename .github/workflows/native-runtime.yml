@@ -88,11 +88,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.16.0'
       - uses: actions/download-artifact@v4
         with:
           pattern: native-*
           path: assets
           merge-multiple: true
+      - name: Mirror the pinned model files
+        run: node scripts/native-build/model-mirror.mjs assets
       - name: Publish assets before manifest promotion
         env:
           GH_TOKEN: ${{ github.token }}
