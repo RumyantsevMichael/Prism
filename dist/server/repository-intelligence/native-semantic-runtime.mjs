@@ -93,9 +93,11 @@ async function download(asset, destination, allowFile) {
   if (allowFile && url.protocol === "file:") body = [await regularBytes(fileURLToPath(url), asset.bytes)];
   else {
     if (url.protocol !== "https:") throw semanticError("corrupt_asset", "Runtime assets require HTTPS.");
-    const response = await fetch(url, { signal: AbortSignal.timeout(12e4) });
-    if (!response.ok) throw semanticError("preparation_failed", `The asset download returned HTTP ${response.status}.`);
-    if (!response.body) throw semanticError("preparation_failed", "The asset download returned no body.");
+    const response = await fetch(url, { signal: AbortSignal.timeout(12e4) }).catch((error) => {
+      throw semanticError("preparation_failed", `The asset download from ${url.host} failed: ${error.cause?.code || error.message}.`);
+    });
+    if (!response.ok) throw semanticError("preparation_failed", `The asset download from ${url.host} returned HTTP ${response.status}.`);
+    if (!response.body) throw semanticError("preparation_failed", `The asset download from ${url.host} returned no body.`);
     body = response.body;
   }
   const temporary = `${destination}.${randomUUID()}.tmp`;
@@ -118,7 +120,38 @@ async function download(asset, destination, allowFile) {
     await rm(temporary, { force: true });
   }
 }
+async function downloadFirst(asset, urls, destination, allowFile) {
+  const failures = [];
+  let code = "preparation_failed";
+  for (const url of urls) {
+    try {
+      return await download({ ...asset, url }, destination, allowFile);
+    } catch (error) {
+      if (error.code === "invalid_path") throw error;
+      failures.push(error.message);
+      code = error.code || code;
+    }
+  }
+  throw semanticError(code, failures.join(" "));
+}
+const modelAssetName = (file) => `model-${file.split("/").join("-")}`;
 const STALE_ASSET_MS = 14 * 24 * 60 * 60 * 1e3;
+const KEPT_INDEX_REVISIONS = 4;
+async function pruneIndexes(directory, current, keep = KEPT_INDEX_REVISIONS) {
+  const entries = await readdir(directory);
+  const revisions = await Promise.all(entries.filter((name) => /^[a-f\d]{64}\.json$/.test(name)).map(async (name) => ({ name, used: (await lstat(path.join(directory, name)).catch(() => null))?.mtimeMs ?? 0 })));
+  const kept = /* @__PURE__ */ new Set([`${current}.json`, ...revisions.sort((a, b) => b.used - a.used).slice(0, keep).map((revision) => revision.name)]);
+  for (const { name } of revisions) if (!kept.has(name)) await rm(path.join(directory, name), { force: true });
+  for (const name of entries) {
+    if (name.startsWith("snapshot-")) {
+      await rm(path.join(directory, name), { recursive: true, force: true });
+      continue;
+    }
+    if (!/^generation-.+\.json$/.test(name)) continue;
+    const pointer = await readJson(path.join(directory, name)).catch(() => ({}));
+    if (!pointer.revision || !kept.has(`${pointer.revision}.json`)) await rm(path.join(directory, name), { force: true });
+  }
+}
 async function pruneAssets(directory, keep, maxAgeMs = STALE_ASSET_MS, now = Date.now()) {
   const entries = await readdir(directory);
   for (const name of entries) {
@@ -296,7 +329,11 @@ class NativeSemanticRuntime {
         const target = path.join(modelDirectory, file.path);
         await privateDirectory(path.dirname(target));
         progress({ phase: "model-download", file: file.path });
-        await download({ ...file, url: file.url || `https://huggingface.co/${manifest.model.id}/resolve/${manifest.model.revision}/${file.path}` }, target, allowFile);
+        const urls = file.url ? [file.url] : [
+          ...manifest.modelMirror ? [`${manifest.modelMirror}/${modelAssetName(file.path)}`] : [],
+          `https://huggingface.co/${manifest.model.id}/resolve/${manifest.model.revision}/${file.path}`
+        ];
+        await downloadFirst(file, urls, target, allowFile);
       }
     }, semanticError, { renew: true, timeoutMs: 12e4 }));
     const used = /* @__PURE__ */ new Date();
@@ -327,6 +364,7 @@ class NativeSemanticRuntime {
       job = { id: sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), snapshot: snapshot.sourceFingerprint, status: "preparing", diagnostics: [], promise: Promise.resolve() };
       this.jobs.set(location.root, job);
       this.generations.set(generationKey, job);
+      for (const [key, generation] of this.generations) if (this.generations.size > KEPT_INDEX_REVISIONS && generation.status !== "preparing") this.generations.delete(key);
       const preparing = job;
       job.promise = this.sequence = this.sequence.catch(() => {
       }).then(async () => {
@@ -365,6 +403,9 @@ class NativeSemanticRuntime {
           job.revision = pointer.revision;
           job.coverage = pointer.coverage;
           job.diagnostics = previous.diagnostics;
+          const used = /* @__PURE__ */ new Date();
+          await utimes(indexPath, used, used).catch(() => {
+          });
           return { ...assets, index: indexMetadata(previous), indexPath, revision: pointer.revision };
         }
       } catch (error) {
@@ -415,6 +456,9 @@ class NativeSemanticRuntime {
         job.revision = revision;
         job.coverage = coverage;
         job.diagnostics = index.diagnostics;
+        await rm(mirror, { recursive: true, force: true });
+        await pruneIndexes(directory, revision).catch(() => {
+        });
         return { ...assets, index: indexMetadata(index), indexPath, revision };
       } finally {
         await rm(mirror, { recursive: true, force: true });
@@ -450,9 +494,11 @@ const nativeSemanticRuntime = new NativeSemanticRuntime();
 export {
   NativeSemanticRuntime,
   assertSafeAncestors,
+  modelAssetName,
   nativeSemanticRuntime,
   privateDirectory,
   pruneAssets,
+  pruneIndexes,
   regularBytes,
   semanticError
 };

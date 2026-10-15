@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { NativeSemanticRuntime, pruneAssets } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
+import { NativeSemanticRuntime, pruneAssets, pruneIndexes } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
 import { SemanticNativeRepositoryIntelligence, findSameNameUnits, findSharedDependencies, findSharedLiterals, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts, validateConceptSearch, validateCohesion, validateComplexUnits, validateModuleInterfaces, validateSameNameUnits, validateSharedDependencies, validateSharedLiterals } from "../../dist/server/repository-intelligence/semantic-native-provider.mjs";
 import { openNativeRepositoryIntelligence } from "../../dist/server/repository-intelligence/native-repository-intelligence.mjs";
 import { CompositeRepositoryIntelligence } from "../../dist/server/repository-intelligence/composite-repository-intelligence.mjs";
@@ -264,6 +264,75 @@ test("atomic generations retain previous bytes after a failed build and reuse un
   assert.equal(recovered.status, "ready");
   assert.notEqual(recovered.prepared.revision, first.prepared.revision);
   assert.equal(recovered.prepared.index.chunks, undefined);
+});
+test("repeated source edits keep a bounded set of reusable index generations", async t => {
+  const { directory, root } = await fixture(t);
+  const runtime = new NativeSemanticRuntime({ directory: path.join(directory, "cache"), manifestPath });
+  runtime.assets = async () => ({ runtime: "fake", modelIdentity: "model", assetIdentity: "assets" });
+  let builds = 0;
+  runtime.helper = () => ({ request: async (_method, args) => {
+    builds++;
+    return { schemaVersion: 1, snapshot: args.snapshot, modelIdentity: "model", units: [], edges: [], chunks: [], fileCoverage: { "a.ts": true }, diagnostics: [], counts: { files: 1 }, structureComplete: true };
+  } });
+  const revisions = [];
+  for (let value = 0; value < 8; value++) {
+    await writeFile(path.join(root, "a.ts"), `export const x = ${value};\n`);
+    const prepared = await runtime.prepare(await openNativeRepositoryIntelligence(root));
+    assert.equal(prepared.status, "ready");
+    revisions.push(prepared.prepared.revision);
+  }
+  const storage = (await runtime.location(root)).directory, entries = await readdir(storage);
+  const kept = entries.filter(name => /^[a-f\d]{64}\.json$/.test(name));
+  assert.equal(kept.length, 4);
+  assert.ok(kept.includes(`${revisions.at(-1)}.json`));
+  for (const name of entries.filter(name => name.startsWith("generation-"))) assert.ok(kept.includes(`${JSON.parse(await readFile(path.join(storage, name), "utf8")).revision}.json`));
+  assert.ok(runtime.generations.size <= 4);
+  await writeFile(path.join(root, "a.ts"), "export const x = 6;\n");
+  const reused = await runtime.prepare(await openNativeRepositoryIntelligence(root));
+  assert.equal(reused.prepared.revision, revisions[6]);
+  assert.equal(builds, 8);
+});
+test("index pruning removes abandoned snapshot mirrors and pointers to removed revisions", async t => {
+  const { directory } = await fixture(t), storage = path.join(directory, "storage"), hour = 60 * 60 * 1000;
+  await mkdir(path.join(storage, "snapshot-abandoned", "src"), { recursive: true });
+  const [current, recent, old] = ["c", "b", "a"].map(value => value.repeat(64));
+  for (const [index, revision] of [current, recent, old].entries()) {
+    await writeFile(path.join(storage, `${revision}.json`), "{}");
+    await writeFile(path.join(storage, `generation-${index}-assets.json`), JSON.stringify({ revision }));
+    const used = new Date(Date.now() - index * hour); await utimes(path.join(storage, `${revision}.json`), used, used);
+  }
+  await writeFile(path.join(storage, "current.json"), JSON.stringify({ revision: current }));
+  await pruneIndexes(storage, current, 2);
+  assert.deepEqual((await readdir(storage)).sort(), [`${current}.json`, `${recent}.json`, "current.json", "generation-0-assets.json", "generation-1-assets.json"].sort());
+});
+test("model files fall back from the release mirror to the model host", async t => {
+  const { directory, root } = await fixture(t), localManifest = path.join(directory, "manifest.json"), platform = `${process.platform}-${process.arch}`;
+  const digest = value => createHash("sha256").update(value).digest("hex"), worker = Buffer.from("// worker"), config = Buffer.from("{}");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  manifest.bundles[platform] = { url: "https://example.invalid/runtime.tar.gz", bytes: 1, sha256: "a".repeat(64), unpackedBytes: 1 };
+  manifest.modelMirror = "https://example.invalid/release";
+  manifest.model.files = [{ path: "onnx/config.json", bytes: config.length, sha256: digest(config) }];
+  await writeFile(localManifest, JSON.stringify(manifest));
+  const cache = path.join(directory, "cache"), runtimeDirectory = path.join(cache, "assets", "a".repeat(64));
+  await mkdir(runtimeDirectory, { recursive: true });
+  await writeFile(path.join(runtimeDirectory, "worker.mjs"), worker);
+  await writeFile(path.join(runtimeDirectory, "runtime.json"), JSON.stringify({ schemaVersion: 1, platform, node: "24.16.0", files: { "worker.mjs": digest(worker) } }));
+  const originalFetch = globalThis.fetch, requested = [];
+  t.after(() => { globalThis.fetch = originalFetch; });
+  let modelHost = true;
+  globalThis.fetch = async url => {
+    requested.push(String(url));
+    if (url.host === "example.invalid" || !modelHost) throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } });
+    return { ok: true, body: [config] };
+  };
+  const runtime = new NativeSemanticRuntime({ directory: cache, manifestPath: localManifest });
+  const assets = await runtime.assets(() => {});
+  assert.deepEqual(requested, ["https://example.invalid/release/model-onnx-config.json", "https://huggingface.co/test/model/resolve/test-revision/onnx/config.json"]);
+  assert.deepEqual(await readFile(path.join(assets.modelDirectory, "onnx/config.json")), config);
+  modelHost = false;
+  await rm(assets.modelDirectory, { recursive: true });
+  await assert.rejects(new NativeSemanticRuntime({ directory: cache, manifestPath: localManifest }).assets(() => {}),
+    { code: "preparation_failed", message: /from example\.invalid failed: ENOTFOUND.*from huggingface\.co failed: ENOTFOUND/ });
 });
 test("a concurrent source edit prevents generation publication", async t => {
   const { directory, root } = await fixture(t);

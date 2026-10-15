@@ -13,6 +13,7 @@ test("published manifests require all platforms and preserve pinned model identi
   assert.deepEqual(Object.keys(result.bundles), PLATFORMS);
   assert.equal(result.assetVersion, "native-runtime-123-1");
   assert.deepEqual(result.model, original.model);
+  assert.equal(result.modelMirror, release);
   assert.deepEqual(original.bundles, {});
 });
 

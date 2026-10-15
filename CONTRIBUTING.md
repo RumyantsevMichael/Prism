@@ -136,6 +136,7 @@ The smoke tests run the packaged Node helper without external executables.
 The MCP smoke test also checks native estimates, offline reuse, responsive discovery, and source changes.
 The release workflow builds and tests all five target platforms for the release pull request.
 It publishes immutable runtime bundles, verifies the default manifest, and commits that manifest to the release pull request.
+The same release mirrors the pinned model files, and the manifest's `modelMirror` points the runtime at them before it falls back to Hugging Face.
 No separate publication branch or manual manifest copy is required for a plugin release.
 The standalone runtime workflow still supports `codex/native-runtime-assets` and manual publication for diagnostics.
 An empty bundle manifest leaves semantic preparation unavailable and preserves lexical results.

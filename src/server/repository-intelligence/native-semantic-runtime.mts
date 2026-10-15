@@ -12,7 +12,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { NativeSource, SourceSnapshot, UnitIndex, PreparedIndex, Preparation, Progress, Diagnostic, WorkerMethods, SearchFilters, SemanticRuntime, Counts } from "./repository-unit-types.mjs";
 
 interface Asset { url: string; bytes: number; sha256: string; unpackedBytes?: number }
-interface AssetManifest { schemaVersion: 1; identity: string; assetVersion: string; bundles: Record<string, Asset>; model: { id: string; revision: string; files: (Omit<Asset, "url"> & { path: string; url?: string })[] } }
+interface AssetManifest { schemaVersion: 1; identity: string; assetVersion: string; bundles: Record<string, Asset>; modelMirror?: string; model: { id: string; revision: string; files: (Omit<Asset, "url"> & { path: string; url?: string })[] } }
 interface Options { directory?: string; manifestPath?: string; idleMs?: number }
 interface Coverage extends Counts { structurallyCoveredFiles: number; complete: boolean }
 interface Job { id: string; snapshot: string; status: Preparation["status"]; diagnostics: Diagnostic[]; promise: Promise<void>; prepared?: PreparedIndex; revision?: string; progress?: Progress; coverage?: Coverage }
@@ -86,9 +86,11 @@ async function download(asset: Asset, destination: string, allowFile: boolean) {
   if (allowFile && url.protocol === "file:") body = [await regularBytes(fileURLToPath(url), asset.bytes)];
   else {
     if (url.protocol !== "https:") throw semanticError("corrupt_asset", "Runtime assets require HTTPS.");
-    const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
-    if (!response.ok) throw semanticError("preparation_failed", `The asset download returned HTTP ${response.status}.`);
-    if (!response.body) throw semanticError("preparation_failed", "The asset download returned no body.");
+    const response = await fetch(url, { signal: AbortSignal.timeout(120000) }).catch(error => {
+      throw semanticError("preparation_failed", `The asset download from ${url.host} failed: ${error.cause?.code || error.message}.`);
+    });
+    if (!response.ok) throw semanticError("preparation_failed", `The asset download from ${url.host} returned HTTP ${response.status}.`);
+    if (!response.body) throw semanticError("preparation_failed", `The asset download from ${url.host} returned no body.`);
     body = response.body;
   }
   const temporary = `${destination}.${randomUUID()}.tmp`;
@@ -106,7 +108,37 @@ async function download(asset: Asset, destination: string, allowFile: boolean) {
   } finally { await handle.close().catch(() => {}); await rm(temporary, { force: true }); }
 }
 
+// Try each source in order, so a release mirror can serve the model where its origin host is unreachable.
+async function downloadFirst(asset: Omit<Asset, "url">, urls: string[], destination: string, allowFile: boolean) {
+  const failures: string[] = [];
+  let code = "preparation_failed";
+  for (const url of urls) {
+    try { return await download({ ...asset, url }, destination, allowFile); }
+    catch (error) { if (error.code === "invalid_path") throw error; failures.push(error.message); code = error.code || code; }
+  }
+  throw semanticError(code, failures.join(" "));
+}
+
+export const modelAssetName = (file: string) => `model-${file.split("/").join("-")}`;
+
 const STALE_ASSET_MS = 14 * 24 * 60 * 60 * 1000;
+const KEPT_INDEX_REVISIONS = 4;
+
+// Keep the current index and the most recently used earlier revisions, so a retained before-change snapshot still reuses its index.
+// Each source change writes a complete index, so older revisions, their generation pointers, and abandoned snapshot mirrors are removed.
+// Call only while holding the project directory lock.
+export async function pruneIndexes(directory: string, current: string, keep = KEPT_INDEX_REVISIONS) {
+  const entries = await readdir(directory);
+  const revisions = await Promise.all(entries.filter(name => /^[a-f\d]{64}\.json$/.test(name)).map(async name => ({ name, used: (await lstat(path.join(directory, name)).catch(() => null))?.mtimeMs ?? 0 })));
+  const kept = new Set([`${current}.json`, ...revisions.sort((a, b) => b.used - a.used).slice(0, keep).map(revision => revision.name)]);
+  for (const { name } of revisions) if (!kept.has(name)) await rm(path.join(directory, name), { force: true });
+  for (const name of entries) {
+    if (name.startsWith("snapshot-")) { await rm(path.join(directory, name), { recursive: true, force: true }); continue; }
+    if (!/^generation-.+\.json$/.test(name)) continue;
+    const pointer = await readJson<IndexPointer>(path.join(directory, name)).catch(() => ({} as IndexPointer));
+    if (!pointer.revision || !kept.has(`${pointer.revision}.json`)) await rm(path.join(directory, name), { force: true });
+  }
+}
 
 // Remove assets that no plugin version has used recently, and downloaded archives whose runtime is already extracted.
 // Each version marks its own runtime and model as used, so a session on an older plugin version keeps its assets.
@@ -237,7 +269,9 @@ export class NativeSemanticRuntime implements SemanticRuntime {
         if (file.path.includes("..") || path.isAbsolute(file.path)) throw semanticError("corrupt_asset", "The model asset path is invalid.");
         const target = path.join(modelDirectory, file.path); await privateDirectory(path.dirname(target));
         progress({ phase: "model-download", file: file.path });
-        await download({ ...file, url: file.url || `https://huggingface.co/${manifest.model.id}/resolve/${manifest.model.revision}/${file.path}` }, target, allowFile);
+        const urls = file.url ? [file.url] : [...(manifest.modelMirror ? [`${manifest.modelMirror}/${modelAssetName(file.path)}`] : []),
+          `https://huggingface.co/${manifest.model.id}/resolve/${manifest.model.revision}/${file.path}`];
+        await downloadFirst(file, urls, target, allowFile);
       }
     }, semanticError, { renew: true, timeoutMs: 120000 }));
     const used = new Date();
@@ -266,6 +300,8 @@ export class NativeSemanticRuntime implements SemanticRuntime {
       job = { id: sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), snapshot: snapshot.sourceFingerprint, status: "preparing", diagnostics: [], promise: Promise.resolve() };
       this.jobs.set(location.root, job);
       this.generations.set(generationKey, job);
+      // Each generation holds index metadata in memory, so forget the oldest finished ones; their indexes stay reusable on disk.
+      for (const [key, generation] of this.generations) if (this.generations.size > KEPT_INDEX_REVISIONS && generation.status !== "preparing") this.generations.delete(key);
       const preparing = job;
       job.promise = this.sequence = this.sequence.catch(() => {}).then(async () => {
         try { preparing.prepared = await this.build(source, snapshot, location, preparing); preparing.status = "ready"; }
@@ -291,6 +327,7 @@ export class NativeSemanticRuntime implements SemanticRuntime {
         previous = JSON.parse(bytes.toString("utf8")) as UnitIndex;
         if (previous.snapshot === snapshot.sourceFingerprint && previous.assetIdentity === assets.assetIdentity) {
           await source.verifySnapshot(); job.revision = pointer.revision; job.coverage = pointer.coverage; job.diagnostics = previous.diagnostics;
+          const used = new Date(); await utimes(indexPath, used, used).catch(() => {});
           return { ...assets, index: indexMetadata(previous), indexPath, revision: pointer.revision };
         }
       } catch (error) { if (error.code !== "ENOENT") throw error; }
@@ -324,6 +361,8 @@ export class NativeSemanticRuntime implements SemanticRuntime {
         await writeAtomically(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`), pointerContents, { mode: 0o600 });
         await writeAtomically(path.join(directory, "current.json"), pointerContents, { mode: 0o600 });
         job.revision = revision; job.coverage = coverage; job.diagnostics = index.diagnostics;
+        await rm(mirror, { recursive: true, force: true });
+        await pruneIndexes(directory, revision).catch(() => {});
         return { ...assets, index: indexMetadata(index), indexPath, revision };
       } finally { await rm(mirror, { recursive: true, force: true }); }
     }, semanticError, { renew: true, timeoutMs: 120000 }));
