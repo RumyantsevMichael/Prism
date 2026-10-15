@@ -938,6 +938,7 @@ th {
 .structured-view {
   display: grid;
   gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .view-card {

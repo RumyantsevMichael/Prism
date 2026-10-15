@@ -103,7 +103,7 @@ try {
   const reviewer = { id: "independent", role: "reviewer" };
   const security = { id: "security", role: "reviewer" };
   const delivery = { id: "delivery", role: "delivery" };
-  await review(coordinator, [{ op: "start_wave", id: "design-audit", mode: "design-audit", deltaRevision: delta.revision, snapshotId: baseline.snapshotId, comparisonId: audit.comparisonId, lanes: [{ id: "main", reviewer: "independent", coverage: ["src", "config"] }, { id: "security", reviewer: "security", coverage: ["src"] }] }]);
+  await review(coordinator, [{ op: "start_wave", id: "design-audit", mode: "design-audit", deltaRevision: delta.revision, snapshotId: baseline.snapshotId, comparisonId: audit.comparisonId, lanes: [{ id: "main", reviewer: "independent", coverage: ["src", "config", "docs", "instructions"] }, { id: "security", reviewer: "security", coverage: ["src"] }] }]);
   await review(reviewer, [{ op: "submit_lane", lane: "main", status: "CLEAN" }]);
   await review(security, [{ op: "submit_lane", lane: "security", status: "CLEAN" }]);
   // The acceptance gate needs native semantic receipts and bound requirements, so this demo leaves the audit wave unaccepted.
@@ -116,7 +116,7 @@ try {
   const result = await call("capture_repository_snapshot", { projectRoot: realRoot });
   const implementation = await call("compare_concept_delta", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, baselineId: baseline.snapshotId, resultSnapshotId: result.snapshotId });
 
-  await review(coordinator, [{ op: "start_wave", id: "implementation", mode: "implementation-review", deltaRevision: delta.revision, snapshotId: result.snapshotId, comparisonId: implementation.comparisonId, lanes: [{ id: "main", reviewer: "independent", coverage: ["src", "config", "docs"] }, { id: "security", reviewer: "security", coverage: ["src"] }] }]);
+  await review(coordinator, [{ op: "start_wave", id: "implementation", mode: "implementation-review", deltaRevision: delta.revision, snapshotId: result.snapshotId, comparisonId: implementation.comparisonId, lanes: [{ id: "main", reviewer: "independent", coverage: ["src", "config", "docs", "instructions"] }, { id: "security", reviewer: "security", coverage: ["src"] }] }]);
   await review(reviewer, [
     { op: "open_finding", lane: "main", localId: "F1", title: "Deadline check ignores the first attempt", severity: "high", affectedPath: "src/retry/strategy.ts", evidence: "shouldRetry compares elapsed time only after a failure, so a slow first attempt can exceed the deadline.", conditionToClose: "A test shows that no retry starts after the deadline elapses." },
     { op: "open_finding", lane: "main", localId: "F2", title: "Connection errors now retry without a requirement", severity: "blocker", affectedPath: "src/retry/strategy.ts", evidence: "The concept delta keeps connection retries out of scope, but the strategy now retries ConnectionError.", conditionToClose: "Either the delta records the behavior change with a requirement, or the branch is removed." },

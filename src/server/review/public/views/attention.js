@@ -99,7 +99,7 @@ function bindAnswers(container, ctx) {
         await ctx.answerGate({ initiative: form.dataset.initiative, id, choice: draft.choice, note: draft.note });
         delete drafts[id];
         ctx.state.focus = null;
-        ctx.showToast("Answer recorded. The agent sees it with your next message in the conversation.");
+        ctx.showToast("Answer recorded. An agent waiting in Claude Code resumes on its own; otherwise the agent sees it with your next message.");
         ctx.rerender();
       } catch (error) {
         failure.textContent = error.code === "gate_answered" ? "This question already has an answer." : error.code === "unknown_gate" ? "The agent already resolved or withdrew this question." : error.message;
@@ -165,7 +165,7 @@ export function render(container, entity, ctx) {
       ? `<ul class="attention-list">${gates.map((item) => gateCard(item, ctx, drafts[item.id] ?? { choice: null, note: "" })).join("")}${notes.map((item) => noteCard(item, ctx)).join("")}</ul>`
       : emptyNote("Nothing is waiting on you."), { eyebrow: "Answer here or in the agent conversation" })}
     <p class="attention-footnote muted">The orchestrator records a question here while it waits on you during an orchestrated run. Direct skill runs, such as ideate or roadmap, still ask only in the conversation.</p>
-    ${answered.length ? card("Answered, waiting for the agent", `<ul class="attention-list">${answered.map((item) => answeredCard(item, ctx)).join("")}</ul><p class="attention-footnote muted">The agent receives these answers with your next message in the conversation, even a short one such as “go”.</p>`, { eyebrow: plural(answered.length, "answer") }) : ""}
+    ${answered.length ? card("Answered, waiting for the agent", `<ul class="attention-list">${answered.map((item) => answeredCard(item, ctx)).join("")}</ul><p class="attention-footnote muted">An agent waiting in Claude Code resumes on its own shortly after your last answer. Otherwise the agent receives these answers with your next message in the conversation, even a short one such as “go”.</p>`, { eyebrow: plural(answered.length, "answer") }) : ""}
     ${card("Watch", data.watch.length
       ? `<div class="table-wrap"><table class="data-table attention-watch"><tbody>${data.watch.map((item) => watchRow(item, ctx)).join("")}</tbody></table></div>`
       : emptyNote("No blocked slices, open findings, or active work."), { eyebrow: "Agent-side state" })}`;

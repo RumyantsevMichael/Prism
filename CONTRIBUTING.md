@@ -103,7 +103,7 @@ To validate `plugin.json` in isolation, copy the plugin into a scratch directory
 ## Native semantic runtime
 
 The new native subsystem uses strict TypeScript in `.mts` files.
-The existing server remains JavaScript.
+Older server modules remain JavaScript, and newer modules such as the conservation store also use `.mts`.
 Shared source unit, index, and worker message types live in `src/server/repository-intelligence/repository-unit-types.mts`.
 Edit runtime sources under `src/`, then regenerate the complete runtime tree under `dist/`.
 The build compiles TypeScript and copies handwritten JavaScript, browser assets, and runtime registries.
