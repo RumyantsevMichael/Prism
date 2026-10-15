@@ -75,7 +75,7 @@ Design discovery can precede dependency implementation, but implementation requi
 Review repeats after corrections until `CLEAN`, a user stop, or a real blocker.
 After integration, delivery verifies the result, with fresh review and confirmation when behavior changes or equivalence is uncertain.
 
-The [resume note](skills/orchestrate/SKILL.md#6-resume-note) records settings, active work, pending user gates, next actions, and evidence paths.
+The [resume note](skills/orchestrate/SKILL.md#state-and-recovery-invariants) records settings, active work, pending user gates, next actions, and evidence paths.
 Each question that waits on the user is recorded as a user gate, and the review browser opens on Attention, which lists those gates with the artifacts to inspect.
 The user can answer a gate on Attention instead of in the conversation.
 In Claude Code the orchestrator waits for that answer in a background tool call and resumes as soon as it arrives; other hosts receive the recorded answer with the user's next message.
@@ -95,6 +95,8 @@ Design creates new artifacts only after fit passes.
 Requirements preserve intent, ADRs preserve decisions, and feature files preserve acceptance examples.
 Tests and consumed contracts enforce behavior, diagrams explain structure, and code supplies implementation details.
 The focused `write-requirements` skill supports requirement file authoring.
+See [Artifact conservation](docs/user-guide/artifact-conservation.md) for how review checks planned changes against retained source evidence.
+See [Decision history](docs/user-guide/decision-history.md) to record workflow decisions locally for later analysis.
 
 ## Review artifacts visually
 
@@ -118,13 +120,13 @@ Start a standalone review from a Prism checkout when no harness session is activ
 ./bin/prism review docs/requirements/reports.md
 ```
 
-The review browser opens on the roadmap.
+The review browser opens on Attention, or on the artifact you name, and later visits restore the tabs you left open.
 It shows initiatives as a board, list, or dependency graph, each initiative as a slice graph, and each slice with its concept delta, review ledger, and documents.
 Requirements, decisions, and the glossary have their own sections.
 
 The review server creates a local Prism certificate authority and a separate server certificate.
-Trust the authority once in your login keychain when Prism prints its command, then restart the browser.
-Prism does not install the authority automatically or change the system keychain.
+Trust the authority once with the command or store that Prism prints for your platform, then restart the browser.
+Prism does not install the authority automatically or change any system certificate store.
 
 The standalone `prism review` command always opens the system browser.
 
