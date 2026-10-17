@@ -124,13 +124,11 @@ The review browser opens on Attention, or on the artifact you name, and later vi
 It shows initiatives as a board, list, or dependency graph, each initiative as a slice graph, and each slice with its concept delta, review ledger, and documents.
 Requirements, decisions, and the glossary have their own sections.
 
-The review server creates a local Prism certificate authority and a separate server certificate.
-Trust the authority once with the command or store that Prism prints for your platform, then restart the browser.
-Prism does not install the authority automatically or change any system certificate store.
-
 The standalone `prism review` command always opens the system browser.
 
 The server binds to `127.0.0.1`, selects an available port, and uses an unguessable session URL.
+It serves plain HTTP, which browsers treat as a secure context on `127.0.0.1`, so no certificate trust step is needed.
+It refuses requests whose host is not `127.0.0.1` or `localhost`.
 It renders entirely in the browser and does not send project sources to a remote renderer.
 Stop the command with `Ctrl-C` when the review ends.
 

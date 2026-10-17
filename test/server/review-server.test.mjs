@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { X509Certificate } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import https from "node:https";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -23,7 +22,7 @@ async function fixture(context) {
 function fetchReview(url, options = {}) {
   return new Promise((resolve, reject) => {
     const { body, ...requestOptions } = options;
-    const request = https.request(url, { ...requestOptions, rejectUnauthorized: false }, (response) => {
+    const request = http.request(url, requestOptions, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => {
@@ -46,7 +45,7 @@ function fetchReview(url, options = {}) {
 
 function openEventStream(url) {
   return new Promise((resolve, reject) => {
-    const request = https.get(url, { rejectUnauthorized: false }, (response) => {
+    const request = http.get(url, (response) => {
       response.setEncoding("utf8");
       let buffer = "";
       const events = [];
@@ -108,17 +107,9 @@ function openEventStream(url) {
 
 test("lists source artifacts and returns diagram source", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
-    assert.match(review.baseUrl, /^https:\/\/127\.0\.0\.1:/);
-    const authority = new X509Certificate(await readFile(review.certificatePath));
-    const certificate = new X509Certificate(await readFile(review.serverCertificatePath));
-    assert.match(authority.subject, /CN=Prism Local Development CA/);
-    assert.equal(authority.ca, true);
-    assert.match(certificate.subjectAltName, /DNS:localhost/);
-    assert.match(certificate.subjectAltName, /IP Address:127\.0\.0\.1/);
-    assert.equal(certificate.checkIssued(authority), true);
-    assert.equal(certificate.verify(authority.publicKey), true);
+    assert.match(review.baseUrl, /^http:\/\/127\.0\.0\.1:/);
     const index = await (await fetchReview(`${review.baseUrl}/api/index`)).json();
     assert.deepEqual(index.artifacts, ["docs/roadmap.md", "docs/roadmap.puml"]);
     const artifact = await (await fetchReview(`${review.baseUrl}/api/artifact?path=docs%2Froadmap.md`)).json();
@@ -129,9 +120,23 @@ test("lists source artifacts and returns diagram source", async (context) => {
   }
 });
 
+test("refuses requests that name an untrusted host", async (context) => {
+  const projectRoot = await fixture(context);
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const port = new URL(review.baseUrl).port;
+    const rebound = await fetchReview(`${review.baseUrl}/api/index`, { headers: { Host: `attacker.example:${port}` } });
+    assert.equal(rebound.status, 403);
+    const named = await fetchReview(`${review.baseUrl.replace("127.0.0.1", "localhost")}/api/index`, { lookup: (hostname, options, callback) => callback(null, [{ address: "127.0.0.1", family: 4 }]) });
+    assert.equal(named.status, 200);
+  } finally {
+    await review.close();
+  }
+});
+
 test("rejects paths outside the project", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const response = await fetchReview(`${review.baseUrl}/api/artifact?path=..%2Foutside.md`);
     assert.equal(response.status, 400);
@@ -142,7 +147,7 @@ test("rejects paths outside the project", async (context) => {
 
 test("requires the unguessable session path", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const url = new URL(review.baseUrl);
     const response = await fetchReview(`${url.origin}/api/index`);
@@ -154,7 +159,7 @@ test("requires the unguessable session path", async (context) => {
 
 test("serves the browser runtime without an image endpoint", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const page = await fetchReview(review.reviewUrl("docs/roadmap.md"));
     assert.match(page.headers["content-security-policy"], /wasm-unsafe-eval/);
@@ -185,7 +190,6 @@ test("uses an injected browser opener when it presents a review", async (context
   const projectRoot = await fixture(context);
   const review = await startReviewServer({
     projectRoot,
-    certificateDirectory: projectRoot,
     openBrowser(url) {
       openedUrls.push(url);
       return true;
@@ -202,7 +206,7 @@ test("uses an injected browser opener when it presents a review", async (context
 
 test("stores agent-selected tabs and exposes them to the viewer", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     await review.setOpenTabs(["docs/roadmap.md", "docs/roadmap.puml"]);
     assert.deepEqual(review.getOpenTabs(), ["docs/roadmap.md", "docs/roadmap.puml"]);
@@ -229,7 +233,7 @@ test("stores agent-selected tabs and exposes them to the viewer", async (context
 
 test("broadcasts session changes to every connected viewer page", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   const streams = [];
   try {
     const first = await openEventStream(`${review.baseUrl}/api/events`);

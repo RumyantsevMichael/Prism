@@ -14,9 +14,6 @@ if (["-h", "--help", "help"].includes(command) || ["-h", "--help"].includes(arti
     review = await startReviewServer();
     const result = await review.open(artifactPath);
     process.stdout.write(`${result.url}\n`);
-    if (review.trustInstructions) {
-      process.stdout.write(`${review.trustInstructions}\n`);
-    }
   } catch (error) {
     process.stderr.write(`prism review: ${error.message}\n`);
     await review?.close();

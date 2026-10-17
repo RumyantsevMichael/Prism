@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
-import https from "node:https";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -14,7 +14,7 @@ test.after(() => rm(privateData, { recursive: true, force: true }));
 
 function get(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, { rejectUnauthorized: false }, (response) => {
+    http.get(url, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => resolve({ status: response.statusCode, text: Buffer.concat(chunks).toString("utf8") }));
@@ -50,7 +50,7 @@ async function project(context, git = true) {
 
 test("serves tracked and unignored source files read-only without secrets or binaries", async (context) => {
   const projectRoot = await project(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const index = JSON.parse((await get(`${review.baseUrl}/api/index`)).text);
     assert.ok(index.sources.includes("src/app.py"));
@@ -72,7 +72,7 @@ test("serves tracked and unignored source files read-only without secrets or bin
 
 test("lists no source files outside a git repository", async (context) => {
   const projectRoot = await project(context, false);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     assert.deepEqual(JSON.parse((await get(`${review.baseUrl}/api/index`)).text).sources, []);
     assert.equal((await get(`${review.baseUrl}/api/artifact?path=src%2Fapp.py`)).status, 404);

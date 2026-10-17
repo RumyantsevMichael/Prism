@@ -135,9 +135,8 @@ function requestedTabs(argumentsValue) {
   return hasArtifact ? argumentsValue.artifact : undefined;
 }
 
-function reviewContent(url, review) {
-  const trustInstructions = review.trustInstructions ? `\n${review.trustInstructions}` : "";
-  return `Human review URL: ${url}${trustInstructions}`;
+function reviewContent(url) {
+  return `Human review URL: ${url}`;
 }
 
 function stateContent(result) {
@@ -340,7 +339,7 @@ const tools = [
   },
   {
     name: "get_review_url",
-    description: "Start or update the local Prism HTTPS review server and return a human review URL only. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open, and an empty array focuses Attention. This tool does not open a browser or return rendered image data.",
+    description: "Start or update the local Prism review server and return a human review URL only. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open, and an empty array focuses Attention. This tool does not open a browser or return rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
@@ -355,7 +354,7 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open or update one local Prism HTTPS review page in the system browser for the human. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
+    description: "Open or update one local Prism review page in the system browser for the human. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1008,11 +1007,11 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
       await review.setOpenTabs(tabs);
     }
     const url = review.reviewUrl(tabs);
-    return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, ...reviewSessionContent(review), certificatePath: review.certificatePath, trustInstructions: review.trustInstructions } };
+    return { content: [{ type: "text", text: reviewContent(url) }], structuredContent: { url, ...reviewSessionContent(review) } };
   }
   if (name === "present_review") {
     const opened = await review.open(requestedTabs(argumentsValue));
-    return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...reviewSessionContent(review), certificatePath: review.certificatePath, trustInstructions: review.trustInstructions } };
+    return { content: [{ type: "text", text: reviewContent(opened.url) }], structuredContent: { ...opened, ...reviewSessionContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {
     const artifacts = await listArtifacts(review.projectRoot);

@@ -33,6 +33,7 @@ The review server MUST render `.puml` sources in the human's browser.
 MCP tools MUST NOT return rendered image content to an agent.
 The server MUST NOT create or commit generated image files.
 Every review URL MUST contain a random session token.
+The review server MUST refuse requests whose host is not `127.0.0.1` or `localhost`.
 Every file request MUST resolve inside the active project root.
 
 ## Mechanism

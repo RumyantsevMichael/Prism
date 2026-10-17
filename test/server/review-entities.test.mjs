@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
-import https from "node:https";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -54,7 +54,7 @@ async function fixture(context) {
 
 function get(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, { rejectUnauthorized: false }, (response) => {
+    http.get(url, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => {
@@ -67,7 +67,7 @@ function get(url) {
 
 function post(url, body, headers = { "Content-Type": "application/json" }) {
   return new Promise((resolve, reject) => {
-    const request = https.request(url, { method: "POST", rejectUnauthorized: false, headers }, (response) => {
+    const request = http.request(url, { method: "POST", headers }, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => resolve({ status: response.statusCode, text: Buffer.concat(chunks).toString("utf8") }));
@@ -79,7 +79,7 @@ function post(url, body, headers = { "Content-Type": "application/json" }) {
 
 function put(url, body) {
   return new Promise((resolve, reject) => {
-    const request = https.request(url, { method: "PUT", rejectUnauthorized: false, headers: { "Content-Type": "application/json" } }, (response) => {
+    const request = http.request(url, { method: "PUT", headers: { "Content-Type": "application/json" } }, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => resolve({ status: response.statusCode, text: Buffer.concat(chunks).toString("utf8") }));
@@ -98,7 +98,7 @@ test("parses entity references without colliding with artifact paths", () => {
 
 test("serves navigation and entity views built from Prism records", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const index = (await get(`${review.baseUrl}/api/index`)).json();
     assert.deepEqual(index.navigation.initiatives.map((item) => [item.id, item.state]), [["reports", "in-progress"], ["search", "envisioned"], ["orphan", "unlisted"]]);
@@ -136,7 +136,7 @@ test("serves navigation and entity views built from Prism records", async (conte
 
 test("accepts entity tabs that resolve and rejects those that do not", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const accepted = await put(`${review.baseUrl}/api/session`, { openTabs: ["roadmap", "initiative:reports", "slice:reports/download", "docs/requirements/reports.md"], activeTab: "slice:reports/download" });
     assert.equal(accepted.status, 200, accepted.text);
@@ -154,7 +154,7 @@ test("accepts entity tabs that resolve and rejects those that do not", async (co
 
 test("lists what waits on the user apart from agent-side state", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const attention = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json();
     const needs = attention.data.needsYou;
@@ -176,7 +176,7 @@ test("lists what waits on the user apart from agent-side state", async (context)
 
 test("gives every tab a breadcrumb trail and sidebar scope", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const contextOf = async (ref) => (await get(`${review.baseUrl}/api/context?ref=${encodeURIComponent(ref)}`)).json();
     const labels = (value) => value.trail.map((crumb) => crumb.label);
@@ -200,7 +200,7 @@ test("gives every tab a breadcrumb trail and sidebar scope", async (context) => 
 
 test("keeps the preview and the human's tabs when an agent presents artifacts", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot, openBrowser: async () => true });
+  const review = await startReviewServer({ projectRoot, openBrowser: async () => true });
   try {
     const browsed = await put(`${review.baseUrl}/api/session`, { openTabs: ["roadmap", "initiative:reports"], activeTab: "initiative:reports", previewTab: "initiative:reports" });
     assert.equal(browsed.status, 200, browsed.text);
@@ -222,7 +222,7 @@ test("keeps the preview and the human's tabs when an agent presents artifacts", 
 
 test("records a browser answer and lists it apart from open questions", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const before = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
     const gate = before.needsYou.find((item) => item.type === "gate");
@@ -251,7 +251,7 @@ test("records a browser answer and lists it apart from open questions", async (c
 
 test("treats the initiative directory as the root slice folder", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const root = (await get(`${review.baseUrl}/api/entity?ref=${encodeURIComponent("slice:reports/reports")}`)).json();
     assert.equal(root.data.artifacts.folder, "docs/plans/reports");
