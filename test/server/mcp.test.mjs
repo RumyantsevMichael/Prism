@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { access, chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import https from "node:https";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -27,7 +27,7 @@ async function projectFixture(context, name, artifact) {
 }
 
 function mcpProcess(context, cwd, projectRoot, environment = {}) {
-  const env = { ...process.env, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_REVIEW_CERT_DIR: path.join(cwd, ".prism-review-cert"), ...environment };
+  const env = { ...process.env, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), ...environment };
   if (projectRoot) {
     env.CLAUDE_PROJECT_DIR = projectRoot;
   } else {
@@ -75,7 +75,7 @@ function mcpProcess(context, cwd, projectRoot, environment = {}) {
 
 function fetchReview(url) {
   return new Promise((resolve, reject) => {
-    const request = https.get(url, { rejectUnauthorized: false }, (response) => {
+    const request = http.get(url, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => {
@@ -164,7 +164,7 @@ async function markerContents(marker) {
 
 async function openEventStream(url) {
   return new Promise((resolve, reject) => {
-    const request = https.get(url, { rejectUnauthorized: false }, (response) => {
+    const request = http.get(url, (response) => {
       response.setEncoding("utf8");
       let buffer = "";
       const events = [];
@@ -820,7 +820,7 @@ test("returns a review URL without opening a system browser", async (context) =>
   await initialize(mcp);
   const review = await callTool(mcp, 2, "get_review_url", { projectRoot: root, artifact: "docs/artifact.md" });
 
-  assert.match(review.result.structuredContent.url, /^https:\/\/127\.0\.0\.1:/);
+  assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
   await delay(100);
   assert.equal(await markerContents(browser.marker), "");
 });
@@ -836,9 +836,10 @@ test("selects and updates persistent artifact tabs without opening a browser", a
     projectRoot: root,
     artifacts: ["docs/first.md", "docs/second.md"]
   });
-  assert.match(selected.result.structuredContent.url, /^https:\/\/127\.0\.0\.1:/);
+  assert.match(selected.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
   assert.deepEqual(selected.result.structuredContent.openTabs, ["docs/first.md", "docs/second.md"]);
-  assert.match(selected.result.content[0].text, /Trust the Prism local development authority once/);
+  assert.equal(selected.result.content[0].text, `Human review URL: ${selected.result.structuredContent.url}`);
+  assert.equal("trustInstructions" in selected.result.structuredContent, false);
 
   const updated = await callTool(mcp, 3, "get_review_url", { projectRoot: root, artifacts: ["docs/second.md"] });
   assert.deepEqual(updated.result.structuredContent.openTabs, ["docs/first.md", "docs/second.md"]);
@@ -857,7 +858,7 @@ test("opens the system browser when it presents a review", async (context) => {
   await initialize(mcp);
   const review = await callTool(mcp, 2, "present_review", { projectRoot: root, artifact: "docs/artifact.md" });
 
-  assert.match(review.result.structuredContent.url, /^https:\/\/127\.0\.0\.1:/);
+  assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
   assert.equal(review.result.structuredContent.opened, true);
   assert.equal(await waitForMarker(browser.marker), "opened");
 });
@@ -896,7 +897,7 @@ test("opens one review page for the complete artifact tree when no artifact is s
   await initialize(mcp);
   const review = await callTool(mcp, 2, "present_review", { projectRoot: root });
 
-  assert.match(review.result.structuredContent.url, /^https:\/\/127\.0\.0\.1:/);
+  assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
   assert.doesNotMatch(review.result.structuredContent.url, /artifact=/);
   assert.equal(review.result.structuredContent.opened, true);
   assert.equal(await waitForMarker(browser.marker), "opened");

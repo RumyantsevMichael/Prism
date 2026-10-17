@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import https from "node:https";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -31,7 +31,7 @@ async function fixture(context) {
 
 function fetchReview(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, { rejectUnauthorized: false }, (response) => {
+    http.get(url, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => {
@@ -44,7 +44,7 @@ function fetchReview(url) {
 
 test("lists JSON artifacts and identifies Prism artifact kinds", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const index = (await fetchReview(`${review.baseUrl}/api/index`)).json();
     assert.deepEqual(index.artifacts, [
@@ -79,7 +79,7 @@ test("reads retained evidence for the review project with bounded lists", async 
   const projectRoot = await fixture(context);
   const candidates = Array.from({ length: 250 }, (_, index) => ({ id: `unit-${index}`, file: "src/a.ts" }));
   const id = await conservationStore.put(projectRoot, { kind: "search", schemaVersion: 1, project: projectRoot, query: "retry", candidates });
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const response = await fetchReview(`${review.baseUrl}/api/evidence?id=${id}`);
     assert.equal(response.status, 200);
@@ -104,7 +104,7 @@ test("does not read evidence that belongs to another project", async (context) =
   const projectRoot = await fixture(context);
   const otherRoot = await fixture(context);
   const id = await conservationStore.put(otherRoot, { kind: "search", schemaVersion: 1, project: otherRoot, query: "other", candidates: [] });
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const response = await fetchReview(`${review.baseUrl}/api/evidence?id=${id}`);
     assert.equal(response.status, 400);
@@ -115,7 +115,7 @@ test("does not read evidence that belongs to another project", async (context) =
 
 test("serves view modules by name only", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot, certificateDirectory: projectRoot });
+  const review = await startReviewServer({ projectRoot });
   try {
     const registry = await fetchReview(`${review.baseUrl}/views/registry.js`);
     assert.equal(registry.status, 200);

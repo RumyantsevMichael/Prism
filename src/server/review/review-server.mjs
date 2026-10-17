@@ -1,8 +1,7 @@
-import { createServer } from "node:https";
-import { randomBytes, X509Certificate } from "node:crypto";
+import { createServer } from "node:http";
+import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { chmod, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
@@ -18,11 +17,8 @@ const VENDOR_DIR = path.join(PLUGIN_ROOT, "vendor", "plantuml");
 const VIEWS_DIR = path.join(PUBLIC_DIR, "views");
 const TEXT_EXTENSIONS = new Set([".md", ".feature", ".puml", ".json"]);
 const EVIDENCE_ARRAY_LIMIT = 200;
-const AUTHORITY_CERTIFICATE_NAME = "review-ca-cert.pem";
-const AUTHORITY_PRIVATE_KEY_NAME = "review-ca-key.pem";
-const SERVER_CERTIFICATE_NAME = "review-server-cert.pem";
-const SERVER_PRIVATE_KEY_NAME = "review-server-key.pem";
-const SERVER_RENEWAL_WINDOW_DAYS = 30;
+// Requests naming any other host are refused, so a DNS-rebinding page cannot reach the server.
+const TRUSTED_HOSTS = new Set(["127.0.0.1", "localhost"]);
 const VIEWER_HEARTBEAT_MS = 15 * 1000;
 const VIEWER_OPEN_RETRY_MS = 10 * 1000;
 
@@ -234,6 +230,14 @@ export async function loadArtifact(projectRoot, artifactPath) {
   return { path: artifactPath, content, diagrams, modifiedAt: metadata.mtimeMs };
 }
 
+function isTrustedHost(host) {
+  try {
+    return TRUSTED_HOSTS.has(new URL(`http://${host}`).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function send(response, statusCode, body, contentType = "text/plain; charset=utf-8") {
   response.writeHead(statusCode, {
     "Content-Type": contentType,
@@ -271,121 +275,6 @@ function openBrowser(url) {
   }
 }
 
-function certificateDirectory(options) {
-  if (options.certificateDirectory) {
-    return path.resolve(options.certificateDirectory);
-  }
-  if (process.env.PRISM_REVIEW_CERT_DIR) {
-    return path.resolve(process.env.PRISM_REVIEW_CERT_DIR);
-  }
-  if (process.platform === "darwin") {
-    return path.join(homedir(), "Library", "Application Support", "Prism");
-  }
-  if (process.platform === "win32") {
-    return path.join(process.env.LOCALAPPDATA ?? homedir(), "Prism");
-  }
-  return path.join(process.env.XDG_STATE_HOME ?? path.join(homedir(), ".local", "state"), "prism");
-}
-
-function runOpenSsl(argumentsValue) {
-  return new Promise((resolve, reject) => {
-    const child = spawn("openssl", argumentsValue, { stdio: "ignore" });
-    child.once("error", (error) => {
-      reject(new Error(`Prism could not start openssl: ${error.message}`));
-    });
-    child.once("close", (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error("Prism could not create its local HTTPS certificate."));
-      }
-    });
-  });
-}
-
-async function localCertificate(options) {
-  if (options.tls) {
-    return { serverOptions: options.tls, authorityCertificatePath: options.certificatePath ?? null, serverCertificatePath: options.certificatePath ?? null };
-  }
-  const directory = certificateDirectory(options);
-  const authorityCertificatePath = path.join(directory, AUTHORITY_CERTIFICATE_NAME);
-  const authorityPrivateKeyPath = path.join(directory, AUTHORITY_PRIVATE_KEY_NAME);
-  const serverCertificatePath = path.join(directory, SERVER_CERTIFICATE_NAME);
-  const serverPrivateKeyPath = path.join(directory, SERVER_PRIVATE_KEY_NAME);
-  const configPath = path.join(directory, `review-openssl-${randomBytes(8).toString("hex")}.cnf`);
-  const requestPath = path.join(directory, `review-openssl-${randomBytes(8).toString("hex")}.csr`);
-  const serialPath = path.join(directory, `review-openssl-${randomBytes(8).toString("hex")}.srl`);
-  const config = `[req]\ndistinguished_name = subject\nprompt = no\n[subject]\nCN = Prism Local Development CA\n[authority]\nbasicConstraints = critical,CA:TRUE\nkeyUsage = critical,keyCertSign,cRLSign\nsubjectKeyIdentifier = hash\n[server]\nbasicConstraints = critical,CA:FALSE\nkeyUsage = critical,digitalSignature,keyEncipherment\nextendedKeyUsage = serverAuth\nauthorityKeyIdentifier = keyid,issuer\nsubjectAltName = @names\n[names]\nDNS.1 = localhost\nIP.1 = 127.0.0.1\nIP.2 = ::1\n`;
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  try {
-    await writeFile(configPath, config, { mode: 0o600 });
-    if (!(await authorityIsUsable(authorityCertificatePath, authorityPrivateKeyPath))) {
-      await runOpenSsl(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "3650", "-config", configPath, "-extensions", "authority", "-keyout", authorityPrivateKeyPath, "-out", authorityCertificatePath]);
-      await chmod(authorityPrivateKeyPath, 0o600);
-    }
-    if (!(await serverCertificateIsUsable(serverCertificatePath, serverPrivateKeyPath, authorityCertificatePath))) {
-      await runOpenSsl(["req", "-new", "-newkey", "rsa:2048", "-nodes", "-sha256", "-config", configPath, "-keyout", serverPrivateKeyPath, "-out", requestPath]);
-      await runOpenSsl(["x509", "-req", "-in", requestPath, "-CA", authorityCertificatePath, "-CAkey", authorityPrivateKeyPath, "-CAserial", serialPath, "-CAcreateserial", "-out", serverCertificatePath, "-days", "365", "-sha256", "-extfile", configPath, "-extensions", "server"]);
-      await chmod(serverPrivateKeyPath, 0o600);
-    }
-  } finally {
-    await Promise.all([rm(configPath, { force: true }), rm(requestPath, { force: true }), rm(serialPath, { force: true })]);
-  }
-  return {
-    serverOptions: { cert: await readFile(serverCertificatePath), key: await readFile(serverPrivateKeyPath) },
-    authorityCertificatePath,
-    serverCertificatePath
-  };
-}
-
-async function certificateIsUsable(certificatePath, privateKeyPath, renewalWindowDays) {
-  try {
-    const [certificate, privateKey] = await Promise.all([readFile(certificatePath), readFile(privateKeyPath)]);
-    const expiry = Date.parse(new X509Certificate(certificate).validTo);
-    return privateKey.length > 0 && Number.isFinite(expiry) && expiry > Date.now() + renewalWindowDays * 24 * 60 * 60 * 1000;
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
-}
-
-async function authorityIsUsable(certificatePath, privateKeyPath) {
-  return certificateIsUsable(certificatePath, privateKeyPath, 0);
-}
-
-async function serverCertificateIsUsable(certificatePath, privateKeyPath, authorityCertificatePath) {
-  if (!(await certificateIsUsable(certificatePath, privateKeyPath, SERVER_RENEWAL_WINDOW_DAYS))) {
-    return false;
-  }
-  try {
-    const [serverCertificate, authorityCertificate] = await Promise.all([readFile(certificatePath), readFile(authorityCertificatePath)]);
-    const server = new X509Certificate(serverCertificate);
-    const authority = new X509Certificate(authorityCertificate);
-    return server.checkIssued(authority) && server.verify(authority.publicKey);
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
-}
-
-function certificateTrustInstructions(authorityCertificatePath) {
-  if (!authorityCertificatePath) {
-    return null;
-  }
-  if (process.platform === "darwin") {
-    const quotedPath = `'${authorityCertificatePath.replaceAll("'", "'\\''")}'`;
-    return `Trust the Prism local development authority once: security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db ${quotedPath}`;
-  }
-  if (process.platform === "win32") {
-    return `Trust the Prism local development authority once: import ${authorityCertificatePath} into the Current User Trusted Root Certification Authorities store.`;
-  }
-  return `Trust the Prism local development authority once: import ${authorityCertificatePath} into your browser certificate store.`;
-}
-
 function normalizeTabs(value) {
   if (value === undefined) {
     return [];
@@ -417,7 +306,6 @@ async function readJson(request) {
 export async function startReviewServer(options = {}) {
   const browserOpener = options.openBrowser ?? openBrowser;
   const projectRoot = await realpath(path.resolve(options.projectRoot ?? process.cwd()));
-  const certificate = await localCertificate(options);
   const token = randomBytes(24).toString("base64url");
   const prefix = `/session/${token}`;
   let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
@@ -575,8 +463,12 @@ export async function startReviewServer(options = {}) {
       response.end();
     }
   }
-  const server = createServer(certificate.serverOptions, async (request, response) => {
+  const server = createServer(async (request, response) => {
     try {
+      if (!isTrustedHost(request.headers.host)) {
+        send(response, 403, "Unknown host");
+        return;
+      }
       const url = new URL(request.url, "http://127.0.0.1");
       if (!url.pathname.startsWith(prefix)) {
         send(response, 404, "Not found");
@@ -651,13 +543,10 @@ export async function startReviewServer(options = {}) {
     server.listen(options.port ?? 0, "127.0.0.1", resolve);
   });
   const address = server.address();
-  const baseUrl = `https://127.0.0.1:${address.port}${prefix}`;
+  const baseUrl = `http://127.0.0.1:${address.port}${prefix}`;
   return {
     baseUrl,
     projectRoot,
-    certificatePath: certificate.authorityCertificatePath,
-    serverCertificatePath: certificate.serverCertificatePath,
-    trustInstructions: certificateTrustInstructions(certificate.authorityCertificatePath),
     getOpenTabs() {
       return [...session.openTabs];
     },
