@@ -178,6 +178,15 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     }
   }
 
+  // A project that falls back to its own server stops renewing, so the app never lists it live and is never relaunched for it.
+  function release(projectRoot) {
+    const lease = leases.get(projectRoot);
+    if (!lease) return;
+    leases.delete(projectRoot);
+    clearInterval(lease.timer);
+    if (current) void controlRequest(current, "DELETE", `/control/projects/${lease.id}`).catch(() => {});
+  }
+
   function present(projectRoot, { tabs, open }) {
     return call("POST", "/control/present", { projectRoot, ...(tabs === undefined ? {} : { tabs }), open });
   }
@@ -190,5 +199,5 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     await Promise.allSettled(released.map((lease) => controlRequest(current, "DELETE", `/control/projects/${lease.id}`)));
   }
 
-  return { register, present, close };
+  return { register, release, present, close };
 }

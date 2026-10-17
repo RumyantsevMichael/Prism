@@ -331,6 +331,23 @@ test("a session whose shared app cannot start stops launching it", async (contex
   assert.equal(launches, 1, "a failed registration leaves no lease renewal behind");
 });
 
+test("a session that falls back after the app goes away stops renewing its lease", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "later-fallback");
+  let launches = 0;
+  const launch = (options) => (launches += 1) === 1 ? launchReviewApp(options) : null;
+  context.mock.timers.enable({ apis: ["setInterval"] });
+  const review = await pool(context, { app: { directory, launch, startTimeoutMs: 1000 } }).get(root, "task");
+  assert.ok(new URL(await review.reviewUrl([])).pathname.includes("/p/"));
+  await shutdownApp(directory);
+  await eventually(async () => !(await stat(path.join(directory, "review-app.lock")).catch(() => null)));
+  assert.ok(!new URL(await review.reviewUrl([])).pathname.includes("/p/"), "the session now serves its own review server");
+  const afterFallback = launches;
+  context.mock.timers.tick(10 * 60 * 1000);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(launches, afterFallback, "no lease renewal launches an app for a project served by its own server");
+});
+
 test("a listener that trickles bytes on the discovered port cannot hold a session past the start deadline", async (context) => {
   const directory = await appDirectory(context);
   await mkdir(directory, { recursive: true, mode: 0o700 });

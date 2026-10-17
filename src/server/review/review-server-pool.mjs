@@ -12,6 +12,7 @@ function tabUrl(baseUrl, tabs) {
 async function appBackedReview(client, projectRoot, { startSession, openBrowser: browserOpener }) {
   let session = null;
   const fallBack = async () => {
+    if (!session) client.release(projectRoot);
     session ??= startSession({ projectRoot, openBrowser: browserOpener });
     return session;
   };
