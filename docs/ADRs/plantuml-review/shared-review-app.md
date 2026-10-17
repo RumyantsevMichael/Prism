@@ -31,7 +31,8 @@ Agent sessions and the `prism review` command MUST reach the review app through 
 A Prism process MUST NOT act on a review app response that does not prove knowledge of the control credential.
 The control credential MUST NOT appear in any browser URL, and the review app MUST refuse control requests that a browser page sends.
 The browser URL MUST carry a separate viewer credential.
-The port and viewer credential SHOULD survive a replacement of the review app, so an open tab reconnects; they are renewed after the review app exits for idleness.
+The port and viewer credential SHOULD survive a replacement of the review app, so an open tab reconnects.
+A review app MUST NOT reuse a viewer credential except after a handoff and on the same port, so a credential that a tab sent to another listener after a crash is never served again.
 Each review app process MUST create its own control credential.
 Each project MUST keep its own review context, including its tabs, viewers, and file boundary, behind a stable project segment of the URL.
 Only a request with the control credential MAY register a project.
@@ -73,7 +74,7 @@ Gate answers already reach agents through the state file under a cross-process l
 The [lifecycle diagram](shared-review-app-lifecycle.puml) shows discovery, start, registration, presentation, replacement, and fallback.
 A Prism process reads the discovery file and checks the app's health with the control credential.
 When no healthy app answers, it starts a detached app and waits a bounded time for the discovery file to name a healthy app.
-A starting app takes the lock, reuses the previous port and viewer credential when they are still free, and writes the discovery file.
+A starting app takes the lock, reuses the previous port and viewer credential only after a handoff and only on that same port, and writes the discovery file.
 An app that cannot take the lock exits, so concurrent starts leave one app.
 The app renews its lock while it runs and stops serving when a renewal finds the lock taken by another owner.
 Each MCP server registers its project and renews the lease while it runs, and each renewal names the project, so a replacement app learns every live project at the next renewal.

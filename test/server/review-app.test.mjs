@@ -105,6 +105,8 @@ async function shutdownApp(directory) {
   try {
     const owner = JSON.parse(await readFile(path.join(directory, "review-app.lock"), "utf8"));
     if (owner.pid !== process.pid && alive(owner.pid)) process.kill(owner.pid);
+    // Windows cannot delete the directory while the app still holds its lock file open.
+    await eventually(() => !alive(owner.pid), 5000);
   } catch {
   }
 }
@@ -200,10 +202,12 @@ test("a session never sends the control credential to a listener that cannot pro
   context.after(() => new Promise((resolve) => { impostor.closeAllConnections(); impostor.close(resolve); }));
   const { port } = impostor.address();
   // A stale discovery file from a crashed app names a port that another listener now holds.
-  await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ protocol: 1, port, controlToken, viewerToken: randomBytes(24).toString("base64url"), pid: 999999 }), { mode: 0o600 });
+  const staleViewerToken = randomBytes(24).toString("base64url");
+  await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ protocol: 1, port, controlToken, viewerToken: staleViewerToken, pid: 999999 }), { mode: 0o600 });
   const url = new URL(await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]));
   assert.notEqual(Number(url.port), port, "the session does not hand out a URL from the impostor");
   assert.ok(seen.every((headers) => !headers.includes(controlToken)), "the credential never reaches the impostor");
+  assert.ok(!url.href.includes(staleViewerToken), "a viewer credential that tabs may have sent to the impostor is not served again");
   assert.equal(JSON.parse((await request(new URL("api/index", url))).body).projectRoot, root);
 });
 
@@ -306,7 +310,7 @@ test("a newer session replaces an older review app and keeps its port and viewer
   const standIn = http.createServer((incoming, outgoing) => {
     const chunks = [];
     incoming.on("data", (chunk) => chunks.push(chunk));
-    incoming.on("end", () => {
+    incoming.on("end", async () => {
       const text = Buffer.concat(chunks).toString("utf8");
       const [nonce, signed] = String(incoming.headers["x-prism-control"] ?? "").split(".");
       const reply = (status, body) => outgoing.writeHead(status, { "Content-Type": "application/json", "X-Prism-Proof": proof(standInKey, nonce, body) }).end(body);
@@ -316,6 +320,7 @@ test("a newer session replaces an older review app and keeps its port and viewer
         reply(200, JSON.stringify({ protocol: 0, pid: process.pid }));
       } else if (incoming.url === "/control/shutdown" && incoming.method === "POST") {
         shutdowns.push(JSON.parse(text));
+        await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ ...JSON.parse(await readFile(path.join(directory, "review-app.json"), "utf8")), handoff: true }), { mode: 0o600 });
         reply(200, "{}");
         standIn.close(() => stopStandIn());
         standIn.closeAllConnections();
