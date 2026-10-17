@@ -141,7 +141,12 @@ export async function startStandaloneReview({ projectRoot = process.cwd(), artif
   const root = await realpath(path.resolve(projectRoot));
   if (reviewAppDisabled(env)) {
     const server = await start({ projectRoot: root, openBrowser: browserOpener });
-    return { ...(await server.open(artifactPath)), held: server };
+    try {
+      return { ...(await server.open(artifactPath)), held: server };
+    } catch (error) {
+      await server.close();
+      throw error;
+    }
   }
   const client = createReviewAppClient({ directory: reviewAppDirectory(env), ...app });
   const review = await appBackedReview(client, root, { startSession: start, openBrowser: browserOpener });
