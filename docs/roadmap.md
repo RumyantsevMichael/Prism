@@ -9,6 +9,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 
 ### Now
 
+- **Single review app** (`single-review-app`): Run one review app per user that every agent session and project shares, with a project switcher that shows which project waits on the user.
 - **Repository intelligence** (`repository-intelligence`): Give workflow agents deterministic repository evidence: providers, context planning, session capacity, structural analysis, and duplication gates.
 
 ### Next
@@ -17,6 +18,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 
 ## Sequencing rationale
 
+- **Single review app**: Now, because Michael asked for it on 2026-10-17 and approved the design direction in the project thread; it builds on the plain-HTTP review server from PR #25.
 - **Repository intelligence**: Kept in Now while repository-intelligence work continues on main.
 - **Agent execution evidence and continuity**: Next, because observed-range reporting consumes verified ranges from repository context planning, while pause checkpoints and diagram-readability assessment can proceed independently after design. The new work stays together until design shows that its outcomes need separate sequencing.
 

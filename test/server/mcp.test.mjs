@@ -27,7 +27,7 @@ async function projectFixture(context, name, artifact) {
 }
 
 function mcpProcess(context, cwd, projectRoot, environment = {}) {
-  const env = { ...process.env, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), ...environment };
+  const env = { ...process.env, PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), ...environment };
   if (projectRoot) {
     env.CLAUDE_PROJECT_DIR = projectRoot;
   } else {

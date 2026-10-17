@@ -1,0 +1,33 @@
+{
+  "$comment": "The review app surface that crosses plugin versions. Protocol 0 names any app older than the first shared app and exists only so a newer client can replace it. Later protocol versions may add properties and routes but must keep every one listed here with the same meaning. Governing ADR: docs/ADRs/plantuml-review/shared-review-app.md. Requirements: docs/requirements/single-review-app.md sections 1, 5, and 7.",
+  "discovery": {
+    "type": "object",
+    "required": ["protocol", "port", "controlToken", "viewerToken", "pid"],
+    "properties": {
+      "protocol": { "type": "integer", "minimum": 0 },
+      "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+      "controlToken": { "type": "string", "minLength": 16 },
+      "viewerToken": { "type": "string", "minLength": 16 },
+      "pid": { "type": "integer", "minimum": 1 },
+      "pluginVersion": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+      "startedAt": { "type": "string" }
+    }
+  },
+  "health": {
+    "type": "object",
+    "required": ["protocol"],
+    "properties": {
+      "protocol": { "type": "integer", "minimum": 0 },
+      "pluginVersion": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+      "pid": { "type": "integer", "minimum": 1 }
+    }
+  },
+  "routes": {
+    "health": { "method": "GET", "path": "/control/health" },
+    "projects": { "method": "GET", "path": "/control/projects", "response": { "projects": [{ "id": "string", "projectRoot": "string", "live": "boolean" }] } },
+    "registerLease": { "method": "PUT", "path": "/control/projects/<lease>", "body": { "projectRoot": "string" } },
+    "endLease": { "method": "DELETE", "path": "/control/projects/<lease>" },
+    "present": { "method": "POST", "path": "/control/present", "body": { "projectRoot": "string", "tabs": "string[] or absent", "open": "boolean" }, "response": { "url": "string", "open": "boolean", "session": "object" } },
+    "shutdown": { "method": "POST", "path": "/control/shutdown", "body": { "handoff": "boolean" } }
+  }
+}

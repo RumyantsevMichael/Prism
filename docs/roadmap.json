@@ -3,6 +3,24 @@
   "serves": "Reliable planning and resumable work in Prism's spec-driven engineering workflow.",
   "initiatives": [
     {
+      "id": "single-review-app",
+      "title": "Single review app",
+      "intent": "Run one review app per user that every agent session and project shares, with a project switcher that shows which project waits on the user.",
+      "band": "Now",
+      "requirements": [
+        "docs/requirements/single-review-app.md#1",
+        "docs/requirements/single-review-app.md#2",
+        "docs/requirements/single-review-app.md#3",
+        "docs/requirements/single-review-app.md#4",
+        "docs/requirements/single-review-app.md#5",
+        "docs/requirements/single-review-app.md#6",
+        "docs/requirements/single-review-app.md#7"
+      ],
+      "requires": [],
+      "rationale": "Now, because Michael asked for it on 2026-10-17 and approved the design direction in the project thread; it builds on the plain-HTTP review server from PR #25.",
+      "decision": null
+    },
+    {
       "id": "repository-intelligence",
       "title": "Repository intelligence",
       "intent": "Give workflow agents deterministic repository evidence: providers, context planning, session capacity, structural analysis, and duplication gates.",
@@ -55,6 +73,12 @@
       "actor": "roadmap",
       "operation": "set_open_questions",
       "at": "2026-10-15T20:04:28.848Z"
+    },
+    {
+      "actor": "orchestrator",
+      "operation": "add_initiative",
+      "id": "single-review-app",
+      "at": "2026-10-17T13:32:03.217Z"
     }
   ]
 }

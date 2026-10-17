@@ -12,7 +12,7 @@ const examples = JSON.parse(await readFile(new URL("./fixtures/concept-delta.jso
 async function fixture(t) {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "prism-concept-mcp-"));
   const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-concept-mcp-data-")));
-  const env = { ...process.env, PLUGIN_DATA: privateData, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
+  const env = { ...process.env, PRISM_REVIEW_APP: "off", PLUGIN_DATA: privateData, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
   delete env.CLAUDE_PROJECT_DIR;
   const child = spawn(process.execPath, [SERVER], { cwd: projectRoot, env, stdio: ["pipe", "pipe", "pipe"] });
   const pending = new Map();
