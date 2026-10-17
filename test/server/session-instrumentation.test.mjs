@@ -289,7 +289,7 @@ test("normalizes valid host event times before chronological ordering", async ()
 test("closes Codex edits only for a versioned PostToolUse lifecycle contract", async (context) => {
   const dataDirectory = await temporaryDirectory(context, "prism-trace-codex-edit-");
   const environment = { PLUGIN_DATA: dataDirectory, CODEX_VERSION: "future-version" };
-  let harnessVersion = "0.156.0";
+  let harnessVersion = "0.146.0";
   const normalizer = createSessionTraceNormalizer({
     now: () => new Date(occurredAt),
     inspectCodexTranscript: async () => codexTranscriptMetadata({ harnessVersion })

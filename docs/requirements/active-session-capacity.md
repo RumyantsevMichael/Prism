@@ -83,7 +83,7 @@ Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§3](#3
 
 Pattern: Event-driven
 
-Disposition: Active
+Disposition: Superseded by [active-session-capacity.md§6](#6)
 
 Supersedes: [active-session-capacity.md§2](#2)
 
@@ -92,3 +92,18 @@ Requirement: When Prism handles a `PreToolUse` event for a root Codex session, P
 Rationale: PreToolUse refresh makes the first model call observable while the effective app-server configuration and exact registry profile prevent unsafe threshold guesses.
 
 Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§3](#3), [session-fit.md§1](session-fit.md#1)
+
+<a id="6"></a>
+## 6. Refresh and resolve active Codex capacity with covered profiles
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Supersedes: [active-session-capacity.md§5](#5)
+
+Requirement: When Prism handles a `PreToolUse` event for a root Codex session, Prism shall refresh allowlisted capacity facts from the correlated transcript's latest bounded `token_count` event and effective Codex configuration for the event working directory, shall use an explicit `model_auto_compact_token_limit` and scope when the effective configuration provides them, shall use the default threshold policy of the registry profile that covers the version, provider, and model when no threshold override is present, shall preserve complete explicit caller overrides as highest precedence, and shall return `UNSUPPORTED` for unavailable or conflicting runtime facts or `body_after_prefix` scope.
+
+Rationale: A covering profile keeps active capacity available across frequent Codex releases, while PreToolUse refresh and the transcript cross-check still prevent unsafe threshold guesses.
+
+Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§3](#3), [session-fit.md§5](session-fit.md#5)

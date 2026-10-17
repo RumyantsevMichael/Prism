@@ -1,5 +1,10 @@
 import { readFileSync } from "node:fs";
 import { HOST_FACT_REASON, readHostSessionFacts } from "./host-session-facts.mjs";
+import {
+  HARNESS_VERSION_POLICIES,
+  isComparableHarnessVersion,
+  selectVersionedProfile
+} from "./harness-version.mjs";
 
 const canonicalRegistry = JSON.parse(readFileSync(new URL("./session-capacity-registry.json", import.meta.url), "utf8"));
 const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
@@ -78,9 +83,16 @@ function validateProfile(profile, index, tupleOwners, profileIds) {
   }
   profileIds.add(profile.id);
 
-  assertExactKeys(profile.match, ["harness", "harnessVersion", "provider", "models", "aliases"], ["harness", "harnessVersion", "provider", "models", "aliases"], `${name}.match`);
+  const matchKeys = ["harness", "harnessVersion", "harnessVersionPolicy", "provider", "models", "aliases"];
+  assertExactKeys(profile.match, matchKeys, matchKeys, `${name}.match`);
   for (const key of ["harness", "harnessVersion", "provider"]) {
     assertNonemptyString(profile.match[key], `${name}.match.${key}`);
+  }
+  if (!HARNESS_VERSION_POLICIES.includes(profile.match.harnessVersionPolicy)) {
+    throw new Error(`${name}.match.harnessVersionPolicy must be exact or minimum.`);
+  }
+  if (profile.match.harnessVersionPolicy === "minimum" && !isComparableHarnessVersion(profile.match.harnessVersion)) {
+    throw new Error(`${name}.match.harnessVersion must be a semantic version for a minimum policy.`);
   }
   if (!Array.isArray(profile.match.models) || profile.match.models.length === 0) {
     throw new Error(`${name}.match.models must be a nonempty array.`);
@@ -190,17 +202,15 @@ function explicitProvenance(input) {
 }
 
 function findProfile(session, registry) {
-  const matches = registry.profiles.filter((profile) => {
-    const match = profile.match;
-    return match.harness === session.harness
-      && match.harnessVersion === session.harnessVersion
-      && match.provider === session.provider
-      && acceptedModels(profile).includes(session.model);
-  });
-  if (matches.length > 1) {
-    throw new Error("The session tuple matches more than one capacity profile.");
-  }
-  return matches[0] ?? null;
+  const candidates = registry.profiles.filter((profile) => (
+    profile.match.harness === session.harness
+    && profile.match.provider === session.provider
+  ));
+  return selectVersionedProfile(
+    candidates,
+    session.harnessVersion,
+    (profile) => acceptedModels(profile).includes(session.model)
+  );
 }
 
 export function resolveRegisteredCapacityPolicy(session, { registry = canonicalRegistry } = {}) {

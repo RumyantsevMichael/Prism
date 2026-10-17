@@ -399,7 +399,7 @@ It persists neither the transcript path nor transcript content.
 The active model comes from the hook event.
 Prism requests the effective layered Codex configuration for the event working directory through the local app-server and stores only allowlisted capacity values and provenance.
 An explicit effective threshold and scope take precedence over a registry default.
-When the effective configuration proves that no threshold override exists, Prism uses only the exact host version, provider, and model registry threshold policy.
+When the effective configuration proves that no threshold override exists, Prism uses the threshold policy of the registry profile that covers the host version, provider, and model.
 An explicit context-window override uses that profile's reviewed default percentage after the transcript effective window is verified.
 Missing, timed-out, malformed, or ambiguous effective configuration keeps capacity unsupported.
 Prism rejects `body_after_prefix` accounting.
@@ -443,9 +443,10 @@ An absent, malformed, or mismatched classification creates a coverage gap when t
 The first successful edit closes the pre-edit window.
 Failed edit attempts keep the window open.
 For Codex, only a root-correlated exact `apply_patch` `PostToolUse` event under a reviewed trace behavior profile proves success.
-The bundled trace behavior registry supports exact Codex versions `0.147.0` and `0.155.0-alpha.9.2` with provider `openai`.
+The bundled trace behavior registry verifies Codex `0.147.0` and `0.163.0` as minimum versions and `0.155.0-alpha.9.2` as an exact version, all with provider `openai`.
+A minimum profile covers its version and every later version until a newer minimum profile replaces it.
 Each profile records the exact tagged upstream source used to verify its lifecycle and response-shape contract in `src/server/session/session-trace-behavior-registry.json`.
-Codex versions without an exact profile and unknown host edits remain attempts even when response fields look successful.
+Codex versions that no profile covers and unknown host edits remain attempts even when response fields look successful.
 Claude `PostToolUse` events use the documented successful lifecycle after positive Claude project classification.
 Tool classification uses exact built-in and explicit provider names instead of suffix matching.
 When a tool exposes an edit path, its canonical resolution must stay beneath the stable project root.
@@ -489,9 +490,12 @@ Override the implementation reserve when the registered default does not fit the
 }
 ```
 
-The bundled registry supports only the exact Codex host, version, provider, and model tuples recorded in `src/server/session/session-capacity-registry.json`.
+The bundled registry in `src/server/session/session-capacity-registry.json` matches host, provider, and model exactly.
+Each profile marks its verified host version as `exact` or `minimum`.
+A `minimum` profile covers its version and every later version until a newer `minimum` profile for the same model replaces it, so a new Codex release needs no plugin update.
+A version with an `exact` profile, such as a reviewed prerelease, resolves only through exact profiles.
 For the bundled 272000-token Codex profiles, the 95 percent usable input window is recorded separately from the default 90 percent automatic-compaction threshold of 244800 tokens.
-Supply both capacity overrides for an unregistered host, provider, model, or version combination.
+Supply both capacity overrides for an unregistered host, provider, or model, or for a version that no profile covers.
 Prism returns `UNSUPPORTED` without a fit classification when neither path establishes exact capacity.
 
 ### Claude Code on AWS Bedrock

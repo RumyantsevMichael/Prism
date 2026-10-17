@@ -80,3 +80,4 @@ It preserves the original ADR's identity correlation, storage, retention, tracin
 ## Decision Log
 
 2026-09-20: Accepted bounded transcript refresh and app-server effective configuration as the active Codex capacity sources.
+2026-10-17: [Cover later host versions with verified minimum profiles](minimum-version-host-profiles.md) proposes replacing exact-version profile matching.
