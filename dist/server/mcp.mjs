@@ -3,6 +3,7 @@ import { pluginURL } from "./plugin-root.mjs";
 import { ACTIVE_OPERATIONS_SCHEMA } from "./workflow/active-operations.mjs";
 import { assertInput } from "./workflow/artifact-schema.mjs";
 import { CONSERVATION_TOOLS, callConservationTool } from "./conservation/conservation-tools.mjs";
+import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ConceptDeltaError, GET_CONCEPT_DELTA_SCHEMA, UPDATE_CONCEPT_DELTA_SCHEMA, getConceptDelta, updateConceptDelta } from "./conservation/concept-delta.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
@@ -33,7 +34,7 @@ import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
 // PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
-const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory() } });
+const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory(), evidenceDirectory: conservationStore.directory } });
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));
 
 function decisionDataDirectory(argumentsValue) {

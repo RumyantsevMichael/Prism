@@ -101,7 +101,9 @@ async function lockCleared(directory, deadline) {
 }
 
 // A client finds the user's review app, starts it when none proves itself, and replaces an app with an older protocol.
-export function createReviewAppClient({ directory = reviewAppDirectory(), launch = launchReviewApp, startTimeoutMs = START_TIMEOUT_MS } = {}) {
+// Every registration and presentation names the evidence store this process writes, so the app serves each project's evidence from it.
+export function createReviewAppClient({ directory = reviewAppDirectory(), launch = launchReviewApp, startTimeoutMs = START_TIMEOUT_MS, evidenceDirectory } = {}) {
+  const evidence = evidenceDirectory === undefined ? {} : { evidenceDirectory };
   let current = null;
   let connecting = null;
   const leases = new Map();
@@ -156,7 +158,7 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
   }
 
   async function renew(projectRoot) {
-    return call("PUT", `/control/projects/${leases.get(projectRoot).id}`, { projectRoot });
+    return call("PUT", `/control/projects/${leases.get(projectRoot).id}`, { projectRoot, ...evidence });
   }
 
   // Each renewal names the project, so a replacement app learns every live project at the next renewal.
@@ -188,7 +190,7 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
   }
 
   function present(projectRoot, { tabs, open }) {
-    return call("POST", "/control/present", { projectRoot, ...(tabs === undefined ? {} : { tabs }), open });
+    return call("POST", "/control/present", { projectRoot, ...(tabs === undefined ? {} : { tabs }), open, ...evidence });
   }
 
   async function close() {

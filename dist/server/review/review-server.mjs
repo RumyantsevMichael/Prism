@@ -193,12 +193,12 @@ function truncateArrays(value, location, truncated) {
   return value;
 }
 
-export async function loadEvidence(projectRoot, evidenceId) {
+export async function loadEvidence(projectRoot, evidenceId, store = conservationStore) {
   if (typeof evidenceId !== "string" || !/^[a-f0-9]{64}$/.test(evidenceId)) {
     throw new Error("The evidence ID must be a 64-character lowercase hexadecimal digest.");
   }
   const truncated = {};
-  const record = truncateArrays(await conservationStore.get(projectRoot, evidenceId), "", truncated);
+  const record = truncateArrays(await store.get(projectRoot, evidenceId), "", truncated);
   return { id: evidenceId, kind: record.kind, record, truncated, arrayLimit: EVIDENCE_ARRAY_LIMIT };
 }
 
@@ -311,7 +311,7 @@ async function readJson(request) {
 
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, onViewer = null }) {
+export function createProjectReview({ projectRoot, baseUrl, instance = null, onViewer = null, evidenceStore = () => conservationStore }) {
   let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
   const viewers = new Map();
   let viewerOpenLease = null;
@@ -501,7 +501,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, onV
         return;
       }
       try {
-        const answered = await answerGate(projectRoot, await readJson(request));
+        const answered = await answerGate(projectRoot, await readJson(request), { store: evidenceStore() });
         forgetWorkspace();
         send(response, 200, JSON.stringify(answered), "application/json; charset=utf-8");
       } catch (error) {
@@ -513,7 +513,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, onV
     } else if (route === "/api/entity") {
       send(response, 200, JSON.stringify(await loadEntity(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {
-      send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"))), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {
       const artifactPath = url.searchParams.get("path");
       // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.

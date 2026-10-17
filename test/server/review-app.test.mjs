@@ -8,6 +8,7 @@ import path from "node:path";
 import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { ConservationStore } from "../../dist/server/conservation/conservation-store.mjs";
 import { createReviewAppClient, launchReviewApp } from "../../dist/server/review/review-app-client.mjs";
 import { startReviewApp } from "../../dist/server/review/review-app-server.mjs";
 import { createReviewServerPool, startStandaloneReview } from "../../dist/server/review/review-server-pool.mjs";
@@ -838,6 +839,27 @@ test("the prism review command exits after presenting through a running app", as
   assert.equal(Number(url.port), before.port);
   assert.equal((await readDiscovery(directory)).pid, before.pid, "the command reused the running app");
   await eventually(() => events.find((event) => event.name === "notice" && event.data.projectRoot === root));
+});
+
+test("the app serves each project's evidence from the store its sessions report, also to a later command and after a restart", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "evidence");
+  const storeDirectory = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-app-store-")));
+  context.after(() => rm(storeDirectory, { recursive: true, force: true }));
+  const id = await new ConservationStore(storeDirectory).put(root, { schemaVersion: 1, kind: "migration", project: root, artifactPath: "docs/evidence.md", revision: "a".repeat(64), lines: ["evidence"] });
+  const evidenceAt = async (url) => {
+    const response = await request(new URL(`api/evidence?id=${id}`, url));
+    return response.status === 200 ? JSON.parse(response.body).record.project : response.status;
+  };
+  const review = await pool(context, { app: { directory, evidenceDirectory: storeDirectory } }).get(root, "task");
+  assert.equal(await evidenceAt(await review.reviewUrl([])), root, "the page reads the session's store, not the app's own");
+  const options = { projectRoot: root, env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: () => true };
+  assert.equal(await evidenceAt((await standalone(context, options)).url), root, "a command without host data keeps the reported store");
+  await shutdownApp(directory);
+  assert.equal(await evidenceAt((await standalone(context, options)).url), root, "a restarted app keeps the reported store");
+  const discovery = await readDiscovery(directory);
+  const lease = randomBytes(8).toString("hex");
+  assert.equal((await control(discovery, `projects/${lease}`, { method: "PUT", body: { projectRoot: root, evidenceDirectory: "relative/store" } })).status, 400);
 });
 
 test("a session falls back within the start deadline when a started app never answers", async (context) => {

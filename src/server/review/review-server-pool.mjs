@@ -1,5 +1,6 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { ConservationStore } from "../conservation/conservation-store.mjs";
 import { createReviewAppClient } from "./review-app-client.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review-app-discovery.mjs";
 import { normalizeTabs, openBrowser, startReviewServer } from "./review-server.mjs";
@@ -148,7 +149,9 @@ export async function startStandaloneReview({ projectRoot = process.cwd(), artif
       throw error;
     }
   }
-  const client = createReviewAppClient({ directory: reviewAppDirectory(env), ...app });
+  // Without host data this command knows no project's store, so it leaves the app with the store a session reported.
+  const hostData = env.PLUGIN_DATA || env.CLAUDE_PLUGIN_DATA;
+  const client = createReviewAppClient({ directory: reviewAppDirectory(env), ...(hostData ? { evidenceDirectory: new ConservationStore(undefined, env).directory } : {}), ...app });
   const review = await appBackedReview(client, root, { startSession: start, openBrowser: browserOpener });
   try {
     const result = await review.open(artifactPath);

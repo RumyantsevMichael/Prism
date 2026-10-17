@@ -105,8 +105,18 @@ export async function readProjectRoots(directory) {
   }
 }
 
-export async function writeProjectRoots(directory, roots) {
-  await writeAtomically(projectsPath(directory), `${JSON.stringify({ projects: roots }, null, 2)}\n`, { mode: 0o600 });
+// Maps each project root to the evidence store directory its sessions reported, so a restarted app keeps serving the right evidence.
+export async function readProjectEvidence(directory) {
+  try {
+    const value = JSON.parse(await readFile(projectsPath(directory), "utf8"))?.evidence;
+    return Object.fromEntries(Object.entries(value && typeof value === "object" ? value : {}).filter(([root, store]) => path.isAbsolute(root) && typeof store === "string" && path.isAbsolute(store)));
+  } catch {
+    return {};
+  }
+}
+
+export async function writeProjectRoots(directory, roots, evidence = {}) {
+  await writeAtomically(projectsPath(directory), `${JSON.stringify({ projects: roots, evidence }, null, 2)}\n`, { mode: 0o600 });
 }
 
 export const newCredential = () => randomBytes(24).toString("base64url");

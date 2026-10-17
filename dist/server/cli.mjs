@@ -26,6 +26,6 @@ if (["-h", "--help", "help"].includes(command) || ["-h", "--help"].includes(arti
     process.once("SIGINT", close);
     process.once("SIGTERM", close);
   } else if (!result.opened) {
-    process.stderr.write("prism review: no new browser tab opened; an open review tab shows this project or a notice with its link, or open the URL above.\n");
+    process.stderr.write("prism review: no new browser tab opened; a review tab that is open or opening shows this project or a notice with its link, or open the URL above.\n");
   }
 }
