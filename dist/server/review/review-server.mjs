@@ -286,7 +286,7 @@ export function normalizeTabs(value) {
   return [...new Set(tabs)];
 }
 
-export async function readJson(request) {
+async function readJson(request) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
