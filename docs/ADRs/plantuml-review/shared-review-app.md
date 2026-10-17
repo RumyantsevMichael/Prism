@@ -39,6 +39,7 @@ Only a request with the control credential MAY register a project.
 A project MUST stay live while its registering session renews its lease and MUST then appear as recent.
 A session MUST register its project when its host names the project at start, and otherwise at its first tool call that names the project.
 A presentation for a project MUST NOT change which project a connected browser tab shows.
+When a project presents while a connected tab shows another project, the review app MUST notify that tab with a link to the presenting project.
 The review app MUST NOT open a browser itself; the presenting process opens it in its own environment when no tab is connected.
 A process that finds an older protocol version MUST replace the running review app, and a process that finds a newer one MUST use it.
 A newer protocol version MUST keep every earlier control route and field with its meaning.
@@ -80,6 +81,7 @@ The app renews its lock while it runs and stops serving when a renewal finds the
 Each MCP server registers its project and renews the lease while it runs, and each renewal names the project, so a replacement app learns every live project at the next renewal.
 The app also remembers registered projects across restarts, so an open tab's project URL keeps working.
 The app serves each registered project's existing review routes under that project's segment.
+Each project page lists the registered projects with their open-gate counts and shows a notice with a link when another project presents.
 A replacement shutdown keeps the discovery file for the successor, and session snapshots name the app instance, so a reconnected tab accepts the new instance's state.
 The app exits after an idle period with no live lease and no viewer, and removes the discovery file.
 
