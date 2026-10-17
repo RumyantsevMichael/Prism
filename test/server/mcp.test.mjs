@@ -151,6 +151,17 @@ async function waitForMarker(marker) {
   return markerContents(marker);
 }
 
+// The stub writes its marker before its count, so a count read right after the marker can trail by one open.
+async function waitForCount(count, expected) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await markerContents(count) === expected) {
+      return expected;
+    }
+    await delay(20);
+  }
+  return markerContents(count);
+}
+
 async function markerContents(marker) {
   try {
     return await readFile(marker, "utf8");
@@ -880,13 +891,12 @@ test("does not reopen an existing viewer for repeated presentation calls", async
 
   const second = await callTool(mcp, 3, "present_review", { projectRoot: root, artifact: "docs/artifact.md" }, "second-task");
   assert.equal(second.result.structuredContent.opened, false);
-  assert.equal(await readFile(browser.count, "utf8"), "x");
+  assert.equal(await waitForCount(browser.count, "x"), "x");
   events.close();
   await delay(50);
   const third = await callTool(mcp, 4, "present_review", { projectRoot: root, artifact: "docs/artifact.md" }, "third-task");
   assert.equal(third.result.structuredContent.opened, true);
-  await delay(50);
-  assert.equal(await readFile(browser.count, "utf8"), "xx");
+  assert.equal(await waitForCount(browser.count, "xx"), "xx");
 });
 
 test("opens one review page for the complete artifact tree when no artifact is selected", async (context) => {
