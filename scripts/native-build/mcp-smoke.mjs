@@ -22,7 +22,7 @@ await mkdir(projectRoot);
 await writeFile(path.join(projectRoot, "retry.ts"), "export function retryRequest() { return 1; }\n");
 await writeFile(path.join(projectRoot, "instructions.md"), "# Retry\n\nRepeat temporary network failures.\n");
 const server = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
-const environment = { ...process.env, PATH: "", PLUGIN_DATA: path.join(temporary, "cache"), CLAUDE_PROJECT_DIR: projectRoot };
+const environment = { ...process.env, PRISM_REVIEW_APP: "off", PATH: "", PLUGIN_DATA: path.join(temporary, "cache"), CLAUDE_PROJECT_DIR: projectRoot };
 delete environment.PRISM_NATIVE_ASSET_MANIFEST;
 if (manifest) environment.PRISM_NATIVE_ASSET_MANIFEST = manifest;
 delete environment.NODE_OPTIONS; delete environment.NODE_PATH;

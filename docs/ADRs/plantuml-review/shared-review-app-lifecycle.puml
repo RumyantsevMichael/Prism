@@ -8,10 +8,10 @@ actor "Browser tab" as Tab
 
 == Discovery ==
 Client -> Discovery : read port, control credential, protocol version
-alt discovery names a healthy app with the same or newer protocol
-  Client -> App : health check (control credential)
-  App --> Client : healthy
-else no healthy app
+alt discovery names an app that proves the credential with the same or newer protocol
+  Client -> App : signed health check
+  App --> Client : healthy, with proof of the control credential
+else no app proves the credential
   Client -> App ** : start detached app
   App -> Discovery : take lock, keep previous port and viewer credential if free
   App -> Discovery : write discovery file, reload registered projects

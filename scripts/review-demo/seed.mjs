@@ -51,7 +51,7 @@ await write("docs/Glossary.md", "# Glossary\n\nTerms used by the payments API te
 await write(`${slice}/slice.md`, "# Retry timed-out requests until a total deadline\n\n## Context\n\nThe existing strategy owns timeout retries, and a total deadline bounds every retry sequence.\nConnection retries stay out of scope until their own slice.\n");
 await write(`${slice}/timeout-retries.puml`, "@startuml\nclass RequestRetryStrategy\n@enduml\n");
 
-const env = { ...process.env, PLUGIN_DATA: dataDir, PRISM_NATIVE_ASSET_MANIFEST: MANIFEST };
+const env = { ...process.env, PRISM_REVIEW_APP: "off", PLUGIN_DATA: dataDir, PRISM_NATIVE_ASSET_MANIFEST: MANIFEST };
 delete env.CLAUDE_PROJECT_DIR;
 const child = spawn(process.execPath, [SERVER], { cwd: realRoot, env, stdio: ["pipe", "pipe", "pipe"] });
 let stderr = "";

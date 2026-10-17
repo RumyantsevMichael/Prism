@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
@@ -50,12 +51,27 @@ async function readDiscovery(directory) {
   return JSON.parse(await readFile(path.join(directory, "review-app.json"), "utf8"));
 }
 
-function control(discovery, route, { method = "GET", body, headers = {} } = {}) {
-  return request(`http://127.0.0.1:${discovery.port}/control/${route}`, {
+// An independent implementation of the contract's signing rules, so the tests check the contract rather than the client.
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+const mac = (key, text) => createHmac("sha256", key).update(text).digest("hex");
+
+function signature(controlToken, method, route, text, nonce = randomBytes(16).toString("hex")) {
+  return { nonce, header: `${nonce}.${mac(controlToken, `${method}\n${route}\n${nonce}\n${sha256(text)}`)}` };
+}
+
+function proof(controlToken, nonce, text) {
+  return mac(controlToken, `${nonce}\n${sha256(text)}`);
+}
+
+async function control(discovery, route, { method = "GET", body, headers = {}, key = discovery.controlToken } = {}) {
+  const text = body ? JSON.stringify(body) : "";
+  const signed = signature(key, method, `/control/${route}`, text);
+  const response = await request(`http://127.0.0.1:${discovery.port}/control/${route}`, {
     method,
-    headers: { Authorization: `Bearer ${discovery.controlToken}`, ...(body ? { "Content-Type": "application/json" } : {}), ...headers },
-    body: body ? JSON.stringify(body) : undefined
+    headers: { "X-Prism-Control": signed.header, ...(body ? { "Content-Type": "application/json" } : {}), ...headers },
+    body: text || undefined
   });
+  return { ...response, proven: response.headers["x-prism-proof"] === proof(discovery.controlToken, signed.nonce, response.body) };
 }
 
 function alive(pid) {
@@ -141,9 +157,54 @@ test("concurrent starts leave one review app", async (context) => {
     pool(context, { app: { directory, launch } }).get(root, "task-b").then((review) => review.reviewUrl([]))
   ]);
   assert.equal(new URL(urlA).host, new URL(urlB).host);
-  const discovery = await readDiscovery(directory);
-  await eventually(() => children.filter((child) => alive(child.pid)).length === 1, 5000);
+  await eventually(() => children.filter((child) => alive(child.pid)).length === 1, 8000);
+  // The losing starter must not leave the winner undiscoverable, so the file is read only after the race settles.
+  const discovery = await eventually(() => readDiscovery(directory), 8000);
   assert.ok(alive(discovery.pid), "the app named by the discovery file is the one still running");
+  assert.equal((await control(discovery, "health")).status, 200);
+});
+
+test("concurrent starts from a lock whose owner is dead leave one discoverable app", async (context) => {
+  const directory = await appDirectory(context);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const exited = spawn(process.execPath, ["-e", ""]);
+  await new Promise((resolve) => exited.once("exit", resolve));
+  await writeFile(path.join(directory, "review-app.lock"), JSON.stringify({ pid: exited.pid, token: "abandoned", renewable: true, at: new Date().toISOString() }), { mode: 0o600 });
+  const root = await project(context, "abandoned");
+  const children = [];
+  const launch = (options) => {
+    const child = launchReviewApp(options);
+    children.push(child);
+    return child;
+  };
+  const urls = await Promise.all(["task-a", "task-b"].map((task) => pool(context, { app: { directory, launch } }).get(root, task).then((review) => review.reviewUrl([]))));
+  assert.ok(urls.every((url) => new URL(url).pathname.includes("/p/")), "both sessions use the shared app instead of falling back");
+  await eventually(() => children.filter((child) => alive(child.pid)).length === 1, 8000);
+  const discovery = await eventually(() => readDiscovery(directory), 8000);
+  assert.ok(alive(discovery.pid));
+  assert.equal((await control(discovery, "health")).status, 200);
+});
+
+test("a session never sends the control credential to a listener that cannot prove it", async (context) => {
+  const directory = await appDirectory(context);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const root = await project(context, "impostor");
+  const controlToken = randomBytes(24).toString("base64url");
+  const seen = [];
+  const impostor = http.createServer((incoming, outgoing) => {
+    seen.push(JSON.stringify(incoming.headers));
+    incoming.resume();
+    incoming.on("end", () => outgoing.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ protocol: 1, url: "http://127.0.0.1:1/look-alike", open: true })));
+  });
+  await new Promise((resolve) => impostor.listen(0, "127.0.0.1", resolve));
+  context.after(() => new Promise((resolve) => { impostor.closeAllConnections(); impostor.close(resolve); }));
+  const { port } = impostor.address();
+  // A stale discovery file from a crashed app names a port that another listener now holds.
+  await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ protocol: 1, port, controlToken, viewerToken: randomBytes(24).toString("base64url"), pid: 999999 }), { mode: 0o600 });
+  const url = new URL(await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]));
+  assert.notEqual(Number(url.port), port, "the session does not hand out a URL from the impostor");
+  assert.ok(seen.every((headers) => !headers.includes(controlToken)), "the credential never reaches the impostor");
+  assert.equal(JSON.parse((await request(new URL("api/index", url))).body).projectRoot, root);
 });
 
 test("control routes refuse requests without the control credential or from a browser origin", async (context) => {
@@ -154,14 +215,23 @@ test("control routes refuse requests without the control credential or from a br
   const body = JSON.stringify({ projectRoot: os.tmpdir() });
   const missing = await request(`http://127.0.0.1:${port}/control/projects/lease-1`, { method: "PUT", headers: { "Content-Type": "application/json" }, body });
   assert.equal(missing.status, 403);
-  const fromPage = await request(`http://127.0.0.1:${port}/control/projects/lease-1`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${controlToken}`, Origin: `http://127.0.0.1:${port}` }, body });
+  const discovery = await readDiscovery(directory);
+  const fromPage = await control(discovery, "projects/lease-1", { method: "PUT", body: { projectRoot: os.tmpdir() }, headers: { Origin: `http://127.0.0.1:${port}` } });
   assert.equal(fromPage.status, 403);
+  const bearer = await request(`http://127.0.0.1:${port}/control/projects/lease-1`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${controlToken}` }, body });
+  assert.equal(bearer.status, 403, "the raw credential is not accepted, so it never needs to travel");
+  const signed = signature(controlToken, "GET", "/control/health", "");
+  const first = await request(`http://127.0.0.1:${port}/control/health`, { headers: { "X-Prism-Control": signed.header } });
+  const replayed = await request(`http://127.0.0.1:${port}/control/health`, { headers: { "X-Prism-Control": signed.header } });
+  assert.equal(first.status, 200);
+  assert.equal(replayed.status, 403, "a replayed signature is refused");
   const present = await request(`http://127.0.0.1:${port}/control/present`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectRoot: root, open: false }) });
   assert.equal(present.status, 403);
-  const shutdown = await request(`http://127.0.0.1:${port}/control/shutdown`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer wrong-credential-of-some-length" }, body: JSON.stringify({ handoff: false }) });
+  const shutdown = await control(discovery, "shutdown", { method: "POST", body: { handoff: false }, key: "wrong-credential-of-some-length" });
   assert.equal(shutdown.status, 403);
-  const health = await control(await readDiscovery(directory), "health");
+  const health = await control(discovery, "health");
   assert.equal(health.status, 200, "refused requests leave the app running");
+  assert.ok(health.proven, "the app proves it knows the control credential");
 });
 
 test("the presenting session opens the browser once and the app never does", async (context) => {
@@ -175,6 +245,23 @@ test("the presenting session opens the browser once and the app never does", asy
   assert.equal(second.opened, false, "the open lease holds back a second browser");
   assert.equal(opened.length, 1);
   assert.equal(opened[0], first.url);
+});
+
+test("until the switcher lands, presenting a project no tab shows opens a tab on it", async (context) => {
+  const directory = await appDirectory(context);
+  const first = await project(context, "shown");
+  const second = await project(context, "hidden");
+  const opened = [];
+  const sessions = pool(context, { app: { directory, openBrowser: (url) => { opened.push(url); return true; } } });
+  const shown = await sessions.get(first, "task-a");
+  const hidden = await sessions.get(second, "task-b");
+  const stream = http.get(new URL("api/events", await shown.reviewUrl([])));
+  context.after(() => stream.destroy());
+  await new Promise((resolve) => stream.once("response", resolve));
+  assert.equal((await shown.open([])).opened, false, "a connected tab on the project needs no browser");
+  const presented = await hidden.open(["docs/hidden.md"]);
+  assert.equal(presented.opened, true, "the other project's presentation is not hidden behind the first project's tab");
+  assert.deepEqual(opened, [presented.url]);
 });
 
 test("reading the review URL without tabs leaves the session unchanged", async (context) => {
@@ -213,19 +300,23 @@ test("a newer session replaces an older review app and keeps its port and viewer
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const root = await project(context, "upgrade");
   const shutdowns = [];
+  const standInKey = "stand-in-control-credential";
   let stopStandIn;
   const stopped = new Promise((resolve) => { stopStandIn = resolve; });
   const standIn = http.createServer((incoming, outgoing) => {
     const chunks = [];
     incoming.on("data", (chunk) => chunks.push(chunk));
     incoming.on("end", () => {
-      if (incoming.headers.authorization !== "Bearer stand-in-control-credential") {
+      const text = Buffer.concat(chunks).toString("utf8");
+      const [nonce, signed] = String(incoming.headers["x-prism-control"] ?? "").split(".");
+      const reply = (status, body) => outgoing.writeHead(status, { "Content-Type": "application/json", "X-Prism-Proof": proof(standInKey, nonce, body) }).end(body);
+      if (!nonce || signed !== signature(standInKey, incoming.method, incoming.url, text, nonce).header.split(".")[1]) {
         outgoing.writeHead(403).end();
       } else if (incoming.url === "/control/health") {
-        outgoing.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ protocol: 0, pid: process.pid }));
+        reply(200, JSON.stringify({ protocol: 0, pid: process.pid }));
       } else if (incoming.url === "/control/shutdown" && incoming.method === "POST") {
-        shutdowns.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-        outgoing.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+        shutdowns.push(JSON.parse(text));
+        reply(200, "{}");
         standIn.close(() => stopStandIn());
         standIn.closeAllConnections();
       } else {
@@ -238,7 +329,7 @@ test("a newer session replaces an older review app and keeps its port and viewer
   const viewerToken = "stand-in-viewer-credential";
   // The stand-in implements only the cross-version contract: the discovery file, health, shutdown, and the lock.
   const held = withFileLock(path.join(directory, "review-app"), async () => {
-    await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ protocol: 0, port, controlToken: "stand-in-control-credential", viewerToken, pid: process.pid }), { mode: 0o600 });
+    await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ protocol: 0, port, controlToken: standInKey, viewerToken, pid: process.pid }), { mode: 0o600 });
     await stopped;
   }, undefined, { renew: true });
   await eventually(() => readDiscovery(directory));
@@ -251,6 +342,7 @@ test("a newer session replaces an older review app and keeps its port and viewer
   const discovery = await readDiscovery(directory);
   assert.ok(discovery.protocol >= 1);
   assert.equal(discovery.viewerToken, viewerToken);
+  assert.notEqual(discovery.controlToken, standInKey, "the successor never reuses the control credential");
   assert.equal(JSON.parse((await request(new URL("api/index", url))).body).projectRoot, root);
 });
 

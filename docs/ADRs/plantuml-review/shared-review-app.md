@@ -27,10 +27,12 @@ The review app MUST publish its port and credentials in one discovery file in th
 On systems with POSIX permissions, a Prism process MUST NOT trust a state directory or discovery file that another user owns or that grants group or other permissions.
 A process MUST hold the review app lock before it serves as the review app.
 The lock MUST count as abandoned when its owner process is gone or its owner has stopped renewing it, and an owner that finds its lock lost MUST stop serving.
-Agent sessions and the `prism review` command MUST reach the review app through a control credential sent in a request header.
+Agent sessions and the `prism review` command MUST reach the review app through a control credential that signs each request and response and never travels on the wire.
+A Prism process MUST NOT act on a review app response that does not prove knowledge of the control credential.
 The control credential MUST NOT appear in any browser URL, and the review app MUST refuse control requests that a browser page sends.
 The browser URL MUST carry a separate viewer credential.
 The port and viewer credential SHOULD survive a replacement of the review app, so an open tab reconnects; they are renewed after the review app exits for idleness.
+Each review app process MUST create its own control credential.
 Each project MUST keep its own review context, including its tabs, viewers, and file boundary, behind a stable project segment of the URL.
 Only a request with the control credential MAY register a project.
 A project MUST stay live while its registering session renews its lease and MUST then appear as recent.

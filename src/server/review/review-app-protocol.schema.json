@@ -22,6 +22,12 @@
       "pid": { "type": "integer", "minimum": 1 }
     }
   },
+  "signing": {
+    "bodyHash": "SHA-256 hex digest of the raw request or response body, or of the empty string when there is none",
+    "request": "Header X-Prism-Control: <nonce>.<HMAC-SHA256 hex under the control credential of method, path with query, nonce, and body hash, joined by newlines>; the nonce is 32 hex characters and is refused when seen within 2 minutes",
+    "response": "Header X-Prism-Proof: HMAC-SHA256 hex under the control credential of the request nonce and the response body hash, joined by a newline; a client discards a response without a valid proof",
+    "refusals": "A control request without a valid signature, with an Origin header, or with an untrusted Host is answered 403 without a proof"
+  },
   "routes": {
     "health": { "method": "GET", "path": "/control/health" },
     "projects": { "method": "GET", "path": "/control/projects", "response": { "projects": [{ "id": "string", "projectRoot": "string", "live": "boolean" }] } },
