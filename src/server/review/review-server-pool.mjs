@@ -1,4 +1,7 @@
+import { realpath } from "node:fs/promises";
+import path from "node:path";
 import { createReviewAppClient } from "./review-app-client.mjs";
+import { reviewAppDirectory, reviewAppDisabled } from "./review-app-discovery.mjs";
 import { normalizeTabs, openBrowser, startReviewServer } from "./review-server.mjs";
 
 const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1000;
@@ -29,7 +32,7 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
     await client.register(projectRoot);
   } catch (error) {
     if (error.reachable) throw error;
-    return fallBack();
+    await fallBack();
   }
   return {
     projectRoot,
@@ -44,6 +47,7 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
       return { url: answer.url, opened, ...answer.session };
     }, (review) => review.open(tabs)),
     viewerCount: () => session ? session.then((review) => review.viewerCount()) : 1,
+    heldServer: async () => session && await session,
     close: async () => session && (await session).close()
   };
 }
@@ -130,4 +134,24 @@ export function createReviewServerPool({ start = startReviewServer, app } = {}) 
   }
 
   return { get, close, register };
+}
+
+// The prism review command presents through the user's review app and returns; it holds a server only when it serves the review itself.
+export async function startStandaloneReview({ projectRoot = process.cwd(), artifactPath, env = process.env, start = startReviewServer, openBrowser: browserOpener = openBrowser, app = {} } = {}) {
+  const root = await realpath(path.resolve(projectRoot));
+  if (reviewAppDisabled(env)) {
+    const server = await start({ projectRoot: root, openBrowser: browserOpener });
+    return { ...(await server.open(artifactPath)), held: server };
+  }
+  const client = createReviewAppClient({ directory: reviewAppDirectory(env), ...app });
+  const review = await appBackedReview(client, root, { startSession: start, openBrowser: browserOpener });
+  try {
+    const result = await review.open(artifactPath);
+    return { ...result, held: await review.heldServer() };
+  } catch (error) {
+    await review.close();
+    throw error;
+  } finally {
+    await client.close();
+  }
 }

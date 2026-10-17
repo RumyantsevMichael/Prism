@@ -1,6 +1,6 @@
 # Share one review app across sessions and projects
 
-Status: Proposed
+Status: Accepted
 Created: 2026-10-17
 
 ## Requirements

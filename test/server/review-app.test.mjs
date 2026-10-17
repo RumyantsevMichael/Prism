@@ -10,10 +10,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createReviewAppClient, launchReviewApp } from "../../dist/server/review/review-app-client.mjs";
 import { startReviewApp } from "../../dist/server/review/review-app-server.mjs";
-import { createReviewServerPool } from "../../dist/server/review/review-server-pool.mjs";
+import { createReviewServerPool, startStandaloneReview } from "../../dist/server/review/review-server-pool.mjs";
 import { withFileLock } from "../../dist/server/workflow/artifact-store.mjs";
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
+const CLI_PATH = fileURLToPath(new URL("../../bin/prism", import.meta.url));
 const POSIX = process.platform !== "win32";
 
 async function project(context, name) {
@@ -745,6 +746,98 @@ test("a session serves its own review server when the shared app cannot start", 
   assert.equal(index.projectRoot, root);
   assert.ok(!url.pathname.includes("/p/"), "the fallback is a single-project session server");
   assert.equal((await request(new URL("api/projects", url))).status, 404, "a session server has no project list, so its page keeps a plain label");
+});
+
+// A standalone review whose held server, if any, closes with the test.
+async function standalone(context, options) {
+  const result = await startStandaloneReview(options);
+  context.after(() => result.held?.close());
+  return result;
+}
+
+test("prism review presents through the shared app, opens the browser, and holds no server", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "command");
+  const opened = [];
+  const result = await standalone(context, { projectRoot: root, artifactPath: "docs/command.md", env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: (url) => { opened.push(url); return true; } });
+  assert.equal(result.held, null, "the command returns instead of serving the review");
+  assert.equal(result.opened, true);
+  assert.deepEqual(opened, [result.url]);
+  const url = new URL(result.url);
+  assert.equal(Number(url.port), (await readDiscovery(directory)).port, "the review is served by the shared app");
+  assert.equal(url.searchParams.get("artifact"), "docs/command.md");
+  const listing = JSON.parse((await request(new URL("api/projects", url))).body);
+  const entry = listing.projects.find((candidate) => candidate.projectRoot === root);
+  assert.equal(entry.live, false, "the command ends its lease, so the project is listed as recent");
+});
+
+test("prism review opens no browser while a review tab is connected", async (context) => {
+  const directory = await appDirectory(context);
+  const shown = await project(context, "watched");
+  const other = await project(context, "other");
+  const opened = [];
+  const options = { env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: (url) => { opened.push(url); return true; } };
+  const first = await standalone(context, { ...options, projectRoot: shown });
+  const events = await viewerEvents(context, first.url);
+  await eventually(() => events.some((event) => event.name === "session"));
+  const second = await standalone(context, { ...options, projectRoot: other });
+  assert.equal(second.opened, false);
+  assert.equal(second.held, null);
+  assert.equal(opened.length, 1, "only the first command opened a browser");
+  const notice = await eventually(() => events.find((event) => event.name === "notice"));
+  assert.equal(notice.data.projectRoot, other);
+});
+
+test("prism review reports an artifact the app refuses without starting its own server", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "refused");
+  const opened = [];
+  let started = 0;
+  await assert.rejects(
+    startStandaloneReview({ projectRoot: root, artifactPath: "docs/missing.md", env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: (url) => { opened.push(url); return true; }, start: () => { started += 1; throw new Error("no fallback expected"); } }),
+    /not available for review: docs\/missing\.md/
+  );
+  assert.deepEqual(opened, []);
+  assert.equal(started, 0);
+});
+
+test("prism review serves the review itself when the app is off or cannot start", async (context) => {
+  const directory = await appDirectory(context);
+  const blocked = path.join(await mkdtemp(path.join(os.tmpdir(), "prism-app-blocked-")), "not-a-directory");
+  await writeFile(blocked, "");
+  context.after(() => rm(path.dirname(blocked), { recursive: true, force: true }));
+  const root = await project(context, "standalone");
+  for (const env of [{ PRISM_REVIEW_APP: "off", PRISM_REVIEW_APP_DIR: directory }, { PRISM_REVIEW_APP_DIR: blocked }]) {
+    const result = await standalone(context, { projectRoot: root, env, openBrowser: () => true });
+    assert.ok(result.held, "the command keeps its own server running");
+    const url = new URL(result.url);
+    assert.ok(!url.pathname.includes("/p/"), "the review comes from a single-project session server");
+    assert.equal(JSON.parse((await request(new URL("api/index", url))).body).projectRoot, root);
+  }
+  await assert.rejects(readDiscovery(directory), { code: "ENOENT" }, "the off switch starts no app");
+});
+
+test("the prism review command exits after presenting through a running app", async (context) => {
+  const directory = await appDirectory(context);
+  const watched = await project(context, "running");
+  const root = await project(context, "cli");
+  const review = await pool(context, { app: { directory } }).get(watched, "task");
+  const events = await viewerEvents(context, await review.reviewUrl([]));
+  await eventually(() => events.some((event) => event.name === "session"));
+  const before = await readDiscovery(directory);
+  const child = spawn(process.execPath, [CLI_PATH, "review"], { cwd: root, env: { ...process.env, PRISM_REVIEW_APP_DIR: directory }, stdio: ["ignore", "pipe", "pipe"] });
+  context.after(() => child.kill());
+  let stdout = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  const code = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve("still running"), 20000);
+    child.once("exit", (exitCode) => { clearTimeout(timer); resolve(exitCode); });
+  });
+  assert.equal(code, 0, "the command does not hold the terminal");
+  const url = new URL(stdout.trim());
+  assert.equal(Number(url.port), before.port);
+  assert.equal((await readDiscovery(directory)).pid, before.pid, "the command reused the running app");
+  await eventually(() => events.find((event) => event.name === "notice" && event.data.projectRoot === root));
 });
 
 test("a session falls back within the start deadline when a started app never answers", async (context) => {

@@ -120,7 +120,7 @@ A session serves its project from its own review server when the shared app cann
 Set `internal` or `external` in `.prism/workflow.md` to override this choice.
 When the selected browser is unavailable, Prism presents the URL and source artifacts.
 
-Start a standalone review from a Prism checkout when no harness session is active:
+Start a review from a Prism checkout when no harness session is active:
 
 ```bash
 ./bin/prism review
@@ -131,13 +131,14 @@ The review browser opens on Attention, or on the artifact you name, and later vi
 It shows initiatives as a board, list, or dependency graph, each initiative as a slice graph, and each slice with its concept delta, review ledger, and documents.
 Requirements, decisions, and the glossary have their own sections.
 
-The standalone `prism review` command always opens the system browser.
+`prism review` opens the project in the shared review app and returns.
+It opens the system browser only when no review tab is open; an open tab shows the project or a notice with a link to it instead.
+When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
 
 The server binds to `127.0.0.1`, selects an available port, and uses an unguessable session URL.
 It serves plain HTTP, which browsers treat as a secure context on `127.0.0.1`, so no certificate trust step is needed.
 It refuses requests whose host is not `127.0.0.1` or `localhost`.
 It renders entirely in the browser and does not send project sources to a remote renderer.
-Stop the command with `Ctrl-C` when the review ends.
 
 Defect repair stays outside this workflow.
 First reproduce and diagnose a defect against the existing specification.
