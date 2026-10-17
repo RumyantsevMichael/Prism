@@ -398,7 +398,8 @@ test("a presentation refused while the first tab is still loading reaches that t
   assert.deepEqual(opened, [granted.url]);
   const events = await viewerEvents(context, granted.url);
   const notice = await eventually(() => events.find((event) => event.name === "notice"));
-  assert.equal(notice.data.projectRoot, second);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(events.filter((event) => event.name === "notice").map((event) => event.data.projectRoot), [second], "the tab gets the other project's notice and never its own");
   assert.equal(notice.data.url, refused.url);
   assert.equal(events[0].name, "session", "the kept notice follows the tab's first session event");
   const later = await viewerEvents(context, granted.url);
@@ -470,7 +471,19 @@ test("a project whose folder is gone is listed with an unknown gate count", asyn
   assert.equal(entry.gates, null);
 });
 
-test("a notice that reached a tab is not kept for a later tab, and a tab never gets its own project's notice", async (context) => {
+test("a project whose records cannot be read is listed with an unknown gate count", async (context) => {
+  const directory = await appDirectory(context);
+  const current = await project(context, "intact");
+  const currentUrl = await (await pool(context, { app: { directory } }).get(current, "task")).reviewUrl([]);
+  const broken = await project(context, "broken");
+  // A file where the plans folder belongs makes the project's records unreadable.
+  await writeFile(path.join(broken, "docs", "plans"), "not a folder\n");
+  await registerRecent(directory, broken);
+  const entry = JSON.parse((await request(new URL("api/projects", currentUrl))).body).projects.find((item) => item.projectRoot === broken);
+  assert.equal(entry.gates, null);
+});
+
+test("a notice that reached a tab is not kept for a later tab", async (context) => {
   const directory = await appDirectory(context);
   const watching = await project(context, "watching");
   const presenting = await project(context, "presenting");
@@ -480,13 +493,25 @@ test("a notice that reached a tab is not kept for a later tab, and a tab never g
   const presenter = await sessions.get(presenting, "task-b");
   const laterUrl = await (await sessions.get(later, "task-c")).reviewUrl([]);
   const watchingEvents = await viewerEvents(context, watchingUrl);
-  const ownEvents = await viewerEvents(context, await presenter.reviewUrl([]));
-  await eventually(() => watchingEvents.some((event) => event.name === "session") && ownEvents.some((event) => event.name === "session"));
-  assert.equal((await presenter.open(["docs/presenting.md"])).opened, false);
+  await eventually(() => watchingEvents.some((event) => event.name === "session"));
+  assert.equal((await presenter.open(["docs/presenting.md"])).opened, false, "a tab is open on another project");
   await eventually(() => watchingEvents.some((event) => event.name === "notice"));
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.ok(!ownEvents.some((event) => event.name === "notice"), "the presenting project's own tab shows the review instead of a notice");
-  assert.ok(await noNotice(context, laterUrl), "a notice that reached a tab is not handed to a later one");
+  assert.ok(await noNotice(context, laterUrl), "the notice reached the open tab, so a later tab is not told again");
+});
+
+test("a tab that connects to the presenting project drops its pending notice instead of receiving it", async (context) => {
+  const directory = await appDirectory(context);
+  const opening = await project(context, "opening");
+  const waiting = await project(context, "waiting");
+  const sessions = pool(context, { app: { directory, openBrowser: () => true } });
+  const opener = await sessions.get(opening, "task-a");
+  const waiter = await sessions.get(waiting, "task-b");
+  const granted = await opener.open([]);
+  assert.equal(granted.opened, true);
+  const refused = await waiter.open(["docs/waiting.md"]);
+  assert.equal(refused.opened, false);
+  assert.ok(await noNotice(context, refused.url), "the presenting project's own tab shows the review, not a notice about it");
+  assert.ok(await noNotice(context, granted.url), "that tab dropped the pending notice, so the other project's tab is not told either");
 });
 
 test("a pending notice expires", async (context) => {
