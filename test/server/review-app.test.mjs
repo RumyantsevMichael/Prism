@@ -9,6 +9,7 @@ import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createReviewAppClient, launchReviewApp } from "../../dist/server/review/review-app-client.mjs";
+import { startReviewApp } from "../../dist/server/review/review-app-server.mjs";
 import { createReviewServerPool } from "../../dist/server/review/review-server-pool.mjs";
 import { withFileLock } from "../../dist/server/workflow/artifact-store.mjs";
 
@@ -435,6 +436,72 @@ test("a granted browser open leaves no pending notice", async (context) => {
   const otherUrl = await (await sessions.get(other, "task-b")).reviewUrl([]);
   assert.equal((await openingReview.open(["docs/opening.md"])).opened, true);
   assert.ok(await noNotice(context, otherUrl), "the opened browser shows that review, so no other tab is told about it");
+});
+
+async function registerRecent(directory, root) {
+  const discovery = await readDiscovery(directory);
+  const lease = randomBytes(8).toString("hex");
+  await control(discovery, `projects/${lease}`, { method: "PUT", body: { projectRoot: root } });
+  await control(discovery, `projects/${lease}`, { method: "DELETE" });
+}
+
+test("the recent limit never drops a project that a tab watches", async (context) => {
+  const directory = await appDirectory(context);
+  const current = await project(context, "anchor");
+  const currentUrl = await (await pool(context, { app: { directory } }).get(current, "task")).reviewUrl([]);
+  const watched = await project(context, "watched");
+  await registerRecent(directory, watched);
+  const listing = JSON.parse((await request(new URL("api/projects", currentUrl))).body);
+  const events = await viewerEvents(context, listing.projects.find((entry) => entry.projectRoot === watched).url);
+  await eventually(() => events.some((event) => event.name === "session"));
+  for (let index = 0; index < 21; index += 1) await registerRecent(directory, await project(context, `crowd${index}`));
+  const listed = JSON.parse((await request(new URL("api/projects", currentUrl))).body).projects.map((entry) => entry.projectRoot);
+  assert.ok(listed.includes(watched), "the watched project stays although it is the least recent");
+});
+
+test("a project whose folder is gone is listed with an unknown gate count", async (context) => {
+  const directory = await appDirectory(context);
+  const current = await project(context, "readable");
+  const currentUrl = await (await pool(context, { app: { directory } }).get(current, "task")).reviewUrl([]);
+  const gone = await gateProject(context, "gone", 1);
+  await registerRecent(directory, gone);
+  await rm(gone, { recursive: true, force: true });
+  const entry = JSON.parse((await request(new URL("api/projects", currentUrl))).body).projects.find((item) => item.projectRoot === gone);
+  assert.equal(entry.gates, null);
+});
+
+test("a notice that reached a tab is not kept for a later tab, and a tab never gets its own project's notice", async (context) => {
+  const directory = await appDirectory(context);
+  const watching = await project(context, "watching");
+  const presenting = await project(context, "presenting");
+  const later = await project(context, "later");
+  const sessions = pool(context, { app: { directory, openBrowser: () => true } });
+  const watchingUrl = await (await sessions.get(watching, "task-a")).reviewUrl([]);
+  const presenter = await sessions.get(presenting, "task-b");
+  const laterUrl = await (await sessions.get(later, "task-c")).reviewUrl([]);
+  const watchingEvents = await viewerEvents(context, watchingUrl);
+  const ownEvents = await viewerEvents(context, await presenter.reviewUrl([]));
+  await eventually(() => watchingEvents.some((event) => event.name === "session") && ownEvents.some((event) => event.name === "session"));
+  assert.equal((await presenter.open(["docs/presenting.md"])).opened, false);
+  await eventually(() => watchingEvents.some((event) => event.name === "notice"));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.ok(!ownEvents.some((event) => event.name === "notice"), "the presenting project's own tab shows the review instead of a notice");
+  assert.ok(await noNotice(context, laterUrl), "a notice that reached a tab is not handed to a later one");
+});
+
+test("a pending notice expires", async (context) => {
+  const directory = await appDirectory(context);
+  const app = await startReviewApp({ directory, noticeMs: 200 });
+  context.after(() => app.close());
+  const first = await project(context, "expiring");
+  const second = await project(context, "expired");
+  const discovery = await readDiscovery(directory);
+  const present = async (root) => JSON.parse((await control(discovery, "present", { method: "POST", body: { projectRoot: root, open: true } })).body);
+  const granted = await present(first);
+  assert.equal(granted.open, true);
+  assert.equal((await present(second)).open, false, "the second presentation is kept as a pending notice");
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.ok(await noNotice(context, granted.url), "a tab that connects after the notice expired gets none");
 });
 
 test("the served review page carries the project switcher and the notice banner", async (context) => {

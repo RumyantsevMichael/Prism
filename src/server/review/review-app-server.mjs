@@ -68,7 +68,7 @@ function holdLock(directory, stopped, onRenew) {
 }
 
 // The review app serves every registered project of one user from one port, behind a lock that keeps it unique.
-export async function startReviewApp({ directory, pluginVersion = null, idleMs = IDLE_MS } = {}) {
+export async function startReviewApp({ directory, pluginVersion = null, idleMs = IDLE_MS, noticeMs = NOTICE_MS } = {}) {
   await prepareDirectory(directory);
   let releaseLock;
   const stopped = new Promise((resolve) => { releaseLock = resolve; });
@@ -185,8 +185,14 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     const open = !watched && now - openGrantedAt >= OPEN_LEASE_MS;
     if (open) openGrantedAt = now;
     if (open || project.review.viewerCount() > 0) pendingNotices.delete(project.id);
-    else if (!watched) pendingNotices.set(project.id, { notice, expiresAt: now + NOTICE_MS });
+    else if (!watched) pendingNotices.set(project.id, { notice, expiresAt: now + noticeMs });
     return open;
+  }
+
+  // A project folder that is gone or records that cannot be read give an unknown count rather than a misleading zero.
+  async function gateCount(root) {
+    if (!(await stat(root).then((info) => info.isDirectory(), () => false))) return null;
+    return loadAttention(root).then((attention) => attention.gateCount, () => null);
   }
 
   async function projectList(current) {
@@ -196,7 +202,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       name: path.basename(project.root),
       projectRoot: project.root,
       live: live(project, now),
-      gates: await loadAttention(project.root).then((attention) => attention.gateCount, () => null),
+      gates: await gateCount(project.root),
       url: project.review.reviewUrl([]),
       lastSeen: project.lastSeen
     })));

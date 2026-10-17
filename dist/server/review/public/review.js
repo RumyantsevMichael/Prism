@@ -16,6 +16,7 @@ const projectGates = document.getElementById("project-gates");
 const noticeBanner = document.getElementById("notice");
 // The latest notice per presenting project; a notice only links, and the tab changes project only when the user follows it.
 const notices = new Map();
+let projectListing = "";
 let selectedPath = new URLSearchParams(location.search).get("artifact");
 let openTabs = [];
 // One preview tab is replaced by ordinary navigation; kept and agent-presented tabs stay until closed.
@@ -250,20 +251,27 @@ async function refreshProjects() {
   projectGates.hidden = waiting === 0;
   projectGates.textContent = String(waiting);
   projectGates.title = `${waiting} open ${waiting === 1 ? "gate" : "gates"} in other projects`;
+  // An unchanged list is left alone, and a rebuilt one keeps keyboard focus on the same project.
+  const text = JSON.stringify(listing);
+  if (text === projectListing) return;
+  projectListing = text;
+  const focused = document.activeElement?.closest?.(".project-entry")?.dataset.project;
   projectList.replaceChildren(...listing.projects.map((entry) => {
     const link = element("a", "project-entry");
+    link.dataset.project = entry.id;
     link.href = entry.url;
     link.title = entry.projectRoot;
     if (entry.id === listing.current) link.setAttribute("aria-current", "page");
     const liveMark = element("span", `project-entry-live${entry.live ? " live" : ""}`);
     liveMark.title = entry.live ? "An agent session is using this project" : "Recently used";
     const gates = element("span", `project-entry-gates${entry.gates ? "" : " none"}`, entry.gates === null ? "?" : String(entry.gates));
-    gates.title = entry.gates === null ? "The project's records cannot be read" : `${entry.gates} open ${entry.gates === 1 ? "gate" : "gates"}`;
+    gates.title = entry.gates === null ? "The project's folder or records cannot be read" : `${entry.gates} open ${entry.gates === 1 ? "gate" : "gates"}`;
     link.append(liveMark, element("span", "project-entry-name", entry.name), gates, element("span", "project-entry-root", entry.projectRoot));
     const item = element("li");
     item.append(link);
     return item;
   }));
+  if (focused) projectList.querySelector(`[data-project="${focused}"]`)?.focus();
 }
 
 function setProjectMenu(open) {
