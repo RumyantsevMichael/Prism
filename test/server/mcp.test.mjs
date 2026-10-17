@@ -152,10 +152,12 @@ async function waitForMarker(marker) {
 }
 
 // The stub writes its marker before its count, so a count read right after the marker can trail by one open.
+// After a match the count is read again, so an extra open that lands late still fails the check.
 async function waitForCount(count, expected) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (await markerContents(count) === expected) {
-      return expected;
+      await delay(100);
+      return markerContents(count);
     }
     await delay(20);
   }
