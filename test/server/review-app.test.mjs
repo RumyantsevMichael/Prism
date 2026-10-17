@@ -251,7 +251,37 @@ test("the presenting session opens the browser once and the app never does", asy
   assert.equal(opened[0], first.url);
 });
 
-test("until the switcher lands, presenting a project no tab shows opens a tab on it", async (context) => {
+// Collects the named events of one viewer stream, so a test can wait for an event without parsing chunk boundaries.
+async function viewerEvents(context, url) {
+  const events = [];
+  const stream = http.get(new URL("api/events", url));
+  context.after(() => stream.destroy());
+  const response = await new Promise((resolve) => stream.once("response", resolve));
+  let buffer = "";
+  response.setEncoding("utf8");
+  response.on("data", (chunk) => {
+    buffer += chunk;
+    let end;
+    while ((end = buffer.indexOf("\n\n")) >= 0) {
+      const block = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      const name = /^event: (.+)$/m.exec(block)?.[1];
+      const data = /^data: (.+)$/m.exec(block)?.[1];
+      if (name && data) events.push({ name, data: JSON.parse(data) });
+    }
+  });
+  return events;
+}
+
+async function gateProject(context, name, gates) {
+  const root = await project(context, name);
+  await mkdir(path.join(root, "docs", "plans", "work"), { recursive: true });
+  const pending = Array.from({ length: gates }, (_, index) => ({ id: `gate-${String(index).padStart(8, "0")}`, kind: "decision", question: `Question ${index}?`, artifacts: [], askedAt: "2026-10-17T00:00:00Z" }));
+  await writeFile(path.join(root, "docs", "plans", "work", "state.json"), JSON.stringify({ schemaVersion: 1, settings: {}, active: [], pending, next: [], evidence: [] }));
+  return root;
+}
+
+test("presenting a project that no tab shows notifies the open tab instead of opening a browser", async (context) => {
   const directory = await appDirectory(context);
   const first = await project(context, "shown");
   const second = await project(context, "hidden");
@@ -259,13 +289,165 @@ test("until the switcher lands, presenting a project no tab shows opens a tab on
   const sessions = pool(context, { app: { directory, openBrowser: (url) => { opened.push(url); return true; } } });
   const shown = await sessions.get(first, "task-a");
   const hidden = await sessions.get(second, "task-b");
-  const stream = http.get(new URL("api/events", await shown.reviewUrl([])));
-  context.after(() => stream.destroy());
-  await new Promise((resolve) => stream.once("response", resolve));
-  assert.equal((await shown.open([])).opened, false, "a connected tab on the project needs no browser");
+  const shownUrl = await shown.reviewUrl([]);
+  const events = await viewerEvents(context, shownUrl);
+  await eventually(() => events.some((event) => event.name === "session"));
+  const before = await shown.getSession();
   const presented = await hidden.open(["docs/hidden.md"]);
-  assert.equal(presented.opened, true, "the other project's presentation is not hidden behind the first project's tab");
-  assert.deepEqual(opened, [presented.url]);
+  assert.equal(presented.opened, false, "a tab is already open, so no second browser tab opens");
+  assert.deepEqual(opened, []);
+  const notice = await eventually(() => events.find((event) => event.name === "notice"));
+  assert.equal(notice.data.projectRoot, second);
+  assert.equal(notice.data.name, path.basename(second));
+  assert.equal(notice.data.url, presented.url, "the notice links to the presenting project's review");
+  assert.deepEqual(await shown.getSession(), before, "the tab's project and tabs stay as they were");
+  assert.equal(events.filter((event) => event.name === "notice").length, 1);
+  await hidden.reviewUrl(["docs/hidden.md"]);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(events.filter((event) => event.name === "notice").length, 1, "reading a review URL sends no notice");
+});
+
+test("the review page lists live and recent projects with their open gates", async (context) => {
+  const directory = await appDirectory(context);
+  const busy = await gateProject(context, "busy", 2);
+  const quiet = await gateProject(context, "quiet", 0);
+  const sessions = pool(context, { app: { directory } });
+  const busyUrl = await (await sessions.get(busy, "task-a")).reviewUrl([]);
+  const discovery = await readDiscovery(directory);
+  const lease = randomBytes(8).toString("hex");
+  assert.equal((await control(discovery, `projects/${lease}`, { method: "PUT", body: { projectRoot: quiet } })).status, 200);
+  assert.equal((await control(discovery, `projects/${lease}`, { method: "DELETE" })).status, 200);
+
+  const response = await request(new URL("api/projects", busyUrl));
+  assert.equal(response.status, 200);
+  const listing = JSON.parse(response.body);
+  const busyEntry = listing.projects.find((entry) => entry.projectRoot === busy);
+  const quietEntry = listing.projects.find((entry) => entry.projectRoot === quiet);
+  assert.equal(listing.current, busyEntry.id);
+  assert.deepEqual([busyEntry.live, busyEntry.gates, busyEntry.name], [true, 2, path.basename(busy)]);
+  assert.deepEqual([quietEntry.live, quietEntry.gates], [false, 0], "a project without a live lease stays listed as recent");
+  assert.ok(listing.projects.indexOf(busyEntry) < listing.projects.indexOf(quietEntry), "live projects come first");
+  assert.ok(!response.body.includes(discovery.controlToken));
+  const switched = JSON.parse((await request(new URL("api/index", quietEntry.url))).body);
+  assert.equal(switched.projectRoot, quiet, "each entry links to that project's review context");
+});
+
+test("the project list keeps at most 20 recent projects", async (context) => {
+  const directory = await appDirectory(context);
+  const current = await project(context, "current");
+  const currentUrl = await (await pool(context, { app: { directory } }).get(current, "task")).reviewUrl([]);
+  const discovery = await readDiscovery(directory);
+  const recent = [];
+  for (let index = 0; index < 22; index += 1) {
+    const root = await project(context, `recent${index}`);
+    const lease = randomBytes(8).toString("hex");
+    await control(discovery, `projects/${lease}`, { method: "PUT", body: { projectRoot: root } });
+    await control(discovery, `projects/${lease}`, { method: "DELETE" });
+    recent.push(root);
+  }
+  const listed = JSON.parse((await request(new URL("api/projects", currentUrl))).body).projects.map((entry) => entry.projectRoot);
+  assert.equal(listed.length, 21, "the live project and the 20 most recent others");
+  assert.equal(listed[0], current);
+  assert.deepEqual(listed.slice(1), recent.slice(2).reverse(), "the least recently used projects are dropped");
+  const persisted = JSON.parse(await readFile(path.join(directory, "review-app-projects.json"), "utf8")).projects;
+  assert.deepEqual(persisted, [...recent.slice(2).reverse(), current], "the file keeps the projects most recent first, and the live project registered first is the least recent");
+});
+
+test("a restarted app restores the recent projects in recency order", async (context) => {
+  const directory = await appDirectory(context);
+  const roots = [await project(context, "older"), await project(context, "middle"), await project(context, "newer")];
+  const touch = async (root) => {
+    const discovery = await readDiscovery(directory);
+    const lease = randomBytes(8).toString("hex");
+    await control(discovery, `projects/${lease}`, { method: "PUT", body: { projectRoot: root } });
+    await control(discovery, `projects/${lease}`, { method: "DELETE" });
+  };
+  const first = await project(context, "first");
+  const firstSession = pool(context, { app: { directory } });
+  await (await firstSession.get(first, "task-a")).reviewUrl([]);
+  for (const root of roots) await touch(root);
+  await touch(roots[0]);
+  // Closing the first session ends its lease, so no renewal can make its project most recent after the restart.
+  await firstSession.close();
+  await shutdownApp(directory);
+  const current = await project(context, "restarted");
+  const url = await (await pool(context, { app: { directory } }).get(current, "task-b")).reviewUrl([]);
+  const listed = JSON.parse((await request(new URL("api/projects", url))).body).projects.map((entry) => entry.projectRoot);
+  assert.deepEqual(listed.filter((root) => roots.includes(root) || root === first), [roots[0], roots[2], roots[1], first], "renewing an existing project makes it most recent, and a restart keeps that order");
+  // Eighteen newer projects make 22 recent ones, so the limit drops the two least recent from before the restart.
+  for (let index = 0; index < 18; index += 1) await touch(await project(context, `later${index}`));
+  const trimmed = JSON.parse((await request(new URL("api/projects", url))).body).projects.map((entry) => entry.projectRoot);
+  assert.deepEqual(trimmed.filter((root) => roots.includes(root) || root === first), [roots[0], roots[2]], "the restored order decides which projects the limit drops");
+});
+
+test("a presentation refused while the first tab is still loading reaches that tab when it connects", async (context) => {
+  const directory = await appDirectory(context);
+  const first = await project(context, "loading");
+  const second = await project(context, "waiting");
+  const opened = [];
+  const sessions = pool(context, { app: { directory, openBrowser: (url) => { opened.push(url); return true; } } });
+  const loading = await sessions.get(first, "task-a");
+  const waiting = await sessions.get(second, "task-b");
+  const granted = await loading.open([]);
+  const refused = await waiting.open(["docs/waiting.md"]);
+  assert.equal(granted.opened, true);
+  assert.equal(refused.opened, false, "one browser open at a time, app-wide");
+  // The granted project presenting again before its tab connects does not displace the other project's notice.
+  assert.equal((await loading.open(["docs/loading.md"])).opened, false);
+  assert.deepEqual(opened, [granted.url]);
+  const events = await viewerEvents(context, granted.url);
+  const notice = await eventually(() => events.find((event) => event.name === "notice"));
+  assert.equal(notice.data.projectRoot, second);
+  assert.equal(notice.data.url, refused.url);
+  assert.equal(events[0].name, "session", "the kept notice follows the tab's first session event");
+  const later = await viewerEvents(context, granted.url);
+  await eventually(() => later.some((event) => event.name === "session"));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.ok(!later.some((event) => event.name === "notice"), "a delivered notice is not sent again on a reload or reconnect");
+});
+
+async function noNotice(context, url) {
+  const events = await viewerEvents(context, url);
+  await eventually(() => events.some((event) => event.name === "session"));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  return !events.some((event) => event.name === "notice");
+}
+
+test("a review shown in its own project's tab is not kept for a later tab of another project", async (context) => {
+  const directory = await appDirectory(context);
+  const seen = await project(context, "seen");
+  const other = await project(context, "other");
+  const sessions = pool(context, { app: { directory, openBrowser: () => true } });
+  const seenReview = await sessions.get(seen, "task-a");
+  const otherUrl = await (await sessions.get(other, "task-b")).reviewUrl([]);
+  const seenEvents = await viewerEvents(context, await seenReview.reviewUrl([]));
+  await eventually(() => seenEvents.some((event) => event.name === "session"));
+  assert.equal((await seenReview.open(["docs/seen.md"])).opened, false, "the project's own tab shows the review");
+  assert.ok(await noNotice(context, otherUrl), "switching to another project brings back no notice for a review already seen");
+});
+
+test("a granted browser open leaves no pending notice", async (context) => {
+  const directory = await appDirectory(context);
+  const opening = await project(context, "opening");
+  const other = await project(context, "other");
+  const sessions = pool(context, { app: { directory, openBrowser: () => true } });
+  const openingReview = await sessions.get(opening, "task-a");
+  const otherUrl = await (await sessions.get(other, "task-b")).reviewUrl([]);
+  assert.equal((await openingReview.open(["docs/opening.md"])).opened, true);
+  assert.ok(await noNotice(context, otherUrl), "the opened browser shows that review, so no other tab is told about it");
+});
+
+test("the served review page carries the project switcher and the notice banner", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "page");
+  const url = await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]);
+  const page = (await request(url)).body;
+  assert.match(page, /id="project-switcher"/);
+  assert.match(page, /id="project-menu"/);
+  assert.match(page, /id="notice"/);
+  const client = (await request(new URL("review.js", url))).body;
+  assert.match(client, /\.\/api\/projects/);
+  assert.match(client, /addEventListener\("notice"/);
 });
 
 test("reading the review URL without tabs leaves the session unchanged", async (context) => {
@@ -295,6 +477,10 @@ test("an MCP server lists its project in the app from start until it exits", asy
   // No initialize request and no tool call: registration rides on the host naming the project at start.
   // Two process starts under a loaded test run can take a while, so the bounds are generous; a pass returns as soon as the state holds.
   await eventually(async () => (await listed())?.live === true, 30000);
+  const discovery = await readDiscovery(directory);
+  const id = createHash("sha256").update(root).digest("hex").slice(0, 16);
+  const page = JSON.parse((await request(`http://127.0.0.1:${discovery.port}/session/${discovery.viewerToken}/p/${id}/api/projects`)).body);
+  assert.equal(page.projects.find((entry) => entry.projectRoot === root)?.live, true, "the review page lists the project before any tool call");
   child.stdin.end();
   await new Promise((resolve) => child.once("exit", resolve));
   await eventually(async () => (await listed())?.live === false, 30000);
@@ -466,6 +652,7 @@ test("a session serves its own review server when the shared app cannot start", 
   const index = JSON.parse((await request(new URL("api/index", url))).body);
   assert.equal(index.projectRoot, root);
   assert.ok(!url.pathname.includes("/p/"), "the fallback is a single-project session server");
+  assert.equal((await request(new URL("api/projects", url))).status, 404, "a session server has no project list, so its page keeps a plain label");
 });
 
 test("a session falls back within the start deadline when a started app never answers", async (context) => {

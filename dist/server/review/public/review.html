@@ -17,11 +17,19 @@
         <small>Artifact review</small>
       </span>
     </div>
-    <div class="project-chip" title="Project root">
-      <span class="status-dot" aria-hidden="true"></span>
-      <span id="project">Loading project</span>
+    <div class="project-switcher" id="project-switcher">
+      <button class="project-chip" id="project-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="project-menu" title="Project root" disabled>
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="project">Loading project</span>
+        <span id="project-gates" class="project-gates" hidden></span>
+      </button>
+      <div id="project-menu" class="project-menu" hidden>
+        <p class="project-menu-title">Projects</p>
+        <ul id="project-list" class="project-list"></ul>
+      </div>
     </div>
   </header>
+  <div id="notice" class="notice-banner" role="status" aria-live="polite" hidden></div>
   <main class="app-shell">
     <aside class="sidebar" aria-label="Workspace navigation">
       <button id="jump" class="jump-button" type="button" aria-haspopup="dialog">

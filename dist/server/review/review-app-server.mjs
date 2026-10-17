@@ -18,6 +18,7 @@ import {
   writeProjectRoots
 } from "./review-app-discovery.mjs";
 import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send } from "./review-server.mjs";
+import { loadAttention } from "./workspace-model.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
 const IDLE_MS = 30 * 60 * 1000;
@@ -26,6 +27,9 @@ const NONCE_MS = 2 * 60 * 1000;
 const LOCK_RENEW_MS = 5 * 1000;
 const LOCK_STALE_MS = 30 * 1000;
 const LOCK_TIMEOUT_MS = 1000;
+const OPEN_LEASE_MS = 10 * 1000;
+const NOTICE_MS = 60 * 1000;
+const RECENT_LIMIT = 20;
 
 function statusError(status, message) {
   return Object.assign(new Error(message), { status });
@@ -85,6 +89,12 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   const instance = randomBytes(8).toString("hex");
   const projects = new Map();
   const nonces = new Map();
+  // Presentations nobody could see yet, by presenting project id, handed to the next viewer of another project.
+  const pendingNotices = new Map();
+  let openGrantedAt = -Infinity;
+  // Recency is a counter rather than a clock, so projects touched within one millisecond keep their order.
+  let sequence = 0;
+  let persisted = null;
   let viewerToken = newCredential();
   let port = null;
   let published = null;
@@ -106,6 +116,42 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     return project.leases.size > 0;
   }
 
+  function byRecency() {
+    return [...projects.values()].sort((left, right) => right.lastSeen - left.lastSeen);
+  }
+
+  // Keeps at most RECENT_LIMIT projects that are neither live nor watched, and saves the projects most recent first whenever that changes.
+  async function rememberProjects() {
+    const now = Date.now();
+    const idle = byRecency().filter((project) => !live(project, now) && project.review.viewerCount() === 0);
+    for (const project of idle.slice(RECENT_LIMIT)) {
+      projects.delete(project.id);
+      pendingNotices.delete(project.id);
+    }
+    const roots = byRecency().map(({ root }) => root);
+    const text = JSON.stringify(roots);
+    if (text === persisted) return;
+    persisted = text;
+    await writeProjectRoots(directory, roots).catch(() => {});
+  }
+
+  async function touch(project) {
+    project.lastSeen = ++sequence;
+    await rememberProjects();
+  }
+
+  function deliverPendingNotices(viewedId, sendNotice) {
+    const now = Date.now();
+    for (const [id, pending] of pendingNotices) {
+      if (pending.expiresAt <= now || id === viewedId) {
+        pendingNotices.delete(id);
+      } else {
+        sendNotice("notice", pending.notice);
+        pendingNotices.delete(id);
+      }
+    }
+  }
+
   async function projectFor(projectRoot, { persist = true } = {}) {
     if (typeof projectRoot !== "string" || !path.isAbsolute(projectRoot)) {
       throw statusError(400, "The projectRoot must be an absolute path.");
@@ -118,11 +164,44 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     let project = projects.get(id);
     if (!project) {
       const baseUrl = `http://127.0.0.1:${port}${viewerPrefix()}/p/${id}`;
-      project = { id, root, leases: new Map(), lastSeen: 0, review: createProjectReview({ projectRoot: root, baseUrl, instance }) };
+      const onViewer = (sendNotice) => deliverPendingNotices(id, sendNotice);
+      // A new project starts as the most recent, so the recent limit never drops the project being registered.
+      project = { id, root, leases: new Map(), lastSeen: ++sequence, review: createProjectReview({ projectRoot: root, baseUrl, instance, onViewer }) };
       projects.set(id, project);
-      if (persist) await writeProjectRoots(directory, [...projects.values()].map(({ root: known }) => known)).catch(() => {});
+      if (persist) await rememberProjects();
     }
     return project;
+  }
+
+  // Answers whether the presenting session should open a browser, and tells every other project's tabs about the presentation.
+  // A browser opens only while no tab of any project is connected, once per lease, so one window serves every project.
+  function announce(project, url) {
+    const notice = { projectId: project.id, name: path.basename(project.root), projectRoot: project.root, url, at: new Date().toISOString() };
+    for (const other of projects.values()) {
+      if (other !== project) other.review.notify("notice", notice);
+    }
+    const now = Date.now();
+    const watched = viewerCount() > 0;
+    const open = !watched && now - openGrantedAt >= OPEN_LEASE_MS;
+    if (open) openGrantedAt = now;
+    if (open || project.review.viewerCount() > 0) pendingNotices.delete(project.id);
+    else if (!watched) pendingNotices.set(project.id, { notice, expiresAt: now + NOTICE_MS });
+    return open;
+  }
+
+  async function projectList(current) {
+    const now = Date.now();
+    const entries = await Promise.all([...projects.values()].map(async (project) => ({
+      id: project.id,
+      name: path.basename(project.root),
+      projectRoot: project.root,
+      live: live(project, now),
+      gates: await loadAttention(project.root).then((attention) => attention.gateCount, () => null),
+      url: project.review.reviewUrl([]),
+      lastSeen: project.lastSeen
+    })));
+    entries.sort((left, right) => Number(right.live) - Number(left.live) || right.lastSeen - left.lastSeen || left.name.localeCompare(right.name));
+    return { current, projects: entries.map(({ lastSeen, ...entry }) => entry) };
   }
 
   function mostRecentLiveProject() {
@@ -150,11 +229,12 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     if (lease && request.method === "PUT") {
       const project = await projectFor(parseBody(text).projectRoot);
       project.leases.set(lease, Date.now() + LEASE_MS);
-      project.lastSeen = Date.now();
+      await touch(project);
       return { projectId: project.id, url: project.review.reviewUrl([]) };
     }
     if (lease && request.method === "DELETE") {
       for (const project of projects.values()) project.leases.delete(lease);
+      await rememberProjects();
       return {};
     }
     if (route === "/control/present" && request.method === "POST") {
@@ -164,13 +244,13 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       if (body.open === true) {
         const tabs = normalizeTabs(body.tabs);
         await review.presentTabs(tabs);
-        project.lastSeen = Date.now();
+        await touch(project);
         const url = review.reviewUrl(tabs);
-        return { url, open: review.claimBrowserOpen(), session: review.getSession() };
+        return { url, open: announce(project, url), session: review.getSession() };
       }
       if (body.tabs !== undefined) {
         await review.setOpenTabs(body.tabs);
-        project.lastSeen = Date.now();
+        await touch(project);
       }
       return { url: review.reviewUrl([]), open: false, session: review.getSession() };
     }
@@ -234,6 +314,10 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         send(response, 404, "Not found");
         return;
       }
+      if (match[2] === "/api/projects" && request.method === "GET") {
+        send(response, 200, JSON.stringify(await projectList(project.id)), "application/json; charset=utf-8");
+        return;
+      }
       await project.review.handle(request, response, match[2] || "/", url);
     } catch (error) {
       if (response.headersSent) {
@@ -260,9 +344,14 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   if (!bound) await listen(server, 0);
   port = server.address().port;
 
-  for (const root of await readProjectRoots(directory)) {
-    await projectFor(root, { persist: false }).catch(() => {});
+  // The file lists projects most recent first, so a restarted app takes recency from its order.
+  const restored = await readProjectRoots(directory);
+  for (const [index, root] of restored.entries()) {
+    const project = await projectFor(root, { persist: false }).catch(() => null);
+    if (project) project.lastSeen = restored.length - index;
   }
+  sequence = restored.length;
+  persisted = JSON.stringify(byRecency().map(({ root }) => root));
 
   published = { protocol: REVIEW_APP_PROTOCOL, port, controlToken, viewerToken, pid: process.pid, pluginVersion, startedAt: new Date().toISOString() };
   await writeDiscovery(directory, published);

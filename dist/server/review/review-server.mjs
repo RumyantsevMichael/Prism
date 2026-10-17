@@ -310,7 +310,8 @@ async function readJson(request) {
 }
 
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
-export function createProjectReview({ projectRoot, baseUrl, instance = null }) {
+// onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
+export function createProjectReview({ projectRoot, baseUrl, instance = null, onViewer = null }) {
   let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
   const viewers = new Map();
   let viewerOpenLease = null;
@@ -335,8 +336,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null }) {
     viewerOpenLease.unref();
   }
 
-  function writeSessionEvent(response) {
-    response.write(`event: session\ndata: ${JSON.stringify(sessionSnapshot())}\n\n`);
+  function writeEvent(response, event, data) {
+    response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
   function removeViewer(response) {
@@ -348,10 +349,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null }) {
     viewers.delete(response);
   }
 
-  function broadcastSession() {
+  function notify(event, data) {
     for (const response of viewers.keys()) {
       try {
-        writeSessionEvent(response);
+        writeEvent(response, event, data);
       } catch {
         removeViewer(response);
         response.destroy();
@@ -381,7 +382,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null }) {
     viewers.set(response, heartbeat);
     response.once("close", () => removeViewer(response));
     clearViewerOpenLease();
-    writeSessionEvent(response);
+    writeEvent(response, "session", sessionSnapshot());
+    onViewer?.((event, data) => writeEvent(response, event, data));
   }
 
   async function assertAvailable(tabs) {
@@ -398,7 +400,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null }) {
       || next.activeTab !== session.activeTab || next.previewTab !== session.previewTab;
     if (changed) {
       session = { ...next, revision: session.revision + 1 };
-      broadcastSession();
+      notify("session", sessionSnapshot());
     }
     return sessionSnapshot();
   }
@@ -539,6 +541,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null }) {
     viewerCount() {
       return viewers.size;
     },
+    notify,
     setOpenTabs,
     presentTabs,
     reviewUrl(artifactPaths) {

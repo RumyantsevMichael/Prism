@@ -9,6 +9,13 @@ const artifacts = document.getElementById("artifacts");
 const artifact = document.getElementById("artifact");
 const tabs = document.getElementById("tabs");
 const toast = document.getElementById("toast");
+const projectButton = document.getElementById("project-button");
+const projectMenu = document.getElementById("project-menu");
+const projectList = document.getElementById("project-list");
+const projectGates = document.getElementById("project-gates");
+const noticeBanner = document.getElementById("notice");
+// The latest notice per presenting project; a notice only links, and the tab changes project only when the user follows it.
+const notices = new Map();
 let selectedPath = new URLSearchParams(location.search).get("artifact");
 let openTabs = [];
 // One preview tab is replaced by ordinary navigation; kept and agent-presented tabs stay until closed.
@@ -217,6 +224,76 @@ function synchronizeSession(snapshot) {
   }
 }
 
+function folderName(root) {
+  return String(root).split(/[\\/]/).filter(Boolean).pop() ?? String(root);
+}
+
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+// The review app lists its projects; a session server has no list, so its page keeps a plain project label.
+async function refreshProjects() {
+  let listing;
+  try {
+    const response = await fetch("./api/projects", { cache: "no-store" });
+    if (!response.ok) return;
+    listing = await response.json();
+  } catch {
+    return;
+  }
+  projectButton.disabled = false;
+  const waiting = listing.projects.filter((entry) => entry.id !== listing.current).reduce((sum, entry) => sum + (entry.gates ?? 0), 0);
+  projectGates.hidden = waiting === 0;
+  projectGates.textContent = String(waiting);
+  projectGates.title = `${waiting} open ${waiting === 1 ? "gate" : "gates"} in other projects`;
+  projectList.replaceChildren(...listing.projects.map((entry) => {
+    const link = element("a", "project-entry");
+    link.href = entry.url;
+    link.title = entry.projectRoot;
+    if (entry.id === listing.current) link.setAttribute("aria-current", "page");
+    const liveMark = element("span", `project-entry-live${entry.live ? " live" : ""}`);
+    liveMark.title = entry.live ? "An agent session is using this project" : "Recently used";
+    const gates = element("span", `project-entry-gates${entry.gates ? "" : " none"}`, entry.gates === null ? "?" : String(entry.gates));
+    gates.title = entry.gates === null ? "The project's records cannot be read" : `${entry.gates} open ${entry.gates === 1 ? "gate" : "gates"}`;
+    link.append(liveMark, element("span", "project-entry-name", entry.name), gates, element("span", "project-entry-root", entry.projectRoot));
+    const item = element("li");
+    item.append(link);
+    return item;
+  }));
+}
+
+function setProjectMenu(open) {
+  projectMenu.hidden = !open;
+  projectButton.setAttribute("aria-expanded", String(open));
+  if (open) void refreshProjects();
+}
+
+function renderNotices() {
+  noticeBanner.hidden = notices.size === 0;
+  noticeBanner.replaceChildren(...[...notices.values()].reverse().map((notice) => {
+    const item = element("div", "notice-item");
+    const text = element("p", "", "An agent presented a review in ");
+    text.append(element("strong", "", notice.name), ". ");
+    const link = element("a", "", "Open it");
+    link.href = notice.url;
+    link.title = notice.projectRoot;
+    text.append(link);
+    const dismiss = element("button", "notice-dismiss", "×");
+    dismiss.type = "button";
+    dismiss.setAttribute("aria-label", `Dismiss the notice about ${notice.name}`);
+    dismiss.addEventListener("click", () => {
+      notices.delete(notice.projectId);
+      renderNotices();
+    });
+    item.append(text, dismiss);
+    return item;
+  }));
+}
+
 function connectSessionEvents() {
   sessionStream = new EventSource("./api/events");
   sessionStream.onopen = () => {
@@ -225,6 +302,15 @@ function connectSessionEvents() {
   sessionStream.onerror = () => {
     sessionConnected = false;
   };
+  sessionStream.addEventListener("notice", (event) => {
+    try {
+      const notice = JSON.parse(event.data);
+      notices.delete(notice.projectId);
+      notices.set(notice.projectId, notice);
+      renderNotices();
+    } catch {
+    }
+  });
   sessionStream.addEventListener("session", (event) => {
     sessionConnected = true;
     try {
@@ -802,7 +888,20 @@ async function initialize() {
   sessionInstance = typeof data.instance === "string" ? data.instance : null;
   const requestedPath = selectedPath;
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
-  project.textContent = data.projectRoot;
+  project.textContent = folderName(data.projectRoot);
+  projectButton.title = data.projectRoot;
+  projectButton.addEventListener("click", () => setProjectMenu(projectMenu.hidden));
+  document.addEventListener("click", (event) => {
+    if (!projectMenu.hidden && !event.target.closest("#project-switcher")) setProjectMenu(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !projectMenu.hidden) {
+      setProjectMenu(false);
+      projectButton.focus();
+    }
+  });
+  void refreshProjects();
+  setInterval(refreshProjects, 5000);
   availableArtifacts = new Set([...data.artifacts, ...(data.sources ?? [])]);
   navigation = data.navigation;
   palette = createPalette({
