@@ -27,7 +27,7 @@ async function projectFixture(context, name, artifact) {
 }
 
 function mcpProcess(context, cwd, projectRoot, environment = {}) {
-  const env = { ...process.env, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), ...environment };
+  const env = { ...process.env, PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), ...environment };
   if (projectRoot) {
     env.CLAUDE_PROJECT_DIR = projectRoot;
   } else {
@@ -149,6 +149,19 @@ async function waitForMarker(marker) {
     await delay(20);
   }
   return markerContents(marker);
+}
+
+// The stub writes its marker before its count, so a count read right after the marker can trail by one open.
+// After a match the count is read again, so an extra open that lands late still fails the check.
+async function waitForCount(count, expected) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await markerContents(count) === expected) {
+      await delay(100);
+      return markerContents(count);
+    }
+    await delay(20);
+  }
+  return markerContents(count);
 }
 
 async function markerContents(marker) {
@@ -880,13 +893,12 @@ test("does not reopen an existing viewer for repeated presentation calls", async
 
   const second = await callTool(mcp, 3, "present_review", { projectRoot: root, artifact: "docs/artifact.md" }, "second-task");
   assert.equal(second.result.structuredContent.opened, false);
-  assert.equal(await readFile(browser.count, "utf8"), "x");
+  assert.equal(await waitForCount(browser.count, "x"), "x");
   events.close();
   await delay(50);
   const third = await callTool(mcp, 4, "present_review", { projectRoot: root, artifact: "docs/artifact.md" }, "third-task");
   assert.equal(third.result.structuredContent.opened, true);
-  await delay(50);
-  assert.equal(await readFile(browser.count, "utf8"), "xx");
+  assert.equal(await waitForCount(browser.count, "xx"), "xx");
 });
 
 test("opens one review page for the complete artifact tree when no artifact is selected", async (context) => {

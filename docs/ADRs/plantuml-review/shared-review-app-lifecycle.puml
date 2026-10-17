@@ -1,0 +1,55 @@
+@startuml
+title Shared review app lifecycle
+
+participant "Prism process\n(MCP server or prism review)" as Client
+database "Discovery file,\nproject list, and lock" as Discovery
+participant "Review app" as App
+actor "Browser tab" as Tab
+
+== Discovery ==
+Client -> Discovery : read port, control credential, protocol version
+alt discovery names an app that proves the credential with the same or newer protocol
+  Client -> App : signed health check
+  App --> Client : healthy, with proof of the control credential
+else no app proves the credential
+  Client -> App ** : start detached app
+  App -> Discovery : take lock, keep port and viewer credential only within 30 s of a handoff on that port
+  App -> Discovery : write discovery file, reload registered projects
+  Client -> Discovery : wait a bounded time for a healthy app
+else app protocol is older
+  Client -> App : handoff shutdown (control credential)
+  App -> Discovery : mark discovery file handed off with its time, release lock
+  destroy App
+  Client -> App ** : start detached app on the same port
+  App -> Tab : reconnected tab accepts the new instance's session
+end
+
+== Registration ==
+Client -> App : register project lease (control credential)
+loop while the session runs
+  Client -> App : renew lease naming the project
+  App -> Discovery : renew lock, stop serving if the lock was taken
+end
+
+== Presentation ==
+Client -> App : present tabs for project B (control credential)
+alt no tab is connected and no open lease is held
+  App --> Client : open a browser
+  Client -> Tab ** : open the browser on project B in its own environment
+else a tab is connected
+  App --> Client : no browser needed
+end
+
+== Fallback ==
+note over Client
+  Condition: the app cannot be started, reached, or trusted.
+  Response: serve this project from a server inside this process for the rest of the session.
+  Governing requirement: single-review-app.md section 6.
+end note
+
+== Exit ==
+note over App
+  Condition: no live lease and no viewer for the idle period.
+  Response: remove the discovery file, release the lock, and exit.
+end note
+@enduml

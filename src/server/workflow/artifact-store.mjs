@@ -31,15 +31,20 @@ async function acquireFileLock(artifactPath, makeError, options) {
         const lockInfo = await lstat(lockPath);
         if (lockInfo.isSymbolicLink() || !lockInfo.isFile()) throw makeError("invalid_path", "The artifact lock must be a regular file.");
         let live = false;
+        const owner = await readFile(lockPath, "utf8").then(JSON.parse).catch(() => ({}));
         if (options.renew) {
-          const owner = await readFile(lockPath, "utf8").then(JSON.parse).catch(() => ({}));
           if (Number.isSafeInteger(owner.pid) && owner.pid > 0) {
             try { process.kill(owner.pid, 0); live = true; }
             catch (error) { live = error.code !== "ESRCH"; }
           }
         }
-        if (!live && Date.now() - lockInfo.mtimeMs > (options.staleMs ?? LOCK_STALE_MS)) {
-          await rm(lockPath, { force: true });
+        // A dead owner is conclusive, but a live pid is not: after a reboot it can belong to an unrelated process.
+        const old = Date.now() - lockInfo.mtimeMs > (options.staleMs ?? LOCK_STALE_MS);
+        // A lock still being written has no token yet, so only its age can abandon it.
+        if (options.abandonWhenUnrenewed ? (typeof owner.token === "string" && !live) || old : !live && old) {
+          // Another starter may have reclaimed the lock since it was read, so only the judged owner's file is removed.
+          const current = await readFile(lockPath, "utf8").then(JSON.parse).catch(() => ({}));
+          if (current.token === owner.token) await rm(lockPath, { force: true });
           continue;
         }
       } catch (lockError) {
@@ -55,9 +60,13 @@ async function acquireFileLock(artifactPath, makeError, options) {
 
 export async function withFileLock(artifactPath, action, makeError = defaultError, options = {}) {
   const lock = await acquireFileLock(artifactPath, makeError, options);
-  const heartbeat = options.renew ? setInterval(() => {
+  const heartbeat = options.renew ? setInterval(async () => {
     const now = new Date();
     lock.handle.utimes(now, now).catch(() => {});
+    if (options.onRenew) {
+      const owner = await readFile(lock.lockPath, "utf8").then(JSON.parse).catch(() => null);
+      options.onRenew(owner?.token === lock.token);
+    }
   }, options.heartbeatMs ?? 5000) : null;
   heartbeat?.unref();
   try {

@@ -1,0 +1,41 @@
+{
+  "$comment": "The review app surface that crosses plugin versions. Protocol 0 names any app older than the first shared app and exists only so a newer client can replace it. Later protocol versions may add properties and routes but must keep every one listed here with the same meaning. Governing ADR: docs/ADRs/plantuml-review/shared-review-app.md. Requirements: docs/requirements/single-review-app.md sections 1, 5, and 7.",
+  "discovery": {
+    "type": "object",
+    "required": ["protocol", "port", "controlToken", "viewerToken", "pid"],
+    "properties": {
+      "protocol": { "type": "integer", "minimum": 0 },
+      "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+      "controlToken": { "type": "string", "minLength": 16 },
+      "viewerToken": { "type": "string", "minLength": 16 },
+      "pid": { "type": "integer", "minimum": 1 },
+      "pluginVersion": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+      "startedAt": { "type": "string" },
+      "handoff": { "type": "boolean" },
+      "handedOffAt": { "type": "string", "description": "ISO time the handoff was written; a successor honors a handoff only within 30 seconds of it" }
+    }
+  },
+  "health": {
+    "type": "object",
+    "required": ["protocol"],
+    "properties": {
+      "protocol": { "type": "integer", "minimum": 0 },
+      "pluginVersion": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+      "pid": { "type": "integer", "minimum": 1 }
+    }
+  },
+  "signing": {
+    "bodyHash": "SHA-256 hex digest of the raw request or response body, or of the empty string when there is none",
+    "request": "Header X-Prism-Control: <nonce>.<HMAC-SHA256 hex under the control credential of method, path with query, nonce, and body hash, joined by newlines>; the nonce is 32 hex characters and is refused when seen within 2 minutes",
+    "response": "Header X-Prism-Proof: HMAC-SHA256 hex under the control credential of the request nonce and the response body hash, joined by a newline; a client discards a response without a valid proof",
+    "refusals": "A control request without a valid signature, with an Origin header, or with an untrusted Host is answered 403 without a proof"
+  },
+  "routes": {
+    "health": { "method": "GET", "path": "/control/health" },
+    "projects": { "method": "GET", "path": "/control/projects", "response": { "projects": [{ "id": "string", "projectRoot": "string", "live": "boolean" }] } },
+    "registerLease": { "method": "PUT", "path": "/control/projects/<lease>", "body": { "projectRoot": "string", "evidenceDirectory": "absolute path or absent; the evidence store the registering process writes for this project, which the app then serves that project's evidence and gate answers from" } },
+    "endLease": { "method": "DELETE", "path": "/control/projects/<lease>" },
+    "present": { "method": "POST", "path": "/control/present", "body": { "projectRoot": "string", "tabs": "string[] or absent", "open": "boolean", "evidenceDirectory": "absolute path or absent, as for registerLease" }, "response": { "url": "string", "open": "boolean", "session": "object" } },
+    "shutdown": { "method": "POST", "path": "/control/shutdown", "body": { "handoff": "boolean" }, "effect": "With handoff true the app rewrites the discovery file with handoff true and handedOffAt before releasing the lock; a successor reuses port and viewerToken only from such a file written within the last 30 seconds and only on that port." }
+  }
+}

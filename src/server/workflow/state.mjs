@@ -635,7 +635,7 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     });
 }
 
-export async function answerUserGate({ projectRoot, statePath, id, choice = null, note = null }) {
+export async function answerUserGate({ projectRoot, statePath, id, choice = null, note = null, store = conservationStore }) {
   const resolved = await resolveStatePath(projectRoot, statePath);
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     const current = await loadState(resolved.path);
@@ -662,8 +662,8 @@ export async function answerUserGate({ projectRoot, statePath, id, choice = null
     if (validation.errors.length > 0) {
       throw error("invalid_state", "The answered state is invalid and was not written.", { errors: validation.errors });
     }
-    await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.displayPath]);
-    await conservationStore.writeManaged(resolved.root, resolved.path, `${JSON.stringify(candidate, null, 2)}\n`);
+    await store.registerCoordinationOutputs(resolved.root, [resolved.displayPath]);
+    await store.writeManaged(resolved.root, resolved.path, `${JSON.stringify(candidate, null, 2)}\n`);
     const updated = await loadState(resolved.path);
     return { ...publicStateResult(resolved, updated), gate: pending[position] };
   }, error));

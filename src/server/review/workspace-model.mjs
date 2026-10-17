@@ -425,7 +425,7 @@ async function computeAttention(projectRoot) {
 }
 
 // The browser names the initiative and gate; the state path always comes from the workflow config, never from the client.
-export async function answerGate(projectRoot, body) {
+export async function answerGate(projectRoot, body, { store } = {}) {
   if (!body || typeof body !== "object" || !SLUG_PATTERN.test(body.initiative ?? "") || typeof body.id !== "string") {
     throw Object.assign(new Error("An initiative and a gate id are required."), { code: "invalid_answer" });
   }
@@ -436,7 +436,7 @@ export async function answerGate(projectRoot, body) {
   }
   const choice = typeof body.choice === "string" && body.choice ? body.choice : null;
   const note = typeof body.note === "string" ? body.note : null;
-  const result = await answerUserGate({ projectRoot, statePath: `${directory}/state.json`, id: body.id, choice, note });
+  const result = await answerUserGate({ projectRoot, statePath: `${directory}/state.json`, id: body.id, choice, note, ...(store ? { store } : {}) });
   return { gate: result.gate, revision: result.revision };
 }
 

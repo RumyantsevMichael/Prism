@@ -39,8 +39,8 @@ async function retainImmutable(target, bytes, expectedHash, corruptMessage) {
 }
 class ConservationStore {
   directory;
-  constructor(directory) {
-    const hostData = process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA;
+  constructor(directory, env = process.env) {
+    const hostData = env.PLUGIN_DATA || env.CLAUDE_PLUGIN_DATA;
     this.directory = path.resolve(directory || (hostData ? path.join(hostData, "conservation") : path.join(os.homedir(), ".local", "share", "prism", "conservation")));
   }
   async location(projectRoot, create = false) {

@@ -109,11 +109,18 @@ Repeated viewer requests update that session instead of opening another browser 
 The artifact tree shows all files, and tabs retain open artifacts.
 Ask the agent to open the viewer at any time during an active session.
 
+All Prism sessions of one user share one review app on one local port, and each project has its own page there.
+The project switcher in the page header lists recent projects with their open gates and marks the ones an agent session is using now.
+When an agent presents a review for another project while a tab is open, that tab shows a notice with a link instead of a second tab opening.
+The app starts with the first session that needs it, outlives that session, and exits after 30 minutes with no session and no open viewer.
+It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.
+A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
+
 `Review browser: auto` uses the internal browser in desktop sessions and the system browser in CLI sessions.
 Set `internal` or `external` in `.prism/workflow.md` to override this choice.
 When the selected browser is unavailable, Prism presents the URL and source artifacts.
 
-Start a standalone review from a Prism checkout when no harness session is active:
+Start a review from a Prism checkout when no harness session is active:
 
 ```bash
 ./bin/prism review
@@ -124,13 +131,14 @@ The review browser opens on Attention, or on the artifact you name, and later vi
 It shows initiatives as a board, list, or dependency graph, each initiative as a slice graph, and each slice with its concept delta, review ledger, and documents.
 Requirements, decisions, and the glossary have their own sections.
 
-The standalone `prism review` command always opens the system browser.
+`prism review` opens the project in the shared review app and returns.
+It opens the system browser only when no review tab is open; an open tab shows the project or a notice with a link to it instead.
+When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
 
 The server binds to `127.0.0.1`, selects an available port, and uses an unguessable session URL.
 It serves plain HTTP, which browsers treat as a secure context on `127.0.0.1`, so no certificate trust step is needed.
 It refuses requests whose host is not `127.0.0.1` or `localhost`.
 It renders entirely in the browser and does not send project sources to a remote renderer.
-Stop the command with `Ctrl-C` when the review ends.
 
 Defect repair stays outside this workflow.
 First reproduce and diagnose a defect against the existing specification.

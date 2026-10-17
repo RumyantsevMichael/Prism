@@ -193,12 +193,12 @@ function truncateArrays(value, location, truncated) {
   return value;
 }
 
-export async function loadEvidence(projectRoot, evidenceId) {
+export async function loadEvidence(projectRoot, evidenceId, store = conservationStore) {
   if (typeof evidenceId !== "string" || !/^[a-f0-9]{64}$/.test(evidenceId)) {
     throw new Error("The evidence ID must be a 64-character lowercase hexadecimal digest.");
   }
   const truncated = {};
-  const record = truncateArrays(await conservationStore.get(projectRoot, evidenceId), "", truncated);
+  const record = truncateArrays(await store.get(projectRoot, evidenceId), "", truncated);
   return { id: evidenceId, kind: record.kind, record, truncated, arrayLimit: EVIDENCE_ARRAY_LIMIT };
 }
 
@@ -230,7 +230,7 @@ export async function loadArtifact(projectRoot, artifactPath) {
   return { path: artifactPath, content, diagrams, modifiedAt: metadata.mtimeMs };
 }
 
-function isTrustedHost(host) {
+export function isTrustedHost(host) {
   try {
     return TRUSTED_HOSTS.has(new URL(`http://${host}`).hostname);
   } catch {
@@ -238,7 +238,7 @@ function isTrustedHost(host) {
   }
 }
 
-function send(response, statusCode, body, contentType = "text/plain; charset=utf-8") {
+export function send(response, statusCode, body, contentType = "text/plain; charset=utf-8") {
   response.writeHead(statusCode, {
     "Content-Type": contentType,
     "Cache-Control": "no-store",
@@ -261,7 +261,7 @@ async function serveFile(response, filePath, contentType) {
   }
 }
 
-function openBrowser(url) {
+export function openBrowser(url) {
   const platform = process.platform;
   const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
   const args = platform === "win32" ? ["/c", "start", "", url] : [url];
@@ -275,7 +275,7 @@ function openBrowser(url) {
   }
 }
 
-function normalizeTabs(value) {
+export function normalizeTabs(value) {
   if (value === undefined) {
     return [];
   }
@@ -286,7 +286,8 @@ function normalizeTabs(value) {
   return [...new Set(tabs)];
 }
 
-async function readJson(request) {
+// Reads a request body of at most 64 KiB as text; the review app needs the exact text because control requests sign it.
+export async function readBody(request) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
@@ -296,24 +297,28 @@ async function readJson(request) {
     }
     chunks.push(chunk);
   }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function readJson(request) {
+  const text = await readBody(request);
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(text);
   } catch {
     throw new Error("The request body must be JSON.");
   }
 }
 
-export async function startReviewServer(options = {}) {
-  const browserOpener = options.openBrowser ?? openBrowser;
-  const projectRoot = await realpath(path.resolve(options.projectRoot ?? process.cwd()));
-  const token = randomBytes(24).toString("base64url");
-  const prefix = `/session/${token}`;
+// One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
+// onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
+export function createProjectReview({ projectRoot, baseUrl, instance = null, onViewer = null, evidenceStore = () => conservationStore }) {
   let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
   const viewers = new Map();
   let viewerOpenLease = null;
 
   function sessionSnapshot() {
-    return { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], revision: session.revision };
+    const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], revision: session.revision };
+    return instance ? { ...snapshot, instance } : snapshot;
   }
 
   function clearViewerOpenLease() {
@@ -331,8 +336,8 @@ export async function startReviewServer(options = {}) {
     viewerOpenLease.unref();
   }
 
-  function writeSessionEvent(response) {
-    response.write(`event: session\ndata: ${JSON.stringify(sessionSnapshot())}\n\n`);
+  function writeEvent(response, event, data) {
+    response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
   function removeViewer(response) {
@@ -344,10 +349,10 @@ export async function startReviewServer(options = {}) {
     viewers.delete(response);
   }
 
-  function broadcastSession() {
+  function notify(event, data) {
     for (const response of viewers.keys()) {
       try {
-        writeSessionEvent(response);
+        writeEvent(response, event, data);
       } catch {
         removeViewer(response);
         response.destroy();
@@ -377,7 +382,8 @@ export async function startReviewServer(options = {}) {
     viewers.set(response, heartbeat);
     response.once("close", () => removeViewer(response));
     clearViewerOpenLease();
-    writeSessionEvent(response);
+    writeEvent(response, "session", sessionSnapshot());
+    onViewer?.((event, data) => writeEvent(response, event, data));
   }
 
   async function assertAvailable(tabs) {
@@ -394,7 +400,7 @@ export async function startReviewServer(options = {}) {
       || next.activeTab !== session.activeTab || next.previewTab !== session.previewTab;
     if (changed) {
       session = { ...next, revision: session.revision + 1 };
-      broadcastSession();
+      notify("session", sessionSnapshot());
     }
     return sessionSnapshot();
   }
@@ -463,6 +469,104 @@ export async function startReviewServer(options = {}) {
       response.end();
     }
   }
+
+  async function handle(request, response, route, url) {
+    if (route === "/" || route === "/review") {
+      await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
+    } else if (route === "/review.js") {
+      await serveFile(response, path.join(PUBLIC_DIR, "review.js"), "text/javascript; charset=utf-8");
+    } else if (route === "/review.css") {
+      await serveFile(response, path.join(PUBLIC_DIR, "review.css"), "text/css; charset=utf-8");
+    } else if (route === "/vendor/plantuml.js") {
+      await serveFile(response, path.join(VENDOR_DIR, "plantuml.js"), "text/javascript; charset=utf-8");
+    } else if (route === "/vendor/viz-global.js") {
+      await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
+    } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
+      await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
+    } else if (/^\/views\/[a-z][a-z-]*\.js$/.test(route)) {
+      await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
+    } else if (route === "/api/events" && request.method === "GET") {
+      openViewerStream(response);
+    } else if (route === "/api/index") {
+      send(response, 200, JSON.stringify({ projectRoot, artifacts: await listArtifacts(projectRoot), sources: await listSourceFiles(projectRoot), navigation: await loadNavigation(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
+    } else if (route === "/api/session" && request.method === "GET") {
+      send(response, 200, JSON.stringify(sessionSnapshot()), "application/json; charset=utf-8");
+    } else if (route === "/api/session" && request.method === "PUT") {
+      const body = await readJson(request);
+      send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
+    } else if (route === "/api/gates/answer" && request.method === "POST") {
+      const origin = request.headers.origin;
+      if (!String(request.headers["content-type"] ?? "").startsWith("application/json") || (origin && new URL(origin).host !== request.headers.host)) {
+        send(response, 403, "Answers must come from the review page as JSON.");
+        return;
+      }
+      try {
+        const answered = await answerGate(projectRoot, await readJson(request), { store: evidenceStore() });
+        forgetWorkspace();
+        send(response, 200, JSON.stringify(answered), "application/json; charset=utf-8");
+      } catch (error) {
+        const status = { gate_answered: 409, unknown_gate: 409, invalid_answer: 400 }[error.code] ?? 400;
+        send(response, status, JSON.stringify({ code: error.code ?? "invalid_answer", message: error.message }), "application/json; charset=utf-8");
+      }
+    } else if (route === "/api/context") {
+      send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
+    } else if (route === "/api/entity") {
+      send(response, 200, JSON.stringify(await loadEntity(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
+    } else if (route === "/api/evidence") {
+      send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
+    } else if (route === "/api/artifact") {
+      const artifactPath = url.searchParams.get("path");
+      // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.
+      await resolveProjectFile(projectRoot, artifactPath);
+      if (!(await listArtifacts(projectRoot)).includes(artifactPath) && !(await listSourceFiles(projectRoot)).includes(artifactPath)) {
+        send(response, 404, "The file is not available for review.");
+        return;
+      }
+      send(response, 200, JSON.stringify(await loadArtifact(projectRoot, artifactPath)), "application/json; charset=utf-8");
+    } else {
+      send(response, 404, "Not found");
+    }
+  }
+
+  return {
+    baseUrl,
+    projectRoot,
+    handle,
+    getOpenTabs() {
+      return [...session.openTabs];
+    },
+    getSession() {
+      return sessionSnapshot();
+    },
+    viewerCount() {
+      return viewers.size;
+    },
+    notify,
+    setOpenTabs,
+    presentTabs,
+    reviewUrl(artifactPaths) {
+      const [activeTab] = normalizeTabs(artifactPaths);
+      return activeTab ? `${baseUrl}/review?artifact=${encodeURIComponent(activeTab)}` : `${baseUrl}/`;
+    },
+    // A browser opens only while no tab watches this project, and once per lease so a slow first load does not open a second tab.
+    claimBrowserOpen() {
+      if (viewers.size > 0 || viewerOpenLease) {
+        return false;
+      }
+      armViewerOpenLease();
+      return true;
+    },
+    releaseBrowserOpen: clearViewerOpenLease,
+    closeViewers: closeViewerStreams
+  };
+}
+
+export async function startReviewServer(options = {}) {
+  const browserOpener = options.openBrowser ?? openBrowser;
+  const projectRoot = await realpath(path.resolve(options.projectRoot ?? process.cwd()));
+  const token = randomBytes(24).toString("base64url");
+  const prefix = `/session/${token}`;
+  let review;
   const server = createServer(async (request, response) => {
     try {
       if (!isTrustedHost(request.headers.host)) {
@@ -474,62 +578,7 @@ export async function startReviewServer(options = {}) {
         send(response, 404, "Not found");
         return;
       }
-      const route = url.pathname.slice(prefix.length) || "/";
-      if (route === "/" || route === "/review") {
-        await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
-      } else if (route === "/review.js") {
-        await serveFile(response, path.join(PUBLIC_DIR, "review.js"), "text/javascript; charset=utf-8");
-      } else if (route === "/review.css") {
-        await serveFile(response, path.join(PUBLIC_DIR, "review.css"), "text/css; charset=utf-8");
-      } else if (route === "/vendor/plantuml.js") {
-        await serveFile(response, path.join(VENDOR_DIR, "plantuml.js"), "text/javascript; charset=utf-8");
-      } else if (route === "/vendor/viz-global.js") {
-        await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
-      } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
-        await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
-      } else if (/^\/views\/[a-z][a-z-]*\.js$/.test(route)) {
-        await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
-      } else if (route === "/api/events" && request.method === "GET") {
-        openViewerStream(response);
-      } else if (route === "/api/index") {
-        send(response, 200, JSON.stringify({ projectRoot, artifacts: await listArtifacts(projectRoot), sources: await listSourceFiles(projectRoot), navigation: await loadNavigation(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
-      } else if (route === "/api/session" && request.method === "GET") {
-        send(response, 200, JSON.stringify(sessionSnapshot()), "application/json; charset=utf-8");
-      } else if (route === "/api/session" && request.method === "PUT") {
-        const body = await readJson(request);
-        send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
-      } else if (route === "/api/gates/answer" && request.method === "POST") {
-        const origin = request.headers.origin;
-        if (!String(request.headers["content-type"] ?? "").startsWith("application/json") || (origin && new URL(origin).host !== request.headers.host)) {
-          send(response, 403, "Answers must come from the review page as JSON.");
-          return;
-        }
-        try {
-          const answered = await answerGate(projectRoot, await readJson(request));
-          forgetWorkspace();
-          send(response, 200, JSON.stringify(answered), "application/json; charset=utf-8");
-        } catch (error) {
-          const status = { gate_answered: 409, unknown_gate: 409, invalid_answer: 400 }[error.code] ?? 400;
-          send(response, status, JSON.stringify({ code: error.code ?? "invalid_answer", message: error.message }), "application/json; charset=utf-8");
-        }
-      } else if (route === "/api/context") {
-        send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
-      } else if (route === "/api/entity") {
-        send(response, 200, JSON.stringify(await loadEntity(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
-      } else if (route === "/api/evidence") {
-        send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"))), "application/json; charset=utf-8");
-      } else if (route === "/api/artifact") {
-        const artifactPath = url.searchParams.get("path");
-        // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.
-        await resolveProjectFile(projectRoot, artifactPath);
-        if (!(await listArtifacts(projectRoot)).includes(artifactPath) && !(await listSourceFiles(projectRoot)).includes(artifactPath)) {
-          send(response, 404, "The file is not available for review.");
-          return;
-        }
-        send(response, 200, JSON.stringify(await loadArtifact(projectRoot, artifactPath)), "application/json; charset=utf-8");
-      } else {
-        send(response, 404, "Not found");
-      }
+      await review.handle(request, response, url.pathname.slice(prefix.length) || "/", url);
     } catch (error) {
       if (response.headersSent) {
         response.destroy();
@@ -544,40 +593,30 @@ export async function startReviewServer(options = {}) {
   });
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}${prefix}`;
+  review = createProjectReview({ projectRoot, baseUrl });
   return {
     baseUrl,
     projectRoot,
-    getOpenTabs() {
-      return [...session.openTabs];
-    },
-    getSession() {
-      return sessionSnapshot();
-    },
-    viewerCount() {
-      return viewers.size;
-    },
-    async setOpenTabs(tabs) {
-      return setOpenTabs(tabs);
-    },
-    reviewUrl(artifactPaths) {
-      const [activeTab] = normalizeTabs(artifactPaths);
-      return activeTab ? `${baseUrl}/review?artifact=${encodeURIComponent(activeTab)}` : `${baseUrl}/`;
-    },
+    getOpenTabs: review.getOpenTabs,
+    getSession: review.getSession,
+    viewerCount: review.viewerCount,
+    setOpenTabs: review.setOpenTabs,
+    reviewUrl: review.reviewUrl,
     async open(artifactPaths) {
       const tabs = normalizeTabs(artifactPaths);
-      await presentTabs(tabs);
-      const url = this.reviewUrl(tabs);
-      if (viewers.size > 0 || viewerOpenLease) {
-        return { url, opened: false, ...sessionSnapshot() };
+      await review.presentTabs(tabs);
+      const url = review.reviewUrl(tabs);
+      if (!review.claimBrowserOpen()) {
+        return { url, opened: false, ...review.getSession() };
       }
       const opened = Boolean(await browserOpener(url));
-      if (opened) {
-        armViewerOpenLease();
+      if (!opened) {
+        review.releaseBrowserOpen();
       }
-      return { url, opened, ...sessionSnapshot() };
+      return { url, opened, ...review.getSession() };
     },
     close() {
-      closeViewerStreams();
+      review.closeViewers();
       return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   };

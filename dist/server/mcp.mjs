@@ -3,6 +3,7 @@ import { pluginURL } from "./plugin-root.mjs";
 import { ACTIVE_OPERATIONS_SCHEMA } from "./workflow/active-operations.mjs";
 import { assertInput } from "./workflow/artifact-schema.mjs";
 import { CONSERVATION_TOOLS, callConservationTool } from "./conservation/conservation-tools.mjs";
+import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ConceptDeltaError, GET_CONCEPT_DELTA_SCHEMA, UPDATE_CONCEPT_DELTA_SCHEMA, getConceptDelta, updateConceptDelta } from "./conservation/concept-delta.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
@@ -24,6 +25,7 @@ import { summarizeSessionConsumption } from "./session/session-trace-store.mjs";
 import { appendDecision, readDecisionHistory, setDecisionRecording } from "./workflow/decision-history.mjs";
 import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
+import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
@@ -31,7 +33,8 @@ import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, wai
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
-const reviewServers = createReviewServerPool();
+// PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
+const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory(), evidenceDirectory: conservationStore.directory } });
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));
 
 function decisionDataDirectory(argumentsValue) {
@@ -110,6 +113,8 @@ async function requestedProjectRoot(argumentsValue) {
       throw new Error(`The projectRoot argument does not match the host project root ${resolvedRoot}. Pass that path, which is the directory where the session started.`);
     }
   }
+  // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call.
+  reviewServers.register(resolvedRoot);
   return resolvedRoot;
 }
 
@@ -1006,18 +1011,23 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     if (tabs !== undefined) {
       await review.setOpenTabs(tabs);
     }
-    const url = review.reviewUrl(tabs);
-    return { content: [{ type: "text", text: reviewContent(url) }], structuredContent: { url, ...reviewSessionContent(review) } };
+    const url = await review.reviewUrl(tabs);
+    return { content: [{ type: "text", text: reviewContent(url) }], structuredContent: { url, ...await reviewSessionContent(review) } };
   }
   if (name === "present_review") {
     const opened = await review.open(requestedTabs(argumentsValue));
-    return { content: [{ type: "text", text: reviewContent(opened.url) }], structuredContent: { ...opened, ...reviewSessionContent(review) } };
+    return { content: [{ type: "text", text: reviewContent(opened.url) }], structuredContent: { ...opened, ...await reviewSessionContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {
     const artifacts = await listArtifacts(review.projectRoot);
     return { content: [{ type: "text", text: artifacts.join("\n") || "No reviewable artifacts found." }], structuredContent: { artifacts } };
   }
   throw new Error(`Unknown tool: ${name}`);
+}
+
+// A host that names the project at start gets it listed in the review app before any tool call, without delaying initialize.
+if (process.env.CLAUDE_PROJECT_DIR) {
+  void realpath(process.env.CLAUDE_PROJECT_DIR).then((root) => reviewServers.register(root), () => {});
 }
 
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });

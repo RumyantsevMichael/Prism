@@ -1,10 +1,63 @@
-import { startReviewServer } from "./review-server.mjs";
+import { realpath } from "node:fs/promises";
+import path from "node:path";
+import { ConservationStore } from "../conservation/conservation-store.mjs";
+import { createReviewAppClient } from "./review-app-client.mjs";
+import { reviewAppDirectory, reviewAppDisabled } from "./review-app-discovery.mjs";
+import { normalizeTabs, openBrowser, startReviewServer } from "./review-server.mjs";
 
 const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1000;
 
-export function createReviewServerPool({ start = startReviewServer } = {}) {
+function tabUrl(baseUrl, tabs) {
+  const [activeTab] = normalizeTabs(tabs);
+  return activeTab ? `${baseUrl}review?artifact=${encodeURIComponent(activeTab)}` : baseUrl;
+}
+
+// A project served by the shared review app until the app cannot be reached, then by its own session server for the rest of the session.
+async function appBackedReview(client, projectRoot, { startSession, openBrowser: browserOpener }) {
+  let session = null;
+  const fallBack = async () => {
+    if (!session) client.release(projectRoot);
+    session ??= startSession({ projectRoot, openBrowser: browserOpener });
+    return session;
+  };
+  async function viaApp(action, fallback) {
+    if (session) return fallback(await session);
+    try {
+      return await action();
+    } catch (error) {
+      if (error.reachable) throw error;
+      return fallback(await fallBack());
+    }
+  }
+  try {
+    await client.register(projectRoot);
+  } catch (error) {
+    if (error.reachable) throw error;
+    await fallBack();
+  }
+  return {
+    projectRoot,
+    // The app answers with its current address, so a link stays valid after the app is replaced on another port or credential.
+    reviewUrl: (tabs) => viaApp(async () => tabUrl((await client.present(projectRoot, { open: false })).url, tabs), (review) => review.reviewUrl(tabs)),
+    getSession: () => viaApp(async () => (await client.present(projectRoot, { open: false })).session, (review) => review.getSession()),
+    setOpenTabs: (tabs) => viaApp(async () => (await client.present(projectRoot, { tabs, open: false })).session.openTabs, (review) => review.setOpenTabs(tabs)),
+    open: (tabs) => viaApp(async () => {
+      const answer = await client.present(projectRoot, { tabs: normalizeTabs(tabs), open: true });
+      // The app never opens a browser; this session opens it in its own environment.
+      const opened = answer.open ? Boolean(await browserOpener(answer.url)) : false;
+      return { url: answer.url, opened, ...answer.session };
+    }, (review) => review.open(tabs)),
+    viewerCount: () => session ? session.then((review) => review.viewerCount()) : 1,
+    heldServer: async () => session && await session,
+    close: async () => session && (await session).close()
+  };
+}
+
+export function createReviewServerPool({ start = startReviewServer, app } = {}) {
   const reviewServers = new Map();
   const taskRoots = new Map();
+  const client = app ? createReviewAppClient(app) : null;
+  const startReview = client ? (options) => appBackedReview(client, options.projectRoot, { startSession: start, openBrowser: app.openBrowser ?? openBrowser }) : start;
 
   function refreshIdleTimeout(projectRoot, binding) {
     clearTimeout(binding.idleTimeout);
@@ -14,7 +67,7 @@ export function createReviewServerPool({ start = startReviewServer } = {}) {
       }
       try {
         const review = await binding.review;
-        if (review.viewerCount() > 0) {
+        if (await review.viewerCount() > 0) {
           refreshIdleTimeout(projectRoot, binding);
           return;
         }
@@ -43,7 +96,7 @@ export function createReviewServerPool({ start = startReviewServer } = {}) {
       refreshIdleTimeout(projectRoot, existing);
       return existing.review;
     }
-    const review = start({ projectRoot });
+    const review = startReview({ projectRoot });
     const binding = { projectRoot, review };
     reviewServers.set(projectRoot, binding);
     refreshIdleTimeout(projectRoot, binding);
@@ -69,7 +122,44 @@ export function createReviewServerPool({ start = startReviewServer } = {}) {
     await Promise.allSettled(reviews.filter(({ status }) => status === "fulfilled").map(({ value }) => value.close()));
     reviewServers.clear();
     taskRoots.clear();
+    await client?.close();
   }
 
-  return { get, close };
+  // Registration lists the project in the review app from session start or the first tool call that names it, once per project;
+  // a failure leaves it to the review tools, which fall back to a session server.
+  const registered = new Set();
+  function register(projectRoot) {
+    if (!client || registered.has(projectRoot)) return;
+    registered.add(projectRoot);
+    void client.register(projectRoot).catch(() => {});
+  }
+
+  return { get, close, register };
+}
+
+// The prism review command presents through the user's review app and returns; it holds a server only when it serves the review itself.
+export async function startStandaloneReview({ projectRoot = process.cwd(), artifactPath, env = process.env, start = startReviewServer, openBrowser: browserOpener = openBrowser, app = {} } = {}) {
+  const root = await realpath(path.resolve(projectRoot));
+  if (reviewAppDisabled(env)) {
+    const server = await start({ projectRoot: root, openBrowser: browserOpener });
+    try {
+      return { ...(await server.open(artifactPath)), held: server };
+    } catch (error) {
+      await server.close();
+      throw error;
+    }
+  }
+  // Without host data this command knows no project's store, so it leaves the app with the store a session reported.
+  const hostData = env.PLUGIN_DATA || env.CLAUDE_PLUGIN_DATA;
+  const client = createReviewAppClient({ directory: reviewAppDirectory(env), ...(hostData ? { evidenceDirectory: new ConservationStore(undefined, env).directory } : {}), ...app });
+  const review = await appBackedReview(client, root, { startSession: start, openBrowser: browserOpener });
+  try {
+    const result = await review.open(artifactPath);
+    return { ...result, held: await review.heldServer() };
+  } catch (error) {
+    await review.close();
+    throw error;
+  } finally {
+    await client.close();
+  }
 }
