@@ -15,6 +15,8 @@ let openTabs = [];
 let previewTab = null;
 let agentTabs = [];
 let sessionRevision = 0;
+// A replaced review app restarts revisions, so a snapshot from a new instance is accepted whatever its revision.
+let sessionInstance = null;
 let sessionConnected = false;
 let sessionStream;
 let saveQueue = Promise.resolve();
@@ -182,9 +184,11 @@ function closeTab(path) {
 
 function synchronizeSession(snapshot) {
   const nextRevision = Number.isInteger(snapshot.revision) ? snapshot.revision : sessionRevision;
-  if (nextRevision <= sessionRevision) {
+  const nextInstance = typeof snapshot.instance === "string" ? snapshot.instance : sessionInstance;
+  if (nextRevision <= sessionRevision && nextInstance === sessionInstance) {
     return;
   }
+  sessionInstance = nextInstance;
   const nextTabs = Array.isArray(snapshot.openTabs) ? [...snapshot.openTabs] : [];
   const nextSelectedPath = Object.hasOwn(snapshot, "activeTab")
     ? snapshot.activeTab
@@ -795,6 +799,7 @@ async function initialize() {
   previewTab = openTabs.includes(data.previewTab) ? data.previewTab : null;
   agentTabs = (data.agentTabs ?? []).filter((tab) => openTabs.includes(tab));
   sessionRevision = Number.isInteger(data.revision) ? data.revision : 0;
+  sessionInstance = typeof data.instance === "string" ? data.instance : null;
   const requestedPath = selectedPath;
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
   project.textContent = data.projectRoot;

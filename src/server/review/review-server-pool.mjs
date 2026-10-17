@@ -1,10 +1,57 @@
-import { startReviewServer } from "./review-server.mjs";
+import { createReviewAppClient } from "./review-app-client.mjs";
+import { normalizeTabs, openBrowser, startReviewServer } from "./review-server.mjs";
 
 const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1000;
 
-export function createReviewServerPool({ start = startReviewServer } = {}) {
+function tabUrl(baseUrl, tabs) {
+  const [activeTab] = normalizeTabs(tabs);
+  return activeTab ? `${baseUrl}review?artifact=${encodeURIComponent(activeTab)}` : baseUrl;
+}
+
+// A project served by the shared review app until the app cannot be reached, then by its own session server for the rest of the session.
+async function appBackedReview(client, projectRoot, { startSession, openBrowser: browserOpener }) {
+  let session = null;
+  let baseUrl = null;
+  const fallBack = async () => {
+    session ??= startSession({ projectRoot, openBrowser: browserOpener });
+    return session;
+  };
+  async function viaApp(action, fallback) {
+    if (session) return fallback(await session);
+    try {
+      return await action();
+    } catch (error) {
+      if (error.reachable) throw error;
+      return fallback(await fallBack());
+    }
+  }
+  try {
+    baseUrl = (await client.register(projectRoot)).url;
+  } catch (error) {
+    if (error.reachable) throw error;
+    return fallBack();
+  }
+  return {
+    projectRoot,
+    reviewUrl: (tabs) => viaApp(async () => tabUrl(baseUrl, tabs), (review) => review.reviewUrl(tabs)),
+    getSession: () => viaApp(async () => (await client.present(projectRoot, { open: false })).session, (review) => review.getSession()),
+    setOpenTabs: (tabs) => viaApp(async () => (await client.present(projectRoot, { tabs, open: false })).session.openTabs, (review) => review.setOpenTabs(tabs)),
+    open: (tabs) => viaApp(async () => {
+      const answer = await client.present(projectRoot, { tabs: normalizeTabs(tabs), open: true });
+      // The app never opens a browser; this session opens it in its own environment.
+      const opened = answer.open ? Boolean(await browserOpener(answer.url)) : false;
+      return { url: answer.url, opened, ...answer.session };
+    }, (review) => review.open(tabs)),
+    viewerCount: () => session ? session.then((review) => review.viewerCount()) : 1,
+    close: async () => session && (await session).close()
+  };
+}
+
+export function createReviewServerPool({ start = startReviewServer, app } = {}) {
   const reviewServers = new Map();
   const taskRoots = new Map();
+  const client = app ? createReviewAppClient(app) : null;
+  const startReview = client ? (options) => appBackedReview(client, options.projectRoot, { startSession: start, openBrowser: app.openBrowser ?? openBrowser }) : start;
 
   function refreshIdleTimeout(projectRoot, binding) {
     clearTimeout(binding.idleTimeout);
@@ -14,7 +61,7 @@ export function createReviewServerPool({ start = startReviewServer } = {}) {
       }
       try {
         const review = await binding.review;
-        if (review.viewerCount() > 0) {
+        if (await review.viewerCount() > 0) {
           refreshIdleTimeout(projectRoot, binding);
           return;
         }
@@ -43,7 +90,7 @@ export function createReviewServerPool({ start = startReviewServer } = {}) {
       refreshIdleTimeout(projectRoot, existing);
       return existing.review;
     }
-    const review = start({ projectRoot });
+    const review = startReview({ projectRoot });
     const binding = { projectRoot, review };
     reviewServers.set(projectRoot, binding);
     refreshIdleTimeout(projectRoot, binding);
@@ -69,7 +116,13 @@ export function createReviewServerPool({ start = startReviewServer } = {}) {
     await Promise.allSettled(reviews.filter(({ status }) => status === "fulfilled").map(({ value }) => value.close()));
     reviewServers.clear();
     taskRoots.clear();
+    await client?.close();
   }
 
-  return { get, close };
+  // Registration at session start lists the project in the review app before any tool call; failures wait for the first tool call.
+  function register(projectRoot) {
+    if (client) void client.register(projectRoot).catch(() => {});
+  }
+
+  return { get, close, register };
 }

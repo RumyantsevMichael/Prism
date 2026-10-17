@@ -293,10 +293,11 @@ test("an MCP server lists its project in the app from start until it exits", asy
     return JSON.parse(response.body).projects.find((entry) => entry.projectRoot === root);
   };
   // No initialize request and no tool call: registration rides on the host naming the project at start.
-  assert.equal((await eventually(listed)).live, true);
+  // Two process starts under a loaded test run can take a while, so the bounds are generous; a pass returns as soon as the state holds.
+  assert.equal((await eventually(listed, 30000)).live, true);
   child.stdin.end();
   await new Promise((resolve) => child.once("exit", resolve));
-  await eventually(async () => (await listed())?.live === false);
+  await eventually(async () => (await listed())?.live === false, 30000);
 });
 
 test("a newer session replaces an older review app and keeps its port and viewer credential", async (context) => {
