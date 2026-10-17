@@ -368,7 +368,7 @@ For a snapshot mismatch, finish repository or index changes and retry planning.
 
 ## Resolve active session capacity
 
-Use the read-only `resolve_session_capacity` tool with active mode when the target implementation session is the current Codex session.
+Use the read-only `resolve_session_capacity` tool with active mode when the target implementation session is the current Codex or Claude Code session.
 
 ```json
 {
@@ -498,9 +498,23 @@ For the bundled 272000-token Codex profiles, the 95 percent usable input window 
 Supply both capacity overrides for an unregistered host, provider, or model, or for a version that no profile covers.
 Prism returns `UNSUPPORTED` without a fit classification when neither path establishes exact capacity.
 
+### Active Claude Code capacity
+
+Claude Code does not report its compaction threshold to hooks, so active Claude Code capacity is a conservative estimate with `capacityBasis: "ESTIMATED"`.
+Codex results and results built from complete explicit overrides report `capacityBasis: "ATTESTED"`.
+In Claude Code the hook announces the correlation key from the first prompt, and the `PreToolUse` refresh before each Prism tool call records the facts.
+The version comes from the bounded session transcript tail, the model from the hook event or the latest main-thread transcript message, and the provider from `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, or `CLAUDE_CODE_USE_FOUNDRY`.
+The context window is 1000000 tokens for a model that carries the `[1m]` suffix, unless `CLAUDE_CODE_DISABLE_1M_CONTEXT` is set, and 200000 tokens otherwise.
+The estimated compaction window is the smallest of that context window, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, and any numeric `autoCompactWindow` in the user, project, local, or managed settings, and defaults to 200000 tokens.
+Prism reads only the `autoCompactWindow` keys from those settings files.
+The threshold is 80 percent of that window after a 20000-token output reserve, or a lower `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` percentage.
+A default 200000-token window gives a 144000-token threshold.
+Fit evaluation uses a 60000-token implementation reserve unless the caller supplies one.
+The estimate cannot observe a `/autocompact` change made inside the session or a server-side window experiment, so supply both capacity overrides when the session uses a smaller window.
+
 ### Claude Code on AWS Bedrock
 
-Claude Code on AWS Bedrock is supported today through explicit session input when the caller supplies the exact effective context window and compaction threshold.
+For a target session other than the current one, Claude Code on AWS Bedrock is supported through explicit session input when the caller supplies the exact effective context window and compaction threshold.
 This explicit path is separate from the verified Codex tuples in the bundled registry.
 Prism does not claim an automatic bundled Bedrock tuple in this milestone.
 The effective Claude Code threshold can depend on host settings and environment, including the auto-compact window or percentage, maximum output tokens, context-window override, and compaction-disable flags.

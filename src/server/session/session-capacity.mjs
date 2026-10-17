@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { HOST_FACT_REASON, readHostSessionFacts } from "./host-session-facts.mjs";
+import { CLAUDE_CODE_ESTIMATE_POLICY } from "./host-adapters/claude-code.mjs";
 import {
   HARNESS_VERSION_POLICIES,
   isComparableHarnessVersion,
@@ -432,6 +433,17 @@ export async function resolveActiveSessionCapacity(activeSession, {
   }
 
   const provenance = { ...resolution.provenance };
+  const estimated = !callerHasCompleteCapacity && ["contextWindowTokens", "compactionThresholdTokens"]
+    .some((key) => facts.provenance?.fields?.[key]?.startsWith("estimate."));
+  let capacity = resolution.capacity;
+  if (estimated && capacity.implementationReserveTokens === null) {
+    capacity = { ...capacity, implementationReserveTokens: CLAUDE_CODE_ESTIMATE_POLICY.implementationReserveTokens };
+    provenance.implementationReserve = {
+      source: "policy",
+      policy: "claude-code-conservative-estimate",
+      field: "implementationReserveTokens"
+    };
+  }
   const fields = [
     ["contextWindow", "contextWindowTokens"],
     ["compactionThreshold", "compactionThresholdTokens"]
@@ -445,6 +457,8 @@ export async function resolveActiveSessionCapacity(activeSession, {
   }
   return {
     ...resolution,
+    capacity,
+    capacityBasis: estimated ? "ESTIMATED" : "ATTESTED",
     session: {
       harness: facts.session.harness,
       harnessVersion: facts.session.harnessVersion,
