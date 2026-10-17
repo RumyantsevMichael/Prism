@@ -13,12 +13,12 @@ alt discovery names an app that proves the credential with the same or newer pro
   App --> Client : healthy, with proof of the control credential
 else no app proves the credential
   Client -> App ** : start detached app
-  App -> Discovery : take lock, keep port and viewer credential only after a handoff on that port
+  App -> Discovery : take lock, keep port and viewer credential only within 30 s of a handoff on that port
   App -> Discovery : write discovery file, reload registered projects
   Client -> Discovery : wait a bounded time for a healthy app
 else app protocol is older
   Client -> App : handoff shutdown (control credential)
-  App -> Discovery : mark discovery file handed off, release lock
+  App -> Discovery : mark discovery file handed off with its time, release lock
   destroy App
   Client -> App ** : start detached app on the same port
   App -> Tab : reconnected tab accepts the new instance's session
