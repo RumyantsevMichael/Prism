@@ -134,7 +134,7 @@ Related: [session-consumption-tracing.md§3](#3), [session-consumption-tracing.m
 
 Pattern: Unwanted behavior
 
-Disposition: Active
+Disposition: Superseded by [session-consumption-tracing.md§12](#12)
 
 Requirement: If Prism cannot correlate a Codex hook to a root transcript with an exact supported behavior profile and canonical transcript project root, then Prism shall not infer mutation success, while a correlated Codex transcript shall take precedence over compatibility environment values and Claude shall use only its canonical `CLAUDE_PROJECT_DIR` as project identity.
 
@@ -167,3 +167,18 @@ Requirement: If a trace directory, record, temporary file, or lock cannot be pro
 Rationale: Local instrumentation must not turn symbolic links, hard links, stale locks, or concurrent writers into cross-boundary writes.
 
 Related: [session-consumption-tracing.md§4](#4), [session-consumption-tracing.md§6](#6)
+
+<a id="12"></a>
+## 12. Prove host behavior with a covering profile and stable project identity
+
+Pattern: Unwanted behavior
+
+Disposition: Active
+
+Supersedes: [session-consumption-tracing.md§9](#9)
+
+Requirement: If Prism cannot correlate a Codex hook to a root transcript with a supported behavior profile that covers its version and a canonical transcript project root, then Prism shall not infer mutation success, while a correlated Codex transcript shall take precedence over compatibility environment values and Claude shall use only its canonical `CLAUDE_PROJECT_DIR` as project identity.
+
+Rationale: Host-like environment aliases and changing working directories do not prove either host identity or repository identity, while a reviewed lifecycle contract usually holds across later host versions.
+
+Related: [session-consumption-tracing.md§1](#1), [session-consumption-tracing.md§2](#2), [session-consumption-tracing.md§5](#5), [session-consumption-tracing.md§8](#8)

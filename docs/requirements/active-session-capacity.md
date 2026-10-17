@@ -20,7 +20,7 @@ Prism requires callers to repeat host, provider, model, version, and capacity fa
 
 - Read arbitrary host configuration keys.
 - Infer active-session identity from another installed command-line executable.
-- Guess capacity for an unknown host, provider, model, or version.
+- Guess capacity for an unknown host, provider, model, or version, other than the marked conservative Claude Code estimate.
 
 ## Design questions
 
@@ -57,7 +57,7 @@ Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§3](#3
 
 Pattern: Unwanted behavior
 
-Disposition: Active
+Disposition: Superseded by [active-session-capacity.md§8](#8)
 
 Requirement: If active-session facts are missing, stale, ambiguous, cross-project, associated with another correlation key, or insufficient for an exact total-scope capacity result, then Prism shall return `UNSUPPORTED` with a stable reason code and no fit classification.
 
@@ -83,7 +83,7 @@ Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§3](#3
 
 Pattern: Event-driven
 
-Disposition: Active
+Disposition: Superseded by [active-session-capacity.md§6](#6)
 
 Supersedes: [active-session-capacity.md§2](#2)
 
@@ -92,3 +92,46 @@ Requirement: When Prism handles a `PreToolUse` event for a root Codex session, P
 Rationale: PreToolUse refresh makes the first model call observable while the effective app-server configuration and exact registry profile prevent unsafe threshold guesses.
 
 Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§3](#3), [session-fit.md§1](session-fit.md#1)
+
+<a id="6"></a>
+## 6. Refresh and resolve active Codex capacity with covered profiles
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Supersedes: [active-session-capacity.md§5](#5)
+
+Requirement: When Prism handles a `PreToolUse` event for a root Codex session, Prism shall refresh allowlisted capacity facts from the correlated transcript's latest bounded `token_count` event and effective Codex configuration for the event working directory, shall use an explicit `model_auto_compact_token_limit` and scope when the effective configuration provides them, shall use the default threshold policy of the registry profile that covers the version, provider, and model when no threshold override is present, shall preserve complete explicit caller overrides as highest precedence, and shall return `UNSUPPORTED` for unavailable or conflicting runtime facts or `body_after_prefix` scope.
+
+Rationale: A covering profile keeps active capacity available across frequent Codex releases, while PreToolUse refresh and the transcript cross-check still prevent unsafe threshold guesses.
+
+Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§3](#3), [session-fit.md§5](session-fit.md#5)
+
+<a id="7"></a>
+## 7. Estimate active Claude Code capacity
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Requirement: When Prism handles a hook event for a root Claude Code session, Prism shall announce the session correlation key on context events, shall record the transcript version, the model, the environment provider, and a conservative capacity estimate derived only from the model's context window, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, numeric `autoCompactWindow` settings, and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, and shall mark every result that uses the estimate as `ESTIMATED`.
+
+Rationale: Claude Code does not expose its compaction threshold to hooks, and an estimate below every observable trigger keeps fit decisions safe while making active capacity available.
+
+Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§8](#8), [session-fit.md§1](session-fit.md#1)
+
+<a id="8"></a>
+## 8. Reject unproved active-session capacity except a marked estimate
+
+Pattern: Unwanted behavior
+
+Disposition: Active
+
+Supersedes: [active-session-capacity.md§3](#3)
+
+Requirement: If active-session facts are missing, stale, ambiguous, cross-project, associated with another correlation key, or insufficient for an exact total-scope capacity result or a marked conservative Claude Code estimate, then Prism shall return `UNSUPPORTED` with a stable reason code and no fit classification.
+
+Rationale: A shell binary or nearby session can differ from the model and settings of the active request, while a marked estimate states its own uncertainty.
+
+Related: [active-session-capacity.md§1](#1), [active-session-capacity.md§6](#6), [active-session-capacity.md§7](#7), [session-fit.md§5](session-fit.md#5)

@@ -424,7 +424,7 @@ const tools = [
   },
   {
     name: "resolve_session_capacity",
-    description: "Resolve exact capacity for an explicit session or for the same active host session identified by the hook-emitted correlation key and plugin data directory. Active resolution fails closed when hook facts are unavailable, stale, mismatched, or do not attest an exact total-session threshold.",
+    description: "Resolve exact capacity for an explicit session or for the same active host session identified by the hook-emitted correlation key and plugin data directory. Active resolution fails closed when hook facts are unavailable, stale, mismatched, or do not attest an exact total-session threshold; Claude Code active capacity is a conservative estimate marked capacityBasis ESTIMATED.",
     inputSchema: {
       type: "object",
       properties: {

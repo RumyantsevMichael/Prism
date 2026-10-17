@@ -130,3 +130,4 @@ The trace store serializes cleanup with token-owned directory locks and evicts e
 2026-09-19: Rejected partial active overrides and hardened fact storage against symbolic-link traversal and stale-owner lock release.
 2026-09-19: Replaced response-text success inference with exact versioned Codex lifecycle evidence, stable host roots, chronological derivation, bounded string token estimation, and token-owned trace storage.
 2026-09-19: Clarified that fact-store mutation remains under exclusive ownership and that aged locks are reclaimed only after the matching owner is confirmed dead.
+2026-10-17: [Cover later host versions with verified minimum profiles](minimum-version-host-profiles.md) proposes replacing exact-version profile matching.

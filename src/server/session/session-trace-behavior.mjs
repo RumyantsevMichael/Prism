@@ -1,4 +1,9 @@
 import { readFileSync } from "node:fs";
+import {
+  HARNESS_VERSION_POLICIES,
+  isComparableHarnessVersion,
+  selectVersionedProfile
+} from "./harness-version.mjs";
 
 const registry = JSON.parse(readFileSync(
   new URL("./session-trace-behavior-registry.json", import.meta.url),
@@ -12,7 +17,8 @@ const PROFILE_KEYS = [
   "modelFacingResponseShape",
   "provenance"
 ];
-const MATCH_KEYS = ["harness", "harnessVersion", "provider"];
+const MATCH_KEYS = ["harness", "harnessVersion", "harnessVersionPolicy", "provider"];
+const TUPLE_KEYS = ["harness", "harnessVersion", "provider"];
 const PROVENANCE_KEYS = ["source", "sourceVersion", "verifiedAt"];
 
 function isObject(value) {
@@ -55,7 +61,13 @@ export function validateSessionTraceBehaviorRegistry(value) {
     for (const key of MATCH_KEYS) {
       assertString(profile.match[key], `${name}.match.${key}`);
     }
-    const tuple = JSON.stringify(MATCH_KEYS.map((key) => profile.match[key]));
+    if (
+      !HARNESS_VERSION_POLICIES.includes(profile.match.harnessVersionPolicy)
+      || (profile.match.harnessVersionPolicy === "minimum" && !isComparableHarnessVersion(profile.match.harnessVersion))
+    ) {
+      throw new Error(`${name}.match.harnessVersionPolicy is invalid.`);
+    }
+    const tuple = JSON.stringify(TUPLE_KEYS.map((key) => profile.match[key]));
     if (tuples.has(tuple)) {
       throw new Error(`Duplicate trace behavior match: ${tuple}.`);
     }
@@ -100,11 +112,10 @@ export function validateSessionTraceBehaviorRegistry(value) {
 validateSessionTraceBehaviorRegistry(registry);
 
 export function resolveSessionTraceBehavior({ harness, harnessVersion, provider } = {}) {
-  const profile = registry.profiles.find((candidate) => (
+  const profile = selectVersionedProfile(registry.profiles.filter((candidate) => (
     candidate.match.harness === harness
-    && candidate.match.harnessVersion === harnessVersion
     && candidate.match.provider === provider
-  ));
+  )), harnessVersion);
   return profile ? structuredClone(profile) : null;
 }
 
