@@ -11,7 +11,6 @@ function tabUrl(baseUrl, tabs) {
 // A project served by the shared review app until the app cannot be reached, then by its own session server for the rest of the session.
 async function appBackedReview(client, projectRoot, { startSession, openBrowser: browserOpener }) {
   let session = null;
-  let baseUrl = null;
   const fallBack = async () => {
     session ??= startSession({ projectRoot, openBrowser: browserOpener });
     return session;
@@ -26,14 +25,15 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
     }
   }
   try {
-    baseUrl = (await client.register(projectRoot)).url;
+    await client.register(projectRoot);
   } catch (error) {
     if (error.reachable) throw error;
     return fallBack();
   }
   return {
     projectRoot,
-    reviewUrl: (tabs) => viaApp(async () => tabUrl(baseUrl, tabs), (review) => review.reviewUrl(tabs)),
+    // The app answers with its current address, so a link stays valid after the app is replaced on another port or credential.
+    reviewUrl: (tabs) => viaApp(async () => tabUrl((await client.present(projectRoot, { open: false })).url, tabs), (review) => review.reviewUrl(tabs)),
     getSession: () => viaApp(async () => (await client.present(projectRoot, { open: false })).session, (review) => review.getSession()),
     setOpenTabs: (tabs) => viaApp(async () => (await client.present(projectRoot, { tabs, open: false })).session.openTabs, (review) => review.setOpenTabs(tabs)),
     open: (tabs) => viaApp(async () => {
@@ -119,9 +119,13 @@ export function createReviewServerPool({ start = startReviewServer, app } = {}) 
     await client?.close();
   }
 
-  // Registration at session start lists the project in the review app before any tool call; failures wait for the first tool call.
+  // Registration lists the project in the review app from session start or the first tool call that names it, once per project;
+  // a failure leaves it to the review tools, which fall back to a session server.
+  const registered = new Set();
   function register(projectRoot) {
-    if (client) void client.register(projectRoot).catch(() => {});
+    if (!client || registered.has(projectRoot)) return;
+    registered.add(projectRoot);
+    void client.register(projectRoot).catch(() => {});
   }
 
   return { get, close, register };

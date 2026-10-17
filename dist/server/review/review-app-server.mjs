@@ -17,7 +17,7 @@ import {
   writeDiscovery,
   writeProjectRoots
 } from "./review-app-discovery.mjs";
-import { createProjectReview, isTrustedHost, normalizeTabs, send } from "./review-server.mjs";
+import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send } from "./review-server.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
 const IDLE_MS = 30 * 60 * 1000;
@@ -26,21 +26,9 @@ const NONCE_MS = 2 * 60 * 1000;
 const LOCK_RENEW_MS = 5 * 1000;
 const LOCK_STALE_MS = 30 * 1000;
 const LOCK_TIMEOUT_MS = 1000;
-const BODY_LIMIT = 64 * 1024;
 
 function statusError(status, message) {
   return Object.assign(new Error(message), { status });
-}
-
-async function readBody(request) {
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > BODY_LIMIT) throw statusError(400, "The request body is too large.");
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString("utf8");
 }
 
 function parseBody(text) {
@@ -256,10 +244,11 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     }
   });
 
-  // A successor keeps the port and viewer credential only from a handed-off file and only on that same port, so a tab reconnects
-  // after a replacement but a credential that a tab may have sent to another listener after a crash is never served again.
+  // A successor keeps the port and viewer credential only from a recent handed-off file and only on that same port, so a tab reconnects
+  // after a replacement but a credential that a tab may have sent to another listener after a crash or long ago is never served again.
   let bound = false;
-  if (previous?.handoff === true) {
+  const handedOffAt = Date.parse(previous?.handedOffAt);
+  if (previous?.handoff === true && Date.now() - handedOffAt <= LOCK_STALE_MS) {
     try {
       await listen(server, previous.port);
       viewerToken = previous.viewerToken;
@@ -301,7 +290,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       await new Promise((resolve) => server.close(() => resolve()));
       // Only the lock holder touches the discovery file, so an app that lost its lock never removes the winner's.
       if (ownsLock) {
-        if (handoff) await writeDiscovery(directory, { ...published, handoff: true }).catch(() => {});
+        if (handoff) await writeDiscovery(directory, { ...published, handoff: true, handedOffAt: new Date().toISOString() }).catch(() => {});
         else await removeDiscovery(directory, controlToken).catch(() => {});
       }
       releaseLock();

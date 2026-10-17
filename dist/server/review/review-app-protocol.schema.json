@@ -11,7 +11,8 @@
       "pid": { "type": "integer", "minimum": 1 },
       "pluginVersion": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
       "startedAt": { "type": "string" },
-      "handoff": { "type": "boolean" }
+      "handoff": { "type": "boolean" },
+      "handedOffAt": { "type": "string", "description": "ISO time the handoff was written; a successor honors a handoff only within 30 seconds of it" }
     }
   },
   "health": {
@@ -35,6 +36,6 @@
     "registerLease": { "method": "PUT", "path": "/control/projects/<lease>", "body": { "projectRoot": "string" } },
     "endLease": { "method": "DELETE", "path": "/control/projects/<lease>" },
     "present": { "method": "POST", "path": "/control/present", "body": { "projectRoot": "string", "tabs": "string[] or absent", "open": "boolean" }, "response": { "url": "string", "open": "boolean", "session": "object" } },
-    "shutdown": { "method": "POST", "path": "/control/shutdown", "body": { "handoff": "boolean" }, "effect": "With handoff true the app rewrites the discovery file with handoff true before releasing the lock; a successor reuses port and viewerToken only from such a file and only on that port." }
+    "shutdown": { "method": "POST", "path": "/control/shutdown", "body": { "handoff": "boolean" }, "effect": "With handoff true the app rewrites the discovery file with handoff true and handedOffAt before releasing the lock; a successor reuses port and viewerToken only from such a file written within the last 30 seconds and only on that port." }
   }
 }

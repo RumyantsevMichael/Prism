@@ -8,7 +8,7 @@ import path from "node:path";
 import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { launchReviewApp } from "../../dist/server/review/review-app-client.mjs";
+import { createReviewAppClient, launchReviewApp } from "../../dist/server/review/review-app-client.mjs";
 import { createReviewServerPool } from "../../dist/server/review/review-server-pool.mjs";
 import { withFileLock } from "../../dist/server/workflow/artifact-store.mjs";
 
@@ -294,10 +294,97 @@ test("an MCP server lists its project in the app from start until it exits", asy
   };
   // No initialize request and no tool call: registration rides on the host naming the project at start.
   // Two process starts under a loaded test run can take a while, so the bounds are generous; a pass returns as soon as the state holds.
-  assert.equal((await eventually(listed, 30000)).live, true);
+  await eventually(async () => (await listed())?.live === true, 30000);
   child.stdin.end();
   await new Promise((resolve) => child.once("exit", resolve));
   await eventually(async () => (await listed())?.live === false, 30000);
+});
+
+test("an MCP server in a host that names no project lists it from its first Prism tool call", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "codex");
+  const env = { ...process.env, PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
+  delete env.PRISM_REVIEW_APP;
+  delete env.CLAUDE_PROJECT_DIR;
+  const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
+  context.after(() => child.kill());
+  readline.createInterface({ input: child.stdout }).on("line", () => {});
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_roadmap", arguments: { projectRoot: root } } })}\n`);
+  const listed = async () => {
+    const response = await control(await readDiscovery(directory), "projects");
+    return JSON.parse(response.body).projects.find((entry) => entry.projectRoot === root);
+  };
+  await eventually(async () => (await listed())?.live === true, 30000);
+});
+
+test("a session whose shared app cannot start stops launching it", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "nolaunch");
+  let launches = 0;
+  const client = createReviewAppClient({ directory, launch: () => { launches += 1; return null; }, startTimeoutMs: 300 });
+  context.after(() => client.close());
+  context.mock.timers.enable({ apis: ["setInterval"] });
+  await assert.rejects(client.register(root), { reachable: false });
+  assert.equal(launches, 1);
+  context.mock.timers.tick(10 * 60 * 1000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(launches, 1, "a failed registration leaves no lease renewal behind");
+});
+
+test("a listener that trickles bytes on the discovered port cannot hold a session past the start deadline", async (context) => {
+  const directory = await appDirectory(context);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const root = await project(context, "trickle");
+  const timers = new Set();
+  const listener = http.createServer((incoming, outgoing) => {
+    outgoing.writeHead(200, { "Content-Type": "application/json" });
+    const timer = setInterval(() => outgoing.write(" "), 100);
+    timers.add(timer);
+  });
+  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const { port } = listener.address();
+  await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ protocol: 1, port, controlToken: "a".repeat(32), viewerToken: "b".repeat(32), pid: 999999 }), { mode: 0o600 });
+  try {
+    const started = Date.now();
+    const review = await pool(context, { app: { directory, launch: () => null } }).get(root, "task");
+    const url = new URL(await review.reviewUrl([]));
+    assert.ok(Date.now() - started < 8000, "the session falls back within the start deadline");
+    assert.notEqual(Number(url.port), port);
+  } finally {
+    // The shared cleanup would wait on this listener too, so it goes first.
+    await rm(path.join(directory, "review-app.json"), { force: true });
+    for (const timer of timers) clearInterval(timer);
+    listener.closeAllConnections();
+    listener.close();
+  }
+});
+
+test("the review URL follows the app after it is replaced on a new port", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "moved");
+  const review = await pool(context, { app: { directory } }).get(root, "task");
+  const before = new URL(await review.reviewUrl([]));
+  await shutdownApp(directory);
+  await eventually(async () => !(await stat(path.join(directory, "review-app.lock")).catch(() => null)));
+  const after = new URL(await review.reviewUrl([]));
+  assert.ok(after.pathname.includes("/p/"), "the session is still served by the shared app");
+  assert.notEqual(after.href, before.href);
+  assert.equal(JSON.parse((await request(new URL("api/index", after))).body).projectRoot, root);
+});
+
+test("a successor ignores a handoff that is older than the lock lifetime", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "stale-handoff");
+  await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]);
+  const first = await readDiscovery(directory);
+  await control(first, "shutdown", { method: "POST", body: { handoff: true } });
+  await eventually(async () => !(await stat(path.join(directory, "review-app.lock")).catch(() => null)));
+  const handedOff = await readDiscovery(directory);
+  assert.equal(handedOff.handoff, true);
+  await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ ...handedOff, handedOffAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() }), { mode: 0o600 });
+  await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]);
+  const second = await readDiscovery(directory);
+  assert.notEqual(second.viewerToken, first.viewerToken, "an old handoff never hands out its viewer credential again");
 });
 
 test("a newer session replaces an older review app and keeps its port and viewer credential", async (context) => {
@@ -321,7 +408,7 @@ test("a newer session replaces an older review app and keeps its port and viewer
         reply(200, JSON.stringify({ protocol: 0, pid: process.pid }));
       } else if (incoming.url === "/control/shutdown" && incoming.method === "POST") {
         shutdowns.push(JSON.parse(text));
-        await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ ...JSON.parse(await readFile(path.join(directory, "review-app.json"), "utf8")), handoff: true }), { mode: 0o600 });
+        await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ ...JSON.parse(await readFile(path.join(directory, "review-app.json"), "utf8")), handoff: true, handedOffAt: new Date().toISOString() }), { mode: 0o600 });
         reply(200, "{}");
         standIn.close(() => stopStandIn());
         standIn.closeAllConnections();

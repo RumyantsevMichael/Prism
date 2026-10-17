@@ -286,7 +286,8 @@ export function normalizeTabs(value) {
   return [...new Set(tabs)];
 }
 
-async function readJson(request) {
+// Reads a request body of at most 64 KiB as text; the review app needs the exact text because control requests sign it.
+export async function readBody(request) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
@@ -296,8 +297,13 @@ async function readJson(request) {
     }
     chunks.push(chunk);
   }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function readJson(request) {
+  const text = await readBody(request);
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(text);
   } catch {
     throw new Error("The request body must be JSON.");
   }

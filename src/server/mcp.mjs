@@ -112,6 +112,8 @@ async function requestedProjectRoot(argumentsValue) {
       throw new Error(`The projectRoot argument does not match the host project root ${resolvedRoot}. Pass that path, which is the directory where the session started.`);
     }
   }
+  // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call.
+  reviewServers.register(resolvedRoot);
   return resolvedRoot;
 }
 

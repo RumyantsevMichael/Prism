@@ -109,6 +109,11 @@ Repeated viewer requests update that session instead of opening another browser 
 The artifact tree shows all files, and tabs retain open artifacts.
 Ask the agent to open the viewer at any time during an active session.
 
+All Prism sessions of one user share one review app on one local port, and each project has its own page there.
+The app starts with the first session that needs it, outlives that session, and exits after 30 minutes with no session and no open viewer.
+It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.
+A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
+
 `Review browser: auto` uses the internal browser in desktop sessions and the system browser in CLI sessions.
 Set `internal` or `external` in `.prism/workflow.md` to override this choice.
 When the selected browser is unavailable, Prism presents the URL and source artifacts.
