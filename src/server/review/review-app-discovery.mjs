@@ -28,8 +28,8 @@ export function reviewAppDisabled(env = process.env) {
   return env.PRISM_REVIEW_APP === "off";
 }
 
-export const discoveryPath = (directory) => path.join(directory, DISCOVERY_FILE);
-export const projectsPath = (directory) => path.join(directory, PROJECTS_FILE);
+const discoveryPath = (directory) => path.join(directory, DISCOVERY_FILE);
+const projectsPath = (directory) => path.join(directory, PROJECTS_FILE);
 // withFileLock locks `${path}.lock`, so this names review-app.lock.
 export const lockBase = (directory) => path.join(directory, LOCK_BASE);
 export const lockPath = (directory) => `${lockBase(directory)}.lock`;
