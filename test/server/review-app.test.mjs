@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -880,6 +880,24 @@ test("the app reads a project's evidence from every store that sessions of diffe
     assert.deepEqual(JSON.parse(response.body).record.lines, [host]);
   }
   assert.equal((await request(new URL(`api/evidence?id=${"0".repeat(64)}`, url))).status, 400, "evidence that no store holds is still refused");
+});
+
+test("the app records a gate answer in the most recently reported store", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await gateProject(context, "answers", 1);
+  const stores = [];
+  for (const host of ["older", "newer"]) {
+    const storeDirectory = await realpath(await mkdtemp(path.join(os.tmpdir(), `prism-app-${host}-`)));
+    context.after(() => rm(storeDirectory, { recursive: true, force: true }));
+    await pool(context, { app: { directory, evidenceDirectory: storeDirectory } }).get(root, "task");
+    stores.push(storeDirectory);
+  }
+  const url = (await standalone(context, { projectRoot: root, env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: () => true })).url;
+  const body = JSON.stringify({ initiative: "work", id: "gate-00000000", choice: null, note: "Answered from the page." });
+  const answered = await request(new URL("api/gates/answer", url), { method: "POST", headers: { "Content-Type": "application/json" }, body });
+  assert.equal(answered.status, 200, answered.body);
+  const contents = await Promise.all(stores.map((store) => readdir(store)));
+  assert.deepEqual(contents.map((entries) => entries.length > 0), [false, true], "only the newest reported store holds the answer's project records");
 });
 
 test("a session falls back within the start deadline when a started app never answers", async (context) => {
