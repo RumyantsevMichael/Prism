@@ -105,11 +105,12 @@ export async function readProjectRoots(directory) {
   }
 }
 
-// Maps each project root to the evidence store directory its sessions reported, so a restarted app keeps serving the right evidence.
+// Maps each project root to the evidence store directories its sessions reported, most recent first, so a restarted app keeps serving the right evidence.
 export async function readProjectEvidence(directory) {
   try {
     const value = JSON.parse(await readFile(projectsPath(directory), "utf8"))?.evidence;
-    return Object.fromEntries(Object.entries(value && typeof value === "object" ? value : {}).filter(([root, store]) => path.isAbsolute(root) && typeof store === "string" && path.isAbsolute(store)));
+    const valid = (stores) => Array.isArray(stores) && stores.length > 0 && stores.every((store) => typeof store === "string" && path.isAbsolute(store));
+    return Object.fromEntries(Object.entries(value && typeof value === "object" ? value : {}).filter(([root, stores]) => path.isAbsolute(root) && valid(stores)));
   } catch {
     return {};
   }

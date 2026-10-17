@@ -862,6 +862,26 @@ test("the app serves each project's evidence from the store its sessions report,
   assert.equal((await control(discovery, `projects/${lease}`, { method: "PUT", body: { projectRoot: root, evidenceDirectory: "relative/store" } })).status, 400);
 });
 
+test("the app reads a project's evidence from every store that sessions of different hosts report", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "hosts");
+  const evidence = [];
+  for (const host of ["claude", "codex"]) {
+    const storeDirectory = await realpath(await mkdtemp(path.join(os.tmpdir(), `prism-app-${host}-`)));
+    context.after(() => rm(storeDirectory, { recursive: true, force: true }));
+    const id = await new ConservationStore(storeDirectory).put(root, { schemaVersion: 1, kind: "migration", project: root, artifactPath: "docs/hosts.md", revision: "b".repeat(64), lines: [host] });
+    evidence.push({ storeDirectory, id, host });
+  }
+  for (const { storeDirectory } of evidence) await pool(context, { app: { directory, evidenceDirectory: storeDirectory } }).get(root, "task");
+  const url = (await standalone(context, { projectRoot: root, env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: () => true })).url;
+  for (const { id, host } of evidence) {
+    const response = await request(new URL(`api/evidence?id=${id}`, url));
+    assert.equal(response.status, 200, `the ${host} session's evidence stays readable`);
+    assert.deepEqual(JSON.parse(response.body).record.lines, [host]);
+  }
+  assert.equal((await request(new URL(`api/evidence?id=${"0".repeat(64)}`, url))).status, 400, "evidence that no store holds is still refused");
+});
+
 test("a session falls back within the start deadline when a started app never answers", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "silent");

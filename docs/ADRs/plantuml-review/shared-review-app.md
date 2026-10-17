@@ -35,7 +35,7 @@ The port and viewer credential SHOULD survive a replacement of the review app, s
 A review app MUST NOT reuse a viewer credential except within 30 seconds of a handoff and on the same port, so a credential that a tab sent to another listener after a crash or an abandoned handoff is never served again.
 Each review app process MUST create its own control credential.
 Each project MUST keep its own review context, including its tabs, viewers, and file boundary, behind a stable project segment of the URL.
-The review app MUST read a project's evidence and write its gate answers in the evidence store that the processes registering or presenting that project report, because the process that launched the app may use another host's store.
+The review app MUST read a project's evidence from the evidence stores that the processes registering or presenting that project report, and write its gate answers in the most recently reported one, because the process that launched the app may use another host's store.
 Only a request with the control credential MAY register a project.
 A project MUST stay live while its registering session renews its lease and MUST then appear as recent.
 A session MUST register its project when its host names the project at start, and otherwise at its first tool call that names the project.

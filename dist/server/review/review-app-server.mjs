@@ -30,6 +30,7 @@ const LOCK_RENEW_MS = 5 * 1000;
 const LOCK_STALE_MS = 30 * 1000;
 const LOCK_TIMEOUT_MS = 1000;
 const OPEN_LEASE_MS = 10 * 1000;
+const EVIDENCE_STORE_LIMIT = 4;
 const NOTICE_MS = 60 * 1000;
 const RECENT_LIMIT = 20;
 
@@ -125,7 +126,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
 
   function savedProjects() {
     const ordered = byRecency();
-    return { roots: ordered.map(({ root }) => root), evidence: Object.fromEntries(ordered.filter((project) => project.evidenceDirectory).map((project) => [project.root, project.evidenceDirectory])) };
+    return { roots: ordered.map(({ root }) => root), evidence: Object.fromEntries(ordered.filter((project) => project.evidenceDirectories.length).map((project) => [project.root, project.evidenceDirectories])) };
   }
 
   // Keeps at most RECENT_LIMIT projects that are neither live nor watched, and saves the projects most recent first whenever that changes.
@@ -143,19 +144,40 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     await writeProjectRoots(directory, roots, evidence).catch(() => {});
   }
 
-  // A project's evidence lives in the store of the sessions that write it, which need not be the store of the process that launched this app.
-  function evidenceStoreOf(project) {
-    if (!project.evidenceDirectory) return conservationStore;
-    let store = stores.get(project.evidenceDirectory);
-    if (!store) stores.set(project.evidenceDirectory, store = new ConservationStore(project.evidenceDirectory));
+  function storeAt(evidenceDirectory) {
+    let store = stores.get(evidenceDirectory);
+    if (!store) stores.set(evidenceDirectory, store = new ConservationStore(evidenceDirectory));
     return store;
+  }
+
+  // A project's evidence lives in the stores of the sessions that write it, which need not be the store of the process that launched this app.
+  // Evidence ids are digests of immutable records, so a read may try every reported store; writes go to the most recently reported one.
+  function evidenceStoreOf(project) {
+    if (!project.evidenceDirectories.length) return conservationStore;
+    const reported = project.evidenceDirectories.map(storeAt);
+    return {
+      async get(...request) {
+        let missing;
+        for (const store of reported) {
+          try {
+            return await store.get(...request);
+          } catch (error) {
+            if (error.code !== "evidence_missing") throw error;
+            missing = error;
+          }
+        }
+        throw missing;
+      },
+      registerCoordinationOutputs: (...request) => reported[0].registerCoordinationOutputs(...request),
+      writeManaged: (...request) => reported[0].writeManaged(...request)
+    };
   }
 
   async function reportEvidence(project, evidenceDirectory) {
     if (evidenceDirectory === undefined) return;
     const resolved = path.resolve(evidenceDirectory);
-    if (resolved === project.evidenceDirectory) return;
-    project.evidenceDirectory = resolved;
+    if (project.evidenceDirectories[0] === resolved) return;
+    project.evidenceDirectories = [resolved, ...project.evidenceDirectories.filter((known) => known !== resolved)].slice(0, EVIDENCE_STORE_LIMIT);
     await rememberProjects();
   }
 
@@ -197,7 +219,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const baseUrl = `http://127.0.0.1:${port}${viewerPrefix()}/p/${id}`;
       const onViewer = (sendNotice) => deliverPendingNotices(id, sendNotice);
       // A new project starts as the most recent, so the recent limit never drops the project being registered.
-      project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectory: null };
+      project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [] };
       project.review = createProjectReview({ projectRoot: root, baseUrl, instance, onViewer, evidenceStore: () => evidenceStoreOf(project) });
       projects.set(id, project);
       if (persist) await rememberProjects();
@@ -394,7 +416,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     const project = await projectFor(root, { persist: false }).catch(() => null);
     if (project) {
       project.lastSeen = restored.length - index;
-      project.evidenceDirectory = restoredEvidence[root] ?? null;
+      project.evidenceDirectories = restoredEvidence[root] ?? [];
     }
   }
   sequence = restored.length;
