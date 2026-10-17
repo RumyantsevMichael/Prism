@@ -95,7 +95,7 @@ Code establishes implemented behavior.
 | Resynthesis | Reconstruction of affected text or declarations from current semantic requirements while preserving their observable obligations. |
 | Complexity delta | Independent before/after measurements and qualified judgments whose tradeoffs require conceptual and behavioral evidence. |
 | Context plan | An explainable commit-bound estimate of repository source ranges that implementation must, likely, or possibly reads. |
-| Session capacity profile | A versioned exact host, provider, model, and version match that supplies capacity facts with provenance. |
+| Session capacity profile | An exact host, provider, and model match, with an exact or minimum verified host version, that supplies capacity facts with provenance. |
 | Repository read budget | The context available for repository discovery after base, design, and implementation reserves are removed from the compaction threshold. |
 | FIT | A design result ready for independent audit, with design artifacts and verification evidence prepared. |
 | SPLIT | A design result reporting new child slice folders for orchestration to accept and continue. |

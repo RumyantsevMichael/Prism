@@ -43,7 +43,7 @@ Related: [session-fit.md§2](#2), [session-fit.md§3](#3), [session-fit.md§4](#
 
 Pattern: Unwanted behavior
 
-Disposition: Active
+Disposition: Superseded by [session-fit.md§5](#5)
 
 Requirement: If Prism cannot resolve an exact supported host, provider, model, and version combination, then Prism shall return `UNSUPPORTED` without a fit classification.
 
@@ -76,3 +76,18 @@ Requirement: Where a caller supplies an implementation reserve override, Prism s
 Rationale: Different workflows and projects require different implementation headroom.
 
 Related: [session-fit.md§1](#1), [session-fit.md§3](#3)
+
+<a id="5"></a>
+## 5. Reject unmatched capacity profiles
+
+Pattern: Unwanted behavior
+
+Disposition: Active
+
+Supersedes: [session-fit.md§2](#2)
+
+Requirement: If no capacity profile matches the target host, provider, and model exactly and covers the target version, either as its exact verified version or as the newest verified minimum version at or below a version without an exact profile, then Prism shall return `UNSUPPORTED` without a fit classification.
+
+Rationale: Host capacity defaults change far less often than host versions, while a guessed host, provider, or model can still produce an unsafe false fit decision.
+
+Related: [session-fit.md§1](#1), [active-session-capacity.md§6](active-session-capacity.md#6)

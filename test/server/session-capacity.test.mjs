@@ -179,10 +179,9 @@ test("returns unsupported for an unknown combination without complete overrides"
   });
 });
 
-test("matches every registry dimension exactly", () => {
+test("matches harness, provider, and model exactly", () => {
   for (const session of [
     { ...supportedSession, harness: "other" },
-    { ...supportedSession, harnessVersion: "0.147.1" },
     { ...supportedSession, provider: "aws-bedrock" },
     { ...supportedSession, model: "unknown-model" }
   ]) {
@@ -190,9 +189,32 @@ test("matches every registry dimension exactly", () => {
   }
 });
 
+test("covers later versions with the newest verified minimum profile", () => {
+  for (const [harnessVersion, model, profileId] of [
+    ["0.147.1", "gpt-5.6-sol", "codex-cli-0.147.0-openai-default"],
+    ["0.162.1", "gpt-5.4", "codex-cli-0.147.0-openai-default"],
+    ["0.163.0", "gpt-5.6-sol", "codex-cli-0.163.0-openai-default"],
+    ["0.170.0", "gpt-6-sol", "codex-cli-0.163.0-openai-default"],
+    ["0.170.0", "gpt-5.4", "codex-cli-0.147.0-openai-default"]
+  ]) {
+    const result = resolveSessionCapacity({ ...supportedSession, harnessVersion, model });
+    assert.equal(result.status, "SUPPORTED", `${harnessVersion} ${model}`);
+    assert.equal(result.profileId, profileId);
+    assert.equal(result.capacity.compactionThresholdTokens, 244800);
+  }
+  for (const [harnessVersion, model] of [
+    ["0.146.9", "gpt-5.6-sol"],
+    ["0.147.0-alpha.1", "gpt-5.6-sol"],
+    ["0.162.1", "gpt-6-sol"],
+    ["not-a-version", "gpt-5.6-sol"]
+  ]) {
+    assert.equal(resolveSessionCapacity({ ...supportedSession, harnessVersion, model }).status, "UNSUPPORTED", `${harnessVersion} ${model}`);
+  }
+});
+
 test("resolves aliases only inside an exact profile match", () => {
   const alias = resolveSessionCapacity({ ...supportedSession, model: "gpt-5.6" });
-  const wrongVersion = resolveSessionCapacity({ ...supportedSession, harnessVersion: "0.147.1", model: "gpt-5.6" });
+  const wrongVersion = resolveSessionCapacity({ ...supportedSession, harnessVersion: "0.146.0", model: "gpt-5.6" });
 
   assert.equal(alias.status, "SUPPORTED");
   assert.equal(alias.model.canonical, "gpt-5.6-sol");
@@ -311,6 +333,7 @@ test("validates the canonical registry and rejects malformed registries", () => 
     match: {
       harness: "test",
       harnessVersion: "1.0.0",
+      harnessVersionPolicy: "exact",
       provider: "test",
       models: ["model"],
       aliases: {}
@@ -349,7 +372,9 @@ test("validates the canonical registry and rejects malformed registries", () => 
     { schemaVersion: 2, profiles: [baseProfile] },
     { schemaVersion: 1, profiles: [baseProfile, { ...baseProfile, id: "duplicate" }] },
     { schemaVersion: 1, profiles: [{ ...baseProfile, match: { ...baseProfile.match, aliases: { alias: "missing" } } }] },
-    { schemaVersion: 1, profiles: [{ ...baseProfile, capacity: { ...baseProfile.capacity, compactionThresholdTokens: 91 } }] }
+    { schemaVersion: 1, profiles: [{ ...baseProfile, capacity: { ...baseProfile.capacity, compactionThresholdTokens: 91 } }] },
+    { schemaVersion: 1, profiles: [{ ...baseProfile, match: { ...baseProfile.match, harnessVersionPolicy: "any" } }] },
+    { schemaVersion: 1, profiles: [{ ...baseProfile, match: { ...baseProfile.match, harnessVersion: "latest", harnessVersionPolicy: "minimum" } }] }
   ]) {
     assert.throws(() => validateCapacityRegistry(registry));
   }

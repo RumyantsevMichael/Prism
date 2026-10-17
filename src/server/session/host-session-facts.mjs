@@ -90,13 +90,14 @@ const SOURCE_KEYS = [
   "compactionScope"
 ];
 const SOURCE_VALUES = Object.freeze({
-  harness: new Set(["codex-adapter"]),
-  harnessVersion: new Set(["transcript.session_meta.cli_version", null]),
-  provider: new Set(["transcript.session_meta.model_provider", null]),
-  model: new Set(["hook.model", null]),
+  harness: new Set(["codex-adapter", "claude-code-adapter"]),
+  harnessVersion: new Set(["transcript.session_meta.cli_version", "transcript.version", null]),
+  provider: new Set(["transcript.session_meta.model_provider", "environment.claude_code_provider", null]),
+  model: new Set(["hook.model", "transcript.message.model", null]),
   contextWindowTokens: new Set([
     "hook.model_context_window",
     "transcript.event_msg.token_count.info.model_context_window",
+    "estimate.claude_code.context_window",
     null
   ]),
   compactionThresholdTokens: new Set([
@@ -104,14 +105,20 @@ const SOURCE_VALUES = Object.freeze({
     "config.model_auto_compact_token_limit",
     "config.absent.model_auto_compact_token_limit",
     "registry.derived.model_auto_compact_token_limit",
+    "estimate.claude_code.auto_compact_threshold",
     null
   ]),
   compactionScope: new Set([
     "hook.model_auto_compact_token_limit_scope",
     "config.model_auto_compact_token_limit_scope",
     "config.default.model_auto_compact_token_limit_scope",
+    "claude_code.total_input_tokens",
     null
   ])
+});
+const HARNESS_ADAPTERS = Object.freeze({
+  "codex-cli": "codex-adapter",
+  "claude-code": "claude-code-adapter"
 });
 const REASON_CODES = new Set(Object.values(HOST_FACT_REASON));
 
@@ -357,7 +364,7 @@ export function validateHostSessionFacts(record) {
   assertIsoDate(record.observedAt, "hostSessionFacts.observedAt");
 
   assertExactKeys(record.host, HOST_KEYS, HOST_KEYS, "hostSessionFacts.host");
-  if (record.host.harness !== "codex-cli") {
+  if (!Object.hasOwn(HARNESS_ADAPTERS, record.host.harness)) {
     throw new Error("hostSessionFacts.host.harness is invalid.");
   }
   assertNullableHostValue(record.host.harnessVersion, "hostSessionFacts.host.harnessVersion", VERSION_PATTERN);
@@ -387,6 +394,9 @@ export function validateHostSessionFacts(record) {
     if (!SOURCE_VALUES[key].has(record.sources[key])) {
       throw new Error(`hostSessionFacts.sources.${key} is invalid.`);
     }
+  }
+  if (record.sources.harness !== HARNESS_ADAPTERS[record.host.harness]) {
+    throw new Error("hostSessionFacts.sources.harness does not match the host harness.");
   }
   for (const key of ["harnessVersion", "provider", "model"]) {
     if ((record.host[key] === null) !== (record.sources[key] === null)) {

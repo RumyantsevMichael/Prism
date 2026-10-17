@@ -67,6 +67,7 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
   assert.equal(Object.hasOwn(hookManifest.hooks, "PostCompact"), false);
   assert.deepEqual(traceBehaviorRegistry.profiles.map((profile) => profile.match.harnessVersion), [
     "0.147.0",
+    "0.163.0",
     "0.155.0-alpha.9.2"
   ]);
 });

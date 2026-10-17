@@ -1,8 +1,13 @@
 import path from "node:path";
 import { realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { createClaudeCodeHostAdapter } from "../server/session/host-adapters/claude-code.mjs";
 import { createCodexHostAdapter } from "../server/session/host-adapters/codex.mjs";
-import { writeHostSessionFacts } from "../server/session/host-session-facts.mjs";
+import {
+  HOST_FACT_REASON,
+  createSessionCorrelationKey,
+  writeHostSessionFacts
+} from "../server/session/host-session-facts.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 const CONTEXT_EVENTS = new Set(["SessionStart", "UserPromptSubmit"]);
@@ -35,18 +40,36 @@ export async function recordSessionFacts({
     } catch {
     }
   }
-  const activeAdapter = adapter || createCodexHostAdapter();
-  const capture = await activeAdapter.capture({ hookInput, environment });
+  let capture = await (adapter || createCodexHostAdapter()).capture({ hookInput, environment });
+  let claudeCodeSessionDigest = null;
+  if (
+    !adapter
+    && !capture.record
+    && capture.reasonCode === HOST_FACT_REASON.HOST_METADATA_UNAVAILABLE
+    && typeof environment.CLAUDE_PROJECT_DIR === "string"
+    && environment.CLAUDE_PROJECT_DIR.trim()
+    && !environment.CODEX_VERSION
+    && !Object.hasOwn(hookInput, "turn_id")
+    && !Object.hasOwn(hookInput, "subagent")
+  ) {
+    capture = await createClaudeCodeHostAdapter().capture({ hookInput, environment });
+    // A new Claude Code session has no transcript until its first model call, and the PreToolUse refresh
+    // before each Prism tool call records the facts, so the key is announced before any record exists.
+    if (typeof hookInput.session_id === "string" && hookInput.session_id.trim() && !hookInput.agent_id) {
+      claudeCodeSessionDigest = createSessionCorrelationKey(hookInput.session_id);
+    }
+  }
   const dataDirectory = environment.PLUGIN_DATA || environment.CLAUDE_PLUGIN_DATA;
   let hookOutput = null;
-  if (capture.record && dataDirectory) {
-    await writeHostSessionFacts(capture.record, { dataDirectory });
+  if (dataDirectory && (capture.record || claudeCodeSessionDigest)) {
+    if (capture.record) await writeHostSessionFacts(capture.record, { dataDirectory });
+    const sessionDigest = capture.record?.sessionDigest ?? claudeCodeSessionDigest;
     const hookEventName = typeof hookInput.hook_event_name === "string" ? hookInput.hook_event_name : null;
     if (CONTEXT_EVENTS.has(hookEventName)) {
       hookOutput = {
         hookSpecificOutput: {
           hookEventName,
-          additionalContext: `Prism session correlation key: ${capture.record.sessionDigest}. Prism plugin data directory: ${dataDirectory}. Pass both exact values to Prism active-session capacity and consumption tools.`
+          additionalContext: `Prism session correlation key: ${sessionDigest}. Prism plugin data directory: ${dataDirectory}. Pass both exact values to Prism active-session capacity and consumption tools.`
         }
       };
     }
