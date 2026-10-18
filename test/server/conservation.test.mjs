@@ -480,29 +480,6 @@ test('a planned file reference covers new private units but never a new public d
  assert.ok(c.observations.some(item=>item.code==='undeclared_public_concept'&&item.severity==='failure'&&item.unit.selector==='api'));
 });
 
-test('python declarations follow the underscore convention, __all__, and stay private in test files and nested functions',async()=>{
- const pyUnits=(snapshot,file,text,specs)=>specs.map(([kind,qualifiedName,snippet])=>{const start=text.indexOf(snippet);assert.ok(start>=0,snippet);const name=qualifiedName.split('::').at(-1);
-  return {id:`${file}:${qualifiedName}`,file,domain:'code',kind,name,qualifiedName,selector:qualifiedName,span:{start,end:start+snippet.length},sourceHash:snapshot.snapshot.files.find(item=>item.file===file).hash,contentHash:digest(snippet),isExported:false};});
- const original='def existing():\n    return 1\n';
- for(const exported of [false,true]){
-  const f=await fixture({'pkg/code.py':original,'requirements.txt':'Change the code.'});
-  await analysis(f.root,f.b,pyUnits(f.b,'pkg/code.py',original,[['function','existing','def existing():\n    return 1']]));
-  const d=await f.update({expectedRevision:null,scope:['pkg','tests'],baselineId:f.b.snapshotId,requirements:[ref('requirements.txt')],operations:[
-   {op:'insert',entry:entry('code','MODIFY',[ref('pkg/code.py')],[ref('pkg/code.py')],{kind:'module'})},
-   {op:'insert',entry:entry('tests','ADD',[],[ref('tests/test_code.py')],{kind:'test',reuseEvidence:{candidates:[],justification:'New test module.',emptyResultReason:'No tests exist.'}})}]});
-  const code=`${exported?"__all__ = ['helper']\n":''}def existing():\n    return 2\ndef helper():\n    def inner():\n        return 3\n    return inner()\ndef _private():\n    return 4\nclass Api:\n    def run(self):\n        return 5\n    def _step(self):\n        return 6\n`;
-  const tests='def test_helper():\n    assert True\n';
-  await writeFile(path.join(f.root,'pkg/code.py'),code);await mkdir(path.join(f.root,'tests'));await writeFile(path.join(f.root,'tests/test_code.py'),tests);
-  const result=await store.capture(f.root);
-  await analysis(f.root,result,[...pyUnits(result,'pkg/code.py',code,[['function','existing','def existing():\n    return 2'],['function','helper','def helper():\n    def inner():\n        return 3\n    return inner()'],['function','helper::inner','def inner():\n        return 3'],['function','_private','def _private():\n    return 4'],['class','Api','class Api:\n    def run(self):\n        return 5\n    def _step(self):\n        return 6'],['method','Api::run','def run(self):\n        return 5'],['method','Api::_step','def _step(self):\n        return 6']]),
-   ...pyUnits(result,'tests/test_code.py',tests,[['function','test_helper','def test_helper():\n    assert True']])]);
-  const c=await compare(f,d,result);
-  const flagged=c.observations.filter(item=>item.code==='undeclared_public_concept').map(item=>item.unit.selector).sort();
-  assert.deepEqual(flagged,exported?['helper']:['Api','Api::run','helper']);
-  assert.equal(c.observations.some(item=>item.code==='unclassified_unit'&&['_private','helper::inner','Api::_step','test_helper','existing'].includes(item.unit?.selector)),false);
-  assert.equal(c.measurements.find(item=>item.dimension==='code.publicDeclarationsAdded').after,exported?1:3);
- }
-});
 test('private units of a new file belong to the planned entries that create it',async()=>{
  const f=await fixture({'code.ts':'function existing() { return 1; }\n','requirements.txt':'Add a shared module.'});await analysis(f.root,f.b,privateFunctions(f.b,'function existing() { return 1; }\n'));
  const d=await f.update({expectedRevision:null,scope:['code.ts','shared.ts'],baselineId:f.b.snapshotId,requirements:[ref('requirements.txt')],operations:[{op:'insert',entry:entry('shared','REPLACE',[{path:'code.ts',selector:{type:'symbol',value:'existing'}}],[{path:'shared.ts',selector:{type:'symbol',value:'existing'}}],{kind:'function'})}]});
