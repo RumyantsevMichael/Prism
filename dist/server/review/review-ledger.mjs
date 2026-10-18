@@ -328,9 +328,10 @@ async function waveProblems(projectRoot, review, wave, requireLaneResults) {
   return problems;
 }
 async function nextSteps(projectRoot, review, wave) {
-  const from = review.waves[review.waves.indexOf(wave) - 1], carryable = [];
-  if (from) for (const lane of wave.lanes) {
-    if (!from.lanes.some((item) => item.id === lane.id) || from.baselineId !== wave.baselineId) continue;
+  const earlier = review.waves.slice(0, review.waves.indexOf(wave)).reverse(), carryable = [];
+  for (const lane of wave.lanes) {
+    const from = earlier.find((item) => item.mode === wave.mode && item.baselineId === wave.baselineId && acceptedIn(review, item).some((assessment) => assessment.lane === lane.id));
+    if (!from) continue;
     const { carried } = await carryCandidates(projectRoot, review, wave, from, lane.id, lane.reviewer).catch(() => ({ carried: [] }));
     if (carried.length) carryable.push({ lane: lane.id, fromWave: from.id, ids: carried.map((item) => item.id.slice(wave.id.length + 1)) });
   }

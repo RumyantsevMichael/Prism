@@ -317,8 +317,10 @@ test('a reviewer carries unchanged assessments into a correction wave and check_
  // A correction adds notes.md: rules.md and requirements.md keep their bytes, so the convergence judgment still stands.
  await writeFile(path.join(f.root,'notes.md'),'# Notes\n\nA new note.\n');
  const second=await compareNow();
- await act(coord,[wave('correction',second)]);
+ // A wave that only fixed findings sits between, so the offer reaches back to the last wave with accepted assessments.
+ await act(coord,[wave('findings-only',second),wave('correction',second)]);
  const offered=await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'});
+ assert.equal(offered.carryable[0].fromWave,'audit');
  assert.ok(offered.carryable[0].ids.includes('converge'));
  assert.ok(offered.assessmentSkeleton.some(item=>item.assessment.kind==='convergence'&&item.assessment.section.path==='notes.md'));
  await assert.rejects(act(coord,[{op:'carry_assessments',lane:'main',fromWave:'audit'}]),{code:'gate_blocked'});

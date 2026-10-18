@@ -285,11 +285,14 @@ async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wav
   return problems;
 }
 
-// What the next round can write: assessments that carry forward from the previous wave unchanged, then a skeleton for the rest.
+// What the next round can write: assessments that carry forward unchanged, then a skeleton for the rest.
+// Each lane carries from the latest earlier wave of the same mode and baseline that holds accepted assessments in that lane,
+// because a correction can follow a wave of the other mode or a wave that only fixed findings.
 async function nextSteps(projectRoot: string, review: ReviewRecord, wave: Wave) {
-  const from = review.waves[review.waves.indexOf(wave) - 1], carryable: { lane: string; fromWave: string; ids: string[] }[] = [];
-  if (from) for (const lane of wave.lanes) {
-    if (!from.lanes.some(item => item.id === lane.id) || from.baselineId !== wave.baselineId) continue;
+  const earlier = review.waves.slice(0, review.waves.indexOf(wave)).reverse(), carryable: { lane: string; fromWave: string; ids: string[] }[] = [];
+  for (const lane of wave.lanes) {
+    const from = earlier.find(item => item.mode === wave.mode && item.baselineId === wave.baselineId && acceptedIn(review, item).some(assessment => assessment.lane === lane.id));
+    if (!from) continue;
     const { carried } = await carryCandidates(projectRoot, review, wave, from, lane.id, lane.reviewer).catch(() => ({ carried: [] as Assessment[] }));
     if (carried.length) carryable.push({ lane: lane.id, fromWave: from.id, ids: carried.map(item => item.id.slice(wave.id.length + 1)) });
   }
