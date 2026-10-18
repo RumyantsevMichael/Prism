@@ -22,7 +22,12 @@ A reviewer in a resolution exchange cannot return final `CLEAN` or mark findings
 4. Read the requirements, relevant ADRs, tests, feature files, diagrams, contract decisions, and verification evidence for the lane.
 5. If code or correction evidence is outdated, request the current result before deciding findings or closure.
 6. Read the complete [concept delta](../design/references/concept-delta.md) through MCP at the submitted or audited revision.
-7. Review the assigned scope through the applicable mode below.
+7. In a correction wave, read `correctionScope` from `check_review_gate`:
+   1. Verify each `FIXED` finding.
+   2. Review each changed file listed for the assigned lane in full.
+   3. If `deltaChanged` is true, review the concept delta changes.
+   4. Read unchanged files only to check what a change depends on.
+8. Review the assigned scope through the applicable mode below.
 
 ## Contracts
 
@@ -66,7 +71,7 @@ Implementation review requires actual consumption and its verification evidence.
   9. Check delta readiness, scope, concept coverage, and reuse evidence against the design.
   10. For `CLEAN`, record the exact delta path and revision in the review result.
 - For `implementation-review`:
-  1. Read the complete diff against the supplied review base and recorded verification results.
+  1. Read the complete diff against the supplied review base and recorded verification results, limited in a correction wave to its `correctionScope`.
   2. Trace assigned requirements and architectural constraints through changed code and observable tests.
   3. Reject product behavior outside Approved intent.
   4. Check feature scenarios against Approved intent and verified behavior.
