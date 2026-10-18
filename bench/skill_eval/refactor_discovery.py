@@ -33,6 +33,8 @@ ALLOWED_TOOLS = [
     "Bash(git log:*)", "Bash(git diff:*)", "Bash(git show:*)", "Bash(git ls-files:*)", "Bash(wc:*)",
     "mcp__plugin_prism_prism-review__*",
 ]
+# The plain variant asks for the list only after the analysis ends, in a resumed turn with no tools, so the list cannot steer the investigation.
+LIST_FOLLOW_UP = "Without investigating further, restate the candidates and kept similarities from your answer above." + RESULT_INSTRUCTION
 STATUS_TOOL = "mcp__plugin_prism_prism-review__get_repository_intelligence_status"
 
 
@@ -72,6 +74,7 @@ def parse_stream(stdout: str) -> dict[str, object]:
     usage = result.get("usage") or {}
     return {
         "output": result.get("result") or "",
+        "session_id": result.get("session_id"),
         "error": "agent reported an error" if result.get("is_error") else (None if result else "no result event"),
         "cost_usd": result.get("total_cost_usd"),
         "turns": result.get("num_turns"),
@@ -157,6 +160,15 @@ def changed_files(workspace: Path) -> list[str]:
     return [line[3:] for line in git(workspace, "status", "--porcelain", "--untracked-files=all").splitlines()]
 
 
+def invoke(workspace: Path, config_dir: Path | None, timeout: int, prompt: str, *extra: str, model: str) -> tuple[str, str | None]:
+    command = ["claude", "-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose", *extra]
+    try:
+        completed = subprocess.run(command, cwd=workspace, env=clean_env(config_dir), capture_output=True, text=True, timeout=timeout)
+        return completed.stdout, f"exit {completed.returncode}" if completed.returncode else None
+    except subprocess.TimeoutExpired as exc:
+        return (exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""), "timeout"
+
+
 def run(args: argparse.Namespace) -> None:
     catalog = json.loads(Path(args.catalog).read_text())
     out = Path(args.out)
@@ -171,24 +183,27 @@ def run(args: argparse.Namespace) -> None:
             try:
                 started = time.monotonic()
                 if args.mock:
-                    stdout, stderr, error = "", "", None
-                    parsed = {"output": mock_output(catalog, rep), "error": None, "cost_usd": 0.0, "turns": 0, "usage": {}, "tool_calls": 0, "status_polls": 0, "prism_tool_calls": 0, "permission_denials": 0}
+                    stdout, error = "", None
+                    parsed = {"output": mock_output(catalog, rep), "session_id": None, "error": None, "cost_usd": 0.0, "turns": 0, "usage": {}, "tool_calls": 0, "status_polls": 0, "prism_tool_calls": 0, "permission_denials": 0}
                 else:
-                    command = ["claude", "-p", PROMPT + RESULT_INSTRUCTION, "--plugin-dir", str(plugin), "--model", args.model,
-                               "--output-format", "stream-json", "--verbose", "--allowedTools", *ALLOWED_TOOLS]
-                    try:
-                        completed = subprocess.run(command, cwd=workspace, env=clean_env(config_dir), capture_output=True, text=True, timeout=args.timeout)
-                        stdout, stderr, error = completed.stdout, completed.stderr, f"exit {completed.returncode}" if completed.returncode else None
-                    except subprocess.TimeoutExpired as exc:
-                        stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""
-                        stderr, error = "", "timeout"
+                    prompt = PROMPT + (RESULT_INSTRUCTION if args.variant == "listed" else "")
+                    stdout, error = invoke(workspace, config_dir, args.timeout, prompt, "--plugin-dir", str(plugin), "--allowedTools", *ALLOWED_TOOLS, model=args.model)
                     parsed = parse_stream(stdout)
+                    if args.variant == "plain" and parsed["session_id"] and not error:
+                        follow_stdout, follow_error = invoke(workspace, config_dir, args.timeout, LIST_FOLLOW_UP, "--plugin-dir", str(plugin), "--resume", str(parsed["session_id"]), "--tools", "", model=args.model)
+                        follow = parse_stream(follow_stdout)
+                        stdout += follow_stdout
+                        error = follow_error or follow["error"]
+                        parsed["analysis_output"] = parsed["output"]
+                        parsed["output"] = follow["output"]
+                        parsed["list_cost_usd"] = follow["cost_usd"]
                 record = {
                     "schema_version": 1,
                     "rep": rep,
                     "started_at": utc_now(),
                     "duration_s": round(time.monotonic() - started, 1),
                     "mock": args.mock,
+                    "variant": args.variant,
                     "model": args.model,
                     "plugin": str(plugin),
                     "plugin_commit": git(plugin, "rev-parse", "HEAD").strip(),
@@ -247,6 +262,8 @@ def main() -> None:
     run_parser.add_argument("--model", default="claude-opus-5-5")
     run_parser.add_argument("--config-dir", help="separate CLAUDE_CONFIG_DIR, so no memory or project history reaches the run")
     run_parser.add_argument("--timeout", type=int, default=3600)
+    run_parser.add_argument("--variant", choices=("listed", "plain"), default="listed",
+                            help="listed asks for the candidate list in the request; plain asks for it in a tool-less follow-up turn")
     run_parser.add_argument("--mock", action="store_true", help="score generated output instead of invoking an agent")
     report_parser = commands.add_parser("report", help="score and summarize a results directory")
     report_parser.add_argument("results")
