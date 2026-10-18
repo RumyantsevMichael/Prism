@@ -9,9 +9,12 @@ The [conservation procedure](../../design/references/concept-delta.md) defines s
 1. Read `get_review` with `projectRoot`, `reviewPath`, and bounded pages.
 2. Pin `expectedRevision` across pages and use that revision for `update_review`.
 3. Create a missing record with `expectedRevision: null`, the sibling `deltaPath`, delivery worker, and coordinator actor.
-4. Submit typed operations through `update_review` in atomic batches of at most 100, and never through a script that starts the Prism MCP server.
-5. After a conflict, reread before retrying.
-6. If `projectionStale` is true, use `regenerate_markdown` without editing JSON or Markdown directly.
+4. Before recording assessments for an unaccepted wave, read `check_review_gate`.
+   - If it returns `carryable`, reuse those assessments with `carry_assessments` instead of recording them again.
+   - Fill the angle-bracket placeholders of its `assessmentSkeleton` operations and submit them.
+5. Submit typed operations through `update_review` in atomic batches of at most 100, and never through a script that starts the Prism MCP server.
+6. After a conflict, reread before retrying.
+7. If `projectionStale` is true, use `regenerate_markdown` without editing JSON or Markdown directly.
 
 Actors name their worker ID and declared role: `coordinator`, `delivery`, or `reviewer`.
 These identities enforce workflow ownership; they are not host authentication credentials.
@@ -25,6 +28,7 @@ Findings retain their original mode, lane, local ID, aliases, routing, and statu
 | Fresh assigned reviewer | `set_finding_status` records `VERIFIED` or `REOPENED`; only corrected `FIXED` findings can become `VERIFIED`. |
 | Delivery or reviewer | `record_assessment` records growth, convergence, private-detail attribution, or scoped unsupported checks. |
 | Fresh assigned reviewer | `accept_assessment` verifies delivery evidence; reviewer-authored assessments identify the responsible reviewer directly. |
+| Fresh assigned reviewer | `carry_assessments` copies the lane's accepted assessments from an earlier wave whose observations, justified growth, and cited files are unchanged; `ids` limits the copy and refuses any assessment that cannot carry. |
 | Coordinator | `record_exchange` disqualifies a correction participant from verification of that correction. |
 | Reviewer or coordinator | `open_conflict` records explicit disagreement; coordinator `resolve_conflict` records the resolution reason. |
 | Assigned reviewer | `submit_lane` records `CLEAN` or `FINDINGS` bound to that lane's findings revision and inputs. |

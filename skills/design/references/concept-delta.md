@@ -159,6 +159,7 @@ For each affected text section:
 
 A `convergence` assessment whose `section` names only the file path covers every changed section of that file.
 An assessment binds to its review wave's source, requirement, comparison, and delta revisions.
+A fresh assigned reviewer can carry an accepted assessment into a later wave with `carry_assessments` while its observations, justified growth, and cited files are unchanged.
 An unsupported check needs a `manual` assessment naming exact observation IDs, evidence, reason, and the assigned reviewer.
 A changed private helper outside a planned reference needs an `implementation-detail` assessment naming its owning concept, and a `manual` assessment cannot clear it.
 Manual evidence cannot override missing semantic search, stale or missing source evidence, scope violations, or demonstrably retained deletion targets.

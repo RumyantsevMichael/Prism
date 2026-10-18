@@ -10,6 +10,7 @@ The delivery conversation is excluded from reviewer inputs.
 Every assigned lane needs a current result before `update_review` can accept the wave.
 Unresolved disagreements block acceptance.
 A lane carries forward only through `carry_lane` after the server verifies unchanged inputs and observations.
+An accepted assessment carries into a later wave only through `carry_assessments` after the server verifies its unchanged evidence.
 Outdated evidence invalidates that lane's result.
 When findings remain, the original `Develop <slice>` and `Review <slice>` workers stay available for direct correction exchange.
 Each worker receives the other worker ID.

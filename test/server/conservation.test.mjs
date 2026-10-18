@@ -290,6 +290,61 @@ test('one reviewed justification covers several growth dimensions and convergenc
  await act(reviewer,[{op:'record_assessment',assessment:{id:'growth',lane:'main',kind:'growth',reason:'The requirement needs the combined explicit wording.',evidence:[requirement],growthIds:c.growth.map(x=>x.id),justification:{dimensions:c.growth.map(x=>x.dimension),conceptIds:['merged'],requirements:[requirement],reason:'Express both constraints.'}}},{op:'submit_lane',lane:'main',status:'CLEAN'}]);
  await act(coord,[{op:'accept_wave'}]);assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'})).ready,true);
 });
+test('a reviewer carries unchanged assessments into a correction wave and check_review_gate offers the rest as a skeleton',async()=>{
+ const f=await fixture({'rules.md':'# Rules\n\nOld one.\nOld two.\n','requirements.md':'Preserve both constraints.'});
+ const requirement=ref('requirements.md');
+ const d=await f.update({expectedRevision:null,scope:['rules.md','notes.md'],baselineId:f.b.snapshotId,requirements:[requirement],operations:[{op:'insert',entry:entry('merged','REPLACE',[ref('rules.md','Old one.\n'),ref('rules.md','Old two.\n')],[ref('rules.md','Apply both constraints and explain the result.\n')])}]});
+ await writeFile(path.join(f.root,'rules.md'),'# Rules\n\nApply both constraints and explain the result.\n');
+ const compareNow=async()=>{const result=await store.capture(f.root);const c=await compareConceptDelta({projectRoot:f.root,deltaPath:f.deltaPath,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:result.snapshotId},{runtime:degraded});return {result,c,full:await store.get(f.root,c.comparisonId,'comparison')};};
+ const first=await compareNow();
+ let revision=null;const coord={id:'coordinator',role:'coordinator'},reviewer={id:'reviewer',role:'reviewer'};
+ const act=async(actor,operations)=>{const r=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'delivery',expectedRevision:revision,actor,operations});revision=r.revision;return r;};
+ const wave=(id,{result,c})=>({op:'start_wave',id,mode:'design-audit',deltaRevision:d.revision,snapshotId:result.snapshotId,comparisonId:c.comparisonId,lanes:[{id:'main',reviewer:'reviewer',coverage:['rules.md','notes.md']}]});
+ await act(coord,[wave('audit',first)]);
+ const gate=await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'});
+ const skeleton=gate.assessmentSkeleton.map(item=>item.assessment);
+ assert.equal(gate.carryable,undefined);
+ assert.deepEqual(skeleton.filter(item=>item.kind==='manual').flatMap(item=>item.observationIds).sort(),first.full.observations.filter(x=>x.severity==='review_required').map(x=>x.id).sort());
+ assert.deepEqual(skeleton.find(item=>item.kind==='growth').growthIds,first.c.growth.map(x=>x.id));
+ assert.deepEqual(skeleton.find(item=>item.kind==='convergence').section,{path:'rules.md'});
+ assert.deepEqual(skeleton.find(item=>item.kind==='convergence').coverage.map(item=>item.requirement),[requirement]);
+ const convergence={id:'converge',lane:'main',kind:'convergence',reason:'Fixture assessment of combined constraints.',evidence:[requirement],section:ref('rules.md'),decision:'consolidate',conceptIds:['merged'],coverage:[{requirement,targets:[ref('rules.md','Apply both constraints and explain the result.')]}]};
+ const manual=first.full.observations.filter(x=>x.severity==='review_required').map(x=>({id:`manual-${x.id.slice(0,8)}`,lane:'main',kind:'manual',reason:'The fixture uses no structural runtime.',evidence:[ref(x.file||'rules.md')],observationIds:[x.id]}));
+ const growth={id:'growth',lane:'main',kind:'growth',reason:'The requirement needs the combined wording.',evidence:[requirement],growthIds:first.c.growth.map(x=>x.id),justification:{dimensions:first.c.growth.map(x=>x.dimension),conceptIds:['merged'],requirements:[requirement],reason:'Express both constraints.'}};
+ await act(reviewer,[convergence,...manual,growth].map(assessment=>({op:'record_assessment',assessment})).concat([{op:'submit_lane',lane:'main',status:'CLEAN'}]));
+ await act(coord,[{op:'accept_wave'}]);
+
+ // A correction adds notes.md: rules.md and requirements.md keep their bytes, so the convergence judgment still stands.
+ await writeFile(path.join(f.root,'notes.md'),'# Notes\n\nA new note.\n');
+ const second=await compareNow();
+ // A wave that only fixed findings sits between, so the offer reaches back to the last wave with accepted assessments.
+ await act(coord,[wave('findings-only',second),wave('correction',second)]);
+ const offered=await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'});
+ assert.equal(offered.carryable[0].fromWave,'audit');
+ assert.ok(offered.carryable[0].ids.includes('converge'));
+ assert.ok(offered.assessmentSkeleton.some(item=>item.assessment.kind==='convergence'&&item.assessment.section.path==='notes.md'));
+ await assert.rejects(act(coord,[{op:'carry_assessments',lane:'main',fromWave:'audit'}]),{code:'gate_blocked'});
+ await assert.rejects(act(reviewer,[{op:'carry_assessments',lane:'main',fromWave:'audit',ids:['missing']}]),{code:'validation_failed'});
+ const carried=await act(reviewer,[{op:'carry_assessments',lane:'main',fromWave:'audit'}]);
+ assert.ok(carried.carry.carried.includes('correction/converge'));
+ assert.deepEqual(carried.carry.carried,offered.carryable[0].ids.map(id=>`correction/${id}`));
+ // A file-less observation judges the whole change, so its assessment does not carry once notes.md changed.
+ const fileless=new Set(first.full.observations.filter(x=>x.severity==='review_required'&&!x.file&&!x.unit?.file).map(x=>`manual-${x.id.slice(0,8)}`));assert.ok(fileless.size>0);
+ assert.ok(carried.carry.notCarried.some(item=>fileless.has(item.id)&&/notes\.md/.test(item.reason)));
+ assert.equal(carried.carry.carried.some(id=>fileless.has(id.slice('correction/'.length))),false);
+ const stored=(await getReview({projectRoot:f.root,reviewPath:f.reviewPath,section:'assessments',limit:100})).entries.find(item=>item.id==='correction/converge');
+ assert.equal(stored.wave,'correction');assert.equal(stored.acceptedBy,'reviewer');assert.equal(stored.author,'reviewer');
+
+ // Changing a cited file stops the carry, and naming that assessment explicitly is refused with the reason.
+ await writeFile(path.join(f.root,'rules.md'),'# Rules\n\nApply both constraints and explain the outcome.\n');
+ const third=await compareNow();
+ await act(coord,[wave('second-correction',third)]);
+ await assert.rejects(act(reviewer,[{op:'carry_assessments',lane:'main',fromWave:'correction',ids:['correction/converge']}]),error=>error.code==='gate_blocked'&&/rules\.md/.test(error.message));
+ const partial=await act(reviewer,[{op:'carry_assessments',lane:'main',fromWave:'correction'}]);
+ assert.equal(partial.carry.carried.includes('second-correction/converge'),false);
+ assert.ok(partial.carry.notCarried.some(item=>item.id==='correction/converge'&&/rules\.md/.test(item.reason)));
+ await assert.rejects(act(coord,[{op:'accept_wave'}]),error=>error.code==='gate_blocked'&&/check_review_gate/.test(error.message));
+});
 test('manual checks cannot waive mechanically retained deletions',async()=>{
  const f=await fixture({'rules.md':'Must remove.','requirements.md':'Remove obsolete behavior.'});
  const d=await f.update({expectedRevision:null,scope:['rules.md'],baselineId:f.b.snapshotId,requirements:[ref('requirements.md')],operations:[{op:'insert',entry:entry('obsolete','DELETE',[ref('rules.md','Must remove.')],[])}]});
@@ -526,4 +581,11 @@ test('treats a scope with a trailing slash like the bare directory',async()=>{
   assert.equal(withinScope('sheetcalc',['sheetcalc/']),true);
   assert.equal(withinScope('sheetcalcx/a.py',['sheetcalc/']),false);
   assert.equal(withinScope('a.py',['/']),false);
+});
+
+test('accepts concept references under a scope written with a trailing slash',async()=>{
+ const f=await fixture({'pkg/code.ts':'function existing() { return 1; }\n','requirements.txt':'Change the code.'});
+ const d=await f.update({expectedRevision:null,scope:['pkg/'],baselineId:f.b.snapshotId,requirements:[ref('requirements.txt')],operations:[{op:'insert',entry:entry('code','MODIFY',[ref('pkg/code.ts')],[ref('pkg/code.ts')])}]});
+ assert.match(d.revision,/^[a-f0-9]{64}$/);
+ await assert.rejects(f.update({expectedRevision:d.revision,operations:[{op:'insert',entry:entry('other','ADD',[],[ref('pkgx/other.ts')])}]}),error=>error.errors.some(item=>item.includes('pkgx/other.ts is outside the declared scope')));
 });

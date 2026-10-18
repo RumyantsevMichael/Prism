@@ -6,6 +6,7 @@ import { mkdir, open, realpath, lstat } from "node:fs/promises";
 import path from "node:path";
 import { normalizeRepositorySourcePath } from "../repository-intelligence/repository-source-path.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
+import { withinScope } from "./conservation-store.mjs";
 
 export const CONCEPT_DELTA_LIMITS = Object.freeze({ operations: 100, bytes: 1024 * 1024, page: 100, defaultPage: 50 });
 export const CONCEPT_ACTIONS = ["KEEP", "MODIFY", "REPLACE", "DELETE", "ADD"];
@@ -103,7 +104,7 @@ function validateDocument(raw) {
       const seen = new Set();
       for (const ref of entry[side]) {
         const key = referenceKey(ref);
-        if (document.schemaVersion === 2 && !document.scope.some(prefix => ref.path === prefix || ref.path.startsWith(prefix + "/"))) errors.push(`${field}.${side}: ${ref.path} is outside the declared scope`);
+        if (document.schemaVersion === 2 && !withinScope(ref.path, document.scope)) errors.push(`${field}.${side}: ${ref.path} is outside the declared scope`);
         if (seen.has(key)) errors.push(`${field}.${side}: contains a duplicate reference`);
         seen.add(key);
         if (side === "before") {
