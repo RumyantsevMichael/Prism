@@ -400,6 +400,124 @@ def artifact_checks(workspace):
     }
 
 
+def review_checks(workspace):
+    """Count review gate work recorded in every review.json of the workspace.
+
+    Totals are cumulative over the workspace, so the final stage covers the whole task.
+    Refused operations never reach review.json; review_tool_calls counts those from transcripts.
+    """
+    totals = {
+        "reviews": 0,
+        "waves": 0,
+        "waves_accepted": 0,
+        "assessments_recorded": 0,
+        "assessments_carried": 0,
+        "findings": 0,
+        "operations": {},
+    }
+    for path in sorted(Path(workspace).rglob("review.json")):
+        if ".git" in path.parts or "_bench_tests" in path.parts:
+            continue
+        try:
+            review = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(review, dict) or not isinstance(review.get("waves"), list):
+            continue
+        totals["reviews"] += 1
+        totals["waves"] += len(review["waves"])
+        totals["waves_accepted"] += sum(1 for wave in review["waves"] if wave.get("accepted"))
+        totals["findings"] += len(review.get("findings") or [])
+        for entry in review.get("history") or []:
+            operation = entry.get("operation") or "?"
+            totals["operations"][operation] = totals["operations"].get(operation, 0) + 1
+        # carry_assessments names a copy "<wave>/<id without its source wave prefix>",
+        # and carry_lane names it "<wave>/<source id>", so a copy matches either form
+        # of an assessment ID from an earlier wave.
+        earlier = set()
+        for wave in review["waves"]:
+            prefix = f"{wave.get('id')}/"
+            current = [a for a in review.get("assessments") or [] if a.get("wave") == wave.get("id")]
+            for assessment in current:
+                aid = assessment.get("id") or ""
+                carried = aid.startswith(prefix) and aid[len(prefix):] in earlier
+                totals["assessments_carried" if carried else "assessments_recorded"] += 1
+            for assessment in current:
+                aid = assessment.get("id") or ""
+                earlier.update({aid, aid[len(prefix):] if aid.startswith(prefix) else aid})
+    return totals
+
+
+PRISM_TOOL = re.compile(r"^mcp__.*prism.*__([a-z_]+)$")
+# summarizeProblems in review-ledger.mts writes each problem group as "<code> x<count>: <message>".
+PROBLEM_GROUP = re.compile(r"\b([a-z]+(?:_[a-z]+)+) x(\d+):")
+
+
+def claude_transcripts(workspace, session_ids):
+    """Transcript files of the given Claude sessions, subagent transcripts included."""
+    root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+    # Claude Code names a project folder after its cwd with every other character
+    # replaced by "-", and shortens long names with a hash suffix.
+    slugs = {re.sub(r"[^A-Za-z0-9]", "-", str(p)) for p in (Path(workspace), Path(workspace).resolve())}
+    folders = [
+        d
+        for d in (root.iterdir() if root.is_dir() else [])
+        if d.name in slugs or any(len(s) > 200 and d.name.startswith(s[:200]) for s in slugs)
+    ]
+    files = []
+    for folder in folders:
+        for session_id in session_ids:
+            main = folder / f"{session_id}.jsonl"
+            files += [main] if main.exists() else []
+            files += sorted((folder / session_id).rglob("*.jsonl")) if (folder / session_id).is_dir() else []
+    return files
+
+
+def review_tool_calls(agent, workspace, phases):
+    """Count prism review tool calls and their refusals in this stage's Claude transcripts.
+
+    Returns None when no transcript is readable, such as for Codex or mock runs.
+    A resumed session can repeat earlier messages, so tool calls are deduplicated by ID.
+    """
+    session_ids = sorted({sid for phase in phases for sid in phase.get("session_ids") or []})
+    if agent != "claude" or not session_ids:
+        return None
+    files = claude_transcripts(workspace, session_ids)
+    if not files:
+        return None
+    uses, results = {}, {}
+    for path in files:
+        for line in path.read_text(errors="replace").splitlines():
+            try:
+                content = (json.loads(line).get("message") or {}).get("content")
+            except (json.JSONDecodeError, AttributeError):
+                continue
+            for block in content if isinstance(content, list) else []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use":
+                    match = PRISM_TOOL.match(block.get("name") or "")
+                    if match:
+                        uses[block.get("id")] = (match.group(1), block.get("input") or {})
+                elif block.get("type") == "tool_result" and block.get("is_error"):
+                    text = block.get("content")
+                    if isinstance(text, list):
+                        text = " ".join(item.get("text") or "" for item in text if isinstance(item, dict))
+                    results[block.get("tool_use_id")] = text or ""
+    counts = {"calls": {}, "errors": {}, "accept_wave_refused": 0, "problem_codes": {}}
+    for use_id, (tool, tool_input) in uses.items():
+        counts["calls"][tool] = counts["calls"].get(tool, 0) + 1
+        if use_id not in results:
+            continue
+        counts["errors"][tool] = counts["errors"].get(tool, 0) + 1
+        operations = tool_input.get("operations") if isinstance(tool_input.get("operations"), list) else []
+        if tool == "update_review" and any(isinstance(o, dict) and o.get("op") == "accept_wave" for o in operations):
+            counts["accept_wave_refused"] += 1
+        for code, number in PROBLEM_GROUP.findall(results[use_id]):
+            counts["problem_codes"][code] = counts["problem_codes"].get(code, 0) + int(number)
+    return counts
+
+
 # ---------------------------------------------------------------- workspaces
 
 
@@ -936,6 +1054,7 @@ def run_phase(
         "completed_marker": False,
         "is_error": None,
         "error": None,
+        "session_ids": [],
     }
     prompt = initial_prompt
     session_id = None
@@ -960,6 +1079,8 @@ def run_phase(
             record["total_cost_usd"] += payload.get("total_cost_usd") or 0.0
             record["is_error"] = payload.get("is_error")
             session_id = payload.get("session_id") or session_id
+            if session_id and session_id not in record["session_ids"]:
+                record["session_ids"].append(session_id)
             for key in TOKEN_KEYS:
                 record["usage"][key] += ((payload.get("usage") or {}).get(key) or 0)
         if error:
@@ -1021,6 +1142,25 @@ def mock_solve(workspace, task, prism_arm):
         guide = docs / "user-guide"
         guide.mkdir(parents=True, exist_ok=True)
         (guide / "usage.md").write_text("# Usage\n\nMock user guide for pipeline tests.\n")
+        # One correction wave that carries one assessment and records one, so the
+        # review metrics have something to count.
+        ledger = docs / "plans" / "mock" / "mock-slice"
+        ledger.mkdir(parents=True, exist_ok=True)
+        (ledger / "review.json").write_text(json.dumps({
+            "waves": [{"id": "audit-1", "accepted": {"actor": "mock"}}, {"id": "audit-2", "accepted": {"actor": "mock"}}],
+            "assessments": [
+                {"id": "a1", "wave": "audit-1"},
+                {"id": "a2", "wave": "audit-1"},
+                {"id": "audit-2/a1", "wave": "audit-2"},
+                {"id": "b1", "wave": "audit-2"},
+            ],
+            "findings": [],
+            "history": [
+                {"operation": op}
+                for op in ("open_wave", "record_assessment", "record_assessment", "accept_wave",
+                           "open_wave", "carry_assessments", "record_assessment", "accept_wave")
+            ],
+        }, indent=2) + "\n")
     return [
         {
             "name": "mock",
@@ -1064,12 +1204,19 @@ def resolve_arm(name, ref, out_dir):
 def env_fingerprint():
     """Record machine context that leaks into every agent session."""
     global_claude_md = Path.home() / ".claude" / "CLAUDE.md"
-    version = run_cmd(["claude", "--version"])
-    codex_version = run_cmd(["codex", "--version"])
+
+    def tool_version(tool):
+        # A mock run needs neither host installed.
+        try:
+            result = run_cmd([tool, "--version"])
+        except FileNotFoundError:
+            return None
+        return result.stdout.strip() if result.returncode == 0 else None
+
     return {
         "global_claude_md": sha256_file(global_claude_md)[:16] if global_claude_md.exists() else None,
-        "claude_version": version.stdout.strip() if version.returncode == 0 else None,
-        "codex_version": codex_version.stdout.strip() if codex_version.returncode == 0 else None,
+        "claude_version": tool_version("claude"),
+        "codex_version": tool_version("codex"),
         "platform": sys.platform,
         "python": sys.version.split()[0],
     }
@@ -1313,6 +1460,11 @@ def cmd_run(args):
                                 "score": score,
                                 "activity": stage_activity(wdir, phases),
                                 "artifacts": artifact_checks(wdir) if prism_arm else None,
+                                "reviews": (
+                                    {"ledger": review_checks(wdir), "tool_calls": review_tool_calls(args.agent, wdir, phases)}
+                                    if prism_arm
+                                    else None
+                                ),
                             }
                             results_file.write(json.dumps(record) + "\n")
                             results_file.flush()
@@ -1569,6 +1721,42 @@ def cmd_report(args):
             agent_tests = mean(r["artifacts"]["agent_test_files"] for r in arm_records)
             out(
                 f"| {arm} | {adr:.2f} | {accepted:.2f} | {features:.1f} | {guide:.2f} | {agent_tests:.1f} |"
+            )
+        out("")
+    review_records = [r for r in records if (r.get("reviews") or {}).get("ledger")]
+    if review_records:
+        out("## Review gate (prism arms, mean per run)")
+        out("")
+        out("Ledger counts come from every review.json at the final stage.")
+        out("Refusals come from Claude transcripts, summed over stages; `n/a` means no transcript was readable.")
+        out("")
+        out("| arm | reviews | waves | accepted | assessments recorded | assessments carried | findings | refused accept_wave | failed review calls | top problem codes |")
+        out("|-----|---------|-------|----------|----------------------|---------------------|----------|---------------------|---------------------|-------------------|")
+        for arm in arms:
+            runs = {}
+            for r in review_records:
+                if r["arm"] == arm:
+                    runs.setdefault((r["task"], r["rep"]), []).append(r)
+            if not runs:
+                continue
+            ledgers = [next(r for r in rs if r["final_stage"])["reviews"]["ledger"] for rs in runs.values() if any(r["final_stage"] for r in rs)]
+            calls = [[r["reviews"]["tool_calls"] for r in rs if r["reviews"].get("tool_calls")] for rs in runs.values()]
+            calls = [c for c in calls if c]
+            cell = lambda key: f"{mean(ledger[key] for ledger in ledgers):.1f}" if ledgers else "n/a"
+            if calls:
+                refused = f"{mean(sum(c['accept_wave_refused'] for c in run) for run in calls):.1f}"
+                failed = f"{mean(sum(sum(c['errors'].values()) for c in run) for run in calls):.1f}"
+                codes = {}
+                for run in calls:
+                    for c in run:
+                        for code, number in c["problem_codes"].items():
+                            codes[code] = codes.get(code, 0) + number / len(calls)
+                top = ", ".join(f"{code} {number:.1f}" for code, number in sorted(codes.items(), key=lambda kv: -kv[1])[:3]) or "none"
+            else:
+                refused = failed = top = "n/a"
+            out(
+                f"| {arm} | {cell('reviews')} | {cell('waves')} | {cell('waves_accepted')} | {cell('assessments_recorded')} "
+                f"| {cell('assessments_carried')} | {cell('findings')} | {refused} | {failed} | {top} |"
             )
         out("")
     report = "\n".join(lines)

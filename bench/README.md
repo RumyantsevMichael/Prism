@@ -31,7 +31,7 @@ For each arm, task, and repetition the harness:
 3. Relays questions: when a session ends without the completion marker, the harness sends the agent's message to the **product owner**, a pinned model prompted to answer only from the stage's hidden reference spec, and resumes the session with the reply (`--resume`).
    This repeats up to `--max-exchanges` times per session.
 4. After each stage, injects the hidden tests for all stages so far under `_bench_tests/` and scores them with pytest in a private venv.
-5. Appends one JSON record per stage to `results.jsonl` with the score, the costs, and mechanical artifact checks.
+5. Appends one JSON record per stage to `results.jsonl` with the score, the costs, mechanical artifact checks, and review gate counts.
 
 ## What is measured
 
@@ -46,6 +46,9 @@ After stage `n` the workspace is scored against the tests of stages 1 through `n
   A workflow that pays off holds its level while the baseline decays.
 - **Artifact observations**: mechanical counts for ADRs, feature files, user guides, and agent-written tests.
   An ADR or user guide is conditional and its absence is not a failure.
+- **Review gate work**: for prism arms, the waves, accepted waves, recorded and carried assessments, findings, and ledger operations counted from every `review.json` in the workspace.
+  Refused `accept_wave` calls, failed review tool calls, and the problem codes in their refusals come from the Claude session transcripts, because a refused operation never reaches `review.json`.
+  Codex runs and mock runs report no transcript counts.
 - **Cost**: agent cost, product-owner cost, token usage, turns, exchanges, and wall time from the agent JSON output.
 - Codex subscription runs report token usage but report zero API cost.
 - **Phase errors**: timeouts, turn-limit hits, and crashed sessions.
