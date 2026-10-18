@@ -320,6 +320,9 @@ test('a reviewer carries unchanged assessments into a correction wave and check_
  // A wave that only fixed findings sits between, so the offer reaches back to the last wave with accepted assessments.
  await act(coord,[wave('findings-only',second),wave('correction',second)]);
  const offered=await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'});
+ assert.equal(gate.correctionScope,undefined);
+ // Nothing changed since the findings-only wave, so the correction has no file to re-review.
+ assert.deepEqual(offered.correctionScope,{fromWave:'findings-only',deltaChanged:false,lanes:[{lane:'main',changedFiles:[]}]});
  assert.equal(offered.carryable[0].fromWave,'audit');
  assert.ok(offered.carryable[0].ids.includes('converge'));
  assert.ok(offered.assessmentSkeleton.some(item=>item.assessment.kind==='convergence'&&item.assessment.section.path==='notes.md'));
@@ -339,6 +342,8 @@ test('a reviewer carries unchanged assessments into a correction wave and check_
  await writeFile(path.join(f.root,'rules.md'),'# Rules\n\nApply both constraints and explain the outcome.\n');
  const third=await compareNow();
  await act(coord,[wave('second-correction',third)]);
+ // Only rules.md changed since the previous wave, so it is the one file this lane re-reviews.
+ assert.deepEqual((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'})).correctionScope,{fromWave:'correction',deltaChanged:false,lanes:[{lane:'main',changedFiles:['rules.md']}]});
  await assert.rejects(act(reviewer,[{op:'carry_assessments',lane:'main',fromWave:'correction',ids:['correction/converge']}]),error=>error.code==='gate_blocked'&&/rules\.md/.test(error.message));
  const partial=await act(reviewer,[{op:'carry_assessments',lane:'main',fromWave:'correction'}]);
  assert.equal(partial.carry.carried.includes('second-correction/converge'),false);

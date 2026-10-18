@@ -196,6 +196,7 @@ async function uncoveredText(projectRoot, comparison, accepted, document, before
   }
   return uncovered;
 }
+const changedFiles = (earlier, current, files = [...new Set([...earlier.files, ...current.files].map((item) => item.file))]) => files.filter((file) => canonical(earlier.files.find((item) => item.file === file) ?? null) !== canonical(current.files.find((item) => item.file === file) ?? null));
 const acceptedIn = (review, wave) => review.assessments.filter((item) => item.wave === wave.id && item.acceptedBy && !review.exchangeWorkers.includes(item.acceptedBy));
 async function carryCandidates(projectRoot, review, wave, from, lane, acceptedBy) {
   if (from.id === wave.id || from.baselineId !== wave.baselineId) throw conservationError("gate_blocked", "Assessments carry forward only from an earlier wave of the same baseline.");
@@ -230,7 +231,7 @@ async function carryCandidates(projectRoot, review, wave, from, lane, acceptedBy
     const references = [...assessment.evidence, ...assessment.section ? [assessment.section] : [], ...(assessment.coverage || []).flatMap((item) => [item.requirement, ...item.targets]), ...assessment.justification?.requirements || []];
     const whole = observations.some((observation) => !observation?.file && !observation?.unit?.file) ? [...earlier.files, ...current.files].map((file) => file.file).filter((file) => withinScope(file, comparison.scope)) : [];
     const files = /* @__PURE__ */ new Set([...references.map((reference) => reference.path), ...whole, ...observations.flatMap((observation) => [observation?.file, observation?.unit?.file]).filter((file) => Boolean(file))]);
-    const changed = [...files].filter((file) => canonical(earlier.files.find((item) => item.file === file) ?? null) !== canonical(current.files.find((item) => item.file === file) ?? null));
+    const changed = changedFiles(earlier, current, [...files]);
     if (changed.length) {
       skip(`Its files changed: ${changed.join(", ")}.`);
       continue;
@@ -336,7 +337,14 @@ async function nextSteps(projectRoot, review, wave) {
     if (carried.length) carryable.push({ lane: lane.id, fromWave: from.id, ids: carried.map((item) => item.id.slice(wave.id.length + 1)) });
   }
   const skeleton = await assessmentSkeleton(projectRoot, review, wave).catch(() => []);
-  return { ...carryable.length ? { carryable } : {}, ...skeleton.length ? { assessmentSkeleton: skeleton } : {} };
+  const scope = await correctionScope(projectRoot, review, wave).catch(() => void 0);
+  return { ...scope ? { correctionScope: scope } : {}, ...carryable.length ? { carryable } : {}, ...skeleton.length ? { assessmentSkeleton: skeleton } : {} };
+}
+async function correctionScope(projectRoot, review, wave) {
+  const previous = review.waves.slice(0, review.waves.indexOf(wave)).reverse().find((item) => item.mode === wave.mode);
+  if (!previous) return void 0;
+  const changed = changedFiles(await conservationStore.get(projectRoot, previous.snapshotId, "snapshot"), await conservationStore.get(projectRoot, wave.snapshotId, "snapshot"));
+  return { fromWave: previous.id, deltaChanged: previous.deltaRevision !== wave.deltaRevision, lanes: wave.lanes.map((lane) => ({ lane: lane.id, changedFiles: changed.filter((file) => withinScope(file, lane.coverage)) })) };
 }
 async function checkReviewGate(input) {
   assertInput(CHECK_REVIEW_GATE_SCHEMA, input);

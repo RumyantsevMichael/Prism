@@ -188,6 +188,9 @@ async function uncoveredText(projectRoot: string, comparison: ComparisonEvidence
   }
   return uncovered;
 }
+// Files whose captured bytes differ between two snapshots, including files added or removed.
+const changedFiles = (earlier: SnapshotEvidence, current: SnapshotEvidence, files = [...new Set([...earlier.files, ...current.files].map(item => item.file))]) =>
+  files.filter(file => canonical(earlier.files.find(item => item.file === file) ?? null) !== canonical(current.files.find(item => item.file === file) ?? null));
 const acceptedIn = (review: ReviewRecord, wave: Wave) => review.assessments.filter(item => item.wave === wave.id && item.acceptedBy && !review.exchangeWorkers.includes(item.acceptedBy));
 
 // An accepted assessment of an earlier wave carries into the current wave only while its judgment rests on unchanged evidence:
@@ -218,7 +221,7 @@ async function carryCandidates(projectRoot: string, review: ReviewRecord, wave: 
     // An observation without a file, such as an unsupported measurement, judges the whole change, so every in-scope file must be unchanged.
     const whole = observations.some(observation => !observation?.file && !observation?.unit?.file) ? [...earlier.files, ...current.files].map(file => file.file).filter(file => withinScope(file, comparison.scope)) : [];
     const files = new Set([...references.map(reference => reference.path), ...whole, ...observations.flatMap(observation => [observation?.file, observation?.unit?.file]).filter((file): file is string => Boolean(file))]);
-    const changed = [...files].filter(file => canonical(earlier.files.find(item => item.file === file) ?? null) !== canonical(current.files.find(item => item.file === file) ?? null));
+    const changed = changedFiles(earlier, current, [...files]);
     if (changed.length) { skip(`Its files changed: ${changed.join(", ")}.`); continue; }
     const copy: Assessment = { ...assessment, id, wave: wave.id, acceptedBy, ...(assessment.growthIds ? { growthIds } : {}) };
     try { await assessmentValid(projectRoot, review, wave, copy, comparison, document); } catch (error) { skip((error as Error).message); continue; }
@@ -297,7 +300,17 @@ async function nextSteps(projectRoot: string, review: ReviewRecord, wave: Wave) 
     if (carried.length) carryable.push({ lane: lane.id, fromWave: from.id, ids: carried.map(item => item.id.slice(wave.id.length + 1)) });
   }
   const skeleton = await assessmentSkeleton(projectRoot, review, wave).catch(() => []);
-  return { ...(carryable.length ? { carryable } : {}), ...(skeleton.length ? { assessmentSkeleton: skeleton } : {}) };
+  const scope = await correctionScope(projectRoot, review, wave).catch(() => undefined);
+  return { ...(scope ? { correctionScope: scope } : {}), ...(carryable.length ? { carryable } : {}), ...(skeleton.length ? { assessmentSkeleton: skeleton } : {}) };
+}
+
+// A correction wave re-reviews what changed since the previous wave of its mode: each lane gets the files whose bytes changed in its coverage.
+// Snapshots record file digests, not text, so the scope names whole files that the reviewer reads in full.
+async function correctionScope(projectRoot: string, review: ReviewRecord, wave: Wave) {
+  const previous = review.waves.slice(0, review.waves.indexOf(wave)).reverse().find(item => item.mode === wave.mode);
+  if (!previous) return undefined;
+  const changed = changedFiles(await conservationStore.get<SnapshotEvidence>(projectRoot, previous.snapshotId, "snapshot"), await conservationStore.get<SnapshotEvidence>(projectRoot, wave.snapshotId, "snapshot"));
+  return { fromWave: previous.id, deltaChanged: previous.deltaRevision !== wave.deltaRevision, lanes: wave.lanes.map(lane => ({ lane: lane.id, changedFiles: changed.filter(file => withinScope(file, lane.coverage)) })) };
 }
 
 export async function checkReviewGate(input: { projectRoot: string; reviewPath: string; expectedRevision?: string; gate: "implementation" | "completion" }) {
