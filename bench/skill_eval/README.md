@@ -19,6 +19,28 @@ The hidden probes test public behavior across error classes, boundary values, de
 Independent review checks knowledge ownership, instruction meaning, and conceptual tradeoffs that those probes cannot establish.
 These trials do not produce paired benchmark claims or prove behavior for all future model invocations.
 
+## Refactoring discovery recall
+
+`refactor_discovery.py` measures how many known candidates a repository-wide refactor analysis finds.
+The catalog in `refactor-discovery/prism-d146852.json` pins a Prism commit and lists known candidates with their files and symbols.
+An `expected` item counts toward recall, and an `acceptable` item is reported but either outcome is fine.
+Each run checks out the pinned commit in a temporary worktree and gives a fresh agent only the analysis request.
+The request ends with a JSON block of candidates and kept similarities, which is the only part the scorer reads.
+A proposed candidate matches an item when it names one of the item's files and one of its symbols.
+One candidate can match two items when their files and symbols overlap.
+The agent gets read, search, read-only git, and Prism tools, and the run fails its byte check if any file changes.
+Pass `--config-dir` with an empty directory so no memory or project history reaches the agent.
+The runner also drops every `CLAUDE*` variable, because a nested session exports memory paths.
+
+```bash
+python3 bench/skill_eval/refactor_discovery.py run --mock --reps 2 --out bench/skill_eval/results/discovery-mock
+python3 bench/skill_eval/refactor_discovery.py run --reps 3 --config-dir /tmp/discovery-config --out bench/skill_eval/results/discovery
+python3 bench/skill_eval/refactor_discovery.py report bench/skill_eval/results/discovery
+```
+
+`report` scores again from the current catalog, so labeling an unmatched proposal and rerunning the report needs no new agent run.
+The catalog came from two earlier analyses, so recall measures agreement with known candidates, not completeness.
+
 ## Automated A/B catalogs
 
 `implement_scenarios.py` defines the hidden catalog for the direct `implement` evaluation.

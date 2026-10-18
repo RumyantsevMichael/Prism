@@ -1,0 +1,299 @@
+{
+  "repository": "https://github.com/RumyantsevMichael/Prism.git",
+  "commit": "d146852d963648ad79bb1a4289280e52bf1c913b",
+  "sources": [
+    "Issue #19, a refactor analysis of bc18fe9, rechecked on this commit.",
+    "Findings of the 2026-10-18 analysis run that were verified in the code."
+  ],
+  "items": [
+    {
+      "id": "paired-locks",
+      "label": "expected",
+      "summary": "Every withArtifactLock call wraps a withFileLock call on the same path, in 15 places.",
+      "files": [
+        "src/server/workflow/artifact-store.mjs",
+        "src/server/workflow/roadmap.mjs",
+        "src/server/workflow/initiative.mjs",
+        "src/server/review/review-ledger.mts",
+        "src/server/workflow/active-operations.mts",
+        "src/server/repository-intelligence/native-semantic-runtime.mts"
+      ],
+      "symbols": [
+        "withArtifactLock",
+        "withFileLock"
+      ]
+    },
+    {
+      "id": "analysis-tool-table",
+      "label": "expected",
+      "summary": "callRepositoryTool names the seven analysis tools in a ternary chain and again in an includes list.",
+      "files": [
+        "src/server/mcp.mjs",
+        "src/server/repository-intelligence/semantic-native-provider.mts"
+      ],
+      "symbols": [
+        "NATIVE_INTELLIGENCE_TOOLS",
+        "searchRepositoryConcepts",
+        "reportComplexUnits",
+        "tool table",
+        "analysis tool"
+      ]
+    },
+    {
+      "id": "mixed-dispatch",
+      "label": "expected",
+      "summary": "callRepositoryTool also dispatches workflow recording, decision recording, session capacity and session usage.",
+      "files": [
+        "src/server/mcp.mjs"
+      ],
+      "symbols": [
+        "callRepositoryTool",
+        "resolve_session_capacity",
+        "summarize_session_consumption",
+        "set_workflow_recording"
+      ]
+    },
+    {
+      "id": "decision-vocabulary",
+      "label": "expected",
+      "summary": "The record_workflow_decision schema repeats value lists that normalizeDecision owns; readability is an exact copy.",
+      "files": [
+        "src/server/workflow/decision-history.mjs",
+        "src/server/mcp.mjs"
+      ],
+      "symbols": [
+        "normalizeDecision",
+        "record_workflow_decision",
+        "READABILITY",
+        "OUTCOMES",
+        "readability"
+      ]
+    },
+    {
+      "id": "validation-helpers",
+      "label": "expected",
+      "summary": "isObject, nonemptyString, assertIsoDate, readHookInput and assertExactKeys are copied across session and hook modules.",
+      "files": [
+        "src/server/session/",
+        "src/hooks/"
+      ],
+      "symbols": [
+        "isObject",
+        "nonemptyString",
+        "assertIsoDate",
+        "readHookInput",
+        "assertExactKeys"
+      ]
+    },
+    {
+      "id": "child-process-runners",
+      "label": "acceptable",
+      "summary": "runCodeGraph, runCommand and requestWithAppServer each own timeout, kill and output limits; keeping them distinct is defensible.",
+      "files": [
+        "src/server/repository-intelligence/codegraph-provider.mjs",
+        "src/server/repository-intelligence/native-repository-intelligence.mjs",
+        "src/server/session/host-adapters/codex-config.mjs"
+      ],
+      "symbols": [
+        "runCodeGraph",
+        "runCommand",
+        "requestWithAppServer"
+      ]
+    },
+    {
+      "id": "search-provider-results",
+      "label": "expected",
+      "summary": "The search providers build the same result shape by hand and repeat small helpers.",
+      "files": [
+        "src/server/repository-intelligence/codegraph-provider.mjs",
+        "src/server/repository-intelligence/codenib-provider.mjs",
+        "src/server/repository-intelligence/native-repository-intelligence.mjs",
+        "src/server/repository-intelligence/composite-repository-intelligence.mjs",
+        "src/server/repository-intelligence/repository-intelligence.mjs"
+      ],
+      "symbols": [
+        "positiveInteger",
+        "unique",
+        "symbolIdentityMatches",
+        "requiredEvidenceComplete",
+        "result shape"
+      ]
+    },
+    {
+      "id": "codex-capture",
+      "label": "expected",
+      "summary": "The Codex adapter capture method is one function of about 350 lines and 82 branches.",
+      "files": [
+        "src/server/session/host-adapters/codex.mjs"
+      ],
+      "symbols": [
+        "capture",
+        "createCodexHostAdapter"
+      ]
+    },
+    {
+      "id": "red-checkpoint-rule",
+      "label": "expected",
+      "summary": "The red-checkpoint pass rule is restated with different wording in several skills.",
+      "files": [
+        "skills/design/",
+        "skills/implement/",
+        "skills/write-step-definitions/",
+        "skills/review/",
+        "skills/orchestrate/",
+        "skills/write-contracts/",
+        "skills/workflow/"
+      ],
+      "symbols": [
+        "red checkpoint",
+        "red-checkpoint"
+      ]
+    },
+    {
+      "id": "managed-record-update",
+      "label": "expected",
+      "summary": "updateRoadmap and updateInitiative run the same locked load, revision check, history and write procedure.",
+      "files": [
+        "src/server/workflow/roadmap.mjs",
+        "src/server/workflow/initiative.mjs"
+      ],
+      "symbols": [
+        "updateRoadmap",
+        "updateInitiative",
+        "loadRoadmap",
+        "loadRecord"
+      ]
+    },
+    {
+      "id": "trace-event-types",
+      "label": "expected",
+      "summary": "EVENT_TYPE_ORDER hand-lists the event types that SESSION_TRACE_EVENT_TYPES owns.",
+      "files": [
+        "src/server/session/session-trace-store.mjs",
+        "src/server/session/session-trace.mjs"
+      ],
+      "symbols": [
+        "EVENT_TYPE_ORDER",
+        "SESSION_TRACE_EVENT_TYPES"
+      ]
+    },
+    {
+      "id": "activity-list",
+      "label": "expected",
+      "summary": "The activity values are written twice in active-operations.mts.",
+      "files": [
+        "src/server/workflow/active-operations.mts"
+      ],
+      "symbols": [
+        "activity",
+        "integration"
+      ]
+    },
+    {
+      "id": "is-inside-copies",
+      "label": "expected",
+      "summary": "isInside has three copies; two reject a child named ..foo.",
+      "files": [
+        "src/server/review/review-server.mjs",
+        "src/server/workflow/state.mjs",
+        "src/server/conservation/concept-delta.mjs"
+      ],
+      "symbols": [
+        "isInside"
+      ]
+    },
+    {
+      "id": "bench-token-counting",
+      "label": "expected",
+      "summary": "bench.py records Claude cache tokens as 0 and counts Codex cached input twice, unlike skill_eval/run.py.",
+      "files": [
+        "bench/harness/bench.py",
+        "bench/skill_eval/run.py"
+      ],
+      "symbols": [
+        "cached_input_tokens",
+        "parse_codex_jsonl",
+        "parse_claude_json",
+        "TOKEN_KEYS"
+      ]
+    },
+    {
+      "id": "artifact-path-resolver",
+      "label": "acceptable",
+      "summary": "The general resolveArtifactPath lives in the concept-delta module, so other records report concept-delta errors.",
+      "files": [
+        "src/server/conservation/concept-delta.mjs"
+      ],
+      "symbols": [
+        "resolveArtifactPath"
+      ]
+    },
+    {
+      "id": "review-app-server-start",
+      "label": "acceptable",
+      "summary": "startReviewApp is the largest complex unit, with 389 lines and 20 nested functions.",
+      "files": [
+        "src/server/review/review-app-server.mjs"
+      ],
+      "symbols": [
+        "startReviewApp"
+      ]
+    },
+    {
+      "id": "unused-exports",
+      "label": "acceptable",
+      "summary": "Some exports have no importers outside their module.",
+      "files": [
+        "src/server/repository-intelligence/codegraph-provider.mjs",
+        "src/server/repository-intelligence/codenib-provider.mjs",
+        "src/server/conservation/concept-delta.mjs"
+      ],
+      "symbols": [
+        "withCodeGraphRepositoryIntelligence",
+        "withCodeNibRepositoryIntelligence",
+        "CONCEPT_ACTIONS"
+      ]
+    },
+    {
+      "id": "review-browser-copies",
+      "label": "acceptable",
+      "summary": "requirementLinks and escapeHtml are copied inside the review browser views.",
+      "files": [
+        "src/server/review/public/"
+      ],
+      "symbols": [
+        "requirementLinks",
+        "escapeHtml"
+      ]
+    },
+    {
+      "id": "session-trace-atomic-write",
+      "label": "acceptable",
+      "summary": "The session-trace store writes files with fewer safety checks than the session-facts store.",
+      "files": [
+        "src/server/session/session-trace-store.mjs",
+        "src/server/session/host-session-facts.mjs"
+      ],
+      "symbols": [
+        "writeHostSessionFacts",
+        "rename",
+        "atomic"
+      ]
+    },
+    {
+      "id": "skill-common-terms",
+      "label": "acceptable",
+      "summary": "Some workflow concepts are missing from the Common terms section, and a gate-rules pointer resolves to the wrong section.",
+      "files": [
+        "skills/workflow/SKILL.md",
+        "skills/orchestrate/",
+        "skills/roadmap/"
+      ],
+      "symbols": [
+        "Common terms",
+        "gate rules",
+        "Active operation"
+      ]
+    }
+  ]
+}
