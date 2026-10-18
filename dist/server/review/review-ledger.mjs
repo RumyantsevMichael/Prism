@@ -30,6 +30,7 @@ const UPDATE_REVIEW_SCHEMA = obj({ ...common, deltaPath: str, delivery: str, act
   obj({ op: { const: "resolve_conflict" }, id: str, reason: str }),
   obj({ op: { const: "submit_lane" }, lane: str, status: { enum: ["CLEAN", "FINDINGS"] } }),
   obj({ op: { const: "carry_lane" }, lane: str, fromWave: str }),
+  obj({ op: { const: "carry_assessments" }, lane: str, fromWave: str, ids: arr(str) }, ["op", "lane", "fromWave"]),
   obj({ op: { const: "accept_wave" } }),
   obj({ op: { const: "import_legacy" }, path: str }),
   obj({ op: { const: "regenerate_markdown" } })
@@ -184,22 +185,8 @@ function summarizeProblems(problems) {
   }
   return [...groups].map(([code, group]) => `${code} x${group.count}: ${group.message}${group.ids.length ? ` (for example ${group.ids.join(", ")})` : ""}`).join("; ");
 }
-async function waveProblems(projectRoot, review, wave, requireLaneResults) {
-  const problems = [];
-  const add = (code, message, id) => problems.push({ code, message, ...id ? { id } : {} });
-  const loaded = await readConceptDeltaDocument(projectRoot, review.deltaPath, wave.deltaRevision), document = loaded.document;
-  if (document.baselineId !== review.baselineId || wave.baselineId !== review.baselineId) add("baseline_changed", "The original baseline must remain unchanged.");
-  for (const item of await assessDeltaReadiness(projectRoot, document)) if (item.blocking !== false) add(item.code, item.message, item.id);
-  const comparison = await comparisonFor(projectRoot, review, wave);
-  const accepted = review.assessments.filter((item) => item.wave === wave.id && item.acceptedBy && !review.exchangeWorkers.includes(item.acceptedBy));
-  for (const assessment of accepted) await assessmentValid(projectRoot, review, wave, assessment, comparison, document);
-  for (const observation of comparison.observations) {
-    if (deferredDesignObservation(wave, observation)) continue;
-    if (observation.severity === "failure") add(observation.code, observation.message, observation.id);
-    else if (!accepted.some((item) => item.observationIds?.includes(observation.id))) add("manual_evidence_missing", observation.message, observation.id);
-  }
-  for (const growth of comparison.growth) if (!accepted.some((item) => item.kind === "growth" && item.growthIds?.includes(growth.id))) add("growth_justification_missing", `Justify the increase in ${growth.dimension}.`, growth.id);
-  const before = await conservationStore.get(projectRoot, wave.baselineId, "snapshot"), after = await conservationStore.get(projectRoot, wave.snapshotId, "snapshot");
+async function uncoveredText(projectRoot, comparison, accepted, document, before, after) {
+  const uncovered = [];
   const changedText = [...new Set([...before.files, ...after.files].filter((file) => /\.(md|markdown)$/i.test(file.file) && withinScope(file.file, document.scope)).map((file) => file.file))].filter((file) => before.files.find((item) => item.file === file)?.hash !== after.files.find((item) => item.file === file)?.hash);
   for (const file of changedText) {
     const assessments = accepted.filter((item) => item.kind === "convergence" && item.section?.path === file);
@@ -208,9 +195,131 @@ async function waveProblems(projectRoot, review, wave, requireLaneResults) {
       const changed = comparison.units[side].filter((unit) => unit.file === file && unit.kind !== "file" && !comparison.units[side === "before" ? "after" : "before"].some((other) => other.key === unit.key && other.hash === unit.hash));
       const targets = changed.length ? changed.filter((unit) => !changed.some((child) => child !== unit && child.start >= unit.start && child.end <= unit.end && (child.start !== unit.start || child.end !== unit.end))) : comparison.units[side].filter((unit) => unit.file === file && unit.kind === "file");
       const spans = (await Promise.all(assessments.map((item) => resolveReference(projectRoot, snapshot, item.section, analysis)))).filter((result) => result.status === "resolved").flatMap((result) => result.units);
-      for (const target of targets) if (!spans.some((span) => span.start <= target.start && span.end >= target.end)) add("convergence_missing", "Each changed text section needs a reviewed convergence assessment that covers its exact source. A section that names only the file path covers the whole file.", `${file}:${side}:${target.start}:${target.end}`);
+      for (const target of targets) if (!spans.some((span) => span.start <= target.start && span.end >= target.end)) uncovered.push({ file, side, start: target.start, end: target.end });
     }
   }
+  return uncovered;
+}
+const changedFiles = (earlier, current, files = [...new Set([...earlier.files, ...current.files].map((item) => item.file))]) => files.filter((file) => canonical(earlier.files.find((item) => item.file === file) ?? null) !== canonical(current.files.find((item) => item.file === file) ?? null));
+const acceptedIn = (review, wave) => review.assessments.filter((item) => item.wave === wave.id && item.acceptedBy && !review.exchangeWorkers.includes(item.acceptedBy));
+async function carryCandidates(projectRoot, review, wave, from, lane, acceptedBy) {
+  if (from.id === wave.id || from.baselineId !== wave.baselineId) throw conservationError("gate_blocked", "Assessments carry forward only from an earlier wave of the same baseline.");
+  laneOf(wave, lane);
+  laneOf(from, lane);
+  const comparison = await comparisonFor(projectRoot, review, wave), previous = await conservationStore.get(projectRoot, from.comparisonId, "comparison");
+  const earlier = await conservationStore.get(projectRoot, from.snapshotId, "snapshot"), current = await conservationStore.get(projectRoot, wave.snapshotId, "snapshot");
+  const document = (await readConceptDeltaDocument(projectRoot, review.deltaPath, wave.deltaRevision)).document;
+  const carried = [], notCarried = [];
+  for (const assessment of acceptedIn(review, from).filter((item) => item.lane === lane)) {
+    const id = `${wave.id}/${assessment.id.startsWith(`${from.id}/`) ? assessment.id.slice(from.id.length + 1) : assessment.id}`;
+    const skip = (reason) => notCarried.push({ id: assessment.id, reason });
+    if (review.assessments.some((item) => item.id === id)) {
+      skip("It is already in this wave.");
+      continue;
+    }
+    const observations = (assessment.observationIds || []).map((item) => previous.observations.find((observation) => observation.id === item));
+    const missing = (assessment.observationIds || []).filter((item) => !comparison.observations.some((observation) => observation.id === item));
+    if (missing.length) {
+      skip(`The comparison no longer reports ${missing.join(", ")}.`);
+      continue;
+    }
+    const growthIds = [];
+    for (const item of assessment.growthIds || []) {
+      const old = previous.growth.find((growth) => growth.id === item), next = old && comparison.growth.find((growth) => growth.dimension === old.dimension);
+      if (next && next.increase <= old.increase) growthIds.push(next.id);
+    }
+    if (growthIds.length !== (assessment.growthIds || []).length) {
+      skip("A justified growth is no longer measured or has increased.");
+      continue;
+    }
+    const references = [...assessment.evidence, ...assessment.section ? [assessment.section] : [], ...(assessment.coverage || []).flatMap((item) => [item.requirement, ...item.targets]), ...assessment.justification?.requirements || []];
+    const whole = observations.some((observation) => !observation?.file && !observation?.unit?.file) ? [...earlier.files, ...current.files].map((file) => file.file).filter((file) => withinScope(file, comparison.scope)) : [];
+    const files = /* @__PURE__ */ new Set([...references.map((reference) => reference.path), ...whole, ...observations.flatMap((observation) => [observation?.file, observation?.unit?.file]).filter((file) => Boolean(file))]);
+    const changed = changedFiles(earlier, current, [...files]);
+    if (changed.length) {
+      skip(`Its files changed: ${changed.join(", ")}.`);
+      continue;
+    }
+    const copy = { ...assessment, id, wave: wave.id, acceptedBy, ...assessment.growthIds ? { growthIds } : {} };
+    try {
+      await assessmentValid(projectRoot, review, wave, copy, comparison, document);
+    } catch (error) {
+      skip(error.message);
+      continue;
+    }
+    carried.push(copy);
+  }
+  return { carried, notCarried };
+}
+async function assessmentSkeleton(projectRoot, review, wave) {
+  const comparison = await comparisonFor(projectRoot, review, wave), accepted = acceptedIn(review, wave);
+  const document = (await readConceptDeltaDocument(projectRoot, review.deltaPath, wave.deltaRevision)).document;
+  const before = await conservationStore.get(projectRoot, wave.baselineId, "snapshot"), after = await conservationStore.get(projectRoot, wave.snapshotId, "snapshot");
+  const laneFor = (file) => (file && wave.lanes.find((lane) => withinScope(file, lane.coverage)) || wave.lanes[0]).id;
+  const groups = /* @__PURE__ */ new Map();
+  for (const observation of comparison.observations) {
+    if (deferredDesignObservation(wave, observation) || observation.severity === "failure" || accepted.some((item) => item.observationIds?.includes(observation.id))) continue;
+    const file = observation.unit?.file || observation.file, kind = observation.code === "unclassified_unit" ? "implementation-detail" : "manual", lane = laneFor(file);
+    const key = canonical([lane, kind, kind === "manual" ? observation.code : file]);
+    const group = groups.get(key) ?? { lane, kind, code: observation.code, ids: [], files: /* @__PURE__ */ new Set() };
+    group.ids.push(observation.id);
+    if (file) group.files.add(file);
+    groups.set(key, group);
+  }
+  const operations = [];
+  const evidence = (files) => {
+    const list = [...files].map((path2) => ({ path: path2 }));
+    return list.length ? list : [{ path: "<file you checked>" }];
+  };
+  for (const group of groups.values()) for (let index = 0; index < group.ids.length; index += 100) operations.push({ op: "record_assessment", assessment: {
+    id: `<${group.kind === "manual" ? group.code : "detail"} id>`,
+    lane: group.lane,
+    kind: group.kind,
+    observationIds: group.ids.slice(index, index + 100),
+    evidence: evidence(group.files),
+    ...group.kind === "implementation-detail" ? { conceptId: "<changed ADD, MODIFY or REPLACE concept>" } : {},
+    reason: `<what you checked for ${group.code}>`
+  } });
+  const growth = comparison.growth.filter((item) => !accepted.some((assessment) => assessment.kind === "growth" && assessment.growthIds?.includes(item.id)));
+  if (growth.length) operations.push({ op: "record_assessment", assessment: {
+    id: "<growth id>",
+    lane: wave.lanes[0].id,
+    kind: "growth",
+    growthIds: growth.map((item) => item.id),
+    evidence: [{ path: "<file you checked>" }],
+    justification: { dimensions: [...new Set(growth.map((item) => item.dimension))], conceptIds: ["<concepts that cause the growth>"], requirements: document.requirements?.length ? document.requirements : [{ path: "<governing requirement>" }], reason: "<why the requirement needs the growth>" },
+    reason: "<what you checked>"
+  } });
+  for (const file of new Set((await uncoveredText(projectRoot, comparison, accepted, document, before, after)).map((item) => item.file))) operations.push({ op: "record_assessment", assessment: {
+    id: `<convergence id for ${file}>`,
+    lane: laneFor(file),
+    kind: "convergence",
+    section: { path: file },
+    decision: "<retain|replace|consolidate|delete>",
+    evidence: [{ path: file }],
+    conceptIds: document.concepts.filter((entry) => ["rule", "exception", "prohibition"].includes(entry.kind) && [...entry.before, ...entry.after].some((ref) => ref.path === file)).map((entry) => entry.id),
+    coverage: (document.requirements || []).map((requirement) => ({ requirement, targets: [{ path: "<resulting target>" }] })),
+    reason: "<meaning, coverage and preserved obligations>"
+  } });
+  return operations;
+}
+async function waveProblems(projectRoot, review, wave, requireLaneResults) {
+  const problems = [];
+  const add = (code, message, id) => problems.push({ code, message, ...id ? { id } : {} });
+  const loaded = await readConceptDeltaDocument(projectRoot, review.deltaPath, wave.deltaRevision), document = loaded.document;
+  if (document.baselineId !== review.baselineId || wave.baselineId !== review.baselineId) add("baseline_changed", "The original baseline must remain unchanged.");
+  for (const item of await assessDeltaReadiness(projectRoot, document)) if (item.blocking !== false) add(item.code, item.message, item.id);
+  const comparison = await comparisonFor(projectRoot, review, wave);
+  const accepted = acceptedIn(review, wave);
+  for (const assessment of accepted) await assessmentValid(projectRoot, review, wave, assessment, comparison, document);
+  for (const observation of comparison.observations) {
+    if (deferredDesignObservation(wave, observation)) continue;
+    if (observation.severity === "failure") add(observation.code, observation.message, observation.id);
+    else if (!accepted.some((item) => item.observationIds?.includes(observation.id))) add("manual_evidence_missing", observation.message, observation.id);
+  }
+  for (const growth of comparison.growth) if (!accepted.some((item) => item.kind === "growth" && item.growthIds?.includes(growth.id))) add("growth_justification_missing", `Justify the increase in ${growth.dimension}.`, growth.id);
+  const before = await conservationStore.get(projectRoot, wave.baselineId, "snapshot"), after = await conservationStore.get(projectRoot, wave.snapshotId, "snapshot");
+  for (const target of await uncoveredText(projectRoot, comparison, accepted, document, before, after)) add("convergence_missing", "Each changed text section needs a reviewed convergence assessment that covers its exact source. A section that names only the file path covers the whole file.", `${target.file}:${target.side}:${target.start}:${target.end}`);
   for (const finding of review.findings.filter((item) => item.mode === wave.mode && item.status !== "VERIFIED")) add("finding_unresolved", finding.title, finding.id);
   for (const conflict of review.conflicts.filter((item) => !item.resolved)) add("review_conflict", conflict.reason, conflict.id);
   for (const file of targetFiles(comparison)) if (!wave.lanes.some((lane) => withinScope(file, lane.coverage))) add("review_coverage_missing", "Assign each original and resulting target file to a review lane.", file);
@@ -222,6 +331,24 @@ async function waveProblems(projectRoot, review, wave, requireLaneResults) {
   await conservationStore.assertCurrent(projectRoot, wave.snapshotId);
   return problems;
 }
+async function nextSteps(projectRoot, review, wave) {
+  const earlier = review.waves.slice(0, review.waves.indexOf(wave)).reverse(), carryable = [];
+  for (const lane of wave.lanes) {
+    const from = earlier.find((item) => item.mode === wave.mode && item.baselineId === wave.baselineId && acceptedIn(review, item).some((assessment) => assessment.lane === lane.id));
+    if (!from) continue;
+    const { carried } = await carryCandidates(projectRoot, review, wave, from, lane.id, lane.reviewer).catch(() => ({ carried: [] }));
+    if (carried.length) carryable.push({ lane: lane.id, fromWave: from.id, ids: carried.map((item) => item.id.slice(wave.id.length + 1)) });
+  }
+  const skeleton = await assessmentSkeleton(projectRoot, review, wave).catch(() => []);
+  const scope = await correctionScope(projectRoot, review, wave).catch(() => void 0);
+  return { ...scope ? { correctionScope: scope } : {}, ...carryable.length ? { carryable } : {}, ...skeleton.length ? { assessmentSkeleton: skeleton } : {} };
+}
+async function correctionScope(projectRoot, review, wave) {
+  const previous = review.waves.slice(0, review.waves.indexOf(wave)).reverse().find((item) => item.mode === wave.mode);
+  if (!previous) return void 0;
+  const changed = changedFiles(await conservationStore.get(projectRoot, previous.snapshotId, "snapshot"), await conservationStore.get(projectRoot, wave.snapshotId, "snapshot"));
+  return { fromWave: previous.id, deltaChanged: previous.deltaRevision !== wave.deltaRevision, lanes: wave.lanes.map((lane) => ({ lane: lane.id, changedFiles: changed.filter((file) => withinScope(file, lane.coverage)) })) };
+}
 async function checkReviewGate(input) {
   assertInput(CHECK_REVIEW_GATE_SCHEMA, input);
   const loaded = await loadReview(input.projectRoot, input.reviewPath);
@@ -232,7 +359,7 @@ async function checkReviewGate(input) {
   if (!wave?.accepted) {
     const blockers = wave ? await waveProblems(input.projectRoot, review, wave, true).catch(() => []) : [];
     const message = blockers.length ? `The required review wave ${wave.id} has no accepted result, and accepting it now would fail on: ${summarizeProblems(blockers)}.` : "The required review wave has no accepted result.";
-    return { ready: false, revision: loaded.revision, problems: [{ code: "review_not_accepted", message }] };
+    return { ready: false, revision: loaded.revision, problems: [{ code: "review_not_accepted", message }], ...wave ? await nextSteps(input.projectRoot, review, wave) : {} };
   }
   const problems = await waveProblems(input.projectRoot, review, wave, true);
   if (wave.accepted.evidenceDigest !== waveDigest(review, wave)) problems.push({ code: "review_result_stale", message: "The accepted review inputs changed." });
@@ -301,7 +428,7 @@ async function updateReview(input) {
     return withArtifactLock(deltaTarget.target, () => withFileLock(deltaTarget.target, async () => {
       const review = structuredClone(loaded.document || { schemaVersion: 1, deltaPath: input.deltaPath, coordinator: input.actor.id, delivery: input.delivery, deliveryWorkers: [input.delivery], waves: [], findings: [], assessments: [], conflicts: [], exchangeWorkers: [], legacy: [], history: [] });
       if (path.posix.dirname(review.deltaPath) !== path.posix.dirname(input.reviewPath) || input.deltaPath && input.deltaPath !== review.deltaPath) throw conservationError("invalid_path", "A review and its concept delta must share the slice directory.");
-      const now = () => (/* @__PURE__ */ new Date()).toISOString();
+      const now = () => (/* @__PURE__ */ new Date()).toISOString(), carry = { carried: [], notCarried: [] };
       for (const operation of input.operations) {
         const wave2 = lastWave(review), op = operation.op;
         if (op === "start_wave") {
@@ -420,10 +547,24 @@ async function updateReview(input) {
             if (review.assessments.some((item) => item.wave === wave2.id && item.lane === lane.id)) throw conservationError("gate_blocked", "A current lane assessment prevents carry-forward.");
             for (const assessment of review.assessments.filter((item) => item.wave === previous.id && item.lane === lane.id)) review.assessments.push({ ...assessment, id: `${wave2.id}/${assessment.id}`, wave: wave2.id });
             lane.result = { status: "CLEAN", reviewer: lane.reviewer, digest: laneDigest(review, wave2, lane) };
+          } else if (op === "carry_assessments") {
+            reviewer(review, wave2, input.actor, operation.lane, true);
+            const from = review.waves.find((item) => item.id === operation.fromWave);
+            if (!from) throw conservationError("validation_failed", "The source wave does not exist.");
+            const requested = operation.ids;
+            const { carried, notCarried } = await carryCandidates(input.projectRoot, review, wave2, from, operation.lane, input.actor.id);
+            const unknown = (requested || []).filter((id) => !carried.some((item) => item.id === `${wave2.id}/${id.startsWith(`${from.id}/`) ? id.slice(from.id.length + 1) : id}`) && !notCarried.some((item) => item.id === id));
+            if (unknown.length) throw conservationError("validation_failed", `The source wave has no accepted assessment ${unknown.join(", ")} in this lane.`);
+            const refused = notCarried.filter((item) => requested?.includes(item.id));
+            if (refused.length) throw conservationError("gate_blocked", `These assessments cannot carry forward: ${refused.map((item) => `${item.id}: ${item.reason}`).join("; ")}`, { problems: refused.map((item) => ({ code: "carry_refused", id: item.id, message: item.reason })) });
+            const chosen = requested ? carried.filter((item) => requested.some((id) => item.id === `${wave2.id}/${id.startsWith(`${from.id}/`) ? id.slice(from.id.length + 1) : id}`)) : carried;
+            review.assessments.push(...chosen);
+            carry.carried.push(...chosen.map((item) => item.id));
+            if (!requested) carry.notCarried.push(...notCarried);
           } else if (op === "accept_wave") {
             requireRole(review, input.actor, "coordinator");
             const problems = await waveProblems(input.projectRoot, review, wave2, true);
-            if (problems.length) throw conservationError("gate_blocked", `The review wave does not satisfy its acceptance gate: ${summarizeProblems(problems)}.`, { problems });
+            if (problems.length) throw conservationError("gate_blocked", `The review wave does not satisfy its acceptance gate: ${summarizeProblems(problems)}. check_review_gate lists the assessments that can carry forward from the previous wave and a ready-to-fill skeleton for the rest.`, { problems });
             wave2.accepted = { evidenceDigest: waveDigest(review, wave2), actor: input.actor.id, at: now() };
           }
         }
@@ -443,7 +584,15 @@ async function updateReview(input) {
         projectionStale = true;
       }
       const wave = lastWave(review);
-      return { exists: true, revision: changed ? digest(contents) : loaded.revision, previousRevision: loaded.revision, projectionStale, currentWave: wave?.id, accepted: Boolean(wave?.accepted && wave.accepted.evidenceDigest === waveDigest(review, wave)) };
+      return {
+        exists: true,
+        revision: changed ? digest(contents) : loaded.revision,
+        previousRevision: loaded.revision,
+        projectionStale,
+        currentWave: wave?.id,
+        accepted: Boolean(wave?.accepted && wave.accepted.evidenceDigest === waveDigest(review, wave)),
+        ...input.operations.some((item) => item.op === "carry_assessments") ? { carry } : {}
+      };
     }, void 0, { renew: true }));
   }, void 0, { renew: true }));
 }
