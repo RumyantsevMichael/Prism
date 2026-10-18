@@ -104,32 +104,20 @@ try {
   const security = { id: "security", role: "reviewer" };
   const delivery = { id: "delivery", role: "delivery" };
   await review(coordinator, [{ op: "start_wave", id: "design-audit", mode: "design-audit", deltaRevision: delta.revision, snapshotId: baseline.snapshotId, comparisonId: audit.comparisonId, lanes: [{ id: "main", reviewer: "independent", coverage: ["src", "config", "docs", "instructions"] }, { id: "security", reviewer: "security", coverage: ["src"] }] }]);
-  await review(reviewer, [{ op: "submit_lane", lane: "main", status: "CLEAN" }]);
-  await review(security, [{ op: "submit_lane", lane: "security", status: "CLEAN" }]);
-  // The acceptance gate needs native semantic receipts and bound requirements, so this demo leaves the audit wave unaccepted.
-
-  await write("src/retry/strategy.ts", "export class RequestRetryStrategy {\n  constructor(private attempts = 3, private deadlineMs = 10000) {}\n  shouldRetry(error: Error, attempt: number, elapsedMs: number) {\n    if (elapsedMs >= this.deadlineMs) return false;\n    if (error.name === \"ConnectionError\") return attempt < this.attempts;\n    return attempt < this.attempts && error.name === \"TimeoutError\";\n  }\n}\n");
-  await rm(path.join(realRoot, "src/retry/legacy.ts"));
-  await write("config/retry.json", `${JSON.stringify({ attemptTimeoutMs: 2000, retryDeadlineMs: 10000 }, null, 2)}\n`);
-  await write("docs/retry.md", "# Retries\n\n## Timeout examples\n\nA timed-out request retries until the total deadline.\n\n## Connection examples\n\nA dropped connection retries three times.\n");
-  await write("instructions/answers.md", "# Answers\n\n- Answer directly and include only information needed to satisfy the request.\n");
-  const result = await call("capture_repository_snapshot", { projectRoot: realRoot });
-  const implementation = await call("compare_concept_delta", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, baselineId: baseline.snapshotId, resultSnapshotId: result.snapshotId });
-
-  await review(coordinator, [{ op: "start_wave", id: "implementation", mode: "implementation-review", deltaRevision: delta.revision, snapshotId: result.snapshotId, comparisonId: implementation.comparisonId, lanes: [{ id: "main", reviewer: "independent", coverage: ["src", "config", "docs", "instructions"] }, { id: "security", reviewer: "security", coverage: ["src"] }] }]);
+  // The acceptance gate needs native semantic receipts and bound requirements, so this demo keeps the audit wave in flight, and start_wave refuses implementation review until the audit is accepted.
   await review(reviewer, [
-    { op: "open_finding", lane: "main", localId: "F1", title: "Deadline check ignores the first attempt", severity: "high", affectedPath: "src/retry/strategy.ts", evidence: "shouldRetry compares elapsed time only after a failure, so a slow first attempt can exceed the deadline.", conditionToClose: "A test shows that no retry starts after the deadline elapses." },
-    { op: "open_finding", lane: "main", localId: "F2", title: "Connection errors now retry without a requirement", severity: "blocker", affectedPath: "src/retry/strategy.ts", evidence: "The concept delta keeps connection retries out of scope, but the strategy now retries ConnectionError.", conditionToClose: "Either the delta records the behavior change with a requirement, or the branch is removed." },
-    { op: "open_finding", lane: "main", localId: "F3", title: "Timeout examples omit the deadline value", severity: "low", affectedPath: "docs/retry.md", evidence: "The example does not say what the default deadline is.", conditionToClose: "The example names the default deadline." }
+    { op: "open_finding", lane: "main", localId: "F1", title: "The delta does not say when the deadline is checked", severity: "high", affectedPath: deltaPath, evidence: "The retry-deadline concept bounds retries, but nothing says the deadline is checked before each attempt, so a slow first attempt can exceed it.", conditionToClose: "The retry-policy concept states that no attempt starts after the deadline elapses." },
+    { op: "open_finding", lane: "main", localId: "F2", title: "Deleting LegacyRetryHandler drops connection retries", severity: "blocker", affectedPath: "src/retry/legacy.ts", evidence: "LegacyRetryHandler is the only code that retries ConnectionError, and the delta deletes it without saying where that behavior goes.", conditionToClose: "Either the delta records where connection retries move with a requirement, or a decision removes them." },
+    { op: "open_finding", lane: "main", localId: "F3", title: "The replacement examples omit the deadline value", severity: "low", affectedPath: "docs/retry.md", evidence: "The retry-documentation concept does not say what the default deadline is.", conditionToClose: "The replacement examples name the default deadline." }
   ]);
-  await review(security, [{ op: "open_finding", lane: "security", localId: "S1", title: "Unbounded deadline from configuration", severity: "medium", affectedPath: "config/retry.json", evidence: "retryDeadlineMs accepts any number, so a misconfiguration can retry for hours.", conditionToClose: "The loader rejects deadlines above a documented maximum." }]);
+  await review(security, [{ op: "open_finding", lane: "security", localId: "S1", title: "Unbounded deadline from configuration", severity: "medium", affectedPath: "config/retry.json", evidence: "The retry-deadline concept accepts any number, so a misconfiguration can retry for hours.", conditionToClose: "The concept caps retryDeadlineMs at a documented maximum." }]);
   await review(delivery, [
-    { op: "set_finding_status", id: "implementation-review/main/F1", status: "IN PROGRESS", evidence: "Adding a pre-attempt deadline check." },
-    { op: "set_finding_status", id: "implementation-review/main/F3", status: "FIXED", evidence: "docs/retry.md now names the 10 second default." },
-    { op: "set_finding_status", id: "implementation-review/security/S1", status: "FIXED", evidence: "The loader caps retryDeadlineMs at 60000." }
+    { op: "set_finding_status", id: "design-audit/main/F1", status: "IN PROGRESS", evidence: "Adding a pre-attempt deadline check to the retry-policy concept." },
+    { op: "set_finding_status", id: "design-audit/main/F3", status: "FIXED", evidence: "The retry-documentation concept now names the 10 second default." },
+    { op: "set_finding_status", id: "design-audit/security/S1", status: "FIXED", evidence: "The retry-deadline concept caps the value at 60000." }
   ]);
-  await review(reviewer, [{ op: "set_finding_status", id: "implementation-review/main/F3", status: "VERIFIED", evidence: "The example states the default." }]);
-  await review(security, [{ op: "set_finding_status", id: "implementation-review/security/S1", status: "REOPENED", evidence: "The cap exists, but the error message leaks the configuration path." }]);
+  await review(reviewer, [{ op: "set_finding_status", id: "design-audit/main/F3", status: "VERIFIED", evidence: "The examples state the default." }]);
+  await review(security, [{ op: "set_finding_status", id: "design-audit/security/S1", status: "REOPENED", evidence: "The cap exists, but the rejection message would leak the configuration path." }]);
 
   // Initiative records and the roadmap come from the record tools, exactly as orchestration and the roadmap skill write them.
   const retries = ["docs/requirements/retries.md#1", "docs/requirements/retries.md#2", "docs/requirements/retries.md#3"];
@@ -179,15 +167,15 @@ try {
 
   const state = await call("update_coordination_state", { projectRoot: realRoot, statePath, expectedRevision: null, changes: {
     settings: { autonomy: "broad", agentFlow: "multi", commit: "on", push: "off", continuation: "stepwise", models: "host defaults" },
-    activeOperations: [{ op: "start", entry: { slice: "timeout-retries", activity: "review", label: "Implementation review, wave 2", workers: ["independent", "security"], workspace: realRoot, reviewPath, reviewLanes: [{ id: "main", reviewer: "independent" }, { id: "security", reviewer: "security" }] } }]
+    activeOperations: [{ op: "start", entry: { slice: "timeout-retries", activity: "review", label: "Design audit", workers: ["independent", "security"], workspace: realRoot, reviewPath, reviewLanes: [{ id: "main", reviewer: "independent" }, { id: "security", reviewer: "security" }] } }]
   } });
   // User gates are recorded exactly as the orchestrator records a question before asking it.
   await call("update_coordination_state", { projectRoot: realRoot, statePath, expectedRevision: state.revision, changes: {
     next: ["docs/plans/retry-hardening/connection-retries"],
     evidence: [`${slice}/slice.md`],
     gateOperations: [
-      { op: "ask", kind: "visual-review", slice: "timeout-retries", question: "Review the concept delta and the total-deadline ADR before the corrected implementation is integrated.", artifacts: [deltaPath, "docs/ADRs/retries/total-retry-deadline.md", `${slice}/slice.md`] },
-      { op: "ask", kind: "decision", slice: "connection-retries", question: "The strategy now retries dropped connections (finding F2). Approve requirement 2 for this slice now, or remove the branch until the slice starts?", artifacts: [reviewPath, "docs/requirements/retries.md"] }
+      { op: "ask", kind: "visual-review", slice: "timeout-retries", question: "Review the concept delta and the total-deadline ADR before implementation starts.", artifacts: [deltaPath, "docs/ADRs/retries/total-retry-deadline.md", `${slice}/slice.md`] },
+      { op: "ask", kind: "decision", slice: "connection-retries", question: "The design deletes the only handler that retries dropped connections (finding F2). Approve requirement 2 for this slice now, or drop connection retries until their slice starts?", artifacts: [reviewPath, "docs/requirements/retries.md"] }
     ]
   } });
   await call("update_coordination_state", { projectRoot: realRoot, statePath: "docs/plans/activity-reports/state.json", expectedRevision: null, changes: {
