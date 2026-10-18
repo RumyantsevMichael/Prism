@@ -527,3 +527,10 @@ test('treats a scope with a trailing slash like the bare directory',async()=>{
   assert.equal(withinScope('sheetcalcx/a.py',['sheetcalc/']),false);
   assert.equal(withinScope('a.py',['/']),false);
 });
+
+test('accepts concept references under a scope written with a trailing slash',async()=>{
+ const f=await fixture({'pkg/code.ts':'function existing() { return 1; }\n','requirements.txt':'Change the code.'});
+ const d=await f.update({expectedRevision:null,scope:['pkg/'],baselineId:f.b.snapshotId,requirements:[ref('requirements.txt')],operations:[{op:'insert',entry:entry('code','MODIFY',[ref('pkg/code.ts')],[ref('pkg/code.ts')])}]});
+ assert.match(d.revision,/^[a-f0-9]{64}$/);
+ await assert.rejects(f.update({expectedRevision:d.revision,operations:[{op:'insert',entry:entry('other','ADD',[],[ref('pkgx/other.ts')])}]}),error=>error.errors.some(item=>item.includes('pkgx/other.ts is outside the declared scope')));
+});
