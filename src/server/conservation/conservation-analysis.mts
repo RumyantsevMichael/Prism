@@ -6,14 +6,14 @@ import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
 import { CHUNKER_VERSION } from "../../native-runtime/versions.mjs";
 import { sameNameGroups } from "../repository-intelligence/same-name-units.mjs";
 import { detectorDiff, DUPLICATE_MIN_LINES } from "./detector-diff.mjs";
-import type { NativeSource, PreparedIndex, SemanticRuntime } from "../repository-intelligence/repository-unit-types.mjs";
+import type { NativeSource, PreparedIndex, SemanticRuntime, SourceUnit } from "../repository-intelligence/repository-unit-types.mjs";
 import type { Evidence, SnapshotEvidence, SearchReceipt, Reference, Resolution, ResolvedUnit, DeltaDocument, ComparisonEvidence, Measurement, Observation } from "./conservation-types.mjs";
 
 type Analysis = Extract<Evidence, { kind: "analysis" }>;
 interface Options { store?: ConservationStore; runtime?: SemanticRuntime }
 const keyFor = (file: string, kind: string, selector: string) => canonical([file, kind, selector]);
 export const ANALYSIS_VERSION = "conservation-metrics-v3";
-export const COMPARISON_VERSION = "conservation-comparison-v3";
+export const COMPARISON_VERSION = "conservation-comparison-v4";
 export function parsedUnitsForReference(units: ResolvedUnit[], target: ResolvedUnit, match: "exact" | "contained" = "exact") {
   if (target.kind === "file") return [];
   const matches = units.filter(unit => unit.kind !== "file" && unit.file === target.file
@@ -40,19 +40,39 @@ export async function prepareAnalysis(projectRoot: string, snapshotId: string, o
   return { status: "ready" as const, analysis: await retainAnalysis(projectRoot, snapshotId, prepared.prepared, store) };
 }
 
+// Python has no export syntax, and the parser reports no visibility for it, so public API follows the naming convention:
+// a declaration is public when no part of its qualified name starts with an underscore, and a module's __all__ narrows its top-level names.
+// Test files and declarations nested in functions are never public.
+const PYTHON_SOURCE = /\.pyi?$/i;
+const PYTHON_TEST = /(^|\/)tests?\/|(^|\/)(test_[^/]*|[^/]*_test|conftest)\.pyi?$/i;
+export function pythonVisibility(file: string, text: string, units: SourceUnit[]) {
+  const visibility = new Map<string, boolean>(), own = units.filter(unit => unit.file === file && unit.span);
+  const listed = text.match(/^__all__\s*(?::[^=\n]*)?=\s*[[(]([^\])]*)[\])]/m)?.[1];
+  const exported = listed === undefined ? null : new Set([...listed.matchAll(/["']([^"']+)["']/g)].map(match => match[1]));
+  for (const unit of own) {
+    if (["file", "import", "parameter"].includes(unit.kind)) continue;
+    const segments = (unit.qualifiedName || unit.selector || unit.name).split("::");
+    const nested = own.some(outer => ["function", "method"].includes(outer.kind) && outer !== unit && outer.span!.start <= unit.span!.start && outer.span!.end >= unit.span!.end);
+    visibility.set(unit.id, !PYTHON_TEST.test(file) && !nested && !segments.some(segment => segment.startsWith("_")) && (exported === null || exported.has(segments[0])));
+  }
+  return visibility;
+}
+const declaredPublic = (unit: SourceUnit, python?: Map<string, boolean>) => python?.has(unit.id) ? python.get(unit.id)! : unit.isExported === true || unit.visibility === "public";
+
 export async function sourceUnits(projectRoot: string, snapshot: SnapshotEvidence, analysis: Analysis | null, store = conservationStore): Promise<ResolvedUnit[]> {
   const units: ResolvedUnit[] = [];
   for (const file of snapshot.files) {
     const bytes = await store.bytes(projectRoot, file), text = file.kind === "source" ? bytes.toString("utf8") : null;
     units.push({ key: keyFor(file.file, "file", ""), file: file.file, kind: "file", selector: "", start: 0, end: text?.length ?? file.bytes, hash: digest(canonical([file.hash, file.kind, file.mode, file.target])), public: null });
     if (text === null) continue;
+    const python = PYTHON_SOURCE.test(file.file) && analysis ? pythonVisibility(file.file, text, analysis.units) : undefined;
     for (const unit of analysis?.units.filter(unit => unit.file === file.file && unit.kind !== "file") || []) {
       if (!unit.span) continue;
       if (unit.span.start < 0 || unit.span.end > text.length || unit.span.end <= unit.span.start) throw conservationError("evidence_missing", "A retained parser span is outside its source.", { file: file.file });
       const hash = digest(text.slice(unit.span.start, unit.span.end));
       if (unit.contentHash !== hash || unit.sourceHash !== file.hash) throw conservationError("evidence_missing", "A retained parser unit does not match its source.", { file: file.file });
       units.push({ key: keyFor(file.file, unit.kind, unit.selector || unit.name), file: file.file, kind: unit.kind, selector: unit.selector || unit.name,
-        ...unit.span, hash, public: unit.isExported === true || unit.visibility === "public" ? true : unit.isExported === false || ["private", "protected", "internal"].includes(unit.visibility || "") ? false : null });
+        ...unit.span, hash, public: declaredPublic(unit, python) ? true : python?.has(unit.id) || unit.isExported === false || ["private", "protected", "internal"].includes(unit.visibility || "") ? false : null });
     }
   }
   return units;
@@ -212,13 +232,20 @@ async function measurements(projectRoot: string, before: SnapshotEvidence, after
   };
   add("source.lines", await lines(left, false), await lines(right, false));
   add("source.nonblankLines", await lines(left, true), await lines(right, true));
+  const pythonFor = async (files: typeof left, analysis: Analysis | null) => {
+    const visibility = new Map<string, boolean>();
+    for (const file of files) if (analysis && file.kind === "source" && PYTHON_SOURCE.test(file.file))
+      for (const [id, value] of pythonVisibility(file.file, (await store.bytes(projectRoot, file)).toString("utf8"), analysis.units)) visibility.set(id, value);
+    return visibility;
+  };
+  const python = new Map([[left, await pythonFor(left, a)], [right, await pythonFor(right, b)]]);
   const codeCount = (files: typeof left, analysis: Analysis | null, kinds?: string[]) => {
     const code = files.filter(file => CODE_EXTENSIONS.has(path.extname(file.file).toLowerCase()));
     if (!code.length) return 0;
     if (!analysis || code.some(file => !analysis.fileCoverage[file.file])) return null;
     const units = analysis.units.filter(unit => code.some(file => file.file === unit.file) && (kinds ? kinds.includes(unit.kind) : !["file", "import", "parameter"].includes(unit.kind)));
     if (!kinds && units.some(unit => unit.isExported === undefined && unit.visibility === undefined)) return null;
-    return kinds ? units.length : units.filter(unit => unit.isExported === true || unit.visibility === "public").length;
+    return kinds ? units.length : units.filter(unit => declaredPublic(unit, python.get(files))).length;
   };
   for (const [metric, kinds] of [["functions", ["function"]], ["methods", ["method"]], ["classes", ["class"]], ["interfaces", ["interface"]], ["types", ["type", "type_alias", "enum", "struct"]]] as [string, string[]][]) add(`code.${metric}`, codeCount(left, a, kinds), codeCount(right, b, kinds));
   add("code.publicDeclarations", codeCount(left, a), codeCount(right, b));

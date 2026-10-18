@@ -62,6 +62,8 @@ All target references fall inside declared scope; reuse candidates may be outsid
 Several sources can converge on one destination; one source can split into several destinations.
 Duplicate IDs, duplicate references, and conflicting ownership of the same exact source reference are invalid.
 A broad file-level `MODIFY` cannot authorize undeclared public concepts.
+Python has no export syntax, so a Python declaration is public when no part of its qualified name starts with an underscore and, if its module defines `__all__`, its top-level name is listed there.
+Python declarations in test files or nested in functions are private.
 A new private unit inside a resulting reference of a planned `ADD`, `MODIFY`, or `REPLACE` entry belongs to that concept without an assessment.
 The same holds for a new private unit in a new file that such an entry references.
 Other private implementation details require explicit attribution to their owning planned concept during review.
