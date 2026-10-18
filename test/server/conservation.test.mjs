@@ -294,8 +294,8 @@ test('manual checks cannot waive mechanically retained deletions',async()=>{
  const f=await fixture({'rules.md':'Must remove.','requirements.md':'Remove obsolete behavior.'});
  const d=await f.update({expectedRevision:null,scope:['rules.md'],baselineId:f.b.snapshotId,requirements:[ref('requirements.md')],operations:[{op:'insert',entry:entry('obsolete','DELETE',[ref('rules.md','Must remove.')],[])}]});
  const c=await compareConceptDelta({projectRoot:f.root,deltaPath:f.deltaPath,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:f.b.snapshotId},{runtime:degraded});const retained=c.observations.find(x=>x.code==='retained_source');assert.ok(retained);
- const created=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'delivery',expectedRevision:null,actor:{id:'coordinator',role:'coordinator'},operations:[{op:'start_wave',id:'review',mode:'implementation-review',deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId:c.comparisonId,lanes:[{id:'main',reviewer:'reviewer',coverage:['rules.md']}]}]});
- await assert.rejects(updateReview({projectRoot:f.root,reviewPath:f.reviewPath,expectedRevision:created.revision,actor:{id:'reviewer',role:'reviewer'},operations:[{op:'record_assessment',assessment:{id:'waiver',lane:'main',kind:'manual',observationIds:[retained.id],reason:'Pretend unsupported.',evidence:[ref('rules.md')]}}]}),{code:'gate_blocked'});
+ const created=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'delivery',expectedRevision:null,actor:{id:'coordinator',role:'coordinator'},operations:[{op:'start_wave',id:'review',mode:'design-audit',deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId:c.comparisonId,lanes:[{id:'main',reviewer:'reviewer',coverage:['rules.md']}]}]});
+ await assert.rejects(updateReview({projectRoot:f.root,reviewPath:f.reviewPath,expectedRevision:created.revision,actor:{id:'reviewer',role:'reviewer'},operations:[{op:'record_assessment',assessment:{id:'waiver',lane:'main',kind:'manual',observationIds:[retained.id],reason:'Pretend unsupported.',evidence:[ref('rules.md')]}}]}),error=>error.code==='gate_blocked'&&/cannot waive/.test(error.message));
 });
 
 test('review independence and required lanes survive reassignment and correction waves',async()=>{
@@ -306,13 +306,18 @@ test('review independence and required lanes survive reassignment and correction
  const wave=(id,lanes,mode='design-audit')=>({op:'start_wave',id,mode,deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId,lanes:lanes.map(([id,reviewer])=>({id,reviewer,coverage:['src']}))});
  await act('coord',[{op:'assign_delivery',worker:'next-dev'}]);
  for(const reviewer of ['original-dev','next-dev','coord']) await assert.rejects(act('coord',[wave('invalid',[['functional',reviewer]])]),{code:'validation_failed'});
+ // An implementation wave before an accepted design audit could never be accepted, so it is refused at the start.
+ const unaudited=error=>error.code==='gate_blocked'&&error.problems.some(item=>item.code==='design_audit_missing');
+ await assert.rejects(act('coord',[wave('early',[['functional','r1']],'implementation-review')]),unaudited);
  await act('coord',[wave('audit',[['functional','r1'],['security','r2']])]);
+ await assert.rejects(act('coord',[wave('early',[['functional','r1']],'implementation-review')]),unaudited);
  await act('r1',[{op:'submit_lane',lane:'functional',status:'CLEAN'}]);await act('r2',[{op:'submit_lane',lane:'security',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
  await assert.rejects(act('coord',[wave('correction',[['functional','r1']])]),{code:'gate_blocked'});
  await act('coord',[wave('correction',[['functional','r1'],['security','r2']]),{op:'carry_lane',lane:'functional',fromWave:'audit'},{op:'carry_lane',lane:'security',fromWave:'audit'},{op:'accept_wave'}]);
  await act('coord',[wave('implementation',[['functional','r1']],'implementation-review')]);await act('r1',[{op:'submit_lane',lane:'functional',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
  assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,true);
  await act('coord',[wave('new-audit',[['functional','r1'],['security','r2'],['additional','r3']])]);
+ await assert.rejects(act('coord',[wave('stale-implementation',[['functional','r1']],'implementation-review')]),unaudited);
  await act('r3',[{op:'open_finding',lane:'additional',localId:'D2',title:'New defect',severity:'high',affectedPath:'src',evidence:'New audit evidence',conditionToClose:'Resolve defect'}]);
  assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,false);
 });

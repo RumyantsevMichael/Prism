@@ -66,6 +66,11 @@ function laneDigest(review: ReviewRecord, wave: Wave, lane: Lane) {
     conflicts: review.conflicts.filter(item => item.wave === wave.id && item.lanes.includes(lane.id)) }));
 }
 function waveDigest(review: ReviewRecord, wave: Wave) { return digest(canonical(wave.lanes.map(lane => ({ lane: lane.id, digest: laneDigest(review, wave, lane), result: lane.result })))); }
+// Implementation review needs the latest design audit accepted for the same delta revision and baseline, with unchanged accepted inputs.
+function designAudited(review: ReviewRecord, wave: Pick<Wave, "deltaRevision" | "baselineId">) {
+  const audit = [...review.waves].reverse().find(item => item.mode === "design-audit");
+  return Boolean(audit?.accepted && audit.deltaRevision === wave.deltaRevision && audit.baselineId === wave.baselineId && audit.accepted.evidenceDigest === waveDigest(review, audit));
+}
 const recordSchema = obj({
   schemaVersion: { const: 1 }, deltaPath: str, coordinator: str, delivery: str, deliveryWorkers: arr(str, 10000), baselineId: hashField,
   waves: arr(obj({ id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, baselineId: hashField, snapshotId: hashField, comparisonId: hashField,
@@ -203,8 +208,7 @@ async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wav
   for (const file of targetFiles(comparison)) if (!wave.lanes.some(lane => withinScope(file, lane.coverage))) add("review_coverage_missing", "Assign each original and resulting target file to a review lane.", file);
   if (requireLaneResults) for (const lane of wave.lanes) if (lane.result?.status !== "CLEAN" || lane.result.digest !== laneDigest(review, wave, lane)) add("lane_result_stale", "Every assigned lane needs a current CLEAN result.", lane.id);
   for (const lane of wave.lanes) if (lane.reviewer === review.coordinator || review.deliveryWorkers.includes(lane.reviewer) || review.exchangeWorkers.includes(lane.reviewer)) add("reviewer_not_independent", "A correction participant cannot verify the correction.", lane.id);
-  const latestAudit = [...review.waves].reverse().find(item => item.mode === "design-audit");
-  if (wave.mode === "implementation-review" && (!latestAudit?.accepted || latestAudit.deltaRevision !== wave.deltaRevision || latestAudit.baselineId !== wave.baselineId || latestAudit.accepted.evidenceDigest !== waveDigest(review, latestAudit))) add("design_audit_missing", "Implementation review requires the latest accepted design revision.");
+  if (wave.mode === "implementation-review" && !designAudited(review, wave)) add("design_audit_missing", "Implementation review requires the latest accepted design revision.");
   await conservationStore.assertCurrent(projectRoot, wave.snapshotId);
   return problems;
 }
@@ -275,6 +279,8 @@ export async function updateReview(input: UpdateInput) {
         const baselineId = (delta.document as DeltaDocument | null)?.baselineId;
         if (!baselineId || (review.baselineId && review.baselineId !== baselineId)) throw conservationError("gate_blocked", "A review must preserve its original retained baseline.");
         const created: Wave = { id: next.id, mode: next.mode, deltaRevision: next.deltaRevision, snapshotId: next.snapshotId, comparisonId: next.comparisonId, baselineId, lanes: next.lanes };
+        // Such a wave could never be accepted, so its review work would be lost.
+        if (created.mode === "implementation-review" && !designAudited(review, created)) throw conservationError("gate_blocked", `Implementation review requires the latest accepted design revision. Start and accept a design-audit wave for delta revision ${created.deltaRevision} before ${created.id}.`, { problems: [{ code: "design_audit_missing", message: "Implementation review requires the latest accepted design revision." }] });
         const comparison = await comparisonFor(input.projectRoot, review, created);
         const uncovered = targetFiles(comparison).filter(file => !created.lanes.some(lane => withinScope(file, lane.coverage)));
         if (uncovered.length) throw conservationError("validation_failed", "Lane coverage holds project-relative path prefixes, such as src/server/session, and each target file of the comparison needs a lane.", { problems: uncovered.map(file => ({ code: "review_coverage_missing", file, message: "no lane covers this target file" })) });

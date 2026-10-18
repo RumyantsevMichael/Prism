@@ -18,6 +18,7 @@ Repeated failed corrections can require a replacement delivery worker or a new d
 Correction that requires `SPLIT` or redesign retains lane evidence and returns to design.
 
 A new design audit requires changed fit, requirements, architecture, boundaries, dependencies, planned verification, or concept delta revision.
+`start_wave` refuses an `implementation-review` wave until the latest design audit is accepted for the same concept delta revision, so a delta edit after the audit needs a new accepted audit before implementation review.
 Reviewers receive verification results and probe paths without a request to rerun the complete suite.
 If a finding spans slices, retain its reporting lane and route correction without transferring its identity or evidence.
 If a design audit finds only implementation gaps, route them after the implementation gate.
