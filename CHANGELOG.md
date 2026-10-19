@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.11.0](https://github.com/RumyantsevMichael/Prism/compare/v0.10.1...v0.11.0) (2026-10-19)
+
+
+### Added
+
+* carry unchanged review assessments forward and return an assessment skeleton ([1ab3adc](https://github.com/RumyantsevMichael/Prism/commit/1ab3adc0c4ff8048fa1cccb8a60b72b9ac14a793))
+* carry unchanged review assessments forward and return an assessment skeleton ([1d20e47](https://github.com/RumyantsevMichael/Prism/commit/1d20e47f5a0f4e34ec8c06a28f2f982171fd8605)), closes [#17](https://github.com/RumyantsevMichael/Prism/issues/17)
+* design a shared review app with red tests ([87b16ad](https://github.com/RumyantsevMichael/Prism/commit/87b16add24d0b7f1af768477d8da8714000bb88b))
+* estimate active Claude Code session capacity conservatively ([dc1f121](https://github.com/RumyantsevMichael/Prism/commit/dc1f121b2dafdbc85aa3ecb4988487a02c307ef0))
+* open prism review in the shared review app and return ([8f5b9d3](https://github.com/RumyantsevMichael/Prism/commit/8f5b9d3ad4bf8b9fc94ad7e4ff885f39e5a1a15a))
+* reuse the review viewer credential only after a handoff ([8452908](https://github.com/RumyantsevMichael/Prism/commit/84529080421e978ce65197a9f1455d1453ea5ce9))
+* scope correction review to files changed since the previous wave ([a9469a0](https://github.com/RumyantsevMichael/Prism/commit/a9469a0ec83a63332c49c30bdb9a01cc4472d34b))
+* scope correction review to files changed since the previous wave ([c7d123c](https://github.com/RumyantsevMichael/Prism/commit/c7d123c7e17893fd4ddd532b08a6e44a3559c355))
+* share one review app across sessions and projects ([1b36d90](https://github.com/RumyantsevMichael/Prism/commit/1b36d905b22509aeb344f06f90cfc285daa3ac8d))
+* share one review app across sessions and projects ([2785f97](https://github.com/RumyantsevMichael/Prism/commit/2785f97b17cee9baa9cba5be7b2cc470e8d0faac))
+* sign review app control requests and isolate scripts ([e2e64d9](https://github.com/RumyantsevMichael/Prism/commit/e2e64d9a73ef675acc99368641f996158b6cd4bc))
+* switch projects in the review app and notify instead of opening a second tab ([8d53127](https://github.com/RumyantsevMichael/Prism/commit/8d531270779a15b054dcf31d4f75aa46760ccbf8))
+
+
+### Fixed
+
+* accept concept references under a scope written with a trailing slash ([325e508](https://github.com/RumyantsevMichael/Prism/commit/325e50854f813097895735318a59d9e753ca2315))
+* bound review app requests and keep registration and links current ([f7e6173](https://github.com/RumyantsevMichael/Prism/commit/f7e61734f82ad2b386675eb6fbb3cd99c7f1328f))
+* close the standalone review server when its first presentation fails ([8194185](https://github.com/RumyantsevMichael/Prism/commit/81941859ee1223ded56eb1d1b8705893687de2ae))
+* cover later Codex versions with minimum-version profiles ([7b2bb6f](https://github.com/RumyantsevMichael/Prism/commit/7b2bb6f609cdbb84e018a4d5ca75caf2db54ad40))
+* hold the Python public-declaration rule until a benchmark measures it ([b87a2b2](https://github.com/RumyantsevMichael/Prism/commit/b87a2b2f4192cb6819f618d878d1abf151a19fc8))
+* keep review app discovery paths private ([bf932b8](https://github.com/RumyantsevMichael/Prism/commit/bf932b8277c2ec51b980cb55c71924a2b5764e38))
+* keep switcher focus across refreshes and cover the remaining notice and limit rules ([113ef6c](https://github.com/RumyantsevMichael/Prism/commit/113ef6c66edde0dcce66e3ec9f3960fb7080097f))
+* keep the review server body reader private ([b0f5f7c](https://github.com/RumyantsevMichael/Prism/commit/b0f5f7cd340fe5c380ef4208fad17c9455964417))
+* make active session capacity work on current Codex and Claude Code ([d7da2cf](https://github.com/RumyantsevMichael/Prism/commit/d7da2cfd5a980be8a05c57d99ca822daea487560))
+* offer carry-forward from the last wave that holds accepted assessments ([9006cd5](https://github.com/RumyantsevMichael/Prism/commit/9006cd5952578f48b6be4cdec630fff4ee36b0bd))
+* read a project's evidence from every store its sessions report ([916a21c](https://github.com/RumyantsevMichael/Prism/commit/916a21cd022a940b4fb658cf8183fcf3b400d8db))
+* refuse implementation review waves before an accepted design audit ([d146852](https://github.com/RumyantsevMichael/Prism/commit/d146852d963648ad79bb1a4289280e52bf1c913b))
+* refuse implementation review waves before an accepted design audit ([aa258bc](https://github.com/RumyantsevMichael/Prism/commit/aa258bc5876f0640730a53c36f1ffd3a86f765a4))
+* serve each project's evidence from the store its sessions report ([18ea1fd](https://github.com/RumyantsevMichael/Prism/commit/18ea1fd36e62e98fe486360ad0539f3f4cd1ed47))
+* serve the review browser over plain HTTP on loopback ([485d1e3](https://github.com/RumyantsevMichael/Prism/commit/485d1e313f21161fc25acff712aae34fa51b369a))
+* serve the review browser over plain HTTP on loopback ([c450423](https://github.com/RumyantsevMichael/Prism/commit/c450423f961c9fe6952db782ee59ed4b3beb9494))
+* stop renewing a project's app lease once it falls back ([64b0c5b](https://github.com/RumyantsevMichael/Prism/commit/64b0c5ba47893046417e7c03a7e0fad746293e85))
+* treat public Python declarations as public in the conservation gate ([6d28808](https://github.com/RumyantsevMichael/Prism/commit/6d28808a643a65426eb2961736fe35ed008335ee))
+
+
+### Documentation
+
+* design the review app project switcher and presentation notice ([e2603f0](https://github.com/RumyantsevMichael/Prism/commit/e2603f011b7578ebc61495ec11aae82d211da531))
+* limit viewer credential reuse to a recent handoff in the shared app ADR ([8839090](https://github.com/RumyantsevMichael/Prism/commit/88390900b62d6ef02b8a0ffc51e93b7e461946f6))
+
 ## [0.10.1](https://github.com/RumyantsevMichael/Prism/compare/v0.10.0...v0.10.1) (2026-10-15)
 
 
