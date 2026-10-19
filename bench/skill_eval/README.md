@@ -29,9 +29,11 @@ Each run checks out the pinned commit in a temporary worktree and gives a fresh 
 The request ends with a JSON block of candidates and kept similarities, which is the only part the scorer reads.
 The JSON block gives each candidate's locations as files with line ranges, so scoring never depends on the words an agent chooses.
 A location without a line range stands for its whole file.
-A proposed candidate matches an item when its cited lines in the item's files overlap the item by at least half of the smaller of the two, and cite at most four times the item's size.
-So a candidate that cites a whole function can match the item for that function, but not a smaller item whose lines merely fall inside it.
-One candidate can still match two items when its lines satisfy both.
+Each resolved definition or line range is one site of the item.
+A cited range pins a site when it overlaps at least half of the smaller of the two and is at most four times the site's length plus five lines.
+A proposed candidate matches an item when it pins one site and, for an item with several sites, at least touches a second one.
+So a candidate that cites a whole function matches the item for that function, but not a one-line call site inside it, and a candidate about one copy of a duplicate does not match the duplication.
+One candidate can still match two items when its locations satisfy both.
 The agent gets read, search, read-only git, and Prism tools, and the run fails its byte check if any file changes.
 Pass `--config-dir` with an empty directory so no memory or project history reaches the agent.
 The runner also drops every `CLAUDE*` variable, because a nested session exports memory paths.

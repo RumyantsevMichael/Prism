@@ -103,7 +103,8 @@ def extract_candidates(output: str) -> list[dict[str, object]] | None:
     return None
 
 
-Lines = dict[str, set[int]]
+# A span is one contiguous place: a definition or line range in one file.
+Span = tuple[str, set[int]]
 
 
 class Source:
@@ -142,37 +143,36 @@ def definition_range(lines: list[str], start: int, python: bool) -> tuple[int, i
     return start + 1, start + 1
 
 
-def symbol_lines(source: Source, path: str, symbol: str) -> Lines:
+def symbol_spans(source: Source, path: str, symbol: str) -> list[Span]:
     name = re.escape(symbol)
     pattern = re.compile(rf"(\bfunction\s*\*?\s+{name}\s*\(|^(export\s+)?(const|let|var|class)\s+{name}\b|^\s*(async\s+)?{name}\s*\([^)]*\)\s*\{{|^\s*def\s+{name}\s*\(|^{name}\s*=)")
-    found: Lines = {}
+    found: list[Span] = []
     for candidate in [p for p in source.paths if p.startswith(path)] if path.endswith("/") else [path]:
         lines = source.lines(candidate) or []
         for index, line in enumerate(lines):
             if pattern.search(line):
                 first, last = definition_range(lines, index, candidate.endswith(".py"))
-                found.setdefault(candidate, set()).update(range(first, last + 1))
+                found.append((candidate, set(range(first, last + 1))))
     return found
 
 
-def item_lines(source: Source, item: dict[str, object]) -> Lines:
-    lines: Lines = {}
+def item_spans(source: Source, item: dict[str, object]) -> list[Span]:
+    spans: list[Span] = []
     for location in item["locations"]:
         if "symbol" in location:
-            resolved = symbol_lines(source, location["file"], location["symbol"])
+            resolved = symbol_spans(source, location["file"], location["symbol"])
             if not resolved:
                 raise SystemExit(f"{item['id']}: {location['symbol']} not found in {location['file']} at {source.commit}")
+            spans += resolved
         else:
             first, last = location["lines"]
-            resolved = {location["file"]: set(range(first, last + 1))}
-        for path, numbers in resolved.items():
-            lines.setdefault(path, set()).update(numbers)
-    return lines
+            spans.append((location["file"], set(range(first, last + 1))))
+    return spans
 
 
-def reported_lines(source: Source, candidate: dict[str, object]) -> Lines:
+def reported_spans(source: Source, candidate: dict[str, object]) -> list[Span]:
     # A location without a usable line range stands for its whole file, so a vague citation is as large as the file.
-    lines: Lines = {}
+    spans: list[Span] = []
     for location in candidate.get("locations") or []:
         if not isinstance(location, dict):
             continue
@@ -180,18 +180,22 @@ def reported_lines(source: Source, candidate: dict[str, object]) -> Lines:
         content = source.lines(path)
         if content is None:
             continue
-        span = re.findall(r"\d+", str(location.get("lines") or ""))
-        first, last = (int(span[0]), int(span[-1])) if span else (1, len(content))
-        lines.setdefault(path, set()).update(range(first, last + 1))
-    return lines
+        numbers = re.findall(r"\d+", str(location.get("lines") or ""))
+        first, last = (int(numbers[0]), int(numbers[-1])) if numbers else (1, len(content))
+        spans.append((path, set(range(first, last + 1))))
+    return spans
 
 
-def candidate_matches(reported: Lines, expected: Lines) -> bool:
-    # The citation must sit mostly inside the item, or cover most of a smaller item, and must not dwarf it.
-    cited = sum(len(numbers) for path, numbers in reported.items() if path in expected)
-    overlap = sum(len(numbers & expected[path]) for path, numbers in reported.items() if path in expected)
-    size = sum(len(numbers) for numbers in expected.values())
-    return overlap > 0 and overlap >= 0.5 * min(cited, size) and cited <= 4 * size
+def pins(cited: Span, site: Span) -> bool:
+    # A citation pins a site when it is about as tight as the site and mostly overlaps it, so a whole function does not pin one call inside it.
+    overlap = len(cited[1] & site[1]) if cited[0] == site[0] else 0
+    return overlap > 0 and overlap >= 0.5 * min(len(cited[1]), len(site[1])) and len(cited[1]) <= 4 * len(site[1]) + 5
+
+
+def candidate_matches(cited: list[Span], sites: list[Span]) -> bool:
+    # One site must be pinned, and an item with several sites needs a second one at least touched, because the item is their relationship.
+    touched = sum(any(path == site[0] and numbers & site[1] for path, numbers in cited) for site in sites)
+    return any(pins(span, site) for span in cited for site in sites) and touched >= min(2, len(sites))
 
 
 def score_run(record: dict[str, object], catalog: dict[str, object], source: Source) -> dict[str, object]:
@@ -200,15 +204,15 @@ def score_run(record: dict[str, object], catalog: dict[str, object], source: Sou
         return {"parsed": False}
     proposed = [candidate for candidate in candidates if candidate.get("verdict") == "candidate"]
     kept = [candidate for candidate in candidates if candidate.get("verdict") == "keep"]
-    proposed_lines = [reported_lines(source, candidate) for candidate in proposed]
-    kept_lines = [reported_lines(source, candidate) for candidate in kept]
+    proposed_spans = [reported_spans(source, candidate) for candidate in proposed]
+    kept_spans = [reported_spans(source, candidate) for candidate in kept]
     items = {}
     matched_candidates: set[int] = set()
     for item in catalog["items"]:
-        expected = item_lines(source, item)
-        found = [index for index, lines in enumerate(proposed_lines) if candidate_matches(lines, expected)]
+        sites = item_spans(source, item)
+        found = [index for index, spans in enumerate(proposed_spans) if candidate_matches(spans, sites)]
         matched_candidates.update(found)
-        outcome = "found" if found else "kept" if any(candidate_matches(lines, expected) for lines in kept_lines) else "missed"
+        outcome = "found" if found else "kept" if any(candidate_matches(spans, sites) for spans in kept_spans) else "missed"
         items[item["id"]] = {"label": item["label"], "outcome": outcome}
     expected = [value for value in items.values() if value["label"] == "expected"]
     return {
@@ -228,8 +232,7 @@ def mock_output(catalog: dict[str, object], source: Source, rep: int) -> str:
     # Alternate halves of the catalog so the mock exercises found, missed, kept, and unmatched outcomes.
     candidates = []
     for index, item in enumerate(catalog["items"]):
-        path, numbers = sorted(item_lines(source, item).items())[0]
-        locations = [{"file": path, "lines": f"{min(numbers)}-{max(numbers)}"}]
+        locations = [{"file": path, "lines": f"{min(numbers)}-{max(numbers)}"} for path, numbers in item_spans(source, item)[:2]]
         if index % 2 == rep % 2:
             candidates.append({"title": item["summary"], "verdict": "candidate", "locations": locations})
         elif index % 3 == 0:
@@ -338,7 +341,9 @@ def locations(args: argparse.Namespace) -> None:
     catalog = json.loads(Path(args.catalog).read_text())
     files = Source(Path(args.source).resolve(), catalog["commit"])
     for item in catalog["items"]:
-        resolved = item_lines(files, item)
+        resolved: dict[str, set[int]] = {}
+        for path, numbers in item_spans(files, item):
+            resolved.setdefault(path, set()).update(numbers)
         print(f"{item['id']} ({sum(len(numbers) for numbers in resolved.values())} lines)")
         for path, numbers in sorted(resolved.items()):
             ranges, ordered = [], sorted(numbers)
