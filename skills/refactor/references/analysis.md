@@ -109,7 +109,7 @@ Managed slices retain their reviewed growth justifications and conservation gate
 
 | Field | Required content where applicable |
 | --- | --- |
-| Candidate | Every proposed candidate and every investigated similarity kept distinct, each with exact artifact locations, plus discovery coverage. |
+| Candidate | Investigated concepts and exact artifact locations, including discovery coverage. |
 | Evidence | Source, semantic candidates, structural relationships, and relevant red flags. |
 | Relationship | Inferred relationship, meaningful distinctions, and confidence. |
 | Desired model | Knowledge ownership, retained boundaries, hidden details, and the reason this structure is preferable. |
