@@ -24,8 +24,9 @@ PROMPT = (
 # The machine-readable tail is the only harness addition to the user request; scoring reads nothing else.
 RESULT_INSTRUCTION = (
     "\n\nEnd your answer with one fenced json block of the form "
-    '{"candidates": [{"title": "...", "verdict": "candidate" or "keep", "files": ["repo-relative paths"], "symbols": ["function, constant, or term names"]}]}. '
-    "List every candidate you propose with verdict candidate, and every similarity you investigated and decided to keep with verdict keep."
+    '{"candidates": [{"title": "...", "verdict": "candidate" or "keep", "locations": [{"file": "repo-relative path", "lines": "start-end"}]}]}. '
+    "List every candidate you propose with verdict candidate, and every similarity you investigated and decided to keep with verdict keep. "
+    "Give each place the candidate involves as a file and its line range."
 )
 # Analysis must not edit, so the agent gets read, search, read-only git, subagents, and Prism's own tools.
 ALLOWED_TOOLS = [
@@ -102,33 +103,112 @@ def extract_candidates(output: str) -> list[dict[str, object]] | None:
     return None
 
 
-def file_matches(reported: str, expected: str) -> bool:
-    reported = reported.strip().lstrip("./").split(":")[0]
-    if expected.endswith("/"):
-        return reported.startswith(expected) or f"/{expected}" in reported
-    return reported == expected or reported.endswith(f"/{expected}") or expected.endswith(f"/{reported}")
+Lines = dict[str, set[int]]
 
 
-def candidate_matches(candidate: dict[str, object], item: dict[str, object]) -> bool:
-    files = [str(value) for value in candidate.get("files") or []]
-    if not any(file_matches(reported, expected) for reported in files for expected in item["files"]):
-        return False
-    text = " ".join([str(candidate.get("title") or ""), *[str(value) for value in candidate.get("symbols") or []]]).lower()
-    return any(symbol.lower() in text for symbol in item["symbols"])
+class Source:
+    """Files of the catalog commit, read through git so scoring needs no checkout."""
+
+    def __init__(self, repository: Path, commit: str):
+        self.repository, self.commit, self.cache = repository, commit, {}
+        self.paths = git(repository, "ls-tree", "-r", "--name-only", commit).splitlines()
+
+    def lines(self, path: str) -> list[str] | None:
+        if path not in self.cache:
+            self.cache[path] = git(self.repository, "show", f"{self.commit}:{path}").splitlines() if path in self.paths else None
+        return self.cache[path]
 
 
-def score_run(record: dict[str, object], catalog: dict[str, object]) -> dict[str, object]:
+def definition_range(lines: list[str], start: int, python: bool) -> tuple[int, int]:
+    # A definition ends where its brackets close, or for Python where the indentation returns to the definition's level.
+    if python and lines[start].lstrip().startswith(("def ", "class ")):
+        indent = len(lines[start]) - len(lines[start].lstrip())
+        end = start
+        for index in range(start + 1, len(lines)):
+            if lines[index].strip() and len(lines[index]) - len(lines[index].lstrip()) <= indent:
+                break
+            if lines[index].strip():
+                end = index
+        return start + 1, end + 1
+    depth, opened = 0, False
+    for index in range(start, len(lines)):
+        for char in lines[index]:
+            if char in "{[":
+                depth, opened = depth + 1, True
+            elif char in "}]":
+                depth -= 1
+        if opened and depth <= 0 or not opened:
+            return start + 1, index + 1
+    return start + 1, start + 1
+
+
+def symbol_lines(source: Source, path: str, symbol: str) -> Lines:
+    name = re.escape(symbol)
+    pattern = re.compile(rf"(\bfunction\s*\*?\s+{name}\s*\(|^(export\s+)?(const|let|var|class)\s+{name}\b|^\s*(async\s+)?{name}\s*\([^)]*\)\s*\{{|^\s*def\s+{name}\s*\(|^{name}\s*=)")
+    found: Lines = {}
+    for candidate in [p for p in source.paths if p.startswith(path)] if path.endswith("/") else [path]:
+        lines = source.lines(candidate) or []
+        for index, line in enumerate(lines):
+            if pattern.search(line):
+                first, last = definition_range(lines, index, candidate.endswith(".py"))
+                found.setdefault(candidate, set()).update(range(first, last + 1))
+    return found
+
+
+def item_lines(source: Source, item: dict[str, object]) -> Lines:
+    lines: Lines = {}
+    for location in item["locations"]:
+        if "symbol" in location:
+            resolved = symbol_lines(source, location["file"], location["symbol"])
+            if not resolved:
+                raise SystemExit(f"{item['id']}: {location['symbol']} not found in {location['file']} at {source.commit}")
+        else:
+            first, last = location["lines"]
+            resolved = {location["file"]: set(range(first, last + 1))}
+        for path, numbers in resolved.items():
+            lines.setdefault(path, set()).update(numbers)
+    return lines
+
+
+def reported_lines(source: Source, candidate: dict[str, object]) -> Lines:
+    # A location without a usable line range stands for its whole file, so a vague citation is as large as the file.
+    lines: Lines = {}
+    for location in candidate.get("locations") or []:
+        if not isinstance(location, dict):
+            continue
+        path = str(location.get("file") or "").strip().lstrip("./").split(":")[0]
+        content = source.lines(path)
+        if content is None:
+            continue
+        span = re.findall(r"\d+", str(location.get("lines") or ""))
+        first, last = (int(span[0]), int(span[-1])) if span else (1, len(content))
+        lines.setdefault(path, set()).update(range(first, last + 1))
+    return lines
+
+
+def candidate_matches(reported: Lines, expected: Lines) -> bool:
+    # The citation must sit mostly inside the item, or cover most of a smaller item, and must not dwarf it.
+    cited = sum(len(numbers) for path, numbers in reported.items() if path in expected)
+    overlap = sum(len(numbers & expected[path]) for path, numbers in reported.items() if path in expected)
+    size = sum(len(numbers) for numbers in expected.values())
+    return overlap > 0 and overlap >= 0.5 * min(cited, size) and cited <= 4 * size
+
+
+def score_run(record: dict[str, object], catalog: dict[str, object], source: Source) -> dict[str, object]:
     candidates = extract_candidates(str(record.get("output") or ""))
     if candidates is None:
         return {"parsed": False}
     proposed = [candidate for candidate in candidates if candidate.get("verdict") == "candidate"]
     kept = [candidate for candidate in candidates if candidate.get("verdict") == "keep"]
+    proposed_lines = [reported_lines(source, candidate) for candidate in proposed]
+    kept_lines = [reported_lines(source, candidate) for candidate in kept]
     items = {}
     matched_candidates: set[int] = set()
     for item in catalog["items"]:
-        found = [index for index, candidate in enumerate(proposed) if candidate_matches(candidate, item)]
+        expected = item_lines(source, item)
+        found = [index for index, lines in enumerate(proposed_lines) if candidate_matches(lines, expected)]
         matched_candidates.update(found)
-        outcome = "found" if found else "kept" if any(candidate_matches(candidate, item) for candidate in kept) else "missed"
+        outcome = "found" if found else "kept" if any(candidate_matches(lines, expected) for lines in kept_lines) else "missed"
         items[item["id"]] = {"label": item["label"], "outcome": outcome}
     expected = [value for value in items.values() if value["label"] == "expected"]
     return {
@@ -144,15 +224,17 @@ def score_run(record: dict[str, object], catalog: dict[str, object]) -> dict[str
     }
 
 
-def mock_output(catalog: dict[str, object], rep: int) -> str:
+def mock_output(catalog: dict[str, object], source: Source, rep: int) -> str:
     # Alternate halves of the catalog so the mock exercises found, missed, kept, and unmatched outcomes.
     candidates = []
     for index, item in enumerate(catalog["items"]):
+        path, numbers = sorted(item_lines(source, item).items())[0]
+        locations = [{"file": path, "lines": f"{min(numbers)}-{max(numbers)}"}]
         if index % 2 == rep % 2:
-            candidates.append({"title": item["summary"], "verdict": "candidate", "files": item["files"][:1], "symbols": item["symbols"][:1]})
+            candidates.append({"title": item["summary"], "verdict": "candidate", "locations": locations})
         elif index % 3 == 0:
-            candidates.append({"title": item["summary"], "verdict": "keep", "files": item["files"][:1], "symbols": item["symbols"][:1]})
-    candidates.append({"title": "Unlabeled mock finding", "verdict": "candidate", "files": ["README.md"], "symbols": ["mock"]})
+            candidates.append({"title": item["summary"], "verdict": "keep", "locations": locations})
+    candidates.append({"title": "Unlabeled mock finding", "verdict": "candidate", "locations": [{"file": "README.md", "lines": "1-5"}]})
     return "Mock analysis.\n\n```json\n" + json.dumps({"candidates": candidates}) + "\n```\n"
 
 
@@ -176,6 +258,7 @@ def run(args: argparse.Namespace) -> None:
     plugin = Path(args.plugin).resolve()
     config_dir = Path(args.config_dir).resolve() if args.config_dir else None
     source = Path(args.source).resolve()
+    files = Source(source, catalog["commit"])
     for rep in range(args.reps):
         with tempfile.TemporaryDirectory(prefix="refactor-discovery-") as temporary:
             workspace = Path(temporary) / "repo"
@@ -184,7 +267,7 @@ def run(args: argparse.Namespace) -> None:
                 started = time.monotonic()
                 if args.mock:
                     stdout, error = "", None
-                    parsed = {"output": mock_output(catalog, rep), "session_id": None, "error": None, "cost_usd": 0.0, "turns": 0, "usage": {}, "tool_calls": 0, "status_polls": 0, "prism_tool_calls": 0, "permission_denials": 0}
+                    parsed = {"output": mock_output(catalog, files, rep), "session_id": None, "error": None, "cost_usd": 0.0, "turns": 0, "usage": {}, "tool_calls": 0, "status_polls": 0, "prism_tool_calls": 0, "permission_denials": 0}
                 else:
                     prompt = PROMPT + (RESULT_INSTRUCTION if args.variant == "listed" else "")
                     stdout, error = invoke(workspace, config_dir, args.timeout, prompt, "--plugin-dir", str(plugin), "--allowedTools", *ALLOWED_TOOLS, model=args.model)
@@ -198,7 +281,7 @@ def run(args: argparse.Namespace) -> None:
                         parsed["output"] = follow["output"]
                         parsed["list_cost_usd"] = follow["cost_usd"]
                 record = {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "rep": rep,
                     "started_at": utc_now(),
                     "duration_s": round(time.monotonic() - started, 1),
@@ -212,7 +295,7 @@ def run(args: argparse.Namespace) -> None:
                     "error": error or parsed["error"],
                     "changed_files": changed_files(workspace),
                 }
-                record["score"] = score_run(record, catalog)
+                record["score"] = score_run(record, catalog, files)
                 name = f"rep-{rep}"
                 (out / f"{name}.json").write_text(json.dumps(record, indent=2) + "\n")
                 if not args.mock:
@@ -224,9 +307,10 @@ def run(args: argparse.Namespace) -> None:
 
 def report(args: argparse.Namespace) -> None:
     catalog = json.loads(Path(args.catalog).read_text())
+    files = Source(Path(args.source).resolve(), catalog["commit"])
     records = [json.loads(path.read_text()) for path in sorted(Path(args.results).glob("rep-*.json"))]
     for record in records:
-        record["score"] = score_run(record, catalog)
+        record["score"] = score_run(record, catalog, files)
     scored = [record for record in records if record["score"].get("parsed")]
     print(f"runs {len(records)}, scored {len(scored)}")
     if not scored:
@@ -250,6 +334,22 @@ def report(args: argparse.Namespace) -> None:
             print(f"  rep {record['rep']}: {title}")
 
 
+def locations(args: argparse.Namespace) -> None:
+    catalog = json.loads(Path(args.catalog).read_text())
+    files = Source(Path(args.source).resolve(), catalog["commit"])
+    for item in catalog["items"]:
+        resolved = item_lines(files, item)
+        print(f"{item['id']} ({sum(len(numbers) for numbers in resolved.values())} lines)")
+        for path, numbers in sorted(resolved.items()):
+            ranges, ordered = [], sorted(numbers)
+            for number in ordered:
+                if ranges and number == ranges[-1][1] + 1:
+                    ranges[-1][1] = number
+                else:
+                    ranges.append([number, number])
+            print(f"  {path}: {', '.join(f'{a}-{b}' if a != b else str(a) for a, b in ranges)}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -268,8 +368,12 @@ def main() -> None:
     report_parser = commands.add_parser("report", help="score and summarize a results directory")
     report_parser.add_argument("results")
     report_parser.add_argument("--catalog", default=str(DEFAULT_CATALOG))
+    report_parser.add_argument("--source", default=str(REPO_ROOT), help="git repository that contains the catalog commit")
+    locations_parser = commands.add_parser("locations", help="print the line ranges each catalog item resolves to")
+    locations_parser.add_argument("--catalog", default=str(DEFAULT_CATALOG))
+    locations_parser.add_argument("--source", default=str(REPO_ROOT))
     args = parser.parse_args()
-    run(args) if args.command == "run" else report(args)
+    {"run": run, "report": report, "locations": locations}[args.command](args)
 
 
 if __name__ == "__main__":

@@ -22,12 +22,16 @@ These trials do not produce paired benchmark claims or prove behavior for all fu
 ## Refactoring discovery recall
 
 `refactor_discovery.py` measures how many known candidates a repository-wide refactor analysis finds.
-The catalog in `refactor-discovery/prism-d146852.json` pins a Prism commit and lists known candidates with their files and symbols.
+The catalog in `refactor-discovery/prism-d146852.json` pins a Prism commit and lists known candidates by location.
+A location is a file with a line range, or a file or directory with a symbol that the scorer resolves to its definition at the pinned commit.
 An `expected` item counts toward recall, and an `acceptable` item is reported but either outcome is fine.
 Each run checks out the pinned commit in a temporary worktree and gives a fresh agent only the analysis request.
 The request ends with a JSON block of candidates and kept similarities, which is the only part the scorer reads.
-A proposed candidate matches an item when it names one of the item's files and one of its symbols.
-One candidate can match two items when their files and symbols overlap.
+The JSON block gives each candidate's locations as files with line ranges, so scoring never depends on the words an agent chooses.
+A location without a line range stands for its whole file.
+A proposed candidate matches an item when its cited lines in the item's files overlap the item by at least half of the smaller of the two, and cite at most four times the item's size.
+So a candidate that cites a whole function can match the item for that function, but not a smaller item whose lines merely fall inside it.
+One candidate can still match two items when its lines satisfy both.
 The agent gets read, search, read-only git, and Prism tools, and the run fails its byte check if any file changes.
 Pass `--config-dir` with an empty directory so no memory or project history reaches the agent.
 The runner also drops every `CLAUDE*` variable, because a nested session exports memory paths.
@@ -36,9 +40,13 @@ The runner also drops every `CLAUDE*` variable, because a nested session exports
 python3 bench/skill_eval/refactor_discovery.py run --mock --reps 2 --out bench/skill_eval/results/discovery-mock
 python3 bench/skill_eval/refactor_discovery.py run --reps 3 --config-dir /tmp/discovery-config --out bench/skill_eval/results/discovery
 python3 bench/skill_eval/refactor_discovery.py report bench/skill_eval/results/discovery
+python3 bench/skill_eval/refactor_discovery.py locations
 ```
 
+`locations` prints the line ranges each catalog item resolves to, which is how to check a catalog edit.
+
 `report` scores again from the current catalog, so labeling an unmatched proposal and rerunning the report needs no new agent run.
+Results with `schema_version` 1 list files and symbols instead of locations, so they score as missed under the current catalog.
 The catalog came from two earlier analyses, so recall measures agreement with known candidates, not completeness.
 
 ## Automated A/B catalogs
