@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.0](https://github.com/RumyantsevMichael/Prism/compare/v0.11.0...v0.12.0) (2026-10-20)
+
+
+### Added
+
+* **review:** compact shell with project/worktree label, tabs in the top bar, and stable refresh ([52a756e](https://github.com/RumyantsevMichael/Prism/commit/52a756e6be415b24280656b3653e3684d6fee3b7))
+* **review:** review browser UI improvements (shell, swimlanes, links, maximize, search) ([48c3a2d](https://github.com/RumyantsevMichael/Prism/commit/48c3a2d990dd27ad80fe46db4db5d06d25271a2d))
+* **review:** swimlane board, in-app Markdown links with contents and previews, maximize, and text search ([4130398](https://github.com/RumyantsevMichael/Prism/commit/4130398d0c8e395bce74f5729a07f318f1c61e8f))
+
 ## [0.11.0](https://github.com/RumyantsevMichael/Prism/compare/v0.10.1...v0.11.0) (2026-10-19)
 
 
