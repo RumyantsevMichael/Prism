@@ -15,5 +15,12 @@ export const deltaMetadata = {
   growthThresholds: arraySchema(objectSchema({ dimension: textField, maximumIncrease: { type: "integer", minimum: 0 } })),
   expectedGrowth: arraySchema(objectSchema({ dimension: textField, increase: { oneOf: [{ type: "number" }, { type: "null" }] }, reason: textField })),
   // Deltas of other slices whose REPLACE and DELETE entries consolidate functions that this delta's additions would otherwise copy.
-  consolidations: arraySchema(objectSchema({ deltaPath: textField, reason: textField }))
+  consolidations: arraySchema(objectSchema({ deltaPath: textField, reason: textField })),
+  // Structural discovery receipts of the baseline and a disposition for each finding they report inside the scope.
+  discoveryEvidence: objectSchema({
+    receiptIds: arraySchema(hashField),
+    omittedTools: arraySchema(objectSchema({ tool: textField, reason: textField })),
+    findings: arraySchema(objectSchema({ receiptId: hashField, findingId: { type: "string", pattern: "^[a-f0-9]{16}$" }, disposition: { enum: ["CHANGE", "KEEP", "DEFER"] },
+      conceptIds: arraySchema(textField), reason: textField }, ["receiptId", "findingId", "disposition", "reason"]), 1000)
+  }, ["receiptIds", "findings"])
 };

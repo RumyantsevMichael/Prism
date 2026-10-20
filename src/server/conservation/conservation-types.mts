@@ -36,6 +36,12 @@ export interface DeltaDocument {
   growthThresholds?: { dimension: string; maximumIncrease: number }[];
   expectedGrowth?: { dimension: string; increase: number | null; reason: string }[];
   consolidations?: { deltaPath: string; reason: string }[];
+  discoveryEvidence?: DiscoveryEvidence;
+}
+// CHANGE names the delta entries that act on a finding, KEEP keeps a similarity distinct, and DEFER leaves it for later work; each gives its reason.
+export interface DiscoveryEvidence {
+  receiptIds: string[]; omittedTools?: { tool: string; reason: string }[];
+  findings: { receiptId: string; findingId: string; disposition: "CHANGE" | "KEEP" | "DEFER"; conceptIds?: string[]; reason: string }[];
 }
 export interface ResolvedUnit { key: string; file: string; kind: string; selector: string; start: number; end: number; hash: string; public: boolean | null }
 export interface Resolution { status: "resolved" | "missing" | "ambiguous" | "unsupported"; reference: Reference; units: ResolvedUnit[]; reason?: string }

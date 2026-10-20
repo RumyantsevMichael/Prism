@@ -22,7 +22,7 @@ Each tool reports facts for investigation, not defects.
 5. For each responsibility that the scope implements, call `search_repository_concepts` with a query that describes it.
 6. While a call returns `preparing`, wait through bounded `get_repository_intelligence_status` requests and repeat the same call.
 7. Read the source of the reported units before you rank them.
-8. Cite the `receiptId` of each discovery result in the evidence of the candidates that it supports.
+8. When the refactor has a target scope, record [discovery verdicts](#discovery-verdicts) for the findings inside it.
 9. Preserve the same baseline through target edits, retries, and corrections.
 10. If a tool is unavailable, report that limitation with the fallback source identity and coverage.
 
@@ -30,6 +30,28 @@ A `preparing` response supplies neither completed candidates nor successful sema
 Live files cannot replace the original baseline after target edits.
 A known omission outside the affected scope limits repository coverage without implying missing affected source.
 Fallback discovery does not satisfy managed semantic gates.
+
+## Discovery verdicts
+
+A concept delta records the structural discovery receipts of a scoped refactor and a verdict for each finding inside its scope.
+Each reported item carries its finding `id`.
+The server lists the findings in scope that still need a verdict, up to ten per result list in each tool's order.
+
+| Disposition | Meaning |
+| --- | --- |
+| `CHANGE` | The delta entries named in `conceptIds` act on the finding, and their `before` references cover its code. |
+| `KEEP` | The similarity stays distinct for the stated reason. |
+| `DEFER` | The finding is left for later work for the stated reason. |
+
+1. Unless the caller supplies a concept delta, create one at `<plans path>/refactor-<target>/concept-delta.json`, using `docs/plans` when the configuration names no plans path.
+2. Capture its baseline with `capture_repository_snapshot` and that `deltaPath` before discovery.
+3. Set the delta `scope` to the refactor target.
+4. Pass the baseline as `snapshotId` to the six structural discovery tools.
+5. List their receipt IDs in `discoveryEvidence.receiptIds`, and name an unavailable tool in `omittedTools` with the reason.
+6. For each finding in scope, record its `receiptId`, `findingId`, disposition, and reason in `discoveryEvidence.findings`.
+7. Read the delta with `get_concept_delta` and resolve every `discovery_` and `finding_` diagnostic before you return the result.
+
+For an analysis request, the delta entries are proposals and the delta changes no target artifact.
 
 ## Candidate signals and ranking
 

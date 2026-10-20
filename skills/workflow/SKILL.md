@@ -84,10 +84,11 @@ Code establishes implemented behavior.
 | User gate record | A pending `state.json` entry that records a gate while it waits on the user, with its kind, slice, question, artifacts, optional decision options, and any answer the user recorded in the review browser. |
 | Fit checkpoint | The design decision that an outcome fits the remaining context and risk budget with settled architecture and end-to-end verification. |
 | Workflow decision record | An opt-in local record of a structured decision, its reason codes, evidence paths, and identity coverage. |
-| Concept delta | MCP-managed version 2 design evidence binding the original baseline, requirements, native search receipts, planned transitions, and growth policy to an audited revision. |
+| Concept delta | MCP-managed version 2 design evidence binding the original baseline, requirements, native search receipts, discovery verdicts, planned transitions, and growth policy to an audited revision. |
 | Conservation evidence | Immutable private B, A, and F source snapshots, semantic search and repository analysis receipts, observations, and measurements used by MCP review gates. |
 | Original baseline | Retained source before the first target edit, preserved for reuse discovery and later comparisons across corrections. |
 | Semantic reuse evidence | Snapshot-bound search candidates with model identity and reviewed reuse dispositions, recorded through the concept-delta MCP capability without treating similarity as equivalence. |
+| Discovery verdict | A concept delta disposition, `CHANGE`, `KEEP`, or `DEFER` with a reason, for one finding of a baseline-bound structural discovery receipt inside the delta scope. |
 | Refactoring | Behavior-preserving restructuring of existing concepts, with shared analysis for targeted cleanup and design reuse. |
 | Semantic concept | A unit of meaning or responsibility that can span several source units or share one with other concepts. |
 | Candidate relationship | An evidence-supported explanation of why concepts appear related, established before choosing a transformation. |
