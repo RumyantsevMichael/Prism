@@ -176,10 +176,32 @@ test("serves the browser runtime without an image endpoint", async (context) => 
     assert.match(client, /PlantUML source copied/);
     assert.match(client, /saveSession/);
     assert.match(client, /EventSource/);
+    assert.doesNotMatch(client, /meta-pill live/, "the page shows a banner when refresh fails instead of a permanent Live pill");
+    assert.doesNotMatch(pageSource, /Auto refresh/);
+    assert.match(pageSource, /id="connection"/);
+    const index = await (await fetchReview(`${review.baseUrl}/api/index`)).json();
+    assert.deepEqual(index.workspace, { repository: path.basename(projectRoot), worktree: null, branch: null });
     const c4 = await fetchReview(`${review.baseUrl}/vendor/c4.min.js`);
     assert.equal(c4.status, 200);
     const image = await fetchReview(`${review.baseUrl}/render/svg?source=docs%2Froadmap.puml`);
     assert.equal(image.status, 404);
+  } finally {
+    await review.close();
+  }
+});
+
+test("searches the text of listed artifacts only", async (context) => {
+  const projectRoot = await fixture(context);
+  await writeFile(path.join(projectRoot, "docs", "notes.md"), "# Notes\n\nThe total retry deadline bounds every call.\n");
+  await writeFile(path.join(projectRoot, "secrets", "private.md"), "# Private\n\nThe total retry deadline is secret.\n");
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const search = async (query) => (await fetchReview(`${review.baseUrl}/api/search?q=${encodeURIComponent(query)}`)).json();
+    const found = await search("RETRY deadline");
+    assert.deepEqual(found.results.map((result) => result.path), ["docs/notes.md"], "an unlisted folder is never searched");
+    assert.deepEqual(found.results[0].matches, [{ line: 3, text: "The total retry deadline bounds every call." }]);
+    assert.deepEqual((await search("deadline nowhere")).results, [], "every term must occur in the file");
+    assert.deepEqual((await search("a")).results, [], "a one-letter query matches nothing");
   } finally {
     await review.close();
   }

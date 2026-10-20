@@ -10,17 +10,13 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
+    <span class="brand" title="Prism review">
       <span class="brand-mark" aria-hidden="true"><i></i></span>
-      <span>
-        <strong>Prism</strong>
-        <small>Artifact review</small>
-      </span>
-    </div>
+      <span class="sr-only">Prism review</span>
+    </span>
     <div class="project-switcher" id="project-switcher">
       <button class="project-chip" id="project-button" type="button" aria-expanded="false" aria-controls="project-menu" title="Project root" disabled>
-        <span class="status-dot" aria-hidden="true"></span>
-        <span id="project">Loading project</span>
+        <span id="project" class="project-label">Loading project</span>
         <span id="project-gates" class="project-gates" hidden></span>
       </button>
       <div id="project-menu" class="project-menu" hidden>
@@ -28,25 +24,33 @@
         <ul id="project-list" class="project-list"></ul>
       </div>
     </div>
+    <div id="tabs" class="artifact-tabs" role="tablist" aria-label="Open artifacts"></div>
   </header>
   <div id="notice" class="notice-banner" role="status" aria-live="polite" hidden></div>
-  <main class="app-shell">
-    <aside class="sidebar" aria-label="Workspace navigation">
-      <button id="jump" class="jump-button" type="button" aria-haspopup="dialog">
-        <span class="search-icon" aria-hidden="true"></span>
-        <span class="jump-label">Jump to…</span>
-        <kbd>Ctrl K</kbd>
-      </button>
-      <nav aria-label="Prism workspace">
+  <div id="connection" class="connection-banner" role="alert" hidden>The review server is not responding. Retrying…</div>
+  <main class="app-shell" id="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Workspace navigation">
+      <div class="sidebar-top">
+        <div class="sidebar-tools">
+          <button id="jump" class="jump-button" type="button" aria-haspopup="dialog" title="Jump to (Ctrl K)">
+            <span class="search-icon" aria-hidden="true"></span>
+            <span class="jump-label">Jump to…</span>
+            <kbd>Ctrl K</kbd>
+          </button>
+          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-controls="sidebar" aria-expanded="true" title="Collapse the sidebar ([)">
+            <span class="sr-only">Collapse the sidebar</span>
+          </button>
+        </div>
+        <ul id="nav-places" class="nav-tree" aria-label="Places"></ul>
+      </div>
+      <nav class="sidebar-scroll" aria-label="Prism workspace">
         <ul id="artifacts" class="nav-tree"></ul>
       </nav>
-      <div class="sidebar-footer">
-        <span class="live-indicator"><i aria-hidden="true"></i>Auto refresh</span>
-        <span>1.5 seconds</span>
+      <div class="sidebar-library">
+        <ul id="nav-library" class="nav-tree" aria-label="Library"></ul>
       </div>
     </aside>
-    <section class="workspace">
-      <div id="tabs" class="artifact-tabs" role="tablist" aria-label="Open artifacts"></div>
+    <section class="workspace" id="workspace">
       <div id="artifact" class="artifact-view" aria-live="polite">
         <div class="welcome-card">
           <span class="welcome-mark" aria-hidden="true"></span>
@@ -69,7 +73,7 @@
       <label class="search-box palette-search">
         <span class="search-icon" aria-hidden="true"></span>
         <span class="sr-only">Jump to</span>
-        <input id="palette-input" type="search" placeholder="Initiative, slice, requirement, decision, term, or file" autocomplete="off" role="combobox" aria-controls="palette-results" aria-expanded="true">
+        <input id="palette-input" type="search" placeholder="Name of an initiative, slice, document, or file, or text in an artifact" autocomplete="off" role="combobox" aria-controls="palette-results" aria-expanded="true">
       </label>
       <ul id="palette-results" class="palette-results" role="listbox" aria-label="Matches"></ul>
       <p class="palette-hint">Enter opens in the preview tab · Ctrl+Enter keeps it open · Esc closes</p>

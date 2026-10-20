@@ -328,6 +328,7 @@ test("the review page lists live and recent projects with their open gates", asy
   const quietEntry = listing.projects.find((entry) => entry.projectRoot === quiet);
   assert.equal(listing.current, busyEntry.id);
   assert.deepEqual([busyEntry.live, busyEntry.gates, busyEntry.name], [true, 2, path.basename(busy)]);
+  assert.deepEqual(busyEntry.workspace, { repository: path.basename(busy), worktree: null, branch: null });
   assert.deepEqual([quietEntry.live, quietEntry.gates], [false, 0], "a project without a live lease stays listed as recent");
   assert.ok(listing.projects.indexOf(busyEntry) < listing.projects.indexOf(quietEntry), "live projects come first");
   assert.ok(!response.body.includes(discovery.controlToken));
