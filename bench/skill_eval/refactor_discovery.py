@@ -21,6 +21,14 @@ PROMPT = (
     "This is an analysis request: do not change any files. "
     "Return the ranked candidates with their evidence, the proposed transformation for each, and the discovery coverage."
 )
+# A scoped run names its target, as a developer who knows what to refactor would.
+SCOPED_PROMPT = (
+    "/prism:refactor Analyze {paths} for refactoring candidates. "
+    "This is an analysis request: do not change the code. "
+    "Return the ranked candidates with their evidence, the proposed transformation for each, and the discovery coverage."
+)
+# A concept delta and its review projections are server-managed evidence, not edits to the analyzed code.
+MANAGED_OUTPUT = re.compile(r"(^|/)(concept-delta\.json|review\.json|review\.md)(\.lock)?$")
 # The machine-readable tail is the only harness addition to the user request; scoring reads nothing else.
 RESULT_INSTRUCTION = (
     "\n\nEnd your answer with one fenced json block of the form "
@@ -198,7 +206,13 @@ def candidate_matches(cited: list[Span], sites: list[Span]) -> bool:
     return any(pins(span, site) for span in cited for site in sites) and touched >= min(2, len(sites))
 
 
+def in_scope(path: str, scope: list[str]) -> bool:
+    return not scope or any(path == entry.rstrip("/") or path.startswith(entry.rstrip("/") + "/") for entry in scope)
+
+
 def score_run(record: dict[str, object], catalog: dict[str, object], source: Source) -> dict[str, object]:
+    # A scoped run counts only items with a site in its scope, and matches them by those sites alone.
+    scope = list(record.get("scope") or [])
     candidates = extract_candidates(str(record.get("output") or ""))
     if candidates is None:
         return {"parsed": False}
@@ -209,7 +223,9 @@ def score_run(record: dict[str, object], catalog: dict[str, object], source: Sou
     items = {}
     matched_candidates: set[int] = set()
     for item in catalog["items"]:
-        sites = item_spans(source, item)
+        sites = [site for site in item_spans(source, item) if in_scope(site[0], scope)]
+        if not sites:
+            continue
         found = [index for index, spans in enumerate(proposed_spans) if candidate_matches(spans, sites)]
         matched_candidates.update(found)
         outcome = "found" if found else "kept" if any(candidate_matches(spans, sites) for spans in kept_spans) else "missed"
@@ -241,8 +257,20 @@ def mock_output(catalog: dict[str, object], source: Source, rep: int) -> str:
     return "Mock analysis.\n\n```json\n" + json.dumps({"candidates": candidates}) + "\n```\n"
 
 
-def changed_files(workspace: Path) -> list[str]:
-    return [line[3:] for line in git(workspace, "status", "--porcelain", "--untracked-files=all").splitlines()]
+def changed_files(workspace: Path) -> tuple[list[str], list[str]]:
+    paths = [line[3:] for line in git(workspace, "status", "--porcelain", "--untracked-files=all").splitlines()]
+    return [path for path in paths if not MANAGED_OUTPUT.search(path)], [path for path in paths if MANAGED_OUTPUT.search(path)]
+
+
+def concept_deltas(workspace: Path, managed: list[str]) -> dict[str, object]:
+    deltas = {}
+    for path in managed:
+        if path.endswith("concept-delta.json") and (workspace / path).is_file():
+            try:
+                deltas[path] = json.loads((workspace / path).read_text())
+            except json.JSONDecodeError:
+                deltas[path] = None
+    return deltas
 
 
 def invoke(workspace: Path, config_dir: Path | None, timeout: int, prompt: str, *extra: str, model: str) -> tuple[str, str | None]:
@@ -272,7 +300,8 @@ def run(args: argparse.Namespace) -> None:
                     stdout, error = "", None
                     parsed = {"output": mock_output(catalog, files, rep), "session_id": None, "error": None, "cost_usd": 0.0, "turns": 0, "usage": {}, "tool_calls": 0, "status_polls": 0, "prism_tool_calls": 0, "permission_denials": 0}
                 else:
-                    prompt = PROMPT + (RESULT_INSTRUCTION if args.variant == "listed" else "")
+                    request = SCOPED_PROMPT.format(paths=" and ".join(f"`{path}`" for path in args.scope)) if args.scope else PROMPT
+                    prompt = request + (RESULT_INSTRUCTION if args.variant == "listed" else "")
                     stdout, error = invoke(workspace, config_dir, args.timeout, prompt, "--plugin-dir", str(plugin), "--allowedTools", *ALLOWED_TOOLS, model=args.model)
                     parsed = parse_stream(stdout)
                     if args.variant == "plain" and parsed["session_id"] and not error:
@@ -283,6 +312,7 @@ def run(args: argparse.Namespace) -> None:
                         parsed["analysis_output"] = parsed["output"]
                         parsed["output"] = follow["output"]
                         parsed["list_cost_usd"] = follow["cost_usd"]
+                changed, managed = changed_files(workspace)
                 record = {
                     "schema_version": 2,
                     "rep": rep,
@@ -290,13 +320,16 @@ def run(args: argparse.Namespace) -> None:
                     "duration_s": round(time.monotonic() - started, 1),
                     "mock": args.mock,
                     "variant": args.variant,
+                    "scope": args.scope or [],
                     "model": args.model,
                     "plugin": str(plugin),
                     "plugin_commit": git(plugin, "rev-parse", "HEAD").strip(),
                     "target_commit": catalog["commit"],
                     **parsed,
                     "error": error or parsed["error"],
-                    "changed_files": changed_files(workspace),
+                    "changed_files": changed,
+                    "managed_files": managed,
+                    "concept_deltas": concept_deltas(workspace, managed),
                 }
                 record["score"] = score_run(record, catalog, files)
                 name = f"rep-{rep}"
@@ -325,8 +358,15 @@ def report(args: argparse.Namespace) -> None:
         print(f"cost per run {[round(cost, 2) for cost in costs]}, total {sum(costs):.2f}")
     print(f"status polls per run {[record.get('status_polls') for record in records]}")
     print(f"changed files per run {[len(record.get('changed_files') or []) for record in records]}")
+    if any(record.get("scope") for record in records):
+        print(f"scope {sorted({path for record in records for path in record.get('scope') or []})}")
+    findings = [sum(len((delta or {}).get("discoveryEvidence", {}).get("findings", [])) for delta in (record.get("concept_deltas") or {}).values()) for record in records]
+    if any(findings):
+        print(f"recorded discovery verdicts per run {findings}")
     print("\nitem                         label       found/runs  kept")
     for item in catalog["items"]:
+        if item["id"] not in scored[0]["score"]["items"]:
+            continue
         outcomes = [record["score"]["items"][item["id"]]["outcome"] for record in scored]
         print(f"{item['id']:<28} {item['label']:<11} {outcomes.count('found')}/{len(scored):<9} {outcomes.count('kept')}")
     union = {item_id for record in scored for item_id, value in record["score"]["items"].items() if value["outcome"] == "found" and value["label"] == "expected"}
@@ -369,6 +409,7 @@ def main() -> None:
     run_parser.add_argument("--timeout", type=int, default=3600)
     run_parser.add_argument("--variant", choices=("listed", "plain"), default="listed",
                             help="listed asks for the candidate list in the request; plain asks for it in a tool-less follow-up turn")
+    run_parser.add_argument("--scope", nargs="+", help="repository paths that a targeted analysis covers; recall then counts only items with a site there")
     run_parser.add_argument("--mock", action="store_true", help="score generated output instead of invoking an agent")
     report_parser = commands.add_parser("report", help="score and summarize a results directory")
     report_parser.add_argument("results")
