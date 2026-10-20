@@ -1,0 +1,342 @@
+{
+  "repository": "https://github.com/RumyantsevMichael/Prism.git",
+  "commit": "d146852d963648ad79bb1a4289280e52bf1c913b",
+  "sources": [
+    "Issue #19, a refactor analysis of bc18fe9, rechecked on this commit.",
+    "Findings of the 2026-10-18 analysis run that were verified in the code."
+  ],
+  "items": [
+    {
+      "id": "paired-locks",
+      "label": "expected",
+      "summary": "Every withArtifactLock call wraps a withFileLock call on the same path, in 15 places.",
+      "locations": [
+        {"file": "src/server/workflow/artifact-store.mjs", "symbol": "withFileLock"},
+        {"file": "src/server/workflow/artifact-store.mjs", "symbol": "withArtifactLock"},
+        {
+          "file": "src/server/conservation/concept-delta.mjs",
+          "lines": [224, 224]
+        },
+        {
+          "file": "src/server/conservation/conservation-store.mts",
+          "lines": [34, 34]
+        },
+        {
+          "file": "src/server/conservation/conservation-store.mts",
+          "lines": [81, 81]
+        },
+        {
+          "file": "src/server/conservation/conservation-store.mts",
+          "lines": [94, 94]
+        },
+        {
+          "file": "src/server/conservation/conservation-store.mts",
+          "lines": [110, 110]
+        },
+        {
+          "file": "src/server/conservation/conservation-store.mts",
+          "lines": [130, 130]
+        },
+        {
+          "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+          "lines": [252, 252]
+        },
+        {
+          "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+          "lines": [267, 267]
+        },
+        {
+          "file": "src/server/repository-intelligence/native-semantic-runtime.mts",
+          "lines": [319, 319]
+        },
+        {
+          "file": "src/server/review/review-ledger.mts",
+          "lines": [365, 365]
+        },
+        {
+          "file": "src/server/review/review-ledger.mts",
+          "lines": [370, 370]
+        },
+        {
+          "file": "src/server/workflow/active-operations.mts",
+          "lines": [38, 38]
+        },
+        {
+          "file": "src/server/workflow/active-operations.mts",
+          "lines": [41, 41]
+        },
+        {
+          "file": "src/server/workflow/initiative.mjs",
+          "lines": [286, 286]
+        },
+        {
+          "file": "src/server/workflow/roadmap.mjs",
+          "lines": [303, 303]
+        }
+      ]
+    },
+    {
+      "id": "analysis-tool-table",
+      "label": "expected",
+      "summary": "callRepositoryTool names the seven analysis tools in a ternary chain and again in an includes list.",
+      "locations": [
+        {
+          "file": "src/server/mcp.mjs",
+          "lines": [839, 858]
+        },
+        {"file": "src/server/repository-intelligence/semantic-native-provider.mts", "symbol": "NATIVE_INTELLIGENCE_TOOLS"}
+      ]
+    },
+    {
+      "id": "mixed-dispatch",
+      "label": "expected",
+      "summary": "callRepositoryTool also dispatches workflow recording, decision recording, session capacity and session usage.",
+      "locations": [
+        {"file": "src/server/mcp.mjs", "symbol": "callRepositoryTool"}
+      ]
+    },
+    {
+      "id": "decision-vocabulary",
+      "label": "expected",
+      "summary": "The record_workflow_decision schema repeats value lists that normalizeDecision owns; readability is an exact copy.",
+      "locations": [
+        {
+          "file": "src/server/workflow/decision-history.mjs",
+          "lines": [16, 18]
+        },
+        {"file": "src/server/workflow/decision-history.mjs", "symbol": "normalizeDecision"},
+        {
+          "file": "src/server/mcp.mjs",
+          "lines": [538, 548]
+        }
+      ]
+    },
+    {
+      "id": "validation-helpers",
+      "label": "expected",
+      "summary": "isObject, nonemptyString, assertIsoDate, readHookInput and assertExactKeys are copied across session and hook modules.",
+      "locations": [
+        {"file": "src/server/session/", "symbol": "isObject"},
+        {"file": "src/server/session/", "symbol": "nonemptyString"},
+        {"file": "src/server/session/", "symbol": "assertIsoDate"},
+        {"file": "src/server/session/", "symbol": "assertExactKeys"},
+        {"file": "src/hooks/", "symbol": "isObject"},
+        {"file": "src/hooks/", "symbol": "nonemptyString"},
+        {"file": "src/hooks/", "symbol": "readHookInput"}
+      ]
+    },
+    {
+      "id": "child-process-runners",
+      "label": "acceptable",
+      "summary": "runCodeGraph, runCommand and requestWithAppServer each own timeout, kill and output limits; keeping them distinct is defensible.",
+      "locations": [
+        {"file": "src/server/repository-intelligence/codegraph-provider.mjs", "symbol": "runCodeGraph"},
+        {"file": "src/server/repository-intelligence/native-repository-intelligence.mjs", "symbol": "runCommand"},
+        {"file": "src/server/session/host-adapters/codex-config.mjs", "symbol": "requestWithAppServer"}
+      ]
+    },
+    {
+      "id": "search-provider-results",
+      "label": "expected",
+      "summary": "The search providers build the same result shape by hand and repeat small helpers.",
+      "locations": [
+        {"file": "src/server/repository-intelligence/", "symbol": "positiveInteger"},
+        {"file": "src/server/repository-intelligence/", "symbol": "unique"},
+        {"file": "src/server/repository-intelligence/", "symbol": "symbolIdentityMatches"}
+      ]
+    },
+    {
+      "id": "codex-capture",
+      "label": "expected",
+      "summary": "The Codex adapter capture method is one function of about 350 lines and 82 branches.",
+      "locations": [
+        {"file": "src/server/session/host-adapters/codex.mjs", "symbol": "capture"}
+      ]
+    },
+    {
+      "id": "red-checkpoint-rule",
+      "label": "expected",
+      "summary": "The red-checkpoint pass rule is restated with different wording in several skills.",
+      "locations": [
+        {
+          "file": "skills/design/SKILL.md",
+          "lines": [100, 100]
+        },
+        {
+          "file": "skills/design/SKILL.md",
+          "lines": [121, 121]
+        },
+        {
+          "file": "skills/implement/SKILL.md",
+          "lines": [29, 29]
+        },
+        {
+          "file": "skills/orchestrate/SKILL.md",
+          "lines": [78, 78]
+        },
+        {
+          "file": "skills/orchestrate/references/delivery-rules.md",
+          "lines": [3, 3]
+        },
+        {
+          "file": "skills/review/SKILL.md",
+          "lines": [52, 52]
+        },
+        {
+          "file": "skills/review/SKILL.md",
+          "lines": [68, 68]
+        },
+        {
+          "file": "skills/review/SKILL.md",
+          "lines": [124, 124]
+        },
+        {
+          "file": "skills/review/SKILL.md",
+          "lines": [127, 127]
+        },
+        {
+          "file": "skills/workflow/SKILL.md",
+          "lines": [112, 112]
+        },
+        {
+          "file": "skills/write-contracts/SKILL.md",
+          "lines": [37, 37]
+        },
+        {
+          "file": "skills/write-step-definitions/SKILL.md",
+          "lines": [34, 34]
+        }
+      ]
+    },
+    {
+      "id": "managed-record-update",
+      "label": "expected",
+      "summary": "updateRoadmap and updateInitiative run the same locked load, revision check, history and write procedure.",
+      "locations": [
+        {"file": "src/server/workflow/roadmap.mjs", "symbol": "updateRoadmap"},
+        {"file": "src/server/workflow/roadmap.mjs", "symbol": "loadRoadmap"},
+        {"file": "src/server/workflow/initiative.mjs", "symbol": "updateInitiative"},
+        {"file": "src/server/workflow/initiative.mjs", "symbol": "loadRecord"}
+      ]
+    },
+    {
+      "id": "trace-event-types",
+      "label": "expected",
+      "summary": "EVENT_TYPE_ORDER hand-lists the event types that SESSION_TRACE_EVENT_TYPES owns.",
+      "locations": [
+        {"file": "src/server/session/session-trace-store.mjs", "symbol": "EVENT_TYPE_ORDER"},
+        {"file": "src/server/session/session-trace.mjs", "symbol": "SESSION_TRACE_EVENT_TYPES"}
+      ]
+    },
+    {
+      "id": "activity-list",
+      "label": "expected",
+      "summary": "The activity values are written twice in active-operations.mts.",
+      "locations": [
+        {
+          "file": "src/server/workflow/active-operations.mts",
+          "lines": [9, 9]
+        },
+        {
+          "file": "src/server/workflow/active-operations.mts",
+          "lines": [52, 52]
+        }
+      ]
+    },
+    {
+      "id": "is-inside-copies",
+      "label": "expected",
+      "summary": "isInside has three copies; two reject a child named ..foo.",
+      "locations": [
+        {"file": "src/server/review/review-server.mjs", "symbol": "isInside"},
+        {"file": "src/server/workflow/state.mjs", "symbol": "isInside"},
+        {"file": "src/server/conservation/concept-delta.mjs", "symbol": "isInside"}
+      ]
+    },
+    {
+      "id": "bench-token-counting",
+      "label": "expected",
+      "summary": "bench.py records Claude cache tokens as 0 and counts Codex cached input twice, unlike skill_eval/run.py.",
+      "locations": [
+        {"file": "bench/harness/bench.py", "symbol": "parse_claude_json"},
+        {"file": "bench/harness/bench.py", "symbol": "parse_codex_jsonl"},
+        {"file": "bench/skill_eval/run.py", "symbol": "TOKEN_KEYS"},
+        {"file": "bench/skill_eval/run.py", "symbol": "parse_claude_json"},
+        {"file": "bench/skill_eval/run.py", "symbol": "parse_codex_jsonl"}
+      ]
+    },
+    {
+      "id": "artifact-path-resolver",
+      "label": "acceptable",
+      "summary": "The general resolveArtifactPath lives in the concept-delta module, so other records report concept-delta errors.",
+      "locations": [
+        {"file": "src/server/conservation/concept-delta.mjs", "symbol": "resolveArtifactPath"}
+      ]
+    },
+    {
+      "id": "review-app-server-start",
+      "label": "acceptable",
+      "summary": "startReviewApp is the largest complex unit, with 389 lines and 20 nested functions.",
+      "locations": [
+        {"file": "src/server/review/review-app-server.mjs", "symbol": "startReviewApp"}
+      ]
+    },
+    {
+      "id": "unused-exports",
+      "label": "acceptable",
+      "summary": "Some exports have no importers outside their module.",
+      "locations": [
+        {"file": "src/server/repository-intelligence/codegraph-provider.mjs", "symbol": "withCodeGraphRepositoryIntelligence"},
+        {"file": "src/server/repository-intelligence/codenib-provider.mjs", "symbol": "withCodeNibRepositoryIntelligence"},
+        {"file": "src/server/conservation/concept-delta.mjs", "symbol": "CONCEPT_ACTIONS"}
+      ]
+    },
+    {
+      "id": "review-browser-copies",
+      "label": "acceptable",
+      "summary": "requirementLinks and escapeHtml are copied inside the review browser views.",
+      "locations": [
+        {"file": "src/server/review/public/views/initiative.js", "symbol": "requirementLinks"},
+        {"file": "src/server/review/public/views/slice.js", "symbol": "requirementLinks"},
+        {"file": "src/server/review/public/review.js", "symbol": "escapeHtml"},
+        {"file": "src/server/review/public/views/util.js", "symbol": "escapeHtml"}
+      ]
+    },
+    {
+      "id": "session-trace-atomic-write",
+      "label": "acceptable",
+      "summary": "The session-trace store writes files with fewer safety checks than the session-facts store.",
+      "locations": [
+        {"file": "src/server/session/session-trace-store.mjs", "symbol": "writeState"},
+        {"file": "src/server/session/host-session-facts.mjs", "symbol": "writeHostSessionFacts"}
+      ]
+    },
+    {
+      "id": "skill-common-terms",
+      "label": "acceptable",
+      "summary": "Some workflow concepts are missing from the Common terms section, and a gate-rules pointer resolves to the wrong section.",
+      "locations": [
+        {
+          "file": "skills/workflow/SKILL.md",
+          "lines": [52, 133]
+        },
+        {
+          "file": "skills/roadmap/SKILL.md",
+          "lines": [41, 41]
+        },
+        {
+          "file": "skills/roadmap/SKILL.md",
+          "lines": [49, 49]
+        },
+        {
+          "file": "skills/workflow-init/SKILL.md",
+          "lines": [38, 38]
+        },
+        {
+          "file": "skills/write-requirements/SKILL.md",
+          "lines": [90, 90]
+        }
+      ]
+    }
+  ]
+}
