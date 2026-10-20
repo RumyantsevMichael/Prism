@@ -6,6 +6,12 @@ import { createPalette } from "./views/palette.js";
 
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
+const navPlaces = document.getElementById("nav-places");
+const navLibrary = document.getElementById("nav-library");
+const workspace = document.getElementById("workspace");
+const appShell = document.getElementById("app-shell");
+const sidebarToggle = document.getElementById("sidebar-toggle");
+const connectionBanner = document.getElementById("connection");
 const artifact = document.getElementById("artifact");
 const tabs = document.getElementById("tabs");
 const toast = document.getElementById("toast");
@@ -29,6 +35,11 @@ let sessionConnected = false;
 let sessionStream;
 let saveQueue = Promise.resolve();
 let lastSnapshot = "";
+// The path whose view the workspace shows, and each open tab's scroll position, so a refresh or a tab switch keeps the reader's place.
+let renderedPath = null;
+let rebuilding = false;
+const scrollPositions = new Map();
+let failedRefreshes = 0;
 let toastTimer;
 let availableArtifacts = new Set();
 let navigation = { attention: {}, glossary: {}, diagnostics: [], index: [] };
@@ -38,11 +49,24 @@ let palette;
 const viewStates = new Map();
 const treeToggles = new Map();
 
+const ICON_PATHS = {
+  attention: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  roadmap: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',
+  requirements: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3 6 1 1 2-2M3 12l1 1 2-2M3 18l1 1 2-2"/>',
+  decisions: '<path d="M12 3v18M5 7h14"/><path d="m5 7-3 7a4 4 0 0 0 6 0zM19 7l-3 7a4 4 0 0 0 6 0z"/>',
+  glossary: '<path d="M4 19.5V5a2 2 0 0 1 2-2h14v16H6.5a2.5 2.5 0 0 0 0 5H20"/>'
+};
+
+function icon(name) {
+  return `<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICON_PATHS[name]}</svg>`;
+}
+
 function samePaths(left, right) {
   return left.length === right.length && left.every((path, index) => path === right[index]);
 }
 
 function welcome() {
+  renderedPath = null;
   artifact.innerHTML = `<div class="welcome-card">
     <span class="welcome-mark" aria-hidden="true"></span>
     <p class="eyebrow">Human review</p>
@@ -111,6 +135,18 @@ function renderTabs() {
     tab.appendChild(close);
     tabs.appendChild(tab);
   }
+  const selected = tabs.querySelector('[aria-selected="true"]')?.parentElement;
+  if (selected) {
+    const left = selected.offsetLeft - tabs.offsetLeft;
+    if (left < tabs.scrollLeft) tabs.scrollLeft = left;
+    else if (left + selected.offsetWidth > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = left + selected.offsetWidth - tabs.clientWidth;
+  }
+  updateTabFades();
+}
+
+function updateTabFades() {
+  tabs.classList.toggle("fade-start", tabs.scrollLeft > 1);
+  tabs.classList.toggle("fade-end", tabs.scrollLeft + tabs.clientWidth < tabs.scrollWidth - 1);
 }
 
 function saveSession() {
@@ -168,6 +204,7 @@ function keepTab(path) {
 }
 
 function closeTab(path) {
+  scrollPositions.delete(path);
   openTabs = openTabs.filter((tab) => tab !== path);
   agentTabs = agentTabs.filter((tab) => tab !== path);
   if (previewTab === path) {
@@ -229,6 +266,22 @@ function folderName(root) {
   return String(root).split(/[\\/]/).filter(Boolean).pop() ?? String(root);
 }
 
+// A linked worktree reads as repository / worktree; a plain checkout, or a server that names no workspace, shows its folder.
+function workspaceIdentity(entry) {
+  return entry.workspace ?? { repository: folderName(entry.projectRoot), worktree: null, branch: null };
+}
+
+function projectLabel(identity) {
+  const label = element("span", "project-label-text");
+  label.append(element("span", "project-repository", identity.repository));
+  if (identity.worktree) label.append(element("span", "project-separator", "/"), element("span", "project-worktree", identity.worktree));
+  return label;
+}
+
+function projectTitle(identity, projectRoot) {
+  return [projectRoot, identity.branch ? `Branch: ${identity.branch}` : ""].filter(Boolean).join("\n");
+}
+
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -256,22 +309,65 @@ async function refreshProjects() {
   if (text === projectListing) return;
   projectListing = text;
   const focused = document.activeElement?.closest?.(".project-entry")?.dataset.project;
-  projectList.replaceChildren(...listing.projects.map((entry) => {
-    const link = element("a", "project-entry");
-    link.dataset.project = entry.id;
-    link.href = entry.url;
-    link.title = entry.projectRoot;
-    if (entry.id === listing.current) link.setAttribute("aria-current", "page");
-    const liveMark = element("span", `project-entry-live${entry.live ? " live" : ""}`);
-    liveMark.title = entry.live ? "An agent session is using this project" : "Recently used";
-    const gates = element("span", `project-entry-gates${entry.gates ? "" : " none"}`, entry.gates === null ? "?" : String(entry.gates));
-    gates.title = entry.gates === null ? "The project's folder or records cannot be read" : `${entry.gates} open ${entry.gates === 1 ? "gate" : "gates"}`;
-    link.append(liveMark, element("span", "project-entry-name", entry.name), gates, element("span", "project-entry-root", entry.projectRoot));
-    const item = element("li");
-    item.append(link);
-    return item;
-  }));
+  const current = listing.projects.find((entry) => entry.id === listing.current);
+  if (current) setProjectLabel(workspaceIdentity(current), current.projectRoot);
+  // Worktrees of one repository are listed together under it, in the order the first of them appears.
+  const groups = new Map();
+  for (const entry of listing.projects) {
+    const identity = workspaceIdentity(entry);
+    if (!groups.has(identity.repository)) groups.set(identity.repository, []);
+    groups.get(identity.repository).push({ entry, identity });
+  }
+  const items = [];
+  for (const [repository, members] of groups) {
+    const grouped = members.length > 1 || members.some(({ identity }) => identity.worktree);
+    if (grouped) items.push(element("li", "project-group", repository));
+    for (const { entry, identity } of members) {
+      const link = element("a", `project-entry${grouped ? " is-grouped" : ""}`);
+      link.dataset.project = entry.id;
+      link.href = entry.url;
+      link.title = projectTitle(identity, entry.projectRoot);
+      if (entry.id === listing.current) link.setAttribute("aria-current", "page");
+      const liveMark = element("span", `project-entry-live${entry.live ? " live" : ""}`);
+      liveMark.title = entry.live ? "An agent session is using this project" : "Recently used";
+      const gates = element("span", `project-entry-gates${entry.gates ? "" : " none"}`, entry.gates === null ? "?" : String(entry.gates));
+      gates.title = entry.gates === null ? "The project's folder or records cannot be read" : `${entry.gates} open ${entry.gates === 1 ? "gate" : "gates"}`;
+      link.append(liveMark, element("span", "project-entry-name", identity.worktree ?? identity.repository), gates, element("span", "project-entry-root", entry.projectRoot));
+      const item = element("li");
+      item.append(link);
+      items.push(item);
+    }
+  }
+  projectList.replaceChildren(...items);
   if (focused) projectList.querySelector(`[data-project="${focused}"]`)?.focus();
+}
+
+function setProjectLabel(identity, projectRoot) {
+  project.replaceChildren(projectLabel(identity));
+  projectButton.title = projectTitle(identity, projectRoot);
+}
+
+const SIDEBAR_KEY = "prism.review.sidebar";
+
+function readSidebarPreference() {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === "collapsed";
+  } catch {
+    return false;
+  }
+}
+
+function setSidebarCollapsed(collapsed, { remember = true } = {}) {
+  appShell.classList.toggle("sidebar-collapsed", collapsed);
+  sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+  const action = collapsed ? "Expand the sidebar" : "Collapse the sidebar";
+  sidebarToggle.title = `${action} ([)`;
+  sidebarToggle.querySelector(".sr-only").textContent = action;
+  if (!remember) return;
+  try {
+    localStorage.setItem(SIDEBAR_KEY, collapsed ? "collapsed" : "expanded");
+  } catch {
+  }
 }
 
 function setProjectMenu(open) {
@@ -414,6 +510,12 @@ function renderText(path, content) {
   return output.join("\n");
 }
 
+// One failed poll can be a restart in progress, so the banner waits for a second one and clears on the next success.
+function reportRefresh(ok) {
+  failedRefreshes = ok ? 0 : failedRefreshes + 1;
+  connectionBanner.hidden = failedRefreshes < 2;
+}
+
 function showToast(message) {
   clearTimeout(toastTimer);
   toast.textContent = message;
@@ -523,7 +625,7 @@ function fileType(path) {
   return path.split(".").pop().toUpperCase();
 }
 
-function navLink(ref, label, { meta = "", className = "", depth = 0, current = false, toggle = null } = {}) {
+function navLink(ref, label, { meta = "", className = "", depth = 0, current = false, toggle = null, iconName = null } = {}) {
   const item = document.createElement("li");
   item.className = `nav-item depth-${Math.min(depth, 6)} ${className}`.trim();
   item.dataset.ref = ref;
@@ -533,7 +635,7 @@ function navLink(ref, label, { meta = "", className = "", depth = 0, current = f
   const link = document.createElement("a");
   link.href = `./review?artifact=${encodeURIComponent(ref)}`;
   link.dataset.path = ref;
-  link.innerHTML = `<span class="nav-label">${escapeHtml(label)}</span>${meta}`;
+  link.innerHTML = `${iconName ? icon(iconName) : ""}<span class="nav-label">${escapeHtml(label)}</span>${meta}`;
   link.title = label;
   if (current) {
     link.setAttribute("aria-current", "page");
@@ -645,33 +747,37 @@ function libraryBranch(scope) {
   return items;
 }
 
-// The sidebar lists fixed places and expands only the path to what is open: an initiative's slices or a library section's documents.
+// The sidebar keeps its places and library sections in fixed groups and expands only the path to what is open between them:
+// an initiative's slices or a library section's documents.
 function renderNavigation() {
   const scope = currentContext?.ref === selectedPath ? currentContext.value.scope : { kind: "global" };
   const attention = navigation.attention ?? {};
-  const items = [];
   const badge = attention.needsYou ? `<span class="count-badge${attention.gates ? " is-alert" : ""}" title="${attention.gates} recorded ${attention.gates === 1 ? "question" : "questions"} and ${attention.needsYou - attention.gates} other ${attention.needsYou - attention.gates === 1 ? "item" : "items"} need you">${attention.needsYou}</span>` : "";
-  items.push(navLink("attention", "Attention", { meta: badge, className: "nav-place place-attention", current: selectedPath === "attention" }));
-  items.push(navLink("roadmap", "Roadmap", { className: "nav-place place-roadmap", current: selectedPath === "roadmap" }));
+  navPlaces.replaceChildren(
+    navLink("attention", "Attention", { meta: badge, className: "nav-place place-attention", current: selectedPath === "attention", iconName: "attention" }),
+    navLink("roadmap", "Roadmap", { className: "nav-place place-roadmap", current: selectedPath === "roadmap", iconName: "roadmap" })
+  );
+  const items = [];
   if (scope.kind === "initiative") {
     items.push(...initiativeBranch(scope));
+  } else if (scope.kind === "library") {
+    items.push(navHeading(ENTITY_LABELS[scope.section] ?? scope.section), ...libraryBranch(scope));
   }
-  items.push(navHeading("Library"));
-  for (const section of ["requirements", "decisions"]) {
-    items.push(navLink(section, ENTITY_LABELS[section], { className: "nav-place nav-library", current: selectedPath === section }));
-    if (scope.kind === "library" && scope.section === section) {
-      items.push(...libraryBranch(scope));
-    }
-  }
-  const glossary = navigation.glossary ?? {};
-  items.push(navLink("glossary", "Glossary", { meta: glossary.exists ? "" : '<span class="nav-note">missing</span>', className: "nav-place nav-library", current: selectedPath === "glossary" || (glossary.path && selectedPath === glossary.path) }));
   if (navigation.diagnostics?.length) {
     const warning = document.createElement("li");
     warning.className = "nav-diagnostics";
     warning.innerHTML = `<details><summary>${navigation.diagnostics.length} workflow config ${navigation.diagnostics.length === 1 ? "warning" : "warnings"}</summary><ul>${navigation.diagnostics.map((item) => `<li>${escapeHtml(item.message)}</li>`).join("")}</ul></details>`;
     items.push(warning);
   }
+  const scrolled = artifacts.parentElement.scrollTop;
   artifacts.replaceChildren(...items);
+  artifacts.parentElement.scrollTop = scrolled;
+  const glossary = navigation.glossary ?? {};
+  navLibrary.replaceChildren(
+    navHeading("Library"),
+    ...["requirements", "decisions"].map((section) => navLink(section, ENTITY_LABELS[section], { className: "nav-place nav-library", current: selectedPath === section, iconName: section })),
+    navLink("glossary", "Glossary", { meta: glossary.exists ? "" : '<span class="nav-note">missing</span>', className: "nav-place nav-library", current: selectedPath === "glossary" || (glossary.path && selectedPath === glossary.path), iconName: "glossary" })
+  );
   artifacts.querySelector('[aria-current="page"]')?.scrollIntoView({ block: "nearest" });
 }
 
@@ -721,6 +827,46 @@ function tabLabel(path) {
   return parsed.kind === "slice" ? parsed.slug : parsed.id;
 }
 
+function controlsOf(root) {
+  return [...root.querySelectorAll("button, a[href], input, textarea, select, summary, [tabindex]")];
+}
+
+// A rebuilt view starts empty and renders graphs and diagrams asynchronously, so the old height is held until it is done
+// and then the scroll position, open sections, and focus come back; a newly opened path starts where its tab was left, or at the top.
+function beginRebuild(path) {
+  const same = renderedPath === path;
+  const memory = { path, top: same ? workspace.scrollTop : scrollPositions.get(path) ?? 0, open: null, focus: -1 };
+  if (same) {
+    memory.open = [...artifact.querySelectorAll("details")].map((details) => [details.querySelector("summary")?.textContent ?? "", details.open]);
+    memory.focus = artifact.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
+    artifact.style.minHeight = `${artifact.offsetHeight}px`;
+  } else {
+    artifact.style.minHeight = "";
+  }
+  rebuilding = true;
+  return memory;
+}
+
+function endRebuild(memory) {
+  rebuilding = false;
+  if (memory.path !== selectedPath) {
+    artifact.style.minHeight = "";
+    return;
+  }
+  if (memory.open) {
+    const sections = artifact.querySelectorAll("details");
+    memory.open.forEach(([summary, open], index) => {
+      if (sections[index] && (sections[index].querySelector("summary")?.textContent ?? "") === summary) sections[index].open = open;
+    });
+  }
+  if (memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
+  workspace.scrollTop = memory.top;
+  renderedPath = memory.path;
+  requestAnimationFrame(() => {
+    artifact.style.minHeight = "";
+  });
+}
+
 async function showEntity(path) {
   const response = await fetch(`./api/entity?ref=${encodeURIComponent(path)}`, { cache: "no-store" });
   if (!response.ok) {
@@ -734,19 +880,33 @@ async function showEntity(path) {
   }
   lastSnapshot = snapshot;
   const label = entityLabel(entity);
+  const state = viewState(path);
+  const memory = beginRebuild(path);
   artifact.innerHTML = `
     <header class="artifact-header">
       <div>
         <nav class="breadcrumbs" aria-label="Location" data-breadcrumbs>${breadcrumbHtml(path)}</nav>
         <h1>${escapeHtml(label.title)}</h1>
+        ${label.lead ? `<div class="artifact-lead${state.leadExpanded ? " is-expanded" : ""}"><p>${escapeHtml(label.lead)}</p><button type="button" class="text-button lead-toggle" hidden>${state.leadExpanded ? "Less" : "More"}</button></div>` : ""}
         ${label.subtitle ? `<p class="artifact-path">${escapeHtml(label.subtitle)}</p>` : ""}
       </div>
-      <div class="artifact-meta"><span class="meta-pill live">Live</span></div>
     </header>`;
+  const lead = artifact.querySelector(".artifact-lead");
+  if (lead) {
+    const text = lead.querySelector("p");
+    const toggle = lead.querySelector(".lead-toggle");
+    toggle.hidden = !state.leadExpanded && text.scrollHeight <= text.clientHeight + 1;
+    toggle.addEventListener("click", () => {
+      state.leadExpanded = !state.leadExpanded;
+      lead.classList.toggle("is-expanded", state.leadExpanded);
+      toggle.textContent = state.leadExpanded ? "Less" : "More";
+    });
+  }
   const container = document.createElement("div");
   container.className = "structured-view";
   artifact.appendChild(container);
-  await renderEntity(container, entity, { ...viewContext(path, viewState(path)), renderMarkdown: (source) => renderText("document.md", source) });
+  await renderEntity(container, entity, { ...viewContext(path, state), renderMarkdown: (source) => renderText("document.md", source) });
+  endRebuild(memory);
 }
 
 async function showArtifact(path) {
@@ -770,7 +930,6 @@ async function showArtifact(path) {
   }
   lastSnapshot = snapshot;
   const diagramLabel = `${data.diagrams.length} diagram${data.diagrams.length === 1 ? "" : "s"}`;
-  const refreshed = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const source = data.kind === "source";
   const structured = Boolean(data.kind) && !source;
   const documentCard = source
@@ -779,6 +938,7 @@ async function showArtifact(path) {
       ? ""
       : `<section class="document-card"><div class="document-content">${renderText(data.path, data.content)}</div></section>`;
   const state = viewState(data.path);
+  const memory = beginRebuild(path);
   artifact.innerHTML = `
     <header class="artifact-header">
       <div>
@@ -794,7 +954,6 @@ async function showArtifact(path) {
         ${structured ? `<span class="meta-pill">${escapeHtml(KIND_LABELS[data.kind] ?? "JSON")}</span>` : ""}
         <span class="meta-pill">${escapeHtml(fileType(data.path))}</span>
         ${source ? '<span class="meta-pill">Read-only</span>' : structured ? "" : `<span class="meta-pill">${diagramLabel}</span>`}
-        <span class="meta-pill live" title="Last refreshed at ${refreshed}">Live</span>
       </div>
     </header>
     ${documentCard}`;
@@ -810,6 +969,7 @@ async function showArtifact(path) {
     container.className = "structured-view";
     artifact.appendChild(container);
     await renderView(container, data, viewContext(data.path, state));
+    endRebuild(memory);
     return;
   }
   for (const diagram of data.diagrams) {
@@ -817,6 +977,7 @@ async function showArtifact(path) {
     artifact.appendChild(section);
     await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section);
   }
+  endRebuild(memory);
 }
 
 const KIND_LABELS = {
@@ -896,8 +1057,14 @@ async function initialize() {
   sessionInstance = typeof data.instance === "string" ? data.instance : null;
   const requestedPath = selectedPath;
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
-  project.textContent = folderName(data.projectRoot);
-  projectButton.title = data.projectRoot;
+  setProjectLabel(workspaceIdentity(data), data.projectRoot);
+  setSidebarCollapsed(readSidebarPreference(), { remember: false });
+  sidebarToggle.addEventListener("click", () => setSidebarCollapsed(!appShell.classList.contains("sidebar-collapsed")));
+  tabs.addEventListener("scroll", updateTabFades, { passive: true });
+  window.addEventListener("resize", updateTabFades);
+  workspace.addEventListener("scroll", () => {
+    if (!rebuilding && renderedPath && renderedPath === selectedPath) scrollPositions.set(renderedPath, workspace.scrollTop);
+  }, { passive: true });
   projectButton.addEventListener("click", () => setProjectMenu(projectMenu.hidden));
   document.addEventListener("click", (event) => {
     if (!projectMenu.hidden && !event.target.closest("#project-switcher")) setProjectMenu(false);
@@ -936,6 +1103,9 @@ async function initialize() {
     } else if (event.key === "/" && !typing && !palette.isOpen()) {
       event.preventDefault();
       palette.show();
+    } else if (event.key === "[" && !typing && !palette.isOpen() && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      setSidebarCollapsed(!appShell.classList.contains("sidebar-collapsed"));
     } else if (event.key === "Escape" && !palette.isOpen() && !document.getElementById("evidence-drawer").hidden) {
       closeEvidence();
     }
@@ -959,8 +1129,9 @@ async function initialize() {
   }
   setInterval(async () => {
     try {
-      const refreshed = await fetch("./api/index", { cache: "no-store" });
-      if (refreshed.ok) {
+      const refreshed = await fetch("./api/index", { cache: "no-store" }).catch(() => null);
+      reportRefresh(Boolean(refreshed?.ok));
+      if (refreshed?.ok) {
         const snapshot = await refreshed.json();
         availableArtifacts = new Set([...snapshot.artifacts, ...(snapshot.sources ?? [])]);
         if (JSON.stringify(snapshot.navigation) !== JSON.stringify(navigation)) {

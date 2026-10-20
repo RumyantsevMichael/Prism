@@ -21,6 +21,7 @@ import {
 } from "./review-app-discovery.mjs";
 import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send } from "./review-server.mjs";
 import { loadAttention } from "./workspace-model.mjs";
+import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
 const IDLE_MS = 30 * 60 * 1000;
@@ -229,8 +230,8 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
 
   // Answers whether the presenting session should open a browser, and tells every other project's tabs about the presentation.
   // A browser opens only while no tab of any project is connected, once per lease, so one window serves every project.
-  function announce(project, url) {
-    const notice = { projectId: project.id, name: path.basename(project.root), projectRoot: project.root, url, at: new Date().toISOString() };
+  function announce(project, url, name) {
+    const notice = { projectId: project.id, name, projectRoot: project.root, url, at: new Date().toISOString() };
     for (const other of projects.values()) {
       if (other !== project) other.review.notify("notice", notice);
     }
@@ -254,6 +255,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     const entries = await Promise.all([...projects.values()].map(async (project) => ({
       id: project.id,
       name: path.basename(project.root),
+      workspace: await readWorkspaceIdentity(project.root),
       projectRoot: project.root,
       live: live(project, now),
       gates: await gateCount(project.root),
@@ -311,7 +313,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         await review.presentTabs(tabs);
         await touch(project);
         const url = review.reviewUrl(tabs);
-        return { url, open: announce(project, url), session: review.getSession() };
+        return { url, open: announce(project, url, workspaceLabel(await readWorkspaceIdentity(project.root))), session: review.getSession() };
       }
       if (body.tabs !== undefined) {
         await review.setOpenTabs(body.tabs);

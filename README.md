@@ -110,7 +110,8 @@ The artifact tree shows all files, and tabs retain open artifacts.
 Ask the agent to open the viewer at any time during an active session.
 
 All Prism sessions of one user share one review app on one local port, and each project has its own page there.
-The project switcher in the page header lists recent projects with their open gates and marks the ones an agent session is using now.
+The project switcher in the page header names the project as `repository/worktree` for a linked git worktree and by its folder otherwise.
+It lists recent projects with their open gates, groups worktrees under their repository, and marks the ones an agent session is using now.
 When an agent presents a review for another project while a tab is open, that tab shows a notice with a link instead of a second tab opening.
 The app starts with the first session that needs it, outlives that session, and exits after 30 minutes with no session and no open viewer.
 It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.

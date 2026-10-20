@@ -176,6 +176,11 @@ test("serves the browser runtime without an image endpoint", async (context) => 
     assert.match(client, /PlantUML source copied/);
     assert.match(client, /saveSession/);
     assert.match(client, /EventSource/);
+    assert.doesNotMatch(client, /meta-pill live/, "the page shows a banner when refresh fails instead of a permanent Live pill");
+    assert.doesNotMatch(pageSource, /Auto refresh/);
+    assert.match(pageSource, /id="connection"/);
+    const index = await (await fetchReview(`${review.baseUrl}/api/index`)).json();
+    assert.deepEqual(index.workspace, { repository: path.basename(projectRoot), worktree: null, branch: null });
     const c4 = await fetchReview(`${review.baseUrl}/vendor/c4.min.js`);
     assert.equal(c4.status, 200);
     const image = await fetchReview(`${review.baseUrl}/render/svg?source=docs%2Froadmap.puml`);

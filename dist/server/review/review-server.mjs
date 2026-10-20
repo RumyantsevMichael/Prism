@@ -9,6 +9,7 @@ import { getConceptDelta } from "../conservation/concept-delta.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { answerGate, entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -488,7 +489,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, onV
     } else if (route === "/api/events" && request.method === "GET") {
       openViewerStream(response);
     } else if (route === "/api/index") {
-      send(response, 200, JSON.stringify({ projectRoot, artifacts: await listArtifacts(projectRoot), sources: await listSourceFiles(projectRoot), navigation: await loadNavigation(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts: await listArtifacts(projectRoot), sources: await listSourceFiles(projectRoot), navigation: await loadNavigation(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "GET") {
       send(response, 200, JSON.stringify(sessionSnapshot()), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "PUT") {
