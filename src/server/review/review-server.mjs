@@ -125,6 +125,53 @@ export async function listArtifacts(projectRoot) {
   return [...results].sort();
 }
 
+const SEARCH_FILE_LIMIT = 30;
+const SEARCH_LINE_LIMIT = 3;
+const SEARCH_SNIPPET = 160;
+const SEARCH_SIZE_LIMIT = 1024 * 1024;
+
+function snippet(line, token) {
+  const text = line.trim();
+  if (text.length <= SEARCH_SNIPPET) return text;
+  const start = Math.max(0, text.toLowerCase().indexOf(token) - 40);
+  return `${start ? "…" : ""}${text.slice(start, start + SEARCH_SNIPPET)}…`;
+}
+
+// Full-text search over the Prism artifacts the review lists, never over source files: every term must occur in a file,
+// and files whose lines hold all terms together rank first.
+export async function searchArtifacts(projectRoot, query) {
+  const tokens = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length || tokens.join("").length < 2) return { query: query ?? "", results: [] };
+  const results = [];
+  for (const artifactPath of await listArtifacts(projectRoot)) {
+    let content;
+    try {
+      const absolutePath = await resolveProjectFile(projectRoot, artifactPath);
+      if ((await stat(absolutePath)).size > SEARCH_SIZE_LIMIT) continue;
+      content = await readFile(absolutePath, "utf8");
+    } catch {
+      continue;
+    }
+    const lower = content.toLowerCase();
+    if (!tokens.every((token) => lower.includes(token))) continue;
+    const lines = content.split(/\r?\n/);
+    const matches = [];
+    let complete = 0;
+    lines.forEach((line, index) => {
+      const lowerLine = line.toLowerCase();
+      const hits = tokens.filter((token) => lowerLine.includes(token)).length;
+      if (!hits) return;
+      if (hits === tokens.length) complete += 1;
+      matches.push({ line: index + 1, text: snippet(line, tokens.find((token) => lowerLine.includes(token))), hits });
+    });
+    matches.sort((left, right) => right.hits - left.hits || left.line - right.line);
+    const pathHit = tokens.every((token) => artifactPath.toLowerCase().includes(token));
+    results.push({ path: artifactPath, score: (pathHit ? 1000 : 0) + complete * 10 + matches.length, matches: matches.slice(0, SEARCH_LINE_LIMIT).map(({ line, text }) => ({ line, text })) });
+  }
+  results.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
+  return { query, results: results.slice(0, SEARCH_FILE_LIMIT).map(({ score, ...result }) => result) };
+}
+
 function linkedDiagramPaths(artifactPath, content) {
   const directory = path.posix.dirname(artifactPath.split(path.sep).join("/"));
   const links = new Set();
@@ -515,6 +562,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, onV
       send(response, 200, JSON.stringify(await loadEntity(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
+    } else if (route === "/api/search") {
+      send(response, 200, JSON.stringify(await searchArtifacts(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {
       const artifactPath = url.searchParams.get("path");
       // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.

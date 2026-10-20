@@ -3,6 +3,8 @@ import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, parseEntityRef, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
+import { HEADING_PREFIX, decorateDocuments, markCurrentSection, renderText } from "./views/markdown.js";
+import { createLinkPreview } from "./views/preview.js";
 
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
@@ -40,12 +42,17 @@ let renderedPath = null;
 let rebuilding = false;
 const scrollPositions = new Map();
 let failedRefreshes = 0;
+// A link to a heading in another document scrolls there once that document has rendered.
+let pendingAnchor = null;
+// A text match chosen in the palette is highlighted once its document has rendered.
+let pendingFind = null;
 let toastTimer;
 let availableArtifacts = new Set();
 let navigation = { attention: {}, glossary: {}, diagnostics: [], index: [] };
 let currentContext = null;
 let contextSnapshot = "";
 let palette;
+let linkPreview;
 const viewStates = new Map();
 const treeToggles = new Map();
 
@@ -67,6 +74,7 @@ function samePaths(left, right) {
 
 function welcome() {
   renderedPath = null;
+  document.body.classList.remove("has-maximized");
   artifact.innerHTML = `<div class="welcome-card">
     <span class="welcome-mark" aria-hidden="true"></span>
     <p class="eyebrow">Human review</p>
@@ -429,85 +437,8 @@ function escapeHtml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-function inlineMarkdown(value) {
-  return value
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => {
-      const allowed = /^(https?:|#)/i.test(href) || (!/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith("//"));
-      return allowed ? `<a href="${href}">${label}</a>` : label;
-    })
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*]+)\*/g, "<em>$1</em>");
-}
-
-function tableCells(line) {
-  return line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => inlineMarkdown(cell.trim()));
-}
-
-function renderText(path, content) {
-  const escaped = escapeHtml(content);
-  if (!path.toLowerCase().endsWith(".md")) {
-    return `<pre><code>${escaped}</code></pre>`;
-  }
-  const lines = escaped.split(/\r?\n/);
-  const output = [];
-  let inCode = false;
-  let listType = null;
-  const closeList = () => {
-    if (listType) {
-      output.push(`</${listType}>`);
-      listType = null;
-    }
-  };
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (line.startsWith("```")) {
-      closeList();
-      output.push(inCode ? "</code></pre>" : "<pre><code>");
-      inCode = !inCode;
-    } else if (inCode) {
-      output.push(`${line}\n`);
-    } else if (line.trim().startsWith("|") && /^\s*\|?\s*:?-+/.test(lines[index + 1] ?? "")) {
-      closeList();
-      const headers = tableCells(line);
-      index += 2;
-      const rows = [];
-      while (index < lines.length && lines[index].trim().startsWith("|")) {
-        rows.push(tableCells(lines[index]));
-        index += 1;
-      }
-      index -= 1;
-      output.push(`<div class="table-wrap"><table><thead><tr>${headers.map((cell) => `<th>${cell}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
-    } else if (/^#{1,6}\s/.test(line)) {
-      closeList();
-      const level = line.match(/^#+/)[0].length;
-      output.push(`<h${level}>${inlineMarkdown(line.slice(level + 1))}</h${level}>`);
-    } else if (/^\s*[-*]\s+/.test(line)) {
-      if (listType !== "ul") {
-        closeList();
-        output.push("<ul>");
-        listType = "ul";
-      }
-      output.push(`<li>${inlineMarkdown(line.replace(/^\s*[-*]\s+/, ""))}</li>`);
-    } else if (/^\s*\d+\.\s+/.test(line)) {
-      if (listType !== "ol") {
-        closeList();
-        output.push("<ol>");
-        listType = "ol";
-      }
-      output.push(`<li>${inlineMarkdown(line.replace(/^\s*\d+\.\s+/, ""))}</li>`);
-    } else if (/^&gt;\s?/.test(line)) {
-      closeList();
-      output.push(`<blockquote>${inlineMarkdown(line.replace(/^&gt;\s?/, ""))}</blockquote>`);
-    } else if (line.trim()) {
-      closeList();
-      output.push(`<p>${inlineMarkdown(line)}</p>`);
-    } else {
-      closeList();
-    }
-  }
-  closeList();
-  return output.join("\n");
+function markdownOptions(basePath) {
+  return { basePath, isKnown: (path) => availableArtifacts.has(path) };
 }
 
 // One failed poll can be a restart in progress, so the banner waits for a second one and clears on the next success.
@@ -844,7 +775,78 @@ function beginRebuild(path) {
     artifact.style.minHeight = "";
   }
   rebuilding = true;
+  linkPreview?.hide();
   return memory;
+}
+
+function scrollToAnchor(anchor) {
+  const target = anchor && artifact.querySelector(`#${CSS.escape(HEADING_PREFIX + anchor)}`);
+  if (!target) return false;
+  workspace.scrollTop += target.getBoundingClientRect().top - workspace.getBoundingClientRect().top - 16;
+  target.classList.remove("is-target");
+  void target.offsetWidth;
+  target.classList.add("is-target");
+  return true;
+}
+
+const MAXIMIZABLE = ".graph-card, .diagram-card, .document-card";
+
+// Graphs, diagrams, and documents can fill the window. The maximized card is remembered in the view state,
+// so a refresh that rebuilds the view keeps it maximized instead of dropping out as browser fullscreen would.
+function decorateMaximize(path) {
+  const state = viewState(path);
+  let found = false;
+  [...artifact.querySelectorAll(MAXIMIZABLE)].forEach((card, index) => {
+    const key = `${card.className.split(" ")[0]}:${index}`;
+    let button = card.querySelector(":scope [data-maximize]");
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.className = "tool-button maximize-button";
+      button.dataset.maximize = key;
+      const tools = card.querySelector(".diagram-tools");
+      if (tools) tools.appendChild(button);
+      else card.prepend(button);
+      button.addEventListener("click", () => setMaximized(path, state.maximized === key ? null : key));
+    }
+    const maximized = state.maximized === key;
+    found ||= maximized;
+    card.classList.toggle("is-maximized", maximized);
+    button.textContent = maximized ? "Restore" : "Maximize";
+    button.setAttribute("aria-pressed", String(maximized));
+    button.title = maximized ? "Restore (Esc)" : "Fill the window";
+  });
+  if (!found) state.maximized = null;
+  document.body.classList.toggle("has-maximized", found);
+}
+
+function setMaximized(path, key) {
+  viewState(path).maximized = key;
+  decorateMaximize(path);
+  const card = artifact.querySelector(".is-maximized") ?? artifact;
+  card.querySelectorAll('[data-zoom="fit"]').forEach((button) => button.click());
+}
+
+// Marks the first rendered occurrence of the query's longest term and scrolls to it.
+function highlightText(query) {
+  const term = query.toLowerCase().split(/\s+/).filter(Boolean).sort((left, right) => right.length - left.length)[0];
+  if (!term) return false;
+  const walker = document.createTreeWalker(artifact, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => node.parentElement?.closest(".doc-toc, .maximize-button, script, style") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+  });
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const index = node.data.toLowerCase().indexOf(term);
+    if (index === -1) continue;
+    const range = document.createRange();
+    range.setStart(node, index);
+    range.setEnd(node, index + term.length);
+    const mark = document.createElement("mark");
+    mark.className = "find-hit";
+    range.surroundContents(mark);
+    workspace.scrollTop += mark.getBoundingClientRect().top - workspace.getBoundingClientRect().top - workspace.clientHeight / 3;
+    return true;
+  }
+  return false;
 }
 
 function endRebuild(memory) {
@@ -853,6 +855,8 @@ function endRebuild(memory) {
     artifact.style.minHeight = "";
     return;
   }
+  decorateDocuments(artifact);
+  decorateMaximize(memory.path);
   if (memory.open) {
     const sections = artifact.querySelectorAll("details");
     memory.open.forEach(([summary, open], index) => {
@@ -861,7 +865,16 @@ function endRebuild(memory) {
   }
   if (memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
   workspace.scrollTop = memory.top;
+  if (pendingAnchor?.path === memory.path) {
+    scrollToAnchor(pendingAnchor.anchor);
+    pendingAnchor = null;
+  }
+  if (pendingFind?.path === memory.path) {
+    if (!highlightText(pendingFind.text)) showToast("The match is not visible in this view; try the Raw view.");
+    pendingFind = null;
+  }
   renderedPath = memory.path;
+  markCurrentSection(artifact, workspace.getBoundingClientRect().top);
   requestAnimationFrame(() => {
     artifact.style.minHeight = "";
   });
@@ -905,7 +918,7 @@ async function showEntity(path) {
   const container = document.createElement("div");
   container.className = "structured-view";
   artifact.appendChild(container);
-  await renderEntity(container, entity, { ...viewContext(path, state), renderMarkdown: (source) => renderText("document.md", source) });
+  await renderEntity(container, entity, { ...viewContext(path, state), renderMarkdown: (source, basePath = null) => renderText("document.md", source, markdownOptions(basePath)) });
   endRebuild(memory);
 }
 
@@ -936,7 +949,7 @@ async function showArtifact(path) {
     ? `<section class="document-card source-card"><ol class="source-lines">${data.content.replace(/\n$/, "").split(/\r?\n/).map((line) => `<li><code>${escapeHtml(line) || " "}</code></li>`).join("")}</ol></section>`
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
-      : `<section class="document-card"><div class="document-content">${renderText(data.path, data.content)}</div></section>`;
+      : `<section class="document-card"><div class="document-content">${renderText(data.path, data.content, markdownOptions(data.path))}</div></section>`;
   const state = viewState(data.path);
   const memory = beginRebuild(path);
   artifact.innerHTML = `
@@ -1062,8 +1075,11 @@ async function initialize() {
   sidebarToggle.addEventListener("click", () => setSidebarCollapsed(!appShell.classList.contains("sidebar-collapsed")));
   tabs.addEventListener("scroll", updateTabFades, { passive: true });
   window.addEventListener("resize", updateTabFades);
+  let sectionFrame = 0;
   workspace.addEventListener("scroll", () => {
     if (!rebuilding && renderedPath && renderedPath === selectedPath) scrollPositions.set(renderedPath, workspace.scrollTop);
+    cancelAnimationFrame(sectionFrame);
+    sectionFrame = requestAnimationFrame(() => markCurrentSection(artifact, workspace.getBoundingClientRect().top));
   }, { passive: true });
   projectButton.addEventListener("click", () => setProjectMenu(projectMenu.hidden));
   document.addEventListener("click", (event) => {
@@ -1084,7 +1100,17 @@ async function initialize() {
     input: document.getElementById("palette-input"),
     results: document.getElementById("palette-results"),
     entries: paletteEntries,
-    onOpen: (ref, options) => openRef(ref, options)
+    search: async (query) => (await fetchJson(`./api/search?q=${encodeURIComponent(query)}`)).results,
+    onOpen: (ref, { find, ...options }) => {
+      pendingFind = find ? { path: ref, text: find } : null;
+      openRef(ref, options);
+    }
+  });
+  linkPreview = createLinkPreview({
+    root: workspace,
+    fetchJson,
+    renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
+    kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record"
   });
   document.getElementById("jump").addEventListener("click", () => palette.show());
   document.getElementById("evidence-close").addEventListener("click", closeEvidence);
@@ -1092,7 +1118,30 @@ async function initialize() {
     const crumb = event.target.closest("[data-crumb]");
     if (crumb) {
       openRef(crumb.dataset.crumb, { keep: event.ctrlKey || event.metaKey });
+      return;
     }
+    // Markdown links to repository files open as review tabs, and anchors scroll within the document they name.
+    const docLink = event.target.closest("a[data-doc-link], a[data-doc-anchor]");
+    if (!docLink || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const target = docLink.dataset.docLink;
+    const anchor = docLink.dataset.docAnchor;
+    if (!target || target === selectedPath) {
+      if (!scrollToAnchor(anchor)) showToast(`No heading #${anchor} in this document.`);
+      else if (docLink.closest(".doc-toc")) {
+        requestAnimationFrame(() => {
+          for (const link of docLink.closest(".doc-toc").querySelectorAll("a")) link.toggleAttribute("aria-current", link === docLink);
+          docLink.setAttribute("aria-current", "location");
+        });
+      }
+      return;
+    }
+    pendingAnchor = anchor ? { path: target, anchor } : null;
+    openRef(target, { keep: event.ctrlKey || event.metaKey });
+  });
+  artifact.addEventListener("dblclick", (event) => {
+    const docLink = event.target.closest("a[data-doc-link]");
+    if (docLink) openRef(docLink.dataset.docLink, { keep: true });
   });
   document.addEventListener("keydown", (event) => {
     const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName);
@@ -1108,6 +1157,8 @@ async function initialize() {
       setSidebarCollapsed(!appShell.classList.contains("sidebar-collapsed"));
     } else if (event.key === "Escape" && !palette.isOpen() && !document.getElementById("evidence-drawer").hidden) {
       closeEvidence();
+    } else if (event.key === "Escape" && !palette.isOpen() && selectedPath && viewState(selectedPath).maximized) {
+      setMaximized(selectedPath, null);
     }
   });
   window.addEventListener("popstate", (event) => {

@@ -18,11 +18,18 @@ function compare(left, right) {
   return 0;
 }
 
-// A name-only jump list over Prism entities and reviewable files; it never searches file contents.
-export function createPalette({ dialog, input, results, entries, onOpen }) {
+const TEXT_SEARCH_DELAY_MS = 200;
+const TEXT_SEARCH_MINIMUM = 3;
+
+// A jump list over Prism entities and reviewable files by name, followed by full-text matches in Prism artifacts.
+export function createPalette({ dialog, input, results, entries, onOpen, search = null }) {
   let matches = [];
+  let textMatches = [];
+  let textState = "idle";
   let active = 0;
   let returnFocus = null;
+  let searchTimer = 0;
+  let searchRequest = 0;
 
   function update() {
     const query = input.value.trim().toLowerCase();
@@ -32,26 +39,55 @@ export function createPalette({ dialog, input, results, entries, onOpen }) {
       ? all.map((entry) => ({ entry, rank: rank(entry, query, tokens) })).filter((item) => item.rank).sort(compare).slice(0, RESULT_LIMIT).map((item) => item.entry)
       : all.filter((entry) => entry.kind === "place" || entry.kind === "initiative").slice(0, RESULT_LIMIT);
     active = 0;
+    textMatches = [];
+    clearTimeout(searchTimer);
+    const current = ++searchRequest;
+    textState = search && query.length >= TEXT_SEARCH_MINIMUM ? "searching" : "idle";
+    if (textState === "searching") {
+      searchTimer = setTimeout(async () => {
+        let found = [];
+        try {
+          found = await search(input.value.trim());
+        } catch {
+          found = [];
+        }
+        if (current !== searchRequest) return;
+        textMatches = found.flatMap((result) => result.matches.slice(0, 1).map((match) => ({ ref: result.path, kind: "text", label: result.path.split("/").pop(), detail: `${result.path}:${match.line}  ${match.text}`, find: input.value.trim() })));
+        textState = "done";
+        render();
+      }, TEXT_SEARCH_DELAY_MS);
+    }
     render();
   }
 
-  function render() {
-    results.innerHTML = matches.length
-      ? matches.map((entry, index) => `<li role="option" id="palette-option-${index}" class="palette-option" data-index="${index}" aria-selected="${index === active}">
+  function all() {
+    return [...matches, ...textMatches];
+  }
+
+  function option(entry, index) {
+    return `<li role="option" id="palette-option-${index}" class="palette-option${entry.kind === "text" ? " is-text" : ""}" data-index="${index}" aria-selected="${index === active}">
           <span class="palette-kind kind-${escapeHtml(entry.kind)}">${escapeHtml(entry.kind)}</span>
           <span class="palette-label">${escapeHtml(entry.label)}</span>
           ${entry.detail ? `<span class="palette-detail">${escapeHtml(entry.detail)}</span>` : ""}
-        </li>`).join("")
+        </li>`;
+  }
+
+  function render() {
+    const textHeader = textState === "searching"
+      ? '<li class="palette-section" role="presentation">Searching text…</li>'
+      : textState === "done" ? `<li class="palette-section" role="presentation">${textMatches.length ? "Text matches" : "No text matches"}</li>` : "";
+    results.innerHTML = matches.length || textState !== "idle"
+      ? `${matches.map(option).join("")}${textHeader}${textMatches.map((entry, index) => option(entry, matches.length + index)).join("")}`
       : '<li class="palette-empty">Nothing matches.</li>';
-    input.setAttribute("aria-activedescendant", matches.length ? `palette-option-${active}` : "");
+    input.setAttribute("aria-activedescendant", all().length ? `palette-option-${active}` : "");
     results.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }
 
   function choose(index, keep) {
-    const entry = matches[index];
+    const entry = all()[index];
     if (!entry) return;
     hide();
-    onOpen(entry.ref, { keep });
+    onOpen(entry.ref, { keep, find: entry.find ?? null });
   }
 
   function show() {
@@ -63,6 +99,8 @@ export function createPalette({ dialog, input, results, entries, onOpen }) {
   }
 
   function hide() {
+    clearTimeout(searchTimer);
+    searchRequest += 1;
     dialog.hidden = true;
     returnFocus?.focus?.();
   }
@@ -71,7 +109,8 @@ export function createPalette({ dialog, input, results, entries, onOpen }) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      if (matches.length) active = (active + (event.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length;
+      const count = all().length;
+      if (count) active = (active + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
       render();
     } else if (event.key === "Enter") {
       event.preventDefault();

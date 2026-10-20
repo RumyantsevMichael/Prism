@@ -25,9 +25,17 @@ function signals(item) {
   return parts.length ? `<div class="card-signals">${parts.join("")}</div>` : "";
 }
 
-function initiativeCard(item, titles) {
+const ARCHIVED = new Set(["shipped", "superseded"]);
+
+function visibleItems(data, archive) {
+  return archive ? data.items : data.items.filter((item) => !ARCHIVED.has(item.state));
+}
+
+const STATE_COLUMNS = [["envisioned", "Envisioned"], ["planned", "Planned"], ["in-progress", "In progress"], ["shipped", "Shipped"]];
+
+function swimlaneCard(item, titles, rank) {
   return `<li class="initiative-card state-${escapeHtml(item.state)}">
-    <div class="initiative-card-head">${stateBadge(item.state)}${item.pillar ? `<span class="pillar">${escapeHtml(item.pillar)}</span>` : ""}</div>
+    <div class="initiative-card-head"><span class="card-rank" title="Priority ${rank} in ${escapeHtml(item.band)}">#${rank}</span>${item.pillar ? `<span class="pillar">${escapeHtml(item.pillar)}</span>` : ""}</div>
     <h3>${initiativeLink(item.id, item.title)}</h3>
     <p class="initiative-intent">${escapeHtml(item.intent)}</p>
     ${progressBar(item.progress)}
@@ -36,20 +44,27 @@ function initiativeCard(item, titles) {
   </li>`;
 }
 
-const ARCHIVED = new Set(["shipped", "superseded"]);
-
-function visibleItems(data, archive) {
-  return archive ? data.items : data.items.filter((item) => !ARCHIVED.has(item.state));
-}
-
-function board(data, titles, archive) {
-  const open = visibleItems(data, archive).filter((item) => item.state !== "superseded");
+// Bands are swimlanes and lifecycle states are columns; a card keeps its priority rank within its band.
+function board(data, titles, archive, collapsed) {
+  const items = visibleItems(data, archive).filter((item) => item.state !== "superseded");
   const superseded = archive ? data.items.filter((item) => item.state === "superseded") : [];
   const bands = archive ? data.bands : data.bands.filter((band) => band !== "Shipped");
-  return `<div class="roadmap-board${archive ? "" : " without-archive"}">${bands.map((band) => {
-    const members = open.filter((item) => item.band === band);
-    return `<section class="band-column band-${band.toLowerCase()}"><h2>${escapeHtml(band)} <span class="column-count">${members.length}</span></h2><ul>${members.map((item) => initiativeCard(item, titles)).join("") || '<li class="column-empty">—</li>'}</ul></section>`;
-  }).join("")}</div>
+  const columns = archive ? STATE_COLUMNS : STATE_COLUMNS.filter(([state]) => state !== "shipped");
+  const head = columns.map(([state, label]) => `<div class="swimlane-column state-${state}"><span>${label}</span><span class="column-count">${items.filter((item) => item.state === state).length}</span></div>`).join("");
+  const lanes = bands.map((band) => {
+    const members = items.filter((item) => item.band === band);
+    const rank = new Map(members.map((item, index) => [item.id, index + 1]));
+    const open = members.length > 0 && !collapsed.has(band);
+    const cells = open ? columns.map(([state]) => {
+      const cards = members.filter((item) => item.state === state);
+      return `<ul class="swimlane-cell" aria-label="${escapeHtml(band)}, ${escapeHtml(state)}">${cards.map((item) => swimlaneCard(item, titles, rank.get(item.id))).join("")}</ul>`;
+    }).join("") : "";
+    return `<section class="swimlane band-${band.toLowerCase()}${open ? "" : " is-collapsed"}">
+      <h2><button type="button" class="swimlane-toggle" data-lane="${escapeHtml(band)}" aria-expanded="${open}" ${members.length ? "" : "disabled"}>${escapeHtml(band)} <span class="column-count">${members.length}</span></button></h2>
+      ${cells}
+    </section>`;
+  }).join("");
+  return `<div class="swimlane-board columns-${columns.length}"><div class="swimlane-head">${head}</div>${lanes}</div>
   ${superseded.length ? `<details class="view-card superseded-card"><summary><span class="eyebrow">Superseded</span> ${plural(superseded.length, "initiative")}</summary><ul class="plain-list">${superseded.map((item) => `<li>${initiativeLink(item.id, item.title)} → ${initiativeLink(item.decision.by, titles.get(item.decision.by) ?? item.decision.by)}: ${escapeHtml(item.decision.reason ?? "")}</li>`).join("")}</ul></details>` : ""}`;
 }
 
@@ -125,7 +140,17 @@ export async function render(container, entity, ctx) {
   if (ctx.state.mode === "graph") {
     await graph(body, data, ctx, titles, ctx.state.archive);
   } else {
-    body.innerHTML = ctx.state.mode === "list" ? list(data, titles, ctx.state.archive) : board(data, titles, ctx.state.archive);
+    ctx.state.collapsedLanes ??= [];
+    body.innerHTML = ctx.state.mode === "list" ? list(data, titles, ctx.state.archive) : board(data, titles, ctx.state.archive, new Set(ctx.state.collapsedLanes));
+  }
+  for (const toggle of container.querySelectorAll("[data-lane]")) {
+    toggle.addEventListener("click", () => {
+      const lanes = new Set(ctx.state.collapsedLanes);
+      if (lanes.has(toggle.dataset.lane)) lanes.delete(toggle.dataset.lane);
+      else lanes.add(toggle.dataset.lane);
+      ctx.state.collapsedLanes = [...lanes];
+      ctx.rerender();
+    });
   }
   container.querySelector("[data-roadmap-archive]").addEventListener("click", () => {
     ctx.state.archive = !ctx.state.archive;

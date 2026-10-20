@@ -34,7 +34,7 @@ export function render(container, entity, ctx) {
   const data = entity.data;
   if (entity.kind === "glossary") {
     container.innerHTML = data.exists
-      ? `<section class="document-card"><div class="document-content">${ctx.renderMarkdown(data.content)}</div></section>`
+      ? `<section class="document-card"><div class="document-content">${ctx.renderMarkdown(data.content, data.path)}</div></section>`
       : card("No glossary yet", data.path ? `<p>The configured glossary <code>${escapeHtml(data.path)}</code> does not exist.</p><p class="muted">Run <code>workflow-init</code> or <code>ideate</code> to create it.</p>` : "<p>The workflow config disables the glossary.</p>", { eyebrow: "Glossary" });
     return;
   }

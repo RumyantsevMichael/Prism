@@ -190,6 +190,23 @@ test("serves the browser runtime without an image endpoint", async (context) => 
   }
 });
 
+test("searches the text of listed artifacts only", async (context) => {
+  const projectRoot = await fixture(context);
+  await writeFile(path.join(projectRoot, "docs", "notes.md"), "# Notes\n\nThe total retry deadline bounds every call.\n");
+  await writeFile(path.join(projectRoot, "secrets", "private.md"), "# Private\n\nThe total retry deadline is secret.\n");
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const search = async (query) => (await fetchReview(`${review.baseUrl}/api/search?q=${encodeURIComponent(query)}`)).json();
+    const found = await search("RETRY deadline");
+    assert.deepEqual(found.results.map((result) => result.path), ["docs/notes.md"], "an unlisted folder is never searched");
+    assert.deepEqual(found.results[0].matches, [{ line: 3, text: "The total retry deadline bounds every call." }]);
+    assert.deepEqual((await search("deadline nowhere")).results, [], "every term must occur in the file");
+    assert.deepEqual((await search("a")).results, [], "a one-letter query matches nothing");
+  } finally {
+    await review.close();
+  }
+});
+
 test("uses an injected browser opener when it presents a review", async (context) => {
   const openedUrls = [];
   const projectRoot = await fixture(context);

@@ -240,6 +240,15 @@ export function enablePanZoom(section, state) {
     label.textContent = `${Math.round(state.scale * 100)}%`;
   };
   apply(state.scale ?? Math.max(0.85, fitScale()));
+  // The pan position survives a refresh the same way the zoom does.
+  if (state.left !== undefined) {
+    viewport.scrollLeft = state.left;
+    viewport.scrollTop = state.top;
+  }
+  viewport.addEventListener("scroll", () => {
+    state.left = viewport.scrollLeft;
+    state.top = viewport.scrollTop;
+  }, { passive: true });
   section.querySelector(".diagram-tools").addEventListener("click", (event) => {
     const action = event.target.closest("button")?.dataset.zoom;
     if (action === "in") apply(state.scale + 0.15);

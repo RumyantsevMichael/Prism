@@ -2724,39 +2724,121 @@ th {
 
 /* Roadmap */
 
-.roadmap-board {
+/* Swimlane board: priority bands are lanes, lifecycle states are columns. */
+.swimlane-board {
   display: grid;
-  gap: 0.7rem;
-  grid-template-columns: repeat(5, minmax(13rem, 1fr));
+  gap: 0.6rem;
   overflow-x: auto;
   padding-bottom: 0.4rem;
 }
 
-.band-column {
+/* The page's style policy forbids inline styles, so the column count is a class. */
+.swimlane-head,
+.swimlane {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(3, minmax(13rem, 1fr));
+}
+
+.columns-4 :is(.swimlane-head, .swimlane) {
+  grid-template-columns: repeat(4, minmax(13rem, 1fr));
+}
+
+.swimlane-column {
+  align-items: center;
+  border-bottom: 2px solid var(--state-color, var(--line-strong));
+  color: var(--ink-muted);
+  display: flex;
+  font-size: 0.72rem;
+  font-weight: 700;
+  justify-content: space-between;
+  letter-spacing: 0.06em;
+  padding: 0.2rem 0.3rem 0.35rem;
+  text-transform: uppercase;
+}
+
+.swimlane-column.state-envisioned { --state-color: var(--state-envisioned); }
+.swimlane-column.state-planned { --state-color: var(--state-planned); }
+.swimlane-column.state-in-progress { --state-color: var(--state-in-progress); }
+.swimlane-column.state-shipped { --state-color: var(--state-shipped); }
+
+.swimlane {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 0.9rem;
-  min-width: 0;
-  padding: 0.7rem;
+  padding: 0.5rem 0.6rem 0.7rem;
 }
 
-.band-column h2 {
-  align-items: center;
-  display: flex;
+.swimlane.is-collapsed {
+  padding-bottom: 0.5rem;
+}
+
+.swimlane h2 {
   font-size: 0.82rem;
-  justify-content: space-between;
+  grid-column: 1 / -1;
   letter-spacing: 0.02em;
-  margin: 0.1rem 0.2rem 0.6rem;
+  margin: 0;
 }
 
-.band-now h2 { color: var(--accent-strong); }
+.swimlane-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 0.4rem;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 700;
+  gap: 0.5rem;
+  padding: 0.15rem 0.3rem;
+}
 
-.band-column > ul {
+.swimlane-toggle::before {
+  border-bottom: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  content: "";
+  height: 0.38rem;
+  transform: rotate(45deg) translate(-0.1rem, -0.1rem);
+  transition: transform 120ms ease;
+  width: 0.38rem;
+}
+
+.swimlane-toggle[aria-expanded="false"]::before {
+  transform: rotate(-45deg);
+}
+
+.swimlane-toggle:disabled {
+  color: var(--ink-muted);
+  cursor: default;
+}
+
+.swimlane-toggle:disabled::before {
+  visibility: hidden;
+}
+
+.swimlane-toggle:not(:disabled):hover {
+  background: var(--surface);
+}
+
+.band-now .swimlane-toggle { color: var(--accent-strong); }
+
+.swimlane-cell {
+  align-content: start;
   display: grid;
   gap: 0.55rem;
   list-style: none;
   margin: 0;
+  min-height: 2.5rem;
+  min-width: 0;
   padding: 0;
+}
+
+.card-rank {
+  color: var(--ink-muted);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
 }
 
 .initiative-card {
@@ -3064,12 +3146,6 @@ th {
     --status-deferred: #e0a030;
     --status-done: #3fbf8f;
     --status-split: #9085e9;
-  }
-}
-
-@media (max-width: 1100px) {
-  .roadmap-board {
-    grid-template-columns: repeat(5, minmax(14rem, 1fr));
   }
 }
 
@@ -3524,10 +3600,6 @@ th {
 
 /* Roadmap archive filter */
 
-.roadmap-board.without-archive {
-  grid-template-columns: repeat(4, minmax(13rem, 1fr));
-}
-
 .roadmap-controls {
   align-items: center;
   display: flex;
@@ -3689,4 +3761,241 @@ th {
 .source-lines code {
   background: none;
   padding: 0;
+}
+
+/* Document contents beside a long document; on narrow screens it folds above the text. */
+.has-toc {
+  column-gap: 2rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 15rem;
+}
+
+.has-toc > :not(.doc-toc, .maximize-button) {
+  grid-column: 1;
+}
+
+.doc-toc {
+  align-self: start;
+  border-left: 1px solid var(--line);
+  font-size: 0.78rem;
+  grid-column: 2;
+  grid-row: 1 / span 40;
+  max-height: calc(100vh - 7rem);
+  overflow: auto;
+  padding: 0.2rem 0 0.2rem 0.9rem;
+  position: sticky;
+  top: 1rem;
+}
+
+.doc-toc-toggle {
+  background: transparent;
+  border: 0;
+  color: var(--ink-muted);
+  cursor: default;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 0 0 0.45rem;
+  text-transform: uppercase;
+}
+
+.doc-toc ol {
+  display: grid;
+  gap: 0.15rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.doc-toc a {
+  border-radius: 0.3rem;
+  color: var(--ink-muted);
+  display: block;
+  line-height: 1.35;
+  padding: 0.2rem 0.4rem;
+  text-decoration: none;
+}
+
+.doc-toc a:hover {
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
+.doc-toc a[aria-current="location"] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.doc-toc .toc-depth-1 { padding-left: 0.75rem; }
+.doc-toc .toc-depth-2 { padding-left: 1.5rem; }
+
+.document-content :is(h1, h2, h3, h4, h5, h6)[id] {
+  scroll-margin-top: 1rem;
+}
+
+.document-content .is-target {
+  animation: target-flash 1.6s ease;
+}
+
+@keyframes target-flash {
+  0%, 40% { background: var(--accent-soft); }
+  100% { background: transparent; }
+}
+
+.doc-link-missing {
+  border-bottom: 1px dashed var(--line-strong);
+  cursor: help;
+}
+
+@media (max-width: 1100px) {
+  .has-toc {
+    display: block;
+  }
+
+  .doc-toc {
+    border: 1px solid var(--line);
+    border-radius: 0.6rem;
+    margin-bottom: 1rem;
+    max-height: none;
+    padding: 0.5rem 0.75rem;
+    position: static;
+  }
+
+  .doc-toc-toggle {
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .doc-toc:not(.is-open) ol {
+    display: none;
+  }
+
+  .doc-toc.is-open .doc-toc-toggle {
+    padding-bottom: 0.45rem;
+  }
+}
+
+/* Link previews */
+.link-preview {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-size: 0.82rem;
+  max-height: min(22rem, 60vh);
+  max-width: min(28rem, calc(100vw - 1rem));
+  overflow: hidden;
+  padding: 0.75rem 0.9rem;
+  position: fixed;
+  width: max-content;
+  z-index: 50;
+}
+
+.link-preview[hidden] {
+  display: none;
+}
+
+.link-preview h3 {
+  font-size: 0.95rem;
+  margin: 0.1rem 0 0.4rem;
+}
+
+.link-preview p {
+  margin: 0.3rem 0;
+}
+
+.link-preview .eyebrow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-preview .document-content {
+  max-width: none;
+}
+
+.link-preview .document-content :is(h1, h2, h3) {
+  font-size: 0.95rem;
+  margin: 0.4rem 0;
+}
+
+.link-preview pre {
+  font-size: 0.72rem;
+  margin: 0.3rem 0 0;
+  overflow: hidden;
+}
+
+/* Maximized cards fill the window above the page; a refresh keeps them maximized. */
+.document-card {
+  position: relative;
+}
+
+.document-card > .maximize-button {
+  position: absolute;
+  right: 0.75rem;
+  top: 0.75rem;
+  z-index: 1;
+}
+
+body.has-maximized::after {
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  content: "";
+  inset: 0;
+  position: fixed;
+  z-index: 39;
+}
+
+.is-maximized {
+  display: flex;
+  flex-direction: column;
+  inset: 0.75rem;
+  margin: 0 !important;
+  overflow: auto;
+  position: fixed !important;
+  z-index: 40;
+}
+
+.is-maximized.has-toc {
+  display: grid;
+}
+
+.is-maximized :is(.graph-viewport, .diagram-output) {
+  flex: 1 1 auto;
+  max-height: none;
+}
+
+.is-maximized .document-content {
+  max-width: 96ch;
+}
+
+/* Full-text matches in the Jump palette */
+.palette-section {
+  border-top: 1px solid var(--line);
+  color: var(--ink-muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-top: 0.3rem;
+  padding: 0.55rem 0.6rem 0.25rem;
+  text-transform: uppercase;
+}
+
+.palette-option.is-text {
+  flex-wrap: wrap;
+}
+
+.palette-option.is-text .palette-detail {
+  flex-basis: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-left: 0;
+  white-space: normal;
+}
+
+mark.find-hit {
+  background: color-mix(in srgb, var(--warn, #e0a030) 35%, transparent);
+  border-radius: 0.2rem;
+  color: inherit;
+  padding: 0 0.1rem;
 }

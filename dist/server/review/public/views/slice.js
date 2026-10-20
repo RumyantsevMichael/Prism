@@ -60,7 +60,7 @@ export async function render(container, entity, ctx) {
   if (artifacts.narrative) {
     try {
       const narrative = await ctx.fetchArtifact(artifacts.narrative);
-      container.querySelector("[data-narrative]").innerHTML = ctx.renderMarkdown(narrative.content);
+      container.querySelector("[data-narrative]").innerHTML = ctx.renderMarkdown(narrative.content, artifacts.narrative);
     } catch (error) {
       container.querySelector("[data-narrative]").innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
     }
