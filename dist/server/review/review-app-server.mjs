@@ -12,13 +12,15 @@ import {
   projectId,
   proveResponse,
   readDiscovery,
-  readProjectEvidence,
+  readProjectDirectories,
   readProjectRoots,
   removeDiscovery,
   verifyRequest,
   writeDiscovery,
   writeProjectRoots
 } from "./review-app-discovery.mjs";
+import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send } from "./review-server.mjs";
 import { loadAttention } from "./workspace-model.mjs";
 import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
@@ -31,7 +33,7 @@ const LOCK_RENEW_MS = 5 * 1000;
 const LOCK_STALE_MS = 30 * 1000;
 const LOCK_TIMEOUT_MS = 1000;
 const OPEN_LEASE_MS = 10 * 1000;
-const EVIDENCE_STORE_LIMIT = 4;
+const STORAGE_DIRECTORY_LIMIT = 4;
 const NOTICE_MS = 60 * 1000;
 const RECENT_LIMIT = 20;
 
@@ -127,7 +129,8 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
 
   function savedProjects() {
     const ordered = byRecency();
-    return { roots: ordered.map(({ root }) => root), evidence: Object.fromEntries(ordered.filter((project) => project.evidenceDirectories.length).map((project) => [project.root, project.evidenceDirectories])) };
+    const reported = (field) => Object.fromEntries(ordered.filter((project) => project[field].length).map((project) => [project.root, project[field]]));
+    return { roots: ordered.map(({ root }) => root), directories: { evidence: reported("evidenceDirectories"), intelligence: reported("intelligenceDirectories") } };
   }
 
   // Keeps at most RECENT_LIMIT projects that are neither live nor watched, and saves the projects most recent first whenever that changes.
@@ -138,11 +141,11 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       projects.delete(project.id);
       pendingNotices.delete(project.id);
     }
-    const { roots, evidence } = savedProjects();
-    const text = JSON.stringify([roots, evidence]);
+    const { roots, directories } = savedProjects();
+    const text = JSON.stringify([roots, directories]);
     if (text === persisted) return;
     persisted = text;
-    await writeProjectRoots(directory, roots, evidence).catch(() => {});
+    await writeProjectRoots(directory, roots, directories).catch(() => {});
   }
 
   function storeAt(evidenceDirectory) {
@@ -174,19 +177,30 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     };
   }
 
-  async function reportEvidence(project, evidenceDirectory) {
-    if (evidenceDirectory === undefined) return;
-    const resolved = path.resolve(evidenceDirectory);
-    if (project.evidenceDirectories[0] === resolved) return;
-    project.evidenceDirectories = [resolved, ...project.evidenceDirectories.filter((known) => known !== resolved)].slice(0, EVIDENCE_STORE_LIMIT);
-    await rememberProjects();
+  // Sessions report where they keep evidence and index storage, which depends on each host's plugin data directory.
+  async function reportDirectories(project, body) {
+    let changed = false;
+    for (const [name, field] of [["evidenceDirectory", "evidenceDirectories"], ["intelligenceDirectory", "intelligenceDirectories"]]) {
+      if (body[name] === undefined) continue;
+      const resolved = path.resolve(body[name]);
+      if (project[field][0] === resolved) continue;
+      project[field] = [resolved, ...project[field].filter((known) => known !== resolved)].slice(0, STORAGE_DIRECTORY_LIMIT);
+      changed = true;
+    }
+    if (changed) await rememberProjects();
   }
 
-  function evidenceDirectoryOf(body) {
-    if (body.evidenceDirectory !== undefined && (typeof body.evidenceDirectory !== "string" || !path.isAbsolute(body.evidenceDirectory))) {
-      throw statusError(400, "The evidenceDirectory must be an absolute path.");
+  function checkDirectories(body) {
+    for (const name of ["evidenceDirectory", "intelligenceDirectory"]) {
+      if (body[name] !== undefined && (typeof body[name] !== "string" || !path.isAbsolute(body[name]))) {
+        throw statusError(400, `The ${name} must be an absolute path.`);
+      }
     }
-    return body.evidenceDirectory;
+  }
+
+  // The app's own default storage comes last, so a project no session has reported yet still shows an index this host built.
+  function intelligenceDirectoriesOf(project) {
+    return [...project.intelligenceDirectories, nativeSemanticRuntime.directory];
   }
 
   async function touch(project) {
@@ -220,8 +234,9 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const baseUrl = `http://127.0.0.1:${port}${viewerPrefix()}/p/${id}`;
       const onViewer = (sendNotice) => deliverPendingNotices(id, sendNotice);
       // A new project starts as the most recent, so the recent limit never drops the project being registered.
-      project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [] };
-      project.review = createProjectReview({ projectRoot: root, baseUrl, instance, onViewer, evidenceStore: () => evidenceStoreOf(project) });
+      project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [], intelligenceDirectories: [] };
+      project.review = createProjectReview({ projectRoot: root, baseUrl, instance, onViewer, evidenceStore: () => evidenceStoreOf(project),
+        intelligenceDirectories: () => intelligenceDirectoriesOf(project) });
       projects.set(id, project);
       if (persist) await rememberProjects();
     }
@@ -259,6 +274,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       projectRoot: project.root,
       live: live(project, now),
       gates: await gateCount(project.root),
+      indexing: (await readIndexingStatus(project.root, intelligenceDirectoriesOf(project)).catch(() => null))?.state ?? null,
       url: project.review.reviewUrl([]),
       lastSeen: project.lastSeen
     })));
@@ -290,9 +306,9 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     }
     if (lease && request.method === "PUT") {
       const body = parseBody(text);
-      const evidenceDirectory = evidenceDirectoryOf(body);
+      checkDirectories(body);
       const project = await projectFor(body.projectRoot);
-      await reportEvidence(project, evidenceDirectory);
+      await reportDirectories(project, body);
       project.leases.set(lease, Date.now() + LEASE_MS);
       await touch(project);
       return { projectId: project.id, url: project.review.reviewUrl([]) };
@@ -304,9 +320,9 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     }
     if (route === "/control/present" && request.method === "POST") {
       const body = parseBody(text);
-      const evidenceDirectory = evidenceDirectoryOf(body);
+      checkDirectories(body);
       const project = await projectFor(body.projectRoot);
-      await reportEvidence(project, evidenceDirectory);
+      await reportDirectories(project, body);
       const review = project.review;
       if (body.open === true) {
         const tabs = normalizeTabs(body.tabs);
@@ -413,17 +429,19 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
 
   // The file lists projects most recent first, so a restarted app takes recency from its order.
   const restored = await readProjectRoots(directory);
-  const restoredEvidence = await readProjectEvidence(directory);
+  const restoredEvidence = await readProjectDirectories(directory, "evidence");
+  const restoredIntelligence = await readProjectDirectories(directory, "intelligence");
   for (const [index, root] of restored.entries()) {
     const project = await projectFor(root, { persist: false }).catch(() => null);
     if (project) {
       project.lastSeen = restored.length - index;
       project.evidenceDirectories = restoredEvidence[root] ?? [];
+      project.intelligenceDirectories = restoredIntelligence[root] ?? [];
     }
   }
   sequence = restored.length;
   const saved = savedProjects();
-  persisted = JSON.stringify([saved.roots, saved.evidence]);
+  persisted = JSON.stringify([saved.roots, saved.directories]);
 
   published = { protocol: REVIEW_APP_PROTOCOL, port, controlToken, viewerToken, pid: process.pid, pluginVersion, startedAt: new Date().toISOString() };
   await writeDiscovery(directory, published);

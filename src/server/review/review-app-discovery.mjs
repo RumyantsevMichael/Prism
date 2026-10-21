@@ -105,10 +105,11 @@ export async function readProjectRoots(directory) {
   }
 }
 
-// Maps each project root to the evidence store directories its sessions reported, most recent first, so a restarted app keeps serving the right evidence.
-export async function readProjectEvidence(directory) {
+// Maps each project root to the private storage directories of one kind, such as evidence stores or index storage, that its sessions reported,
+// most recent first, so a restarted app keeps reading the right ones.
+export async function readProjectDirectories(directory, field) {
   try {
-    const value = JSON.parse(await readFile(projectsPath(directory), "utf8"))?.evidence;
+    const value = JSON.parse(await readFile(projectsPath(directory), "utf8"))?.[field];
     const valid = (stores) => Array.isArray(stores) && stores.length > 0 && stores.every((store) => typeof store === "string" && path.isAbsolute(store));
     return Object.fromEntries(Object.entries(value && typeof value === "object" ? value : {}).filter(([root, stores]) => path.isAbsolute(root) && valid(stores)));
   } catch {
@@ -116,8 +117,8 @@ export async function readProjectEvidence(directory) {
   }
 }
 
-export async function writeProjectRoots(directory, roots, evidence = {}) {
-  await writeAtomically(projectsPath(directory), `${JSON.stringify({ projects: roots, evidence }, null, 2)}\n`, { mode: 0o600 });
+export async function writeProjectRoots(directory, roots, { evidence = {}, intelligence = {} } = {}) {
+  await writeAtomically(projectsPath(directory), `${JSON.stringify({ projects: roots, evidence, intelligence }, null, 2)}\n`, { mode: 0o600 });
 }
 
 export const newCredential = () => randomBytes(24).toString("base64url");

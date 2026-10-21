@@ -9,6 +9,7 @@ import { constants } from "node:fs";
 import { mkdir, lstat, realpath, readdir, open, rename, rm, chmod, utimes } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/artifact-store.mjs";
+import { ProgressRecorder, gitFingerprint, projectStorageKey, sameFingerprint, writeFreshness } from "./index-progress.mjs";
 const semanticError = (code, message) => Object.assign(new Error(message), { code });
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const supported = /* @__PURE__ */ new Set(["darwin-x64", "darwin-arm64", "linux-x64", "linux-arm64", "win32-x64"]);
@@ -76,7 +77,8 @@ async function regularBytes(file, max = 512 * 1024 * 1024) {
 async function readJson(file) {
   return JSON.parse((await regularBytes(file)).toString("utf8"));
 }
-async function download(asset, destination, allowFile) {
+async function download(asset, destination, allowFile, onBytes = () => {
+}) {
   const valid = async () => {
     try {
       const bytes = await regularBytes(destination, asset.bytes);
@@ -109,6 +111,7 @@ async function download(asset, destination, allowFile) {
       if (length > asset.bytes) throw semanticError("corrupt_asset", "The downloaded asset exceeds its pinned size.");
       digest.update(chunk);
       await handle.writeFile(chunk);
+      onBytes(length, asset.bytes);
     }
     if (length !== asset.bytes || digest.digest("hex") !== asset.sha256) throw semanticError("corrupt_asset", "The downloaded asset failed its integrity check.");
     await handle.sync();
@@ -120,12 +123,12 @@ async function download(asset, destination, allowFile) {
     await rm(temporary, { force: true });
   }
 }
-async function downloadFirst(asset, urls, destination, allowFile) {
+async function downloadFirst(asset, urls, destination, allowFile, onBytes) {
   const failures = [];
   let code = "preparation_failed";
   for (const url of urls) {
     try {
-      return await download({ ...asset, url }, destination, allowFile);
+      return await download({ ...asset, url }, destination, allowFile, onBytes);
     } catch (error) {
       if (error.code === "invalid_path") throw error;
       failures.push(error.message);
@@ -260,7 +263,7 @@ class NativeSemanticRuntime {
   async location(projectRoot) {
     const root = await realpath(projectRoot);
     if (inside(root, this.directory)) throw semanticError("invalid_path", "Native storage must be outside the target project.");
-    return { root, directory: path.join(this.directory, "projects", sha(root)) };
+    return { root, directory: path.join(this.directory, "projects", projectStorageKey(root)) };
   }
   async status(projectRoot, waitMs = 0) {
     if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 3e4) throw semanticError("validation_failed", "waitMs must be from 0 through 30000.");
@@ -286,12 +289,16 @@ class NativeSemanticRuntime {
         graph: "1.6.0",
         chunker: job?.prepared?.index.chunkerVersion || published?.chunkerVersion || null
       },
-      runtime: { supported: supported.has(`${process.platform}-${process.arch}`), published: Boolean(manifest.bundles[`${process.platform}-${process.arch}`]) },
+      runtime: await this.availability(),
       structuralCapabilities: { code: ["JavaScript", "TypeScript", "Python", "Go", "Rust", "Java", "C#", "C", "C++"], documents: ["Markdown", "JSON", "YAML"] },
       limits: { files: 2e4, sourceBytes: 64 * 1024 * 1024, fileBytes: 2 * 1024 * 1024, sdkFileBytes: 1024 * 1024, modelTokens: 512 },
       diagnostics: job?.diagnostics || published?.diagnostics || [],
       freshness: "verify-on-use"
     };
+  }
+  async availability() {
+    const manifest = await this.manifest(), platform = `${process.platform}-${process.arch}`;
+    return { supported: supported.has(platform), published: Boolean(manifest.bundles[platform]) };
   }
   async assets(progress) {
     const manifest = await this.manifest(), platform = `${process.platform}-${process.arch}`, asset = manifest.bundles[platform];
@@ -300,6 +307,7 @@ class NativeSemanticRuntime {
     const assets = await privateDirectory(path.join(this.directory, "assets"));
     const runtime = path.join(assets, asset.sha256), modelDirectory = path.join(assets, sha(JSON.stringify(manifest.model)));
     const allowFile = Boolean(this.options.manifestPath || process.env.PRISM_NATIVE_ASSET_MANIFEST);
+    progress({ phase: "assets-check" });
     await withArtifactLock(runtime, () => withFileLock(runtime, async () => {
       try {
         await this.verifyRuntime(runtime, platform);
@@ -307,11 +315,12 @@ class NativeSemanticRuntime {
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
-      progress({ phase: "runtime-download" });
+      progress({ phase: "runtime-download", current: 0, total: asset.bytes, unit: "bytes" });
       const archive = `${runtime}.tar.gz`;
-      await download(asset, archive, allowFile);
+      await download(asset, archive, allowFile, (current, total) => progress({ phase: "runtime-download", current, total, unit: "bytes" }));
       const staging = await privateDirectory(`${runtime}.${randomUUID()}.tmp`);
       try {
+        progress({ phase: "runtime-extract" });
         const { extractRuntime } = await import(pluginURL("vendor/native-runtime/extract.mjs").href);
         await extractRuntime(archive, staging, asset.unpackedBytes);
         await this.verifyRuntime(staging, platform);
@@ -324,16 +333,16 @@ class NativeSemanticRuntime {
     }, semanticError, { renew: true, timeoutMs: 12e4 }));
     await privateDirectory(modelDirectory);
     await withArtifactLock(modelDirectory, () => withFileLock(modelDirectory, async () => {
-      for (const file of manifest.model.files) {
+      for (const [index, file] of manifest.model.files.entries()) {
         if (file.path.includes("..") || path.isAbsolute(file.path)) throw semanticError("corrupt_asset", "The model asset path is invalid.");
         const target = path.join(modelDirectory, file.path);
         await privateDirectory(path.dirname(target));
-        progress({ phase: "model-download", file: file.path });
+        const step = { phase: "model-download", file: file.path, item: index + 1, items: manifest.model.files.length, unit: "bytes" };
         const urls = file.url ? [file.url] : [
           ...manifest.modelMirror ? [`${manifest.modelMirror}/${modelAssetName(file.path)}`] : [],
           `https://huggingface.co/${manifest.model.id}/resolve/${manifest.model.revision}/${file.path}`
         ];
-        await downloadFirst(file, urls, target, allowFile);
+        await downloadFirst(file, urls, target, allowFile, (current, total) => progress({ ...step, current, total }));
       }
     }, semanticError, { renew: true, timeoutMs: 12e4 }));
     const used = /* @__PURE__ */ new Date();
@@ -355,115 +364,140 @@ class NativeSemanticRuntime {
   }
   async prepare(source, expectedSnapshot, waitMs = 1e4) {
     if (expectedSnapshot !== void 0 && (typeof expectedSnapshot !== "string" || !/^[a-f\d]{64}$/.test(expectedSnapshot))) throw semanticError("validation_failed", "expectedSnapshot must be a SHA-256 snapshot identity.");
+    const projectRoot = source.projectRoot, fingerprint = typeof projectRoot === "string" ? await gitFingerprint(projectRoot) : null;
     const snapshot = await source.snapshot(), location = await this.location(snapshot.root);
+    const live = snapshot.enumerator !== "retained";
     if (expectedSnapshot && expectedSnapshot !== snapshot.sourceFingerprint) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
     const manifest = await this.manifest();
     const generationKey = `${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`;
     let job = this.generations.get(generationKey);
     if (job?.snapshot !== snapshot.sourceFingerprint || job?.status === "degraded") {
-      job = { id: sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), snapshot: snapshot.sourceFingerprint, status: "preparing", diagnostics: [], promise: Promise.resolve() };
+      job = { id: sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), snapshot: snapshot.sourceFingerprint, status: "preparing", diagnostics: [], promise: Promise.resolve(), freshness: live ? fingerprint : void 0 };
       this.jobs.set(location.root, job);
       this.generations.set(generationKey, job);
       for (const [key, generation] of this.generations) if (this.generations.size > KEPT_INDEX_REVISIONS && generation.status !== "preparing") this.generations.delete(key);
       const preparing = job;
       job.promise = this.sequence = this.sequence.catch(() => {
       }).then(async () => {
+        const recorder = preparing.recorder = new ProgressRecorder(location.directory, preparing.id);
+        const started = privateDirectory(location.directory).then(() => recorder.start()).catch(() => {
+        });
         try {
           preparing.prepared = await this.build(source, snapshot, location, preparing);
           preparing.status = "ready";
+          if (preparing.freshness !== void 0) await writeFreshness(location.directory, preparing.snapshot, preparing.freshness);
+          await started;
+          await recorder.succeed();
         } catch (error) {
           preparing.status = "degraded";
           preparing.diagnostics = [{ code: stableFailure(error), message: error.message, recovery: "Retry preparation after correcting the reported runtime, network, or source problem." }];
+          await started;
+          await recorder.fail(preparing.diagnostics);
+        } finally {
+          preparing.recorder = void 0;
         }
       });
+    } else if (live && fingerprint && job.status === "ready" && !sameFingerprint(job.freshness ?? null, fingerprint)) {
+      job.freshness = fingerprint;
+      await writeFreshness(location.directory, job.snapshot, fingerprint);
     }
     this.jobs.set(location.root, job);
     if (job.status === "preparing") await boundedWait(job.promise, Math.min(waitMs, 1e4));
     return { status: job.status, preparationId: job.id, snapshot: job.snapshot, diagnostics: job.diagnostics, prepared: job.prepared };
   }
+  report(job, progress) {
+    job.progress = progress;
+    job.recorder?.update(progress);
+  }
   async build(source, snapshot, location, job) {
     await privateDirectory(this.directory);
-    const assets = await this.assets((value) => {
-      job.progress = value;
-    });
+    const assets = await this.assets((value) => this.report(job, value));
     const directory = await privateDirectory(location.directory);
-    return withArtifactLock(directory, () => withFileLock(directory, async () => {
-      let previous;
-      try {
-        const pointer = await readJson(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`)).catch((error) => {
-          if (error.code !== "ENOENT") throw error;
-          return readJson(path.join(directory, "current.json"));
-        });
-        if (!pointer.revision || !/^[a-f\d]{64}$/.test(pointer.revision)) throw semanticError("corrupt_asset", "The index pointer has an invalid revision.");
-        const indexPath = path.join(directory, `${pointer.revision}.json`), bytes = await regularBytes(indexPath);
-        if (sha(bytes) !== pointer.revision) throw semanticError("corrupt_asset", "The semantic index failed its integrity check.");
-        previous = JSON.parse(bytes.toString("utf8"));
-        if (previous.snapshot === snapshot.sourceFingerprint && previous.assetIdentity === assets.assetIdentity) {
-          await source.verifySnapshot();
-          job.revision = pointer.revision;
-          job.coverage = pointer.coverage;
-          job.diagnostics = previous.diagnostics;
-          const used = /* @__PURE__ */ new Date();
-          await utimes(indexPath, used, used).catch(() => {
+    const waiting = setTimeout(() => this.report(job, { phase: "waiting" }), 1e3);
+    waiting.unref();
+    try {
+      return await withArtifactLock(directory, () => withFileLock(directory, async () => {
+        clearTimeout(waiting);
+        let previous;
+        try {
+          const pointer = await readJson(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`)).catch((error) => {
+            if (error.code !== "ENOENT") throw error;
+            return readJson(path.join(directory, "current.json"));
           });
-          return { ...assets, index: indexMetadata(previous), indexPath, revision: pointer.revision };
-        }
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-      }
-      const mirror = await privateDirectory(path.join(directory, `snapshot-${randomUUID()}`));
-      try {
-        for (const file of snapshot.files) {
-          const target = path.resolve(mirror, file.file);
-          if (!inside(mirror, target)) throw semanticError("invalid_path", "A snapshot path escapes its mirror.");
-          await privateDirectory(path.dirname(target));
-          const handle = await open(target, "wx", 256);
-          try {
-            const bytes = await regularBytes(file.absolutePath, 2 * 1024 * 1024);
-            if (sha(bytes) !== file.hash) throw semanticError("stale_snapshot", "Source bytes changed while copying the snapshot.");
-            await handle.writeFile(bytes);
-          } finally {
-            await handle.close();
+          if (!pointer.revision || !/^[a-f\d]{64}$/.test(pointer.revision)) throw semanticError("corrupt_asset", "The index pointer has an invalid revision.");
+          const indexPath = path.join(directory, `${pointer.revision}.json`), bytes = await regularBytes(indexPath);
+          if (sha(bytes) !== pointer.revision) throw semanticError("corrupt_asset", "The semantic index failed its integrity check.");
+          previous = JSON.parse(bytes.toString("utf8"));
+          if (previous.snapshot === snapshot.sourceFingerprint && previous.assetIdentity === assets.assetIdentity) {
+            await source.verifySnapshot();
+            job.revision = pointer.revision;
+            job.coverage = pointer.coverage;
+            job.diagnostics = previous.diagnostics;
+            const used = /* @__PURE__ */ new Date();
+            await utimes(indexPath, used, used).catch(() => {
+            });
+            return { ...assets, index: indexMetadata(previous), indexPath, revision: pointer.revision };
           }
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
         }
-        await source.verifySnapshot();
-        const previousEmbeddings = Object.fromEntries((previous?.chunks || []).filter((chunk) => chunk.embeddingKey && chunk.embedding).map((chunk) => [chunk.embeddingKey, chunk.embedding]));
-        const indexStarted = performance.now();
-        const index = await this.helper(assets.runtime).request("build", {
-          mirror,
-          files: snapshot.files.map(({ file, hash }) => ({ file, hash })),
-          snapshot: snapshot.sourceFingerprint,
-          modelDirectory: assets.modelDirectory,
-          modelIdentity: assets.modelIdentity,
-          previousEmbeddings
-        }, (progress) => {
-          job.progress = progress;
-        });
-        index.resources = { ...index.resources, indexMilliseconds: performance.now() - indexStarted };
-        await source.verifySnapshot();
-        index.assetIdentity = assets.assetIdentity;
-        if (!snapshot.complete) {
-          index.structureComplete = false;
-          index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." });
+        const mirror = await privateDirectory(path.join(directory, `snapshot-${randomUUID()}`));
+        try {
+          this.report(job, { phase: "snapshot-copy", current: 0, total: snapshot.files.length, unit: "files" });
+          for (const [index2, file] of snapshot.files.entries()) {
+            const target = path.resolve(mirror, file.file);
+            if (!inside(mirror, target)) throw semanticError("invalid_path", "A snapshot path escapes its mirror.");
+            await privateDirectory(path.dirname(target));
+            const handle = await open(target, "wx", 256);
+            try {
+              const bytes = await regularBytes(file.absolutePath, 2 * 1024 * 1024);
+              if (sha(bytes) !== file.hash) throw semanticError("stale_snapshot", "Source bytes changed while copying the snapshot.");
+              await handle.writeFile(bytes);
+            } finally {
+              await handle.close();
+            }
+            this.report(job, { phase: "snapshot-copy", current: index2 + 1, total: snapshot.files.length, unit: "files" });
+          }
+          await source.verifySnapshot();
+          const previousEmbeddings = Object.fromEntries((previous?.chunks || []).filter((chunk) => chunk.embeddingKey && chunk.embedding).map((chunk) => [chunk.embeddingKey, chunk.embedding]));
+          const indexStarted = performance.now();
+          const index = await this.helper(assets.runtime).request("build", {
+            mirror,
+            files: snapshot.files.map(({ file, hash }) => ({ file, hash })),
+            snapshot: snapshot.sourceFingerprint,
+            modelDirectory: assets.modelDirectory,
+            modelIdentity: assets.modelIdentity,
+            previousEmbeddings
+          }, (progress) => this.report(job, progress));
+          index.resources = { ...index.resources, indexMilliseconds: performance.now() - indexStarted };
+          this.report(job, { phase: "saving" });
+          await source.verifySnapshot();
+          index.assetIdentity = assets.assetIdentity;
+          if (!snapshot.complete) {
+            index.structureComplete = false;
+            index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." });
+          }
+          const contents = JSON.stringify(index), revision = sha(contents), indexPath = path.join(directory, `${revision}.json`);
+          if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The semantic index exceeds 512 MiB.");
+          await writeAtomically(indexPath, contents, { mode: 384 });
+          const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
+          const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics, builtAt: (/* @__PURE__ */ new Date()).toISOString() });
+          await writeAtomically(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`), pointerContents, { mode: 384 });
+          await writeAtomically(path.join(directory, "current.json"), pointerContents, { mode: 384 });
+          job.revision = revision;
+          job.coverage = coverage;
+          job.diagnostics = index.diagnostics;
+          await rm(mirror, { recursive: true, force: true });
+          await pruneIndexes(directory, revision).catch(() => {
+          });
+          return { ...assets, index: indexMetadata(index), indexPath, revision };
+        } finally {
+          await rm(mirror, { recursive: true, force: true });
         }
-        const contents = JSON.stringify(index), revision = sha(contents), indexPath = path.join(directory, `${revision}.json`);
-        if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The semantic index exceeds 512 MiB.");
-        await writeAtomically(indexPath, contents, { mode: 384 });
-        const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
-        const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics });
-        await writeAtomically(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`), pointerContents, { mode: 384 });
-        await writeAtomically(path.join(directory, "current.json"), pointerContents, { mode: 384 });
-        job.revision = revision;
-        job.coverage = coverage;
-        job.diagnostics = index.diagnostics;
-        await rm(mirror, { recursive: true, force: true });
-        await pruneIndexes(directory, revision).catch(() => {
-        });
-        return { ...assets, index: indexMetadata(index), indexPath, revision };
-      } finally {
-        await rm(mirror, { recursive: true, force: true });
-      }
-    }, semanticError, { renew: true, timeoutMs: 12e4 }));
+      }, semanticError, { renew: true, timeoutMs: 12e4 }));
+    } finally {
+      clearTimeout(waiting);
+    }
   }
   helper(runtime) {
     if (this.process?.runtime !== runtime) {

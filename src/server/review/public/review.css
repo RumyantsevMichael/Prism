@@ -263,6 +263,232 @@ a {
   background: var(--mint);
 }
 
+.project-entry-indexing {
+  border-radius: 50%;
+  display: inline-block;
+  height: 0.45rem;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+  width: 0.45rem;
+}
+
+.project-entry-indexing.preparing {
+  animation: indexing-pulse 1.4s ease-in-out infinite;
+  background: var(--accent);
+}
+
+.project-entry-indexing.failed {
+  background: var(--danger);
+}
+
+/* The index chip sits on the dark top bar in both themes, so its tones use fixed colors that read on that bar. */
+.indexing {
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.indexing-chip {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  color: #cbc7df;
+  cursor: pointer;
+  display: flex;
+  font-size: 0.72rem;
+  gap: 0.45rem;
+  padding: 0.32rem 0.7rem;
+  white-space: nowrap;
+}
+
+.indexing-chip:hover,
+.indexing-chip[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.indexing-dot {
+  background: #77729a;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 0.5rem;
+  width: 0.5rem;
+}
+
+.indexing[data-tone="ok"] .indexing-dot { background: #52c7a5; }
+.indexing[data-tone="warn"] .indexing-dot { background: #e0a030; }
+.indexing[data-tone="danger"] .indexing-dot { background: #e05a6f; }
+
+.indexing[data-tone="busy"] .indexing-dot {
+  animation: indexing-pulse 1.4s ease-in-out infinite;
+  background: #a392ff;
+}
+
+.indexing-label {
+  color: #f8f7ff;
+  font-weight: 600;
+}
+
+.indexing-detail {
+  color: #aaa5c8;
+}
+
+.indexing-meter,
+.indexing-step-meter {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  display: inline-block;
+  height: 0.3rem;
+  overflow: hidden;
+  position: relative;
+  width: 4.5rem;
+}
+
+.indexing-step-meter {
+  background: var(--line);
+  display: block;
+  margin: 0.35rem 0 0.2rem;
+  width: 100%;
+}
+
+.indexing-meter > span,
+.indexing-step-meter > span {
+  background: #a392ff;
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  transition: width 0.4s ease;
+}
+
+.indexing-step-meter > span {
+  background: var(--accent);
+}
+
+.indexing-meter[hidden],
+.indexing-detail[hidden] {
+  display: none;
+}
+
+/* A step without counts shows motion, not a made-up fraction. */
+.indexing-meter.indeterminate > span,
+.indexing-step-meter.indeterminate > span {
+  animation: indexing-slide 1.3s ease-in-out infinite;
+  width: 35% !important;
+}
+
+@keyframes indexing-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+
+@keyframes indexing-pulse {
+  50% { opacity: 0.35; }
+}
+
+.indexing-panel {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-size: 0.8rem;
+  left: 0;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 0.75rem 0.9rem;
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  width: min(90vw, 24rem);
+  z-index: 20;
+}
+
+.indexing-panel p {
+  margin: 0 0 0.6rem;
+}
+
+.indexing-panel-title {
+  color: var(--ink-muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.indexing-panel-note {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+}
+
+.indexing-steps {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+
+.indexing-step {
+  border-left: 2px solid var(--line);
+  padding: 0.2rem 0 0.35rem 0.75rem;
+  position: relative;
+}
+
+.indexing-step::before {
+  background: var(--surface-raised);
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+  content: "";
+  height: 0.55rem;
+  left: -0.4rem;
+  position: absolute;
+  top: 0.45rem;
+  width: 0.55rem;
+}
+
+.indexing-step.done::before {
+  background: var(--good);
+  border-color: var(--good);
+}
+
+.indexing-step.current::before {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.indexing-step.pending .indexing-step-label {
+  color: var(--ink-muted);
+}
+
+.indexing-step.current .indexing-step-label {
+  font-weight: 650;
+}
+
+.indexing-step-detail {
+  color: var(--ink-muted);
+  display: block;
+  font-size: 0.72rem;
+}
+
+.indexing-facts {
+  display: grid;
+  gap: 0.2rem 0.75rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  margin: 0 0 0.6rem;
+}
+
+.indexing-facts dt {
+  color: var(--ink-muted);
+}
+
+.indexing-facts dd {
+  margin: 0;
+}
+
+.indexing-diagnostics {
+  margin: 0 0 0.6rem;
+  padding-left: 1.1rem;
+}
+
+.indexing-diagnostics span {
+  color: var(--ink-muted);
+}
+
 .notice-banner {
   display: grid;
   gap: 0.4rem;
@@ -1298,6 +1524,13 @@ th {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .indexing-dot,
+  .project-entry-indexing,
+  .indexing-meter > span,
+  .indexing-step-meter > span {
+    animation: none !important;
+  }
+
   *,
   *::before,
   *::after {

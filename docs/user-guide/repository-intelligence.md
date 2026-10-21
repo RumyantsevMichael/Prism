@@ -114,6 +114,25 @@ A `preparing` response is unfinished discovery, not an empty search result.
 Keep the original `snapshotId` through retries and edits so new code cannot appear as preexisting reuse evidence.
 Use `discover_repository_intelligence` for native runtime, model, index, and coverage status without starting downloads or preparation.
 
+#### Watch an index build in the review browser
+
+The review browser's top bar shows the open project's native index next to the project name.
+While a build runs, the chip names the current step out of five and its percentage, and clicking it lists every step.
+The steps are checking or downloading the runtime and model, copying source files, parsing code, embedding new fragments, and saving the index.
+A step shows a percentage only when the build reports counts for it, so unpacking the runtime, planning fragments, and saving show motion without a number.
+Embedding counts only fragments that need a new embedding, so a rebuild after a small edit has a small total.
+The project switcher marks other projects whose build runs or failed.
+
+The browser only shows the index.
+An agent's search starts or retries a build, and the browser has no button for it.
+`Not indexed` means no search has built the index yet, and `Indexing stopped` means the session that ran the build ended before it finished.
+`Index rebuild pending` means files changed during the build, and the next search builds from the current files.
+
+`Index out of date` is a hint from Git, not a comparison of file contents.
+It compares the commit and the changed files' sizes and modification times with those recorded when the index was built or last reused.
+A commit that leaves indexed files unchanged looks out of date until the next search, and an edit that keeps a file's size and modification time looks current.
+A folder outside Git, an index of a retained baseline, and an index built before this release show no hint.
+
 ### Find shared dependencies
 
 `find_shared_dependencies` groups functions and methods in different files that call the same rare set of operations.
