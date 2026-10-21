@@ -95,7 +95,9 @@ test("prepared shared literal groups read snapshot files, leave out tests by def
   assert.deepEqual(found.groups.map(group => group.members.map(member => member.file).sort()), [["src/panel.mjs", "src/states.mjs"]]);
   const withTests = await findSharedLiterals({ projectRoot: root, includeTests: true }, { runtime });
   assert.deepEqual(withTests.groups[0].members.map(member => member.file).sort(), ["src/panel.mjs", "src/states.mjs", "test/panel.test.mjs"]);
-  assert.deepEqual((await findSharedLiterals({ projectRoot: root, filters: { paths: ["src/panel.mjs"] } }, { runtime })).groups, []);
+  // A path filter keeps a group with one member inside it, together with the members elsewhere.
+  assert.deepEqual((await findSharedLiterals({ projectRoot: root, filters: { paths: ["src/panel.mjs"] } }, { runtime })).groups.map(group => group.members.map(member => member.file).sort()), [["src/panel.mjs", "src/states.mjs"]]);
+  assert.deepEqual((await findSharedLiterals({ projectRoot: root, filters: { paths: ["lib"] } }, { runtime })).groups, []);
   const cohesion = await reportCohesionClusters({ projectRoot: root }, { runtime });
   assert.deepEqual([cohesion.status, cohesion.containers, cohesion.coverage], ["ready", [], { examinedContainers: 0, reportedContainers: 0 }]);
   // Each analysis retains its complete result, with the hash of every file that the result names.
@@ -129,7 +131,8 @@ test("prepared same-name groups and complex units read snapshot files and retain
     prepared: { index: { units, edges: [], unresolvedReferences: [], structureComplete: true }, revision: "test", modelIdentity: "test" } }) };
   const same = await findSameNameUnits({ projectRoot: root }, { runtime });
   assert.deepEqual(same.groups.map(group => [group.name, group.kind, group.files]), [["isObject", "identical", 2]]);
-  assert.deepEqual((await findSameNameUnits({ projectRoot: root, filters: { paths: ["src/a.mjs"] } }, { runtime })).groups, []);
+  assert.deepEqual((await findSameNameUnits({ projectRoot: root, filters: { paths: ["src/a.mjs"] } }, { runtime })).groups.map(group => [group.name, group.files]), [["isObject", 2]]);
+  assert.deepEqual((await findSameNameUnits({ projectRoot: root, filters: { paths: ["src/mcp.mjs"] } }, { runtime })).groups, []);
   const complex = await reportComplexUnits({ projectRoot: root }, { runtime });
   assert.deepEqual(complex.units.map(unit => [unit.selector, unit.dispatch]), [["handle", { subject: "name", values: 9 }]]);
   const receipt = await callConservationTool("get_conservation_evidence", { projectRoot: root, evidenceId: complex.receiptId });

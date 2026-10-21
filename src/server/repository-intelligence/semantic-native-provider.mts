@@ -58,7 +58,7 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
       includeTests: { type: "boolean", default: false, description: "Include test files, which often repeat setup code on purpose." },
       filters: { type: "object", additionalProperties: false, properties: {
-        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when at least two of its members are inside these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when one of its members is inside these paths, and it keeps its members elsewhere.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   },
@@ -82,7 +82,7 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
       includeTests: { type: "boolean", default: false, description: "Include test files, which often repeat expected values on purpose." },
       filters: { type: "object", additionalProperties: false, properties: {
-        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when at least two of its members are inside these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when one of its members is inside these paths, and it keeps its members elsewhere.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   },
@@ -106,7 +106,7 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
       includeTests: { type: "boolean", default: false, description: "Include test code, which often repeats small helpers on purpose." },
       filters: { type: "object", additionalProperties: false, properties: {
-        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when at least two of its functions are inside these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when one of its functions is inside these paths, and it keeps its functions elsewhere.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   },
@@ -290,7 +290,7 @@ export async function findSharedDependencies(input: SharedDependencyInput, optio
   const { index } = provider.prepared, contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
   const result = sharedDependencyGroups(index, { include, limit: 100 });
-  const groups = result.groups.filter(group => group.members.filter(member => inside(member.file)).length >= 2);
+  const groups = result.groups.filter(group => group.members.some(member => inside(member.file)));
   await provider.verifySnapshot();
   const diagnostics = [...(index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a group can miss members." }]),
     ...(result.coverage.unresolvedNames ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so groups use project calls only.", recovery: "Prepare the index again with the current native runtime." }]),
@@ -355,7 +355,7 @@ export async function findSharedLiterals(input: SharedDependencyInput, options: 
   const contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
   const result = sharedLiteralGroups(provider.prepared.index, contents, { include, limit: 100 });
-  const groups = result.groups.filter(group => [...group.members, ...group.clients].filter(member => inside(member.file)).length >= 2);
+  const groups = result.groups.filter(group => [...group.members, ...group.clients].some(member => inside(member.file)));
   const shaped = sharedShapes(provider.prepared.index, contents, { include, limit: 100 });
   const shapes = shaped.shapes.filter(shape => shape.locations.some(location => inside(location.file)));
   await provider.verifySnapshot();
@@ -392,7 +392,7 @@ export async function findSameNameUnits(input: ScopedAnalysisInput, options: Pro
   const contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
   const result = sameNameGroups(provider.prepared.index, contents, { include });
-  const groups = result.groups.filter(group => group.variants.flatMap(variant => variant.members).filter(member => inside(member.file)).length >= 2);
+  const groups = result.groups.filter(group => group.variants.some(variant => variant.members.some(member => inside(member.file))));
   await provider.verifySnapshot();
   const diagnostics = [...(provider.prepared.index.unresolvedReferences ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so variants compare project calls only.", recovery: "Prepare the index again with the current native runtime." }]), ...provider.preparation.diagnostics];
   const receiptId = await retainResult(input, provider, "find_same_name_units", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
