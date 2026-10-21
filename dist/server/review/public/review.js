@@ -3,7 +3,7 @@ import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, parseEntityRef, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
-import { HEADING_PREFIX, decorateDocuments, markCurrentSection, renderText } from "./views/markdown.js";
+import { anchorTarget, decorateDocuments, markCurrentSection, renderText } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
 
 const project = document.getElementById("project");
@@ -780,7 +780,7 @@ function beginRebuild(path) {
 }
 
 function scrollToAnchor(anchor) {
-  const target = anchor && artifact.querySelector(`#${CSS.escape(HEADING_PREFIX + anchor)}`);
+  const target = anchorTarget(artifact, anchor);
   if (!target) return false;
   workspace.scrollTop += target.getBoundingClientRect().top - workspace.getBoundingClientRect().top - 16;
   target.classList.remove("is-target");
@@ -994,7 +994,7 @@ async function showArtifact(path) {
 }
 
 const KIND_LABELS = {
-  "concept-delta": "Concept delta",
+  "change-map": "Change map",
   "review-ledger": "Review ledger",
   "coordination-state": "Coordination state",
   json: "JSON artifact"
@@ -1029,7 +1029,9 @@ function viewContext(path, state) {
         showToast(`Not a reviewable artifact: ${artifactPath}`);
         return;
       }
-      openRef(artifactPath, options);
+      const { anchor, ...rest } = options;
+      pendingAnchor = anchor ? { path: artifactPath, anchor } : null;
+      openRef(artifactPath, rest);
     },
     openEvidence: (id, label) => openEvidence(id, label, viewContext(path, state)),
     async answerGate(payload) {
@@ -1110,7 +1112,8 @@ async function initialize() {
     root: workspace,
     fetchJson,
     renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
-    kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record"
+    kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
+    currentPath: () => selectedPath
   });
   document.getElementById("jump").addEventListener("click", () => palette.show());
   document.getElementById("evidence-close").addEventListener("click", closeEvidence);

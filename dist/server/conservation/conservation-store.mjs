@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "../repository-intelligence/native-repository-intelligence.mjs";
 import { privateDirectory, regularBytes, semanticError } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
-import { resolveArtifactPath } from "./concept-delta.mjs";
+import { CHANGE_MAP_FILES, resolveArtifactPath } from "./change-map.mjs";
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 async function trackedIgnored(root) {
   try {
@@ -37,6 +37,11 @@ async function retainImmutable(target, bytes, expectedHash, corruptMessage) {
     }
   }));
 }
+function withRenamedChangeMaps(outputs) {
+  const names = [...CHANGE_MAP_FILES, ...CHANGE_MAP_FILES.map((name) => `${name}.lock`)];
+  const siblings = outputs.filter((file) => names.includes(path.posix.basename(file))).flatMap((file) => names.map((name) => `${path.posix.dirname(file)}/${name}`));
+  return [.../* @__PURE__ */ new Set([...outputs, ...siblings])].sort();
+}
 class ConservationStore {
   directory;
   constructor(directory, env = process.env) {
@@ -56,7 +61,7 @@ class ConservationStore {
     try {
       const record = JSON.parse((await regularBytes(path.join(directory, "outputs.json"), 1024 * 1024)).toString());
       if (record.schemaVersion !== 1 || !Array.isArray(record.outputs) || record.outputs.some((file) => typeof file !== "string")) throw new Error();
-      return record.outputs;
+      return withRenamedChangeMaps(record.outputs);
     } catch (error) {
       if (error.code === "ENOENT") return [];
       throw conservationError("evidence_missing", "The managed output registry is invalid.");

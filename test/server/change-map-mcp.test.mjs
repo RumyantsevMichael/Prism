@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const SERVER = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
-const examples = JSON.parse(await readFile(new URL("./fixtures/concept-delta.json", import.meta.url), "utf8"));
+const examples = JSON.parse(await readFile(new URL("./fixtures/change-map.json", import.meta.url), "utf8"));
 async function fixture(t) {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "prism-concept-mcp-"));
   const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-concept-mcp-data-")));
@@ -45,47 +45,47 @@ async function fixture(t) {
     pending.set(next, { resolve, reject, timer });
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: next, method, params })}\n`);
   });
-  const input = { projectRoot, deltaPath: "docs/plans/demo/retry/concept-delta.json" };
+  const input = { projectRoot, deltaPath: "docs/plans/demo/retry/change-map.json" };
   return { input, rpc, call: (name, args) => rpc("tools/call", { name, arguments: args }) };
 }
 
 test("discovers typed MCP tools and performs managed code and non-code edits", async (t) => {
   const { input, rpc, call } = await fixture(t);
   const discovery = await rpc("tools/list");
-  const get = discovery.result.tools.find((tool) => tool.name === "get_concept_delta");
-  const update = discovery.result.tools.find((tool) => tool.name === "update_concept_delta");
+  const get = discovery.result.tools.find((tool) => tool.name === "get_change_map");
+  const update = discovery.result.tools.find((tool) => tool.name === "update_change_map");
   assert.equal(get.annotations.readOnlyHint, true);
   assert.equal(update.annotations.readOnlyHint, false);
   assert.equal(get.inputSchema.properties.limit.maximum, 100);
   assert.equal(update.inputSchema.properties.operations.maxItems, 100);
   assert.equal(update.inputSchema.properties.operations.items.oneOf.length, 3);
   assert.equal(update.inputSchema.additionalProperties, false);
-  const absent = await call("get_concept_delta", input);
+  const absent = await call("get_change_map", input);
   assert.equal(absent.result.structuredContent.exists, false);
-  const response = await call("update_concept_delta", { ...input, expectedRevision: null, scope: examples.scope, operations: examples.concepts.map((entry) => ({ op: "insert", entry })) });
+  const response = await call("update_change_map", { ...input, expectedRevision: null, scope: examples.scope, operations: examples.concepts.map((entry) => ({ op: "insert", entry })) });
   assert.ok(response.result, JSON.stringify(response.error));
   const created = response.result.structuredContent;
   assert.equal(created.ready, false);
   assert.ok(created.diagnostics.some(item => item.code === "baseline_missing"));
   assert.match(created.revision, /^[a-f0-9]{64}$/);
   assert.deepEqual(JSON.parse(response.result.content[0].text), created);
-  const page = await call("get_concept_delta", { ...input, expectedRevision: created.revision, limit: 2 });
+  const page = await call("get_change_map", { ...input, expectedRevision: created.revision, limit: 2 });
   assert.equal(page.result.structuredContent.concepts.length, 2);
   assert.equal(page.result.structuredContent.nextOffset, 2);
-  const changed = await call("update_concept_delta", { ...input, expectedRevision: created.revision, operations: [
+  const changed = await call("update_change_map", { ...input, expectedRevision: created.revision, operations: [
     { op: "update", id: "retry-policy", set: { reason: "A revised reason." } },
     { op: "remove", id: "legacy-retry" }
   ] });
   assert.deepEqual(changed.result.structuredContent.changedIds, ["legacy-retry", "retry-policy"]);
-  const stale = await call("get_concept_delta", { ...input, expectedRevision: created.revision, offset: 2 });
+  const stale = await call("get_change_map", { ...input, expectedRevision: created.revision, offset: 2 });
   assert.equal(stale.error.data.code, "revision_conflict");
   assert.equal(stale.error.data.currentRevision, changed.result.structuredContent.revision);
 });
 test("MCP failures expose stable codes and preserve rejected batch bytes", async (t) => {
   const { input, call } = await fixture(t);
-  const created = (await call("update_concept_delta", { ...input, expectedRevision: null, scope: examples.scope, operations: [] })).result.structuredContent;
+  const created = (await call("update_change_map", { ...input, expectedRevision: null, scope: examples.scope, operations: [] })).result.structuredContent;
   const bytes = await readFile(path.join(input.projectRoot, input.deltaPath), "utf8");
-  const invalid = await call("update_concept_delta", { ...input, expectedRevision: created.revision, operations: [
+  const invalid = await call("update_change_map", { ...input, expectedRevision: created.revision, operations: [
     { op: "insert", entry: examples.concepts[0] }, { op: "update", id: "missing", set: { reason: "Bad" } }
   ] });
   assert.equal(invalid.error.data.code, "validation_failed");
@@ -93,24 +93,24 @@ test("MCP failures expose stable codes and preserve rejected batch bytes", async
   assert.match(invalid.error.message, /operations\[1\]\.id/);
   assert.equal(invalid.error.message.split(invalid.error.data.errors[0]).length, 2);
   assert.equal(await readFile(path.join(input.projectRoot, input.deltaPath), "utf8"), bytes);
-  const unknown = await call("get_concept_delta", { ...input, extra: true });
+  const unknown = await call("get_change_map", { ...input, extra: true });
   assert.equal(unknown.error.data.code, "validation_failed");
-  const escape = await call("get_concept_delta", { ...input, deltaPath: "../concept-delta.json" });
+  const escape = await call("get_change_map", { ...input, deltaPath: "../change-map.json" });
   assert.equal(escape.error.data.code, "invalid_path");
-  const oversized = await call("get_concept_delta", { ...input, limit: 101 });
+  const oversized = await call("get_change_map", { ...input, limit: 101 });
   assert.equal(oversized.error.data.code, "validation_failed");
 });
 
 test('public conservation MCP captures, compares, accepts review and enforces mutation gates',async t=>{
  const {input,rpc,call}=await fixture(t);
  const discovery=await rpc('tools/list');
- for(const name of ['capture_repository_snapshot','get_conservation_evidence','compare_concept_delta','get_review','update_review','check_review_gate']) {
+ for(const name of ['capture_repository_snapshot','get_conservation_evidence','compare_change_map','get_review','update_review','check_review_gate']) {
   const tool=discovery.result.tools.find(item=>item.name===name);assert.ok(tool,name);assert.equal(tool.inputSchema.additionalProperties,false);
  }
  const b=(await call('capture_repository_snapshot',input)).result.structuredContent;
- const d=(await call('update_concept_delta',{...input,expectedRevision:null,baselineId:b.snapshotId,scope:['src'],operations:[]})).result.structuredContent;
+ const d=(await call('update_change_map',{...input,expectedRevision:null,baselineId:b.snapshotId,scope:['src'],operations:[]})).result.structuredContent;
  assert.equal(d.ready,true);
- const c=(await call('compare_concept_delta',{...input,expectedRevision:d.revision,baselineId:b.snapshotId,resultSnapshotId:b.snapshotId})).result.structuredContent;
+ const c=(await call('compare_change_map',{...input,expectedRevision:d.revision,baselineId:b.snapshotId,resultSnapshotId:b.snapshotId})).result.structuredContent;
  assert.equal(c.status,'ready');
  const observations=(await call('get_conservation_evidence',{projectRoot:input.projectRoot,evidenceId:c.comparisonId,section:'observations',limit:1})).result.structuredContent;assert.equal(observations.totalCount,0);
  const reviewPath='docs/plans/demo/retry/review.json';

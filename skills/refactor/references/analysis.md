@@ -33,25 +33,25 @@ Fallback discovery does not satisfy managed semantic gates.
 
 ## Discovery verdicts
 
-A concept delta records the structural discovery receipts of a scoped refactor and a verdict for each finding inside its scope.
+A change map records the structural discovery receipts of a scoped refactor and a verdict for each finding inside its scope.
 Each reported item carries its finding `id`.
 The server lists the findings in scope that still need a verdict, up to ten per result list in each tool's order.
 
 | Disposition | Meaning |
 | --- | --- |
-| `CHANGE` | The delta entries named in `conceptIds` act on the finding, and their `before` references cover its code. |
+| `CHANGE` | The change map entries named in `conceptIds` act on the finding, and their `before` references cover its code. |
 | `KEEP` | The similarity stays distinct for the stated reason. |
 | `DEFER` | The finding is left for later work for the stated reason. |
 
-1. Unless the caller supplies a concept delta, create one at `<plans path>/refactor-<target>/concept-delta.json`, using `docs/plans` when the configuration names no plans path.
+1. Unless the caller supplies a change map, create one at `<plans path>/refactor-<target>/change-map.json`, using `docs/plans` when the configuration names no plans path.
 2. Capture its baseline with `capture_repository_snapshot` and that `deltaPath` before discovery.
-3. Set the delta `scope` to the refactor target.
+3. Set the change map `scope` to the refactor target.
 4. Pass the baseline as `snapshotId` to the six structural discovery tools.
 5. List their receipt IDs in `discoveryEvidence.receiptIds`, and name an unavailable tool in `omittedTools` with the reason.
 6. For each finding in scope, record its `receiptId`, `findingId`, disposition, and reason in `discoveryEvidence.findings`.
-7. Read the delta with `get_concept_delta` and resolve every `discovery_` and `finding_` diagnostic before you return the result.
+7. Read the change map with `get_change_map` and resolve every `discovery_` and `finding_` diagnostic before you return the result.
 
-For an analysis request, the delta entries are proposals and the delta changes no target artifact.
+For an analysis request, the change map entries are proposals and the change map changes no target artifact.
 
 ## Candidate signals and ranking
 
@@ -142,7 +142,7 @@ Managed slices retain their reviewed growth justifications and conservation gate
 | Uncertainty | Missing evidence, unresolved distinctions, coverage limits, and deferred candidates. |
 | Escalation | The exact decision, affected authority, and evidence needed by the caller, or none. |
 
-The caller can reuse this evidence in existing concept deltas, review records, or its returned result.
+The caller can reuse this evidence in existing change maps, review records, or its returned result.
 This table defines content, not a new serialization format or mandatory artifact.
 
 ## Review criteria

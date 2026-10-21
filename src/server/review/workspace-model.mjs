@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { CHANGE_MAP_FILES } from "../conservation/change-map.mjs";
 import { readInitiative, sliceFolder } from "../workflow/initiative.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
@@ -96,7 +97,7 @@ async function sliceArtifacts(root, directory, slices, slug) {
     folder,
     files,
     narrative: files.includes(`${folder}/slice.md`) ? `${folder}/slice.md` : null,
-    conceptDelta: files.includes(`${folder}/concept-delta.json`) ? `${folder}/concept-delta.json` : null,
+    changeMap: CHANGE_MAP_FILES.map((name) => `${folder}/${name}`).find((file) => files.includes(file)) ?? null,
     review
   };
 }

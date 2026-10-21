@@ -50,7 +50,7 @@ python3 bench/skill_eval/refactor_discovery.py locations
 `--scope` names the paths of a targeted analysis, as a developer who knows what to refactor would.
 A scoped run counts only items with a site inside its scope and matches them by those sites alone.
 Concept deltas and their review projections that the run writes are listed apart from changed files and copied into the result, so the report can count recorded discovery verdicts.
-`--allow-evidence` tells the agent that writing a concept delta does not count as a change, because agents otherwise skip the delta in an analysis-only request.
+`--allow-evidence` tells the agent that writing a change map does not count as a change, because agents otherwise skip the change map in an analysis-only request.
 
 ```bash
 python3 bench/skill_eval/refactor_discovery.py run --scope src/server/workflow --reps 3 --config-dir /tmp/discovery-config --out bench/skill_eval/results/discovery-workflow

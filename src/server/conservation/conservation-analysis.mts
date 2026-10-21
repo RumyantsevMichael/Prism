@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readConceptDeltaDocument } from "./concept-delta.mjs";
+import { readChangeMapDocument } from "./change-map.mjs";
 import { conservationStore, ConservationStore, conservationError, digest, canonical, withinScope } from "./conservation-store.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
@@ -103,7 +103,7 @@ async function duplicationDiagnostics(projectRoot: string, document: DeltaDocume
   if (additions.size < 2 && modifications.size < 2) return [];
   if (!analysis) {
     const prepared = await prepareAnalysis(projectRoot, document.baselineId!, options);
-    if (prepared.status === "preparing") return [{ code: "duplication_check_preparing", message: "Read the concept delta again after the baseline analysis is ready.", blocking: true }];
+    if (prepared.status === "preparing") return [{ code: "duplication_check_preparing", message: "Read the change map again after the baseline analysis is ready.", blocking: true }];
     if (!prepared.analysis) return [{ code: "duplication_check_unavailable", message: "The baseline analysis is unavailable, so a review must check the additions and modifications for duplicated functions.", blocking: false }];
     analysis = prepared.analysis;
   }
@@ -127,7 +127,7 @@ async function duplicationDiagnostics(projectRoot: string, document: DeltaDocume
   const consolidating: ResolvedUnit[] = [], diagnostics: { code: string; message: string; blocking: boolean }[] = [];
   const documents: DeltaDocument[] = [document];
   for (const item of document.consolidations || []) {
-    try { documents.push((await readConceptDeltaDocument(projectRoot, item.deltaPath)).document as DeltaDocument); }
+    try { documents.push((await readChangeMapDocument(projectRoot, item.deltaPath)).document as DeltaDocument); }
     catch { diagnostics.push({ code: "consolidation_delta_invalid", message: `The consolidation delta ${item.deltaPath} is missing or invalid.`, blocking: true }); }
   }
   for (const delta of documents) for (const entry of delta.concepts) if (entry.action === "REPLACE" || entry.action === "DELETE") for (const reference of entry.before) {
@@ -193,7 +193,7 @@ async function discoveryDiagnostics(projectRoot: string, document: DeltaDocument
     if (!entries.length || entries.some(entry => !entry)) { add("finding_change_unplanned", `CHANGE for ${where(finding)} must name existing delta entries in conceptIds.`); continue; }
     if (!analysis) {
       const prepared = await prepareAnalysis(projectRoot, document.baselineId!, options);
-      if (prepared.status === "preparing") { add("discovery_check_preparing", "Read the concept delta again after the baseline analysis is ready."); return diagnostics; }
+      if (prepared.status === "preparing") { add("discovery_check_preparing", "Read the change map again after the baseline analysis is ready."); return diagnostics; }
       analysis = prepared.analysis;
     }
     // An entry acts on a finding when its baseline references cover the finding's own code, not only another part of the same file.
@@ -222,7 +222,7 @@ export async function assessDeltaReadiness(projectRoot: string, document: DeltaD
   for (const entry of document.concepts) {
     for (const reference of entry.before) {
       const resolved = await resolveReference(projectRoot, baseline, reference, analysis, store);
-      if (resolved.status === "missing") add("baseline_reference_missing", "An existing concept is absent from the original baseline.", entry.id);
+      if (resolved.status === "missing") add("baseline_reference_missing", "An existing item is absent from the original baseline.", entry.id);
       else if (resolved.status !== "resolved") add("reference_review_required", "The baseline reference needs a typed selector or an explicit review check.", entry.id, false);
     }
     if (entry.action !== "ADD") continue;
@@ -316,9 +316,9 @@ async function measurements(projectRoot: string, before: SnapshotEvidence, after
   return values;
 }
 
-export async function compareConceptDelta(input: { projectRoot: string; deltaPath: string; expectedRevision: string; baselineId: string; resultSnapshotId: string }, options: Options = {}) {
+export async function compareChangeMap(input: { projectRoot: string; deltaPath: string; expectedRevision: string; baselineId: string; resultSnapshotId: string }, options: Options = {}) {
   const store = options.store || conservationStore;
-  const loaded = await readConceptDeltaDocument(input.projectRoot, input.deltaPath, input.expectedRevision), document = loaded.document as DeltaDocument;
+  const loaded = await readChangeMapDocument(input.projectRoot, input.deltaPath, input.expectedRevision), document = loaded.document as DeltaDocument;
   if (document.schemaVersion !== 2 || document.baselineId !== input.baselineId) throw conservationError("validation_failed", "The comparison must use the delta's original baseline.");
   const before = await store.get<SnapshotEvidence>(input.projectRoot, input.baselineId, "snapshot"), after = await store.get<SnapshotEvidence>(input.projectRoot, input.resultSnapshotId, "snapshot");
   const preparedA = await prepareAnalysis(input.projectRoot, input.baselineId, options);
@@ -349,7 +349,7 @@ export async function compareConceptDelta(input: { projectRoot: string; deltaPat
       const identities = (side: "before" | "after") => sides[side].flatMap(result => result.units.map(span => { const matches = parsedUnitsForReference(side === "before" ? left : right, span); return matches.length === 1 ? matches[0].key : undefined; }));
       const previous = identities("before"), current = identities("after");
       if (previous.length && current.length && previous.every(Boolean) && current.every(Boolean)) {
-        if (canonical([...previous].sort()) !== canonical([...current].sort())) observe("modify_identity_changed", "failure", "A MODIFY span changes a known concept identity; use an explicit replacement or addition.", { conceptId: entry.id });
+        if (canonical([...previous].sort()) !== canonical([...current].sort())) observe("modify_identity_changed", "failure", "A MODIFY span changes a known item identity; use an explicit replacement or addition.", { conceptId: entry.id });
       } else observe("modify_identity_unknown", "review_required", "The parser cannot establish identity across these MODIFY spans; review the exact bound source.", { conceptId: entry.id });
     }
     if (entry.action === "ADD") for (const [index, reference] of entry.after.entries()) {
@@ -400,7 +400,7 @@ export async function compareConceptDelta(input: { projectRoot: string; deltaPat
       const plannedFile = !before.files.some(item => item.file === file) && sourceRefs.some(ref => ref.side === "after" && ref.action !== "KEEP" && ref.unit.file === file);
       if (exact || ((covered || (created && plannedFile)) && (!created || unit.public !== true))) continue;
       observe(created && unit.public === true ? "undeclared_public_concept" : "unclassified_unit", created && unit.public === true ? "failure" : "review_required",
-        created && unit.public === true ? "A new public declaration requires an explicit concept transition." : "Attribute the changed unit to a planned concept or revise the plan.", { file, unit });
+        created && unit.public === true ? "A new public declaration requires an explicit planned change." : "Attribute the changed unit to a planned change or revise the plan.", { file, unit });
     }
     // Compare source outside changed parser units as well: parsed children never hide edits in gaps.
     const residual = async (snapshot: SnapshotEvidence, side: "before" | "after") => {
@@ -414,7 +414,7 @@ export async function compareConceptDelta(input: { projectRoot: string; deltaPat
     };
     if (await residual(before, "before") !== await residual(after, "after")) observe("unclassified_unit", "review_required", "Changed source outside parsed or planned spans needs an explicit attribution.", { file, unit: (right.find(unit => unit.file === file && unit.kind === "file") || left.find(unit => unit.file === file && unit.kind === "file")) });
     const original = before.files.find(item => item.file === file), final = after.files.find(item => item.file === file);
-    if (original && final && (original.mode !== final.mode || original.kind !== final.kind) && !sourceRefs.some(ref => ref.unit.file === file && ref.unit.kind === "file" && ref.action !== "KEEP")) observe("unclassified_unit", "review_required", "Attribute the file kind or mode change to a planned concept.", { file, unit: right.find(unit => unit.file === file && unit.kind === "file") });
+    if (original && final && (original.mode !== final.mode || original.kind !== final.kind) && !sourceRefs.some(ref => ref.unit.file === file && ref.unit.kind === "file" && ref.action !== "KEEP")) observe("unclassified_unit", "review_required", "Attribute the file kind or mode change to a planned change.", { file, unit: right.find(unit => unit.file === file && unit.kind === "file") });
   }
   // Detector findings that the change adds, so that a review judges new duplication and complexity rather than the baseline's.
   const changedSource = [...changedPaths].filter(file => after.files.some(item => item.file === file && item.kind === "source"));
@@ -439,7 +439,7 @@ export async function compareConceptDelta(input: { projectRoot: string; deltaPat
     if (result.status === "missing") observe("requirement_missing", "failure", "A governing requirement is absent from the result.", { file: reference.path });
     else if (result.status !== "resolved") observe("requirement_unknown", "review_required", "The governing requirement needs an explicit review check.", { file: reference.path });
   }
-  const evidence: ComparisonEvidence = { kind: "comparison", schemaVersion: 1, project: before.project, deltaPath: input.deltaPath, deltaRevision: input.expectedRevision,
+  const evidence: ComparisonEvidence = { kind: "comparison", schemaVersion: 1, project: before.project, deltaPath: loaded.deltaPath, deltaRevision: input.expectedRevision,
     baselineId: input.baselineId, resultSnapshotId: input.resultSnapshotId, scope: document.scope, requirements,
     analysisIds: { before: a ? await store.put(input.projectRoot, a) : null, after: b ? await store.put(input.projectRoot, b) : null },
     versions: { ...(a?.versions || { metrics: ANALYSIS_VERSION, structure: "unavailable" }), comparison: COMPARISON_VERSION }, observations: [...new Map(observations.map(item => [item.id, item])).values()],

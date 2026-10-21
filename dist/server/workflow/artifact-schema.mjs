@@ -46,5 +46,5 @@ export function describeErrors(errors = []) {
 export function assertInput(schema, input) {
   const errors = [];
   checkSchema(schema, input, "arguments", errors);
-  if (errors.length) throw failure("validation_failed", `The concept delta arguments are invalid: ${describeErrors(errors)}`, { errors });
+  if (errors.length) throw failure("validation_failed", `The arguments are invalid: ${describeErrors(errors)}`, { errors });
 }

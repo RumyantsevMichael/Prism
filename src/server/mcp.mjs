@@ -4,7 +4,7 @@ import { ACTIVE_OPERATIONS_SCHEMA } from "./workflow/active-operations.mjs";
 import { assertInput } from "./workflow/artifact-schema.mjs";
 import { CONSERVATION_TOOLS, callConservationTool } from "./conservation/conservation-tools.mjs";
 import { conservationStore } from "./conservation/conservation-store.mjs";
-import { ConceptDeltaError, GET_CONCEPT_DELTA_SCHEMA, UPDATE_CONCEPT_DELTA_SCHEMA, getConceptDelta, updateConceptDelta } from "./conservation/concept-delta.mjs";
+import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
@@ -245,7 +245,7 @@ function stateErrorData(error) {
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
   }
-  if (error instanceof ConceptDeltaError) {
+  if (error instanceof ChangeMapError) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
   if (error instanceof InitiativeError || error instanceof RoadmapError || error?.name === "InitiativeGraphError") {
@@ -331,15 +331,15 @@ const tools = [
   ...CONSERVATION_TOOLS,
   ...NATIVE_INTELLIGENCE_TOOLS,
   {
-    name: "get_concept_delta",
-    description: "Read a bounded page of a slice concept-delta.json through MCP. Pin expectedRevision across pages and to the audited design. Reads never create files.",
-    inputSchema: GET_CONCEPT_DELTA_SCHEMA,
+    name: "get_change_map",
+    description: "Read a bounded page of a slice change map (change-map.json, or a legacy concept-delta.json) through MCP. Pin expectedRevision across pages and to the audited design. Reads never create files.",
+    inputSchema: GET_CHANGE_MAP_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
-    name: "update_concept_delta",
-    description: "Insert, update, or remove concept entries in one validated atomic batch. Read first and pass its revision. Use null only for creation. Never edit the artifact directly. Missing addition evidence keeps drafts not ready for FIT.",
-    inputSchema: UPDATE_CONCEPT_DELTA_SCHEMA,
+    name: "update_change_map",
+    description: "Insert, update, or remove change map entries in one validated atomic batch. Read first and pass its revision. Use null only for creation. Never edit the artifact directly. Missing addition evidence keeps drafts not ready for FIT.",
+    inputSchema: UPDATE_CHANGE_MAP_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   },
   {
@@ -984,10 +984,10 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     const value = await callConservationTool(name, { ...argumentsValue, projectRoot });
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
-  if (["get_concept_delta", "update_concept_delta"].includes(name)) {
+  if (["get_change_map", "update_change_map"].includes(name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const input = { ...argumentsValue, projectRoot };
-    const value = name === "get_concept_delta" ? await getConceptDelta(input) : await updateConceptDelta(input);
+    const value = name === "get_change_map" ? await getChangeMap(input) : await updateChangeMap(input);
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (stateTools.has(name)) {

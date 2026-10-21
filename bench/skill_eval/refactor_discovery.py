@@ -27,10 +27,10 @@ SCOPED_PROMPT = (
     "This is an analysis request: do not change the code. "
     "Return the ranked candidates with their evidence, the proposed transformation for each, and the discovery coverage."
 )
-# Tells a scoped run that recording discovery verdicts in a concept delta is not a change to the code under analysis.
-EVIDENCE_PERMISSION = " Recording Prism's concept delta and its evidence under docs/plans is allowed and does not count as a change."
-# A concept delta and its review projections are server-managed evidence, not edits to the analyzed code.
-MANAGED_OUTPUT = re.compile(r"(^|/)(concept-delta\.json|review\.json|review\.md)(\.lock)?$")
+# Tells a scoped run that recording discovery verdicts in a change map is not a change to the code under analysis.
+EVIDENCE_PERMISSION = " Recording Prism's change map and its evidence under docs/plans is allowed and does not count as a change."
+# A change map and its review projections are server-managed evidence, not edits to the analyzed code.
+MANAGED_OUTPUT = re.compile(r"(^|/)(change-map\.json|concept-delta\.json|review\.json|review\.md)(\.lock)?$")
 # The machine-readable tail is the only harness addition to the user request; scoring reads nothing else.
 RESULT_INSTRUCTION = (
     "\n\nEnd your answer with one fenced json block of the form "
@@ -260,7 +260,7 @@ def mock_output(catalog: dict[str, object], source: Source, rep: int) -> str:
 
 
 def changed_files(workspace: Path) -> tuple[list[str], list[str]]:
-    # Ignored files count too, because a project can ignore the directory where concept deltas live.
+    # Ignored files count too, because a project can ignore the directory where change maps live.
     paths = [line[3:] for line in git(workspace, "status", "--porcelain", "--untracked-files=all", "--ignored").splitlines()]
     return [path for path in paths if not MANAGED_OUTPUT.search(path)], [path for path in paths if MANAGED_OUTPUT.search(path)]
 
@@ -268,7 +268,7 @@ def changed_files(workspace: Path) -> tuple[list[str], list[str]]:
 def concept_deltas(workspace: Path, managed: list[str]) -> dict[str, object]:
     deltas = {}
     for path in managed:
-        if path.endswith("concept-delta.json") and (workspace / path).is_file():
+        if path.endswith(("change-map.json", "concept-delta.json")) and (workspace / path).is_file():
             try:
                 deltas[path] = json.loads((workspace / path).read_text())
             except json.JSONDecodeError:
@@ -415,7 +415,7 @@ def main() -> None:
     run_parser.add_argument("--variant", choices=("listed", "plain"), default="listed",
                             help="listed asks for the candidate list in the request; plain asks for it in a tool-less follow-up turn")
     run_parser.add_argument("--scope", nargs="+", help="repository paths that a targeted analysis covers; recall then counts only items with a site there")
-    run_parser.add_argument("--allow-evidence", action="store_true", help="tell the agent that writing a concept delta does not count as a change")
+    run_parser.add_argument("--allow-evidence", action="store_true", help="tell the agent that writing a change map does not count as a change")
     run_parser.add_argument("--mock", action="store_true", help="score generated output instead of invoking an agent")
     report_parser = commands.add_parser("report", help="score and summarize a results directory")
     report_parser.add_argument("results")

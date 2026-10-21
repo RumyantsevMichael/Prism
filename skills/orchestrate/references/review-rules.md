@@ -5,7 +5,7 @@ Distinct risk scopes use a pinned required lane set in the slice MCP review reco
 The [review format](../../review/references/review-format.md) defines each lane record and compact result.
 
 Each fresh `Review <slice>` worker receives the mode, lane, review path and lane, artifacts, verification evidence, and review base.
-Each reviewer also receives the concept delta path and submitted or audited revision.
+Each reviewer also receives the change map path and submitted or audited revision.
 The delivery conversation is excluded from reviewer inputs.
 Every assigned lane needs a current result before `update_review` can accept the wave.
 Unresolved disagreements block acceptance.
@@ -18,8 +18,8 @@ Corrected affected lanes need fresh reviewers, original finding identities, and 
 Repeated failed corrections can require a replacement delivery worker or a new design audit.
 Correction that requires `SPLIT` or redesign retains lane evidence and returns to design.
 
-A new design audit requires changed fit, requirements, architecture, boundaries, dependencies, planned verification, or concept delta revision.
-`start_wave` refuses an `implementation-review` wave until the latest design audit is accepted for the same concept delta revision, so a delta edit after the audit needs a new accepted audit before implementation review.
+A new design audit requires changed fit, requirements, architecture, boundaries, dependencies, planned verification, or change map revision.
+`start_wave` refuses an `implementation-review` wave until the latest design audit is accepted for the same change map revision, so a change map edit after the audit needs a new accepted audit before implementation review.
 Reviewers receive verification results and probe paths without a request to rerun the complete suite.
 If a finding spans slices, retain its reporting lane and route correction without transferring its identity or evidence.
 If a design audit finds only implementation gaps, route them after the implementation gate.

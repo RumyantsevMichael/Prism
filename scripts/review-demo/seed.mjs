@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SERVER = path.join(ROOT, "dist/server/mcp.mjs");
 const MANIFEST = path.join(ROOT, "test/server/fixtures/native-manifest-unavailable.json");
-const examples = JSON.parse(await readFile(path.join(ROOT, "test/server/fixtures/concept-delta.json"), "utf8"));
+const examples = JSON.parse(await readFile(path.join(ROOT, "test/server/fixtures/change-map.json"), "utf8"));
 
 const requested = process.argv[2];
 const projectRoot = requested ? path.resolve(requested) : await mkdtemp(path.join(os.tmpdir(), "prism-review-demo-"));
@@ -30,7 +30,7 @@ async function write(relative, content) {
 }
 
 const slice = "docs/plans/retry-hardening/timeout-retries";
-const deltaPath = `${slice}/concept-delta.json`;
+const deltaPath = `${slice}/change-map.json`;
 const reviewPath = `${slice}/review.json`;
 const statePath = "docs/plans/retry-hardening/state.json";
 
@@ -40,8 +40,8 @@ await write("src/retry/legacy.ts", "export class LegacyRetryHandler {\n  handle(
 await write("config/retry.json", `${JSON.stringify({ attemptTimeoutMs: 2000 }, null, 2)}\n`);
 await write("docs/retry.md", "# Retries\n\n## Examples\n\nA timed-out request retries three times.\n");
 await write("instructions/answers.md", "# Answers\n\n- Do not repeat the user's question.\n- Keep introductions short.\n");
-await write("docs/requirements/retries.md", "# Retry requirements\n\nStatus: Approved\nCreated: 2026-09-02\nApproved: 2026-09-04\n\n## 1\n\nWhen a request exceeds the total retry deadline, the client shall stop retrying.\n\n## 2\n\nWhen a connection drops, the client shall retry at most three times.\n\n## 3\n\nThe client shall report retry attempts and outcomes as metrics.\n");
-await write("docs/requirements/reports.md", "# Activity reports\n\nStatus: Approved\nCreated: 2026-09-10\nApproved: 2026-09-12\n\n## 1\n\nWhen a user requests an export, the system shall produce a signed report.\n\n## 2\n\nThe system shall restrict report downloads to authorized users.\n");
+await write("docs/requirements/retries.md", "# Retry requirements\n\nStatus: Approved\nCreated: 2026-09-02\nApproved: 2026-09-04\n\n<a id=\"1\"></a>\n## 1. Total deadline\n\nWhen a request exceeds the total retry deadline, the client shall stop retrying.\n\n<a id=\"2\"></a>\n## 2. Connection drops\n\nWhen a connection drops, the client shall retry at most three times.\n\n<a id=\"3\"></a>\n## 3. Retry metrics\n\nThe client shall report retry attempts and outcomes as metrics.\n");
+await write("docs/requirements/reports.md", "# Activity reports\n\nStatus: Approved\nCreated: 2026-09-10\nApproved: 2026-09-12\n\n<a id=\"1\"></a>\n## 1. Signed export\n\nWhen a user requests an export, the system shall produce a signed report.\n\n<a id=\"2\"></a>\n## 2. Authorized downloads\n\nThe system shall restrict report downloads to authorized users.\n");
 await write("docs/requirements/search.md", "# Search indexing\n\nStatus: Draft\nCreated: 2026-10-01\n\n## 1\n\nThe system shall index activity for full-text search.\n");
 await write("docs/requirements/audit-log.md", "# Audit log\n\nStatus: Approved\nCreated: 2026-08-01\nApproved: 2026-08-02\n\n## 1\n\nThe system shall record every administrative action.\n");
 await write("docs/ADRs/retries/total-retry-deadline.md", "# Bound retries by a total deadline\n\nStatus: Proposed\nCreated: 2026-09-20\n\n## Decision\n\nEvery retry sequence MUST stop when its total deadline elapses.\n");
@@ -95,9 +95,9 @@ try {
   const concepts = examples.concepts.map((entry) => entry.id === "retry-deadline"
     ? { ...entry, requirements: [{ path: "docs/requirements/retries.md", selector: { type: "heading", value: "Retry requirements" } }], reuseEvidence: { ...entry.reuseEvidence, receiptIds: [search.receiptId] } }
     : entry);
-  let delta = await call("update_concept_delta", { projectRoot: realRoot, deltaPath, expectedRevision: null, baselineId: baseline.snapshotId, scope: examples.scope, operations: concepts.map((entry) => ({ op: "insert", entry })) });
-  delta = await call("update_concept_delta", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, expectedGrowth: [{ dimension: "configurationOptions", increase: 1, reason: "The total retry deadline is a new option." }], operations: [] });
-  const audit = await call("compare_concept_delta", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, baselineId: baseline.snapshotId, resultSnapshotId: baseline.snapshotId });
+  let delta = await call("update_change_map", { projectRoot: realRoot, deltaPath, expectedRevision: null, baselineId: baseline.snapshotId, scope: examples.scope, operations: concepts.map((entry) => ({ op: "insert", entry })) });
+  delta = await call("update_change_map", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, expectedGrowth: [{ dimension: "configurationOptions", increase: 1, reason: "The total retry deadline is a new option." }], operations: [] });
+  const audit = await call("compare_change_map", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, baselineId: baseline.snapshotId, resultSnapshotId: baseline.snapshotId });
 
   const coordinator = { id: "coordinator", role: "coordinator" };
   const reviewer = { id: "independent", role: "reviewer" };
@@ -174,7 +174,7 @@ try {
     next: ["docs/plans/retry-hardening/connection-retries"],
     evidence: [`${slice}/slice.md`],
     gateOperations: [
-      { op: "ask", kind: "visual-review", slice: "timeout-retries", question: "Review the concept delta and the total-deadline ADR before implementation starts.", artifacts: [deltaPath, "docs/ADRs/retries/total-retry-deadline.md", `${slice}/slice.md`] },
+      { op: "ask", kind: "visual-review", slice: "timeout-retries", question: "Review the change map and the total-deadline ADR before implementation starts.", artifacts: [deltaPath, "docs/ADRs/retries/total-retry-deadline.md", `${slice}/slice.md`] },
       { op: "ask", kind: "decision", slice: "connection-retries", question: "The design deletes the only handler that retries dropped connections (finding F2). Approve requirement 2 for this slice now, or drop connection retries until their slice starts?", artifacts: [reviewPath, "docs/requirements/retries.md"] }
     ]
   } });

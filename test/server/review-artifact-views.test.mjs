@@ -11,7 +11,7 @@ process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
 const { conservationStore } = await import("../../dist/server/conservation/conservation-store.mjs");
-const examples = await readFile(new URL("./fixtures/concept-delta.json", import.meta.url), "utf8");
+const examples = await readFile(new URL("./fixtures/change-map.json", import.meta.url), "utf8");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
 async function fixture(context) {
@@ -21,7 +21,10 @@ async function fixture(context) {
   await mkdir(slice, { recursive: true });
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans (scratch): docs/plans/\n");
+  // A slice designed before the rename keeps its legacy file name; a newer slice uses change-map.json.
   await writeFile(path.join(slice, "concept-delta.json"), examples);
+  await mkdir(path.join(root, "docs", "plans", "demo", "deadline"), { recursive: true });
+  await writeFile(path.join(root, "docs", "plans", "demo", "deadline", "change-map.json"), examples);
   await writeFile(path.join(slice, "review.json"), JSON.stringify({ schemaVersion: 1, deltaPath: "docs/plans/demo/retry/concept-delta.json", waves: [], findings: [] }));
   await writeFile(path.join(root, "docs", "plans", "demo", "state.json"), JSON.stringify({ schemaVersion: 1, settings: {}, active: [] }));
   await writeFile(path.join(root, "docs", "plans", "demo", "notes.json"), JSON.stringify({ anything: [1, 2] }));
@@ -49,6 +52,7 @@ test("lists JSON artifacts and identifies Prism artifact kinds", async (context)
     const index = (await fetchReview(`${review.baseUrl}/api/index`)).json();
     assert.deepEqual(index.artifacts, [
       "docs/plans/demo/broken.json",
+      "docs/plans/demo/deadline/change-map.json",
       "docs/plans/demo/notes.json",
       "docs/plans/demo/retry/concept-delta.json",
       "docs/plans/demo/retry/review.json",
@@ -56,7 +60,8 @@ test("lists JSON artifacts and identifies Prism artifact kinds", async (context)
     ]);
     const load = async (artifact) => (await fetchReview(`${review.baseUrl}/api/artifact?path=${encodeURIComponent(artifact)}`)).json();
     const delta = await load("docs/plans/demo/retry/concept-delta.json");
-    assert.equal(delta.kind, "concept-delta");
+    assert.equal(delta.kind, "change-map");
+    assert.equal((await load("docs/plans/demo/deadline/change-map.json")).kind, "change-map");
     assert.equal(delta.data.concepts.length, 6);
     assert.equal(delta.summary.totalCount, 6);
     assert.equal(delta.summary.counts.REPLACE, 2);
@@ -121,7 +126,7 @@ test("serves view modules by name only", async (context) => {
     assert.equal(registry.status, 200);
     assert.match(registry.headers["content-type"], /text\/javascript/);
     assert.match(registry.headers["content-security-policy"], /script-src 'self'/);
-    for (const name of ["concept-delta", "review-ledger", "coordination-state", "evidence", "graph", "json-tree", "json-view", "util"]) {
+    for (const name of ["change-map", "review-ledger", "coordination-state", "evidence", "graph", "json-tree", "json-view", "util"]) {
       assert.equal((await fetchReview(`${review.baseUrl}/views/${name}.js`)).status, 200, name);
     }
     assert.equal((await fetchReview(`${review.baseUrl}/views/missing.js`)).status, 404);

@@ -2,7 +2,7 @@ import { canonical, digest } from "./conservation-store.mjs";
 import type { AnalysisReceipt } from "./conservation-types.mjs";
 import type { SourceRange } from "../repository-intelligence/repository-unit-types.mjs";
 
-// The six structural discovery tools. A refactor that cites their receipts in a concept delta records a verdict for each finding in its scope.
+// The six structural discovery tools. A refactor that cites their receipts in a change map records a verdict for each finding in its scope.
 export const DISCOVERY_TOOLS: AnalysisReceipt["tool"][] = ["find_shared_dependencies", "find_shared_literals", "find_same_name_units", "report_module_interfaces", "report_cohesion_clusters", "report_complex_units"];
 // Each result list of a receipt keeps the tool's own ranking, and only this many findings of each list need a verdict.
 export const REQUIRED_FINDINGS_PER_LIST = 10;

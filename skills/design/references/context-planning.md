@@ -19,7 +19,7 @@ The native provider is always the live-source baseline.
 An external provider is optional and can add semantic or structural evidence.
 A native plan can support numeric `FIT` when semantic retrieval, applicable structure, source freshness, required hints, and source ranges are complete.
 An external CodeGraph plan has no semantic retrieval and cannot support numeric `FIT` by itself.
-For preparation, degraded retrieval, and stale snapshots, follow the [semantic reuse procedure](concept-delta.md#semantic-reuse-search).
+For preparation, degraded retrieval, and stale snapshots, follow the [semantic reuse procedure](change-map.md#semantic-reuse-search).
 The observed verified-source size is an approximate count of returned ranges, not a fit-eligible estimate.
 
 ## Calculate the repository read budget

@@ -20,7 +20,7 @@ src/                 # editable server, native helper, and hook sources
   server/            # mcp.mjs, cli.mjs, plugin-root.mjs, and one directory per domain
     workflow/        # coordination state, artifact storage, decision history
     review/          # review server, review ledger, browser assets in public/
-    conservation/    # concept delta and conservation analysis
+    conservation/    # change map and conservation analysis
     repository-intelligence/  # providers, native semantic runtime, unit types
     session/         # host adapters, session facts, capacity, and tracing
   native-runtime/    # native helper packaged into runtime archives
@@ -90,7 +90,7 @@ Run a local human review from the repository root:
 ```
 
 To try the entity-first review browser, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
-The seed builds a temporary project whose roadmap, initiative records, concept delta, review ledger, coordination state, recorded user gates, and evidence come from the real MCP tools.
+The seed builds a temporary project whose roadmap, initiative records, change map, review ledger, coordination state, recorded user gates, and evidence come from the real MCP tools.
 The browser opens on Attention, which lists the recorded user gates, and its sidebar expands only the path to the open initiative, slice, or library section.
 Answering a gate on Attention records the answer in `state.json`, and the `deliver-gate-answers` prompt hook passes answered gates to the agent with the next user message until the agent resolves them.
 In Claude Code the `wait_for_user_gate` tool also returns the answer: Claude Code moves the call to the background after about two minutes (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`), its result wakes the idle session, and progress notifications every minute keep the stdio idle window (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`) from cancelling it.
