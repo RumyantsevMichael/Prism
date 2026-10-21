@@ -5,6 +5,7 @@ import { ENTITY_LABELS, entityLabel, parseEntityRef, renderEntity } from "./view
 import { createPalette } from "./views/palette.js";
 import { anchorTarget, decorateDocuments, markCurrentSection, renderText } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
+import { createIndexingStatus } from "./views/indexing.js";
 
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
@@ -340,7 +341,14 @@ async function refreshProjects() {
       liveMark.title = entry.live ? "An agent session is using this project" : "Recently used";
       const gates = element("span", `project-entry-gates${entry.gates ? "" : " none"}`, entry.gates === null ? "?" : String(entry.gates));
       gates.title = entry.gates === null ? "The project's folder or records cannot be read" : `${entry.gates} open ${entry.gates === 1 ? "gate" : "gates"}`;
-      link.append(liveMark, element("span", "project-entry-name", identity.worktree ?? identity.repository), gates, element("span", "project-entry-root", entry.projectRoot));
+      const name = element("span", "project-entry-name", identity.worktree ?? identity.repository);
+      // Only a running or failed build is marked, because the chip in the top bar covers the open project's other states.
+      if (entry.indexing === "preparing" || entry.indexing === "failed") {
+        const indexing = element("span", `project-entry-indexing ${entry.indexing}`);
+        indexing.title = entry.indexing === "preparing" ? "Indexing the repository" : "The last index build failed";
+        name.append(indexing);
+      }
+      link.append(liveMark, name, gates, element("span", "project-entry-root", entry.projectRoot));
       const item = element("li");
       item.append(link);
       items.push(item);
@@ -1095,6 +1103,15 @@ async function initialize() {
   });
   void refreshProjects();
   setInterval(refreshProjects, 5000);
+  createIndexingStatus({
+    root: document.getElementById("indexing"),
+    button: document.getElementById("indexing-button"),
+    label: document.getElementById("indexing-label"),
+    detail: document.getElementById("indexing-detail"),
+    meter: document.getElementById("indexing-meter"),
+    panel: document.getElementById("indexing-panel"),
+    fetchJson
+  });
   availableArtifacts = new Set([...data.artifacts, ...(data.sources ?? [])]);
   navigation = data.navigation;
   palette = createPalette({

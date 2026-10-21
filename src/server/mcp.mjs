@@ -34,7 +34,7 @@ import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
 // PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
-const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory(), evidenceDirectory: conservationStore.directory } });
+const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory(), evidenceDirectory: conservationStore.directory, intelligenceDirectory: nativeSemanticRuntime.directory } });
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));
 
 function decisionDataDirectory(argumentsValue) {

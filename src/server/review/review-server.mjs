@@ -8,6 +8,9 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
+import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
+import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { answerGate, entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 
@@ -22,6 +25,8 @@ const EVIDENCE_ARRAY_LIMIT = 200;
 const TRUSTED_HOSTS = new Set(["127.0.0.1", "localhost"]);
 const VIEWER_HEARTBEAT_MS = 15 * 1000;
 const VIEWER_OPEN_RETRY_MS = 10 * 1000;
+// The stale hint runs Git in the project, so its answer is reused for this long however often the page asks.
+const FRESHNESS_CHECK_MS = 30 * 1000;
 
 function isInside(root, target) {
   const relative = path.relative(root, target);
@@ -359,7 +364,12 @@ async function readJson(request) {
 
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, onViewer = null, evidenceStore = () => conservationStore }) {
+export function createProjectReview({ projectRoot, baseUrl, instance = null, onViewer = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory] }) {
+  let fingerprint = null;
+  function currentFingerprint() {
+    if (!fingerprint || Date.now() - fingerprint.at >= FRESHNESS_CHECK_MS) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
+    return fingerprint.value;
+  }
   let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
   const viewers = new Map();
   let viewerOpenLease = null;
@@ -562,6 +572,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, onV
       send(response, 200, JSON.stringify(await loadEntity(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
+    } else if (route === "/api/indexing" && request.method === "GET") {
+      send(response, 200, JSON.stringify(await readIndexingStatus(projectRoot, intelligenceDirectories(), { fingerprint: currentFingerprint })), "application/json; charset=utf-8");
     } else if (route === "/api/search") {
       send(response, 200, JSON.stringify(await searchArtifacts(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {

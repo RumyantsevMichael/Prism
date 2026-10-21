@@ -863,6 +863,30 @@ test("the app serves each project's evidence from the store its sessions report,
   assert.equal((await control(discovery, `projects/${lease}`, { method: "PUT", body: { projectRoot: root, evidenceDirectory: "relative/store" } })).status, 400);
 });
 
+test("the app shows a build that a session reports from its own index storage, also after a restart", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "indexing");
+  const intelligenceDirectory = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-app-intelligence-")));
+  context.after(() => rm(intelligenceDirectory, { recursive: true, force: true }));
+  const storage = path.join(intelligenceDirectory, "projects", createHash("sha256").update(root).digest("hex"));
+  await mkdir(storage, { recursive: true });
+  const at = new Date().toISOString();
+  await writeFile(path.join(storage, `progress-${process.pid}.json`), JSON.stringify({ schemaVersion: 1, pid: process.pid, preparationId: "p", state: "preparing",
+    startedAt: at, updatedAt: at, progress: { phase: "embedding", current: 8, total: 32 }, diagnostics: [] }));
+  const review = await pool(context, { app: { directory, intelligenceDirectory } }).get(root, "task");
+  const url = await review.reviewUrl([]);
+  const indexing = async (page) => JSON.parse((await request(new URL("api/indexing", page))).body);
+  assert.deepEqual((await indexing(url)).progress, { phase: "embedding", current: 8, total: 32 });
+  const listing = JSON.parse((await request(new URL("api/projects", url))).body);
+  assert.equal(listing.projects.find((entry) => entry.projectRoot === root).indexing, "preparing");
+  await shutdownApp(directory);
+  const restarted = (await standalone(context, { projectRoot: root, env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: () => true })).url;
+  assert.equal((await indexing(restarted)).state, "preparing", "a restarted app keeps the reported index storage");
+  const discovery = await readDiscovery(directory);
+  const lease = randomBytes(8).toString("hex");
+  assert.equal((await control(discovery, `projects/${lease}`, { method: "PUT", body: { projectRoot: root, intelligenceDirectory: "relative/storage" } })).status, 400);
+});
+
 test("the app reads a project's evidence from every store that sessions of different hosts report", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "hosts");
