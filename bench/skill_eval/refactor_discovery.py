@@ -27,6 +27,8 @@ SCOPED_PROMPT = (
     "This is an analysis request: do not change the code. "
     "Return the ranked candidates with their evidence, the proposed transformation for each, and the discovery coverage."
 )
+# Tells a scoped run that recording discovery verdicts in a concept delta is not a change to the code under analysis.
+EVIDENCE_PERMISSION = " Recording Prism's concept delta and its evidence under docs/plans is allowed and does not count as a change."
 # A concept delta and its review projections are server-managed evidence, not edits to the analyzed code.
 MANAGED_OUTPUT = re.compile(r"(^|/)(concept-delta\.json|review\.json|review\.md)(\.lock)?$")
 # The machine-readable tail is the only harness addition to the user request; scoring reads nothing else.
@@ -258,7 +260,8 @@ def mock_output(catalog: dict[str, object], source: Source, rep: int) -> str:
 
 
 def changed_files(workspace: Path) -> tuple[list[str], list[str]]:
-    paths = [line[3:] for line in git(workspace, "status", "--porcelain", "--untracked-files=all").splitlines()]
+    # Ignored files count too, because a project can ignore the directory where concept deltas live.
+    paths = [line[3:] for line in git(workspace, "status", "--porcelain", "--untracked-files=all", "--ignored").splitlines()]
     return [path for path in paths if not MANAGED_OUTPUT.search(path)], [path for path in paths if MANAGED_OUTPUT.search(path)]
 
 
@@ -301,6 +304,7 @@ def run(args: argparse.Namespace) -> None:
                     parsed = {"output": mock_output(catalog, files, rep), "session_id": None, "error": None, "cost_usd": 0.0, "turns": 0, "usage": {}, "tool_calls": 0, "status_polls": 0, "prism_tool_calls": 0, "permission_denials": 0}
                 else:
                     request = SCOPED_PROMPT.format(paths=" and ".join(f"`{path}`" for path in args.scope)) if args.scope else PROMPT
+                    request += EVIDENCE_PERMISSION if args.allow_evidence else ""
                     prompt = request + (RESULT_INSTRUCTION if args.variant == "listed" else "")
                     stdout, error = invoke(workspace, config_dir, args.timeout, prompt, "--plugin-dir", str(plugin), "--allowedTools", *ALLOWED_TOOLS, model=args.model)
                     parsed = parse_stream(stdout)
@@ -321,6 +325,7 @@ def run(args: argparse.Namespace) -> None:
                     "mock": args.mock,
                     "variant": args.variant,
                     "scope": args.scope or [],
+                    "allow_evidence": args.allow_evidence,
                     "model": args.model,
                     "plugin": str(plugin),
                     "plugin_commit": git(plugin, "rev-parse", "HEAD").strip(),
@@ -410,6 +415,7 @@ def main() -> None:
     run_parser.add_argument("--variant", choices=("listed", "plain"), default="listed",
                             help="listed asks for the candidate list in the request; plain asks for it in a tool-less follow-up turn")
     run_parser.add_argument("--scope", nargs="+", help="repository paths that a targeted analysis covers; recall then counts only items with a site there")
+    run_parser.add_argument("--allow-evidence", action="store_true", help="tell the agent that writing a concept delta does not count as a change")
     run_parser.add_argument("--mock", action="store_true", help="score generated output instead of invoking an agent")
     report_parser = commands.add_parser("report", help="score and summarize a results directory")
     report_parser.add_argument("results")
