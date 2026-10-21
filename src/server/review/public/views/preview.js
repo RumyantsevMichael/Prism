@@ -1,5 +1,5 @@
 import { entityLabel, parseEntityRef, progressBar, stateBadge } from "./entities.js";
-import { HEADING_PREFIX } from "./markdown.js";
+import { anchorTarget } from "./markdown.js";
 import { escapeHtml } from "./util.js";
 
 const SHOW_DELAY_MS = 400;
@@ -9,8 +9,9 @@ const BLOCK_LIMIT = 8;
 const SOURCE_LINES = 14;
 
 function sectionOf(container, anchor) {
-  const heading = anchor && container.querySelector(`#${CSS.escape(HEADING_PREFIX + anchor)}`);
-  const start = heading ?? container.firstElementChild;
+  const target = anchorTarget(container, anchor);
+  const heading = target && /^H[1-6]$/.test(target.tagName) ? target : null;
+  const start = target ?? container.firstElementChild;
   const blocks = [];
   const level = heading ? Number(heading.tagName[1]) : 0;
   for (let node = start; node && blocks.length < BLOCK_LIMIT; node = node.nextElementSibling) {
@@ -58,7 +59,7 @@ function fileSummary(data, anchor, { renderMarkdown, kindLabel }) {
 }
 
 // Hovering or focusing an internal link shows what it points to: an entity's summary, or the start of a file or the linked section.
-export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel }) {
+export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath }) {
   const popover = document.createElement("div");
   popover.className = "link-preview";
   popover.setAttribute("role", "tooltip");
@@ -71,9 +72,11 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel }
   let request = 0;
 
   function targetOf(element) {
-    if (element.dataset.docLink) return { ref: element.dataset.docLink, anchor: element.dataset.docAnchor ?? null };
-    const ref = element.dataset.artifact;
-    return ref ? { ref, anchor: null } : null;
+    const anchor = element.dataset.docAnchor ?? null;
+    if (element.dataset.docLink) return { ref: element.dataset.docLink, anchor };
+    if (element.dataset.artifact) return { ref: element.dataset.artifact, anchor };
+    // An in-document anchor previews its section of the open document; contents entries need no preview.
+    return anchor && !element.closest(".doc-toc") && currentPath() ? { ref: currentPath(), anchor } : null;
   }
 
   async function load({ ref, anchor }) {
@@ -133,7 +136,7 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel }
     showTimer = setTimeout(() => show(element), SHOW_DELAY_MS);
   }
 
-  const selector = "[data-artifact], a[data-doc-link]";
+  const selector = "[data-artifact], a[data-doc-link], a[data-doc-anchor]";
   root.addEventListener("pointerover", (event) => {
     const element = event.target.closest(selector);
     if (element && event.pointerType !== "touch" && root.contains(element)) enter(element);

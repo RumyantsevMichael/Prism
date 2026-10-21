@@ -1,18 +1,12 @@
+import { activityBoard } from "./coordination-state.js";
 import { applyWidths, progressBar, stateBadge } from "./entities.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
-import { artifactChip, bindLinks, card, emptyNote, escapeHtml, keyValues, plural } from "./util.js";
+import { artifactChip, bindLinks, card, emptyNote, escapeHtml, keyValues, plural, requirementLinks } from "./util.js";
 
 function statusBadge(status) {
   return `<span class="slice-status status-${escapeHtml(status)}">${escapeHtml(status)}</span>`;
 }
 
-function requirementLinks(references, ctx) {
-  return references.map((reference) => {
-    const [file, anchor] = reference.split("#");
-    const label = `${file.split("/").pop()}${anchor ? `#${anchor}` : ""}`;
-    return ctx.hasArtifact(file) ? `<button type="button" class="link-chip artifact-chip" data-artifact="${escapeHtml(file)}"><code>${escapeHtml(label)}</code></button>` : `<code>${escapeHtml(reference)}</code>`;
-  }).join(" ");
-}
 
 function sliceSignals(artifacts) {
   const parts = [];
@@ -61,7 +55,6 @@ export async function render(container, entity, ctx) {
         ["Needs", item?.requires.length ? item.requires.map((id) => artifactChip(`initiative:${id}`, ctx, id)).join(" ") : null],
         ["Unblocks", item?.requiredBy.length ? item.requiredBy.map((id) => artifactChip(`initiative:${id}`, ctx, id)).join(" ") : null],
         ["Requirements", item?.requirements.length ? requirementLinks(item.requirements, ctx) : null],
-        ["Active work", data.active.length ? data.active.map((entry) => `<span class="meta-pill">${escapeHtml(entry.slice)} · ${escapeHtml(entry.activity)} · ${escapeHtml((entry.workers ?? []).join(", "))}</span>`).join(" ") : null],
         ["Records", [artifactChip(data.recordPath, ctx, "initiative.json"), ctx.hasArtifact(data.statePath) ? artifactChip(data.statePath, ctx, "state.json") : ""].join(" ")]
       ])}
     </section>`;
@@ -76,7 +69,9 @@ export async function render(container, entity, ctx) {
     return;
   }
   const counts = data.derived.counts;
+  const sliceTitle = (slug) => data.record.slices[slug] ? `<button type="button" class="text-button" data-artifact="slice:${escapeHtml(data.id)}/${escapeHtml(slug)}">${escapeHtml(data.record.slices[slug].title)}</button>` : escapeHtml(slug);
   container.innerHTML = `${head}
+    ${data.active.length ? card("Active work", activityBoard(data.active, ctx, sliceTitle), { eyebrow: `${plural(data.active.length, "active slice")} · state.json` }) : ""}
     <div data-graph-slot></div>
     ${card("Slice tree", `<ul class="slice-tree root">${tree(data, data.derived.root, 0, ctx)}</ul>`, { eyebrow: `${plural(data.derived.leaves.length, "leaf slice")} · ${counts.done} done · ${counts["in-progress"]} in progress · ${counts.blocked} blocked` })}
     ${data.derived.designCandidates.length ? card("Design frontier", `<ul class="plain-list">${data.derived.designCandidates.map((slug) => `<li>${artifactChip(`slice:${data.id}/${slug}`, ctx, data.record.slices[slug].title)}${data.derived.dependenciesComplete.includes(slug) ? "" : ' <span class="muted">dependencies incomplete</span>'}</li>`).join("")}</ul>`, { eyebrow: "Unstarted leaves" }) : ""}`;

@@ -2207,10 +2207,15 @@ th {
 }
 
 .slice-head {
-  align-items: center;
+  align-items: flex-start;
   display: flex;
   gap: 0.4rem;
   justify-content: space-between;
+}
+
+.slice-head .text-button {
+  font-size: 0.95rem;
+  line-height: 1.3;
 }
 
 .activity-badge {

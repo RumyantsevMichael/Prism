@@ -108,7 +108,8 @@ Prism opens one viewer session after design audit and before final correctness c
 Repeated viewer requests update that session instead of opening another browser tab.
 The artifact tree shows all files, and tabs retain open artifacts.
 The Jump palette (Ctrl K) finds entities and files by name and searches the text of Prism artifacts.
-Markdown links open the linked file or heading in the review, hovering any internal link previews its target, and graphs, diagrams, and documents can be maximized.
+Markdown links open the linked file or heading in the review, hovering any internal link previews its target or the linked section, and graphs, diagrams, and documents can be maximized.
+An initiative page shows its active slices as a board grouped by activity.
 Ask the agent to open the viewer at any time during an active session.
 
 All Prism sessions of one user share one review app on one local port, and each project has its own page there.
