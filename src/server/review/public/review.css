@@ -1644,6 +1644,164 @@ th {
   border-color: var(--danger);
 }
 
+/* Change map */
+
+.change-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.change-controls .action-filters {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.readiness-jump {
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.change-group {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.2rem;
+}
+
+.change-group-title {
+  align-items: center;
+  display: flex;
+  font-size: 0.9rem;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.change-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--action-color);
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.9rem 1.1rem;
+  scroll-margin-top: 1rem;
+}
+
+.change-card.is-blocked {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  border-left-color: var(--action-color);
+}
+
+.change-card.is-target {
+  animation: target-flash 1.6s ease;
+}
+
+.change-head {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.change-head h3 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.change-head .status-pill {
+  margin-left: auto;
+}
+
+.change-reason {
+  margin: 0;
+}
+
+.change-sides {
+  align-items: start;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.change-side {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.change-side .eyebrow {
+  margin: 0;
+}
+
+.change-arrow {
+  color: var(--ink-muted);
+  padding-top: 1.2rem;
+}
+
+.change-reference {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  color: var(--ink);
+  display: grid;
+  font: inherit;
+  font-size: 0.8rem;
+  gap: 0.1rem;
+  min-width: 0;
+  padding: 0.35rem 0.55rem;
+  text-align: left;
+}
+
+.change-reference.is-link {
+  cursor: pointer;
+}
+
+.change-reference.is-link:hover,
+.change-reference.is-link:focus-visible {
+  border-color: var(--accent);
+}
+
+.change-reference code {
+  overflow-wrap: anywhere;
+}
+
+.reference-selector {
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.change-requirements {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.change-requirements .eyebrow {
+  margin: 0;
+}
+
+.change-evidence summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .change-sides {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .change-arrow {
+    display: none;
+  }
+}
+
 .split-layout {
   align-items: start;
   display: grid;
