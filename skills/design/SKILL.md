@@ -21,17 +21,17 @@ An atomic slice delivers one observable outcome within the remaining context and
 3. Read the initiative record through `get_initiative`, the glossary, assigned Approved requirements, relevant ADRs, feature files, and the current slice's `slice.md` narrative when present.
 4. Read the ancestor diagram source and ADRs supplied by orchestration before refining the current slice's design.
 5. Read [repository context planning](references/context-planning.md).
-6. Read [MCP-managed concept delta](references/concept-delta.md).
-7. Before any target edit, capture the original baseline through its [source evidence procedure](references/concept-delta.md#capture-source-evidence).
+6. Read [MCP-managed change map](references/change-map.md).
+7. Before any target edit, capture the original baseline through its [source evidence procedure](references/change-map.md#capture-source-evidence).
 
 ## 2. Explore
 
 1. Locate the starting surface where the required behavior enters the system.
-2. Use `refactor` in analysis mode to assess existing concepts against the required behavior before selecting concept transitions.
+2. Use `refactor` in analysis mode to assess existing concepts against the required behavior before selecting planned changes.
    - Supply the outcome, governing requirements, discovery scope, baseline, and known repository context.
    - Include active artifacts and approved dependencies in the investigation.
    - Use its relationship evidence to decide reuse, modification, replacement, generalization, consolidation, deletion, or addition.
-3. Use the [semantic reuse procedure](references/concept-delta.md#semantic-reuse-search) before accepting an `ADD` transition.
+3. Use the [semantic reuse procedure](references/change-map.md#semantic-reuse-search) before accepting an `ADD` change.
 4. Use [delegation.md](../workflow/references/delegation.md) to research suitable 3rd party solutions.
 5. Inspect affected code, tests, boundaries, and dependency evidence until you can support a design and fit decision.
 6. When a technical uncertainty affects that decision, investigate it with a bounded experiment.
@@ -56,8 +56,8 @@ Child designs settle finer decisions within inherited boundaries.
 Parent diagrams remain in the parent slice folder as shared design input, while children author their own refined views.
 Implementation owns private helpers and local data structures.
 
-- After exploration, author every planned semantic transition through the concept-delta MCP capability.
-- Before `FIT`, validate the complete delta at one revision using the [concept-delta procedure](references/concept-delta.md).
+- After exploration, author every planned change through the change-map MCP capability.
+- Before `FIT`, validate the complete change map at one revision using the [change-map procedure](references/change-map.md).
 
 ## 4. Check whether the scope is atomic
 
@@ -117,7 +117,7 @@ Finding evidence remains in its original lane file.
    - `SPLIT`: the unchanged parent title, parent diagram and ADR paths, and each new child's slug, folder path, title, outcome, and requirement references.
    - `FIT`: the capability title, starting surface, artifact paths, contract decisions, verification command, and security surface or `none`.
    - `BLOCKED`: the unresolved question or missing evidence.
-2. For `FIT`, include the ready concept delta path and exact revision.
+2. For `FIT`, include the ready change map path and exact revision.
 3. For `FIT`, include the red checkpoint's exact command, exit status, and expected failure reason, or the exemption reason.
 4. For `FIT` or `SPLIT`, include diagram counts, readability, and the split assessment.
 5. When a findings path is assigned or resolved, include it for every status.

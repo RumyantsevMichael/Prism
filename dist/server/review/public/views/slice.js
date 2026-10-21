@@ -24,7 +24,7 @@ export async function render(container, entity, ctx) {
   const data = entity.data;
   const slice = data.slice;
   const artifacts = data.artifacts ?? { files: [] };
-  const known = new Set([artifacts.narrative, artifacts.conceptDelta, artifacts.review?.path].filter(Boolean));
+  const known = new Set([artifacts.narrative, artifacts.changeMap, artifacts.review?.path].filter(Boolean));
   const others = artifacts.files.filter((file) => !known.has(file));
   container.innerHTML = `
     <section class="view-card summary-card">
@@ -44,7 +44,7 @@ export async function render(container, entity, ctx) {
       ])}
     </section>
     <div class="artifact-cards">
-      ${card("Concept delta", artifacts.conceptDelta ? `<p>The planned concept transitions and their readiness.</p><p>${artifactChip(artifacts.conceptDelta, ctx, "Open the concept graph")}</p>` : emptyNote("No concept delta exists yet."), { eyebrow: "concept-delta.json" })}
+      ${card("Change map", artifacts.changeMap ? `<p>The planned changes and their readiness.</p><p>${artifactChip(artifacts.changeMap, ctx, "Open the change map")}</p>` : emptyNote("No change map exists yet."), { eyebrow: artifacts.changeMap ? artifacts.changeMap.split("/").pop() : "change-map.json" })}
       ${reviewCard(artifacts.review, ctx)}
     </div>
     ${card("Other documents", others.length ? `<ul class="plain-list">${others.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder has no other files."), { eyebrow: plural(artifacts.files.length, "file") + " in the slice folder" })}

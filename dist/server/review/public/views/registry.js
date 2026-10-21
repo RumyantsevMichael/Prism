@@ -1,7 +1,7 @@
 import { escapeHtml } from "./util.js";
 
 const VIEWS = {
-  "concept-delta": () => import("./concept-delta.js"),
+  "change-map": () => import("./change-map.js"),
   "review-ledger": () => import("./review-ledger.js"),
   "coordination-state": () => import("./coordination-state.js"),
   json: () => import("./json-view.js")

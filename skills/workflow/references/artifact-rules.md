@@ -19,8 +19,8 @@ When no existing artifact can own a fact required by a later context, create one
 ## Design evidence
 
 - Store C4 source and supplementary slice diagrams in the slice folder.
-- Manage slice `concept-delta.json` through the [concept-delta MCP capability](../../design/references/concept-delta.md).
-- Preserve the audited delta path and revision in existing design and review evidence.
+- Manage slice `change-map.json` through the [change-map MCP capability](../../design/references/change-map.md).
+- Preserve the audited change map path and revision in existing design and review evidence.
 - Bind immutable native semantic receipts and candidate dispositions to baseline B through MCP.
 - Manage slice `review.json` through `get_review` and `update_review`; retain `review.md` only as a generated projection.
 - Retain source snapshots, receipts, and comparisons in private conservation storage independently of disposable indexes.

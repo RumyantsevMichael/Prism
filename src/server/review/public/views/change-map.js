@@ -11,11 +11,11 @@ function referenceKey(side, reference) {
   return `${side}|${reference.path}|${JSON.stringify(reference.selector ?? "")}`;
 }
 
-function buildGraph(concepts) {
+function buildGraph(changes) {
   const nodes = new Map();
   const edges = [];
   const clusterLabels = new Map();
-  const addReference = (side, reference, concept) => {
+  const addReference = (side, reference, change) => {
     const id = referenceKey(side, reference);
     const cluster = `${side}|${reference.path}`;
     clusterLabels.set(cluster, `${side === "b" ? "before" : "after"} · ${reference.path}`);
@@ -23,15 +23,15 @@ function buildGraph(concepts) {
       const selector = formatSelector(reference.selector);
       nodes.set(id, { id, cluster, title: selector || "(whole file)", subtitle: typeof reference.selector === "object" && reference.selector ? reference.selector.type : "", tooltip: formatReference(reference), className: `ref-node ref-${side === "b" ? "before" : "after"}`, monospace: true, reference, side });
     }
-    edges.push(side === "b" ? { from: id, to: `c|${concept.id}`, className: `action-${concept.action.toLowerCase()}` } : { from: `c|${concept.id}`, to: id, className: `action-${concept.action.toLowerCase()}` });
+    edges.push(side === "b" ? { from: id, to: `c|${change.id}`, className: `action-${change.action.toLowerCase()}` } : { from: `c|${change.id}`, to: id, className: `action-${change.action.toLowerCase()}` });
   };
-  for (const concept of concepts) {
-    nodes.set(`c|${concept.id}`, { id: `c|${concept.id}`, title: concept.label, subtitle: `${concept.kind} · ${concept.action}`, tooltip: concept.reason, className: `concept-node action-${concept.action.toLowerCase()}`, concept });
-    for (const reference of concept.before ?? []) addReference("b", reference, concept);
-    for (const reference of concept.after ?? []) addReference("a", reference, concept);
+  for (const change of changes) {
+    nodes.set(`c|${change.id}`, { id: `c|${change.id}`, title: change.label, subtitle: `${change.kind} · ${change.action}`, tooltip: change.reason, className: `change-node action-${change.action.toLowerCase()}`, change });
+    for (const reference of change.before ?? []) addReference("b", reference, change);
+    for (const reference of change.after ?? []) addReference("a", reference, change);
   }
   return {
-    graph: { label: "Concept transitions", nodes: [...nodes.values()], edges, sameRank: [concepts.map((concept) => `c|${concept.id}`)] },
+    graph: { label: "Planned changes", nodes: [...nodes.values()], edges, sameRank: [changes.map((change) => `c|${change.id}`)] },
     clusterLabels,
     nodes
   };
@@ -65,25 +65,25 @@ function reuseEvidence(evidence) {
   </div>`;
 }
 
-function conceptDetail(concept, diagnostics) {
-  const own = diagnostics.filter((item) => item.id === concept.id);
-  return `<p class="eyebrow">Concept · ${escapeHtml(concept.kind)}</p>
-    <h2>${escapeHtml(concept.label)}</h2>
-    <p class="detail-meta">${actionBadge(concept.action)} <code>${escapeHtml(concept.id)}</code></p>
+function changeDetail(change, diagnostics) {
+  const own = diagnostics.filter((item) => item.id === change.id);
+  return `<p class="eyebrow">Change · ${escapeHtml(change.kind)}</p>
+    <h2>${escapeHtml(change.label)}</h2>
+    <p class="detail-meta">${actionBadge(change.action)} <code>${escapeHtml(change.id)}</code></p>
     ${own.length ? `<ul class="diagnostic-list">${own.map(diagnosticItem).join("")}</ul>` : ""}
-    <div class="detail-block"><h3>Reason</h3><p>${escapeHtml(concept.reason)}</p></div>
-    <div class="detail-block"><h3>Before</h3>${referenceList(concept.before)}</div>
-    <div class="detail-block"><h3>After</h3>${referenceList(concept.after)}</div>
-    ${concept.requirements?.length ? `<div class="detail-block"><h3>Requirements</h3>${referenceList(concept.requirements)}</div>` : ""}
-    ${reuseEvidence(concept.reuseEvidence)}`;
+    <div class="detail-block"><h3>Reason</h3><p>${escapeHtml(change.reason)}</p></div>
+    <div class="detail-block"><h3>Before</h3>${referenceList(change.before)}</div>
+    <div class="detail-block"><h3>After</h3>${referenceList(change.after)}</div>
+    ${change.requirements?.length ? `<div class="detail-block"><h3>Requirements</h3>${referenceList(change.requirements)}</div>` : ""}
+    ${reuseEvidence(change.reuseEvidence)}`;
 }
 
-function referenceDetail(node, concepts) {
-  const users = concepts.filter((concept) => (node.side === "b" ? concept.before : concept.after)?.some((reference) => referenceKey(node.side, reference) === node.id));
+function referenceDetail(node, changes) {
+  const users = changes.filter((change) => (node.side === "b" ? change.before : change.after)?.some((reference) => referenceKey(node.side, reference) === node.id));
   return `<p class="eyebrow">${node.side === "b" ? "Before" : "After"} reference</p>
     <h2>${escapeHtml(formatSelector(node.reference.selector) || "(whole file)")}</h2>
     <p class="detail-meta"><code>${escapeHtml(node.reference.path)}</code></p>
-    <div class="detail-block"><h3>Concepts</h3><ul class="plain-list">${users.map((concept) => `<li><button type="button" class="text-button" data-select="c|${escapeHtml(concept.id)}">${escapeHtml(concept.label)}</button> ${actionBadge(concept.action)}</li>`).join("")}</ul></div>`;
+    <div class="detail-block"><h3>Changes</h3><ul class="plain-list">${users.map((change) => `<li><button type="button" class="text-button" data-select="c|${escapeHtml(change.id)}">${escapeHtml(change.label)}</button> ${actionBadge(change.action)}</li>`).join("")}</ul></div>`;
 }
 
 function diagnosticItem(item) {
@@ -128,14 +128,14 @@ function metadata(document, ctx) {
 
 export async function render(container, data, ctx) {
   const document = data.data;
-  const concepts = document.concepts ?? [];
+  const changes = document.concepts ?? [];
   const summary = data.summary;
   const diagnostics = summary?.diagnostics ?? [];
   const state = ctx.state;
   state.hidden ??= [];
   state.graph ??= {};
-  const counts = Object.fromEntries(ACTIONS.map((action) => [action, concepts.filter((concept) => concept.action === action).length]));
-  const visible = concepts.filter((concept) => !state.hidden.includes(concept.action));
+  const counts = Object.fromEntries(ACTIONS.map((action) => [action, changes.filter((change) => change.action === action).length]));
+  const visible = changes.filter((change) => !state.hidden.includes(change.action));
 
   container.innerHTML = `
     <section class="view-card summary-card">
@@ -155,23 +155,23 @@ export async function render(container, data, ctx) {
       <aside class="view-card detail-panel" aria-live="polite" data-detail></aside>
     </div>
     ${metadata(document, ctx)}
-    ${card("All concepts", `<div class="table-wrap"><table class="data-table"><thead><tr><th>Concept</th><th>Kind</th><th>Action</th><th>Before</th><th>After</th></tr></thead><tbody>${concepts.map((concept) => `<tr data-select="c|${escapeHtml(concept.id)}" class="${state.selected === `c|${concept.id}` ? "is-selected" : ""}"><td><button type="button" class="text-button" data-select="c|${escapeHtml(concept.id)}">${escapeHtml(concept.label)}</button></td><td>${escapeHtml(concept.kind)}</td><td>${actionBadge(concept.action)}</td><td>${concept.before?.length ?? 0}</td><td>${concept.after?.length ?? 0}</td></tr>`).join("")}</tbody></table></div>`, { eyebrow: "Table view" })}`;
+    ${card("All changes", `<div class="table-wrap"><table class="data-table"><thead><tr><th>Change</th><th>Kind</th><th>Action</th><th>Before</th><th>After</th></tr></thead><tbody>${changes.map((change) => `<tr data-select="c|${escapeHtml(change.id)}" class="${state.selected === `c|${change.id}` ? "is-selected" : ""}"><td><button type="button" class="text-button" data-select="c|${escapeHtml(change.id)}">${escapeHtml(change.label)}</button></td><td>${escapeHtml(change.kind)}</td><td>${actionBadge(change.action)}</td><td>${change.before?.length ?? 0}</td><td>${change.after?.length ?? 0}</td></tr>`).join("")}</tbody></table></div>`, { eyebrow: "Table view" })}`;
 
   const { graph, clusterLabels, nodes } = buildGraph(visible);
   const detail = container.querySelector("[data-detail]");
   const showDetail = () => {
     const node = nodes.get(state.selected);
     if (!node) {
-      detail.innerHTML = `<p class="eyebrow">Details</p><h2>Select a concept</h2><p class="empty-note">Click a concept or a source reference in the graph to see its reason, references, and reuse evidence.</p>`;
+      detail.innerHTML = `<p class="eyebrow">Details</p><h2>Select a change</h2><p class="empty-note">Click a change or a source reference in the graph to see its reason, references, and reuse evidence.</p>`;
     } else {
-      detail.innerHTML = node.concept ? conceptDetail(node.concept, diagnostics) : referenceDetail(node, concepts);
+      detail.innerHTML = node.change ? changeDetail(node.change, diagnostics) : referenceDetail(node, changes);
     }
   };
   showDetail();
 
   const graphSection = graphCard({
-    title: plural(visible.length, "concept"),
-    eyebrow: "Before → concept → after",
+    title: plural(visible.length, "change"),
+    eyebrow: "Before → change → after",
     legend: `<span><i class="legend-ref ref-before"></i>Before reference</span><span><i class="legend-ref ref-after"></i>After reference</span><span class="legend-hint">Drag to pan · Ctrl + wheel to zoom</span>`
   });
   container.querySelector("[data-graph-slot]").appendChild(graphSection);
@@ -186,7 +186,7 @@ export async function render(container, data, ctx) {
     showDetail();
   };
   if (visible.length === 0) {
-    viewport.innerHTML = emptyNote("No concepts match the current filter.");
+    viewport.innerHTML = emptyNote("No changes match the current filter.");
   } else {
     graphView = await renderGraph(viewport, graph, { onSelect: (id, options) => options?.double ? undefined : select(state.selected === id ? null : id), selectedId: state.selected, clusterLabels });
     enablePanZoom(graphSection, state.graph);

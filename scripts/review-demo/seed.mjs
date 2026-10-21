@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SERVER = path.join(ROOT, "dist/server/mcp.mjs");
 const MANIFEST = path.join(ROOT, "test/server/fixtures/native-manifest-unavailable.json");
-const examples = JSON.parse(await readFile(path.join(ROOT, "test/server/fixtures/concept-delta.json"), "utf8"));
+const examples = JSON.parse(await readFile(path.join(ROOT, "test/server/fixtures/change-map.json"), "utf8"));
 
 const requested = process.argv[2];
 const projectRoot = requested ? path.resolve(requested) : await mkdtemp(path.join(os.tmpdir(), "prism-review-demo-"));
@@ -30,7 +30,7 @@ async function write(relative, content) {
 }
 
 const slice = "docs/plans/retry-hardening/timeout-retries";
-const deltaPath = `${slice}/concept-delta.json`;
+const deltaPath = `${slice}/change-map.json`;
 const reviewPath = `${slice}/review.json`;
 const statePath = "docs/plans/retry-hardening/state.json";
 
@@ -95,9 +95,9 @@ try {
   const concepts = examples.concepts.map((entry) => entry.id === "retry-deadline"
     ? { ...entry, requirements: [{ path: "docs/requirements/retries.md", selector: { type: "heading", value: "Retry requirements" } }], reuseEvidence: { ...entry.reuseEvidence, receiptIds: [search.receiptId] } }
     : entry);
-  let delta = await call("update_concept_delta", { projectRoot: realRoot, deltaPath, expectedRevision: null, baselineId: baseline.snapshotId, scope: examples.scope, operations: concepts.map((entry) => ({ op: "insert", entry })) });
-  delta = await call("update_concept_delta", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, expectedGrowth: [{ dimension: "configurationOptions", increase: 1, reason: "The total retry deadline is a new option." }], operations: [] });
-  const audit = await call("compare_concept_delta", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, baselineId: baseline.snapshotId, resultSnapshotId: baseline.snapshotId });
+  let delta = await call("update_change_map", { projectRoot: realRoot, deltaPath, expectedRevision: null, baselineId: baseline.snapshotId, scope: examples.scope, operations: concepts.map((entry) => ({ op: "insert", entry })) });
+  delta = await call("update_change_map", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, expectedGrowth: [{ dimension: "configurationOptions", increase: 1, reason: "The total retry deadline is a new option." }], operations: [] });
+  const audit = await call("compare_change_map", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, baselineId: baseline.snapshotId, resultSnapshotId: baseline.snapshotId });
 
   const coordinator = { id: "coordinator", role: "coordinator" };
   const reviewer = { id: "independent", role: "reviewer" };
@@ -174,7 +174,7 @@ try {
     next: ["docs/plans/retry-hardening/connection-retries"],
     evidence: [`${slice}/slice.md`],
     gateOperations: [
-      { op: "ask", kind: "visual-review", slice: "timeout-retries", question: "Review the concept delta and the total-deadline ADR before implementation starts.", artifacts: [deltaPath, "docs/ADRs/retries/total-retry-deadline.md", `${slice}/slice.md`] },
+      { op: "ask", kind: "visual-review", slice: "timeout-retries", question: "Review the change map and the total-deadline ADR before implementation starts.", artifacts: [deltaPath, "docs/ADRs/retries/total-retry-deadline.md", `${slice}/slice.md`] },
       { op: "ask", kind: "decision", slice: "connection-retries", question: "The design deletes the only handler that retries dropped connections (finding F2). Approve requirement 2 for this slice now, or drop connection retries until their slice starts?", artifacts: [reviewPath, "docs/requirements/retries.md"] }
     ]
   } });

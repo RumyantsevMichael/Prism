@@ -132,7 +132,7 @@ Start a review from a Prism checkout when no harness session is active:
 ```
 
 The review browser opens on Attention, or on the artifact you name, and later visits restore the tabs you left open.
-It shows initiatives as a board, list, or dependency graph, each initiative as a slice graph, and each slice with its concept delta, review ledger, and documents.
+It shows initiatives as a board, list, or dependency graph, each initiative as a slice graph, and each slice with its change map, review ledger, and documents.
 Requirements, decisions, and the glossary have their own sections.
 
 `prism review` opens the project in the shared review app and returns.

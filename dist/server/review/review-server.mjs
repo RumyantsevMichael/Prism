@@ -5,7 +5,7 @@ import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
-import { getConceptDelta } from "../conservation/concept-delta.mjs";
+import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { answerGate, entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
@@ -196,8 +196,8 @@ export function artifactKind(artifactPath, data) {
   if (!isRecord(data)) {
     return "json";
   }
-  if (name === "concept-delta.json" && Array.isArray(data.concepts)) {
-    return "concept-delta";
+  if (CHANGE_MAP_FILES.includes(name) && Array.isArray(data.concepts)) {
+    return "change-map";
   }
   if (name === "review.json" && Array.isArray(data.waves) && Array.isArray(data.findings)) {
     return "review-ledger";
@@ -217,9 +217,9 @@ async function loadJsonArtifact(projectRoot, artifactPath, content) {
   }
   const kind = artifactKind(artifactPath, data);
   const result = { kind, data };
-  if (kind === "concept-delta") {
+  if (kind === "change-map") {
     try {
-      const { concepts, selectedCount, nextOffset, ...summary } = await getConceptDelta({ projectRoot, deltaPath: artifactPath, limit: 1 });
+      const { concepts, selectedCount, nextOffset, ...summary } = await getChangeMap({ projectRoot, deltaPath: artifactPath, limit: 1 });
       result.summary = summary;
     } catch (error) {
       result.summaryError = error.message;

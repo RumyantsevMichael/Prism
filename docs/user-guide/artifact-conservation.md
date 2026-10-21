@@ -6,7 +6,7 @@ The baseline follows the ignore rules also for tracked files, so force-adding an
 
 1. Capture B with `capture_repository_snapshot` before editing and pass the slice `deltaPath` to register its evidence outputs.
 2. Search reuse against B with `search_repository_concepts` and keep the returned receipt IDs.
-3. Author the version 2 concept delta with typed MCP operations.
+3. Author the version 2 change map with typed MCP operations.
 4. Capture A, compare B→A, and record the independent design audit in `review.json` through `update_review`.
 5. Enter implementation with typed coordination `activeOperations` and the slice `reviewPath`.
 6. After authoring finishes, capture F and compare B→F.
@@ -24,9 +24,11 @@ For an unaccepted wave it also lists the assessments that can carry forward from
 In a correction wave it also lists, for each lane, the files whose bytes changed since the previous wave of the same mode, which the reviewer re-reads in full instead of the whole slice.
 A missing semantic runtime can return lexical exploration results but cannot satisfy an addition's semantic evidence requirement.
 Preparation starts automatically when a search or comparison needs native analysis.
-Concept delta readiness fails when planned additions or modifications copy a change into functions that several files already repeat, until the delta or a delta named in `consolidations` consolidates them.
+Change map readiness fails when planned additions or modifications copy a change into functions that several files already repeat, until the change map or a change map named in `consolidations` consolidates them.
 Comparisons report only the analysis findings that the change adds: a new copy of a function is a failure, and new shared values, repeated key sets, complex units, cohesion splits, and unused exports need a review check.
 Known failures such as a retained deletion, scope escape, or stale source cannot be waived with a manual assessment.
 `release` and `checkpoint_pause` remove active coordination without claiming completion.
-Legacy version 1 deltas and Markdown findings remain readable; explicit migration preserves their content but never imports historical `CLEAN` as current acceptance.
-The [maintained procedure](../../skills/design/references/concept-delta.md) describes the full schema and review responsibilities.
+Legacy version 1 change maps and Markdown findings remain readable; explicit migration preserves their content but never imports historical `CLEAN` as current acceptance.
+Slices designed before the change map got its name keep it as `concept-delta.json`, and every tool and the review browser still read and update it.
+To use the new name, move the file to `change-map.json` in the same slice folder; its revision, evidence ownership, and review bindings stay valid, so an accepted review stays accepted.
+The [maintained procedure](../../skills/design/references/change-map.md) describes the full schema and review responsibilities.

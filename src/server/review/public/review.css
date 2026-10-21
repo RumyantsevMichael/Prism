@@ -1897,7 +1897,7 @@ th {
   font-weight: 500;
 }
 
-.concept-node .graph-node-box {
+.change-node .graph-node-box {
   background: color-mix(in srgb, var(--action-color) 10%, var(--surface));
   border-color: color-mix(in srgb, var(--action-color) 60%, transparent);
   border-left: 5px solid var(--action-color);

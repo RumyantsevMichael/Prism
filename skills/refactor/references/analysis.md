@@ -120,7 +120,7 @@ Managed slices retain their reviewed growth justifications and conservation gate
 | Uncertainty | Missing evidence, unresolved distinctions, coverage limits, and deferred candidates. |
 | Escalation | The exact decision, affected authority, and evidence needed by the caller, or none. |
 
-The caller can reuse this evidence in existing concept deltas, review records, or its returned result.
+The caller can reuse this evidence in existing change maps, review records, or its returned result.
 This table defines content, not a new serialization format or mandatory artifact.
 
 ## Review criteria

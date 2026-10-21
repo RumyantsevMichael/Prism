@@ -994,7 +994,7 @@ async function showArtifact(path) {
 }
 
 const KIND_LABELS = {
-  "concept-delta": "Concept delta",
+  "change-map": "Change map",
   "review-ledger": "Review ledger",
   "coordination-state": "Coordination state",
   json: "JSON artifact"

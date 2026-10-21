@@ -10,7 +10,7 @@ function statusBadge(status) {
 
 function sliceSignals(artifacts) {
   const parts = [];
-  if (artifacts?.conceptDelta) parts.push('<span class="artifact-tag">delta</span>');
+  if (artifacts?.changeMap) parts.push('<span class="artifact-tag">delta</span>');
   if (artifacts?.review && !artifacts.review.invalid) {
     const review = artifacts.review;
     parts.push(review.blocking ? `<span class="artifact-tag is-bad">${review.blocking} blocking</span>` : review.unresolved ? `<span class="artifact-tag is-warn">${review.unresolved} open</span>` : '<span class="artifact-tag is-good">review clean</span>');

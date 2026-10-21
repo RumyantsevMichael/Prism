@@ -65,7 +65,7 @@ jobs:
       - name: Test parsers, language relationships, and containment
         run: |
           node --liftoff-only --test --test-reporter=tap --test-timeout=120000 test/native-runtime/*.test.mjs
-          node --test --test-reporter=tap --test-timeout=120000 scripts/native-build/*.test.mjs test/server/native-semantics.test.mjs test/server/conservation.test.mjs test/server/concept-delta-mcp.test.mjs
+          node --test --test-reporter=tap --test-timeout=120000 scripts/native-build/*.test.mjs test/server/native-semantics.test.mjs test/server/conservation.test.mjs test/server/change-map-mcp.test.mjs
       - name: Build an immutable runtime archive
         env:
           PRISM_NATIVE_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/native-runtime-${{ github.run_id }}-${{ github.run_attempt }}

@@ -1,7 +1,8 @@
-# MCP-managed concept delta and conservation
+# MCP-managed change map and conservation
 
-A concept delta records intended changes to code, instructions, documentation, specifications, tests, and configuration.
-Design owns the slice's `concept-delta.json` through `get_concept_delta` and `update_concept_delta`.
+A change map records intended changes to code, instructions, documentation, specifications, tests, and configuration.
+Design owns the slice's `change-map.json` through `get_change_map` and `update_change_map`.
+A slice designed before the rename keeps its `concept-delta.json`, and either file name reaches the slice's one change map.
 The server owns serialization, validation, revisions, locking, atomic persistence, and retained evidence.
 Agents never edit managed JSON or its generated Markdown directly.
 Context-budget `FIT` and conservation acceptance are separate checks.
@@ -10,7 +11,7 @@ Context-budget `FIT` and conservation acceptance are separate checks.
 
 1. Before the first target edit, call `capture_repository_snapshot` with the absolute `projectRoot` and slice-relative `deltaPath`.
 2. Preserve the returned baseline identity as **B**, including dirty and untracked source.
-3. Bind governing requirements through source references in the delta.
+3. Bind governing requirements through source references in the change map.
 4. After design-authored tests and scaffolds, capture **A** for design audit.
 5. After implementation or corrections finish, capture **F** for implementation review.
 6. Preserve B through all corrections and child assignments.
@@ -21,17 +22,17 @@ Snapshots retain verified text, opaque bytes, symlink identities without followi
 Missing or corrupt affected source evidence prevents acceptance.
 Registered evidence outputs are exact server-owned paths, including their temporary writes and locks; arbitrary exclusion patterns are unavailable.
 Retained snapshots and receipts survive disposal of semantic index caches.
-A split parent retains its provisional delta; each child needs its own delta and baseline binding.
-A parent delta does not authorize child implementation.
+A split parent retains its provisional change map; each child needs its own change map and baseline binding.
+A parent change map does not authorize child implementation.
 
 ## Author and read
 
-1. Read the artifact with `get_concept_delta`.
-2. For an absent artifact, use `update_concept_delta` with `expectedRevision: null`, nonempty `scope`, `baselineId`, `requirements`, and typed `operations`.
+1. Read the artifact with `get_change_map`.
+2. For an absent artifact, use `update_change_map` with `expectedRevision: null`, nonempty `scope`, `baselineId`, `requirements`, and typed `operations`.
 3. Insert, partially update, or remove entries in batches of at most 100 operations.
 4. After a revision conflict, reread the artifact before retrying.
 5. Before returning `FIT`, read every page at the same `expectedRevision` and confirm `valid: true` and `ready: true`.
-6. Return the delta path, exact revision, and baseline identity.
+6. Return the change map path, exact revision, and baseline identity.
 7. If MCP or required semantic preparation is unavailable, return `BLOCKED` with the missing capability.
 
 New artifacts use `schemaVersion: 2`.
@@ -41,8 +42,8 @@ Entry IDs are immutable, omitted update fields stay unchanged, and supplied arra
 An invalid batch preserves existing artifact bytes, and a no-op preserves its revision.
 `remove` removes a planned entry rather than deleting its target.
 `ready` means ready for design audit, not approved for implementation.
-An empty delta can be ready when a retained baseline supports a design with no target changes.
-When `ADD` entries add units to several files that repeat the same functions, or `MODIFY` entries change copies of one function in several files, readiness reports `duplication_growth` until `REPLACE` or `DELETE` entries cover those functions in this delta or in a delta that `consolidations` names.
+An empty change map can be ready when a retained baseline supports a design with no target changes.
+When `ADD` entries add units to several files that repeat the same functions, or `MODIFY` entries change copies of one function in several files, readiness reports `duplication_growth` until `REPLACE` or `DELETE` entries cover those functions in this change map or in a change map that `consolidations` names.
 
 ## Entries and exact references
 
@@ -53,7 +54,7 @@ All target references fall inside declared scope; reuse candidates may be outsid
 | Action | Before | After |
 | --- | --- | --- |
 | `KEEP` | Nonempty | Same references and unchanged content |
-| `MODIFY` | Nonempty | Preserved concept identity |
+| `MODIFY` | Nonempty | Preserved item identity |
 | `REPLACE` | Nonempty | Replacement references |
 | `DELETE` | Nonempty | Empty |
 | `ADD` | Empty | Nonempty |
@@ -61,10 +62,10 @@ All target references fall inside declared scope; reuse candidates may be outsid
 `REPLACE` includes renaming, moving, consolidation, and splitting.
 Several sources can converge on one destination; one source can split into several destinations.
 Duplicate IDs, duplicate references, and conflicting ownership of the same exact source reference are invalid.
-A broad file-level `MODIFY` cannot authorize undeclared public concepts.
-A new private unit inside a resulting reference of a planned `ADD`, `MODIFY`, or `REPLACE` entry belongs to that concept without an assessment.
+A broad file-level `MODIFY` cannot authorize undeclared public declarations.
+A new private unit inside a resulting reference of a planned `ADD`, `MODIFY`, or `REPLACE` entry belongs to that change without an assessment.
 The same holds for a new private unit in a new file that such an entry references.
-Other private implementation details require explicit attribution to their owning planned concept during review.
+Other private implementation details require explicit attribution to their owning planned change during review.
 
 References contain project-relative `path` and optional `selector`.
 Typed selectors use `{ "type": "symbol|heading|text|json-pointer|yaml-key", "value": "..." }` or `{ "type": "span", "start": 0, "end": 20, "sourceHash": "..." }`.
@@ -75,7 +76,7 @@ A span whose future bytes are not known requires a stable typed selector or an e
 Legacy string selectors remain readable and require explicit resolution evidence.
 Resolution reports `resolved`, `missing`, `ambiguous`, or `unsupported` without fuzzy identity matching.
 
-1. List every affected semantic concept, relevant concepts deliberately kept, and planned tests, contracts, documentation, and configuration.
+1. List every affected item, relevant items deliberately kept, and planned tests, contracts, documentation, and configuration.
 2. Leave unsettled private implementation details to implementation.
 3. Link additions and expected growth to the governing requirements.
 
@@ -88,14 +89,14 @@ Resolution reports `resolved`, `missing`, `ambiguous`, or `unsupported` without 
 5. Read the successful receipt through `get_conservation_evidence` when its bounded summary is insufficient.
 6. Record its ID in `reuseEvidence.receiptIds` and a disposition for every returned candidate.
 7. Copy each candidate's ID, receipt ID, and exact snapshot-bound reference into the disposition.
-8. Explain why existing concepts cannot reasonably absorb the required behavior in `reuseEvidence.justification`.
+8. Explain why existing code, instructions, documentation, or configuration cannot reasonably absorb the required behavior in `reuseEvidence.justification`.
 9. If successful searches return no candidates, record `emptyResultReason`.
 
 The server generates receipt query, filters, limit, source spans and hashes, scores, model, tokenizer, runtime, index identity, coverage, and omissions.
 Preparing, failed, or lexical-only searches cannot make an addition ready.
 Native preparation starts automatically and retains searchable verified text when structural extraction fails.
 Live searches retain their freshness checks; baseline searches cannot treat newly authored material as preexisting reuse evidence.
-Similarity ranks candidates; reviewers decide search adequacy, reuse, and conceptual equivalence.
+Similarity ranks candidates; reviewers decide search adequacy, reuse, and equivalence.
 A high score cannot resolve an explicit missing symbol or determine implementation effort.
 Normal responses summarize diagnostics; bounded evidence pages contain the details.
 
@@ -128,7 +129,7 @@ Replace them with the receipt and source hashes returned by the search.
 
 ## Compare and measure
 
-1. Call `compare_concept_delta` with the exact delta revision, B, and A or F.
+1. Call `compare_change_map` with the exact change map revision, B, and A or F.
 2. Read all observations, measurements, growth records, and applicable diagnostics through `get_conservation_evidence`.
 3. Return material deviations for design revision and audit before continuing implementation.
 4. Record requirement-linked justification for every positive measured increase through MCP review assessments.
@@ -144,7 +145,7 @@ New shared dependencies, shared literals, repeated key sets, complex units, cohe
 Parser, tokenizer, and metric versions bind the comparison, which retains its exact analysis records.
 Markdown list items become identified obligations only through explicit source-bound classification and review.
 Default growth tolerance is zero; `expectedGrowth`, requirement-linked `growthJustifications`, and `growthThresholds` are audited design inputs, and every actual positive increase still needs reviewed justification.
-Comparisons preserve observed facts; review decisions cannot erase a retained deletion, scope escape, changed `KEEP`, or undeclared public concept.
+Comparisons preserve observed facts; review decisions cannot erase a retained deletion, scope escape, changed `KEEP`, or undeclared public declaration.
 
 ## Text convergence
 
@@ -158,10 +159,10 @@ For each affected text section:
 6. Have an independent reviewer assess meaning, coverage, and preservation of the existing obligations.
 
 A `convergence` assessment whose `section` names only the file path covers every changed section of that file.
-An assessment binds to its review wave's source, requirement, comparison, and delta revisions.
+An assessment binds to its review wave's source, requirement, comparison, and change map revisions.
 A fresh assigned reviewer can carry an accepted assessment into a later wave with `carry_assessments` while its observations, justified growth, and cited files are unchanged.
 An unsupported check needs a `manual` assessment naming exact observation IDs, evidence, reason, and the assigned reviewer.
-A changed private helper outside a planned reference needs an `implementation-detail` assessment naming its owning concept, and a `manual` assessment cannot clear it.
+A changed private helper outside a planned reference needs an `implementation-detail` assessment naming its owning change, and a `manual` assessment cannot clear it.
 Manual evidence cannot override missing semantic search, stale or missing source evidence, scope violations, or demonstrably retained deletion targets.
 Scripted assessment fixtures test enforcement; they do not prove semantic correctness.
 
@@ -171,8 +172,8 @@ Scripted assessment fixtures test enforcement; they do not prove semantic correc
 2. For design audit, inspect B→A, plan completeness, reuse evidence, growth policy, and any convergence assessments.
 3. Submit current lane results and accept the wave through `update_review`.
 4. Before implementation, use `check_review_gate` and a typed coordination `start` or `update` entering `implementation`.
-5. On changed source A or delta revision, return to design review.
-6. For implementation review, inspect B→F and record missing deletions, extra concepts, incorrect replacements, and unmet requirements as findings.
+5. On changed source A or change map revision, return to design review.
+6. For implementation review, inspect B→F and record missing deletions, unplanned changes, incorrect replacements, and unmet requirements as findings.
 7. Before integration or completion, require accepted current review evidence through the same gate validator.
 
 Implementation never rewrites the accepted plan to match its output.
@@ -183,10 +184,11 @@ These gates control Prism records; they do not prevent direct filesystem edits.
 
 ## Migration
 
-1. Read legacy version 1 deltas through MCP.
-2. Use `update_concept_delta` with `migrate: true` for explicit migration that retains the original bytes as immutable evidence.
+1. Read legacy version 1 change maps through MCP.
+2. Use `update_change_map` with `migrate: true` for explicit migration that retains the original bytes as immutable evidence.
 3. Use review `import_legacy` to retain original Markdown findings and history.
 4. Establish new review waves with current evidence before implementation or completion.
 5. If the original source was not retained before edits, report the missing original baseline instead of fabricating B from the changed tree.
 
 Historical `CLEAN` is readable history and never current acceptance.
+Moving a `concept-delta.json` to `change-map.json` in the same slice folder keeps its revision, evidence ownership, and review bindings.

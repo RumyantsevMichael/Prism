@@ -15,7 +15,7 @@ Orchestration owns review dispatch, lifecycle changes, ADR acceptance, commits, 
 1. Read `.prism/workflow.md` and applicable project instructions.
 2. Read the Approved requirements, audited design result, relevant ADRs, contract decisions, tests, feature files, and slice diagrams.
 3. Confirm orchestration cleared the implementation gate and supplied the current workspace and review base.
-4. Before edits, read the complete [concept delta](../design/references/concept-delta.md) through MCP at its audited revision.
+4. Before edits, read the complete [change map](../design/references/change-map.md) through MCP at its audited revision.
 5. If required design evidence is missing or invalid, return to `design` before production edits.
 6. Use the slice `review.json` through MCP as defined by [review-format.md](../review/references/review-format.md).
 7. Read every assigned review lane through `get_review` and check the current implementation gate before edits.
@@ -55,8 +55,8 @@ Weakening or replacing design acceptance requires renewed design and its gates.
 - If the outcome exceeds atomic fit or contradicts acceptance, preserve the work and return to `design` through orchestration.
 
 Implementation does not edit requirements without user approval or revise ADRs without a user or orchestrator response.
-A changed delta revision or material concept deviation requires design revision and a new design audit.
-Implementation never rewrites the accepted delta to match its output.
+A changed change map revision or a material deviation from it requires design revision and a new design audit.
+Implementation never rewrites the accepted change map to match its output.
 
 ## 4. Verify and update artifacts
 
@@ -74,7 +74,7 @@ Implementation never rewrites the accepted delta to match its output.
 5. Remove task-generated temporary files and caches from the change.
 6. Use `write-user-docs` for changed user behavior and move verified necessary content from the slice's `runbook-draft.md` to the configured user-guide path.
 7. Update slice-folder diagram source against verified code, removing obsolete relationships and resolved proposed markers.
-8. Apply [text convergence](../design/references/concept-delta.md#text-convergence) after all target updates, then capture F and compare B→F through MCP.
+8. Apply [text convergence](../design/references/change-map.md#text-convergence) after all target updates, then capture F and compare B→F through MCP.
 9. If any target changes afterward, recapture F, compare B→F, and refresh assessments before returning review evidence.
 
 In-process tests do not replace required cross-process or cross-surface proof.
