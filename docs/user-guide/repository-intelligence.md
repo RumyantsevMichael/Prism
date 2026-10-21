@@ -131,7 +131,7 @@ An agent's search starts or retries a build, and the browser has no button for i
 `Index out of date` is a hint from Git, not a comparison of file contents.
 It compares the commit and the changed files' sizes and modification times with those recorded when the index was built or last reused.
 A commit that leaves indexed files unchanged looks out of date until the next search, and an edit that keeps a file's size and modification time looks current.
-A folder outside Git, an index of a retained baseline, and an index built before this release show no hint.
+A folder outside Git, an index of a retained baseline, and an index built by a Prism version without the chip show no hint.
 
 ### Find shared dependencies
 
@@ -159,7 +159,7 @@ A path constructor such as `Registry::new` keeps its type, so it does not match 
 Test code is left out unless `includeTests` is true.
 Test code is a file in a test directory or with a test name, such as `store.test.ts`, `test_store.py`, `store_test.go`, or `StoreTest.java`, and a Rust `#[cfg(test)]` module or `#[test]` function.
 Generated, vendored, and minified files are always left out.
-With `filters.paths`, a group is reported when at least two of its members are inside the paths.
+With `filters.paths`, a group is reported when at least two of its members are inside the paths, so a group with one member inside the paths stays hidden until you widen them.
 A function that only uses core operations has no dependency profile, so use search for small helpers.
 `coverage` gives the number of profiled units, and a `dependency_names_unavailable` diagnostic means that the index was prepared without library call names.
 A shared dependency set identifies candidates for investigation and does not establish equivalent behavior.
@@ -185,6 +185,7 @@ An unused export can be private or removed, unless it is a published API, an ent
 A test-only export is often a deliberate test seam.
 `namesPerImporter` is the median number of exports that one importer uses, so a low value on a module with many exports shows that each caller needs only a small part of the interface.
 By default, only modules with unused or test-only exports appear, and `allModules` reports every exporting module.
+With `filters.paths`, only modules inside the paths are reported, while importers outside the paths still count.
 Use `offset` and `nextOffset` to page through modules.
 
 Imports resolve through relative paths, `package.json` names and `exports` maps of workspace packages, `tsconfig` path aliases, and built output that mirrors a `src/` file.
@@ -215,7 +216,8 @@ Shared dependencies find units that do the same work, and this tool finds units 
 }
 ```
 
-The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, `includeTests`, and `filters.paths` behavior as `find_shared_dependencies`.
+The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, and `includeTests` behavior as `find_shared_dependencies`.
+With `filters.paths`, a group is reported when at least two of its members and clients are inside the paths.
 Each group lists its shared literals, with the number of units that spell each literal, and its members with their `share`.
 Only identifier-like literals count: a letter or underscore, then letters, digits, `_`, `.`, `:`, `/`, or `-`, from 3 through 81 characters.
 Prose, format strings, and module specifiers in `import`, `export ... from`, `require`, and `import()` do not count.
