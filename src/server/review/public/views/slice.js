@@ -1,16 +1,9 @@
-import { artifactChip, bindLinks, card, emptyNote, escapeHtml, keyValues, plural } from "./util.js";
+import { artifactChip, bindLinks, card, emptyNote, escapeHtml, keyValues, plural, requirementLinks } from "./util.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
 }
 
-function requirementLinks(references, ctx) {
-  return references.map((reference) => {
-    const [file, anchor] = reference.split("#");
-    const label = `${file.split("/").pop()}${anchor ? `#${anchor}` : ""}`;
-    return ctx.hasArtifact(file) ? `<button type="button" class="link-chip artifact-chip" data-artifact="${escapeHtml(file)}"><code>${escapeHtml(label)}</code></button>` : `<code>${escapeHtml(reference)}</code>`;
-  }).join(" ");
-}
 
 function reviewCard(review, ctx) {
   if (!review) return card("Review ledger", emptyNote("No review has started for this slice."), { eyebrow: "review.json" });
@@ -31,7 +24,7 @@ export async function render(container, entity, ctx) {
   const data = entity.data;
   const slice = data.slice;
   const artifacts = data.artifacts ?? { files: [] };
-  const known = new Set([artifacts.narrative, artifacts.conceptDelta, artifacts.review?.path].filter(Boolean));
+  const known = new Set([artifacts.narrative, artifacts.changeMap, artifacts.review?.path].filter(Boolean));
   const others = artifacts.files.filter((file) => !known.has(file));
   container.innerHTML = `
     <section class="view-card summary-card">
@@ -51,11 +44,11 @@ export async function render(container, entity, ctx) {
       ])}
     </section>
     <div class="artifact-cards">
-      ${card("Concept delta", artifacts.conceptDelta ? `<p>The planned concept transitions and their readiness.</p><p>${artifactChip(artifacts.conceptDelta, ctx, "Open the concept graph")}</p>` : emptyNote("No concept delta exists yet."), { eyebrow: "concept-delta.json" })}
+      ${card("Change map", artifacts.changeMap ? `<p>The planned changes and their readiness.</p><p>${artifactChip(artifacts.changeMap, ctx, "Open the change map")}</p>` : emptyNote("No change map exists yet."), { eyebrow: artifacts.changeMap ? artifacts.changeMap.split("/").pop() : "change-map.json" })}
       ${reviewCard(artifacts.review, ctx)}
     </div>
-    ${artifacts.narrative ? `<section class="view-card"><header class="view-card-header"><p class="eyebrow">slice.md</p><h2>Design narrative</h2></header><div class="document-content" data-narrative><p class="rendering">Loading narrative</p></div></section>` : ""}
-    ${card("Other documents", others.length ? `<ul class="plain-list">${others.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder has no other files."), { eyebrow: plural(artifacts.files.length, "file") + " in the slice folder" })}`;
+    ${card("Other documents", others.length ? `<ul class="plain-list">${others.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder has no other files."), { eyebrow: plural(artifacts.files.length, "file") + " in the slice folder" })}
+    ${artifacts.narrative ? `<section class="view-card"><header class="view-card-header"><p class="eyebrow">slice.md</p><h2>Design narrative</h2></header><div class="document-content" data-narrative><p class="rendering">Loading narrative</p></div></section>` : ""}`;
   bindLinks(container, ctx);
   if (artifacts.narrative) {
     try {

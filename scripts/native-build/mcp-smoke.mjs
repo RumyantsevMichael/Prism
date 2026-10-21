@@ -61,23 +61,23 @@ async function managedTrial() {
   await writeFile(path.join(projectRoot, "requirements.md"), "Preserve the retry result while removing the redundant local variable.\n");
   await mkdir(path.join(projectRoot, "vendor"));
   await writeFile(path.join(projectRoot, "vendor/large.js"), "// " + "x".repeat(2 * 1024 * 1024));
-  const deltaPath = "plans/managed/concept-delta.json", reviewPath = "plans/managed/review.json";
-  const omittedDeltaPath = "plans/omitted/concept-delta.json";
+  const deltaPath = "plans/managed/change-map.json", reviewPath = "plans/managed/review.json";
+  const omittedDeltaPath = "plans/omitted/change-map.json";
   await call("capture_repository_snapshot", { deltaPath: omittedDeltaPath });
   const baseline = await call("capture_repository_snapshot", { deltaPath });
   assert.equal(baseline.complete, false);
-  const omitted = await call("update_concept_delta", { deltaPath: omittedDeltaPath, expectedRevision: null,
+  const omitted = await call("update_change_map", { deltaPath: omittedDeltaPath, expectedRevision: null,
     baselineId: baseline.snapshotId, scope: ["vendor/large.js"], operations: [] });
   assert.equal(omitted.ready, false);
   assert.ok(omitted.diagnostics.some(item => item.code === "evidence_missing"), JSON.stringify(omitted));
   const reference = { path: "retry.mjs", selector: { type: "symbol", value: "retryRequest" } };
-  const delta = await call("update_concept_delta", { deltaPath, expectedRevision: null, baselineId: baseline.snapshotId,
+  const delta = await call("update_change_map", { deltaPath, expectedRevision: null, baselineId: baseline.snapshotId,
     scope: ["retry.mjs"], requirements: [{ path: "requirements.md" }], operations: [{ op: "insert", entry: {
       id: "retry", kind: "function", label: "Retry result", action: "MODIFY", before: [reference], after: [reference],
       reason: "Remove the redundant local variable while preserving the result.", requirements: [{ path: "requirements.md" }]
     } }] });
   assert.equal(delta.ready, true, JSON.stringify(delta));
-  const compare = snapshotId => ready("compare_concept_delta", { deltaPath, expectedRevision: delta.revision,
+  const compare = snapshotId => ready("compare_change_map", { deltaPath, expectedRevision: delta.revision,
     baselineId: baseline.snapshotId, resultSnapshotId: snapshotId });
   let revision = null;
   const mutate = async (id, operations) => {
@@ -115,7 +115,7 @@ async function managedTrial() {
 try {
   start();
   assert.equal((await call("discover_repository_intelligence")).status, "unprepared");
-  const deltaPath = "plans/demo/concept-delta.json";
+  const deltaPath = "plans/demo/change-map.json";
   const baseline = await call("capture_repository_snapshot", { deltaPath });
   const cold = ready("search_repository_concepts", { snapshotId: baseline.snapshotId, query: "retryRequest", filters: { domains: ["code"] } });
   const begin = performance.now();
@@ -134,7 +134,7 @@ try {
   const candidates = receipt.entries.map(candidate => ({ receiptId: retained.receiptId, candidateId: candidate.id,
     reference: { path: candidate.file, selector: candidate.span ? { type: "span", ...candidate.span, sourceHash: candidate.sourceHash } : candidate.selector || candidate.name },
     disposition: "PARTIAL", reason: "Fixture evidence: existing retry behavior can be reused but the proposed total deadline is distinct." }));
-  const delta = await call("update_concept_delta", { deltaPath, expectedRevision: null, baselineId: baseline.snapshotId, scope: ["retry.ts", "instructions.md"], requirements: [{ path: "instructions.md" }], operations: [{ op: "insert", entry: {
+  const delta = await call("update_change_map", { deltaPath, expectedRevision: null, baselineId: baseline.snapshotId, scope: ["retry.ts", "instructions.md"], requirements: [{ path: "instructions.md" }], operations: [{ op: "insert", entry: {
     id: "deadline", kind: "rule", label: "Total retry deadline", action: "ADD", before: [], after: [{ path: "instructions.md", selector: { type: "text", value: "Use one total retry deadline." } }], reason: "Fixture requirement for a total deadline.", requirements: [{ path: "instructions.md" }],
     reuseEvidence: { receiptIds: [retained.receiptId], candidates, justification: "The existing per-attempt behavior does not express a total deadline.", ...(candidates.length ? {} : { emptyResultReason: "The retained fixture contains no returned reuse candidate." }) }
   } }] });
@@ -157,19 +157,19 @@ try {
   assert.equal(retainedOffline.status, "ready"); assert.equal(retainedOffline.indexRevision, retained.indexRevision);
   const retryCandidate = retainedOffline.results.find(candidate => candidate.file === "retry.ts" && candidate.kind === "function");
   assert.ok(retryCandidate?.span, "The native parser must supply the function's exact source span.");
-  const deleted = await call("update_concept_delta", { deltaPath, expectedRevision: delta.revision, operations: [{ op: "update", id: "deadline", set: {
+  const deleted = await call("update_change_map", { deltaPath, expectedRevision: delta.revision, operations: [{ op: "update", id: "deadline", set: {
     action: "DELETE", kind: "function", before: [{ path: "retry.ts", selector: { type: "span", ...retryCandidate.span, sourceHash: retryCandidate.sourceHash } }], after: []
   } }] });
   await writeFile(path.join(projectRoot, "retry.ts"), "export function retryRequest() { return 2; }\n");
   const changed = await call("capture_repository_snapshot", { deltaPath });
-  const retainedDeletion = await ready("compare_concept_delta", { deltaPath, expectedRevision: deleted.revision, baselineId: baseline.snapshotId, resultSnapshotId: changed.snapshotId });
+  const retainedDeletion = await ready("compare_change_map", { deltaPath, expectedRevision: deleted.revision, baselineId: baseline.snapshotId, resultSnapshotId: changed.snapshotId });
   assert.ok(retainedDeletion.observations.some(item => item.code === "retained_source" && item.conceptId === "deadline"), JSON.stringify(retainedDeletion));
-  const falseAddition = await call("update_concept_delta", { deltaPath, expectedRevision: deleted.revision, operations: [{ op: "update", id: "deadline", set: {
+  const falseAddition = await call("update_change_map", { deltaPath, expectedRevision: deleted.revision, operations: [{ op: "update", id: "deadline", set: {
     action: "ADD", before: [], after: [{ path: "retry.ts", selector: { type: "symbol", value: "retryRequest" } }]
   } }] });
   assert.equal(falseAddition.ready, false);
   assert.ok(falseAddition.diagnostics.some(item => item.code === "addition_already_exists"));
-  const existingAddition = await ready("compare_concept_delta", { deltaPath, expectedRevision: falseAddition.revision, baselineId: baseline.snapshotId, resultSnapshotId: changed.snapshotId });
+  const existingAddition = await ready("compare_change_map", { deltaPath, expectedRevision: falseAddition.revision, baselineId: baseline.snapshotId, resultSnapshotId: changed.snapshotId });
   assert.ok(existingAddition.observations.some(item => item.code === "addition_already_exists"));
   await writeFile(path.join(projectRoot, "retry.ts"), "export function retryRequest() { return 1; }\n");
   await rename(path.join(projectRoot, "retry.ts"), path.join(projectRoot, "renamed.ts"));

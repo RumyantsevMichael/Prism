@@ -4,6 +4,16 @@ import { escapeHtml } from "./util.js";
 export const HEADING_PREFIX = "md-";
 
 // GitHub-style slugs, so an anchor written for the repository host also lands here.
+// A Markdown file can name a section with an explicit anchor line, such as `<a id="1"></a>` above a requirement heading.
+const EXPLICIT_ANCHOR = /^\s*&lt;a\s+(?:id|name)=&quot;([^&]+)&quot;\s*&gt;\s*&lt;\/a&gt;\s*$/;
+
+// Resolves an anchor to its heading, also when an explicit anchor stands just above the heading it names.
+export function anchorTarget(root, anchor) {
+  const target = anchor && root.querySelector(`#${CSS.escape(HEADING_PREFIX + anchor)}`);
+  const next = target?.nextElementSibling;
+  return target?.classList.contains("md-anchor") && next && /^H[1-6]$/.test(next.tagName) ? next : target;
+}
+
 export function headingSlug(text) {
   return text
     .replace(/<[^>]+>/g, "")
@@ -96,6 +106,9 @@ export function renderText(path, content, options = {}) {
       }
       index -= 1;
       output.push(`<div class="table-wrap"><table><thead><tr>${headers.map((cell) => `<th>${cell}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+    } else if (EXPLICIT_ANCHOR.test(line)) {
+      closeList();
+      output.push(`<span class="md-anchor" id="${HEADING_PREFIX}${line.match(EXPLICIT_ANCHOR)[1]}"></span>`);
     } else if (/^#{1,6}\s/.test(line)) {
       closeList();
       const level = line.match(/^#+/)[0].length;

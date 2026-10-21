@@ -8,8 +8,12 @@ import { normalizeRepositorySourcePath } from "../repository-intelligence/reposi
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { withinScope } from "./conservation-store.mjs";
 
-export const CONCEPT_DELTA_LIMITS = Object.freeze({ operations: 100, bytes: 1024 * 1024, page: 100, defaultPage: 50 });
-export const CONCEPT_ACTIONS = ["KEEP", "MODIFY", "REPLACE", "DELETE", "ADD"];
+// New slices write change-map.json; slices designed before the rename keep their concept-delta.json, and either name finds the slice's one file.
+export const CHANGE_MAP_FILE = "change-map.json";
+export const LEGACY_CHANGE_MAP_FILE = "concept-delta.json";
+export const CHANGE_MAP_FILES = [CHANGE_MAP_FILE, LEGACY_CHANGE_MAP_FILE];
+export const CHANGE_MAP_LIMITS = Object.freeze({ operations: 100, bytes: 1024 * 1024, page: 100, defaultPage: 50 });
+export const CHANGE_ACTIONS = ["KEEP", "MODIFY", "REPLACE", "DELETE", "ADD"];
 const string = { type: "string", minLength: 1 };
 const object = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
 const array = (items, extra = {}) => ({ type: "array", items, ...extra });
@@ -20,36 +24,36 @@ const evidenceSchema = object({
   justification: string, emptyResultReason: string
 }, ["candidates", "justification"]);
 const entryProperties = {
-  id: string, kind: string, label: string, action: { enum: CONCEPT_ACTIONS },
+  id: string, kind: string, label: string, action: { enum: CHANGE_ACTIONS },
   before: array(referenceSchema), after: array(referenceSchema), reason: string, reuseEvidence: evidenceSchema, requirements: array(referenceSchema)
 };
 const entrySchema = object(entryProperties, Object.keys(entryProperties).filter((key) => !["reuseEvidence", "requirements"].includes(key)));
 const scopeSchema = array(string, { minItems: 1 });
 const revisionSchema = { oneOf: [{ type: "string", pattern: "^[a-f0-9]{64}$" }, { type: "null" }] };
 const commonProperties = { projectRoot: string, deltaPath: string, expectedRevision: revisionSchema };
-export const GET_CONCEPT_DELTA_SCHEMA = object({
+export const GET_CHANGE_MAP_SCHEMA = object({
   ...commonProperties, ids: array(string), offset: { type: "integer", minimum: 0 },
-  limit: { type: "integer", minimum: 1, maximum: CONCEPT_DELTA_LIMITS.page }
+  limit: { type: "integer", minimum: 1, maximum: CHANGE_MAP_LIMITS.page }
 }, ["projectRoot", "deltaPath"]);
-export const UPDATE_CONCEPT_DELTA_SCHEMA = object({
+export const UPDATE_CHANGE_MAP_SCHEMA = object({
   ...commonProperties, scope: scopeSchema, ...deltaMetadata, migrate: { type: "boolean" },
   operations: array({ oneOf: [
     object({ op: { const: "insert" }, entry: entrySchema }),
     object({ op: { const: "update" }, id: string, set: { ...object(Object.fromEntries(Object.entries(entryProperties).filter(([key]) => key !== "id")), []), minProperties: 1 } }),
     object({ op: { const: "remove" }, id: string })
-  ] }, { maxItems: CONCEPT_DELTA_LIMITS.operations })
+  ] }, { maxItems: CHANGE_MAP_LIMITS.operations })
 }, ["projectRoot", "deltaPath", "expectedRevision", "operations"]);
 const documentSchema = object({ schemaVersion: { enum: [1, 2] }, scope: scopeSchema, concepts: array(entrySchema), ...deltaMetadata }, ["schemaVersion", "scope", "concepts"]);
 
-export class ConceptDeltaError extends Error {
+export class ChangeMapError extends Error {
   constructor(code, message, details = {}) {
     super(message);
-    this.name = "ConceptDeltaError";
+    this.name = "ChangeMapError";
     this.code = code;
     Object.assign(this, details);
   }
 }
-const failure = (code, message, details) => new ConceptDeltaError(code, message, details);
+const failure = (code, message, details) => new ChangeMapError(code, message, details);
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
@@ -134,13 +138,30 @@ function isInside(root, target) {
   const relative = path.relative(root, target);
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
-export async function resolveArtifactPath(projectRoot, deltaPath, createParent = false, artifactName = "concept-delta.json") {
+async function existingSibling(root, relative) {
+  for (const name of [path.posix.basename(relative), ...CHANGE_MAP_FILES]) {
+    const candidate = path.posix.join(path.posix.dirname(relative), name);
+    try {
+      await lstat(path.resolve(root, candidate));
+      return candidate;
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+  return relative;
+}
+// One slice folder holds one change map, so two paths name the same change map when they share a folder and a change-map file name.
+export function sameChangeMap(left, right) {
+  return path.posix.dirname(left) === path.posix.dirname(right) && CHANGE_MAP_FILES.includes(path.posix.basename(left)) && CHANGE_MAP_FILES.includes(path.posix.basename(right));
+}
+export async function resolveArtifactPath(projectRoot, deltaPath, createParent = false, artifactName = CHANGE_MAP_FILE) {
   if (!path.isAbsolute(projectRoot)) throw failure("invalid_path", "The project root must be absolute.");
   const root = await realpath(projectRoot);
-  const relative = safePath(deltaPath);
-  if (path.posix.basename(relative) !== artifactName || (["concept-delta.json", "review.json", "review.md"].includes(artifactName) && !relative.includes("/"))) {
-    throw failure("invalid_path", "The deltaPath must name a slice concept-delta.json file.");
+  const changeMap = artifactName === CHANGE_MAP_FILE;
+  let relative = safePath(deltaPath);
+  const named = changeMap ? CHANGE_MAP_FILES.includes(path.posix.basename(relative)) : path.posix.basename(relative) === artifactName;
+  if (!named || ([CHANGE_MAP_FILE, "review.json", "review.md"].includes(artifactName) && !relative.includes("/"))) {
+    throw failure("invalid_path", changeMap ? "The deltaPath must name a slice change-map.json file." : `The path must name a slice ${artifactName} file.`);
   }
+  if (changeMap) relative = await existingSibling(root, relative);
   const target = path.resolve(root, relative);
   let ancestor = path.dirname(target);
   while (true) {
@@ -155,7 +176,7 @@ export async function resolveArtifactPath(projectRoot, deltaPath, createParent =
   if (createParent) await mkdir(path.dirname(target), { recursive: true });
   try {
     const info = await lstat(target);
-    if (!info.isFile() || info.isSymbolicLink()) throw failure("invalid_path", "The concept delta must be a regular file.");
+    if (!info.isFile() || info.isSymbolicLink()) throw failure("invalid_path", "The change map must be a regular file.");
   } catch (error) { if (error.code !== "ENOENT") throw error; }
   return { root, target, deltaPath: relative };
 }
@@ -163,39 +184,39 @@ async function loadDelta(resolved) {
   let handle;
   try { handle = await open(resolved.target, constants.O_RDONLY | constants.O_NOFOLLOW); }
   catch (error) {
-    if (error.code === "ENOENT") return { exists: false, revision: null, document: null, valid: true, ready: false, errors: [], diagnostics: [{ code: "delta_missing", message: "Create the concept delta before FIT." }] };
+    if (error.code === "ENOENT") return { exists: false, revision: null, document: null, valid: true, ready: false, errors: [], diagnostics: [{ code: "delta_missing", message: "Create the change map before FIT." }] };
     throw error;
   }
   let contents;
   try {
     const info = await handle.stat();
-    if (!info.isFile()) throw failure("invalid_path", "The concept delta must be a regular file.");
-    if (info.size > CONCEPT_DELTA_LIMITS.bytes) throw failure("artifact_too_large", "The concept delta exceeds 1 MiB.");
-    const buffer = Buffer.alloc(CONCEPT_DELTA_LIMITS.bytes + 1);
+    if (!info.isFile()) throw failure("invalid_path", "The change map must be a regular file.");
+    if (info.size > CHANGE_MAP_LIMITS.bytes) throw failure("artifact_too_large", "The change map exceeds 1 MiB.");
+    const buffer = Buffer.alloc(CHANGE_MAP_LIMITS.bytes + 1);
     let length = 0;
     while (length < buffer.length) {
       const { bytesRead } = await handle.read(buffer, length, buffer.length - length, null);
       if (!bytesRead) break;
       length += bytesRead;
     }
-    if (length > CONCEPT_DELTA_LIMITS.bytes) throw failure("artifact_too_large", "The concept delta exceeds 1 MiB.");
+    if (length > CHANGE_MAP_LIMITS.bytes) throw failure("artifact_too_large", "The change map exceeds 1 MiB.");
     contents = buffer.subarray(0, length);
   } finally { await handle.close(); }
   const revision = createHash("sha256").update(contents).digest("hex");
   let raw;
   try { raw = JSON.parse(contents.toString("utf8")); }
-  catch { return { exists: true, revision, document: null, valid: false, ready: false, errors: ["The concept delta must contain valid JSON."], diagnostics: [] }; }
+  catch { return { exists: true, revision, document: null, valid: false, ready: false, errors: ["The change map must contain valid JSON."], diagnostics: [] }; }
   return { exists: true, revision, ...validateDocument(raw) };
 }
 async function assess(resolved, loaded) {
   if (!loaded.document || !loaded.valid) return loaded;
-  if (loaded.document.schemaVersion === 1) return { ...loaded, ready: false, diagnostics: [...loaded.diagnostics, { code: "legacy_evidence", message: "Migrate the delta with a retained baseline before a new audit." }] };
+  if (loaded.document.schemaVersion === 1) return { ...loaded, ready: false, diagnostics: [...loaded.diagnostics, { code: "legacy_evidence", message: "Migrate the change map with a retained baseline before a new audit." }] };
   const { assessDeltaReadiness } = await import("./conservation-analysis.mjs");
   const diagnostics = await assessDeltaReadiness(resolved.root, loaded.document);
   return { ...loaded, ready: loaded.ready && diagnostics.every(item => item.blocking === false), diagnostics: [...loaded.diagnostics, ...diagnostics] };
 }
 function summary(resolved, loaded) {
-  const counts = Object.fromEntries(CONCEPT_ACTIONS.map((action) => [action, 0]));
+  const counts = Object.fromEntries(CHANGE_ACTIONS.map((action) => [action, 0]));
   for (const entry of loaded.document?.concepts ?? []) counts[entry.action]++;
   return { deltaPath: resolved.deltaPath, exists: loaded.exists, revision: loaded.revision, schemaVersion: loaded.document?.schemaVersion ?? null,
     ...Object.fromEntries(Object.keys(deltaMetadata).filter(key => loaded.document?.[key] !== undefined).map(key => [key, loaded.document[key]])),
@@ -203,21 +224,21 @@ function summary(resolved, loaded) {
     valid: loaded.valid, ready: loaded.ready, errors: loaded.errors.slice(0, 50), diagnostics: loaded.diagnostics.slice(0, 50), totalDiagnostics: loaded.diagnostics.length };
 }
 function checkRevision(expected, loaded) {
-  if (expected !== loaded.revision) throw failure("revision_conflict", "The concept delta changed. Read it again before retrying.", { currentRevision: loaded.revision });
+  if (expected !== loaded.revision) throw failure("revision_conflict", "The change map changed. Read it again before retrying.", { currentRevision: loaded.revision });
 }
-export async function getConceptDelta(input) {
-  assertInput(GET_CONCEPT_DELTA_SCHEMA, input);
+export async function getChangeMap(input) {
+  assertInput(GET_CHANGE_MAP_SCHEMA, input);
   const resolved = await resolveArtifactPath(input.projectRoot, input.deltaPath);
   const loaded = await assess(resolved, await loadDelta(resolved));
   if (Object.hasOwn(input, "expectedRevision")) checkRevision(input.expectedRevision, loaded);
   const selected = (loaded.document?.concepts ?? []).filter((entry) => input.ids === undefined || input.ids.includes(entry.id));
   const offset = input.offset ?? 0;
-  const limit = input.limit ?? CONCEPT_DELTA_LIMITS.defaultPage;
+  const limit = input.limit ?? CHANGE_MAP_LIMITS.defaultPage;
   return { ...summary(resolved, loaded), concepts: selected.slice(offset, offset + limit), selectedCount: selected.length,
     nextOffset: offset + limit < selected.length ? offset + limit : null };
 }
-export async function updateConceptDelta(input) {
-  assertInput(UPDATE_CONCEPT_DELTA_SCHEMA, input);
+export async function updateChangeMap(input) {
+  assertInput(UPDATE_CHANGE_MAP_SCHEMA, input);
   const resolved = await resolveArtifactPath(input.projectRoot, input.deltaPath, true);
   const { conservationStore } = await import("./conservation-store.mjs");
   if (input.expectedRevision === null || input.migrate) await conservationStore.registerSlice(resolved.root, resolved.deltaPath, input.migrate ? input.expectedRevision : undefined);
@@ -225,8 +246,8 @@ export async function updateConceptDelta(input) {
     await resolveArtifactPath(input.projectRoot, input.deltaPath);
     const current = await loadDelta(resolved);
     checkRevision(input.expectedRevision, current);
-    if (!current.valid) throw failure("invalid_delta", "The existing concept delta is invalid and was not changed.", { errors: current.errors });
-    if (current.document?.schemaVersion === 1 && input.migrate !== true) throw failure("validation_failed", "Use migrate with a retained baseline before changing a legacy delta.");
+    if (!current.valid) throw failure("invalid_delta", "The existing change map is invalid and was not changed.", { errors: current.errors });
+    if (current.document?.schemaVersion === 1 && input.migrate !== true) throw failure("validation_failed", "Use migrate with a retained baseline before changing a legacy change map.");
     if (current.document?.baselineId && input.baselineId && current.document.baselineId !== input.baselineId) throw failure("validation_failed", "Corrections must preserve the original baseline.");
     const entries = new Map((current.document?.concepts ?? []).map((entry) => [entry.id, entry]));
     for (const [index, operation] of input.operations.entries()) {
@@ -241,17 +262,17 @@ export async function updateConceptDelta(input) {
       }
     }
     const candidate = validateDocument({ schemaVersion: 2, scope: input.scope ?? current.document?.scope, concepts: [...entries.values()], ...Object.fromEntries(Object.keys(deltaMetadata).filter(key => input[key] !== undefined || current.document?.[key] !== undefined).map(key => [key, input[key] ?? current.document[key]])) });
-    if (!candidate.valid) throw failure("validation_failed", "The proposed concept delta is invalid and was not written.", { errors: candidate.errors });
+    if (!candidate.valid) throw failure("validation_failed", "The proposed change map is invalid and was not written.", { errors: candidate.errors });
     const { conservationStore } = await import("./conservation-store.mjs");
     const outputs = [...await conservationStore.outputs(resolved.root), resolved.deltaPath, `${path.posix.dirname(resolved.deltaPath)}/review.json`, `${path.posix.dirname(resolved.deltaPath)}/review.md`];
-    if (candidate.document.concepts.some(entry => [...entry.before, ...entry.after].some(ref => outputs.includes(ref.path)))) throw failure("invalid_path", "Managed evidence outputs cannot be target concepts.");
+    if (candidate.document.concepts.some(entry => [...entry.before, ...entry.after].some(ref => outputs.includes(ref.path)))) throw failure("invalid_path", "Managed evidence outputs cannot be change targets.");
     const assessed = await assess(resolved, candidate);
     const contents = `${JSON.stringify(candidate.document, null, 2)}\n`;
-    if (Buffer.byteLength(contents) > CONCEPT_DELTA_LIMITS.bytes) throw failure("artifact_too_large", "The concept delta exceeds 1 MiB.");
+    if (Buffer.byteLength(contents) > CHANGE_MAP_LIMITS.bytes) throw failure("artifact_too_large", "The change map exceeds 1 MiB.");
     let migrationEvidenceId;
     if (input.migrate && current.document?.schemaVersion === 1) {
       const { regularBytes } = await import("../repository-intelligence/native-semantic-runtime.mjs");
-      const bytes = await regularBytes(resolved.target, CONCEPT_DELTA_LIMITS.bytes);
+      const bytes = await regularBytes(resolved.target, CHANGE_MAP_LIMITS.bytes);
       migrationEvidenceId = await conservationStore.put(resolved.root, { kind: "migration", schemaVersion: 1, project: resolved.root, artifactPath: resolved.deltaPath, revision: current.revision, lines: bytes.toString().split("\n") });
     }
     await conservationStore.registerSlice(resolved.root, resolved.deltaPath, input.migrate ? current.revision : undefined);
@@ -267,10 +288,10 @@ export async function updateConceptDelta(input) {
   }, failure));
 }
 
-export async function readConceptDeltaDocument(projectRoot, deltaPath, expectedRevision) {
+export async function readChangeMapDocument(projectRoot, deltaPath, expectedRevision) {
   const resolved = await resolveArtifactPath(projectRoot, deltaPath);
   const loaded = await loadDelta(resolved);
   if (expectedRevision !== undefined) checkRevision(expectedRevision, loaded);
-  if (!loaded.exists || !loaded.valid) throw failure("validation_failed", "The concept delta is missing or invalid.", { errors: loaded.errors });
-  return { document: loaded.document, revision: loaded.revision };
+  if (!loaded.exists || !loaded.valid) throw failure("validation_failed", "The change map is missing or invalid.", { errors: loaded.errors });
+  return { document: loaded.document, revision: loaded.revision, deltaPath: resolved.deltaPath };
 }

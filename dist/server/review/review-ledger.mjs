@@ -2,7 +2,7 @@
 import path from "node:path";
 import { withArtifactLock, withFileLock } from "../workflow/artifact-store.mjs";
 import { assertInput } from "../workflow/artifact-schema.mjs";
-import { resolveArtifactPath, readConceptDeltaDocument } from "../conservation/concept-delta.mjs";
+import { resolveArtifactPath, readChangeMapDocument, sameChangeMap } from "../conservation/change-map.mjs";
 import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { conservationStore, canonical, digest, conservationError, withinScope } from "../conservation/conservation-store.mjs";
 import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "../conservation/conservation-analysis.mjs";
@@ -104,8 +104,8 @@ async function loadReview(projectRoot, reviewPath) {
 async function comparisonFor(projectRoot, review, wave) {
   const comparison = await conservationStore.get(projectRoot, wave.comparisonId, "comparison");
   if (comparison.versions.comparison !== COMPARISON_VERSION) throw conservationError("evidence_missing", "Regenerate comparison evidence with the current identity and growth checks.");
-  const mismatched = [["deltaPath", comparison.deltaPath, review.deltaPath], ["deltaRevision", comparison.deltaRevision, wave.deltaRevision], ["baselineId", comparison.baselineId, wave.baselineId], ["snapshotId", comparison.resultSnapshotId, wave.snapshotId]].filter(([, compared, given]) => compared !== given).map(([field, compared, given]) => ({ code: "comparison_input_mismatch", field, message: `the comparison has ${compared}, and the review has ${given}` }));
-  if (mismatched.length) throw conservationError("evidence_missing", "The review inputs do not match the immutable comparison. Compare the concept delta again with the review inputs, or start the wave with the inputs of the comparison.", { problems: mismatched });
+  const mismatched = [["deltaPath", comparison.deltaPath, review.deltaPath], ["deltaRevision", comparison.deltaRevision, wave.deltaRevision], ["baselineId", comparison.baselineId, wave.baselineId], ["snapshotId", comparison.resultSnapshotId, wave.snapshotId]].filter(([field, compared, given]) => field === "deltaPath" ? !sameChangeMap(compared, given) : compared !== given).map(([field, compared, given]) => ({ code: "comparison_input_mismatch", field, message: `the comparison has ${compared}, and the review has ${given}` }));
+  if (mismatched.length) throw conservationError("evidence_missing", "The review inputs do not match the immutable comparison. Compare the change map again with the review inputs, or start the wave with the inputs of the comparison.", { problems: mismatched });
   for (const id of [wave.baselineId, wave.snapshotId]) {
     const snapshot = await conservationStore.get(projectRoot, id, "snapshot");
     for (const file of snapshot.files.filter((file2) => withinScope(file2.file, comparison.scope))) await conservationStore.bytes(projectRoot, file);
@@ -135,12 +135,12 @@ async function assessmentValid(projectRoot, review, wave, assessment, comparison
       const observation = comparison.observations.find((item) => item.id === id);
       if (!observation || observation.severity === "failure") throw conservationError("gate_blocked", "A manual assessment cannot waive a known mechanical failure.");
       if (assessment.kind === "implementation-detail") {
-        if (observation.code !== "unclassified_unit" || observation.unit?.public === true || !document.concepts.some((entry) => entry.id === assessment.conceptId && ["MODIFY", "REPLACE", "ADD"].includes(entry.action))) throw conservationError("gate_blocked", "Attribute only private implementation detail to a changed planned concept.");
+        if (observation.code !== "unclassified_unit" || observation.unit?.public === true || !document.concepts.some((entry) => entry.id === assessment.conceptId && ["MODIFY", "REPLACE", "ADD"].includes(entry.action))) throw conservationError("gate_blocked", "Attribute only private implementation detail to a planned ADD, MODIFY, or REPLACE change.");
         for (const entry of document.concepts.filter((entry2) => entry2.action === "DELETE")) for (const reference of entry.before) {
           const deleted = await resolveReference(projectRoot, before, reference, a);
-          if (deleted.units.some((target) => target.key === observation.unit?.key || comparison.units.before.some((unit) => unit.key === observation.unit?.key && unit.file === target.file && unit.start >= target.start && unit.end <= target.end))) throw conservationError("gate_blocked", "An explicitly deleted concept cannot become another concept's implementation detail.");
+          if (deleted.units.some((target) => target.key === observation.unit?.key || comparison.units.before.some((unit) => unit.key === observation.unit?.key && unit.file === target.file && unit.start >= target.start && unit.end <= target.end))) throw conservationError("gate_blocked", "An explicitly deleted item cannot become implementation detail of another change.");
         }
-      } else if (observation.code === "unclassified_unit") throw conservationError("gate_blocked", `The observation ${id} reports the unclassified unit ${observation.unit ? `${observation.unit.file}:${observation.unit.selector}` : observation.file || "in the comparison"}. Record an implementation-detail assessment that names its changed concept, or revise the design so that a concept entry covers it.`);
+      } else if (observation.code === "unclassified_unit") throw conservationError("gate_blocked", `The observation ${id} reports the unclassified unit ${observation.unit ? `${observation.unit.file}:${observation.unit.selector}` : observation.file || "in the comparison"}. Record an implementation-detail assessment that names its planned change, or revise the design so that a change map entry covers it.`);
     }
   }
   const boundRequirement = (reference) => document.requirements?.some((item) => item.path === reference.path && (item.selector === void 0 || canonical(item) === canonical(reference)));
@@ -151,9 +151,9 @@ async function assessmentValid(projectRoot, review, wave, assessment, comparison
       ...justification?.requirements.length ? [] : ["justification.requirements is empty"],
       ...(justification?.requirements || []).filter((ref) => !boundRequirement(ref)).map((ref) => `the requirement ${describe(ref)} is not in the delta requirements`),
       ...justification?.conceptIds.length ? [] : ["justification.conceptIds is empty"],
-      ...(justification?.conceptIds || []).filter((id) => !document.concepts.some((entry) => entry.id === id)).map((id) => `the concept ${id} is not in the delta`)
+      ...(justification?.conceptIds || []).filter((id) => !document.concepts.some((entry) => entry.id === id)).map((id) => `the change ${id} is not in the change map`)
     ];
-    if (missing.length) throw conservationError("gate_blocked", "Growth needs governing requirements and affected concepts.", { problems: missing.map((message) => ({ code: "growth_justification_invalid", message })) });
+    if (missing.length) throw conservationError("gate_blocked", "Growth needs governing requirements and the changes that cause it.", { problems: missing.map((message) => ({ code: "growth_justification_invalid", message })) });
     for (const id of assessment.growthIds) {
       const growth = comparison.growth.find((item) => item.id === id);
       if (!growth) throw conservationError("validation_failed", `The comparison has no growth ${id}.`);
@@ -208,7 +208,7 @@ async function carryCandidates(projectRoot, review, wave, from, lane, acceptedBy
   laneOf(from, lane);
   const comparison = await comparisonFor(projectRoot, review, wave), previous = await conservationStore.get(projectRoot, from.comparisonId, "comparison");
   const earlier = await conservationStore.get(projectRoot, from.snapshotId, "snapshot"), current = await conservationStore.get(projectRoot, wave.snapshotId, "snapshot");
-  const document = (await readConceptDeltaDocument(projectRoot, review.deltaPath, wave.deltaRevision)).document;
+  const document = (await readChangeMapDocument(projectRoot, review.deltaPath, wave.deltaRevision)).document;
   const carried = [], notCarried = [];
   for (const assessment of acceptedIn(review, from).filter((item) => item.lane === lane)) {
     const id = `${wave.id}/${assessment.id.startsWith(`${from.id}/`) ? assessment.id.slice(from.id.length + 1) : assessment.id}`;
@@ -253,7 +253,7 @@ async function carryCandidates(projectRoot, review, wave, from, lane, acceptedBy
 }
 async function assessmentSkeleton(projectRoot, review, wave) {
   const comparison = await comparisonFor(projectRoot, review, wave), accepted = acceptedIn(review, wave);
-  const document = (await readConceptDeltaDocument(projectRoot, review.deltaPath, wave.deltaRevision)).document;
+  const document = (await readChangeMapDocument(projectRoot, review.deltaPath, wave.deltaRevision)).document;
   const before = await conservationStore.get(projectRoot, wave.baselineId, "snapshot"), after = await conservationStore.get(projectRoot, wave.snapshotId, "snapshot");
   const laneFor = (file) => (file && wave.lanes.find((lane) => withinScope(file, lane.coverage)) || wave.lanes[0]).id;
   const groups = /* @__PURE__ */ new Map();
@@ -277,7 +277,7 @@ async function assessmentSkeleton(projectRoot, review, wave) {
     kind: group.kind,
     observationIds: group.ids.slice(index, index + 100),
     evidence: evidence(group.files),
-    ...group.kind === "implementation-detail" ? { conceptId: "<changed ADD, MODIFY or REPLACE concept>" } : {},
+    ...group.kind === "implementation-detail" ? { conceptId: "<planned ADD, MODIFY, or REPLACE change ID>" } : {},
     reason: `<what you checked for ${group.code}>`
   } });
   const growth = comparison.growth.filter((item) => !accepted.some((assessment) => assessment.kind === "growth" && assessment.growthIds?.includes(item.id)));
@@ -287,7 +287,7 @@ async function assessmentSkeleton(projectRoot, review, wave) {
     kind: "growth",
     growthIds: growth.map((item) => item.id),
     evidence: [{ path: "<file you checked>" }],
-    justification: { dimensions: [...new Set(growth.map((item) => item.dimension))], conceptIds: ["<concepts that cause the growth>"], requirements: document.requirements?.length ? document.requirements : [{ path: "<governing requirement>" }], reason: "<why the requirement needs the growth>" },
+    justification: { dimensions: [...new Set(growth.map((item) => item.dimension))], conceptIds: ["<IDs of the changes that cause the growth>"], requirements: document.requirements?.length ? document.requirements : [{ path: "<governing requirement>" }], reason: "<why the requirement needs the growth>" },
     reason: "<what you checked>"
   } });
   for (const file of new Set((await uncoveredText(projectRoot, comparison, accepted, document, before, after)).map((item) => item.file))) operations.push({ op: "record_assessment", assessment: {
@@ -306,7 +306,7 @@ async function assessmentSkeleton(projectRoot, review, wave) {
 async function waveProblems(projectRoot, review, wave, requireLaneResults) {
   const problems = [];
   const add = (code, message, id) => problems.push({ code, message, ...id ? { id } : {} });
-  const loaded = await readConceptDeltaDocument(projectRoot, review.deltaPath, wave.deltaRevision), document = loaded.document;
+  const loaded = await readChangeMapDocument(projectRoot, review.deltaPath, wave.deltaRevision), document = loaded.document;
   if (document.baselineId !== review.baselineId || wave.baselineId !== review.baselineId) add("baseline_changed", "The original baseline must remain unchanged.");
   for (const item of await assessDeltaReadiness(projectRoot, document)) if (item.blocking !== false) add(item.code, item.message, item.id);
   const comparison = await comparisonFor(projectRoot, review, wave);
@@ -382,7 +382,7 @@ async function checkReviewGate(input) {
 function markdown(review) {
   const lines = ["# Slice review", "", "This file is a generated view of review.json.", ""];
   for (const wave of review.waves) {
-    lines.push(`## ${wave.mode}: ${wave.id}`, "", `Concept delta revision: ${wave.deltaRevision}`, `Source snapshot: ${wave.snapshotId}`, `Comparison: ${wave.comparisonId}`, "");
+    lines.push(`## ${wave.mode}: ${wave.id}`, "", `Change map revision: ${wave.deltaRevision}`, `Source snapshot: ${wave.snapshotId}`, `Comparison: ${wave.comparisonId}`, "");
     for (const lane of wave.lanes) lines.push(`- ${lane.id}: ${lane.result?.status || "PENDING"} (${lane.reviewer})`);
     lines.push("");
   }
@@ -426,8 +426,8 @@ async function updateReview(input) {
     if (!loaded.document && (!input.deltaPath || !input.delivery || input.actor.role !== "coordinator")) throw conservationError("validation_failed", "Review creation requires the coordinator, delivery worker, and delta path.");
     const deltaTarget = await resolveArtifactPath(input.projectRoot, loaded.document?.deltaPath || input.deltaPath, false);
     return withArtifactLock(deltaTarget.target, () => withFileLock(deltaTarget.target, async () => {
-      const review = structuredClone(loaded.document || { schemaVersion: 1, deltaPath: input.deltaPath, coordinator: input.actor.id, delivery: input.delivery, deliveryWorkers: [input.delivery], waves: [], findings: [], assessments: [], conflicts: [], exchangeWorkers: [], legacy: [], history: [] });
-      if (path.posix.dirname(review.deltaPath) !== path.posix.dirname(input.reviewPath) || input.deltaPath && input.deltaPath !== review.deltaPath) throw conservationError("invalid_path", "A review and its concept delta must share the slice directory.");
+      const review = structuredClone(loaded.document || { schemaVersion: 1, deltaPath: deltaTarget.deltaPath, coordinator: input.actor.id, delivery: input.delivery, deliveryWorkers: [input.delivery], waves: [], findings: [], assessments: [], conflicts: [], exchangeWorkers: [], legacy: [], history: [] });
+      if (path.posix.dirname(review.deltaPath) !== path.posix.dirname(input.reviewPath) || input.deltaPath && !sameChangeMap(input.deltaPath, review.deltaPath)) throw conservationError("invalid_path", "A review and its change map must share the slice directory.");
       const now = () => (/* @__PURE__ */ new Date()).toISOString(), carry = { carried: [], notCarried: [] };
       for (const operation of input.operations) {
         const wave2 = lastWave(review), op = operation.op;
@@ -437,7 +437,7 @@ async function updateReview(input) {
           if (review.waves.some((item) => item.id === next.id) || !next.lanes.length || new Set(next.lanes.map((lane) => lane.id)).size !== next.lanes.length || next.lanes.some((lane) => !lane.coverage.length || lane.reviewer === review.coordinator || review.deliveryWorkers.includes(lane.reviewer))) throw conservationError("validation_failed", "Assign distinct review lanes and independent reviewers.");
           const requiredLanes = review.waves.filter((item) => item.mode === next.mode).flatMap((item) => item.lanes.map((lane) => lane.id));
           if (requiredLanes.some((id) => !next.lanes.some((lane) => lane.id === id))) throw conservationError("gate_blocked", "A correction wave must retain every required lane from earlier waves in this review mode.");
-          const delta = await readConceptDeltaDocument(input.projectRoot, review.deltaPath, next.deltaRevision);
+          const delta = await readChangeMapDocument(input.projectRoot, review.deltaPath, next.deltaRevision);
           const baselineId = delta.document?.baselineId;
           if (!baselineId || review.baselineId && review.baselineId !== baselineId) throw conservationError("gate_blocked", "A review must preserve its original retained baseline.");
           const created = { id: next.id, mode: next.mode, deltaRevision: next.deltaRevision, snapshotId: next.snapshotId, comparisonId: next.comparisonId, baselineId, lanes: next.lanes };
@@ -504,14 +504,14 @@ async function updateReview(input) {
             if (input.actor.role === "delivery") requireRole(review, input.actor, "delivery");
             else reviewer(review, wave2, input.actor, data.lane, true);
             const assessment = { ...data, wave: wave2.id, author: input.actor.id, ...input.actor.role === "reviewer" ? { acceptedBy: input.actor.id } : {} };
-            const delta = await readConceptDeltaDocument(input.projectRoot, review.deltaPath, wave2.deltaRevision);
+            const delta = await readChangeMapDocument(input.projectRoot, review.deltaPath, wave2.deltaRevision);
             await assessmentValid(input.projectRoot, review, wave2, assessment, await comparisonFor(input.projectRoot, review, wave2), delta.document);
             review.assessments.push(assessment);
           } else if (op === "accept_assessment") {
             const assessment = review.assessments.find((item) => item.id === operation.id && item.wave === wave2.id);
             if (!assessment) throw conservationError("validation_failed", "The assessment is not part of this wave.");
             reviewer(review, wave2, input.actor, assessment.lane, true);
-            const delta = await readConceptDeltaDocument(input.projectRoot, review.deltaPath, wave2.deltaRevision);
+            const delta = await readChangeMapDocument(input.projectRoot, review.deltaPath, wave2.deltaRevision);
             await assessmentValid(input.projectRoot, review, wave2, assessment, await comparisonFor(input.projectRoot, review, wave2), delta.document);
             assessment.acceptedBy = input.actor.id;
           } else if (op === "record_exchange") {

@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "../repository-intelligence/native-repository-intelligence.mjs";
 import { privateDirectory, regularBytes, semanticError } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
-import { resolveArtifactPath } from "./concept-delta.mjs";
+import { CHANGE_MAP_FILES, resolveArtifactPath } from "./change-map.mjs";
 import type { Evidence, SnapshotEvidence, InventoryEntry } from "./conservation-types.mjs";
 import type { NativeSource, SourceSnapshot, SourceFile, Diagnostic } from "../repository-intelligence/repository-unit-types.mjs";
 
@@ -37,6 +37,14 @@ async function retainImmutable(target: string, bytes: string | Uint8Array, expec
   }));
 }
 
+
+// A slice's change map keeps its ownership under either file name, so renaming concept-delta.json to change-map.json needs no re-registration.
+function withRenamedChangeMaps(outputs: string[]) {
+  const names = [...CHANGE_MAP_FILES, ...CHANGE_MAP_FILES.map(name => `${name}.lock`)];
+  const siblings = outputs.filter(file => names.includes(path.posix.basename(file))).flatMap(file => names.map(name => `${path.posix.dirname(file)}/${name}`));
+  return [...new Set([...outputs, ...siblings])].sort();
+}
+
 export class ConservationStore {
   directory: string;
   constructor(directory?: string, env: NodeJS.ProcessEnv = process.env) {
@@ -56,7 +64,7 @@ export class ConservationStore {
     try {
       const record = JSON.parse((await regularBytes(path.join(directory, "outputs.json"), 1024 * 1024)).toString()) as Registry;
       if (record.schemaVersion !== 1 || !Array.isArray(record.outputs) || record.outputs.some(file => typeof file !== "string")) throw new Error();
-      return record.outputs;
+      return withRenamedChangeMaps(record.outputs);
     } catch (error) { if (error.code === "ENOENT") return []; throw conservationError("evidence_missing", "The managed output registry is invalid."); }
   }
   async registerSlice(projectRoot: string, deltaPath: string, legacyRevision?: string) {

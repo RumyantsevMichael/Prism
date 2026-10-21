@@ -25,3 +25,10 @@ test("relative links resolve against the document and open known files in the re
   assert.doesNotMatch(html, /javascript:/);
   assert.match(html, /<code>\[code\]\(x\.md\)<\/code>/);
 });
+
+test("an explicit anchor line names the section below it instead of rendering as text", () => {
+  const html = renderText("doc.md", '# Retries\n\n<a id="2"></a>\n## 2. Connection drops\n\nInline <a id="x"></a> stays text.\n');
+  assert.match(html, /<span class="md-anchor" id="md-2"><\/span>\n<h2 id="md-2-connection-drops">/);
+  assert.doesNotMatch(html, /&lt;a id=&quot;2&quot;/);
+  assert.match(html, /Inline &lt;a id=&quot;x&quot;&gt;&lt;\/a&gt; stays text\./);
+});

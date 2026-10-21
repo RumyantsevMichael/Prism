@@ -68,7 +68,7 @@ function observationList(observations) {
 function comparison(record, ctx) {
   const failures = (record.observations ?? []).filter((item) => item.severity === "failure").length;
   return `${keyValues([
-      ["Concept delta", record.deltaPath ? artifactChip(record.deltaPath, ctx) : null],
+      ["Change map", record.deltaPath ? artifactChip(record.deltaPath, ctx) : null],
       ["Delta revision", record.deltaRevision ? `<code title="${escapeHtml(record.deltaRevision)}">${escapeHtml(shortId(record.deltaRevision))}</code>` : null],
       ["Baseline", evidenceChip(record.baselineId, "Baseline snapshot")],
       ["Result", evidenceChip(record.resultSnapshotId, "Result snapshot")],

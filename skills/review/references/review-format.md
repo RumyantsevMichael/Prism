@@ -2,7 +2,7 @@
 
 One slice `review.json` is authoritative for all its lanes and waves.
 `review.md` is a generated human view; projection failure never rolls back accepted JSON.
-The [conservation procedure](../../design/references/concept-delta.md) defines source capture, native reuse receipts, measurement, growth evidence, and text convergence.
+The [conservation procedure](../../design/references/change-map.md) defines source capture, native reuse receipts, measurement, growth evidence, and text convergence.
 
 ## Read and mutate
 
@@ -23,7 +23,7 @@ Findings retain their original mode, lane, local ID, aliases, routing, and statu
 
 | Owner | Operations and constraints |
 | --- | --- |
-| Coordinator | `start_wave` pins mode, delta revision, snapshot, comparison, and lanes; `assign_delivery` selects delivery. |
+| Coordinator | `start_wave` pins mode, change map revision, snapshot, comparison, and lanes; `assign_delivery` selects delivery. |
 | Assigned reviewer | `open_finding` records title, severity, affected path, evidence, closing condition, aliases, and escalation target. |
 | Delivery | `set_finding_status` records `IN PROGRESS` or `FIXED` with correction evidence. |
 | Fresh assigned reviewer | `set_finding_status` records `VERIFIED` or `REOPENED`; only corrected `FIXED` findings can become `VERIFIED`. |
@@ -50,7 +50,7 @@ Slice: <reporting slice>
 Review: <project-relative review.json>
 Lane: <assigned lane>
 Wave: <wave ID>
-Concept delta revision: <SHA-256>
+Change map revision: <SHA-256>
 Baseline: <B identity>
 Source: <A or F identity>
 Comparison: <immutable comparison ID>

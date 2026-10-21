@@ -177,7 +177,7 @@ test("requires prior-art search and a compact worker lifetime reference", async 
   assert.match(analysis, /## Repository discovery[\s\S]*Cite the `receiptId` of each discovery result/);
   assert.match(refactor, /Record relevant matches and the reason to reuse or reject them/);
   assert.match(refactor, /semantic indexing is unavailable or incomplete.*available structural and text evidence/);
-  assert.match(design, /semantic reuse procedure.*before accepting an `ADD` transition/);
+  assert.match(design, /semantic reuse procedure.*before accepting an `ADD` change/);
   assert.match(review, /new component, dependency, or design approach has a recorded search for existing solutions/);
   assert.match(orchestrate, /worker-lifetime\.md/);
   assert.match(lifetime, /worker wait timeout or missing completion event as non-terminal/);

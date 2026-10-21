@@ -2,7 +2,7 @@
 import { assertInput } from "./artifact-schema.mjs";
 import path from "node:path";
 import { realpath, stat } from "node:fs/promises";
-import { resolveArtifactPath } from "../conservation/concept-delta.mjs";
+import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { checkReviewGate, loadReview } from "../review/review-ledger.mjs";
 import { conservationError } from "../conservation/conservation-store.mjs";

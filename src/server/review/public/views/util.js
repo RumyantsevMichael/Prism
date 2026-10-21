@@ -59,6 +59,19 @@ export function artifactChip(path, ctx, label = path) {
   return `<button type="button" class="link-chip artifact-chip" data-artifact="${escapeHtml(path)}" title="Open ${escapeHtml(path)}"><code>${escapeHtml(label)}</code></button>`;
 }
 
+// A requirement reference keeps its anchor, so the link opens and previews the requirement's own section.
+export function requirementLinks(references, ctx) {
+  return references.map((reference) => {
+    const [file, anchor] = reference.split("#");
+    const label = `${file.split("/").pop()}${anchor ? `#${anchor}` : ""}`;
+    return ctx.hasArtifact(file) ? `<button type="button" class="link-chip artifact-chip" data-artifact="${escapeHtml(file)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}><code>${escapeHtml(label)}</code></button>` : `<code>${escapeHtml(reference)}</code>`;
+  }).join(" ");
+}
+
+function linkTarget(element, keep) {
+  return [element.dataset.artifact, { keep, anchor: element.dataset.docAnchor }];
+}
+
 export function bindLinks(root, ctx) {
   root.addEventListener("click", (event) => {
     const evidence = event.target.closest("[data-evidence]");
@@ -70,19 +83,19 @@ export function bindLinks(root, ctx) {
     const artifactLink = event.target.closest("[data-artifact]");
     if (artifactLink && root.contains(artifactLink)) {
       event.preventDefault();
-      ctx.openArtifact(artifactLink.dataset.artifact, { keep: event.ctrlKey || event.metaKey });
+      ctx.openArtifact(...linkTarget(artifactLink, event.ctrlKey || event.metaKey));
     }
   });
   // A single click previews a link; a double click or a middle click keeps it open, as in an editor.
   root.addEventListener("dblclick", (event) => {
     const artifactLink = event.target.closest("[data-artifact]");
-    if (artifactLink && root.contains(artifactLink)) ctx.openArtifact(artifactLink.dataset.artifact, { keep: true });
+    if (artifactLink && root.contains(artifactLink)) ctx.openArtifact(...linkTarget(artifactLink, true));
   });
   root.addEventListener("auxclick", (event) => {
     const artifactLink = event.target.closest("[data-artifact]");
     if (event.button === 1 && artifactLink && root.contains(artifactLink)) {
       event.preventDefault();
-      ctx.openArtifact(artifactLink.dataset.artifact, { keep: true });
+      ctx.openArtifact(...linkTarget(artifactLink, true));
     }
   });
 }

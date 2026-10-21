@@ -1,7 +1,7 @@
 // Generated from src/server/conservation/conservation-tools.mts by scripts/native-build/compile.mjs.
 import { assertInput } from "../workflow/artifact-schema.mjs";
 import { conservationStore, conservationError } from "./conservation-store.mjs";
-import { compareConceptDelta } from "./conservation-analysis.mjs";
+import { compareChangeMap } from "./conservation-analysis.mjs";
 import { GET_REVIEW_SCHEMA, UPDATE_REVIEW_SCHEMA, CHECK_REVIEW_GATE_SCHEMA, getReview, updateReview, checkReviewGate } from "../review/review-ledger.mjs";
 import { objectSchema as obj, textField as str, hashField } from "./conservation-schema.mjs";
 const captureSchema = obj({ projectRoot: str, deltaPath: str }, ["projectRoot"]);
@@ -11,7 +11,7 @@ const annotations = (readOnlyHint, openWorldHint = false) => ({ readOnlyHint, de
 const CONSERVATION_TOOLS = [
   { name: "capture_repository_snapshot", description: "Retain immutable source evidence before edits, including dirty, untracked, opaque and symlink identities. Pass deltaPath to register exact slice evidence outputs before creating them. Returns the baseline or result snapshot identity.", inputSchema: captureSchema, annotations: annotations(false) },
   { name: "get_conservation_evidence", description: "Read an immutable snapshot, search receipt, repository analysis receipt, comparison, or analysis in bounded pages. Evidence IDs bind every page without revision drift.", inputSchema: evidenceSchema, annotations: annotations(true) },
-  { name: "compare_concept_delta", description: "Compare an exact concept plan with retained B and A/F snapshots. Prepare native extraction automatically and retain immutable observed facts and measurements. Similarity never proves equivalence.", inputSchema: compareSchema, annotations: annotations(false, true) },
+  { name: "compare_change_map", description: "Compare an exact change map revision with retained B and A/F snapshots. Prepare native extraction automatically and retain immutable observed facts and measurements. Similarity never proves equivalence.", inputSchema: compareSchema, annotations: annotations(false, true) },
   { name: "get_review", description: "Read the authoritative MCP review ledger and report stale Markdown projections. Page findings, waves, assessments, conflicts, migration history or operation history.", inputSchema: GET_REVIEW_SCHEMA, annotations: annotations(true) },
   { name: "update_review", description: "Apply typed revision-checked review operations. Enforce finding ownership, independent verification, lane evidence and acceptance prerequisites. JSON commits survive Markdown projection failures.", inputSchema: UPDATE_REVIEW_SCHEMA, annotations: annotations(false) },
   { name: "check_review_gate", description: "Explain current implementation-entry or completion prerequisites using the same validator as review acceptance and coordination mutations. Verifies live source against accepted evidence. For an unaccepted wave, lists the files each lane must re-review since the previous wave of its mode, assessments that carry_assessments can reuse, and a ready-to-fill assessment skeleton.", inputSchema: CHECK_REVIEW_GATE_SCHEMA, annotations: annotations(false) }
@@ -23,7 +23,7 @@ async function callConservationTool(name, input) {
   if (name === "get_review") return getReview(input);
   if (name === "update_review") return updateReview(input);
   if (name === "check_review_gate") return checkReviewGate(input);
-  if (name === "compare_concept_delta") return compareConceptDelta(input);
+  if (name === "compare_change_map") return compareChangeMap(input);
   const projectRoot = input.projectRoot;
   if (name === "capture_repository_snapshot") {
     const { snapshotId, snapshot } = await conservationStore.capture(projectRoot, input.deltaPath);

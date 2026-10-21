@@ -110,7 +110,7 @@ export function render(container, data, ctx) {
         ${unresolvedConflicts ? `<div class="stat is-bad"><span class="stat-value">${unresolvedConflicts}</span><span class="stat-label">open conflicts</span></div>` : ""}
       </div>
       ${keyValues([
-        ["Concept delta", artifactChip(record.deltaPath, ctx)],
+        ["Change map", artifactChip(record.deltaPath, ctx)],
         ["Coordinator", escapeHtml(record.coordinator)],
         ["Delivery", escapeHtml([record.delivery, ...(record.deliveryWorkers ?? []).filter((worker) => worker !== record.delivery)].join(", "))],
         ["Exchange workers", record.exchangeWorkers?.length ? escapeHtml(record.exchangeWorkers.join(", ")) : null],

@@ -21,11 +21,11 @@ A reviewer in a resolution exchange cannot return final `CLEAN` or mark findings
 3. Read the complete assigned lane through `get_review` using [review-format.md](references/review-format.md).
 4. Read the requirements, relevant ADRs, tests, feature files, diagrams, contract decisions, and verification evidence for the lane.
 5. If code or correction evidence is outdated, request the current result before deciding findings or closure.
-6. Read the complete [concept delta](../design/references/concept-delta.md) through MCP at the submitted or audited revision.
+6. Read the complete [change map](../design/references/change-map.md) through MCP at the submitted or audited revision.
 7. In a correction wave, read `correctionScope` from `check_review_gate`:
    1. Verify each `FIXED` finding.
    2. Review each changed file listed for the assigned lane in full.
-   3. If `deltaChanged` is true, review the concept delta changes.
+   3. If `deltaChanged` is true, review the change map changes.
    4. Read unchanged files only to check what a change depends on.
 8. Review the assigned scope through the applicable mode below.
 
@@ -68,8 +68,8 @@ Implementation review requires actual consumption and its verification evidence.
   6. Check the red checkpoint reaches the starting surface and fails for missing behavior, or has a documentation-only exemption.
   7. Record defects in fit, design, requirements, or verification as findings.
   8. Route implementation-only gaps to delivery without opening design findings.
-  9. Check delta readiness, scope, concept coverage, and reuse evidence against the design.
-  10. For `CLEAN`, record the exact delta path and revision in the review result.
+  9. Check change map readiness, scope, coverage of planned changes, and reuse evidence against the design.
+  10. For `CLEAN`, record the exact change map path and revision in the review result.
 - For `implementation-review`:
   1. Read the complete diff against the supplied review base and recorded verification results, limited in a correction wave to its `correctionScope`.
   2. Trace assigned requirements and architectural constraints through changed code and observable tests.
@@ -79,7 +79,7 @@ Implementation review requires actual consumption and its verification evidence.
   6. Inspect changed trust boundaries for untrusted inputs, secrets, authorization, privilege, storage, network access, and IPC.
   7. If the declared security surface is `none`, verify that classification and record the security audit exemption.
   8. Check unrelated edits, generated files, temporary files, and stale user or operator guidance.
-  9. Review the immutable B→F comparison and [conservation procedure](../design/references/concept-delta.md#compare-and-measure), recording discrepancies through MCP.
+  9. Review the immutable B→F comparison and [conservation procedure](../design/references/change-map.md#compare-and-measure), recording discrepancies through MCP.
   10. When a concrete finding needs executable proof:
      1. Add one minimal regression probe in the canonical test location through a public or system surface.
      2. Base assertions on requirements, ADRs, features, contracts, or verified behavior.

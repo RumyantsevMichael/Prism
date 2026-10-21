@@ -8,7 +8,7 @@ import { readInitiative } from "./initiative.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
-import { resolveArtifactPath } from "../conservation/concept-delta.mjs";
+import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
 
