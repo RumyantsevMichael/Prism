@@ -1,7 +1,7 @@
 # Upgrading to managed roadmap and initiative records
 
-This release changes how Prism stores the roadmap and each initiative's slice graph.
-Agents now change both only through MCP tools, and the review browser navigates by them.
+Prism 0.10.0 changed how Prism stores the roadmap and each initiative's slice graph.
+Agents change both only through MCP tools, and the review browser navigates by them.
 
 ## What changed
 

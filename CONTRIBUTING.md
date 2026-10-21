@@ -17,7 +17,7 @@ A change to Markdown changes agent behavior at task time.
 skills/
   <name>/SKILL.md    # one directory per skill; the directory name is the skill name
 src/                 # editable server, native helper, and hook sources
-  server/            # mcp.mjs, cli.mjs, plugin-root.mjs, and one directory per domain
+  server/            # mcp.mjs, cli.mjs, review-app.mjs, plugin-root.mjs, and one directory per domain
     workflow/        # coordination state, artifact storage, decision history
     review/          # review server, review ledger, browser assets in public/
     conservation/    # change map and conservation analysis

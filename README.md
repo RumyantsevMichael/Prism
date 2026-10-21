@@ -4,234 +4,109 @@
 
 # Prism
 
-Prism helps Claude Code and Codex deliver complex changes as small outcome slices.
-It keeps one delivery context from code exploration through implementation.
-Fresh contexts audit the design and review completed code.
-Small changes do not need this workflow.
+Prism is a Claude Code and Codex plugin for big, multi-file changes.
+It splits a feature into slices that fit one agent session, and fresh agents audit each design and review the finished code.
 
-Use Prism when a change needs clear intent, architecture decisions, durable behavior records, or several dependency-ordered slices.
+Prism is built for complex features in large codebases.
+For a change that fits in one session, plain Claude Code or Codex is faster and cheaper.
+
+## Highlights
+
+- **Sized to fit.** Prism estimates the context a slice needs and splits slices that would not fit the session.
+- **Independent review.** Designs and code are reviewed in fresh contexts, never by the agent that wrote them.
+- **Reuse first.** A planned addition that copies logic the repository already repeats is refused until the design consolidates it.
+- **Local semantic search.** A bundled index searches code and docs by meaning, on your machine, with nothing else to install.
+- **Review browser.** Roadmap board, slice graphs, rendered PlantUML diagrams, change maps, and review findings on `127.0.0.1`.
+- **Answer in the browser.** Questions for you wait on one Attention page, and in Claude Code the agent resumes when you answer.
+- **Durable records.** Requirements in EARS, decisions as ADRs, and acceptance behavior as Gherkin.
+- **Refactoring analysis.** Find duplicated logic, repeated values, diverged copies, and oversized classes and functions.
 
 ## Install
 
-### Claude Code
+Prism runs on macOS and Linux (x64 and arm64) and Windows (x64).
 
-Run these commands in Claude Code:
+**Claude Code**
 
 ```text
 /plugin marketplace add RumyantsevMichael/Prism
 /plugin install prism@prism
 ```
 
-### Codex
-
-Prism requires Codex 0.147.0 or later.
+**Codex** 0.147.0 or later
 
 ```bash
 codex plugin marketplace add RumyantsevMichael/Prism
 codex plugin add prism@prism
 ```
 
-In Codex Desktop, trust the current Prism hooks through `/hooks`, then start a new root task.
-See [Repository intelligence](docs/user-guide/repository-intelligence.md) for provider roles and optional setup.
+In Codex, trust the Prism hooks through `/hooks`, then start a new task.
 
-## Start a project
+The first code analysis downloads a pinned runtime and model from Prism's GitHub release, so a restricted network only needs `github.com`.
 
-Initialize Prism once in each project.
+## Quick start
 
-- In Claude Code, run `/prism:workflow-init`.
-- In Codex, select `prism:workflow-init` from the skill picker or mention it in your request.
+1. Run `/prism:workflow-init` once per project to write `.prism/workflow.md`.
+2. Start an initiative:
 
-The skill inspects the project and asks about its documentation paths, stack, verification commands, issue tracker, and local rules.
-It then writes `.prism/workflow.md` and creates the configured documentation structure.
+   ```text
+   /prism:orchestrate Let users download signed PDF reports from the billing page
+   ```
 
-Start with `prism:ideate` to shape an idea, or `prism:orchestrate` for a roadmap initiative with Approved requirement links.
-Use `prism:design` directly for one Approved outcome.
-Use `prism:workflow` for workflow guidance.
-Use `prism:refactor` to analyze or simplify existing code, skills, documents, or configuration while preserving behavior.
-See [Refactoring](docs/user-guide/refactoring.md) for focused cleanup and reuse analysis.
+3. Review and answer questions in the browser that opens.
 
-## How the workflow works
+In Codex, pick the same skills from the skill picker or mention them in your request.
 
-| Stage | Skill | Result |
-|---|---|---|
-| Prioritize | `prism:roadmap` | An ordered Now, Next, Later, and Parked roadmap record |
-| Shape | `prism:ideate` | Approved EARS requirement files, or a decision to stop |
-| Start an initiative | `prism:orchestrate` | One provisional root slice and a short resume note |
-| Design | `prism:design` | A fit decision, Gherkin acceptance scenarios, architectural ADRs, and executable boundary artifacts when needed |
-| Refactor | `prism:refactor` | Relationship analysis, a desired conceptual model, and proposed or verified behavior-preserving changes |
-| Design audit | `prism:review` in `design-audit` mode | Complete requirements, boundary, contract, security, and verification findings |
-| Implement | `prism:implement` | Failing tests, working code, step definitions, and verification |
-| Review | `prism:review` in `implementation-review` mode | Exhaustive independent findings against the completed code and intent until `CLEAN` |
+## Skills
 
-The roadmap owns the initiative name, intent, priority, and Approved requirement links.
-The orchestrator creates one provisional root slice after those inputs exist.
-Design explores documents and focused code paths, then returns `FIT`, `SPLIT`, or `BLOCKED`.
-On `SPLIT`, design proposes child slices and dependencies while preserving requirement coverage.
-The orchestrator applies the accepted proposal to the initiative record through `update_initiative`, then repeats design for each child.
-It routes decisions while design owns boundaries, dependencies, and architecture.
-
-Each fitted leaf proceeds through design audit, implementation, review, and user correctness confirmation.
-Design discovery can precede dependency implementation, but implementation requires completed dependencies and a fresh fit check.
-Review repeats after corrections until `CLEAN`, a user stop, or a real blocker.
-After integration, delivery verifies the result, with fresh review and confirmation when behavior changes or equivalence is uncertain.
-
-The [resume note](skills/orchestrate/SKILL.md#state-and-recovery-invariants) records settings, active work, pending user gates, next actions, and evidence paths.
-Each question that waits on the user is recorded as a user gate, and the review browser opens on Attention, which lists those gates with the artifacts to inspect.
-The user can answer a gate on Attention instead of in the conversation.
-In Claude Code the orchestrator waits for that answer in a background tool call and resumes as soon as it arrives; other hosts receive the recorded answer with the user's next message.
-The background wait needs a tool timeout (`MCP_TOOL_TIMEOUT`) longer than Claude Code's background handoff, which is two minutes by default.
-The authoritative [initiative record](skills/orchestrate/references/initiative-record.md) holds slice topology, titles, outcomes, requirement assignments, dependencies, and structural status.
-The MCP server validates coverage and the expanded dependency graph on every write, and refuses a `done` slice without a passing completion gate.
-The roadmap record holds initiative bands, order, required initiatives, and rationale, while initiative progress is derived from the initiative records.
-Slice files retain findings and evidence needed to resume work.
-Agents reason about the next step within the workflow's ownership rules and human gates.
-
-`orchestrate` stores decision autonomy and agent flow in each initiative's `state.json`.
-Autonomy supports `conservative`, `broad`, and `full`, while agent flow supports `multi` and `mono`.
-Mono flow keeps planning, design, implementation, and corrections in the orchestrator context, while both flows use fresh independent review contexts.
-Full autonomy can resolve internal decisions and defaults missing commits to on, but explicit commit, continuation, and push settings remain authoritative.
-
-Design creates new artifacts only after fit passes.
-Requirements preserve intent, ADRs preserve decisions, and feature files preserve acceptance examples.
-Tests and consumed contracts enforce behavior, diagrams explain structure, and code supplies implementation details.
-The focused `write-requirements` skill supports requirement file authoring.
-See [Artifact conservation](docs/user-guide/artifact-conservation.md) for how review checks planned changes against retained source evidence.
-See [Decision history](docs/user-guide/decision-history.md) to record workflow decisions locally for later analysis.
-
-## Review artifacts visually
-
-Prism stores diagrams as PlantUML `.puml` source files beside their Markdown artifacts.
-Agents read the PlantUML source and never read rendered images.
-The bundled review server renders diagrams in the human's browser without creating image files.
-
-Prism opens one viewer session after design audit and before final correctness confirmation.
-Repeated viewer requests update that session instead of opening another browser tab.
-The artifact tree shows all files, and tabs retain open artifacts.
-The Jump palette (Ctrl K) finds entities and files by name and searches the text of Prism artifacts.
-Markdown links open the linked file or heading in the review, hovering any internal link previews its target or the linked section, and graphs, diagrams, and documents can be maximized.
-An initiative page shows its active slices as a board grouped by activity.
-Ask the agent to open the viewer at any time during an active session.
-
-All Prism sessions of one user share one review app on one local port, and each project has its own page there.
-The project switcher in the page header names the project as `repository/worktree` for a linked git worktree and by its folder otherwise.
-It lists recent projects with their open gates, groups worktrees under their repository, and marks the ones an agent session is using now.
-When an agent presents a review for another project while a tab is open, that tab shows a notice with a link instead of a second tab opening.
-The app starts with the first session that needs it, outlives that session, and exits after 30 minutes with no session and no open viewer.
-It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.
-A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
-
-`Review browser: auto` uses the internal browser in desktop sessions and the system browser in CLI sessions.
-Set `internal` or `external` in `.prism/workflow.md` to override this choice.
-When the selected browser is unavailable, Prism presents the URL and source artifacts.
-
-Start a review from a Prism checkout when no harness session is active:
-
-```bash
-./bin/prism review
-./bin/prism review docs/requirements/reports.md
-```
-
-The review browser opens on Attention, or on the artifact you name, and later visits restore the tabs you left open.
-It shows initiatives as a board, list, or dependency graph, each initiative as a slice graph, and each slice with its change map, review ledger, and documents.
-Requirements, decisions, and the glossary have their own sections.
-
-`prism review` opens the project in the shared review app and returns.
-It opens the system browser only when no review tab is open; an open tab shows the project or a notice with a link to it instead.
-When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
-
-The server binds to `127.0.0.1`, selects an available port, and uses an unguessable session URL.
-It serves plain HTTP, which browsers treat as a secure context on `127.0.0.1`, so no certificate trust step is needed.
-It refuses requests whose host is not `127.0.0.1` or `localhost`.
-It renders entirely in the browser and does not send project sources to a remote renderer.
-
-Defect repair stays outside this workflow.
-First reproduce and diagnose a defect against the existing specification.
-Change the specification only when the required behavior must also change.
-
-## Project files
-
-Prism stores its configuration in `.prism/workflow.md`.
-All configured paths resolve from the project root.
-
-The default paths are:
-
-| Content | Default path |
+| Skill | Use it to |
 |---|---|
-| EARS requirements | `docs/requirements/` |
-| Architecture decisions | `docs/ADRs/` |
-| Initiative plans, state, slice findings, and recovery records | `docs/plans/` |
-| Gherkin feature files | `docs/Features/` |
-| Roadmap | `docs/roadmap.md` |
-| Glossary | `docs/Glossary.md` |
-| User documentation | `docs/user-guide/` |
+| `prism:orchestrate` | Run or resume an initiative from idea to reviewed code |
+| `prism:ideate` | Shape an idea into Approved requirements |
+| `prism:roadmap` | Prioritize initiatives into Now, Next, Later, and Parked |
+| `prism:design` | Design one Approved outcome |
+| `prism:refactor` | Analyze or simplify existing code, skills, documents, or configuration |
+| `prism:workflow` | Explain the workflow |
 
-The roadmap record `roadmap.json` sits beside the configured roadmap Markdown, which Prism generates from it.
-Each initiative coordination directory has an `initiative.json` record beside `state.json`, with a generated `initiative.md` view.
-Orchestration applies accepted design proposals and structural lifecycle changes to the record through MCP tools.
-The record holds meaningful slice titles, nested parent-child slices, dependency edges, and live status.
-Design supplies titles such as `Download signed reports`, while stable slugs identify slices and artifact paths.
+## Learn more
 
-### Migrate an older initiative map or roadmap
-
-On resume, orchestration imports a legacy `map.puml` into the initiative record, taking slice outcomes from existing `slice.md` files.
-The `roadmap` skill proposes a roadmap record from a legacy roadmap and `roadmap.puml`, and replaces the hand-written roadmap Markdown only after you accept it.
-It keeps needed evidence and records current work in the short `state.json` resume note.
-Missing or conflicting facts require recovery before scheduling.
-See [Upgrading to managed records](docs/user-guide/upgrading-to-managed-records.md) for everything that changed and what needs your confirmation.
-
-### Migrate an older configuration
-
-Prism no longer reads `.claude/workflow-config.md` during normal tasks.
-Run `prism:workflow-init` to migrate its values into `.prism/workflow.md`.
-The migration keeps the old file unchanged.
+- [Workflow](docs/user-guide/workflow.md): stages, slices, records, autonomy, and project files.
+- [Review browser](docs/user-guide/review-browser.md): navigation, search, answering questions, and several projects.
+- [Repository intelligence](docs/user-guide/repository-intelligence.md): search, analysis tools, providers, and fit checks.
+- [Artifact conservation](docs/user-guide/artifact-conservation.md): how review checks planned changes against the source.
+- [Refactoring](docs/user-guide/refactoring.md) and [Decision history](docs/user-guide/decision-history.md).
 
 ## Update
-
-### Claude Code
 
 ```text
 /plugin marketplace update prism
 /plugin update prism@prism
 ```
 
-### Codex
+In Codex, run `codex plugin marketplace upgrade prism`, review changed hooks through `/hooks`, and start a new task.
 
-```bash
-codex plugin marketplace upgrade prism
-```
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+Before 1.0, a minor release can include a breaking migration, and [Upgrading to managed records](docs/user-guide/upgrading-to-managed-records.md) covers the one in 0.10.0.
 
-Review changed Prism hooks through `/hooks`, then start a new root task.
+## Enable Prism for a team
 
-Releases follow semantic versioning and appear in [CHANGELOG.md](CHANGELOG.md).
-Before version 1.0, a minor release can include a breaking workflow or artifact migration.
-
-## Configure Claude Code for a team
-
-Commit this configuration to `.claude/settings.json` so Claude Code can discover and enable Prism for the project.
+Commit this to `.claude/settings.json` so Claude Code offers Prism to everyone in the project:
 
 ```json
 {
   "extraKnownMarketplaces": {
     "prism": {
-      "source": {
-        "source": "github",
-        "repo": "RumyantsevMichael/Prism"
-      }
+      "source": { "source": "github", "repo": "RumyantsevMichael/Prism" }
     }
   },
-  "enabledPlugins": {
-    "prism@prism": true
-  }
+  "enabledPlugins": { "prism@prism": true }
 }
 ```
 
 ## Contribute
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the repository layout, local development process, validation steps, and release process.
-Read the [Skill Definition Markdown authoring standard](docs/skill-language.md) and its [validation behavior](docs/skill-language-validation.md) before you edit a skill.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Prism uses the [MIT License](LICENSE).
-Prism includes the MIT build of PlantUML for local browser rendering.
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for its version and source.
+[MIT](LICENSE).
+Prism bundles the MIT build of PlantUML, described in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
