@@ -27,10 +27,6 @@ SCOPED_PROMPT = (
     "This is an analysis request: do not change the code. "
     "Return the ranked candidates with their evidence, the proposed transformation for each, and the discovery coverage."
 )
-# Tells a scoped run that recording discovery verdicts in a change map is not a change to the code under analysis.
-EVIDENCE_PERMISSION = " Recording Prism's change map and its evidence under docs/plans is allowed and does not count as a change."
-# A change map and its review projections are server-managed evidence, not edits to the analyzed code.
-MANAGED_OUTPUT = re.compile(r"(^|/)(change-map\.json|concept-delta\.json|review\.json|review\.md)(\.lock)?$")
 # The machine-readable tail is the only harness addition to the user request; scoring reads nothing else.
 RESULT_INSTRUCTION = (
     "\n\nEnd your answer with one fenced json block of the form "
@@ -259,21 +255,8 @@ def mock_output(catalog: dict[str, object], source: Source, rep: int) -> str:
     return "Mock analysis.\n\n```json\n" + json.dumps({"candidates": candidates}) + "\n```\n"
 
 
-def changed_files(workspace: Path) -> tuple[list[str], list[str]]:
-    # Ignored files count too, because a project can ignore the directory where change maps live.
-    paths = [line[3:] for line in git(workspace, "status", "--porcelain", "--untracked-files=all", "--ignored").splitlines()]
-    return [path for path in paths if not MANAGED_OUTPUT.search(path)], [path for path in paths if MANAGED_OUTPUT.search(path)]
-
-
-def concept_deltas(workspace: Path, managed: list[str]) -> dict[str, object]:
-    deltas = {}
-    for path in managed:
-        if path.endswith(("change-map.json", "concept-delta.json")) and (workspace / path).is_file():
-            try:
-                deltas[path] = json.loads((workspace / path).read_text())
-            except json.JSONDecodeError:
-                deltas[path] = None
-    return deltas
+def changed_files(workspace: Path) -> list[str]:
+    return [line[3:] for line in git(workspace, "status", "--porcelain", "--untracked-files=all").splitlines()]
 
 
 def invoke(workspace: Path, config_dir: Path | None, timeout: int, prompt: str, *extra: str, model: str) -> tuple[str, str | None]:
@@ -304,7 +287,6 @@ def run(args: argparse.Namespace) -> None:
                     parsed = {"output": mock_output(catalog, files, rep), "session_id": None, "error": None, "cost_usd": 0.0, "turns": 0, "usage": {}, "tool_calls": 0, "status_polls": 0, "prism_tool_calls": 0, "permission_denials": 0}
                 else:
                     request = SCOPED_PROMPT.format(paths=" and ".join(f"`{path}`" for path in args.scope)) if args.scope else PROMPT
-                    request += EVIDENCE_PERMISSION if args.allow_evidence else ""
                     prompt = request + (RESULT_INSTRUCTION if args.variant == "listed" else "")
                     stdout, error = invoke(workspace, config_dir, args.timeout, prompt, "--plugin-dir", str(plugin), "--allowedTools", *ALLOWED_TOOLS, model=args.model)
                     parsed = parse_stream(stdout)
@@ -316,7 +298,6 @@ def run(args: argparse.Namespace) -> None:
                         parsed["analysis_output"] = parsed["output"]
                         parsed["output"] = follow["output"]
                         parsed["list_cost_usd"] = follow["cost_usd"]
-                changed, managed = changed_files(workspace)
                 record = {
                     "schema_version": 2,
                     "rep": rep,
@@ -325,16 +306,13 @@ def run(args: argparse.Namespace) -> None:
                     "mock": args.mock,
                     "variant": args.variant,
                     "scope": args.scope or [],
-                    "allow_evidence": args.allow_evidence,
                     "model": args.model,
                     "plugin": str(plugin),
                     "plugin_commit": git(plugin, "rev-parse", "HEAD").strip(),
                     "target_commit": catalog["commit"],
                     **parsed,
                     "error": error or parsed["error"],
-                    "changed_files": changed,
-                    "managed_files": managed,
-                    "concept_deltas": concept_deltas(workspace, managed),
+                    "changed_files": changed_files(workspace),
                 }
                 record["score"] = score_run(record, catalog, files)
                 name = f"rep-{rep}"
@@ -365,9 +343,6 @@ def report(args: argparse.Namespace) -> None:
     print(f"changed files per run {[len(record.get('changed_files') or []) for record in records]}")
     if any(record.get("scope") for record in records):
         print(f"scope {sorted({path for record in records for path in record.get('scope') or []})}")
-    findings = [sum(len((delta or {}).get("discoveryEvidence", {}).get("findings", [])) for delta in (record.get("concept_deltas") or {}).values()) for record in records]
-    if any(findings):
-        print(f"recorded discovery verdicts per run {findings}")
     print("\nitem                         label       found/runs  kept")
     for item in catalog["items"]:
         if item["id"] not in scored[0]["score"]["items"]:
@@ -415,7 +390,6 @@ def main() -> None:
     run_parser.add_argument("--variant", choices=("listed", "plain"), default="listed",
                             help="listed asks for the candidate list in the request; plain asks for it in a tool-less follow-up turn")
     run_parser.add_argument("--scope", nargs="+", help="repository paths that a targeted analysis covers; recall then counts only items with a site there")
-    run_parser.add_argument("--allow-evidence", action="store_true", help="tell the agent that writing a change map does not count as a change")
     run_parser.add_argument("--mock", action="store_true", help="score generated output instead of invoking an agent")
     report_parser = commands.add_parser("report", help="score and summarize a results directory")
     report_parser.add_argument("results")

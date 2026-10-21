@@ -44,7 +44,6 @@ An invalid batch preserves existing artifact bytes, and a no-op preserves its re
 `ready` means ready for design audit, not approved for implementation.
 An empty change map can be ready when a retained baseline supports a design with no target changes.
 When `ADD` entries add units to several files that repeat the same functions, or `MODIFY` entries change copies of one function in several files, readiness reports `duplication_growth` until `REPLACE` or `DELETE` entries cover those functions in this change map or in a change map that `consolidations` names.
-When `discoveryEvidence` cites structural discovery receipts, readiness reports `finding_disposition_missing` until each finding inside the scope has a [discovery verdict](../../refactor/references/analysis.md#discovery-verdicts).
 
 ## Entries and exact references
 

@@ -11,7 +11,6 @@ import { sameNameGroups } from "./same-name-units.mjs";
 import { complexUnits } from "./complex-units.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
-import { withFindingIds } from "../conservation/discovery-findings.mjs";
 const domains = /* @__PURE__ */ new Set(["code", "instruction", "documentation", "configuration"]);
 const exact = (node, value) => [node.name, node.qualifiedName, node.selector].includes(value);
 const pinned = (hit) => hit.reasons?.some((reason) => ["explicit-design-reference", "expected-modification-target", "exact-symbol"].includes(reason));
@@ -357,7 +356,7 @@ async function findSharedDependencies(input, options = {}) {
   const { index } = provider.prepared, contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
   const result = sharedDependencyGroups(index, { include, limit: 100 });
-  const { groups } = withFindingIds("find_shared_dependencies", { groups: result.groups.filter((group) => group.members.filter((member) => inside(member.file)).length >= 2) });
+  const groups = result.groups.filter((group) => group.members.filter((member) => inside(member.file)).length >= 2);
   await provider.verifySnapshot();
   const diagnostics = [
     ...index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a group can miss members." }],
@@ -383,7 +382,7 @@ async function reportModuleInterfaces(input, options = {}) {
   if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, modules: [], delegatingClasses: [] };
   const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
   const { inside } = analysisScope(input, contents);
-  const report = withFindingIds("report_module_interfaces", moduleInterfaceReport(provider.prepared.index, contents, { include: inside, allModules: input.allModules }));
+  const report = moduleInterfaceReport(provider.prepared.index, contents, { include: inside, allModules: input.allModules });
   await provider.verifySnapshot();
   const offset = input.offset || 0, limit = input.limit || 20;
   const diagnostics = [
@@ -454,12 +453,12 @@ async function findSharedLiterals(input, options = {}) {
   const result = sharedLiteralGroups(provider.prepared.index, contents, { include, limit: 100 });
   const groups = result.groups.filter((group) => [...group.members, ...group.clients].filter((member) => inside(member.file)).length >= 2);
   const shaped = sharedShapes(provider.prepared.index, contents, { include, limit: 100 });
-  const found = withFindingIds("find_shared_literals", { groups, shapes: shaped.shapes.filter((shape) => shape.locations.some((location) => inside(location.file))) });
+  const shapes = shaped.shapes.filter((shape) => shape.locations.some((location) => inside(location.file)));
   await provider.verifySnapshot();
   const diagnostics = provider.preparation.diagnostics, coverage = { ...result.coverage, objects: shaped.coverage.objects };
-  const receiptId = await retainResult(input, provider, "find_shared_literals", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, coverage, diagnostics, { groups: found.groups, shapes: found.shapes });
-  const brief = found.groups.slice(0, input.limit || 20).map((group) => ({ ...group, literals: group.literals.slice(0, 10), literalCount: group.literals.length }));
-  const briefShapes = found.shapes.slice(0, Math.min(input.limit || 20, 8)).map((shape) => ({ ...shape, locations: shape.locations.slice(0, 4) }));
+  const receiptId = await retainResult(input, provider, "find_shared_literals", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, coverage, diagnostics, { groups, shapes });
+  const brief = groups.slice(0, input.limit || 20).map((group) => ({ ...group, literals: group.literals.slice(0, 10), literalCount: group.literals.length }));
+  const briefShapes = shapes.slice(0, Math.min(input.limit || 20, 8)).map((shape) => ({ ...shape, locations: shape.locations.slice(0, 4) }));
   return {
     ...identity,
     receiptId,
@@ -467,9 +466,9 @@ async function findSharedLiterals(input, options = {}) {
     coverage,
     diagnostics: diagnostics.slice(0, 20),
     diagnosticCount: diagnostics.length,
-    totalGroups: found.groups.length,
+    totalGroups: groups.length,
     groups: brief,
-    totalShapes: found.shapes.length,
+    totalShapes: shapes.length,
     shapes: briefShapes
   };
 }
@@ -480,7 +479,7 @@ async function reportCohesionClusters(input, options = {}) {
   if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, containers: [] };
   const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
-  const report = withFindingIds("report_cohesion_clusters", cohesionReport(provider.prepared.index, contents, { include: (unit) => include(unit) && inside(unit.file) }));
+  const report = cohesionReport(provider.prepared.index, contents, { include: (unit) => include(unit) && inside(unit.file) });
   await provider.verifySnapshot();
   const { index } = provider.prepared;
   const diagnostics = [...index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a cluster can miss members or calls." }], ...provider.preparation.diagnostics];
@@ -504,7 +503,7 @@ async function findSameNameUnits(input, options = {}) {
   const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
   const result = sameNameGroups(provider.prepared.index, contents, { include });
-  const { groups } = withFindingIds("find_same_name_units", { groups: result.groups.filter((group) => group.variants.flatMap((variant) => variant.members).filter((member) => inside(member.file)).length >= 2) });
+  const groups = result.groups.filter((group) => group.variants.flatMap((variant) => variant.members).filter((member) => inside(member.file)).length >= 2);
   await provider.verifySnapshot();
   const diagnostics = [...provider.prepared.index.unresolvedReferences ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so variants compare project calls only.", recovery: "Prepare the index again with the current native runtime." }], ...provider.preparation.diagnostics];
   const receiptId = await retainResult(input, provider, "find_same_name_units", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
@@ -526,7 +525,7 @@ async function reportComplexUnits(input, options = {}) {
   if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, units: [] };
   const contents = new Map((await provider.snapshot()).files.map((file) => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
-  const result = withFindingIds("report_complex_units", complexUnits(provider.prepared.index, contents, { include: (unit) => include(unit) && inside(unit.file) }));
+  const result = complexUnits(provider.prepared.index, contents, { include: (unit) => include(unit) && inside(unit.file) });
   await provider.verifySnapshot();
   const diagnostics = provider.preparation.diagnostics;
   const receiptId = await retainResult(input, provider, "report_complex_units", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { units: result.units });

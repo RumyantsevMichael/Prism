@@ -6,9 +6,8 @@ import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
 import { CHUNKER_VERSION } from "../../native-runtime/versions.mjs";
 import { sameNameGroups } from "../repository-intelligence/same-name-units.mjs";
 import { detectorDiff, DUPLICATE_MIN_LINES } from "./detector-diff.mjs";
-import { DISCOVERY_TOOLS, REQUIRED_FINDINGS_PER_LIST, receiptFindings, type Finding } from "./discovery-findings.mjs";
 import type { NativeSource, PreparedIndex, SemanticRuntime } from "../repository-intelligence/repository-unit-types.mjs";
-import type { Evidence, SnapshotEvidence, SearchReceipt, AnalysisReceipt, Reference, Resolution, ResolvedUnit, DeltaDocument, ComparisonEvidence, Measurement, Observation } from "./conservation-types.mjs";
+import type { Evidence, SnapshotEvidence, SearchReceipt, Reference, Resolution, ResolvedUnit, DeltaDocument, ComparisonEvidence, Measurement, Observation } from "./conservation-types.mjs";
 
 type Analysis = Extract<Evidence, { kind: "analysis" }>;
 interface Options { store?: ConservationStore; runtime?: SemanticRuntime }
@@ -148,67 +147,6 @@ async function duplicationDiagnostics(projectRoot: string, document: DeltaDocume
   return diagnostics;
 }
 
-// Discovery tools report findings that an agent can see and still drop without a verdict.
-// When a delta cites discovery receipts, each finding of the baseline inside its scope needs a disposition, up to a bounded number per result list.
-async function discoveryDiagnostics(projectRoot: string, document: DeltaDocument, baseline: SnapshotEvidence, analysis: Analysis | null, options: Options) {
-  const store = options.store || conservationStore, evidence = document.discoveryEvidence, diagnostics: { code: string; message: string; blocking: boolean }[] = [];
-  if (!evidence) return diagnostics;
-  const add = (code: string, message: string, blocking = true) => diagnostics.push({ code, message, blocking });
-  const where = (finding: Finding) => `${finding.id} (${finding.tool}: ${finding.members.slice(0, 3).map(member => `${member.file}:${member.startLine}-${member.endLine}`).join(", ")}${finding.members.length > 3 ? `, and ${finding.members.length - 3} more` : ""})`;
-  const known = new Map<string, Finding>(), required: { key: string; finding: Finding }[] = [], tools = new Set<string>();
-  for (const receiptId of evidence.receiptIds) {
-    let receipt: AnalysisReceipt;
-    try { receipt = await store.get<AnalysisReceipt>(projectRoot, receiptId, "repository-analysis"); }
-    catch { add("evidence_missing", `The discovery receipt ${receiptId} is missing or corrupt.`); continue; }
-    if (receipt.snapshotId !== document.baselineId) { add("discovery_receipt_invalid", `The ${receipt.tool} receipt ${receiptId} must come from the delta's baseline; repeat the call with the baseline as snapshotId.`); continue; }
-    tools.add(receipt.tool);
-    const listed = new Map<string, number>();
-    for (const finding of receiptFindings(receipt)) {
-      known.set(`${receiptId}:${finding.id}`, finding);
-      if (!finding.members.some(member => withinScope(member.file, document.scope))) continue;
-      const count = listed.get(finding.list) || 0;
-      if (count < REQUIRED_FINDINGS_PER_LIST) { listed.set(finding.list, count + 1); required.push({ key: `${receiptId}:${finding.id}`, finding }); }
-    }
-  }
-  const omitted = new Set((evidence.omittedTools || []).map(item => item.tool)), absent = DISCOVERY_TOOLS.filter(tool => !tools.has(tool) && !omitted.has(tool));
-  if (absent.length) add("discovery_tool_missing", `Run ${absent.join(", ")} over the scope with the baseline as snapshotId and cite each receiptId, or name the tool in omittedTools with the reason.`);
-  // Findings that name the same code in several tools share one disposition.
-  const code = (finding: Finding) => canonical(finding.members.map(member => `${member.file}:${member.startLine}-${member.endLine}`).sort());
-  const decided = new Set<string>(), lines = new Map<string, number[]>();
-  const lineOf = async (file: string, offset: number) => {
-    if (!lines.has(file)) {
-      const entry = baseline.files.find(item => item.file === file), text = entry?.kind === "source" ? (await store.bytes(projectRoot, entry)).toString("utf8") : "";
-      lines.set(file, [...text.matchAll(/\n/g)].map(match => match.index!));
-    }
-    return lines.get(file)!.filter(index => index < offset).length + 1;
-  };
-  let deferred = 0;
-  for (const item of evidence.findings) {
-    const finding = known.get(`${item.receiptId}:${item.findingId}`);
-    if (!finding) { add("finding_not_in_receipt", `The disposition of ${item.findingId} must name a finding of the cited receipt ${item.receiptId}.`); continue; }
-    decided.add(code(finding));
-    if (item.disposition === "DEFER") deferred++;
-    if (item.disposition !== "CHANGE") continue;
-    const entries = (item.conceptIds || []).map(id => document.concepts.find(entry => entry.id === id));
-    if (!entries.length || entries.some(entry => !entry)) { add("finding_change_unplanned", `CHANGE for ${where(finding)} must name existing delta entries in conceptIds.`); continue; }
-    if (!analysis) {
-      const prepared = await prepareAnalysis(projectRoot, document.baselineId!, options);
-      if (prepared.status === "preparing") { add("discovery_check_preparing", "Read the change map again after the baseline analysis is ready."); return diagnostics; }
-      analysis = prepared.analysis;
-    }
-    // An entry acts on a finding when its baseline references cover the finding's own code, not only another part of the same file.
-    const spans: { file: string; start: number; end: number }[] = [];
-    for (const entry of entries) for (const reference of entry!.before) for (const unit of (await resolveReference(projectRoot, baseline, reference, analysis, store)).units)
-      spans.push({ file: unit.file, start: await lineOf(unit.file, unit.start), end: await lineOf(unit.file, Math.max(unit.start, unit.end - 1)) });
-    const covered = finding.members.filter(member => spans.some(span => span.file === member.file && span.start <= member.endLine && member.startLine <= span.end)).length;
-    if (covered < Math.min(2, finding.members.length)) add("finding_change_mismatch", `The entries ${item.conceptIds!.join(", ")} do not reference the code of ${where(finding)} in their before references; reference that code, or record KEEP or DEFER with the reason.`);
-  }
-  const missing = required.filter(({ finding }) => !decided.has(code(finding)));
-  if (missing.length) add("finding_disposition_missing", `Record CHANGE, KEEP, or DEFER in discoveryEvidence.findings for ${missing.length} discovery findings inside the scope: ${missing.slice(0, 20).map(({ key, finding }) => `${where(finding)} in receipt ${key.split(":")[0]}`).join("; ")}${missing.length > 20 ? "; and more after these are recorded" : ""}.`);
-  if (deferred) add("findings_deferred", `${deferred} of ${evidence.findings.length} recorded discovery findings are deferred.`, false);
-  return diagnostics;
-}
-
 export async function assessDeltaReadiness(projectRoot: string, document: DeltaDocument, store = conservationStore, options: Options = {}) {
   const diagnostics: { code: string; message: string; id?: string; blocking?: boolean }[] = [];
   const add = (code: string, message: string, id?: string, blocking = true) => diagnostics.push({ code, message, ...(id ? { id } : {}), blocking });
@@ -255,7 +193,6 @@ export async function assessDeltaReadiness(projectRoot: string, document: DeltaD
     if (!count && !evidence.emptyResultReason?.trim()) add("empty_search_explanation_missing", "Explain the empty semantic search result.", entry.id);
   }
   diagnostics.push(...await duplicationDiagnostics(projectRoot, document, baseline, analysis, { ...options, store }));
-  diagnostics.push(...await discoveryDiagnostics(projectRoot, document, baseline, analysis, { ...options, store }));
   return diagnostics;
 }
 
