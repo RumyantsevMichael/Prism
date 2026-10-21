@@ -16,7 +16,7 @@ export interface UnitIndex extends IndexMetadata { chunks: Fragment[] }
 export interface RuntimeAssets { runtime: string; modelDirectory: string; modelIdentity: string; assetIdentity: string }
 export interface PreparedIndex extends RuntimeAssets { index: IndexMetadata; indexPath: string; revision: string }
 export interface Preparation { status: "preparing" | "ready" | "degraded"; preparationId: string; snapshot: string; diagnostics: Diagnostic[]; prepared?: PreparedIndex }
-export interface Progress { phase: string; current?: number; total?: number; file?: string }
+export interface Progress { phase: string; current?: number; total?: number; file?: string; unit?: "bytes" | "files"; item?: number; items?: number }
 export interface BuildArguments { mirror: string; files: Pick<SourceFile, "file" | "hash">[]; snapshot: string; modelDirectory: string; modelIdentity: string; previousEmbeddings?: Record<string, number[]>; fragmentsOnly?: boolean }
 export interface SearchArguments { query: string; filters?: SearchFilters; limit: number; mode?: "lexical"; snapshot: string; modelDirectory: string; modelIdentity: string; indexPath: string }
 export type WorkerRequest = { id: number; method: "build"; args: BuildArguments } | { id: number; method: "search"; args: SearchArguments };

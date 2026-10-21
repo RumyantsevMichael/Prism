@@ -24,6 +24,15 @@
         <ul id="project-list" class="project-list"></ul>
       </div>
     </div>
+    <div class="indexing" id="indexing" hidden>
+      <button class="indexing-chip" id="indexing-button" type="button" aria-expanded="false" aria-controls="indexing-panel">
+        <span class="indexing-dot" aria-hidden="true"></span>
+        <span id="indexing-label" class="indexing-label"></span>
+        <span id="indexing-meter" class="indexing-meter" aria-hidden="true" hidden><span></span></span>
+        <span id="indexing-detail" class="indexing-detail" hidden></span>
+      </button>
+      <div id="indexing-panel" class="indexing-panel" role="dialog" aria-label="Repository index" hidden></div>
+    </div>
     <div id="tabs" class="artifact-tabs" role="tablist" aria-label="Open artifacts"></div>
   </header>
   <div id="notice" class="notice-banner" role="status" aria-live="polite" hidden></div>

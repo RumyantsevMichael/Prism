@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/RumyantsevMichael/Prism/compare/v0.12.0...v0.13.0) (2026-10-21)
+
+
+### Added
+
+* review browser round two and the change map rename ([#37](https://github.com/RumyantsevMichael/Prism/issues/37)) ([ea6704e](https://github.com/RumyantsevMichael/Prism/commit/ea6704e9dee9cd19af2d771ea059edc492e384e3))
+* show native index build progress in the review browser ([#39](https://github.com/RumyantsevMichael/Prism/issues/39)) ([cc62b8a](https://github.com/RumyantsevMichael/Prism/commit/cc62b8ac185d71ef2081a2035db191f3eea44fd6))
+
 ## [0.12.0](https://github.com/RumyantsevMichael/Prism/compare/v0.11.0...v0.12.0) (2026-10-20)
 
 

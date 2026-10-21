@@ -6,8 +6,8 @@ The baseline follows the ignore rules also for tracked files, so force-adding an
 
 1. Capture B with `capture_repository_snapshot` before editing and pass the slice `deltaPath` to register its evidence outputs.
 2. Search reuse against B with `search_repository_concepts` and keep the returned receipt IDs.
-3. Author the version 2 change map with typed MCP operations.
-4. Capture A, compare B→A, and record the independent design audit in `review.json` through `update_review`.
+3. Author the version 2 change map with typed `update_change_map` operations, and read it in pages with `get_change_map`.
+4. Capture A, compare B→A with `compare_change_map`, and record the independent design audit in `review.json` through `update_review`.
 5. Enter implementation with typed coordination `activeOperations` and the slice `reviewPath`.
 6. After authoring finishes, capture F and compare B→F.
 7. Record findings, growth justification, text convergence, and scoped unsupported checks through review operations.

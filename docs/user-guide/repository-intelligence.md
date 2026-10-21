@@ -114,6 +114,25 @@ A `preparing` response is unfinished discovery, not an empty search result.
 Keep the original `snapshotId` through retries and edits so new code cannot appear as preexisting reuse evidence.
 Use `discover_repository_intelligence` for native runtime, model, index, and coverage status without starting downloads or preparation.
 
+#### Watch an index build in the review browser
+
+The review browser's top bar shows the open project's native index next to the project name.
+While a build runs, the chip names the current step out of five and its percentage, and clicking it lists every step.
+The steps are checking or downloading the runtime and model, copying source files, parsing code, embedding new fragments, and saving the index.
+A step shows a percentage only when the build reports counts for it, so unpacking the runtime, planning fragments, and saving show motion without a number.
+Embedding counts only fragments that need a new embedding, so a rebuild after a small edit has a small total.
+The project switcher marks other projects whose build runs or failed.
+
+The browser only shows the index.
+An agent's search starts or retries a build, and the browser has no button for it.
+`Not indexed` means no search has built the index yet, and `Indexing stopped` means the session that ran the build ended before it finished.
+`Index rebuild pending` means files changed during the build, and the next search builds from the current files.
+
+`Index out of date` is a hint from Git, not a comparison of file contents.
+It compares the commit and the changed files' sizes and modification times with those recorded when the index was built or last reused.
+A commit that leaves indexed files unchanged looks out of date until the next search, and an edit that keeps a file's size and modification time looks current.
+A folder outside Git, an index of a retained baseline, and an index built by a Prism version without the chip show no hint.
+
 ### Find shared dependencies
 
 `find_shared_dependencies` groups functions and methods in different files that call the same rare set of operations.
@@ -166,6 +185,7 @@ An unused export can be private or removed, unless it is a published API, an ent
 A test-only export is often a deliberate test seam.
 `namesPerImporter` is the median number of exports that one importer uses, so a low value on a module with many exports shows that each caller needs only a small part of the interface.
 By default, only modules with unused or test-only exports appear, and `allModules` reports every exporting module.
+With `filters.paths`, only modules inside the paths are reported, while importers outside the paths still count.
 Use `offset` and `nextOffset` to page through modules.
 
 Imports resolve through relative paths, `package.json` names and `exports` maps of workspace packages, `tsconfig` path aliases, and built output that mirrors a `src/` file.
@@ -196,7 +216,8 @@ Shared dependencies find units that do the same work, and this tool finds units 
 }
 ```
 
-The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, `includeTests`, and `filters.paths` behavior as `find_shared_dependencies`.
+The tool uses the same preparation, `snapshotId`, `expectedSnapshot`, and `includeTests` behavior as `find_shared_dependencies`.
+With `filters.paths`, a group is reported when one of its members or clients is inside the paths, and it keeps the ones elsewhere.
 Each group lists its shared literals, with the number of units that spell each literal, and its members with their `share`.
 Only identifier-like literals count: a letter or underscore, then letters, digits, `_`, `.`, `:`, `/`, or `-`, from 3 through 81 characters.
 Prose, format strings, and module specifiers in `import`, `export ... from`, `require`, and `import()` do not count.
