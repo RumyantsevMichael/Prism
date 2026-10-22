@@ -526,6 +526,7 @@ function renderDiagram(source, target, section) {
         target.innerHTML = '<p class="error">PlantUML reported a syntax error.</p>';
       } else {
         // The page's style policy refuses inline style attributes, so the stylesheet sets PlantUML's preserved text spacing instead.
+        // The runtime still sets that attribute once while it renders, and the browser logs that refusal.
         target.innerHTML = svg.replace(/ style="white-space: ?pre;?"/g, "");
         configureDiagram(section, source);
       }
