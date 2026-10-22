@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.14.0](https://github.com/RumyantsevMichael/Prism/compare/v0.13.0...v0.14.0) (2026-10-22)
+
+
+### Added
+
+* branch-named project switcher, initiative view modes, quiet card sources, favicon ([#43](https://github.com/RumyantsevMichael/Prism/issues/43)) ([b193bf8](https://github.com/RumyantsevMichael/Prism/commit/b193bf8404b02126f1232b87455d0bde74eb2bbd))
+* open the review browser at session start and replace older-release review apps ([#44](https://github.com/RumyantsevMichael/Prism/issues/44)) ([5d58118](https://github.com/RumyantsevMichael/Prism/commit/5d58118de87f9a8f7530e05f6e4ecbc9fa5872c6))
+* show scoped discovery groups whose other copies live outside the scope ([#36](https://github.com/RumyantsevMichael/Prism/issues/36)) ([3c68817](https://github.com/RumyantsevMichael/Prism/commit/3c68817923583e1209c8ee5687dc6f12785294fa))
+
+
+### Fixed
+
+* keep the indexing chip on one build when sessions wait for the index lock ([#42](https://github.com/RumyantsevMichael/Prism/issues/42)) ([e1ae39e](https://github.com/RumyantsevMichael/Prism/commit/e1ae39e0c741722b51b67584aacec362c032456d))
+* keep the review browser layout intact at every window size ([#45](https://github.com/RumyantsevMichael/Prism/issues/45)) ([10faf73](https://github.com/RumyantsevMichael/Prism/commit/10faf7398d146111d9ebe7aae4e8a6536d7af79a))
+
+
+### Documentation
+
+* shorter README with highlights, plus workflow and review browser guides ([#40](https://github.com/RumyantsevMichael/Prism/issues/40)) ([343cf34](https://github.com/RumyantsevMichael/Prism/commit/343cf34239d83a681167a7661d6ab12a9f0d3e2e))
+
 ## [0.13.0](https://github.com/RumyantsevMichael/Prism/compare/v0.12.0...v0.13.0) (2026-10-21)
 
 
