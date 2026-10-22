@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.1](https://github.com/RumyantsevMichael/Prism/compare/v0.13.0...v0.13.1) (2026-10-22)
+
+
+### Fixed
+
+* keep the indexing chip on one build when sessions wait for the index lock ([#42](https://github.com/RumyantsevMichael/Prism/issues/42)) ([e1ae39e](https://github.com/RumyantsevMichael/Prism/commit/e1ae39e0c741722b51b67584aacec362c032456d))
+
+
+### Documentation
+
+* shorter README with highlights, plus workflow and review browser guides ([#40](https://github.com/RumyantsevMichael/Prism/issues/40)) ([343cf34](https://github.com/RumyantsevMichael/Prism/commit/343cf34239d83a681167a7661d6ab12a9f0d3e2e))
+
 ## [0.13.0](https://github.com/RumyantsevMichael/Prism/compare/v0.12.0...v0.13.0) (2026-10-21)
 
 
