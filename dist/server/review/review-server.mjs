@@ -535,6 +535,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, onV
       await serveFile(response, path.join(PUBLIC_DIR, "review.js"), "text/javascript; charset=utf-8");
     } else if (route === "/review.css") {
       await serveFile(response, path.join(PUBLIC_DIR, "review.css"), "text/css; charset=utf-8");
+    } else if (route === "/favicon.svg") {
+      await serveFile(response, path.join(PUBLIC_DIR, "favicon.svg"), "image/svg+xml");
     } else if (route === "/vendor/plantuml.js") {
       await serveFile(response, path.join(VENDOR_DIR, "plantuml.js"), "text/javascript; charset=utf-8");
     } else if (route === "/vendor/viz-global.js") {

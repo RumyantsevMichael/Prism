@@ -18,7 +18,7 @@ function requirements(data, ctx) {
     <td>${statusBadge(entry.status)}</td>
     <td class="muted dates">${[entry.created && `created ${escapeHtml(entry.created)}`, entry.approved && `approved ${escapeHtml(entry.approved)}`].filter(Boolean).join("<br>") || "—"}</td>
     <td>${entry.assignedTo.length ? entry.assignedTo.map((use) => artifactChip(`slice:${use.initiative}/${use.slug}`, ctx, `${use.title}${use.anchor ? ` #${use.anchor}` : ""}`)).join(" ") : '<span class="muted">unassigned</span>'}</td>
-  </tr>`).join("")}</tbody></table></div>`, { eyebrow: data.directory })}`;
+  </tr>`).join("")}</tbody></table></div>`, { source: data.directory })}`;
 }
 
 function decisions(data, ctx) {

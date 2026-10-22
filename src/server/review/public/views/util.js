@@ -35,9 +35,14 @@ export function formatTime(value) {
   return Number.isFinite(time) ? new Date(time).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : String(value ?? "");
 }
 
-export function card(title, body, { eyebrow = "", className = "" } = {}) {
+// The source names the file a card reads, in a quiet label beside the title rather than in the eyebrow.
+export function cardSource(source) {
+  return source ? `<span class="card-source">${escapeHtml(source)}</span>` : "";
+}
+
+export function card(title, body, { eyebrow = "", source = "", className = "" } = {}) {
   return `<section class="view-card ${className}">
-    <header class="view-card-header">${eyebrow ? `<p class="eyebrow">${escapeHtml(eyebrow)}</p>` : ""}<h2>${escapeHtml(title)}</h2></header>
+    <header class="view-card-header">${eyebrow ? `<p class="eyebrow">${escapeHtml(eyebrow)}</p>` : ""}<div class="view-card-title"><h2>${escapeHtml(title)}</h2>${cardSource(source)}</div></header>
     <div class="view-card-body">${body}</div>
   </section>`;
 }

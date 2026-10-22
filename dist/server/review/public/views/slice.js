@@ -1,4 +1,4 @@
-import { artifactChip, bindLinks, card, emptyNote, escapeHtml, keyValues, plural, requirementLinks } from "./util.js";
+import { artifactChip, bindLinks, card, cardSource, emptyNote, escapeHtml, keyValues, plural, requirementLinks } from "./util.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
@@ -6,8 +6,8 @@ function sliceChip(data, slug, ctx) {
 
 
 function reviewCard(review, ctx) {
-  if (!review) return card("Review ledger", emptyNote("No review has started for this slice."), { eyebrow: "review.json" });
-  if (review.invalid) return card("Review ledger", `<p class="error">The review ledger is not valid JSON.</p>${artifactChip(review.path, ctx, "Open raw")}`, { eyebrow: "review.json" });
+  if (!review) return card("Review ledger", emptyNote("No review has started for this slice."), { source: "review.json" });
+  if (review.invalid) return card("Review ledger", `<p class="error">The review ledger is not valid JSON.</p>${artifactChip(review.path, ctx, "Open raw")}`, { source: "review.json" });
   const statuses = Object.entries(review.byStatus).filter(([, count]) => count).map(([status, count]) => `<span class="meta-pill">${escapeHtml(status)}: ${count}</span>`).join(" ");
   return card("Review ledger", `
     <div class="stat-row compact">
@@ -17,7 +17,7 @@ function reviewCard(review, ctx) {
     </div>
     ${review.currentWave ? `<p>Current wave <code>${escapeHtml(review.currentWave.id)}</code> (${escapeHtml(review.currentWave.mode)}) is ${review.currentWave.accepted ? "accepted" : "not accepted"}.</p>` : ""}
     ${statuses ? `<p>${statuses}</p>` : ""}
-    <p>${artifactChip(review.path, ctx, "Open the findings board")}</p>`, { eyebrow: "review.json" });
+    <p>${artifactChip(review.path, ctx, "Open the findings board")}</p>`, { source: "review.json" });
 }
 
 export async function render(container, entity, ctx) {
@@ -44,11 +44,11 @@ export async function render(container, entity, ctx) {
       ])}
     </section>
     <div class="artifact-cards">
-      ${card("Change map", artifacts.changeMap ? `<p>The planned changes and their readiness.</p><p>${artifactChip(artifacts.changeMap, ctx, "Open the change map")}</p>` : emptyNote("No change map exists yet."), { eyebrow: artifacts.changeMap ? artifacts.changeMap.split("/").pop() : "change-map.json" })}
+      ${card("Change map", artifacts.changeMap ? `<p>The planned changes and their readiness.</p><p>${artifactChip(artifacts.changeMap, ctx, "Open the change map")}</p>` : emptyNote("No change map exists yet."), { source: artifacts.changeMap ? artifacts.changeMap.split("/").pop() : "change-map.json" })}
       ${reviewCard(artifacts.review, ctx)}
     </div>
     ${card("Other documents", others.length ? `<ul class="plain-list">${others.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder has no other files."), { eyebrow: plural(artifacts.files.length, "file") + " in the slice folder" })}
-    ${artifacts.narrative ? `<section class="view-card"><header class="view-card-header"><p class="eyebrow">slice.md</p><h2>Design narrative</h2></header><div class="document-content" data-narrative><p class="rendering">Loading narrative</p></div></section>` : ""}`;
+    ${artifacts.narrative ? `<section class="view-card"><header class="view-card-header"><div class="view-card-title"><h2>Design narrative</h2>${cardSource(artifacts.narrative.split("/").pop())}</div></header><div class="document-content" data-narrative><p class="rendering">Loading narrative</p></div></section>` : ""}`;
   bindLinks(container, ctx);
   if (artifacts.narrative) {
     try {

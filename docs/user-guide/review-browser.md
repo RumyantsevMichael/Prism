@@ -53,7 +53,10 @@ The board has one lane per band and one column per state, and each card shows it
 Click a lane to collapse it.
 Shipped and superseded initiatives appear only with "Show shipped and superseded".
 
-An initiative page shows its active slices as a board grouped by activity, its slice tree, the unstarted leaves that can be designed next, and a slice graph in execution order.
+An initiative page shows its slices as a board, a graph, or a list.
+The board has one column per slice status, and the card of an active slice also shows its activity, workers, and review lanes.
+The graph orders leaf slices by execution order, and the list shows the slice tree.
+Below them, the page lists the unstarted leaves that can be designed next.
 A slice page shows the slice's change map, its review ledger, its other files, and the design narrative from `slice.md`.
 
 The change map page starts with a readiness line that jumps to the first blocked change.
@@ -93,8 +96,8 @@ See [Watch an index build in the review browser](repository-intelligence.md#watc
 ## Several projects
 
 All Prism sessions of one user share one review app on one local port, and each project has its own page there.
-The project switcher names the project as `repository/worktree` for a linked git worktree and by its folder otherwise.
-It lists recent projects with their open questions, groups worktrees under their repository, and marks the ones an agent session is using now.
+The project switcher names the project as `repository/branch`, falls back to the worktree folder without a branch, and shows a detached checkout by its commit.
+It lists recent projects under their repository, even a repository with one checkout, with their open questions, and marks the ones an agent session is using now.
 When an agent presents a review for another project while a tab is open, that tab shows a notice with a link instead of a second tab opening.
 
 The app starts with the first session that needs it, outlives that session, and exits after 30 minutes with no session and no open viewer.
