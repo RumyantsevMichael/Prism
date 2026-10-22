@@ -235,12 +235,19 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const onViewer = (sendNotice) => deliverPendingNotices(id, sendNotice);
       // A new project starts as the most recent, so the recent limit never drops the project being registered.
       project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [], intelligenceDirectories: [] };
-      project.review = createProjectReview({ projectRoot: root, baseUrl, instance, onViewer, evidenceStore: () => evidenceStoreOf(project),
+      project.review = createProjectReview({ projectRoot: root, baseUrl, instance, appVersion: pluginVersion, onViewer, evidenceStore: () => evidenceStoreOf(project),
         intelligenceDirectories: () => intelligenceDirectoriesOf(project) });
       projects.set(id, project);
       if (persist) await rememberProjects();
     }
     return project;
+  }
+
+  // Grants one browser open while no tab of any project is connected and no other open was granted within the open lease.
+  function grantOpen(now = Date.now()) {
+    const open = viewerCount() === 0 && now - openGrantedAt >= OPEN_LEASE_MS;
+    if (open) openGrantedAt = now;
+    return open;
   }
 
   // Answers whether the presenting session should open a browser, and tells every other project's tabs about the presentation.
@@ -252,8 +259,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     }
     const now = Date.now();
     const watched = viewerCount() > 0;
-    const open = !watched && now - openGrantedAt >= OPEN_LEASE_MS;
-    if (open) openGrantedAt = now;
+    const open = grantOpen(now);
     if (open || project.review.viewerCount() > 0) pendingNotices.delete(project.id);
     else if (!watched) pendingNotices.set(project.id, { notice, expiresAt: now + noticeMs });
     return open;
@@ -324,6 +330,11 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const project = await projectFor(body.projectRoot);
       await reportDirectories(project, body);
       const review = project.review;
+      // A session start asks only whether to open a window, and leaves tabs and other projects' notices alone.
+      if (body.open === true && body.start === true) {
+        await touch(project);
+        return { url: review.reviewUrl([]), open: grantOpen(), session: review.getSession() };
+      }
       if (body.open === true) {
         const tabs = normalizeTabs(body.tabs);
         await review.presentTabs(tabs);

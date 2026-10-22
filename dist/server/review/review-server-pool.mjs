@@ -127,14 +127,22 @@ export function createReviewServerPool({ start = startReviewServer, app } = {}) 
 
   // Registration lists the project in the review app from session start or the first tool call that names it, once per project;
   // a failure leaves it to the review tools, which fall back to a session server.
+  // With open, a session start also opens a browser on the project while no review tab is connected.
   const registered = new Set();
-  function register(projectRoot) {
+  function register(projectRoot, { open = false } = {}) {
     if (!client || registered.has(projectRoot)) return;
     registered.add(projectRoot);
-    void client.register(projectRoot).catch(() => {});
+    const opener = app.openBrowser ?? openBrowser;
+    const started = open ? client.openAtStart(projectRoot).then((answer) => answer.open && opener(answer.url)) : client.register(projectRoot);
+    void started.catch(() => {});
   }
 
-  return { get, close, register };
+  // Starts the review app before any project is known, so it is ready for a host that names its project only with a tool call.
+  function startApp() {
+    void client?.start().catch(() => {});
+  }
+
+  return { get, close, register, startApp };
 }
 
 // The prism review command presents through the user's review app and returns; it holds a server only when it serves the review itself.

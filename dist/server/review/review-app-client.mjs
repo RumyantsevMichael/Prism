@@ -3,14 +3,16 @@ import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import http from "node:http";
 import { homedir } from "node:os";
-import { pluginPath } from "../plugin-root.mjs";
-import { REVIEW_APP_PROTOCOL, lockPath, readDiscovery, reviewAppDirectory, signRequest, trustedDirectory, verifyResponse } from "./review-app-discovery.mjs";
+import { pluginPath, pluginVersion as installedVersion } from "../plugin-root.mjs";
+import { REVIEW_APP_PROTOCOL, lockPath, olderVersion, readDiscovery, reviewAppDirectory, signRequest, trustedDirectory, verifyResponse } from "./review-app-discovery.mjs";
 
 const REQUEST_TIMEOUT_MS = 2000;
 const RESPONSE_LIMIT = 4 * 1024 * 1024;
 const START_TIMEOUT_MS = 5000;
 const POLL_MS = 50;
 const LEASE_RENEW_MS = 60 * 1000;
+// Tabs of a replaced app reconnect within a few seconds, so a start that replaced one waits before it decides whether a tab is open.
+const RECONNECT_GRACE_MS = 5000;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -100,13 +102,15 @@ async function lockCleared(directory, deadline) {
   return false;
 }
 
-// A client finds the user's review app, starts it when none proves itself, and replaces an app with an older protocol.
+// A client finds the user's review app, starts it when none proves itself, and replaces an app with an older protocol or plugin version.
+// It never replaces a newer app, so sessions of two installed versions settle on the newer one instead of replacing each other.
 // Every registration and presentation names the evidence store and index storage this process writes, so the app reads each project's
 // evidence and indexing state from them.
-export function createReviewAppClient({ directory = reviewAppDirectory(), launch = launchReviewApp, startTimeoutMs = START_TIMEOUT_MS, evidenceDirectory, intelligenceDirectory } = {}) {
+export function createReviewAppClient({ directory = reviewAppDirectory(), launch = launchReviewApp, startTimeoutMs = START_TIMEOUT_MS, reconnectGraceMs = RECONNECT_GRACE_MS, pluginVersion = installedVersion(), evidenceDirectory, intelligenceDirectory } = {}) {
   const storage = Object.fromEntries(Object.entries({ evidenceDirectory, intelligenceDirectory }).filter(([, value]) => value !== undefined));
   let current = null;
   let connecting = null;
+  let replaced = false;
   const leases = new Map();
 
   const remaining = (deadline) => Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now());
@@ -115,7 +119,8 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     if (!candidate || remaining(deadline) <= 0) return null;
     try {
       const health = await controlRequest(candidate, "GET", "/control/health", undefined, remaining(deadline));
-      return Number.isSafeInteger(health.protocol) ? { ...candidate, protocol: health.protocol } : null;
+      if (!Number.isSafeInteger(health.protocol)) return null;
+      return { ...candidate, protocol: health.protocol, pluginVersion: typeof health.pluginVersion === "string" ? health.pluginVersion : null };
     } catch {
       return null;
     }
@@ -125,8 +130,9 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     if (!(await trustedDirectory(directory))) throw failure("The review app state directory is not private to this user.", false);
     const deadline = Date.now() + startTimeoutMs;
     const found = await proven(await readDiscovery(directory), deadline);
-    if (found && found.protocol >= REVIEW_APP_PROTOCOL) return found;
+    if (found && found.protocol >= REVIEW_APP_PROTOCOL && !olderVersion(found.pluginVersion, pluginVersion)) return found;
     if (found) {
+      replaced = true;
       await controlRequest(found, "POST", "/control/shutdown", { handoff: true }, remaining(deadline)).catch(() => {});
       await lockCleared(directory, deadline);
     }
@@ -194,6 +200,18 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     return call("POST", "/control/present", { projectRoot, ...(tabs === undefined ? {} : { tabs }), open, ...storage });
   }
 
+  // Opens a browser at session start only while no tab of any project is connected, so many sessions open at most one window.
+  async function openAtStart(projectRoot) {
+    await register(projectRoot);
+    if (replaced) await sleep(reconnectGraceMs);
+    return call("POST", "/control/present", { projectRoot, open: true, start: true, ...storage });
+  }
+
+  // Starts the app without a project, for a host that names its project only with its first tool call.
+  async function start() {
+    await app();
+  }
+
   async function close() {
     const released = [...leases.values()];
     leases.clear();
@@ -202,5 +220,5 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     await Promise.allSettled(released.map((lease) => controlRequest(current, "DELETE", `/control/projects/${lease.id}`)));
   }
 
-  return { register, release, present, close };
+  return { register, release, present, openAtStart, start, close };
 }
