@@ -17,7 +17,7 @@ test("the review demo seed builds its project through the current MCP tools", as
   const { stdout } = await run(process.execPath, [path.join(ROOT, "scripts/review-demo/seed.mjs"), project], { timeout: 120000 });
 
   assert.match(stdout, /Start the review browser with:/);
-  for (const record of ["docs/roadmap.json", "docs/plans/retry-hardening/initiative.json", "docs/plans/retry-hardening/state.json", "docs/plans/retry-hardening/timeout-retries/review.json"]) {
+  for (const record of [".prism/roadmap.json", ".prism/initiatives/retry-hardening/initiative.json", ".prism/initiatives/retry-hardening/state.json", ".prism/initiatives/retry-hardening/slices/timeout-retries/review.json"]) {
     await access(path.join(project, record));
   }
 });
@@ -29,7 +29,7 @@ test("the edge-case seed builds its project through the current MCP tools", asyn
   const { stdout } = await run(process.execPath, [path.join(ROOT, "scripts/review-demo/seed-stress.mjs"), project], { timeout: 120000 });
 
   assert.match(stdout, /Stress project:/);
-  for (const record of ["docs/roadmap.json", "docs/plans/huge-initiative/initiative.json", "docs/plans/huge-initiative/state.json", "docs/plans/huge-initiative/slice-with-long-name/review.json", "docs/plans/huge-initiative/slice-with-long-name/change-map.json"]) {
+  for (const record of [".prism/roadmap.json", ".prism/initiatives/huge-initiative/initiative.json", ".prism/initiatives/huge-initiative/state.json", ".prism/initiatives/huge-initiative/slices/slice-with-long-name/review.json", ".prism/initiatives/huge-initiative/slices/slice-with-long-name/change-map.json"]) {
     await access(path.join(project, record));
   }
 });

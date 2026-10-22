@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
@@ -9,6 +9,7 @@ import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
+import { locateRecord, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
 
 const RECORD_NAME = "initiative.json";
 const PROJECTION_NAME = "initiative.md";
@@ -44,7 +45,8 @@ export const UPDATE_INITIATIVE_SCHEMA = object({
     object({ op: { const: "set_dependencies" }, slug, dependencies: { type: "array", maxItems: 200, items: slug } }),
     object({ op: { const: "update_slice" }, slug, title: text, outcome: text }, ["op", "slug"]),
     object({ op: { const: "import_map" }, path: text }),
-    object({ op: { const: "regenerate_markdown" } })
+    object({ op: { const: "regenerate_markdown" } }),
+    object({ op: { const: "remove_records" } })
   ] } }
 }, ["projectRoot", "initiative", "expectedRevision", "operations"]);
 
@@ -65,9 +67,9 @@ export async function resolveInitiative(projectRoot, initiative, createParent = 
   if (directory === null) {
     throw fail("invalid_config", "The workflow config disables the plans path, so initiatives have no location.");
   }
-  const record = await resolveArtifactPath(projectRoot, `${directory}/${RECORD_NAME}`, createParent, RECORD_NAME);
-  const projection = await resolveArtifactPath(projectRoot, `${directory}/${PROJECTION_NAME}`, false, PROJECTION_NAME);
-  return { root: record.root, initiative, directory, requirementsDirectory: config.paths.requirements, recordPath: record.deltaPath, target: record.target, projectionPath: projection.deltaPath, projectionTarget: projection.target };
+  const record = await locateRecord(projectRoot, { kind: "initiative", initiative });
+  const projection = await resolveArtifactPath(projectRoot, `${directory}/${PROJECTION_NAME}`, createParent, PROJECTION_NAME);
+  return { root: record.root, initiative, directory, requirementsDirectory: config.paths.requirements, recordPath: record.path, target: record.target, projectionPath: projection.deltaPath, projectionTarget: projection.target };
 }
 
 function revisionOf(contents) {
@@ -206,13 +208,12 @@ async function sliceOutcome(resolved, slices, slugValue) {
   }
 }
 
-async function completionGate(resolved, slices, slugValue) {
+async function completionGate(resolved, slugValue) {
   const { checkReviewGate } = await import("../review/review-ledger.mjs");
-  const reviewPath = `${sliceFolder(resolved.directory, slices, slugValue)}/review.json`;
   try {
-    return { reviewPath, ...(await checkReviewGate({ projectRoot: resolved.root, reviewPath, gate: "completion" })) };
+    return await checkReviewGate({ projectRoot: resolved.root, initiative: resolved.initiative, slice: slugValue, gate: "completion" });
   } catch (error) {
-    return { reviewPath, ready: false, problems: [{ code: error.code ?? "evidence_missing", message: error.message }] };
+    return { ready: false, problems: [{ code: error.code ?? "evidence_missing", message: error.message }] };
   }
 }
 
@@ -254,10 +255,10 @@ async function applyOperation(resolved, record, operation) {
       const slice = requireSlice(operation.slug);
       if (slice.status === "split") throw fail("validation_failed", "A split parent keeps the split status permanently.");
       if (operation.status === "done" && slice.status !== "done") {
-        const gate = await completionGate(resolved, slices, operation.slug);
+        const gate = await completionGate(resolved, operation.slug);
         if (!gate.ready) {
           const reasons = (gate.problems ?? []).map((problem) => problem.message).filter(Boolean).join(" ");
-          throw fail("gate_blocked", `The slice has no passing completion gate at ${gate.reviewPath}.${reasons ? ` ${reasons}` : ""}`, { reviewPath: gate.reviewPath, problems: gate.problems });
+          throw fail("gate_blocked", `The slice ${operation.slug} has no passing completion gate in its review.${reasons ? ` ${reasons}` : ""}`, { slice: operation.slug, problems: gate.problems });
         }
       }
       slice.status = operation.status;
@@ -274,15 +275,34 @@ async function applyOperation(resolved, record, operation) {
     }
     case "regenerate_markdown":
       break;
+    case "remove_records":
+      throw fail("validation_failed", "remove_records must be the only operation of its update.");
     default:
       throw fail("validation_failed", `Unsupported operation ${operation.op}.`);
   }
 }
 
+// Coordination cleanup removes an initiative's records only after the roadmap keeps its shipped or superseded decision.
+async function removeRecords(input) {
+  const { readRoadmap } = await import("./roadmap.mjs");
+  const resolved = await resolveInitiative(input.projectRoot, input.initiative);
+  const current = await loadRecord(resolved);
+  if (current.revision !== input.expectedRevision) {
+    throw fail("revision_conflict", revisionMismatch("initiative record", input.expectedRevision, current.revision), { currentRevision: current.revision });
+  }
+  const roadmap = await readRoadmap(input.projectRoot);
+  const decision = roadmap.loaded.record?.initiatives?.find((item) => item.id === input.initiative)?.decision;
+  if (!decision) throw fail("gate_blocked", `Record the shipped or superseded decision for ${input.initiative} on the roadmap before removing its records.`);
+  await removeInitiativeRecords(resolved.root, input.initiative);
+  return { initiative: input.initiative, removed: true, decision: decision.kind };
+}
+
 export async function updateInitiative(input) {
   validateInput(UPDATE_INITIATIVE_SCHEMA, input);
+  if (input.operations.length === 1 && input.operations[0].op === "remove_records") return removeRecords(input);
   const resolved = await resolveInitiative(input.projectRoot, input.initiative, true);
-  await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.recordPath, resolved.projectionPath]);
+  await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.projectionPath]);
+  await mkdir(path.dirname(resolved.target), { recursive: true });
   return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
     const current = await loadRecord(resolved);
     if (current.revision !== input.expectedRevision) {
@@ -308,7 +328,7 @@ export async function updateInitiative(input) {
     for (const operation of mutating) record.history.push({ actor, operation: operation.op, ...(operation.slug ? { slug: operation.slug } : operation.parent ? { slug: operation.parent } : {}), at });
     const contents = serialize(record);
     const changed = mutating.length > 0 && (!current.exists || contents !== (await readFile(resolved.target, "utf8").catch(() => null)));
-    if (changed) await conservationStore.writeManaged(resolved.root, resolved.target, contents);
+    if (changed) await writeRecord(resolved.root, { kind: "initiative", initiative: resolved.initiative }, contents);
     let projectionStale = false;
     try {
       projectionStale = !(await writeProjection(resolved.root, resolved.projectionTarget, markdown(canonicalRecord(record)), RECORD_NAME)).written;
@@ -329,7 +349,7 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, or import a legacy map.puml. Done transitions require a passing completion gate, and every write validates the whole slice graph and regenerates initiative.md.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, or import a legacy map.puml. Done transitions require a passing completion gate, and every write validates the whole slice graph and regenerates initiative.md. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's records during coordination cleanup.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

@@ -143,7 +143,7 @@ Required inputs are:
 - linked evidence when they exist.
 The [run settings](references/run-settings.md) define decision gates and agent flow.
 The [worker lifetime](references/worker-lifetime.md) rules define valid worker waits, resumes, and replacements.
-The `get_coordination_state` input includes the initiative path, even when `state.json` does not exist.
+The `get_coordination_state` input includes the initiative identifier, even when the coordination state does not exist.
 The `update_coordination_state` input includes the current revision.
 Settings resolution supplies `changes.settings`.
 Initiative state updates supply current workers, blockers, next actions, and evidence paths.
@@ -170,7 +170,7 @@ The `update_roadmap` ship operation receives the initiative identifier and is re
 A missing roadmap entry for the initiative is a missing initiative input, so its roadmap entry exists before the initiative record is created.
 A roadmap entry or priority change made during orchestration waits for user acceptance through a recorded `decision` gate unless `full` autonomy resolves roadmap priority.
 Graduation moves facts that later work needs from the initiative directory into durable sources under the [artifact rules](../workflow/references/artifact-rules.md).
-After the ship decision and graduation, coordination cleanup deletes the initiative directory, and the roadmap keeps the shipped record.
+After the ship decision and graduation, coordination cleanup deletes the initiative directory and calls `update_initiative` with a single `remove_records` operation, and the roadmap keeps the shipped record.
 When the initiative directory holds uncommitted files, cleanup waits for a recorded `decision` gate, because the deletion cannot be undone.
 
 A valid `SPLIT` has unique child slugs, an unchanged parent title, and exact collective requirement coverage.
@@ -209,18 +209,18 @@ The review browser lists recorded gates as waiting on the user.
 
 ## State and recovery invariants
 
-The initiative's `state.json` records current coordination facts beside `initiative.json`.
+The initiative's coordination state records current coordination facts.
 Typed `activeOperations` use `start`, `update`, `finish`, and `release`; only `finish` claims completion after the server checks current review evidence.
 Activities are `design`, `implementation`, `review`, and `integration`, with descriptive labels stored separately.
 The initiative record alone owns slice topology, titles, outcomes, requirement assignments, dependencies, and status.
 The orchestrator is the only workflow writer for initiative state.
 Mono delivery records `orchestrator` as the active worker and the current workspace.
-State evidence paths resolve from the note's directory unless absolute.
+State evidence paths resolve from the initiative directory unless absolute.
 Empty lists mean no current item.
 An old recovery note for an inactive parent slice is historical evidence, not an active pause failure.
 
-The `checkpoint_pause` input includes the current revision, active slice, recovery content and path, and state changes.
-The fallback `update_coordination_state` input includes the current revision, recovery path, and state changes.
+The `checkpoint_pause` input includes the initiative identifier, current revision, active slice, recovery content, and state changes, and the server writes `recovery.md` in the active slice folder.
+The fallback writes `recovery.md` in the active slice folder, and its `update_coordination_state` input includes the current revision, the recovery evidence path, and state changes.
 The fallback applies only when `checkpoint_pause` is unavailable and the other coordination-state tools work.
 A completed pause requires recovery and state updates.
 Replacement workers need retained recovery and ancestor evidence after compaction or handoff.

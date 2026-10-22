@@ -22,6 +22,6 @@ test("orchestration requires the pause checkpoint before state changes", async (
   assert.match(pauseFlow, /Call get_coordination_state tool[\s\S]*Call checkpoint_pause tool/);
   assert.match(pauseFlow, /Write recovery before calling update_coordination_state/);
   assert.match(pauseFlow, /Recovery and state update succeeded\?/);
-  assert.match(orchestrate, /The `checkpoint_pause` input includes the current revision/);
+  assert.match(orchestrate, /The `checkpoint_pause` input includes the initiative identifier, current revision/);
   assert.match(orchestrate, /inactive parent slice is historical evidence/);
 });

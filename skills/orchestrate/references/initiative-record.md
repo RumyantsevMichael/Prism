@@ -1,8 +1,7 @@
 # Initiative record
 
 The initiative record owns slice titles, outcomes, hierarchy, requirement assignments, dependencies, and structural status.
-It lives at `<configured plans>/<initiative>/initiative.json` beside `state.json`.
-`initiative.md` beside it is a generated view.
+It is a Prism record addressed by the initiative identifier, and `initiative.md` in the initiative directory is its generated view.
 Design proposes slice outcomes and titles, while orchestration owns parent relationships and dependencies.
 Agents read the record with `get_initiative` and change it with `update_initiative`, never by editing the JSON or its generated view.
 
@@ -31,7 +30,7 @@ The server validates the whole candidate graph before writing, so an invalid bat
 Slugs use letters, digits, hyphens, and underscores, and each slug is unique within the initiative.
 There is exactly one root with the complete Approved initiative requirement assignment.
 Requirement references use `<requirements path>/<file>.md#<number>`, and a cited `<file>.md§<number>` is stored in that form.
-The done check reads `review.json` in the slice folder, which is the initiative directory for the root slice.
+The done check reads the slice's review record.
 Every slice has a nonempty title and requirement assignment.
 Each parent's direct children cover exactly its assignment, with shared references allowed.
 Only accepted splits add children.

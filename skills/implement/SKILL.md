@@ -17,7 +17,7 @@ Orchestration owns review dispatch, lifecycle changes, ADR acceptance, commits, 
 3. Confirm orchestration cleared the implementation gate and supplied the current workspace and review base.
 4. Before edits, read the complete [change map](../design/references/change-map.md) through MCP at its audited revision.
 5. If required design evidence is missing or invalid, return to `design` before production edits.
-6. Use the slice `review.json` through MCP as defined by [review-format.md](../review/references/review-format.md).
+6. Use the slice review record through MCP as defined by [review-format.md](../review/references/review-format.md).
 7. Read every assigned review lane through `get_review` and check the current implementation gate before edits.
 8. Select the entry path:
    - For initial implementation, complete section 2 before section 6.

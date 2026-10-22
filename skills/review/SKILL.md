@@ -69,7 +69,7 @@ Implementation review requires actual consumption and its verification evidence.
   7. Record defects in fit, design, requirements, or verification as findings.
   8. Route implementation-only gaps to delivery without opening design findings.
   9. Check change map readiness, scope, coverage of planned changes, and reuse evidence against the design.
-  10. For `CLEAN`, record the exact change map path and revision in the review result.
+  10. For `CLEAN`, record the exact change map revision in the review result.
 - For `implementation-review`:
   1. Read the complete diff against the supplied review base and recorded verification results, limited in a correction wave to its `correctionScope`.
   2. Trace assigned requirements and architectural constraints through changed code and observable tests.

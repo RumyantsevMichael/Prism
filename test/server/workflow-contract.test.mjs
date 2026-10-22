@@ -114,7 +114,7 @@ test("forms bounded slice architecture before fit and authors artifacts only aft
   for (const status of ["FIT", "SPLIT", "BLOCKED"]) assert.ok(design.includes("`" + status + "`:"));
   assert.match(design, /When orchestration returns findings, start at section 7 instead of section 1/);
   assert.match(design, /follow section 5's non-atomic branch before returning `SPLIT`/);
-  assert.match(design, /slice `review.json` and design-audit lane through MCP/);
+  assert.match(design, /slice review record and design-audit lane through MCP/);
 });
 
 test("keeps one delivery task through tests and code", async () => {
@@ -217,7 +217,7 @@ test("keeps workflow persistence minimal and stages runbook drafts in slices", a
   const docs = await skill("write-user-docs");
 
   assert.match(artifacts, /Workflow results stay in the agent response unless a later context needs them/);
-  assert.match(artifacts, /Use `state\.json` for current coordination facts and evidence paths, not copied reports/);
+  assert.match(artifacts, /Use the coordination state for current coordination facts and evidence paths, not copied reports/);
   assert.match(artifacts, /Existing artifacts replace standalone exploration or verification reports when they preserve the required facts/);
   assert.match(artifacts, /store `runbook-draft\.md` in the slice folder/);
   assert.match(artifacts, /Move verified necessary content to the configured user-guide directory through `write-user-docs`/);
@@ -256,7 +256,7 @@ test("uses one review skill for both review modes", async () => {
 
 test("keeps findings authoritative per review lane", async () => {
   const format = await reference("review", "review-format.md");
-  assert.match(format, /One slice `review.json` is authoritative for all its lanes and waves/);
+  assert.match(format, /One slice review record is authoritative for all its lanes and waves/);
   assert.doesNotMatch(format, /Canonical findings/);
   const reviewRules = await reference("orchestrate", "review-rules.md");
   assert.match(reviewRules, /pinned required lane set/);
@@ -265,7 +265,7 @@ test("keeps findings authoritative per review lane", async () => {
   assert.match(reviewRules, /direct correction exchange/);
   assert.match(reviewRules, /Each worker receives the other worker ID/);
   assert.match(reviewRules, /retain its reporting lane and route correction without transferring its identity or evidence/);
-  assert.match(await skill("workflow"), /\| `review.json` \| The authoritative MCP-managed slice review/);
+  assert.match(await skill("workflow"), /\| Review record \| The authoritative Prism record of one slice's review/);
 });
 
 test("detects delegation from a callable child-start capability", async () => {
@@ -338,7 +338,7 @@ test("uses the Codex benchmark model policy", async () => {
 test("keeps coordination state concise without an inline schema example", async () => {
   const orchestrate = await skill("orchestrate");
   assert.doesNotMatch(orchestrate, /```json/);
-  assert.match(orchestrate, /The `get_coordination_state` input includes the initiative path/);
+  assert.match(orchestrate, /The `get_coordination_state` input includes the initiative identifier/);
   await assert.rejects(reference("orchestrate", "state-schema.md"), /ENOENT/);
   for (const name of ["orchestrate", "design", "implement", "review", "roadmap"]) {
     assert.doesNotMatch(await skill(name), /worker-protocol\.md|baseRevision|preconditions|correction digest/);
@@ -355,7 +355,7 @@ test("places process order in diagrams and pause inputs in prose", async () => {
   assert.match(phaseFlow, /Leaf done and continuation is stepwise\?/);
   assert.match(pauseFlow, /Slice absent from active state\?/);
   assert.match(pauseFlow, /Other coordination-state tools available\?/);
-  assert.match(orchestrate, /The `checkpoint_pause` input includes the current revision/);
+  assert.match(orchestrate, /The `checkpoint_pause` input includes the initiative identifier, current revision/);
   assert.doesNotMatch(orchestrate, /## Continuity and pause[\s\S]*\n1\./);
 });
 
@@ -364,9 +364,9 @@ test("uses the validated coordination state tools", async () => {
   const artifacts = await reference("workflow", "artifact-rules.md");
   const orchestrate = await skill("orchestrate");
   assert.doesNotMatch(workflow, /\| Coordination-state capability \|/);
-  assert.match(artifacts, /Call `get_coordination_state` to read `state\.json` and its revision/);
+  assert.match(artifacts, /Call `get_coordination_state` with the initiative identifier to read the coordination state and its revision/);
   assert.match(artifacts, /Call `update_coordination_state` with that revision/);
-  assert.match(orchestrate, /The `get_coordination_state` input includes the initiative path/);
+  assert.match(orchestrate, /The `get_coordination_state` input includes the initiative identifier/);
   assert.match(orchestrate, /Typed `activeOperations` use `start`, `update`, `finish`, and `release`/);
   assert.match(orchestrate, /only `finish` claims completion after the server checks current review evidence/);
   assert.doesNotMatch(orchestrate, /Direct file editing is an emergency recovery action/);
@@ -464,8 +464,8 @@ test("manages the roadmap and initiative graph only through MCP records", async 
   assert.match(roadmap, /Read it with `get_roadmap` and change it with `update_roadmap`/);
   assert.match(roadmap, /`update_roadmap` refuses `ship` until every leaf slice is done/);
   assert.doesNotMatch(roadmap, /orchestrated state-change mode/);
-  assert.match(workflow, /\| `initiative.json` \| The authoritative MCP-managed initiative record/);
-  assert.match(workflow, /\| `roadmap.json` \| The roadmap record/);
+  assert.match(workflow, /\| Initiative record \| The authoritative Prism record/);
+  assert.match(workflow, /\| Roadmap record \| The Prism record owning initiative bands/);
   assert.doesNotMatch(workflow, /\| `map.puml` \|/);
 });
 
@@ -490,14 +490,14 @@ test("records each user gate in coordination state while it waits on the user", 
   assert.match(orchestrate, /Every question to the user goes through a recorded gate, and related questions share one gate/);
   assert.match(orchestrate, /A missing roadmap entry for the initiative is a missing initiative input, so its roadmap entry exists before the initiative record is created/);
   assert.match(orchestrate, /Graduation moves facts that later work needs from the initiative directory into durable sources/);
-  assert.match(orchestrate, /After the ship decision and graduation, coordination cleanup deletes the initiative directory, and the roadmap keeps the shipped record/);
+  assert.match(orchestrate, /After the ship decision and graduation, coordination cleanup deletes the initiative directory and calls `update_initiative` with a single `remove_records` operation, and the roadmap keeps the shipped record/);
   assert.match(orchestrate, /A roadmap entry or priority change made during orchestration waits for user acceptance through a recorded `decision` gate unless `full` autonomy resolves roadmap priority/);
   assert.match(workflow, /Use the initiative directory as the root slice folder, and keep every other slice folder directly under it/);
   assert.match(await skill("design"), /The initiative directory is the root slice folder, other slice folders are flat under it/);
   assert.match(await reference("orchestrate", "initiative-record.md"), /a cited `<file>\.md§<number>` is stored in that form/);
   assert.match(orchestrate, /A gate that the autonomy setting settles automatically is not recorded/);
-  assert.match(runSettings, /Every question that waits on the user is recorded as a user gate in `state\.json` before it is asked/);
-  assert.match(workflow, /\| User gate record \| A pending `state\.json` entry that records a gate while it waits on the user/);
+  assert.match(runSettings, /Every question that waits on the user is recorded as a user gate in the coordination state before it is asked/);
+  assert.match(workflow, /\| User gate record \| A pending coordination state entry that records a gate while it waits on the user/);
   assert.match(workflow, /any answer the user recorded in the review browser/);
   assert.match(workflow, /Change Prism records only through Prism MCP tools, never by importing, running, or editing the plugin's own files/);
   assert.match(workflow, /pending user gate records, next actions, evidence paths, and a revision/);

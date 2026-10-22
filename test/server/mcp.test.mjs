@@ -309,7 +309,7 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.match(tools.get_review_url.description, /does not open a browser/);
   assert.match(tools.get_review_url.description, /the human's open tabs stay open/);
   assert.match(tools.present_review.description, /system browser/);
-  assert.deepEqual(tools.wait_for_user_gate.inputSchema.required, ["projectRoot", "statePath"]);
+  assert.deepEqual(tools.wait_for_user_gate.inputSchema.required, ["projectRoot", "initiative"]);
   assert.equal(tools.wait_for_user_gate.inputSchema.properties.gateIds.maxItems, 10);
   assert.equal(tools.wait_for_user_gate.annotations.readOnlyHint, true);
   assert.match(tools.wait_for_user_gate.description, /its result wakes the session when the user answers/);
@@ -358,16 +358,16 @@ test("checkpoints a pause and records its recovery evidence through MCP", async 
   context.after(() => rm(dataDirectory, { recursive: true, force: true }));
   const mcp = mcpProcess(context, root, root);
   await initialize(mcp);
-  const statePath = "docs/plans/example/state.json";
+  const initiative = "example";
   const recoveryPath = "docs/plans/example/child/recovery.md";
-  const current = await callTool(mcp, 2, "update_coordination_state", { projectRoot: root, statePath, expectedRevision: null,
+  const current = await callTool(mcp, 2, "update_coordination_state", { projectRoot: root, initiative, expectedRevision: null,
     changes: { activeOperations: [{ slice: "child", activity: "design", workers: ["worker"], workspace: "/work" }].map(entry => ({ op: "start", entry })) } });
   await callTool(mcp, 3, "set_workflow_recording", { projectRoot: root, dataDirectory, enabled: true });
-  const paused = await callTool(mcp, 4, "checkpoint_pause", { projectRoot: root, statePath, expectedRevision: current.result.structuredContent.revision,
-    activeSlice: "child", recoveryPath, recoveryContent: "Current recovery.\n", changes: { next: ["Continue child"] }, dataDirectory });
+  const paused = await callTool(mcp, 4, "checkpoint_pause", { projectRoot: root, initiative, expectedRevision: current.result.structuredContent.revision,
+    activeSlice: "child", recoveryContent: "Current recovery.\n", changes: { next: ["Continue child"] }, dataDirectory });
   assert.equal(paused.result.structuredContent.pausedSlice, "child");
   assert.equal(paused.result.structuredContent.decisionRecording.status, "recorded");
-  const history = await callTool(mcp, 5, "read_workflow_decisions", { projectRoot: root, dataDirectory, statePath, recoveryPaths: [recoveryPath] });
+  const history = await callTool(mcp, 5, "read_workflow_decisions", { projectRoot: root, dataDirectory, initiative, recoveryPaths: [recoveryPath] });
   assert.equal(history.result.structuredContent.records.at(-1).kind, "pause");
   assert.equal(history.result.structuredContent.recovery[0].status, "historical");
 });
@@ -394,29 +394,28 @@ test("requires structured diagram and review checkpoints through MCP", async (co
 
 test("updates coordination state without starting the review server", async (context) => {
   const root = await projectFixture(context, "state-mcp", "artifact.md");
-  const statePath = "docs/plans/demo/state.json";
-  await mkdir(path.join(root, path.dirname(statePath)), { recursive: true });
+  const initiative = "demo";
   const mcp = mcpProcess(context, root, root);
 
   await initialize(mcp);
-  const missing = await callTool(mcp, 2, "get_coordination_state", { statePath });
+  const missing = await callTool(mcp, 2, "get_coordination_state", { initiative });
   assert.equal(missing.result.structuredContent.exists, false);
   assert.equal(missing.result.structuredContent.revision, null);
 
   const created = await callTool(mcp, 3, "update_coordination_state", {
-    statePath,
+    initiative,
     expectedRevision: null,
     changes: { pending: ["User decision: retention"] }
   });
   assert.equal(created.result.structuredContent.created, true);
   assert.equal(created.result.structuredContent.valid, true);
 
-  const current = await callTool(mcp, 4, "get_coordination_state", { statePath });
+  const current = await callTool(mcp, 4, "get_coordination_state", { initiative });
   assert.deepEqual(current.result.structuredContent.state.pending, ["User decision: retention"]);
   assert.equal(current.result.structuredContent.revision, created.result.structuredContent.revision);
 
   const stale = await callTool(mcp, 5, "update_coordination_state", {
-    statePath,
+    initiative,
     expectedRevision: null,
     changes: { next: ["Retry from the current revision"] }
   });

@@ -8,6 +8,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { RECORD_DIRECTORY, ensureRecords, keyOfPath, recordPath } from "../workflow/record-store.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
@@ -124,9 +125,15 @@ export async function listSourceFiles(projectRoot) {
 export async function listArtifacts(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const results = new Set();
+  // Move legacy records first, so the listing never shows a record at both locations.
+  await ensureRecords(await realpath(projectRoot)).catch(() => {});
   for (const root of configuredRoots(config)) {
     await walkArtifacts(projectRoot, root, results);
   }
+  // Machine records live under .prism, which the walk above skips as a hidden folder.
+  await walkArtifacts(projectRoot, `${RECORD_DIRECTORY}/initiatives`, results);
+  const roadmap = recordPath({ kind: "roadmap" });
+  if (await stat(path.join(projectRoot, roadmap)).then((info) => info.isFile(), () => false)) results.add(roadmap);
   return [...results].sort();
 }
 
@@ -224,7 +231,9 @@ async function loadJsonArtifact(projectRoot, artifactPath, content) {
   const result = { kind, data };
   if (kind === "change-map") {
     try {
-      const { concepts, selectedCount, nextOffset, ...summary } = await getChangeMap({ projectRoot, deltaPath: artifactPath, limit: 1 });
+      const key = await keyOfPath(projectRoot, artifactPath);
+      if (key?.kind !== "change-map") throw new Error("Only a slice change map record has a readiness summary.");
+      const { concepts, selectedCount, nextOffset, ...summary } = await getChangeMap({ projectRoot, initiative: key.initiative, slice: key.slice, limit: 1 });
       result.summary = summary;
     } catch (error) {
       result.summaryError = error.message;
@@ -561,7 +570,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       try {
-        const answered = await answerGate(projectRoot, await readJson(request), { store: evidenceStore() });
+        const answered = await answerGate(projectRoot, await readJson(request));
         forgetWorkspace();
         send(response, 200, JSON.stringify(answered), "application/json; charset=utf-8");
       } catch (error) {

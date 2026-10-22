@@ -14,6 +14,7 @@ import {updateCoordinationState,checkpointPause} from '../../dist/server/workflo
 import {callConservationTool} from '../../dist/server/conservation/conservation-tools.mjs';
 import {applyActiveOperations} from '../../dist/server/workflow/active-operations.mjs';
 import {writeAtomically} from '../../dist/server/workflow/artifact-store.mjs';
+import {forgetMigrations} from '../../dist/server/workflow/record-store.mjs';
 import {CHUNKER_VERSION} from '../../dist/native-runtime/versions.mjs';
 const home=await realpath(await mkdtemp(path.join(os.tmpdir(),'prism-conservation-test-')));
 store.directory=path.join(home,'evidence');
@@ -22,9 +23,9 @@ const degraded={prepare:async()=>({status:'degraded',diagnostics:[{code:'unsuppo
 async function fixture(files={}) {
  const root=await mkdtemp(path.join(home,'project-'));
  for(const [file,body] of Object.entries(files)) {await mkdir(path.dirname(path.join(root,file)),{recursive:true});await writeFile(path.join(root,file),body);}
- const deltaPath='plan/slice/change-map.json',reviewPath='plan/slice/review.json';
- const b=await store.capture(root,deltaPath);
- return {root,deltaPath,reviewPath,b,update:args=>updateChangeMap({projectRoot:root,deltaPath,...args})};
+ const key={initiative:'plan',slice:'slice'},deltaPath='.prism/initiatives/plan/slices/slice/change-map.json',reviewPath='.prism/initiatives/plan/slices/slice/review.json';
+ const b=await store.capture(root,key);
+ return {root,key,deltaPath,reviewPath,b,update:args=>updateChangeMap({projectRoot:root,...key,...args})};
 }
 const ref=(path,value)=>({path,...(value?{selector:{type:'text',value}}:{})});
 const entry=(id,action,before,after,extra={})=>({id,kind:'rule',label:id,action,before,after,reason:'Satisfy the bound requirement.',...extra});
@@ -32,7 +33,7 @@ async function analysis(root,snapshot,units=[]) {
  const record={kind:'analysis',schemaVersion:1,project:root,snapshotId:snapshot.snapshotId,units,fileCoverage:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,true])),diagnostics:[],tokenCounts:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,1])),structureCounts:Object.fromEntries(snapshot.snapshot.files.map(f=>[f.file,{sections:0,paragraphs:0,listItems:0,links:0}])),versions:{extractor:CHUNKER_VERSION,metrics:ANALYSIS_VERSION,tokenizer:'fixture'}};
  const id=await store.put(root,record); await store.link(root,snapshot.snapshotId,id); return record;
 }
-async function compare(f,delta,result) {const response=await compareChangeMap({projectRoot:f.root,deltaPath:f.deltaPath,expectedRevision:delta.revision,baselineId:f.b.snapshotId,resultSnapshotId:result.snapshotId},{runtime:degraded});return store.get(f.root,response.comparisonId,'comparison');}
+async function compare(f,delta,result) {const response=await compareChangeMap({projectRoot:f.root,...f.key,expectedRevision:delta.revision,baselineId:f.b.snapshotId,resultSnapshotId:result.snapshotId},{runtime:degraded});return store.get(f.root,response.comparisonId,'comparison');}
 function privateFunctions(snapshot,text) {
  return [...text.matchAll(/function (\w+)\(\) \{ return \d; \}/g)].map(match=>({id:match[1],file:'code.ts',domain:'code',kind:'function',name:match[1],selector:match[1],span:{start:match.index,end:match.index+match[0].length},sourceHash:snapshot.snapshot.files.find(file=>file.file==='code.ts').hash,contentHash:digest(match[0]),isExported:false}));
 }
@@ -44,7 +45,7 @@ test('behavior-changing newlines outside declarations cannot pass an empty plan'
  const f=await fixture({'script.js':original});await analysis(f.root,f.b);
  const d=await f.update({expectedRevision:null,scope:['script.js'],baselineId:f.b.snapshotId,operations:[]});
  let revision=null;
- const act=async(id,operations)=>{const r=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=r.revision;return r;};
+ const act=async(id,operations)=>{const r=await updateReview({projectRoot:f.root,...f.key,delivery:'dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=r.revision;return r;};
  const wave=(id,mode,snapshot,comparisonId)=>({op:'start_wave',id,mode,deltaRevision:d.revision,snapshotId:snapshot.snapshotId,comparisonId,lanes:[{id:'main',reviewer:'reviewer',coverage:['script.js']}]});
  const baseline=await compare(f,d,f.b);
  await act('coord',[wave('audit','design-audit',f.b,await store.put(f.root,baseline))]);
@@ -55,7 +56,7 @@ test('behavior-changing newlines outside declarations cannot pass an empty plan'
  await act('coord',[wave('implementation','implementation-review',result,await store.put(f.root,compared))]);
  await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);
  await assert.rejects(act('coord',[{op:'accept_wave'}]),error=>error.code==='gate_blocked'&&error.problems.some(item=>item.code==='manual_evidence_missing'));
- assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,false);
+ assert.equal((await checkReviewGate({projectRoot:f.root,...f.key,gate:'completion'})).ready,false);
 });
 
 test('implementation review must cover deleted paths even when the result is empty', async t => {
@@ -65,7 +66,7 @@ test('implementation review must cover deleted paths even when the result is emp
   const scope=unrelated?['delete.js','unrelated.js']:['delete.js'];
   const d=await f.update({expectedRevision:null,scope,baselineId:f.b.snapshotId,requirements:[ref('requirements.txt')],operations:[{op:'insert',entry:entry('obsolete','DELETE',[ref('delete.js')],[],{kind:'file'})}]});
   let revision=null;
-  const act=async(id,operations)=>{const r=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=r.revision;return r;};
+  const act=async(id,operations)=>{const r=await updateReview({projectRoot:f.root,...f.key,delivery:'dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=r.revision;return r;};
   const wave=(id,mode,snapshot,comparisonId,coverage)=>({op:'start_wave',id,mode,deltaRevision:d.revision,snapshotId:snapshot.snapshotId,comparisonId,lanes:[{id:'main',reviewer:'reviewer',coverage}]});
   const baseline=await compare(f,d,f.b);
   await act('coord',[wave('audit','design-audit',f.b,await store.put(f.root,baseline),scope)]);
@@ -76,12 +77,12 @@ test('implementation review must cover deleted paths even when the result is emp
   await assert.rejects(act('coord',[wave('incomplete','implementation-review',result,comparisonId,['unrelated.js'])]),error=>error.code==='validation_failed'&&error.problems.some(item=>item.code==='review_coverage_missing'&&item.file==='delete.js'));
   await assert.rejects(act('coord',[wave('anchors','implementation-review',result,comparisonId,['requirements.txt#1'])]),error=>error.code==='validation_failed'&&/path prefixes/.test(error.message));
   await act('coord',[wave('pending','implementation-review',result,comparisonId,scope)]);
-  const blocked=await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'});
+  const blocked=await checkReviewGate({projectRoot:f.root,...f.key,gate:'completion'});
   assert.equal(blocked.ready,false);
   assert.match(blocked.problems[0].message,/wave pending has no accepted result, and accepting it now would fail on: lane_result_stale x1/);
   await act('coord',[wave('complete','implementation-review',result,comparisonId,scope)]);
   await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
-  assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,true);
+  assert.equal((await checkReviewGate({projectRoot:f.root,...f.key,gate:'completion'})).ready,true);
  });
 });
 
@@ -192,34 +193,33 @@ test('mode-only changes cannot pass KEEP',async()=>{
 test('review acceptance, exact source gates, concurrent lanes and coordination bypasses',async()=>{
  const f=await fixture();await analysis(f.root,f.b);
  const d=await f.update({expectedRevision:null,scope:['src'],baselineId:f.b.snapshotId,operations:[]});
- const compared=await compareChangeMap({projectRoot:f.root,deltaPath:f.deltaPath,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:f.b.snapshotId},{runtime:degraded});
+ const compared=await compareChangeMap({projectRoot:f.root,...f.key,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:f.b.snapshotId},{runtime:degraded});
  let revision=null;
  const actor=id=>({id,role:id==='coordinator'?'coordinator':id==='delivery'?'delivery':'reviewer'});
- const mutate=async(id,operations)=>{const r=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'delivery',expectedRevision:revision,actor:actor(id),operations});revision=r.revision;return r;};
+ const mutate=async(id,operations)=>{const r=await updateReview({projectRoot:f.root,...f.key,delivery:'delivery',expectedRevision:revision,actor:actor(id),operations});revision=r.revision;return r;};
  const start=(id,mode)=>({op:'start_wave',id,mode,deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId:compared.comparisonId,lanes:[{id:'one',reviewer:'r1',coverage:['src']},{id:'two',reviewer:'r2',coverage:['src']}]});
  await mutate('coordinator',[start('audit','design-audit')]);
  await assert.rejects(mutate('coordinator',[{op:'accept_wave'}]),{code:'gate_blocked'});
  const lanes=[['r1','one'],['r2','two']],sameRevision=revision;
- const simultaneous=await Promise.allSettled(lanes.map(([id,lane])=>updateReview({projectRoot:f.root,reviewPath:f.reviewPath,expectedRevision:sameRevision,actor:actor(id),operations:[{op:'submit_lane',lane,status:'CLEAN'}]})));
+ const simultaneous=await Promise.allSettled(lanes.map(([id,lane])=>updateReview({projectRoot:f.root,...f.key,expectedRevision:sameRevision,actor:actor(id),operations:[{op:'submit_lane',lane,status:'CLEAN'}]})));
  assert.equal(simultaneous.filter(result=>result.status==='fulfilled').length,1);
  revision=simultaneous.find(result=>result.status==='fulfilled').value.revision;
  const retry=simultaneous.findIndex(result=>result.status==='rejected');assert.equal(simultaneous[retry].reason.code,'revision_conflict');
  await mutate(lanes[retry][0],[{op:'submit_lane',lane:lanes[retry][1],status:'CLEAN'}]);await mutate('coordinator',[{op:'accept_wave'}]);
- assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'})).ready,true);
- const statePath='plan/state.json';
- let state=await updateCoordinationState({projectRoot:f.root,statePath,expectedRevision:null,changes:{activeOperations:[{op:'start',entry:{slice:'slice',activity:'implementation',workers:['delivery'],workspace:f.root,reviewPath:f.reviewPath}}]}});
+ assert.equal((await checkReviewGate({projectRoot:f.root,...f.key,gate:'implementation'})).ready,true);
+  let state=await updateCoordinationState({projectRoot:f.root,initiative:'plan',expectedRevision:null,changes:{activeOperations:[{op:'start',entry:{slice:'slice',activity:'implementation',workers:['delivery'],workspace:f.root}}]}});
  // The coordination output must be registered before the next source capture in a real workflow.
- await assert.rejects(updateCoordinationState({projectRoot:f.root,statePath,expectedRevision:state.revision,changes:{active:[]}}),{code:'gate_blocked'});
- await assert.rejects(updateCoordinationState({projectRoot:f.root,statePath,expectedRevision:state.revision,changes:{activeOperations:[{op:'finish',slice:'slice'}]}}),{code:'gate_blocked'});
- state=await updateCoordinationState({projectRoot:f.root,statePath,expectedRevision:state.revision,changes:{activeOperations:[{op:'release',slice:'slice'}]}});assert.equal(state.state.active.length,0);
- await rm(path.join(f.root,statePath));
+ await assert.rejects(updateCoordinationState({projectRoot:f.root,initiative:'plan',expectedRevision:state.revision,changes:{active:[]}}),{code:'gate_blocked'});
+ await assert.rejects(updateCoordinationState({projectRoot:f.root,initiative:'plan',expectedRevision:state.revision,changes:{activeOperations:[{op:'finish',slice:'slice'}]}}),{code:'gate_blocked'});
+ state=await updateCoordinationState({projectRoot:f.root,initiative:'plan',expectedRevision:state.revision,changes:{activeOperations:[{op:'release',slice:'slice'}]}});assert.equal(state.state.active.length,0);
+ await rm(path.join(f.root,'.prism/initiatives/plan/state.json'));
  await mutate('coordinator',[start('implementation','implementation-review')]);
  await mutate('r1',[{op:'submit_lane',lane:'one',status:'CLEAN'}]);await mutate('r2',[{op:'submit_lane',lane:'two',status:'CLEAN'}]);await mutate('coordinator',[{op:'accept_wave'}]);
- assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,true);
- await writeFile(path.join(f.root,'unexpected'),'change');await assert.rejects(checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'}),{code:'stale_snapshot'});
+ assert.equal((await checkReviewGate({projectRoot:f.root,...f.key,gate:'completion'})).ready,true);
+ await writeFile(path.join(f.root,'unexpected'),'change');await assert.rejects(checkReviewGate({projectRoot:f.root,...f.key,gate:'completion'}),{code:'stale_snapshot'});
  await rm(path.join(f.root,'unexpected'));
  await mutate('coordinator',[{op:'open_conflict',id:'disagreement',lanes:['one','two'],reason:'Different conclusions'}]);
- assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,false);
+ assert.equal((await checkReviewGate({projectRoot:f.root,...f.key,gate:'completion'})).ready,false);
  await mutate('coordinator',[{op:'record_exchange',reviewer:'r1'}]);await assert.rejects(mutate('r1',[{op:'submit_lane',lane:'one',status:'CLEAN'}]),{code:'gate_blocked'});
  const bytes=await readFile(path.join(f.root,f.reviewPath),'utf8');await assert.rejects(mutate('delivery',[{op:'accept_wave'}]),{code:'gate_blocked'});assert.equal(await readFile(path.join(f.root,f.reviewPath),'utf8'),bytes);
 });
@@ -252,22 +252,22 @@ test('consolidation and split observations use exact text without declaring stru
  await writeFile(path.join(f.root,'rules.md'),'Answer directly.\nBe brief.');const split=await compare(f,updated,await store.capture(f.root));assert.equal(split.measurements.find(x=>x.dimension==='planned.splits').after,1);
 });
 test('legacy delta migration retains bytes and does not fabricate a baseline',async()=>{
- const root=await mkdtemp(path.join(home,'legacy-')),deltaPath='slice/concept-delta.json';await mkdir(path.join(root,'slice'));
- const contents=JSON.stringify({schemaVersion:1,scope:['src'],concepts:[]},null,4);await writeFile(path.join(root,deltaPath),contents);
- const read=await getChangeMap({projectRoot:root,deltaPath});assert.equal(read.ready,false);
- const changed=await updateChangeMap({projectRoot:root,deltaPath,expectedRevision:read.revision,migrate:true,operations:[]});assert.equal(changed.schemaVersion,2);assert.equal(changed.ready,false);
+ const root=await mkdtemp(path.join(home,'legacy-')),legacy='docs/plans/legacy/slice/concept-delta.json',key={initiative:'legacy',slice:'slice'};await mkdir(path.dirname(path.join(root,legacy)),{recursive:true});
+ const contents=JSON.stringify({schemaVersion:1,scope:['src'],concepts:[]},null,4);await writeFile(path.join(root,legacy),contents);
+ const read=await getChangeMap({projectRoot:root,...key});assert.equal(read.ready,false);assert.equal(read.deltaPath,'.prism/initiatives/legacy/slices/slice/change-map.json');
+ const changed=await updateChangeMap({projectRoot:root,...key,expectedRevision:read.revision,migrate:true,operations:[]});assert.equal(changed.schemaVersion,2);assert.equal(changed.ready,false);
  const migrated=await store.get(root,changed.migrationEvidenceId,'migration');assert.equal(migrated.lines.join('\n'),contents);
 });
 test('review finding ownership, independent verification, and projection failure preserve authoritative JSON',async()=>{
- const f=await fixture();await analysis(f.root,f.b);const d=await f.update({expectedRevision:null,scope:['src'],baselineId:f.b.snapshotId,operations:[]});const c=await compareChangeMap({projectRoot:f.root,deltaPath:f.deltaPath,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:f.b.snapshotId},{runtime:degraded});
- let revision=null;const act=async(actor,operations)=>{const r=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'dev',expectedRevision:revision,actor,operations});revision=r.revision;return r;};
+ const f=await fixture();await analysis(f.root,f.b);const d=await f.update({expectedRevision:null,scope:['src'],baselineId:f.b.snapshotId,operations:[]});const c=await compareChangeMap({projectRoot:f.root,...f.key,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:f.b.snapshotId},{runtime:degraded});
+ let revision=null;const act=async(actor,operations)=>{const r=await updateReview({projectRoot:f.root,...f.key,delivery:'dev',expectedRevision:revision,actor,operations});revision=r.revision;return r;};
  const coordinator={id:'coord',role:'coordinator'},reviewer={id:'reviewer',role:'reviewer'},delivery={id:'dev',role:'delivery'};
  await act(coordinator,[{op:'start_wave',id:'first',mode:'design-audit',deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId:c.comparisonId,lanes:[{id:'main',reviewer:'reviewer',coverage:['src']}]}]);
  await act(reviewer,[{op:'open_finding',lane:'main',localId:'F-1',title:'Gap',severity:'high',affectedPath:'src',evidence:'Missing fact',conditionToClose:'Supply fact'}]);
  const id='design-audit/main/F-1';await assert.rejects(act(delivery,[{op:'set_finding_status',id,status:'VERIFIED',evidence:'Self signoff'}]),{code:'gate_blocked'});
  await act(delivery,[{op:'set_finding_status',id,status:'IN PROGRESS',evidence:'Investigating'},{op:'set_finding_status',id,status:'FIXED',evidence:'Supplied fact'}]);await act(reviewer,[{op:'set_finding_status',id,status:'VERIFIED',evidence:'Checked fact'}]);
- const md=path.join(f.root,'plan/slice/review.md');await rm(md);await mkdir(md);
- const updated=await act(reviewer,[{op:'submit_lane',lane:'main',status:'CLEAN'}]);assert.equal(updated.projectionStale,true);assert.equal((await getReview({projectRoot:f.root,reviewPath:f.reviewPath})).entries[0].status,'VERIFIED');
+ const md=path.join(f.root,'docs/plans/plan/slice/review.md');await rm(md);await mkdir(md);
+ const updated=await act(reviewer,[{op:'submit_lane',lane:'main',status:'CLEAN'}]);assert.equal(updated.projectionStale,true);assert.equal((await getReview({projectRoot:f.root,...f.key})).entries[0].status,'VERIFIED');
  await rm(md,{recursive:true});const regenerated=await act(coordinator,[{op:'regenerate_markdown'}]);assert.equal(regenerated.revision,updated.revision);assert.equal(regenerated.projectionStale,false);
 });
 
@@ -276,10 +276,10 @@ test('one reviewed justification covers several growth dimensions and convergenc
  const requirement=ref('requirements.md');
  const d=await f.update({expectedRevision:null,scope:['rules.md'],baselineId:f.b.snapshotId,requirements:[requirement],growthThresholds:[{dimension:'source.bytes',maximumIncrease:1000}],operations:[{op:'insert',entry:entry('merged','REPLACE',[ref('rules.md','Old one.\n'),ref('rules.md','Old two.\n')],[ref('rules.md','Apply both constraints and explain the result.\n')])}]});
  await writeFile(path.join(f.root,'rules.md'),'# Rules\n\nApply both constraints and explain the result.\n');const result=await store.capture(f.root);
- const c=await compareChangeMap({projectRoot:f.root,deltaPath:f.deltaPath,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:result.snapshotId},{runtime:degraded});
+ const c=await compareChangeMap({projectRoot:f.root,...f.key,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:result.snapshotId},{runtime:degraded});
  assert.ok(c.growth.length>=1);assert.ok(c.growth.some(x=>x.dimension==='source.bytes'&&x.threshold===1000));
  let revision=null;const coord={id:'coordinator',role:'coordinator'},reviewer={id:'reviewer',role:'reviewer'};
- const act=async(actor,operations)=>{const r=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'delivery',expectedRevision:revision,actor,operations});revision=r.revision;return r;};
+ const act=async(actor,operations)=>{const r=await updateReview({projectRoot:f.root,...f.key,delivery:'delivery',expectedRevision:revision,actor,operations});revision=r.revision;return r;};
  await act(coord,[{op:'start_wave',id:'audit',mode:'design-audit',deltaRevision:d.revision,snapshotId:result.snapshotId,comparisonId:c.comparisonId,lanes:[{id:'main',reviewer:'reviewer',coverage:['rules.md']}]}]);
  const convergence={id:'converge',lane:'main',kind:'convergence',reason:'Fixture assessment of combined constraints; no claim of semantic proof.',evidence:[requirement],section:ref('rules.md'),decision:'consolidate',conceptIds:['merged'],coverage:[]};
  await assert.rejects(act(reviewer,[{op:'record_assessment',assessment:convergence}]),{code:'gate_blocked'});
@@ -288,20 +288,20 @@ test('one reviewed justification covers several growth dimensions and convergenc
  await act(reviewer,[{op:'record_assessment',assessment:convergence},{op:'record_assessment',assessment:{id:'unsupported',lane:'main',kind:'manual',reason:'The fixture deliberately uses no structural runtime; source evidence binds the unsupported checks.',evidence:[requirement],observationIds:observations.observations.filter(x=>x.severity==='review_required').map(x=>x.id)}},{op:'submit_lane',lane:'main',status:'CLEAN'}]);
  await assert.rejects(act(coord,[{op:'accept_wave'}]),error=>error.code==='gate_blocked'&&error.problems.some(x=>x.code==='growth_justification_missing'));
  await act(reviewer,[{op:'record_assessment',assessment:{id:'growth',lane:'main',kind:'growth',reason:'The requirement needs the combined explicit wording.',evidence:[requirement],growthIds:c.growth.map(x=>x.id),justification:{dimensions:c.growth.map(x=>x.dimension),conceptIds:['merged'],requirements:[requirement],reason:'Express both constraints.'}}},{op:'submit_lane',lane:'main',status:'CLEAN'}]);
- await act(coord,[{op:'accept_wave'}]);assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'})).ready,true);
+ await act(coord,[{op:'accept_wave'}]);assert.equal((await checkReviewGate({projectRoot:f.root,...f.key,gate:'implementation'})).ready,true);
 });
 test('a reviewer carries unchanged assessments into a correction wave and check_review_gate offers the rest as a skeleton',async()=>{
  const f=await fixture({'rules.md':'# Rules\n\nOld one.\nOld two.\n','requirements.md':'Preserve both constraints.'});
  const requirement=ref('requirements.md');
  const d=await f.update({expectedRevision:null,scope:['rules.md','notes.md'],baselineId:f.b.snapshotId,requirements:[requirement],operations:[{op:'insert',entry:entry('merged','REPLACE',[ref('rules.md','Old one.\n'),ref('rules.md','Old two.\n')],[ref('rules.md','Apply both constraints and explain the result.\n')])}]});
  await writeFile(path.join(f.root,'rules.md'),'# Rules\n\nApply both constraints and explain the result.\n');
- const compareNow=async()=>{const result=await store.capture(f.root);const c=await compareChangeMap({projectRoot:f.root,deltaPath:f.deltaPath,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:result.snapshotId},{runtime:degraded});return {result,c,full:await store.get(f.root,c.comparisonId,'comparison')};};
+ const compareNow=async()=>{const result=await store.capture(f.root);const c=await compareChangeMap({projectRoot:f.root,...f.key,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:result.snapshotId},{runtime:degraded});return {result,c,full:await store.get(f.root,c.comparisonId,'comparison')};};
  const first=await compareNow();
  let revision=null;const coord={id:'coordinator',role:'coordinator'},reviewer={id:'reviewer',role:'reviewer'};
- const act=async(actor,operations)=>{const r=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'delivery',expectedRevision:revision,actor,operations});revision=r.revision;return r;};
+ const act=async(actor,operations)=>{const r=await updateReview({projectRoot:f.root,...f.key,delivery:'delivery',expectedRevision:revision,actor,operations});revision=r.revision;return r;};
  const wave=(id,{result,c})=>({op:'start_wave',id,mode:'design-audit',deltaRevision:d.revision,snapshotId:result.snapshotId,comparisonId:c.comparisonId,lanes:[{id:'main',reviewer:'reviewer',coverage:['rules.md','notes.md']}]});
  await act(coord,[wave('audit',first)]);
- const gate=await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'});
+ const gate=await checkReviewGate({projectRoot:f.root,...f.key,gate:'implementation'});
  const skeleton=gate.assessmentSkeleton.map(item=>item.assessment);
  assert.equal(gate.carryable,undefined);
  assert.deepEqual(skeleton.filter(item=>item.kind==='manual').flatMap(item=>item.observationIds).sort(),first.full.observations.filter(x=>x.severity==='review_required').map(x=>x.id).sort());
@@ -319,7 +319,7 @@ test('a reviewer carries unchanged assessments into a correction wave and check_
  const second=await compareNow();
  // A wave that only fixed findings sits between, so the offer reaches back to the last wave with accepted assessments.
  await act(coord,[wave('findings-only',second),wave('correction',second)]);
- const offered=await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'});
+ const offered=await checkReviewGate({projectRoot:f.root,...f.key,gate:'implementation'});
  assert.equal(gate.correctionScope,undefined);
  // Nothing changed since the findings-only wave, so the correction has no file to re-review.
  assert.deepEqual(offered.correctionScope,{fromWave:'findings-only',deltaChanged:false,lanes:[{lane:'main',changedFiles:[]}]});
@@ -335,7 +335,7 @@ test('a reviewer carries unchanged assessments into a correction wave and check_
  const fileless=new Set(first.full.observations.filter(x=>x.severity==='review_required'&&!x.file&&!x.unit?.file).map(x=>`manual-${x.id.slice(0,8)}`));assert.ok(fileless.size>0);
  assert.ok(carried.carry.notCarried.some(item=>fileless.has(item.id)&&/notes\.md/.test(item.reason)));
  assert.equal(carried.carry.carried.some(id=>fileless.has(id.slice('correction/'.length))),false);
- const stored=(await getReview({projectRoot:f.root,reviewPath:f.reviewPath,section:'assessments',limit:100})).entries.find(item=>item.id==='correction/converge');
+ const stored=(await getReview({projectRoot:f.root,...f.key,section:'assessments',limit:100})).entries.find(item=>item.id==='correction/converge');
  assert.equal(stored.wave,'correction');assert.equal(stored.acceptedBy,'reviewer');assert.equal(stored.author,'reviewer');
 
  // Changing a cited file stops the carry, and naming that assessment explicitly is refused with the reason.
@@ -343,7 +343,7 @@ test('a reviewer carries unchanged assessments into a correction wave and check_
  const third=await compareNow();
  await act(coord,[wave('second-correction',third)]);
  // Only rules.md changed since the previous wave, so it is the one file this lane re-reviews.
- assert.deepEqual((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'})).correctionScope,{fromWave:'correction',deltaChanged:false,lanes:[{lane:'main',changedFiles:['rules.md']}]});
+ assert.deepEqual((await checkReviewGate({projectRoot:f.root,...f.key,gate:'implementation'})).correctionScope,{fromWave:'correction',deltaChanged:false,lanes:[{lane:'main',changedFiles:['rules.md']}]});
  await assert.rejects(act(reviewer,[{op:'carry_assessments',lane:'main',fromWave:'correction',ids:['correction/converge']}]),error=>error.code==='gate_blocked'&&/rules\.md/.test(error.message));
  const partial=await act(reviewer,[{op:'carry_assessments',lane:'main',fromWave:'correction'}]);
  assert.equal(partial.carry.carried.includes('second-correction/converge'),false);
@@ -353,16 +353,16 @@ test('a reviewer carries unchanged assessments into a correction wave and check_
 test('manual checks cannot waive mechanically retained deletions',async()=>{
  const f=await fixture({'rules.md':'Must remove.','requirements.md':'Remove obsolete behavior.'});
  const d=await f.update({expectedRevision:null,scope:['rules.md'],baselineId:f.b.snapshotId,requirements:[ref('requirements.md')],operations:[{op:'insert',entry:entry('obsolete','DELETE',[ref('rules.md','Must remove.')],[])}]});
- const c=await compareChangeMap({projectRoot:f.root,deltaPath:f.deltaPath,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:f.b.snapshotId},{runtime:degraded});const retained=c.observations.find(x=>x.code==='retained_source');assert.ok(retained);
- const created=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'delivery',expectedRevision:null,actor:{id:'coordinator',role:'coordinator'},operations:[{op:'start_wave',id:'review',mode:'design-audit',deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId:c.comparisonId,lanes:[{id:'main',reviewer:'reviewer',coverage:['rules.md']}]}]});
- await assert.rejects(updateReview({projectRoot:f.root,reviewPath:f.reviewPath,expectedRevision:created.revision,actor:{id:'reviewer',role:'reviewer'},operations:[{op:'record_assessment',assessment:{id:'waiver',lane:'main',kind:'manual',observationIds:[retained.id],reason:'Pretend unsupported.',evidence:[ref('rules.md')]}}]}),error=>error.code==='gate_blocked'&&/cannot waive/.test(error.message));
+ const c=await compareChangeMap({projectRoot:f.root,...f.key,expectedRevision:d.revision,baselineId:f.b.snapshotId,resultSnapshotId:f.b.snapshotId},{runtime:degraded});const retained=c.observations.find(x=>x.code==='retained_source');assert.ok(retained);
+ const created=await updateReview({projectRoot:f.root,...f.key,delivery:'delivery',expectedRevision:null,actor:{id:'coordinator',role:'coordinator'},operations:[{op:'start_wave',id:'review',mode:'design-audit',deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId:c.comparisonId,lanes:[{id:'main',reviewer:'reviewer',coverage:['rules.md']}]}]});
+ await assert.rejects(updateReview({projectRoot:f.root,...f.key,expectedRevision:created.revision,actor:{id:'reviewer',role:'reviewer'},operations:[{op:'record_assessment',assessment:{id:'waiver',lane:'main',kind:'manual',observationIds:[retained.id],reason:'Pretend unsupported.',evidence:[ref('rules.md')]}}]}),error=>error.code==='gate_blocked'&&/cannot waive/.test(error.message));
 });
 
 test('review independence and required lanes survive reassignment and correction waves',async()=>{
  const f=await fixture();await analysis(f.root,f.b);
  const d=await f.update({expectedRevision:null,scope:['src'],baselineId:f.b.snapshotId,operations:[]});const c=await compare(f,d,f.b);
  const comparisonId=await store.put(f.root,c);let revision=null;
- const act=async(id,operations)=>{const result=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'original-dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=result.revision;return result;};
+ const act=async(id,operations)=>{const result=await updateReview({projectRoot:f.root,...f.key,delivery:'original-dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=result.revision;return result;};
  const wave=(id,lanes,mode='design-audit')=>({op:'start_wave',id,mode,deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId,lanes:lanes.map(([id,reviewer])=>({id,reviewer,coverage:['src']}))});
  await act('coord',[{op:'assign_delivery',worker:'next-dev'}]);
  for(const reviewer of ['original-dev','next-dev','coord']) await assert.rejects(act('coord',[wave('invalid',[['functional',reviewer]])]),{code:'validation_failed'});
@@ -375,35 +375,35 @@ test('review independence and required lanes survive reassignment and correction
  await assert.rejects(act('coord',[wave('correction',[['functional','r1']])]),{code:'gate_blocked'});
  await act('coord',[wave('correction',[['functional','r1'],['security','r2']]),{op:'carry_lane',lane:'functional',fromWave:'audit'},{op:'carry_lane',lane:'security',fromWave:'audit'},{op:'accept_wave'}]);
  await act('coord',[wave('implementation',[['functional','r1']],'implementation-review')]);await act('r1',[{op:'submit_lane',lane:'functional',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
- assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,true);
+ assert.equal((await checkReviewGate({projectRoot:f.root,...f.key,gate:'completion'})).ready,true);
  await act('coord',[wave('new-audit',[['functional','r1'],['security','r2'],['additional','r3']])]);
  await assert.rejects(act('coord',[wave('stale-implementation',[['functional','r1']],'implementation-review')]),unaudited);
  await act('r3',[{op:'open_finding',lane:'additional',localId:'D2',title:'New defect',severity:'high',affectedPath:'src',evidence:'New audit evidence',conditionToClose:'Resolve defect'}]);
- assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,false);
+ assert.equal((await checkReviewGate({projectRoot:f.root,...f.key,gate:'completion'})).ready,false);
 });
 
 test('coordination holds review and delta locks until its admitted state is committed',async()=>{
  const f=await fixture();await analysis(f.root,f.b);const d=await f.update({expectedRevision:null,scope:['src'],baselineId:f.b.snapshotId,operations:[]});const c=await compare(f,d,f.b);
- let review=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'dev',expectedRevision:null,actor:{id:'coord',role:'coordinator'},operations:[{op:'start_wave',id:'audit',mode:'design-audit',deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId:await store.put(f.root,c),lanes:[{id:'main',reviewer:'r',coverage:['src']}]}]});
- review=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,expectedRevision:review.revision,actor:{id:'r',role:'reviewer'},operations:[{op:'submit_lane',lane:'main',status:'CLEAN'}]});
- review=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,expectedRevision:review.revision,actor:{id:'coord',role:'coordinator'},operations:[{op:'accept_wave'}]});
+ let review=await updateReview({projectRoot:f.root,...f.key,delivery:'dev',expectedRevision:null,actor:{id:'coord',role:'coordinator'},operations:[{op:'start_wave',id:'audit',mode:'design-audit',deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId:await store.put(f.root,c),lanes:[{id:'main',reviewer:'r',coverage:['src']}]}]});
+ review=await updateReview({projectRoot:f.root,...f.key,expectedRevision:review.revision,actor:{id:'r',role:'reviewer'},operations:[{op:'submit_lane',lane:'main',status:'CLEAN'}]});
+ review=await updateReview({projectRoot:f.root,...f.key,expectedRevision:review.revision,actor:{id:'coord',role:'coordinator'},operations:[{op:'accept_wave'}]});
  const original=store.assertCurrent.bind(store);let entered,release;const reached=new Promise(resolve=>entered=resolve),resume=new Promise(resolve=>release=resolve);
  store.assertCurrent=async(...args)=>{const result=await original(...args);entered();await resume;return result;};
  try {
-  const admission=updateCoordinationState({projectRoot:f.root,statePath:'plan/state.json',expectedRevision:null,changes:{activeOperations:[{op:'start',entry:{slice:'slice',activity:'implementation',workers:['dev'],workspace:f.root,reviewPath:f.reviewPath}}]}});
+  const admission=updateCoordinationState({projectRoot:f.root,initiative:'plan',expectedRevision:null,changes:{activeOperations:[{op:'start',entry:{slice:'slice',activity:'implementation',workers:['dev'],workspace:f.root}}]}});
   await reached;let reviewWritten=false,deltaWritten=false;
-  const finding=updateReview({projectRoot:f.root,reviewPath:f.reviewPath,expectedRevision:review.revision,actor:{id:'r',role:'reviewer'},operations:[{op:'open_finding',lane:'main',localId:'race',title:'Concurrent finding',severity:'high',affectedPath:'src',evidence:'Changed conclusion',conditionToClose:'Resolve'}]}).then(value=>{reviewWritten=true;return value;});
+  const finding=updateReview({projectRoot:f.root,...f.key,expectedRevision:review.revision,actor:{id:'r',role:'reviewer'},operations:[{op:'open_finding',lane:'main',localId:'race',title:'Concurrent finding',severity:'high',affectedPath:'src',evidence:'Changed conclusion',conditionToClose:'Resolve'}]}).then(value=>{reviewWritten=true;return value;});
   const delta=f.update({expectedRevision:d.revision,operations:[]}).then(value=>{deltaWritten=true;return value;});
   await new Promise(resolve=>setTimeout(resolve,40));assert.equal(reviewWritten,false);assert.equal(deltaWritten,false);
   release();const state=await admission;assert.equal(state.state.active[0].activity,'implementation');await Promise.all([finding,delta]);
-  assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'implementation'})).ready,false);
+  assert.equal((await checkReviewGate({projectRoot:f.root,...f.key,gate:'implementation'})).ready,false);
  } finally {release();store.assertCurrent=original;}
 });
 
 test('legacy active labels cannot bypass gates and post-commit cleanup cannot roll back publication',async()=>{
  const active=[{slice:'slice',activity:'implementing',workers:['dev'],workspace:home}];
- await assert.rejects(applyActiveOperations(home,active,[{op:'update',slice:'slice',set:{workers:['replacement']}}]),{code:'gate_blocked'});
- assert.deepEqual((await applyActiveOperations(home,active,[{op:'release',slice:'slice'}])).active,[]);
+ await assert.rejects(applyActiveOperations(home,'plan',active,[{op:'update',slice:'slice',set:{workers:['replacement']}}]),{code:'gate_blocked'});
+ assert.deepEqual((await applyActiveOperations(home,'plan',active,[{op:'release',slice:'slice'}])).active,[]);
  const file=path.join(home,'atomic-test');await writeFile(file,'old');
  await writeAtomically(file,'new',{afterTemporary:async()=>{throw new Error('cleanup failed');}});assert.equal(await readFile(file,'utf8'),'new');
  await assert.rejects(writeAtomically(file,'lost',{renameFile:async()=>{throw new Error('publication failed');}}),/publication failed/);assert.equal(await readFile(file,'utf8'),'new');
@@ -448,7 +448,7 @@ test('convergence must cover changed source and growth cannot cite a nonexistent
  const units=(snapshot,text)=>[{id:'overview',file:'rules.md',domain:'documentation',kind:'heading',name:'Overview',selector:'#overview',span:{start:0,end:text.indexOf('# Rules')},sourceHash:snapshot.snapshot.files.find(x=>x.file==='rules.md').hash,contentHash:digest(text.slice(0,text.indexOf('# Rules')))},{id:'rules',file:'rules.md',domain:'documentation',kind:'heading',name:'Rules',selector:'#rules',span:{start:text.indexOf('# Rules'),end:text.length},sourceHash:snapshot.snapshot.files.find(x=>x.file==='rules.md').hash,contentHash:digest(text.slice(text.indexOf('# Rules')))}];
  await analysis(f.root,f.b,units(f.b,original));await writeFile(path.join(f.root,'rules.md'),final);const result=await store.capture(f.root);await analysis(f.root,result,units(result,final));
  const requirement=ref('requirements.md'),d=await f.update({expectedRevision:null,scope:['rules.md'],baselineId:f.b.snapshotId,requirements:[requirement],operations:[{op:'insert',entry:entry('rules','MODIFY',[ref('rules.md')],[ref('rules.md')])}]});const c=await compare(f,d,result);let revision=null;
- const act=async(id,operations)=>{const r=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=r.revision;return r;};
+ const act=async(id,operations)=>{const r=await updateReview({projectRoot:f.root,...f.key,delivery:'dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=r.revision;return r;};
  await act('coord',[{op:'start_wave',id:'audit',mode:'design-audit',deltaRevision:d.revision,snapshotId:result.snapshotId,comparisonId:await store.put(f.root,c),lanes:[{id:'main',reviewer:'r',coverage:['rules.md']}]}]);
  const growth={id:'growth',lane:'main',kind:'growth',reason:'Test justification',evidence:[requirement],growthIds:c.growth.map(x=>x.id),justification:{dimensions:c.growth.map(x=>x.dimension),conceptIds:['rules'],requirements:[ref('requirements.md','DOES NOT EXIST')],reason:'Required behavior'}};
  await assert.rejects(act('r',[{op:'record_assessment',assessment:growth}]),{code:'evidence_missing'});
@@ -464,7 +464,7 @@ test('a changed DELETE identity blocks completion and cannot be attributed to a 
  const obsolete={path:'code.ts',selector:{type:'span',...units[0].span,end:units[0].span.end+padding,sourceHash:units[0].sourceHash}},tracked={path:'code.ts',selector:{type:'symbol',value:'tracked'}};
  const d=await f.update({expectedRevision:null,scope:['code.ts'],baselineId:f.b.snapshotId,requirements:[ref('requirements.txt')],operations:[{op:'insert',entry:entry('obsolete','DELETE',[obsolete],[],{kind:'function'})},{op:'insert',entry:entry('tracked','MODIFY',[tracked],[tracked],{kind:'function'})}]});
  const initial=await compare(f,d,f.b);let revision=null;
- const act=async(id,operations)=>{const r=await updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=r.revision;return r;};
+ const act=async(id,operations)=>{const r=await updateReview({projectRoot:f.root,...f.key,delivery:'dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=r.revision;return r;};
  const wave=(id,mode,snapshot,comparisonId)=>({op:'start_wave',id,mode,deltaRevision:d.revision,snapshotId:snapshot.snapshotId,comparisonId,lanes:[{id:'main',reviewer:'r',coverage:['code.ts']}]});
  await act('coord',[wave('audit','design-audit',f.b,await store.put(f.root,initial))]);await act('r',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
  const changed=original.replace('return 1','return 3').replace('return 2','return 4');await writeFile(path.join(f.root,'code.ts'),changed);const result=await store.capture(f.root);await analysis(f.root,result,privateFunctions(result,changed));const c=await compare(f,d,result);
@@ -473,7 +473,7 @@ test('a changed DELETE identity blocks completion and cannot be attributed to a 
  const unclassified=c.observations.find(item=>item.code==='unclassified_unit'&&item.unit.selector==='obsolete');assert.ok(unclassified);
  await assert.rejects(act('r',[{op:'record_assessment',assessment:{id:'relabel',lane:'main',kind:'implementation-detail',observationIds:[unclassified.id],conceptId:'tracked',reason:'Attempt to retain obsolete as tracked detail.',evidence:[ref('code.ts')]}}]),{code:'gate_blocked'});
  await act('r',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await assert.rejects(act('coord',[{op:'accept_wave'}]),e=>e.code==='gate_blocked'&&e.problems.some(item=>item.code==='retained_source'));
- assert.equal((await checkReviewGate({projectRoot:f.root,reviewPath:f.reviewPath,gate:'completion'})).ready,false);
+ assert.equal((await checkReviewGate({projectRoot:f.root,...f.key,gate:'completion'})).ready,false);
  const corrected='function tracked() { return 4; }\nfunction helper() { return 5; }\n';await writeFile(path.join(f.root,'code.ts'),corrected);const correctedSnapshot=await store.capture(f.root);await analysis(f.root,correctedSnapshot,privateFunctions(correctedSnapshot,corrected));const correctedComparison=await compare(f,d,correctedSnapshot);
  assert.equal(correctedComparison.observations.some(item=>item.code==='retained_source'),false);
  await act('coord',[wave('correction','implementation-review',correctedSnapshot,await store.put(f.root,correctedComparison))]);
@@ -527,7 +527,7 @@ test('whole-file DELETE requires actual absence and its operation count does not
 
 test('review rejects immutable comparisons produced before the identity checks',async()=>{
  const f=await fixture();await analysis(f.root,f.b);const d=await f.update({expectedRevision:null,scope:['src'],baselineId:f.b.snapshotId,operations:[]});const c=await compare(f,d,f.b);delete c.versions.comparison;
- await assert.rejects(updateReview({projectRoot:f.root,reviewPath:f.reviewPath,deltaPath:f.deltaPath,delivery:'dev',expectedRevision:null,actor:{id:'coord',role:'coordinator'},operations:[{op:'start_wave',id:'old',mode:'design-audit',deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId:await store.put(f.root,c),lanes:[{id:'main',reviewer:'r',coverage:['src']}]}]}),{code:'evidence_missing'});
+ await assert.rejects(updateReview({projectRoot:f.root,...f.key,delivery:'dev',expectedRevision:null,actor:{id:'coord',role:'coordinator'},operations:[{op:'start_wave',id:'old',mode:'design-audit',deltaRevision:d.revision,snapshotId:f.b.snapshotId,comparisonId:await store.put(f.root,c),lanes:[{id:'main',reviewer:'r',coverage:['src']}]}]}),{code:'evidence_missing'});
 });
 
 test('ADD of a new section does not treat reused nested text as the section identity',async()=>{
@@ -571,10 +571,10 @@ test('readiness rejects additions and parallel modifications that copy a change 
  const consolidate=entry('lock-owner','REPLACE',[symbol('a.ts','readLockOwner'),symbol('b.ts','readLockOwner')],[symbol('shared.ts','readLockOwner')]);
  assert.deepEqual(await growth({...base,concepts:[...additions,consolidate]}),[]);
  assert.equal((await growth({...base,concepts:[...additions,{...consolidate,before:[symbol('a.ts','readLockOwner')]}]})).length,1);
- const other='plan/consolidate/change-map.json';
- await updateChangeMap({projectRoot:f.root,deltaPath:other,expectedRevision:null,scope:['a.ts','b.ts','shared.ts'],baselineId:f.b.snapshotId,operations:[{op:'insert',entry:consolidate}]});
- assert.deepEqual(await growth({...base,consolidations:[{deltaPath:other,reason:'The store slice consolidates the lock helpers first.'}]}),[]);
- assert.deepEqual((await growth({...base,consolidations:[{deltaPath:'plan/missing/change-map.json',reason:'Missing.'}]})).map(x=>x.code).sort(),['consolidation_delta_invalid','duplication_growth']);
+ const other={initiative:'plan',slice:'consolidate'};
+ await updateChangeMap({projectRoot:f.root,...other,expectedRevision:null,scope:['a.ts','b.ts','shared.ts'],baselineId:f.b.snapshotId,operations:[{op:'insert',entry:consolidate}]});
+ assert.deepEqual(await growth({...base,consolidations:[{...other,reason:'The store slice consolidates the lock helpers first.'}]}),[]);
+ assert.deepEqual((await growth({...base,consolidations:[{initiative:'plan',slice:'missing',reason:'Missing.'}]})).map(x=>x.code).sort(),['consolidation_delta_invalid','duplication_growth']);
  const modify=file=>entry(`wait-${file}`,'MODIFY',[symbol(file,'readLockOwner')],[symbol(file,'readLockOwner')]);
  const parallel=await growth({...base,concepts:[modify('a.ts'),modify('b.ts')]});
  assert.equal(parallel.length,1);assert.equal(parallel[0].code,'duplication_growth');
@@ -600,27 +600,30 @@ test('accepts concept references under a scope written with a trailing slash',as
  await assert.rejects(f.update({expectedRevision:d.revision,operations:[{op:'insert',entry:entry('other','ADD',[],[ref('pkgx/other.ts')])}]}),error=>error.errors.some(item=>item.includes('pkgx/other.ts is outside the declared scope')));
 });
 
-test('a legacy concept-delta.json keeps working and can be renamed to change-map.json mid-review', async () => {
+test('a legacy concept-delta.json moves into .prism with its bytes and revision so an open review keeps its gate', async () => {
  const root=await mkdtemp(path.join(home,'renamed-'));await writeFile(path.join(root,'script.js'),'let x=0;\n');
- const legacyPath='plan/slice/concept-delta.json',newPath='plan/slice/change-map.json',reviewPath='plan/slice/review.json';
- const b=await store.capture(root,legacyPath);await analysis(root,b);
- const d=await updateChangeMap({projectRoot:root,deltaPath:legacyPath,expectedRevision:null,scope:['script.js'],baselineId:b.snapshotId,operations:[]});
- assert.equal(d.deltaPath,legacyPath);
- // A caller that already uses the new name finds the slice's legacy file instead of creating a second one.
- assert.equal((await getChangeMap({projectRoot:root,deltaPath:newPath})).revision,d.revision);
+ const key={initiative:'plan',slice:'slice'},legacyPath='docs/plans/plan/slice/concept-delta.json',legacyReview='docs/plans/plan/slice/review.json';
+ const b=await store.capture(root,key);await analysis(root,b);
+ const d=await updateChangeMap({projectRoot:root,...key,expectedRevision:null,scope:['script.js'],baselineId:b.snapshotId,operations:[]});
  let revision=null;
- const act=async(id,operations,deltaPath=legacyPath)=>{const r=await updateReview({projectRoot:root,reviewPath,deltaPath,delivery:'dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=r.revision;return r;};
- const comparison=async(deltaPath)=>(await compareChangeMap({projectRoot:root,deltaPath,expectedRevision:d.revision,baselineId:b.snapshotId,resultSnapshotId:b.snapshotId},{runtime:degraded})).comparisonId;
- await act('coord',[{op:'start_wave',id:'audit',mode:'design-audit',deltaRevision:d.revision,snapshotId:b.snapshotId,comparisonId:await comparison(newPath),lanes:[{id:'main',reviewer:'reviewer',coverage:['script.js']}]}]);
+ const act=async(id,operations)=>{const r=await updateReview({projectRoot:root,...key,delivery:'dev',expectedRevision:revision,actor:{id,role:id==='coord'?'coordinator':'reviewer'},operations});revision=r.revision;return r;};
+ const comparison=async()=>(await compareChangeMap({projectRoot:root,...key,expectedRevision:d.revision,baselineId:b.snapshotId,resultSnapshotId:b.snapshotId},{runtime:degraded})).comparisonId;
+ await act('coord',[{op:'start_wave',id:'audit',mode:'design-audit',deltaRevision:d.revision,snapshotId:b.snapshotId,comparisonId:await comparison(),lanes:[{id:'main',reviewer:'reviewer',coverage:['script.js']}]}]);
  await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
- assert.equal((await checkReviewGate({projectRoot:root,reviewPath,gate:'implementation'})).ready,true);
- await import('node:fs/promises').then(fs=>fs.rename(path.join(root,legacyPath),path.join(root,newPath)));
- const renamed=await getChangeMap({projectRoot:root,deltaPath:legacyPath});
- assert.equal(renamed.deltaPath,newPath);assert.equal(renamed.revision,d.revision);
- assert.equal((await checkReviewGate({projectRoot:root,reviewPath,gate:'implementation'})).ready,true);
+ assert.equal((await checkReviewGate({projectRoot:root,...key,gate:'implementation'})).ready,true);
+ // Put the records back where an older checkout kept them, with the change map under its earlier name.
+ const fs=await import('node:fs/promises');await mkdir(path.join(root,'docs/plans/plan/slice'),{recursive:true});
+ await fs.rename(path.join(root,'.prism/initiatives/plan/slices/slice/change-map.json'),path.join(root,legacyPath));
+ await fs.rename(path.join(root,'.prism/initiatives/plan/slices/slice/review.json'),path.join(root,legacyReview));
+ forgetMigrations();
+ const moved=await getChangeMap({projectRoot:root,...key});
+ assert.equal(moved.deltaPath,'.prism/initiatives/plan/slices/slice/change-map.json');assert.equal(moved.revision,d.revision);
+ await assert.rejects(readFile(path.join(root,legacyPath)),{code:'ENOENT'});
+ assert.equal((await checkReviewGate({projectRoot:root,...key,gate:'implementation'})).ready,true);
  const after=await store.capture(root);
- assert.equal(after.snapshot.files.some(file=>file.file===newPath),false);
- await act('coord',[{op:'start_wave',id:'audit-2',mode:'design-audit',deltaRevision:d.revision,snapshotId:b.snapshotId,comparisonId:await comparison(newPath),lanes:[{id:'main',reviewer:'reviewer',coverage:['script.js']}]}],newPath);
- await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}],newPath);await act('coord',[{op:'accept_wave'}],newPath);
- assert.equal((await checkReviewGate({projectRoot:root,reviewPath,gate:'implementation'})).ready,true);
+ assert.equal(after.snapshot.files.some(file=>file.file.startsWith('.prism/initiatives/')),false);
+ revision=(await getReview({projectRoot:root,...key})).revision;
+ await act('coord',[{op:'start_wave',id:'audit-2',mode:'design-audit',deltaRevision:d.revision,snapshotId:b.snapshotId,comparisonId:await comparison(),lanes:[{id:'main',reviewer:'reviewer',coverage:['script.js']}]}]);
+ await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
+ assert.equal((await checkReviewGate({projectRoot:root,...key,gate:'implementation'})).ready,true);
 });

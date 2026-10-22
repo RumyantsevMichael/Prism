@@ -4,17 +4,17 @@ Prism retains original, audited, and final source evidence and checks planned ch
 The source baseline includes dirty and untracked files, so a Git commit alone is not the baseline.
 The baseline follows the ignore rules also for tracked files, so force-adding an ignored file does not change it.
 
-1. Capture B with `capture_repository_snapshot` before editing and pass the slice `deltaPath` to register its evidence outputs.
+1. Capture B with `capture_repository_snapshot` before editing and pass the slice's `initiative` and `slice` identifiers to register its evidence outputs.
 2. Search reuse against B with `search_repository_concepts` and keep the returned receipt IDs.
 3. Author the version 2 change map with typed `update_change_map` operations, and read it in pages with `get_change_map`.
-4. Capture A, compare B→A with `compare_change_map`, and record the independent design audit in `review.json` through `update_review`.
-5. Enter implementation with typed coordination `activeOperations` and the slice `reviewPath`.
+4. Capture A, compare B→A with `compare_change_map`, and record the independent design audit in the slice's review record through `update_review`.
+5. Enter implementation with typed coordination `activeOperations` for the slice.
 6. After authoring finishes, capture F and compare B→F.
 7. Record findings, growth justification, text convergence, and scoped unsupported checks through review operations.
 8. Accept current lane results and the review wave, then use `finish` to claim completion.
 
 Lane coverage holds project-relative path prefixes, and a review wave starts only when its lanes cover every target file of the comparison.
-The `reviewPath` resolves from the project root and names `review.json` in the slice folder.
+Every change map and review tool takes the slice's `initiative` and `slice` identifiers instead of a file path.
 A refused write lists its problems in the error message.
 
 `get_conservation_evidence` pages immutable manifests, receipts, observations, and measurements.
@@ -29,6 +29,5 @@ Comparisons report only the analysis findings that the change adds: a new copy o
 Known failures such as a retained deletion, scope escape, or stale source cannot be waived with a manual assessment.
 `release` and `checkpoint_pause` remove active coordination without claiming completion.
 Legacy version 1 change maps and Markdown findings remain readable; explicit migration preserves their content but never imports historical `CLEAN` as current acceptance.
-Slices designed before the change map got its name keep it as `concept-delta.json`, and every tool and the review browser still read and update it.
-To use the new name, move the file to `change-map.json` in the same slice folder; its revision, evidence ownership, and review bindings stay valid, so an accepted review stays accepted.
+A change map from an earlier version, including one named `concept-delta.json`, moves into the project's records with its bytes unchanged, so its revision, evidence ownership, and review bindings stay valid and an accepted review stays accepted.
 The [maintained procedure](../../skills/design/references/change-map.md) describes the full schema and review responsibilities.

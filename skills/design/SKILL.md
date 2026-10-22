@@ -117,7 +117,7 @@ Finding evidence remains in its original lane file.
    - `SPLIT`: the unchanged parent title, parent diagram and ADR paths, and each new child's slug, folder path, title, outcome, and requirement references.
    - `FIT`: the capability title, starting surface, artifact paths, contract decisions, verification command, and security surface or `none`.
    - `BLOCKED`: the unresolved question or missing evidence.
-2. For `FIT`, include the ready change map path and exact revision.
+2. For `FIT`, include the ready change map's exact revision.
 3. For `FIT`, include the red checkpoint's exact command, exit status, and expected failure reason, or the exemption reason.
 4. For `FIT` or `SPLIT`, include diagram counts, readability, and the split assessment.
 5. When a findings path is assigned or resolved, include it for every status.
@@ -135,7 +135,7 @@ The orchestrator owns lifecycle changes and the transition to implementation.
 
 - When orchestration returns findings:
   1. Read `.prism/workflow.md`.
-  2. Use its assigned slice `review.json` and design-audit lane through MCP.
+  2. Use its assigned slice review record and design-audit lane through MCP.
   3. Read [review-format.md](../review/references/review-format.md) and the complete lane findings through `get_review` in the same `Develop <slice>` worker.
   4. For each `OPEN`, `REOPENED`, or `IN PROGRESS` design finding:
      1. Mark it `IN PROGRESS`.
