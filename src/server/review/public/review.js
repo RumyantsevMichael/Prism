@@ -281,20 +281,27 @@ function folderName(root) {
   return String(root).split(/[\\/]/).filter(Boolean).pop() ?? String(root);
 }
 
-// A linked worktree reads as repository / worktree; a plain checkout, or a server that names no workspace, shows its folder.
+// A project reads as repository / branch; a server that names no workspace shows its folder.
 function workspaceIdentity(entry) {
-  return entry.workspace ?? { repository: folderName(entry.projectRoot), worktree: null, branch: null };
+  return entry.workspace ?? { repository: folderName(entry.projectRoot), worktree: null, branch: null, detached: false };
+}
+
+// Mirrors workspaceName in workspace-identity.mjs: the branch names a checkout, because a worktree folder is often a generated name.
+function workspaceName(identity) {
+  if (identity.branch) return identity.detached ? `detached ${identity.branch}` : identity.branch;
+  return identity.worktree;
 }
 
 function projectLabel(identity) {
   const label = element("span", "project-label-text");
   label.append(element("span", "project-repository", identity.repository));
-  if (identity.worktree) label.append(element("span", "project-separator", "/"), element("span", "project-worktree", identity.worktree));
+  const name = workspaceName(identity);
+  if (name) label.append(element("span", "project-separator", "/"), element("span", "project-worktree", name));
   return label;
 }
 
 function projectTitle(identity, projectRoot) {
-  return [projectRoot, identity.branch ? `Branch: ${identity.branch}` : ""].filter(Boolean).join("\n");
+  return [projectRoot, identity.branch ? `${identity.detached ? "Detached at" : "Branch:"} ${identity.branch}` : "", identity.worktree ? `Worktree: ${identity.worktree}` : ""].filter(Boolean).join("\n");
 }
 
 function element(tag, className, text) {
@@ -326,7 +333,7 @@ async function refreshProjects() {
   const focused = document.activeElement?.closest?.(".project-entry")?.dataset.project;
   const current = listing.projects.find((entry) => entry.id === listing.current);
   if (current) setProjectLabel(workspaceIdentity(current), current.projectRoot);
-  // Worktrees of one repository are listed together under it, in the order the first of them appears.
+  // Every project is listed under its repository, even a repository with one checkout, in the order the first of them appears.
   const groups = new Map();
   for (const entry of listing.projects) {
     const identity = workspaceIdentity(entry);
@@ -335,10 +342,9 @@ async function refreshProjects() {
   }
   const items = [];
   for (const [repository, members] of groups) {
-    const grouped = members.length > 1 || members.some(({ identity }) => identity.worktree);
-    if (grouped) items.push(element("li", "project-group", repository));
+    items.push(element("li", "project-group", repository));
     for (const { entry, identity } of members) {
-      const link = element("a", `project-entry${grouped ? " is-grouped" : ""}`);
+      const link = element("a", "project-entry");
       link.dataset.project = entry.id;
       link.href = entry.url;
       link.title = projectTitle(identity, entry.projectRoot);
@@ -347,7 +353,7 @@ async function refreshProjects() {
       liveMark.title = entry.live ? "An agent session is using this project" : "Recently used";
       const gates = element("span", `project-entry-gates${entry.gates ? "" : " none"}`, entry.gates === null ? "?" : String(entry.gates));
       gates.title = entry.gates === null ? "The project's folder or records cannot be read" : `${entry.gates} open ${entry.gates === 1 ? "gate" : "gates"}`;
-      const name = element("span", "project-entry-name", identity.worktree ?? identity.repository);
+      const name = element("span", "project-entry-name", workspaceName(identity) ?? folderName(entry.projectRoot));
       // Only a running or failed build is marked, because the chip in the top bar covers the open project's other states.
       if (entry.indexing === "preparing" || entry.indexing === "failed") {
         const indexing = element("span", `project-entry-indexing ${entry.indexing}`);

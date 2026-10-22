@@ -45,7 +45,7 @@ function entitySummary(entity) {
 }
 
 function fileSummary(data, anchor, { renderMarkdown, kindLabel }) {
-  const head = `<p class="eyebrow">${escapeHtml(data.path)}</p>`;
+  const head = `<p class="card-source">${escapeHtml(data.path)}</p>`;
   if (data.kind === "source") {
     const lines = data.content.split(/\r?\n/).slice(0, SOURCE_LINES).join("\n");
     return `${head}<pre><code>${escapeHtml(lines)}</code></pre>`;

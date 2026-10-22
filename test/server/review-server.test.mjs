@@ -180,7 +180,11 @@ test("serves the browser runtime without an image endpoint", async (context) => 
     assert.doesNotMatch(pageSource, /Auto refresh/);
     assert.match(pageSource, /id="connection"/);
     const index = await (await fetchReview(`${review.baseUrl}/api/index`)).json();
-    assert.deepEqual(index.workspace, { repository: path.basename(projectRoot), worktree: null, branch: null });
+    assert.deepEqual(index.workspace, { repository: path.basename(projectRoot), worktree: null, branch: null, detached: false });
+    assert.match(pageSource, /rel="icon" href="\.\/favicon\.svg"/);
+    const favicon = await fetchReview(`${review.baseUrl}/favicon.svg`);
+    assert.equal(favicon.status, 200);
+    assert.match(favicon.headers["content-type"], /^image\/svg\+xml/);
     const c4 = await fetchReview(`${review.baseUrl}/vendor/c4.min.js`);
     assert.equal(c4.status, 200);
     const image = await fetchReview(`${review.baseUrl}/render/svg?source=docs%2Froadmap.puml`);

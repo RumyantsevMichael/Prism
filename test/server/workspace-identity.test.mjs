@@ -16,11 +16,11 @@ test("a plain checkout is named by its folder and reads the branch from HEAD", a
   await mkdir(path.join(root, ".git"), { recursive: true });
   await writeFile(path.join(root, ".git", "HEAD"), "ref: refs/heads/feature/retries\n");
   const identity = await readWorkspaceIdentity(root);
-  assert.deepEqual(identity, { repository: "payments", worktree: null, branch: "feature/retries" });
-  assert.equal(workspaceLabel(identity), "payments");
+  assert.deepEqual(identity, { repository: "payments", worktree: null, branch: "feature/retries", detached: false });
+  assert.equal(workspaceLabel(identity), "payments/feature/retries");
 });
 
-test("a linked worktree is named by its main repository and its own folder", async (context) => {
+test("a linked worktree is named by its main repository and its branch, not its folder", async (context) => {
   const base = await folder(context);
   const gitDirectory = path.join(base, "payments", ".git", "worktrees", "retry-fix");
   await mkdir(gitDirectory, { recursive: true });
@@ -30,8 +30,8 @@ test("a linked worktree is named by its main repository and its own folder", asy
   await mkdir(worktree, { recursive: true });
   await writeFile(path.join(worktree, ".git"), `gitdir: ${gitDirectory}\n`);
   const identity = await readWorkspaceIdentity(worktree);
-  assert.deepEqual(identity, { repository: "payments", worktree: "retry-fix", branch: "claude/retry-fix" });
-  assert.equal(workspaceLabel(identity), "payments/retry-fix");
+  assert.deepEqual(identity, { repository: "payments", worktree: "retry-fix", branch: "claude/retry-fix", detached: false });
+  assert.equal(workspaceLabel(identity), "payments/claude/retry-fix");
 });
 
 test("a worktree of a bare repository drops the .git suffix", async (context) => {
@@ -43,7 +43,9 @@ test("a worktree of a bare repository drops the .git suffix", async (context) =>
   const worktree = path.join(base, "main");
   await mkdir(worktree);
   await writeFile(path.join(worktree, ".git"), "gitdir: ../payments.git/worktrees/main\n");
-  assert.deepEqual(await readWorkspaceIdentity(worktree), { repository: "payments", worktree: "main", branch: "0123456" });
+  const identity = await readWorkspaceIdentity(worktree);
+  assert.deepEqual(identity, { repository: "payments", worktree: "main", branch: "0123456", detached: true });
+  assert.equal(workspaceLabel(identity), "payments/detached 0123456");
 });
 
 test("a submodule or a folder without git keeps its folder name", async (context) => {
@@ -54,10 +56,11 @@ test("a submodule or a folder without git keeps its folder name", async (context
   const submodule = path.join(base, "parent", "lib");
   await mkdir(submodule);
   await writeFile(path.join(submodule, ".git"), `gitdir: ${moduleDirectory}\n`);
-  assert.deepEqual(await readWorkspaceIdentity(submodule), { repository: "lib", worktree: null, branch: "main" });
+  assert.deepEqual(await readWorkspaceIdentity(submodule), { repository: "lib", worktree: null, branch: "main", detached: false });
   const plain = path.join(base, "notes");
   await mkdir(plain);
-  assert.deepEqual(await readWorkspaceIdentity(plain), { repository: "notes", worktree: null, branch: null });
+  assert.deepEqual(await readWorkspaceIdentity(plain), { repository: "notes", worktree: null, branch: null, detached: false });
+  assert.equal(workspaceLabel(await readWorkspaceIdentity(plain)), "notes");
   await writeFile(path.join(plain, ".git"), "not a pointer\n");
-  assert.deepEqual(await readWorkspaceIdentity(plain), { repository: "notes", worktree: null, branch: null });
+  assert.deepEqual(await readWorkspaceIdentity(plain), { repository: "notes", worktree: null, branch: null, detached: false });
 });

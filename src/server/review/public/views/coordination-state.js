@@ -2,7 +2,6 @@ import { jsonTreeHtml } from "./json-tree.js";
 import { artifactChip, bindLinks, card, emptyNote, escapeHtml, keyValues, plural } from "./util.js";
 
 const KNOWN_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence"]);
-const ACTIVITIES = ["design", "review", "implementation", "integration"];
 
 function settingValue(value) {
   if (value === null || value === undefined) {
@@ -18,18 +17,18 @@ function pathChip(value, ctx) {
   return typeof value === "string" && value.includes("/") ? artifactChip(value, ctx) : `<code>${escapeHtml(value)}</code>`;
 }
 
-function activeCard(entry, ctx, sliceTitle) {
-  return `<li class="slice-card activity-${escapeHtml(String(entry.activity ?? "").toLowerCase())}">
-    <div class="slice-head"><strong>${sliceTitle(entry.slice)}</strong><span class="activity-badge">${escapeHtml(entry.activity)}</span></div>
-    ${entry.label ? `<p class="slice-label">${escapeHtml(entry.label)}</p>` : ""}
+// One active entry's activity, workers, review lanes, and workspace; the initiative board shows it on the slice's card.
+export function activeDetails(entry, ctx) {
+  return `<div class="active-details activity-${escapeHtml(String(entry.activity ?? "").toLowerCase())}">
+    <p class="active-head"><span class="activity-badge">${escapeHtml(entry.activity)}</span>${entry.label ? ` <span class="slice-label">${escapeHtml(entry.label)}</span>` : ""}</p>
     ${keyValues([
       ["Workers", entry.workers?.length ? entry.workers.map((worker) => `<span class="meta-pill">${escapeHtml(worker)}</span>`).join(" ") : null],
       ["Review lanes", entry.reviewLanes?.length ? entry.reviewLanes.map((lane) => `<span class="meta-pill">${escapeHtml(lane.id)} · ${escapeHtml(lane.reviewer)}</span>`).join(" ") : null],
-      ["Review", entry.reviewPath ? artifactChip(entry.reviewPath, ctx) : null],
-      ["Findings", entry.findingsPath ? artifactChip(entry.findingsPath, ctx) : null],
+      ["Review", entry.reviewPath ? artifactChip(entry.reviewPath, ctx, entry.reviewPath.split("/").pop()) : null],
+      ["Findings", entry.findingsPath ? artifactChip(entry.findingsPath, ctx, entry.findingsPath.split("/").pop()) : null],
       ["Workspace", entry.workspace ? `<code title="${escapeHtml(entry.workspace)}">${escapeHtml(entry.workspace.split("/").filter(Boolean).pop() ?? entry.workspace)}</code>` : null]
     ])}
-  </li>`;
+  </div>`;
 }
 
 function queueItem(item, ctx) {
@@ -41,16 +40,6 @@ function queueItem(item, ctx) {
 
 function queue(title, items, ctx) {
   return `<div class="queue"><h3>${escapeHtml(title)} <span class="column-count">${items.length}</span></h3>${items.length ? `<ol class="queue-list">${items.map((item) => `<li>${queueItem(item, ctx)}</li>`).join("")}</ol>` : emptyNote("Empty")}</div>`;
-}
-
-// The board of active slices by activity; the initiative page shows it, and sliceTitle renders each card's heading.
-export function activityBoard(active, ctx, sliceTitle = (slug) => escapeHtml(slug)) {
-  const grouped = ACTIVITIES.map((activity) => [activity, active.filter((entry) => entry.activity === activity)]);
-  const other = active.filter((entry) => !ACTIVITIES.includes(entry.activity));
-  if (other.length) {
-    grouped.push(["other", other]);
-  }
-  return `<div class="activity-board">${grouped.map(([activity, entries]) => `<div class="board-column"><h3><span class="activity-badge">${escapeHtml(activity)}</span><span class="column-count">${entries.length}</span></h3><ul>${entries.map((entry) => activeCard(entry, ctx, sliceTitle)).join("") || '<li class="column-empty">—</li>'}</ul></div>`).join("")}</div>`;
 }
 
 export function render(container, data, ctx) {
@@ -68,7 +57,7 @@ export function render(container, data, ctx) {
       </div>
       ${state.settings ? `<div class="settings-strip">${Object.entries(state.settings).map(([key, value]) => `<span class="setting"><span class="setting-key">${escapeHtml(key)}</span>${settingValue(value)}</span>`).join("")}</div>` : ""}
     </section>
-    ${card("Active work", `<p>${active.length ? `${plural(active.length, "active slice")}: ${active.map((entry) => `<code>${escapeHtml(entry.slice)}</code>`).join(" ")}.` : "No slice is active."} The board of active slices is on the initiative page.</p><p>${artifactChip(initiative, ctx, "Open the initiative")}</p>`, { eyebrow: plural(active.length, "slice") })}
+    ${card("Active work", `<p>${active.length ? `${plural(active.length, "active slice")}: ${active.map((entry) => `<code>${escapeHtml(entry.slice)}</code>`).join(" ")}.` : "No slice is active."} The initiative page's board shows each active slice's activity.</p><p>${artifactChip(initiative, ctx, "Open the initiative")}</p>`, { eyebrow: plural(active.length, "slice") })}
     <section class="view-card"><div class="queues">${queue("Pending", state.pending ?? [], ctx)}${queue("Next", state.next ?? [], ctx)}${queue("Evidence", state.evidence ?? [], ctx)}</div></section>
     ${Object.keys(unknown).length ? card("Unrecognized fields", jsonTreeHtml(unknown, { ctx }), { eyebrow: "Preserved by the validator with warnings" }) : ""}`;
   bindLinks(container, ctx);

@@ -1,4 +1,4 @@
-import { escapeHtml } from "./util.js";
+import { cardSource, escapeHtml } from "./util.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 const POINTS_PER_INCH = 72;
@@ -205,12 +205,12 @@ export async function renderGraph(target, graph, { onSelect, selectedId = null, 
   };
 }
 
-export function graphCard({ title, eyebrow, legend = "" }) {
+export function graphCard({ title, eyebrow, source = "", legend = "" }) {
   const section = document.createElement("section");
   section.className = "view-card graph-card";
   section.innerHTML = `
     <header class="view-card-header graph-header">
-      <div><p class="eyebrow">${escapeHtml(eyebrow)}</p><h2>${escapeHtml(title)}</h2></div>
+      <div><p class="eyebrow">${escapeHtml(eyebrow)}</p><div class="view-card-title"><h2>${escapeHtml(title)}</h2>${cardSource(source)}</div></div>
       <div class="diagram-tools" aria-label="Graph controls">
         <button class="tool-button" data-zoom="out" type="button" aria-label="Zoom out">−</button>
         <button class="tool-button" data-zoom="fit" type="button" aria-label="Fit to width">Fit</button>
