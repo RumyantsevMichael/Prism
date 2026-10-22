@@ -22,6 +22,7 @@ Each process MUST write only its own progress file, so concurrent sessions never
 Progress writes MUST be best effort and MUST NOT fail or delay a build.
 A building process MUST refresh its progress file at least every five seconds, also through steps that report no counts.
 A reader MUST treat a progress file as a running build only while its process exists and the file was refreshed within the last minute, and otherwise as an interrupted build.
+When several running builds report progress for one project, a reader MUST show the same build on every read: a build that holds the project lock before one that waits for it, then the earliest started.
 A successful build MUST remove its progress file, and a failed build MUST leave it with the failure's diagnostics until a newer index or build replaces it.
 A process that starts a build MUST remove progress files whose processes no longer exist.
 The review browser MUST only display index state and MUST NOT start, retry, or cancel a build.
@@ -62,6 +63,7 @@ The Git fingerprint costs a few small Git commands, while the real snapshot fing
 - The progress file of a process that hangs without exiting reads as interrupted after a minute, even if the process later resumes.
 - A process identifier that the system reuses within a minute can keep an interrupted build looking like a running one until its heartbeat expires.
 - Builds that ran before this change have no recorded build time or fingerprint, so the browser shows the pointer's modification time and no staleness hint until the next build.
+- A session that waits for another session's build no longer replaces that build's step in the chip, which used to jump between the waiting step and the running one.
 - The review browser polls index state every two seconds while a build runs and every ten seconds otherwise.
 
 ## Mechanism
