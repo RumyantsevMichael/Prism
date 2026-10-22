@@ -364,7 +364,7 @@ async function readJson(request) {
 
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, onViewer = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory] }) {
+export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory] }) {
   let fingerprint = null;
   function currentFingerprint() {
     if (!fingerprint || Date.now() - fingerprint.at >= FRESHNESS_CHECK_MS) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
@@ -376,7 +376,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, onV
 
   function sessionSnapshot() {
     const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], revision: session.revision };
-    return instance ? { ...snapshot, instance } : snapshot;
+    return instance ? { ...snapshot, instance, ...(appVersion ? { appVersion } : {}) } : snapshot;
   }
 
   function clearViewerOpenLease() {

@@ -560,7 +560,7 @@ test("reading the review URL without tabs leaves the session unchanged", async (
 test("an MCP server lists its project in the app from start until it exits", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "registered");
-  const env = { ...process.env, CLAUDE_PROJECT_DIR: root, PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
+  const env = { ...process.env, CLAUDE_PROJECT_DIR: root, PRISM_REVIEW_APP_DIR: directory, PRISM_REVIEW_BROWSER_ON_START: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
   delete env.PRISM_REVIEW_APP;
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
   context.after(() => child.kill());
@@ -581,7 +581,7 @@ test("an MCP server lists its project in the app from start until it exits", asy
   await eventually(async () => (await listed())?.live === false, 30000);
 });
 
-test("an MCP server in a host that names no project lists it from its first Prism tool call", async (context) => {
+test("an MCP server in a host that names no project starts the app at once and lists the project from its first Prism tool call", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "codex");
   const env = { ...process.env, PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
@@ -590,6 +590,9 @@ test("an MCP server in a host that names no project lists it from its first Pris
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
   context.after(() => child.kill());
   readline.createInterface({ input: child.stdout }).on("line", () => {});
+  // The app starts with the server, before any tool call names the project.
+  const started = await eventually(async () => (await control(await readDiscovery(directory), "health")).proven, 30000);
+  assert.ok(started);
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_roadmap", arguments: { projectRoot: root } } })}\n`);
   const listed = async () => {
     const response = await control(await readDiscovery(directory), "projects");
@@ -685,56 +688,123 @@ test("a successor ignores a handoff that is older than the lock lifetime", async
   assert.notEqual(second.viewerToken, first.viewerToken, "an old handoff never hands out its viewer credential again");
 });
 
-test("a newer session replaces an older review app and keeps its port and viewer credential", async (context) => {
-  const directory = await appDirectory(context);
+// A stand-in for an app of another release that implements only the cross-version contract: the discovery file, health, shutdown, and the lock.
+async function standInApp(context, directory, health) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const root = await project(context, "upgrade");
   const shutdowns = [];
-  const standInKey = "stand-in-control-credential";
+  const controlToken = "stand-in-control-credential";
+  const viewerToken = "stand-in-viewer-credential";
   let stopStandIn;
   const stopped = new Promise((resolve) => { stopStandIn = resolve; });
-  const standIn = http.createServer((incoming, outgoing) => {
+  const server = http.createServer((incoming, outgoing) => {
     const chunks = [];
     incoming.on("data", (chunk) => chunks.push(chunk));
     incoming.on("end", async () => {
       const text = Buffer.concat(chunks).toString("utf8");
       const [nonce, signed] = String(incoming.headers["x-prism-control"] ?? "").split(".");
-      const reply = (status, body) => outgoing.writeHead(status, { "Content-Type": "application/json", "X-Prism-Proof": proof(standInKey, nonce, body) }).end(body);
-      if (!nonce || signed !== signature(standInKey, incoming.method, incoming.url, text, nonce).header.split(".")[1]) {
+      const reply = (status, body) => outgoing.writeHead(status, { "Content-Type": "application/json", "X-Prism-Proof": proof(controlToken, nonce, body) }).end(body);
+      if (!nonce || signed !== signature(controlToken, incoming.method, incoming.url, text, nonce).header.split(".")[1]) {
         outgoing.writeHead(403).end();
       } else if (incoming.url === "/control/health") {
-        reply(200, JSON.stringify({ protocol: 0, pid: process.pid }));
+        reply(200, JSON.stringify({ ...health, pid: process.pid }));
       } else if (incoming.url === "/control/shutdown" && incoming.method === "POST") {
         shutdowns.push(JSON.parse(text));
         await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ ...JSON.parse(await readFile(path.join(directory, "review-app.json"), "utf8")), handoff: true, handedOffAt: new Date().toISOString() }), { mode: 0o600 });
         reply(200, "{}");
-        standIn.close(() => stopStandIn());
-        standIn.closeAllConnections();
+        server.close(() => stopStandIn());
+        server.closeAllConnections();
       } else {
         outgoing.writeHead(404).end();
       }
     });
   });
-  await new Promise((resolve) => standIn.listen(0, "127.0.0.1", resolve));
-  const { port } = standIn.address();
-  const viewerToken = "stand-in-viewer-credential";
-  // The stand-in implements only the cross-version contract: the discovery file, health, shutdown, and the lock.
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => { server.close(() => stopStandIn()); server.closeAllConnections(); });
+  const { port } = server.address();
   const held = withFileLock(path.join(directory, "review-app"), async () => {
-    await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ protocol: 0, port, controlToken: standInKey, viewerToken, pid: process.pid }), { mode: 0o600 });
+    await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ ...health, port, controlToken, viewerToken, pid: process.pid }), { mode: 0o600 });
     await stopped;
   }, undefined, { renew: true });
   await eventually(() => readDiscovery(directory));
+  return { port, controlToken, viewerToken, shutdowns, held };
+}
+
+test("a newer session replaces an older review app and keeps its port and viewer credential", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "upgrade");
+  const standIn = await standInApp(context, directory, { protocol: 0 });
 
   const url = new URL(await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]));
-  await held;
-  assert.deepEqual(shutdowns, [{ handoff: true }]);
-  assert.equal(Number(url.port), port, "the successor serves on the same port");
-  assert.ok(url.pathname.startsWith(`/session/${viewerToken}/p/`), "an open tab keeps its viewer credential");
+  await standIn.held;
+  assert.deepEqual(standIn.shutdowns, [{ handoff: true }]);
+  assert.equal(Number(url.port), standIn.port, "the successor serves on the same port");
+  assert.ok(url.pathname.startsWith(`/session/${standIn.viewerToken}/p/`), "an open tab keeps its viewer credential");
   const discovery = await readDiscovery(directory);
   assert.ok(discovery.protocol >= 1);
-  assert.equal(discovery.viewerToken, viewerToken);
-  assert.notEqual(discovery.controlToken, standInKey, "the successor never reuses the control credential");
+  assert.equal(discovery.viewerToken, standIn.viewerToken);
+  assert.notEqual(discovery.controlToken, standIn.controlToken, "the successor never reuses the control credential");
   assert.equal(JSON.parse((await request(new URL("api/index", url))).body).projectRoot, root);
+});
+
+test("a session of a newer plugin release replaces an app of an older release with the same protocol", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "release-upgrade");
+  const standIn = await standInApp(context, directory, { protocol: 1, pluginVersion: "0.1.0" });
+  const client = createReviewAppClient({ directory, pluginVersion: "0.2.0" });
+  context.after(() => client.close());
+  await client.register(root);
+  await standIn.held;
+  assert.deepEqual(standIn.shutdowns, [{ handoff: true }]);
+  const discovery = await readDiscovery(directory);
+  assert.notEqual(discovery.controlToken, standIn.controlToken);
+  assert.equal(discovery.port, standIn.port, "open tabs reconnect on the same port");
+});
+
+test("a session of an older plugin release keeps a newer app", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "release-downgrade");
+  const app = await startReviewApp({ directory, pluginVersion: "9.0.0" });
+  context.after(() => app.close());
+  const before = await readDiscovery(directory);
+  const client = createReviewAppClient({ directory, pluginVersion: "0.1.0" });
+  context.after(() => client.close());
+  await client.register(root);
+  assert.equal((await readDiscovery(directory)).controlToken, before.controlToken, "the newer app keeps serving");
+});
+
+test("a tab learns the plugin release of the app that serves it", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "release-tab");
+  const app = await startReviewApp({ directory, pluginVersion: "1.2.3" });
+  context.after(() => app.close());
+  const client = createReviewAppClient({ directory, pluginVersion: "1.2.3" });
+  context.after(() => client.close());
+  const { url } = await client.register(root);
+  const index = JSON.parse((await request(new URL("api/index", `${url}`))).body);
+  assert.equal(index.appVersion, "1.2.3");
+});
+
+test("a session start opens one browser while no review tab is connected and sends no notice", async (context) => {
+  const directory = await appDirectory(context);
+  const first = await project(context, "start-first");
+  const second = await project(context, "start-second");
+  const opened = [];
+  const openBrowser = (url) => { opened.push(url); return true; };
+  pool(context, { app: { directory, openBrowser } }).register(first, { open: true });
+  await eventually(() => opened.length === 1);
+  const events = await viewerEvents(context, opened[0]);
+  await eventually(() => events.some((event) => event.name === "session"));
+  const before = JSON.stringify(events.filter((event) => event.name === "session").at(-1).data.openTabs);
+  pool(context, { app: { directory, openBrowser } }).register(second, { open: true });
+  const listed = async () => {
+    const response = await control(await readDiscovery(directory), "projects");
+    return JSON.parse(response.body).projects.find((entry) => entry.projectRoot === second)?.live;
+  };
+  await eventually(listed);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(opened.length, 1, "a connected tab holds back a second window");
+  assert.ok(!events.some((event) => event.name === "notice"), "a session start is not a presentation");
+  assert.equal(JSON.stringify(events.filter((event) => event.name === "session").at(-1).data.openTabs), before);
 });
 
 test("a session serves its own review server when the shared app cannot start", async (context) => {

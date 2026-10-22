@@ -100,7 +100,15 @@ The project switcher names the project as `repository/branch`, falls back to the
 It lists recent projects under their repository, even a repository with one checkout, with their open questions, and marks the ones an agent session is using now.
 When an agent presents a review for another project while a tab is open, that tab shows a notice with a link instead of a second tab opening.
 
-The app starts with the first session that needs it, outlives that session, and exits after 30 minutes with no session and no open viewer.
+The app starts with the MCP server of the first Prism session, outlives that session, and exits after 30 minutes with no session and no open viewer.
+A session of a newer Prism release replaces an app of an older release on the same port, and open tabs reload into the new version.
+A session never replaces a newer app.
+
+A new session opens the review browser on its project when no review tab of any project is open.
+Starting several sessions at once opens at most one window.
+Cloud, CI, print-mode, and display-less sessions open nothing.
+Add `- Review browser on start: off` under `## Interaction` in `.prism/workflow.md` to turn this off for a project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every project you work on.
+`Review browser: internal` also turns it off, because only the agent can open the internal browser.
 It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.
 A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
 
