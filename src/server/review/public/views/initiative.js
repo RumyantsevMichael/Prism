@@ -3,7 +3,7 @@ import { applyWidths, progressBar, stateBadge } from "./entities.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
 import { artifactChip, bindLinks, card, emptyNote, escapeHtml, keyValues, plural, requirementLinks } from "./util.js";
 
-const MODES = [["board", "Board"], ["graph", "Graph"], ["list", "List"]];
+const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 // These columns always show; another status, such as deferred, gets a column only while a slice has it.
 const STATUS_COLUMNS = [["not-started", "Not started"], ["in-progress", "In progress"], ["blocked", "Blocked"], ["deferred", "Deferred"], ["done", "Done"]];
 const FIXED_COLUMNS = new Set(["not-started", "in-progress", "blocked", "done"]);

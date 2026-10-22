@@ -53,9 +53,9 @@ The board has one lane per band and one column per state, and each card shows it
 Click a lane to collapse it.
 Shipped and superseded initiatives appear only with "Show shipped and superseded".
 
-An initiative page shows its slices as a board, a graph, or a list.
+An initiative page shows its slices as a board, a list, or a graph.
 The board has one column per slice status, and the card of an active slice also shows its activity, workers, and review lanes.
-The graph orders leaf slices by execution order, and the list shows the slice tree.
+The list shows the slice tree, and the graph orders leaf slices by execution order.
 Below them, the page lists the unstarted leaves that can be designed next.
 A slice page shows the slice's change map, its review ledger, its other files, and the design narrative from `slice.md`.
 
