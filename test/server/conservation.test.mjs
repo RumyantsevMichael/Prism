@@ -269,6 +269,10 @@ test('review finding ownership, independent verification, and projection failure
  const md=path.join(f.root,'plan/slice/review.md');await rm(md);await mkdir(md);
  const updated=await act(reviewer,[{op:'submit_lane',lane:'main',status:'CLEAN'}]);assert.equal(updated.projectionStale,true);assert.equal((await getReview({projectRoot:f.root,reviewPath:f.reviewPath})).entries[0].status,'VERIFIED');
  await rm(md,{recursive:true});const regenerated=await act(coordinator,[{op:'regenerate_markdown'}]);assert.equal(regenerated.revision,updated.revision);assert.equal(regenerated.projectionStale,false);
+ const raised=await getReview({projectRoot:f.root,reviewPath:f.reviewPath,wave:'first'});assert.deepEqual(raised.entries.map(item=>item.id),[id]);assert.equal(raised.totalCount,1);
+ assert.equal((await getReview({projectRoot:f.root,reviewPath:f.reviewPath,wave:'later'})).totalCount,0);
+ assert.deepEqual((await getReview({projectRoot:f.root,reviewPath:f.reviewPath,section:'waves',wave:'first'})).entries.map(item=>item.id),['first']);
+ await assert.rejects(getReview({projectRoot:f.root,reviewPath:f.reviewPath,section:'history',wave:'first'}),{code:'validation_failed'});
 });
 
 test('one reviewed justification covers several growth dimensions and convergence requires coverage of every requirement',async()=>{

@@ -1974,10 +1974,26 @@ th {
   font-size: 0.74rem;
 }
 
+.wave-started,
 .wave-accepted,
 .wave-findings {
   color: var(--ink-muted);
   font-size: 0.76rem !important;
+}
+
+.wave-findings {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.75rem;
+}
+
+.wave-count strong {
+  color: var(--ink);
+}
+
+.wave-filter {
+  font-size: inherit;
 }
 
 .lane-list {

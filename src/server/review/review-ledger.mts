@@ -28,7 +28,7 @@ const assessmentSchema = { oneOf: [
   obj({ ...assessmentCommon, kind: { const: "growth" }, growthIds: arr(str), justification: justificationSchema }),
   obj({ ...assessmentCommon, kind: { const: "convergence" }, section: referenceSchema, decision: { enum: ["retain", "replace", "consolidate", "delete"] }, conceptIds: arr(str), coverage: arr(obj({ requirement: referenceSchema, targets: arr(referenceSchema) })) })
 ] };
-export const GET_REVIEW_SCHEMA = obj({ ...common, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, section: { enum: ["findings", "waves", "assessments", "conflicts", "legacy", "history"] } }, ["projectRoot", "reviewPath"]);
+export const GET_REVIEW_SCHEMA = obj({ ...common, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, section: { enum: ["findings", "waves", "assessments", "conflicts", "legacy", "history"] }, wave: str }, ["projectRoot", "reviewPath"]);
 export const UPDATE_REVIEW_SCHEMA = obj({ ...common, deltaPath: str, delivery: str, actor: obj({ id: str, role: { enum: ["coordinator", "delivery", "reviewer"] } }), operations: arr({ oneOf: [
   obj({ op: { const: "start_wave" }, id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, snapshotId: hashField, comparisonId: hashField, lanes: arr(laneSchema) }),
   obj({ op: { const: "assign_delivery" }, worker: str }),
@@ -51,6 +51,7 @@ export const CHECK_REVIEW_GATE_SCHEMA = obj({ projectRoot: str, reviewPath: str,
 interface Operation { op: string; [key: string]: unknown }
 interface UpdateInput { projectRoot: string; reviewPath: string; expectedRevision: string | null; actor: Actor; deltaPath?: string; delivery?: string; operations: Operation[] }
 const lastWave = (review: ReviewRecord) => review.waves.at(-1);
+const raisedIn = (finding: Finding) => finding.history[0]?.wave;
 const laneOf = (wave: Wave, lane: string) => { const value = wave.lanes.find(item => item.id === lane); if (!value) throw conservationError("validation_failed", "The review lane is not assigned."); return value; };
 const requireRole = (review: ReviewRecord, actor: Actor, role: Actor["role"]) => {
   if (actor.role !== role || (role === "coordinator" && actor.id !== review.coordinator) || (role === "delivery" && actor.id !== review.delivery)) throw conservationError("gate_blocked", "This worker does not own the requested review change.");
@@ -346,12 +347,15 @@ function markdown(review: ReviewRecord) {
   for (const finding of review.findings) lines.push(`## ${finding.id}: ${finding.title}`, "", `- Status: ${finding.status}`, `- Severity: ${finding.severity}`, `- Evidence: ${finding.evidence}`, `- Condition to close: ${finding.conditionToClose}`, `- Implementer evidence: ${finding.implementerEvidence || "none"}`, "");
   return lines.join("\n") + "\n";
 }
-export async function getReview(input: { projectRoot: string; reviewPath: string; expectedRevision?: string | null; offset?: number; limit?: number; section?: keyof Pick<ReviewRecord, "findings" | "waves" | "assessments" | "conflicts" | "legacy" | "history"> }) {
+export async function getReview(input: { projectRoot: string; reviewPath: string; expectedRevision?: string | null; offset?: number; limit?: number; section?: keyof Pick<ReviewRecord, "findings" | "waves" | "assessments" | "conflicts" | "legacy" | "history">; wave?: string }) {
   assertInput(GET_REVIEW_SCHEMA, input);
   const loaded = await loadReview(input.projectRoot, input.reviewPath);
   if (input.expectedRevision !== undefined && loaded.revision !== input.expectedRevision) throw conservationError("revision_conflict", "The review record changed.", { currentRevision: loaded.revision });
   if (!loaded.document) return { exists: false, revision: null };
-  const section = input.section || "findings", list = loaded.document[section], offset = input.offset || 0, limit = input.limit || 50;
+  const section = input.section || "findings", offset = input.offset || 0, limit = input.limit || 50;
+  if (input.wave !== undefined && (section === "legacy" || section === "history")) throw conservationError("validation_failed", "The wave filter applies to findings, waves, assessments, and conflicts.");
+  const list: unknown[] = input.wave === undefined ? loaded.document[section] : section === "findings" ? loaded.document.findings.filter(item => raisedIn(item) === input.wave)
+    : section === "waves" ? loaded.document.waves.filter(item => item.id === input.wave) : (loaded.document[section] as { wave: string }[]).filter(item => item.wave === input.wave);
   let projectionStale = true;
   try { const projection = await resolveArtifactPath(input.projectRoot, input.reviewPath.replace(/\.json$/, ".md"), false, "review.md"); projectionStale = (await regularBytes(projection.target, 4 * 1024 * 1024)).toString() !== markdown(loaded.document); } catch { /* The authoritative record remains readable. */ }
   return { exists: true, revision: loaded.revision, schemaVersion: 1, deltaPath: loaded.document.deltaPath, baselineId: loaded.document.baselineId,

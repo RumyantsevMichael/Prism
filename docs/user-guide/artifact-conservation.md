@@ -19,6 +19,7 @@ A refused write lists its problems in the error message.
 
 `get_conservation_evidence` pages immutable manifests, receipts, observations, and measurements.
 `get_review` pages the review ledger and reports whether its generated `review.md` needs regeneration.
+Pass `wave` to `get_review` to keep only the findings that wave raised, that wave, or its assessments and conflicts.
 `check_review_gate` explains prerequisites; the write operations enforce the same checks.
 For an unaccepted wave it also lists the assessments that can carry forward from the previous wave and a ready-to-fill skeleton for the rest.
 In a correction wave it also lists, for each lane, the files whose bytes changed since the previous wave of the same mode, which the reviewer re-reads in full instead of the whole slice.

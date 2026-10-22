@@ -16,8 +16,29 @@ function severityBadge(severity) {
   return `<span class="severity severity-${token(severity)}">${escapeHtml(severity)}</span>`;
 }
 
-function waveCard(wave, index, findings, current) {
-  const waveFindings = findings.filter((finding) => finding.history?.some((entry) => entry.wave === wave.id));
+function raisedIn(finding) {
+  return finding.history?.[0]?.wave ?? "";
+}
+
+// Review history logs each start_wave in order, so the nth entry dates the nth wave when nothing is missing.
+function waveStarts(record) {
+  const starts = (record.history ?? []).filter((entry) => entry.operation === "start_wave").map((entry) => entry.at);
+  return starts.length === (record.waves ?? []).length ? starts : [];
+}
+
+function waveCounts(wave, findings) {
+  const reached = (status) => findings.filter((finding) => finding.history?.some((entry) => entry.wave === wave.id && entry.status === status)).length;
+  return [
+    ["raised", findings.filter((finding) => raisedIn(finding) === wave.id).length],
+    ["fixed", reached("FIXED")],
+    ["verified", reached("VERIFIED")],
+    ["reopened", reached("REOPENED")]
+  ];
+}
+
+function waveCard(wave, index, findings, current, startedAt) {
+  const counts = waveCounts(wave, findings);
+  const raised = counts[0][1];
   const lanes = wave.lanes.map((lane) => `<li>
     <span class="lane-name">${escapeHtml(lane.id)}</span>
     <span class="lane-reviewer">${escapeHtml(lane.reviewer)}</span>
@@ -27,6 +48,7 @@ function waveCard(wave, index, findings, current) {
     <div class="wave-marker" aria-hidden="true">${index + 1}</div>
     <div class="wave-body">
       <div class="wave-head"><strong>${escapeHtml(wave.id)}</strong><span class="wave-mode">${escapeHtml(wave.mode)}</span>${current ? '<span class="status-pill is-info">current</span>' : ""}</div>
+      ${startedAt ? `<p class="wave-started">Started ${escapeHtml(formatTime(startedAt))}</p>` : ""}
       <p class="wave-accepted">${wave.accepted ? `Accepted by <strong>${escapeHtml(wave.accepted.actor)}</strong> · ${escapeHtml(formatTime(wave.accepted.at))}` : "Not accepted"}</p>
       <ul class="lane-list">${lanes}</ul>
       <div class="wave-evidence">
@@ -35,7 +57,8 @@ function waveCard(wave, index, findings, current) {
         ${wave.baselineId && wave.baselineId !== wave.snapshotId ? evidenceChip(wave.baselineId, "Baseline") : ""}
         <span class="meta-pill" title="${escapeHtml(wave.deltaRevision)}">delta ${escapeHtml(shortId(wave.deltaRevision))}</span>
       </div>
-      <p class="wave-findings">${plural(waveFindings.length, "finding")} touched</p>
+      <p class="wave-findings">${counts.filter(([, count]) => count).map(([label, count]) => `<span class="wave-count"><strong>${count}</strong> ${label}</span>`).join("") || "No finding changed in this wave"}
+        ${raised ? `<button type="button" class="text-button wave-filter" data-wave-filter="${escapeHtml(wave.id)}">Show raised findings</button>` : ""}</p>
     </div>
   </li>`;
 }
@@ -44,7 +67,7 @@ function findingCard(finding, selected) {
   return `<li><button type="button" class="finding-card ${selected ? "is-selected" : ""}" data-finding="${escapeHtml(finding.id)}">
     <span class="finding-card-head">${severityBadge(finding.severity)}<code>${escapeHtml(finding.localId)}</code></span>
     <strong>${escapeHtml(finding.title)}</strong>
-    <span class="finding-card-meta">${escapeHtml(finding.lane)} · ${escapeHtml(finding.mode)}</span>
+    <span class="finding-card-meta">${escapeHtml(finding.lane)} · ${escapeHtml(raisedIn(finding) || finding.mode)}</span>
     ${finding.affectedPath ? `<span class="finding-card-path"><code>${escapeHtml(finding.affectedPath)}</code></span>` : ""}
   </button></li>`;
 }
@@ -58,6 +81,7 @@ function findingDetail(finding) {
     <h2>${escapeHtml(finding.title)}</h2>
     <p class="detail-meta">${severityBadge(finding.severity)} ${statusBadge(finding.status)} <code>${escapeHtml(finding.id)}</code></p>
     ${keyValues([
+      ["Raised in", raisedIn(finding) ? `wave <code>${escapeHtml(raisedIn(finding))}</code>` : null],
       ["Affected path", finding.affectedPath ? `<code>${escapeHtml(finding.affectedPath)}</code>` : null],
       ["Escalation", finding.escalationTarget ? escapeHtml(finding.escalationTarget) : null],
       ["Probe", finding.probe ? `<code>${escapeHtml(finding.probe)}</code>` : null],
@@ -94,8 +118,11 @@ export function render(container, data, ctx) {
   const currentWave = waves.at(-1);
   state.lane ??= "";
   state.severity ??= "";
+  state.wave ??= "";
+  const starts = waveStarts(record);
+  const raisingWaves = waves.map((wave) => wave.id).filter((id) => findings.some((finding) => raisedIn(finding) === id));
   const lanes = [...new Set(findings.map((finding) => finding.lane))].sort();
-  const filtered = findings.filter((finding) => (!state.lane || finding.lane === state.lane) && (!state.severity || finding.severity === state.severity));
+  const filtered = findings.filter((finding) => (!state.lane || finding.lane === state.lane) && (!state.severity || finding.severity === state.severity) && (!state.wave || raisedIn(finding) === state.wave));
   const openCount = findings.filter((finding) => ["OPEN", "IN PROGRESS", "REOPENED"].includes(finding.status)).length;
   const blocking = findings.filter((finding) => finding.status !== "VERIFIED" && ["blocker", "high"].includes(finding.severity)).length;
   const unresolvedConflicts = (record.conflicts ?? []).filter((conflict) => !conflict.resolved).length;
@@ -117,13 +144,14 @@ export function render(container, data, ctx) {
         ["Baseline", evidenceChip(record.baselineId, "Snapshot")]
       ])}
     </section>
-    ${card("Waves", waves.length ? `<ol class="wave-timeline">${waves.map((wave, index) => waveCard(wave, index, findings, wave === currentWave)).join("")}</ol>` : emptyNote("No review wave has started."), { eyebrow: "Timeline" })}
+    ${card("Waves", waves.length ? `<ol class="wave-timeline">${waves.map((wave, index) => waveCard(wave, index, findings, wave === currentWave, starts[index])).join("")}</ol>` : emptyNote("No review wave has started."), { eyebrow: "Timeline" })}
     <div class="split-layout">
       <section class="view-card split-main">
         <header class="view-card-header board-header">
           <div><p class="eyebrow">Findings board</p><h2>${plural(filtered.length, "finding")}</h2></div>
           <div class="board-filters">
             <label>Lane <select data-filter="lane"><option value="">All</option>${lanes.map((lane) => `<option value="${escapeHtml(lane)}"${lane === state.lane ? " selected" : ""}>${escapeHtml(lane)}</option>`).join("")}</select></label>
+            <label>Raised in <select data-filter="wave"><option value="">All waves</option>${raisingWaves.map((id) => `<option value="${escapeHtml(id)}"${id === state.wave ? " selected" : ""}>${escapeHtml(id)}</option>`).join("")}</select></label>
             <label>Severity <select data-filter="severity"><option value="">All</option>${SEVERITIES.map((severity) => `<option value="${severity}"${severity === state.severity ? " selected" : ""}>${severity}</option>`).join("")}</select></label>
           </div>
         </header>
@@ -149,6 +177,12 @@ export function render(container, data, ctx) {
   };
   select(state.selected);
   container.addEventListener("click", (event) => {
+    const waveFilter = event.target.closest("[data-wave-filter]");
+    if (waveFilter) {
+      state.wave = waveFilter.dataset.waveFilter;
+      ctx.rerender();
+      return;
+    }
     const button = event.target.closest("[data-finding]");
     if (button) {
       select(button.dataset.finding);
