@@ -34,6 +34,8 @@ let agentTabs = [];
 let sessionRevision = 0;
 // A replaced review app restarts revisions, so a snapshot from a new instance is accepted whatever its revision.
 let sessionInstance = null;
+// A tab that reconnects to an app of another plugin version reloads, so it never runs old page code against a newer app.
+let appVersion = null;
 let sessionConnected = false;
 let sessionStream;
 let saveQueue = Promise.resolve();
@@ -239,6 +241,10 @@ function closeTab(path) {
 function synchronizeSession(snapshot) {
   const nextRevision = Number.isInteger(snapshot.revision) ? snapshot.revision : sessionRevision;
   const nextInstance = typeof snapshot.instance === "string" ? snapshot.instance : sessionInstance;
+  if (typeof snapshot.appVersion === "string" && appVersion !== null && snapshot.appVersion !== appVersion) {
+    location.reload();
+    return;
+  }
   if (nextRevision <= sessionRevision && nextInstance === sessionInstance) {
     return;
   }
@@ -1078,6 +1084,7 @@ async function initialize() {
   agentTabs = (data.agentTabs ?? []).filter((tab) => openTabs.includes(tab));
   sessionRevision = Number.isInteger(data.revision) ? data.revision : 0;
   sessionInstance = typeof data.instance === "string" ? data.instance : null;
+  appVersion = typeof data.appVersion === "string" ? data.appVersion : null;
   const requestedPath = selectedPath;
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
   setProjectLabel(workspaceIdentity(data), data.projectRoot);

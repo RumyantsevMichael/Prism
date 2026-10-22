@@ -25,6 +25,7 @@ import { summarizeSessionConsumption } from "./session/session-trace-store.mjs";
 import { appendDecision, readDecisionHistory, setDecisionRecording } from "./workflow/decision-history.mjs";
 import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
+import { opensAtStart } from "./review/open-at-start.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } from "./workflow/initiative.mjs";
@@ -1025,9 +1026,12 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   throw new Error(`Unknown tool: ${name}`);
 }
 
-// A host that names the project at start gets it listed in the review app before any tool call, without delaying initialize.
+// A host that names the project at start gets it listed in the review app before any tool call, without delaying initialize,
+// and opens the review browser when nobody watches one; a host that names no project still gets a running app.
 if (process.env.CLAUDE_PROJECT_DIR) {
-  void realpath(process.env.CLAUDE_PROJECT_DIR).then((root) => reviewServers.register(root), () => {});
+  void realpath(process.env.CLAUDE_PROJECT_DIR).then(async (root) => reviewServers.register(root, { open: await opensAtStart(root) }), () => {});
+} else {
+  reviewServers.startApp();
 }
 
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });

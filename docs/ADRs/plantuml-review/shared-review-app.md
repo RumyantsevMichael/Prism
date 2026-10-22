@@ -39,10 +39,14 @@ The review app MUST read a project's evidence from the evidence stores that the 
 Only a request with the control credential MAY register a project.
 A project MUST stay live while its registering session renews its lease and MUST then appear as recent.
 A session MUST register its project when its host names the project at start, and otherwise at its first tool call that names the project.
+A session whose host names no project at start MUST still start the review app.
+A session whose host names the project at start SHOULD open a browser on it when no tab of any project is connected and someone can see the window, unless the user or the project turned that off.
+A session start MUST NOT present tabs or notify other projects' tabs.
 A presentation for a project MUST NOT change which project a connected browser tab shows.
 When a project presents while a connected tab shows another project, the review app MUST notify that tab with a link to the presenting project.
 The review app MUST NOT open a browser itself; the presenting process opens it in its own environment when no tab is connected.
-A process that finds an older protocol version MUST replace the running review app, and a process that finds a newer one MUST use it.
+A process that finds an older protocol version or an older plugin release MUST replace the running review app, and a process that finds a newer one MUST use it.
+A tab that reconnects to an app of another plugin release MUST reload its page.
 A newer protocol version MUST keep every earlier control route and field with its meaning.
 When the review app cannot be reached or started, an MCP server MUST serve that project's reviews from its own review server for the rest of the session.
 The loopback binding, Host allowlist, and file boundary of [browser-rendered-plantuml.md](browser-rendered-plantuml.md) MUST apply to the shared review app unchanged.
@@ -66,9 +70,10 @@ Gate answers already reach agents through the state file under a cross-process l
 
 - One tab shows every project, and the open-gate count shows which project waits on the user.
 - One viewer URL now exposes every registered project instead of one, so a leaked URL reveals more than before.
-- A detached process can outlive the plugin version that started it until a newer session replaces it.
+- A detached process can outlive the plugin version that started it until a session of a newer release starts.
 - A host that forbids detached processes or private state writes falls back to one server per session.
-- Hosts that do not name the project at startup, such as Codex today, list the project only after its first Prism tool call.
+- Hosts that do not name the project at startup, such as Codex today, start the app at once but list the project only after its first Prism tool call.
+- A user who closed every review tab gets a new window from the next session start, unless they turn the start window off.
 - A pid alone cannot prove a lock owner alive after a reboot, so a stalled owner that stops renewing for longer than the stale period is replaced and must stop serving when it resumes.
 
 ## Mechanism
@@ -88,4 +93,4 @@ The app exits after an idle period with no live lease and no viewer, and removes
 
 ## Decision Log
 
-- n/a.
+2026-10-22: Added plugin-release replacement and the browser opened at session start, because an app of an older release kept serving its old pages while any session lived, and nothing showed the user that the app was running.

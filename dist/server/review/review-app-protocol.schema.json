@@ -35,7 +35,7 @@
     "projects": { "method": "GET", "path": "/control/projects", "response": { "projects": [{ "id": "string", "projectRoot": "string", "live": "boolean" }] } },
     "registerLease": { "method": "PUT", "path": "/control/projects/<lease>", "body": { "projectRoot": "string", "evidenceDirectory": "absolute path or absent; the evidence store the registering process writes for this project, which the app then serves that project's evidence and gate answers from" } },
     "endLease": { "method": "DELETE", "path": "/control/projects/<lease>" },
-    "present": { "method": "POST", "path": "/control/present", "body": { "projectRoot": "string", "tabs": "string[] or absent", "open": "boolean", "evidenceDirectory": "absolute path or absent, as for registerLease" }, "response": { "url": "string", "open": "boolean", "session": "object" } },
+    "present": { "method": "POST", "path": "/control/present", "body": { "projectRoot": "string", "tabs": "string[] or absent", "open": "boolean", "start": "true or absent; with open true, a session start that only asks whether to open a window, so the app leaves tabs and other projects' notices alone", "evidenceDirectory": "absolute path or absent, as for registerLease" }, "response": { "url": "string", "open": "boolean", "session": "object" } },
     "shutdown": { "method": "POST", "path": "/control/shutdown", "body": { "handoff": "boolean" }, "effect": "With handoff true the app rewrites the discovery file with handoff true and handedOffAt before releasing the lock; a successor reuses port and viewerToken only from such a file written within the last 30 seconds and only on that port." }
   }
 }

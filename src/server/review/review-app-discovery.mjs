@@ -28,6 +28,21 @@ export function reviewAppDisabled(env = process.env) {
   return env.PRISM_REVIEW_APP === "off";
 }
 
+// Turns off the browser that a session opens at start; tests and users who never want that window set it.
+export function openAtStartDisabled(env = process.env) {
+  return env.PRISM_REVIEW_BROWSER_ON_START === "off";
+}
+
+// Answers whether a release version is older than another; an unreadable version is never older, so it never causes a replacement.
+export function olderVersion(candidate, reference) {
+  const parse = (version) => /^(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ""))?.slice(1).map(Number) ?? null;
+  const left = parse(candidate);
+  const right = parse(reference);
+  if (!left || !right) return false;
+  const index = left.findIndex((part, position) => part !== right[position]);
+  return index >= 0 && left[index] < right[index];
+}
+
 const discoveryPath = (directory) => path.join(directory, DISCOVERY_FILE);
 const projectsPath = (directory) => path.join(directory, PROJECTS_FILE);
 // withFileLock locks `${path}.lock`, so this names review-app.lock.
