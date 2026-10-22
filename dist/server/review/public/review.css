@@ -1053,8 +1053,19 @@ kbd {
 .artifact-view {
   margin: 0 auto;
   max-width: 92rem;
+  overflow-wrap: anywhere;
   padding: 2rem clamp(1.2rem, 3vw, 3.5rem) 4rem;
   width: 100%;
+}
+
+/* Wide tables scroll inside their card; cells break only words longer than the table can hold. */
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.table-wrap table {
+  overflow-wrap: break-word;
 }
 
 .welcome-card {
@@ -1285,10 +1296,16 @@ th {
   white-space: nowrap;
 }
 
+.diagram-output svg text {
+  white-space: pre;
+}
+
 .diagram-tools {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   gap: 0.28rem;
+  max-width: 100%;
 }
 
 .tool-button {
@@ -1427,6 +1444,27 @@ th {
     max-width: calc(100vw - 5rem);
   }
 
+  /* The topbar anchors its menus on narrow screens so they span the window instead of running off its right edge. */
+  .project-switcher,
+  .indexing {
+    position: static;
+  }
+
+  .project-menu,
+  .indexing-panel {
+    left: 0.5rem;
+    max-width: none;
+    min-width: 0;
+    right: 0.5rem;
+    width: auto;
+  }
+
+  /* The topbar wraps to two rows here, so the drawer covers it rather than hiding its own header under it. */
+  .evidence-drawer {
+    top: 0;
+    z-index: 30;
+  }
+
   .artifact-tabs {
     flex-basis: 100%;
     order: 3;
@@ -1501,6 +1539,19 @@ th {
   .diagram-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .diagram-title {
+    align-self: stretch;
+  }
+
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+  }
+
+  .stat {
+    min-width: 0;
   }
 
   .diagram-output {
@@ -1672,6 +1723,8 @@ th {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .stat-row {
@@ -1743,11 +1796,13 @@ th {
   font-size: 0.74rem;
   gap: 0.4rem;
   max-width: 100%;
+  min-width: 0;
   padding: 0.2rem 0.5rem;
   vertical-align: middle;
 }
 
 .link-chip code {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2084,6 +2139,7 @@ th {
 .candidate-ranking {
   display: grid;
   gap: 0.4rem;
+  grid-template-columns: minmax(0, 1fr);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -2732,6 +2788,7 @@ th {
 
 .evidence-drawer {
   background: var(--surface-raised);
+  overflow-wrap: anywhere;
   border-left: 1px solid var(--line);
   bottom: 0;
   box-shadow: -18px 0 50px rgba(36, 33, 55, 0.16);
@@ -3310,6 +3367,7 @@ th {
   align-content: start;
   display: grid;
   gap: 0.55rem;
+  grid-template-columns: minmax(0, 1fr);
   list-style: none;
   margin: 0;
   min-height: 2.5rem;
@@ -3332,6 +3390,7 @@ th {
   box-shadow: var(--shadow-soft);
   display: grid;
   gap: 0.4rem;
+  grid-template-columns: minmax(0, 1fr);
   padding: 0.7rem 0.75rem;
 }
 
@@ -3369,6 +3428,7 @@ th {
 .pillar {
   color: var(--ink-muted);
   font-size: 0.66rem;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3604,6 +3664,7 @@ th {
 .decision-list {
   display: grid;
   gap: 0.45rem;
+  grid-template-columns: minmax(0, 1fr);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -3942,6 +4003,7 @@ th {
 .palette-results {
   display: grid;
   gap: 0.1rem;
+  grid-template-columns: minmax(0, 1fr);
   list-style: none;
   margin: 0;
   overflow: auto;
@@ -3982,8 +4044,10 @@ th {
 
 .palette-detail {
   color: var(--ink-muted);
+  flex: 0 1000 auto;
   font-size: 0.72rem;
   margin-left: auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4006,6 +4070,7 @@ th {
 .attention-list {
   display: grid;
   gap: 0.6rem;
+  grid-template-columns: minmax(0, 1fr);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -4057,6 +4122,8 @@ th {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 0.25rem;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .attention-question {
@@ -4143,6 +4210,10 @@ th {
 .choice-button.is-negative[aria-pressed="true"] {
   background: var(--danger);
   border-color: var(--danger);
+}
+
+.gate-note {
+  position: relative;
 }
 
 .gate-note textarea {
@@ -4423,6 +4494,29 @@ th {
   z-index: 1;
 }
 
+/* Without the contents column beside the text, the button floats so the first heading wraps beside it instead of under it. */
+.document-card:not(.has-toc) > .maximize-button {
+  float: right;
+  margin: -0.5rem -0.5rem 0.5rem 0.75rem;
+  position: relative;
+  right: auto;
+  top: auto;
+}
+
+@media (max-width: 1100px) {
+  .document-card.has-toc > .maximize-button {
+    float: right;
+    margin: -0.5rem -0.5rem 0.5rem 0.75rem;
+    position: relative;
+    right: auto;
+    top: auto;
+  }
+
+  .document-card.has-toc > .doc-toc {
+    display: flow-root;
+  }
+}
+
 body.has-maximized::after {
   background: color-mix(in srgb, var(--bg) 70%, transparent);
   content: "";
@@ -4443,6 +4537,19 @@ body.has-maximized::after {
 
 .is-maximized.has-toc {
   display: grid;
+}
+
+/* Below the contents-column breakpoint a maximized document keeps the stacked layout, with its button at the top right. */
+@media (max-width: 1100px) {
+  .is-maximized.has-toc {
+    display: flex;
+  }
+
+  .is-maximized > .maximize-button {
+    align-self: flex-end;
+    float: none;
+    margin: 0 0 0.5rem;
+  }
 }
 
 .is-maximized :is(.graph-viewport, .diagram-output) {

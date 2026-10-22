@@ -1,33 +1,11 @@
 // Build a demo project whose JSON artifacts come from the real Prism MCP tools, for trying the review browser views.
 // Usage: node scripts/review-demo/seed.mjs [project-directory]
-import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
-import readline from "node:readline";
-import { fileURLToPath } from "node:url";
+import { ROOT, prepareProject, startTools } from "./project.mjs";
 
-const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const SERVER = path.join(ROOT, "dist/server/mcp.mjs");
-const MANIFEST = path.join(ROOT, "test/server/fixtures/native-manifest-unavailable.json");
 const examples = JSON.parse(await readFile(path.join(ROOT, "test/server/fixtures/change-map.json"), "utf8"));
-
-const requested = process.argv[2];
-const projectRoot = requested ? path.resolve(requested) : await mkdtemp(path.join(os.tmpdir(), "prism-review-demo-"));
-if (requested) {
-  await rm(projectRoot, { recursive: true, force: true });
-}
-await mkdir(projectRoot, { recursive: true });
-const realRoot = await realpath(projectRoot);
-const dataDir = path.join(path.dirname(realRoot), `${path.basename(realRoot)}-data`);
-await rm(dataDir, { recursive: true, force: true });
-await mkdir(dataDir, { recursive: true });
-
-async function write(relative, content) {
-  const target = path.join(realRoot, relative);
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, content);
-}
+const { realRoot, dataDir, write } = await prepareProject(process.argv[2], "prism-review-demo-");
 
 const slice = "docs/plans/retry-hardening/timeout-retries";
 const deltaPath = `${slice}/change-map.json`;
@@ -51,36 +29,7 @@ await write("docs/Glossary.md", "# Glossary\n\nTerms used by the payments API te
 await write(`${slice}/slice.md`, "# Retry timed-out requests until a total deadline\n\n## Context\n\nThe existing strategy owns timeout retries, and a total deadline bounds every retry sequence.\nConnection retries stay out of scope until their own slice.\n");
 await write(`${slice}/timeout-retries.puml`, "@startuml\nclass RequestRetryStrategy\n@enduml\n");
 
-const env = { ...process.env, PRISM_REVIEW_APP: "off", PLUGIN_DATA: dataDir, PRISM_NATIVE_ASSET_MANIFEST: MANIFEST };
-delete env.CLAUDE_PROJECT_DIR;
-const child = spawn(process.execPath, [SERVER], { cwd: realRoot, env, stdio: ["pipe", "pipe", "pipe"] });
-let stderr = "";
-child.stderr.on("data", (chunk) => {
-  stderr += chunk;
-});
-const pending = new Map();
-let nextId = 0;
-readline.createInterface({ input: child.stdout }).on("line", (line) => {
-  const response = JSON.parse(line);
-  pending.get(response.id)?.(response);
-  pending.delete(response.id);
-});
-
-async function call(name, args) {
-  const id = ++nextId;
-  const response = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${name} timed out: ${stderr}`)), 120000);
-    pending.set(id, (value) => {
-      clearTimeout(timer);
-      resolve(value);
-    });
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } })}\n`);
-  });
-  if (response.error || response.result?.isError) {
-    throw new Error(`${name} failed: ${JSON.stringify(response.error ?? response.result)}`);
-  }
-  return response.result.structuredContent;
-}
+const { call, close } = startTools(realRoot, dataDir);
 
 let reviewRevision = null;
 async function review(actor, operations) {
@@ -185,5 +134,5 @@ try {
 
   process.stdout.write(`Demo project: ${realRoot}\nPrivate evidence: ${dataDir}\n\nStart the review browser with:\n  cd ${realRoot} && PLUGIN_DATA=${dataDir} ${path.join(ROOT, "bin/prism")} review\n`);
 } finally {
-  child.stdin.end();
+  close();
 }

@@ -22,6 +22,18 @@ test("the review demo seed builds its project through the current MCP tools", as
   }
 });
 
+test("the edge-case seed builds its project through the current MCP tools", async (t) => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "prism-stress-test-"));
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const project = path.join(parent, "stress");
+  const { stdout } = await run(process.execPath, [path.join(ROOT, "scripts/review-demo/seed-stress.mjs"), project], { timeout: 120000 });
+
+  assert.match(stdout, /Stress project:/);
+  for (const record of ["docs/roadmap.json", "docs/plans/huge-initiative/initiative.json", "docs/plans/huge-initiative/state.json", "docs/plans/huge-initiative/slice-with-long-name/review.json", "docs/plans/huge-initiative/slice-with-long-name/change-map.json"]) {
+    await access(path.join(project, record));
+  }
+});
+
 test("the review command prints usage for help and rejects unknown arguments without a stack trace", async () => {
   const cli = path.join(ROOT, "bin/prism");
   const help = await run(process.execPath, [cli, "--help"]);

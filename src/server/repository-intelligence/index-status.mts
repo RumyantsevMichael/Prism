@@ -46,7 +46,10 @@ export async function readIndexingStatus(projectRoot: string, directories: strin
   }
   const status = (state: IndexingState, record: ProgressRecord | null = null, endedAt: string | null = null): IndexingStatus =>
     ({ state, progress: record?.progress ?? null, startedAt: record?.startedAt ?? null, endedAt, diagnostics: record?.diagnostics ?? [], index, stale });
-  const active = records.find(running);
+  // Every running build heartbeats, so the newest write alternates between concurrent builds. The chip follows one build: the one that holds
+  // the project lock before any that wait for it, then the earliest started, which keeps the choice stable from one poll to the next.
+  const waiting = (record: ProgressRecord) => record.progress?.phase === "waiting" ? 1 : 0;
+  const active = records.filter(running).sort((left, right) => waiting(left) - waiting(right) || time(left.startedAt) - time(right.startedAt) || left.pid - right.pid)[0];
   if (active) return status("preparing", active);
   const ended = records.find(record => !running(record));
   if (ended) {
