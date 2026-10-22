@@ -97,6 +97,18 @@ In Claude Code the `wait_for_user_gate` tool also returns the answer: Claude Cod
 The review page's secret session URL is the only credential for recording an answer, so anyone who can open that URL can answer for the user.
 One shipped initiative record is written directly, because its completion gate needs accepted reviews that the offline demo cannot produce.
 
+`node scripts/review-demo/seed-stress.mjs` builds an edge-case project with unbroken long names, long text, many records, a deep slice tree, and unreadable records.
+Check the browser layout after a UI change:
+
+```bash
+node scripts/review-demo/layout-check.mjs
+```
+
+The check opens every page of the demo, edge-case, and an empty project at phone, tablet, laptop, and wide window sizes, plus the menus, palette, and maximized views.
+It fails on content that escapes its container, a page that scrolls the whole window, a control cut off by its container, and browser errors.
+`--viewports`, `--themes`, and `--screenshots <directory>` widen the run or keep screenshots for a visual pass.
+Playwright is not a repository dependency, so the check uses an installed copy and is not part of CI.
+
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.
 
