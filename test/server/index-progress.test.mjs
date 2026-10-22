@@ -114,6 +114,22 @@ test("progress from a stopped process reads as interrupted, and an older one giv
   assert.equal((await status(root, cache)).state, "ready");
 });
 
+test("a session waiting for another session's build does not replace that build's progress", async t => {
+  const { root, cache, runtime } = await fixture(t);
+  const storage = (await runtime.location(root)).directory;
+  await mkdir(storage, { recursive: true });
+  const at = seconds => new Date(Date.now() - seconds * 1000).toISOString();
+  // The lock holder reports sparsely while saving, and the waiting session's heartbeat is often the newer write.
+  const building = { schemaVersion: 1, pid: process.ppid, preparationId: "p", state: "preparing", startedAt: at(60), updatedAt: at(3), progress: { phase: "embedding", current: 8, total: 32 }, diagnostics: [] };
+  const waiting = { ...building, pid: process.pid, startedAt: at(20), updatedAt: at(0), progress: { phase: "waiting" } };
+  await writeFile(path.join(storage, `progress-${building.pid}.json`), JSON.stringify(building));
+  await writeFile(path.join(storage, `progress-${waiting.pid}.json`), JSON.stringify(waiting));
+  assert.equal((await status(root, cache)).progress.phase, "embedding");
+  await writeFile(path.join(storage, `progress-${building.pid}.json`), JSON.stringify({ ...building, updatedAt: at(0), progress: { phase: "saving" } }));
+  await writeFile(path.join(storage, `progress-${waiting.pid}.json`), JSON.stringify({ ...waiting, updatedAt: at(4) }));
+  assert.equal((await status(root, cache)).progress.phase, "saving");
+});
+
 test("a platform without a published runtime reads as unavailable", async t => {
   const { root, cache } = await fixture(t);
   assert.equal((await readIndexingStatus(root, [cache], { availability: async () => ({ supported: true, published: false }) })).state, "unavailable");
