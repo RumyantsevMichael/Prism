@@ -76,23 +76,16 @@
       ]
     },
     {
-      "id": "analysis-tool-table",
+      "id": "repository-tool-dispatch",
       "label": "expected",
-      "summary": "callRepositoryTool names the seven analysis tools in a ternary chain and again in an includes list.",
+      "summary": "callRepositoryTool names the seven analysis tools in a ternary chain and an includes list, and also dispatches workflow recording, decision recording, session capacity and session usage.",
       "locations": [
+        {"file": "src/server/mcp.mjs", "symbol": "callRepositoryTool"},
         {
           "file": "src/server/mcp.mjs",
           "lines": [839, 858]
         },
         {"file": "src/server/repository-intelligence/semantic-native-provider.mts", "symbol": "NATIVE_INTELLIGENCE_TOOLS"}
-      ]
-    },
-    {
-      "id": "mixed-dispatch",
-      "label": "expected",
-      "summary": "callRepositoryTool also dispatches workflow recording, decision recording, session capacity and session usage.",
-      "locations": [
-        {"file": "src/server/mcp.mjs", "symbol": "callRepositoryTool"}
       ]
     },
     {
