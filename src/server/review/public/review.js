@@ -365,12 +365,14 @@ function setProjectLabel(identity, projectRoot) {
 
 const SIDEBAR_KEY = "prism.review.sidebar";
 
+// Without a remembered choice the sidebar starts collapsed on narrow screens, where it would stack above the artifact.
 function readSidebarPreference() {
+  let stored = null;
   try {
-    return localStorage.getItem(SIDEBAR_KEY) === "collapsed";
+    stored = localStorage.getItem(SIDEBAR_KEY);
   } catch {
-    return false;
   }
+  return stored ? stored === "collapsed" : window.matchMedia("(max-width: 800px)").matches;
 }
 
 function setSidebarCollapsed(collapsed, { remember = true } = {}) {
@@ -523,7 +525,8 @@ function renderDiagram(source, target, section) {
       if (svg.includes("Syntax Error")) {
         target.innerHTML = '<p class="error">PlantUML reported a syntax error.</p>';
       } else {
-        target.innerHTML = svg;
+        // The page's style policy refuses inline style attributes, so the stylesheet sets PlantUML's preserved text spacing instead.
+        target.innerHTML = svg.replace(/ style="white-space: ?pre;?"/g, "");
         configureDiagram(section, source);
       }
       resolve();
