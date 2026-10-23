@@ -15,13 +15,13 @@ const execFileAsync = promisify(execFile);
 async function fixture(t) {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "prism-concepts-"));
   t.after(() => rm(projectRoot, { recursive: true, force: true }));
-  return { projectRoot, deltaPath: "docs/plans/demo/retry/change-map.json" };
+  return { projectRoot, initiative: "demo", slice: "retry" };
 }
 const insert = (entry) => ({ op: "insert", entry });
 async function create(input, concepts = examples.concepts) {
   return updateChangeMap({ ...input, expectedRevision: null, scope: examples.scope, operations: concepts.map(insert) });
 }
-const file = (input) => path.join(input.projectRoot, input.deltaPath);
+const file = (input) => path.join(input.projectRoot, ".prism/initiatives", input.initiative, "slices", input.slice, "change-map.json");
 
 test("reads absent artifacts without creating directories", async (t) => {
   const input = await fixture(t);
@@ -76,7 +76,7 @@ test("draft addition evidence controls readiness and malformed evidence fails", 
 });
 test("empty deltas are ready and no-op updates preserve bytes and revision", async (t) => {
   const input = await fixture(t);
-  const baseline = await conservationStore.capture(input.projectRoot, input.deltaPath);
+  const baseline = await conservationStore.capture(input.projectRoot, { initiative: input.initiative, slice: input.slice });
   const created = await updateChangeMap({ ...input, expectedRevision: null, baselineId: baseline.snapshotId, scope: examples.scope, operations: [] });
   assert.equal(created.ready, true);
   const result = await updateChangeMap({ ...input, expectedRevision: created.revision, operations: [] });
@@ -145,13 +145,14 @@ test("serializes concurrent writers within and across processes", async (t) => {
 });
 test("rejects escaping paths, symbolic links, and non-file artifacts", async (t) => {
   const input = await fixture(t);
-  for (const deltaPath of ["../change-map.json", "/tmp/concept-delta.json", "C:\\tmp\\concept-delta.json", "docs/other.json", "concept-delta.json"]) {
-    await assert.rejects(getChangeMap({ ...input, deltaPath }), (error) => error.code === "invalid_path");
+  for (const slice of ["..", "a/b", "C:\\tmp", ""]) {
+    await assert.rejects(getChangeMap({ ...input, slice }), (error) => ["invalid_path", "validation_failed"].includes(error.code));
   }
   const outside = await mkdtemp(path.join(os.tmpdir(), "prism-outside-"));
   t.after(() => rm(outside, { recursive: true, force: true }));
-  await symlink(outside, path.join(input.projectRoot, "escape"));
-  await assert.rejects(create({ ...input, deltaPath: "escape/new/concept-delta.json" }), (error) => error.code === "invalid_path");
+  await symlink(outside, path.join(input.projectRoot, ".prism"));
+  await assert.rejects(create(input), (error) => error.code === "invalid_path");
+  await rm(path.join(input.projectRoot, ".prism"));
   await mkdir(path.dirname(file(input)), { recursive: true });
   await writeFile(path.join(outside, "data.json"), "{}");
   await symlink(path.join(outside, "data.json"), file(input));

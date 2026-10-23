@@ -8,21 +8,21 @@ Review evidence belongs in MCP-managed records rather than duplicate handoff rep
 
 Workflow results stay in the agent response unless a later context needs them.
 Persist only facts that an existing artifact does not already own.
-Use `state.json` for current coordination facts and evidence paths, not copied reports.
-Call `get_coordination_state` to read `state.json` and its revision.
+Use the coordination state for current coordination facts and evidence paths, not copied reports.
+Call `get_coordination_state` with the initiative identifier to read the coordination state and its revision.
 Call `update_coordination_state` with that revision and typed `activeOperations` to change active work.
 Call `checkpoint_pause` to write active slice recovery and update state together before a pause.
-Manage `initiative.json` through `get_initiative` and `update_initiative`, and `roadmap.json` through `get_roadmap` and `update_roadmap`; retain `initiative.md` and the roadmap Markdown only as generated projections.
+Manage the initiative record through `get_initiative` and `update_initiative`, and the roadmap record through `get_roadmap` and `update_roadmap`; retain `initiative.md` and the roadmap Markdown only as generated projections.
 Existing artifacts replace standalone exploration or verification reports when they preserve the required facts.
 When no existing artifact can own a fact required by a later context, create one focused artifact and state why it is needed.
 
 ## Design evidence
 
 - Store C4 source and supplementary slice diagrams in the slice folder.
-- Manage slice `change-map.json` through the [change-map MCP capability](../../design/references/change-map.md).
-- Preserve the audited change map path and revision in existing design and review evidence.
+- Manage the slice change map through the [change-map MCP capability](../../design/references/change-map.md).
+- Preserve the audited change map revision in existing design and review evidence.
 - Bind immutable native semantic receipts and candidate dispositions to baseline B through MCP.
-- Manage slice `review.json` through `get_review` and `update_review`; retain `review.md` only as a generated projection.
+- Manage the slice review record through `get_review` and `update_review`; retain `review.md` only as a generated projection.
 - Retain source snapshots, receipts, and comparisons in private conservation storage independently of disposable indexes.
 - Preserve ancestor source for child designs.
 - Record settled shared decisions as Proposed ADRs before splitting when children need them.

@@ -5,7 +5,7 @@ Distinct risk scopes use a pinned required lane set in the slice MCP review reco
 The [review format](../../review/references/review-format.md) defines each lane record and compact result.
 
 Each fresh `Review <slice>` worker receives the mode, lane, review path and lane, artifacts, verification evidence, and review base.
-Each reviewer also receives the change map path and submitted or audited revision.
+Each reviewer also receives the slice identifiers and the submitted or audited change map revision.
 The delivery conversation is excluded from reviewer inputs.
 Every assigned lane needs a current result before `update_review` can accept the wave.
 Unresolved disagreements block acceptance.

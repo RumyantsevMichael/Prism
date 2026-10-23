@@ -54,7 +54,8 @@ Code establishes implemented behavior.
 | Term | Definition |
 | --- | --- |
 | Initiative | A roadmap-owned item that groups related Approved outcomes, identified by a stable identifier that names its plans folder. |
-| Roadmap record | The MCP-managed `roadmap.json` beside the configured roadmap Markdown, owning initiative bands, order, required initiatives, rationale, open questions, and recorded ship and supersede decisions. |
+| Prism record | Machine JSON that only Prism MCP tools read and write, addressed by initiative and slice identifiers rather than file paths. |
+| Roadmap record | The Prism record owning initiative bands, order, required initiatives, rationale, open questions, and recorded ship and supersede decisions, read through `get_roadmap` and changed through `update_roadmap`; the configured roadmap Markdown is its generated view. |
 | Initiative lifecycle | `envisioned`, `planned`, and `in-progress` derived by `get_roadmap` from the initiative record and coordination state, plus recorded `shipped` and `superseded` decisions. |
 | Initiative coordination | The initiative record, slice folders, design evidence, findings, and resume records. |
 | Slice | One observable outcome across required layers, recursively split until it fits one `Develop <slice>` worker. |
@@ -81,10 +82,10 @@ Code establishes implemented behavior.
 | Design finding | A defect in approved intent, fit, boundaries, or planned verification that prevents a sound implementation gate. |
 | Implementation gap | Missing production behavior or implementation-owned wiring after design fit that does not reopen design unless it invalidates the design evidence. |
 | Gate | A user decision or correctness confirmation that controls progress. |
-| User gate record | A pending `state.json` entry that records a gate while it waits on the user, with its kind, slice, question, artifacts, optional decision options, and any answer the user recorded in the review browser. |
+| User gate record | A pending coordination state entry that records a gate while it waits on the user, with its kind, slice, question, artifacts, optional decision options, and any answer the user recorded in the review browser. |
 | Fit checkpoint | The design decision that an outcome fits the remaining context and risk budget with settled architecture and end-to-end verification. |
 | Workflow decision record | An opt-in local record of a structured decision, its reason codes, evidence paths, and identity coverage. |
-| Change map | MCP-managed version 2 design evidence binding the original baseline, requirements, native search receipts, planned changes, and growth policy to an audited revision; slices designed earlier keep it as `concept-delta.json`. |
+| Change map | MCP-managed version 2 design evidence binding the original baseline, requirements, native search receipts, planned changes, and growth policy to an audited revision. |
 | Conservation evidence | Immutable private B, A, and F source snapshots, semantic search and repository analysis receipts, observations, and measurements used by MCP review gates. |
 | Original baseline | Retained source before the first target edit, preserved for reuse discovery and later comparisons across corrections. |
 | Semantic reuse evidence | Snapshot-bound search candidates with model identity and reviewed reuse dispositions, recorded through the change-map MCP capability without treating similarity as equivalence. |
@@ -114,7 +115,7 @@ Code establishes implemented behavior.
 | Review wave | One coordinated pass of fresh `Review <slice>` workers against one slice. |
 | Review lane | One independently scoped review in a review wave. |
 | Resolution exchange | A bounded direct conversation between a `Develop <slice>` worker and its assigned `Review <slice>` worker that resolves findings before a fresh review. |
-| Reporting slice | The slice that owns a finding's original evidence and lane in `review.json`. |
+| Reporting slice | The slice that owns a finding's original evidence and lane in its review record. |
 | Escalation target | The affected slice or user gate named by a finding that exceeds its reporting slice. |
 | Review probe | A minimal failing regression test authored by implementation review through a public or system surface that proves a concrete finding. |
 | Design checkpoint | The commit after a clean design audit and visual review that becomes the implementation diff base. |
@@ -122,12 +123,11 @@ Code establishes implemented behavior.
 | Decision autonomy | An orchestration setting that controls automatic internal decisions. |
 | Agent flow | An orchestration setting that selects inline or delegated delivery. |
 | Slice continuation | An orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input. |
-| `state.json` | Machine-managed coordination state with settings, active work, pending user gate records, next actions, evidence paths, and a revision. |
-| `initiative.json` | The authoritative MCP-managed initiative record with slice titles, outcomes, topology, requirement assignments, dependencies, and status, read through `get_initiative` and changed through `update_initiative`; `initiative.md` is a generated view. |
-| `roadmap.json` | The roadmap record, read through `get_roadmap` and changed through `update_roadmap`; the configured roadmap Markdown is a generated view. |
-| `review.json` | The authoritative MCP-managed slice review containing lanes, waves, findings, assessments, disagreements, and evidence bindings. |
+| Coordination state | The initiative's Prism record of settings, active work, pending user gate records, next actions, evidence paths, and a revision, read through `get_coordination_state` and changed through `update_coordination_state`. |
+| Initiative record | The authoritative Prism record with slice titles, outcomes, topology, requirement assignments, dependencies, and status, read through `get_initiative` and changed through `update_initiative`; `initiative.md` is a generated view. |
+| Review record | The authoritative Prism record of one slice's review containing lanes, waves, findings, assessments, disagreements, and evidence bindings, read through `get_review` and changed through `update_review`; `review.md` is a generated view. |
 | `findings.md` | Legacy review evidence that remains readable and can be imported through MCP without carrying historical acceptance forward. |
-| Lane findings file | A legacy name for a lane now read and changed through `review.json`; `review.md` is a generated human view. |
+| Lane findings file | A legacy name for a lane now read and changed through the slice's review record. |
 | `recovery.md` | A slice-owned note that preserves unfinished work and evidence when its `Develop <slice>` worker must pause or be replaced. |
 | Pause checkpoint | An orchestrator action that writes an active slice recovery note before it updates coordination state at an expected revision. |
 

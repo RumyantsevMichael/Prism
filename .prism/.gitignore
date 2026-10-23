@@ -1,0 +1,3 @@
+# Transient lock and write files of Prism records.
+*.lock
+.*.tmp

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, readdir, realpath, rm, lstat } from "node:fs/promises";
 import { readCoordinationState } from "./state.mjs";
+import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { writeAtomically } from "./artifact-store.mjs";
 import path from "node:path";
 import { readHostSessionFacts } from "../session/host-session-facts.mjs";
@@ -274,7 +275,7 @@ export async function appendDecision({ projectRoot, dataDirectory, correlationKe
   });
 }
 
-export async function readDecisionHistory({ projectRoot, dataDirectory, correlationKey, statePath, recoveryPaths = [] }) {
+export async function readDecisionHistory({ projectRoot, dataDirectory, correlationKey, initiative, recoveryPaths = [] }) {
   const { root, directory, projectDigest } = await rootAndDirectory({ projectRoot, dataDirectory });
   const isEnabled = await enabled(directory, projectDigest);
   const file = path.join(directory, `${projectDigest}.events.json`);
@@ -295,17 +296,20 @@ export async function readDecisionHistory({ projectRoot, dataDirectory, correlat
   if (records.some((item) => item.agentLabel)) coverageGaps.push("subagent_attribution_unverified");
   if (records.some((item) => item.kind === "design_fit" && item.readability === "not_assessed")) coverageGaps.push("legacy_fit_readability_unobserved");
   let recovery = [];
-  if (statePath !== undefined) {
-    const state = await readCoordinationState({ projectRoot: root, statePath });
+  if (initiative !== undefined) {
+    const state = await readCoordinationState({ projectRoot: root, initiative });
     if (!state.valid || !state.exists) throw new Error("The coordination state is missing or invalid.");
-    recovery = await assessRecovery({ root, state, recoveryPaths: relativePaths(recoveryPaths), records });
+    const directory = initiativeDirectory(await readWorkflowConfig(root), initiative);
+    if (directory === null) throw new Error("The workflow config disables the plans path, so recovery notes have no location.");
+    recovery = await assessRecovery({ root, state, directory, recoveryPaths: relativePaths(recoveryPaths), records });
   }
   return { enabled: isEnabled, projectDigest, records, coverageGaps: [...new Set(coverageGaps)], recovery };
 }
 
-async function assessRecovery({ root, state, recoveryPaths, records }) {
+// Recovery evidence in coordination state is relative to the initiative's plans folder, where recovery notes live.
+async function assessRecovery({ root, state, directory, recoveryPaths, records }) {
   const active = new Set(state.state.active.map((item) => item.slice));
-  const stateDirectory = path.posix.dirname(state.statePath);
+  const stateDirectory = directory;
   const stateRecoveryPaths = state.state.evidence.filter((item) => item.endsWith("/recovery.md")).map((item) => {
     const absolute = path.isAbsolute(item) ? item : path.resolve(root, stateDirectory, item);
     const relative = path.relative(root, absolute).split(path.sep).join("/");

@@ -140,10 +140,11 @@ async function duplicationDiagnostics(projectRoot, document, baseline, analysis,
   const consolidating = [], diagnostics = [];
   const documents = [document];
   for (const item of document.consolidations || []) {
+    const named = item.slice ? `${item.initiative}/${item.slice}` : item.deltaPath;
     try {
-      documents.push((await readChangeMapDocument(projectRoot, item.deltaPath)).document);
+      documents.push((await readChangeMapDocument(projectRoot, item.slice ? { initiative: item.initiative, slice: item.slice } : item.deltaPath)).document);
     } catch {
-      diagnostics.push({ code: "consolidation_delta_invalid", message: `The consolidation delta ${item.deltaPath} is missing or invalid.`, blocking: true });
+      diagnostics.push({ code: "consolidation_delta_invalid", message: `The consolidation change map ${named} is missing or invalid.`, blocking: true });
     }
   }
   for (const delta of documents) for (const entry of delta.concepts) if (entry.action === "REPLACE" || entry.action === "DELETE") for (const reference of entry.before) {
@@ -284,7 +285,7 @@ async function measurements(projectRoot, before, after, a, b, document, store) {
 }
 async function compareChangeMap(input, options = {}) {
   const store = options.store || conservationStore;
-  const loaded = await readChangeMapDocument(input.projectRoot, input.deltaPath, input.expectedRevision), document = loaded.document;
+  const loaded = await readChangeMapDocument(input.projectRoot, { initiative: input.initiative, slice: input.slice }, input.expectedRevision), document = loaded.document;
   if (document.schemaVersion !== 2 || document.baselineId !== input.baselineId) throw conservationError("validation_failed", "The comparison must use the delta's original baseline.");
   const before = await store.get(input.projectRoot, input.baselineId, "snapshot"), after = await store.get(input.projectRoot, input.resultSnapshotId, "snapshot");
   const preparedA = await prepareAnalysis(input.projectRoot, input.baselineId, options);

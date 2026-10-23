@@ -9,6 +9,7 @@ import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "
 import { privateDirectory, regularBytes, semanticError } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { CHANGE_MAP_FILES, resolveArtifactPath } from "./change-map.mjs";
+import { isManagedRecordFile, keyOfPath, recordPath, sliceDocumentFolder } from "../workflow/record-store.mjs";
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 async function trackedIgnored(root) {
   try {
@@ -67,31 +68,29 @@ class ConservationStore {
       throw conservationError("evidence_missing", "The managed output registry is invalid.");
     }
   }
-  async registerSlice(projectRoot, deltaPath, legacyRevision) {
-    const resolved = await resolveArtifactPath(projectRoot, deltaPath);
-    const { directory } = await this.location(projectRoot, true), registry = path.join(directory, "outputs.json");
-    const parent = path.posix.dirname(resolved.deltaPath);
-    const artifacts = [resolved.deltaPath, `${parent}/review.json`, `${parent}/review.md`];
-    const outputs = [...artifacts, ...artifacts.map((file) => `${file}.lock`)];
-    const owned = await this.outputs(projectRoot);
+  // A slice's records live under .prism, which snapshots never count; its generated review.md stays beside slice.md and is registered here.
+  async sliceOutputs(projectRoot, initiative, slice) {
+    const folder = await sliceDocumentFolder(projectRoot, initiative, slice);
+    const records = ["change-map", "review"].map((kind) => recordPath({ kind, initiative, slice }));
+    const projection = folder === null ? [] : [`${folder}/review.md`, `${folder}/review.md.lock`];
+    return [...records, ...projection];
+  }
+  async registerSlice(projectRoot, initiative, slice) {
+    const { directory, root } = await this.location(projectRoot, true), registry = path.join(directory, "outputs.json");
+    const outputs = (await this.sliceOutputs(root, initiative, slice)).filter((file) => !isManagedRecordFile(file));
+    const owned = await this.outputs(root);
     for (const output of outputs.filter((output2) => !owned.includes(output2))) {
       try {
-        await lstat(path.join(resolved.root, output));
+        await lstat(path.join(root, output));
       } catch (error) {
         if (error.code === "ENOENT") continue;
         throw error;
       }
-      if (output === resolved.deltaPath && legacyRevision) {
-        const bytes = await regularBytes(path.join(resolved.root, output), 1024 * 1024);
-        if (digest(bytes) !== legacyRevision || JSON.parse(bytes.toString()).schemaVersion !== 1) throw conservationError("revision_conflict", "The legacy delta changed before migration.");
-        await this.put(projectRoot, { kind: "migration", schemaVersion: 1, project: resolved.root, artifactPath: output, revision: legacyRevision, lines: bytes.toString().split("\n") });
-        continue;
-      }
       throw conservationError("invalid_path", "Register evidence outputs before creating them; an existing source file cannot be claimed by filename.", { file: output });
     }
-    for (const output of outputs) if (!(owned.includes(output) && output.endsWith("/review.md"))) await resolveArtifactPath(projectRoot, output, false, path.posix.basename(output));
+    for (const output of outputs) if (!(owned.includes(output) && output.endsWith("/review.md"))) await resolveArtifactPath(root, output, false, path.posix.basename(output));
     await withArtifactLock(registry, () => withFileLock(registry, async () => {
-      const current = await this.outputs(projectRoot), next = [.../* @__PURE__ */ new Set([...current, ...outputs])].sort();
+      const current = await this.outputs(root), next = [.../* @__PURE__ */ new Set([...current, ...outputs])].sort();
       if (canonical(current) !== canonical(next)) await writeAtomically(registry, canonical({ schemaVersion: 1, outputs: next }), { mode: 384 });
     }));
     return outputs;
@@ -182,11 +181,12 @@ class ConservationStore {
       throw conservationError("evidence_missing", "Retained source bytes are missing or corrupt.", { file: entry.file });
     }
   }
-  async capture(projectRoot, deltaPath) {
-    if (deltaPath) await this.registerSlice(projectRoot, deltaPath);
+  async capture(projectRoot, slice) {
+    if (slice) await this.registerSlice(projectRoot, slice.initiative, slice.slice);
     const { root, directory } = await this.location(projectRoot, true);
     const source = await openNativeRepositoryIntelligence(root, { retainOpaque: true });
-    const snapshot = await source.snapshot(), exclusions = await this.outputs(root), ignored = new Set(await trackedIgnored(root));
+    const snapshot = await source.snapshot(), ignored = new Set(await trackedIgnored(root));
+    const exclusions = [.../* @__PURE__ */ new Set([...await this.outputs(root), ...snapshot.inventory.map((entry) => entry.file).filter(isManagedRecordFile)])].sort();
     const selected = snapshot.inventory.filter((entry) => !exclusions.includes(entry.file) && !ignored.has(entry.file));
     const blobs = await privateDirectory(path.join(directory, "blobs"));
     for (const entry of selected) {
@@ -267,8 +267,10 @@ class ConservationStore {
   async assertCurrent(projectRoot, snapshotId) {
     const before = await this.get(projectRoot, snapshotId, "snapshot");
     for (const file of before.files) await this.bytes(projectRoot, file);
-    const current = await this.capture(projectRoot), exclusions = await this.outputs(projectRoot);
-    const allowed = exclusions.filter((file) => !before.files.some((entry) => entry.file === file));
+    const current = await this.capture(projectRoot), exclusions = [...await this.outputs(projectRoot), ...current.snapshot.exclusions];
+    const moved = [];
+    for (const entry of before.files) if (isManagedRecordFile(entry.file) || await keyOfPath(projectRoot, entry.file)) moved.push(entry.file);
+    const allowed = [...exclusions.filter((file) => !before.files.some((entry) => entry.file === file)), ...moved];
     const selected = (record) => canonical({ files: record.files.filter((file) => !allowed.includes(file.file)), omissions: record.omissions, complete: record.complete });
     if (selected(before) !== selected(current.snapshot)) {
       const hashes = (record) => new Map(record.files.filter((file) => !allowed.includes(file.file)).map((file) => [file.file, file.hash]));

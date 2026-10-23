@@ -22,7 +22,6 @@ The roadmap Markdown is a generated view, so agents never edit the record or its
 6. State the selected mode.
 
 Configured paths override `docs/roadmap.md` and `docs/Glossary.md`.
-The roadmap record sits beside the configured roadmap Markdown with the same base name and a `.json` extension.
 
 ## 2. Apply the selected mode
 
@@ -67,6 +66,6 @@ Lifecycle states are `envisioned`, `planned`, `in-progress`, `shipped`, and `sup
 Required initiatives are the only stored dependency, and the inverse relation is derived.
 Alignment, rationale, overload risks, and unresolved questions stay in the record's rationale and open questions.
 
-- Return the record path, the applied operations, and the new revision, or the unresolved decision.
+- Return the applied operations and the new revision, or the unresolved decision.
 
 Initiative coordination cleanup must wait until the roadmap records the initiative as shipped.

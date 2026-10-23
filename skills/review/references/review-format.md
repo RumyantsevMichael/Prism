@@ -1,14 +1,14 @@
 # MCP review records
 
-One slice `review.json` is authoritative for all its lanes and waves.
+One slice review record is authoritative for all its lanes and waves.
 `review.md` is a generated human view; projection failure never rolls back accepted JSON.
 The [conservation procedure](../../design/references/change-map.md) defines source capture, native reuse receipts, measurement, growth evidence, and text convergence.
 
 ## Read and mutate
 
-1. Read `get_review` with `projectRoot`, `reviewPath`, and bounded pages.
+1. Read `get_review` with `projectRoot`, the `initiative` and `slice` identifiers, and bounded pages.
 2. Pin `expectedRevision` across pages and use that revision for `update_review`.
-3. Create a missing record with `expectedRevision: null`, the sibling `deltaPath`, delivery worker, and coordinator actor.
+3. Create a missing record with `expectedRevision: null`, the delivery worker, and the coordinator actor.
 4. Before reviewing or recording assessments for an unaccepted wave, read `check_review_gate`.
    - If it returns `correctionScope`, re-review the changed files it lists for the lane as the review skill describes.
    - If it returns `carryable`, reuse those assessments with `carry_assessments` instead of recording them again.
@@ -47,7 +47,7 @@ Only `VERIFIED` findings are resolved.
 ```text
 Mode: design-audit | implementation-review
 Slice: <reporting slice>
-Review: <project-relative review.json>
+Review: <initiative>/<slice>
 Lane: <assigned lane>
 Wave: <wave ID>
 Change map revision: <SHA-256>

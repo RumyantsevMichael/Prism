@@ -85,7 +85,7 @@ test("creates, splits, and updates an initiative through revision-checked operat
   const projectRoot = await project(context);
   const absent = await getInitiative({ projectRoot, initiative: "reports" });
   assert.equal(absent.exists, false);
-  assert.equal(absent.recordPath, "work/plans/reports/initiative.json");
+  assert.equal(absent.recordPath, ".prism/initiatives/reports/initiative.json");
   const created = await updateInitiative({ projectRoot, initiative: "reports", expectedRevision: null, actor: "orchestrator", operations: [
     { op: "create", slug: "reports", title: "Export activity reports", outcome: "Users export their activity.", requirements: ["docs/requirements/reports.md#1", "docs/requirements/reports.md#2"] }
   ] });
@@ -123,12 +123,12 @@ test("refuses a done transition without a passing completion gate", async (conte
   const created = await updateInitiative({ projectRoot, initiative: "solo", expectedRevision: null, operations: [{ op: "create", slug: "solo", title: "Solo", requirements: ["r.md#1"] }] });
   await assert.rejects(
     updateInitiative({ projectRoot, initiative: "solo", expectedRevision: created.revision, operations: [{ op: "set_status", slug: "solo", status: "done" }] }),
-    (error) => error.code === "gate_blocked" && error.problems.length > 0 && error.reviewPath === "work/plans/solo/review.json" && error.message.includes("at work/plans/solo/review.json")
+    (error) => error.code === "gate_blocked" && error.problems.length > 0 && error.slice === "solo"
   );
   const split = await updateInitiative({ projectRoot, initiative: "solo", expectedRevision: created.revision, operations: [{ op: "split", parent: "solo", children: [{ slug: "child", title: "Child", requirements: ["r.md#1"] }] }] });
   await assert.rejects(
     updateInitiative({ projectRoot, initiative: "solo", expectedRevision: split.revision, operations: [{ op: "set_status", slug: "child", status: "done" }] }),
-    (error) => error.code === "gate_blocked" && error.reviewPath === "work/plans/solo/child/review.json"
+    (error) => error.code === "gate_blocked" && error.slice === "child"
   );
 });
 

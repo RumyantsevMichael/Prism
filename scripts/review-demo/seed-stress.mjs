@@ -7,8 +7,9 @@ const LONG = "Supercalifragilisticexpialidocious-unbroken-identifier-that-never-
 const PARA = "This sentence is deliberately long so that the layout has to wrap it across many lines, and it keeps going with more clauses, more qualifications, and more detail than any reasonable summary would ever carry. ";
 const base = "docs/plans/huge-initiative";
 const slicePath = `${base}/slice-with-long-name`;
-const deltaPath = `${slicePath}/change-map.json`;
-const reviewPath = `${slicePath}/review.json`;
+const key = { initiative: "huge-initiative", slice: "slice-with-long-name" };
+const deltaPath = ".prism/initiatives/huge-initiative/slices/slice-with-long-name/change-map.json";
+const reviewPath = ".prism/initiatives/huge-initiative/slices/slice-with-long-name/review.json";
 const notesPath = `${slicePath}/notes-${LONG.toLowerCase()}.md`;
 const requirementFiles = Array.from({ length: 14 }, (_, i) => `docs/requirements/${i === 0 ? `a-requirement-file-with-an-extremely-long-name-${LONG.toLowerCase()}` : `area-${i}`}.md`);
 
@@ -27,25 +28,25 @@ for (let i = 0; i < 20; i += 1) {
 await write(`${slicePath}/slice.md`, `# ${LONG}\n\n${PARA.repeat(4)}\n`);
 await write(`${slicePath}/diagram.puml`, `@startuml\nclass ${LONG.replace(/-/g, "_")}\n${Array.from({ length: 13 }, (_, i) => `VeryLongClassNameNumber${i + 1}ForWideDiagrams --> VeryLongClassNameNumber${((i + 3) % 13) + 1}ForWideDiagrams`).join("\n")}\n@enduml\n`);
 await write(notesPath, `# Notes\n\n${PARA}\n`);
-await write("docs/plans/broken/initiative.json", "{ this is not json");
-await write("docs/plans/broken/state.json", "{\"schemaVersion\": 1, \"slices\": ");
+await write(".prism/initiatives/broken/initiative.json", "{ this is not json");
+await write(".prism/initiatives/broken/state.json", "{\"schemaVersion\": 1, \"slices\": ");
 
 const { call, close } = startTools(realRoot, dataDir);
 let reviewRevision = null;
 async function review(actor, operations) {
-  const result = await call("update_review", { projectRoot: realRoot, reviewPath, deltaPath, delivery: "delivery", expectedRevision: reviewRevision, actor, operations });
+  const result = await call("update_review", { projectRoot: realRoot, ...key, delivery: "delivery", expectedRevision: reviewRevision, actor, operations });
   reviewRevision = result.revision;
 }
 
 try {
-  const baseline = await call("capture_repository_snapshot", { projectRoot: realRoot, deltaPath });
+  const baseline = await call("capture_repository_snapshot", { projectRoot: realRoot, ...key });
   const unit = (i) => [{ path: `src/module-${i}/${i === 0 ? LONG : "file"}.ts`, selector: `Unit${i}` }];
   const changes = Array.from({ length: 20 }, (_, i) => {
     const action = ["ADD", "MODIFY", "REPLACE", "DELETE", "KEEP"][i % 5];
     return { id: `change-${i}`, kind: ["class", "configuration-option", "document", "function"][i % 4], label: i === 0 ? LONG : `ChangedUnitNumber${i}WithLongName`, action, before: action === "ADD" ? [] : unit(i), after: action === "DELETE" ? [] : unit(i), reason: i % 3 ? PARA : "Short." };
   });
-  const delta = await call("update_change_map", { projectRoot: realRoot, deltaPath, expectedRevision: null, baselineId: baseline.snapshotId, scope: ["src"], operations: changes.map((entry) => ({ op: "insert", entry })) });
-  const audit = await call("compare_change_map", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, baselineId: baseline.snapshotId, resultSnapshotId: baseline.snapshotId });
+  const delta = await call("update_change_map", { projectRoot: realRoot, ...key, expectedRevision: null, baselineId: baseline.snapshotId, scope: ["src"], operations: changes.map((entry) => ({ op: "insert", entry })) });
+  const audit = await call("compare_change_map", { projectRoot: realRoot, ...key, expectedRevision: delta.revision, baselineId: baseline.snapshotId, resultSnapshotId: baseline.snapshotId });
   const lanes = Array.from({ length: 6 }, (_, i) => ({ id: `lane-${i}`, reviewer: i === 0 ? `reviewer-${LONG.toLowerCase()}` : `reviewer-${i}`, coverage: ["src"] }));
   await review({ id: "coordinator", role: "coordinator" }, [{ op: "start_wave", id: "design-audit", mode: "design-audit", deltaRevision: delta.revision, snapshotId: baseline.snapshotId, comparisonId: audit.comparisonId, lanes }]);
   for (const lane of lanes) {
@@ -78,7 +79,7 @@ try {
   const roadmap = await call("update_roadmap", { projectRoot: realRoot, expectedRevision: null, actor: "roadmap", operations });
   await call("update_roadmap", { projectRoot: realRoot, expectedRevision: roadmap.revision, actor: "orchestrator", operations: [{ op: "supersede", id: "initiative-5", by: "initiative-0", reason: PARA }] });
 
-  await call("update_coordination_state", { projectRoot: realRoot, statePath: `${base}/state.json`, expectedRevision: null, changes: {
+  await call("update_coordination_state", { projectRoot: realRoot, initiative: "huge-initiative", expectedRevision: null, changes: {
     settings: { autonomy: "broad", agentFlow: "multi", commit: "on", push: "off", continuation: "stepwise", models: "host defaults" },
     activeOperations: Array.from({ length: 4 }, (_, i) => ({ op: "start", entry: { slice: i === 0 ? "slice-with-long-name" : `slice-${i}`, activity: "design", label: i === 0 ? LONG : "Working on it", workers: Array.from({ length: 5 }, (_, j) => `worker-${i}-${j}`), workspace: realRoot } })),
     next: slices.slice(0, 10).map((slice) => `${base}/${slice.slug}`),

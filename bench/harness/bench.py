@@ -1144,7 +1144,7 @@ def mock_solve(workspace, task, prism_arm):
         (guide / "usage.md").write_text("# Usage\n\nMock user guide for pipeline tests.\n")
         # One correction wave that carries one assessment and records one, so the
         # review metrics have something to count.
-        ledger = docs / "plans" / "mock" / "mock-slice"
+        ledger = Path(workspace) / ".prism" / "initiatives" / "mock" / "slices" / "mock-slice"
         ledger.mkdir(parents=True, exist_ok=True)
         (ledger / "review.json").write_text(json.dumps({
             "waves": [{"id": "audit-1", "accepted": {"actor": "mock"}}, {"id": "audit-2", "accepted": {"actor": "mock"}}],
