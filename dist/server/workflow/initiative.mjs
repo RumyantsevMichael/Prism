@@ -349,7 +349,7 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, or import a legacy map.puml. Done transitions require a passing completion gate, and every write validates the whole slice graph and regenerates initiative.md. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's records during coordination cleanup.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, or import a legacy map.puml. Done transitions require a passing completion gate, and every write validates the whole slice graph and regenerates initiative.md. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

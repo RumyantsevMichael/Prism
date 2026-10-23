@@ -307,13 +307,21 @@ export async function listSliceRecords(projectRootPath, initiative) {
   return directoryNames(path.join(root, INITIATIVES, requireSlug(initiative, "initiative"), "slices"));
 }
 
-/** Remove every record of an initiative after its coordination ends. */
+/** Remove an initiative's coordination records after its coordination ends; run entries outlive the cleanup. */
 export async function removeInitiativeRecords(projectRootPath, initiative) {
   const root = await projectRoot(projectRootPath);
   await ensureRecords(root);
   const target = path.join(root, INITIATIVES, requireSlug(initiative, "initiative"));
   await assertContained(root, path.join(target, "x"));
-  await rm(target, { recursive: true, force: true });
+  for (const kind of ["initiative", "state"]) await rm(path.join(root, recordPath({ kind, initiative })), { force: true });
+  for (const slice of await directoryNames(path.join(target, "slices"))) {
+    const folder = path.join(target, "slices", slice);
+    for (const entry of await readdir(folder)) if (entry !== "runs") await rm(path.join(folder, entry), { recursive: true, force: true });
+    await rmdir(folder).catch(() => {});
+  }
+  // Only folders left empty go, so a slice that still holds runs keeps its path.
+  await rmdir(path.join(target, "slices")).catch(() => {});
+  await rmdir(target).catch(() => {});
   await rmdir(path.join(root, INITIATIVES)).catch(() => {});
 }
 

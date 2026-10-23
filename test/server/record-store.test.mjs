@@ -109,12 +109,19 @@ test("appends immutable entries and never replaces one", async (context) => {
   assert.deepEqual(entries.map((item) => [item.id, item.entry.order]), [["run-1", 1], ["run-2", 2]]);
 });
 
-test("removes an initiative's records and nothing else", async (context) => {
+test("removes an initiative's coordination records but keeps its run entries", async (context) => {
   const root = await project(context);
+  const runs = { kind: "runs", initiative: "reports", slice: "download" };
+  await writeRecord(root, { kind: "initiative", initiative: "reports" }, "{}\n");
   await writeRecord(root, { kind: "state", initiative: "reports" }, "{}\n");
   await writeRecord(root, { kind: "review", initiative: "reports", slice: "download" }, "{}\n");
+  await writeRecord(root, { kind: "change-map", initiative: "reports", slice: "export" }, "{}\n");
+  await appendRecord(root, runs, "run-1", { order: 1 });
   await writeRecord(root, { kind: "state", initiative: "search" }, "{}\n");
   await removeInitiativeRecords(root, "reports");
   assert.deepEqual(await listInitiatives(root), ["search"]);
+  assert.deepEqual((await listRecordEntries(root, runs)).map((item) => item.id), ["run-1"]);
+  assert.equal(await exists(path.join(root, ".prism/initiatives/reports/slices/download/review.json")), false);
+  assert.equal(await exists(path.join(root, ".prism/initiatives/reports/slices/export")), false);
   assert.equal(await exists(path.join(root, ".prism/workflow.md")), true);
 });

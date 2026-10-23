@@ -24,6 +24,7 @@ MCP tools MUST address records by initiative and slice identifiers, and skills M
 Every slice MUST have its own record folder keyed by its slug, including the root slice.
 All record access MUST go through one record store in the server, so a later backend can replace the working-tree layout without changing tools or skills.
 Run entries MUST be immutable once written, and a second entry with the same identifier MUST be refused.
+Coordination cleanup MUST NOT remove run entries.
 Records written by an earlier layout MUST move to the new layout for every initiative at once, keeping their bytes so revisions stay valid.
 A legacy record whose new location already holds different bytes MUST stay in place rather than be overwritten.
 Records MUST be marked as generated for the major git hosts, so pull request diffs collapse them.
@@ -51,7 +52,7 @@ Pull requests show records as generated files, while slice narratives and diagra
 Tool inputs change from record paths to initiative and slice identifiers, which is a breaking change for callers that passed paths.
 Projects upgrade automatically on the first record access, and a conflicting legacy record stays visible until a person resolves it.
 A branch created before the move brings legacy records back when merged, and the next record access moves them again.
-Coordination cleanup removes an initiative's records through the initiative tool instead of deleting the plans folder alone.
+Coordination cleanup removes an initiative's coordination records through the initiative tool, while its run entries remain as history.
 
 ## Mechanism
 
