@@ -27,6 +27,7 @@ It reviews the result that the slice's last passing verification run tested.
 
 - Don't
   - Change production code, frozen tests, or existing tests.
+  - Open a finding whose condition to close contradicts another open finding or needs a change that follows completion, such as accepting a Proposed ADR.
 
 ## 3. Record
 
