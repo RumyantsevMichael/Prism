@@ -35,6 +35,6 @@ It works from files and the project's own tools and makes no Prism record calls.
 ## 3. Finish
 
 1. Commit the step's changes with a message that names the slice and step, unless orchestration said commits are off.
-2. Report `DONE` with the changed paths and the test results, or `BLOCKED` with evidence when the contract, an assumption, or a frozen test is wrong or cannot be satisfied.
+2. Report `DONE` with the changed paths and the test results, or `BLOCKED` with evidence when the contract, an assumption, a frozen test, or a review finding is wrong or cannot be satisfied, or when two findings conflict.
 
 A contract defect goes back to design, so report it instead of working around it.
