@@ -5,7 +5,7 @@ Agents open it for design and correctness reviews, and you can answer recorded q
 
 ## Open the browser
 
-Prism opens one viewer session after design audit and before final correctness confirmation.
+Prism opens the browser when a design waits for your approval or a question waits for your answer.
 Repeated viewer requests update that session instead of opening another browser tab.
 Ask the agent to open the viewer at any time during an active session.
 
@@ -57,7 +57,7 @@ An initiative page shows its slices as a board, a list, or a graph.
 The board has one column per slice status, and the card of an active slice also shows its activity, workers, and review lanes.
 The list shows the slice tree, and the graph orders leaf slices by execution order.
 Below them, the page lists the unstarted leaves that can be designed next.
-A slice page shows the slice's change map, its review ledger, its other files, and the design narrative from `slice.md`.
+A slice page shows the slice's verification run, its review ledger, its change map when it has one, its other files, and the design from `slice.md`.
 
 The change map page starts with a readiness line that jumps to the first blocked change.
 Each change has one card with its reason, its before and after references, its own problems, and its reuse evidence.

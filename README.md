@@ -5,16 +5,16 @@
 # Prism
 
 Prism is a Claude Code and Codex plugin for big, multi-file changes.
-It splits a feature into slices that fit one agent session, and fresh agents audit each design and review the finished code.
+It designs each slice of a feature as a frozen contract with failing acceptance tests, has fresh agents implement against them, and runs your tests before a slice counts as done.
 
 Prism is built for complex features in large codebases.
 For a change that fits in one session, plain Claude Code or Codex is faster and cheaper.
 
 ## Highlights
 
-- **Sized to fit.** Prism estimates the context a slice needs and splits slices that would not fit the session.
-- **Independent review.** Designs and code are reviewed in fresh contexts, never by the agent that wrote them.
-- **Reuse first.** A planned addition that copies logic the repository already repeats is refused until the design consolidates it.
+- **Frozen contracts.** Design fixes the observable interface, probes its assumptions against the real system, and writes acceptance tests that implementers may not change.
+- **Verified completion.** Prism runs your configured test command itself, after you allow it once, and a slice is done only on a fresh passing run.
+- **Review where it pays.** Design marks risky slices, such as security-heavy ones, for an independent review in a fresh context.
 - **Local semantic search.** A bundled index searches code and docs by meaning, on your machine, with nothing else to install.
 - **Review browser.** Roadmap board, slice graphs, rendered PlantUML diagrams, change maps, and review findings on `127.0.0.1`.
 - **Answer in the browser.** Questions for you wait on one Attention page, and in Claude Code the agent resumes when you answer.
@@ -60,10 +60,9 @@ In Codex, pick the same skills from the skill picker or mention them in your req
 
 | Skill | Use it to |
 |---|---|
-| `prism:orchestrate` | Run or resume an initiative from idea to reviewed code |
-| `prism:ideate` | Shape an idea into Approved requirements |
-| `prism:roadmap` | Prioritize initiatives into Now, Next, Later, and Parked |
-| `prism:design` | Design one Approved outcome |
+| `prism:orchestrate` | Run or resume an initiative from idea to verified code |
+| `prism:ideate` | Shape an idea into Approved requirements and a roadmap entry |
+| `prism:design` | Design one slice: a frozen contract and failing acceptance tests, or a split |
 | `prism:refactor` | Analyze or simplify existing code, skills, documents, or configuration |
 | `prism:workflow` | Explain the workflow |
 

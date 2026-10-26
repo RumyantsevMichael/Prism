@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Run or resume an initiative through recursive design, implementation, independent review, and user gates."
+description: "Run or resume an initiative: design each slice when it is next, gate the design, implement it in fresh sessions, verify it, review it when its design asks, and record progress."
 disable-model-invocation: true
 argument-hint: '[initiative]'
 sdm: "0.3"
@@ -8,225 +8,90 @@ sdm: "0.3"
 
 # Orchestrate an initiative
 
-The [workflow terms](../workflow/SKILL.md#common-terms) define the shared lifecycle.
-The diagrams own phase order, branches, and returns.
-The prose defines inputs, constraints, and tool arguments.
+The orchestrator is the only agent that writes Prism records for the initiative.
+Design, implementation, and review sessions get files and identifiers from it and return a status.
+The [workflow](../workflow/SKILL.md) defines the terms.
 
-## Core flow
+## 1. Settings
 
-The following PlantUML block defines the required orchestration process.
-The [pause flow](references/pause-flow.puml) applies when unfinished work must pause.
+Settings live in the initiative's coordination state, read with `get_coordination_state` and written once before active work with `update_coordination_state` and the current revision.
+A stored value stays authoritative on resume, and `agentFlow` is fixed once work starts.
 
-```plantuml
-@startuml
-title Orchestrate an initiative
+| Setting | Values | Default | Effect |
+| --- | --- | --- | --- |
+| `autonomy` | `conservative`, `broad`, `full` | `conservative` | Which gates wait for the user. |
+| `agentFlow` | `multi`, `mono` | `multi` | `multi` runs design, implementation, and review in fresh child agents; `mono` runs design and implementation inline. |
+| `commit` | `on`, `off` | `on` under `full`, otherwise `off` | Whether design and implementation commit their changes. |
+| `push` | `on`, `off` | `off` | Whether finished slices are pushed; autonomy never turns it on. |
+| `continuation` | `auto`, `stepwise` | `auto` | Whether the next slice starts without the user. |
+| `models` | `host defaults` or `{delivery, review, securityReview}` | `host defaults` | Models for child agents. |
 
-start
-:Read workflow configuration, run settings, worker lifetime, and initiative inputs;
-:Call get_coordination_state tool;
-if (Settings missing?) then (yes)
-  :Call update_coordination_state tool before active work;
-endif
-if (Initiative inputs missing?) then (yes)
-  :Run ideate and roadmap skills under the autonomy gate;
-endif
-:Call get_initiative tool;
-if (Initiative record missing?) then (yes)
-  :Call update_initiative tool to create or import the initiative record;
-endif
+- `conservative` waits for the user at every design gate and decision.
+- `broad` accepts a design automatically unless it changes requirements, adds an ADR, or reports an open question.
+- `full` accepts every design and resolves internal decisions, but never invents external facts or turns on push.
 
-while (An unfinished leaf can progress?) is (yes)
-  :Select a candidate leaf;
-  :Read its coordination activity, outcome,\nreview findings, and current artifacts;
-  if (Resuming or replacing a worker?) then (yes)
-    :Inspect recorded workers and workspaces against actual artifacts;
-    if (Worker records conflict?) then (yes)
-      :Ask the responsible worker to reconcile records\nagainst actual artifacts;
-      :Re-read worker records and actual artifacts;
-    endif
-  endif
-  if (Current FIT outcome exists?) then (no)
-    :Call update_initiative tool to mark the leaf in-progress;
-    :Collect ancestor evidence and run design\nin the selected agent flow;
-    if (Design returned SPLIT?) then (yes)
-      :Check unique child slugs, unchanged parent title,\nand exact coverage against the initiative record;
-      if (Coverage or record conflict?) then (yes)
-        :Return the specific defect to design;
-      else (no)
-        :Derive child dependencies from parent design\nand the current initiative record;
-        :Accept the split and dependencies under the autonomy setting;
-        if (Late split has preserved work or findings?) then (yes)
-          :Preserve completed work and original review lane paths\nin recovery evidence;
-        endif
-        :Call update_initiative tool to apply the split and dependencies;
-      endif
-    else (no)
-      if (Evidence changes dependencies?) then (yes)
-        :Apply the autonomy gate before changing dependencies;
-        :Call update_initiative tool to apply the dependencies;
-      endif
-      if (Design returned BLOCKED?) then (yes)
-        :Record the blocker and seek independent work;
-      endif
-    endif
-  endif
-  if (Current FIT outcome exists?) then (yes)
-    :Read review, delivery, and completion rules;
-    :Resume at the first unmet gate\nand repeat gates with outdated evidence;
-    :Run independent design audit and corrections;
-    if (All design audit lanes CLEAN?) then (yes)
-      :Confirm red checkpoint and visual review;
-      :Apply the implementation gate;
-      :Wait for effective dependencies and recheck fit;
-      if (Fit or design changed?) then (yes)
-        :Invalidate FIT and return to design;
-      else (no)
-        :Preserve the immutable review base;
-        :Run or resume implement skill in the selected agent flow;
-        if (Implementation needs redesign?) then (yes)
-          :Invalidate FIT and return to design;
-        elseif (Implementation BLOCKED?) then (yes)
-          :Record the blocker and seek independent work;
-        else (ready)
-          :Run independent implementation review and corrections;
-          if (All review lanes CLEAN?) then (yes)
-            :Preserve the reviewed result;
-            :Integrate and verify the integrated tree;
-            :Review changed behavior and preserved ancestor lanes;
-            :Complete visual review and correctness gate;
-            if (All completion gates pass?) then (yes)
-              :Accept eligible ADRs and apply commit and push settings;
-              :Call update_initiative tool for the done transition;
-            else (no)
-              :Keep the leaf active and resolve the missing gate;
-            endif
-          else (no)
-            :Route unresolved lanes to correction, design, or a blocker;
-          endif
-        endif
-      endif
-    else (no)
-      :Record the blocker or unresolved audit lane;
-    endif
-  endif
-  :Call get_coordination_state tool;
-  :Call update_coordination_state tool;
-  if (Leaf done and continuation is stepwise?) then (yes)
-    :Follow pause-flow.puml;
-    :Report the completed leaf;
-    stop
-  endif
-endwhile (no)
+## 2. Start
 
-if (All leaves and preserved finding lanes are done?) then (yes)
-  :Call update_roadmap tool to record the ship decision;
-  :Graduate durable information;
-else (no)
-  :Report blockers or wait under continuation settings;
-  if (Unfinished work must pause?) then (yes)
-    :Follow pause-flow.puml;
-  endif
-endif
-stop
+1. Read `.prism/workflow.md`, the settings, and the pending user gates, and act on every recorded answer.
+2. When the initiative has no Approved requirements or no roadmap entry, run `ideate`.
+3. Read the initiative record with `get_initiative`.
+4. When the record does not exist, call `update_initiative` with `expectedRevision: null` and a `create` operation for the root slice with its slug, title, outcome, and every Approved requirement of the initiative.
 
-@enduml
-```
+## 3. Run each slice
 
-## Inputs and coordination contracts
+Repeat for the next leaf that is `not-started` and whose effective dependencies are done, so that each slice is designed against the code its prerequisites produced.
 
-Required inputs are:
-- `.prism/workflow.md`
-- the roadmap initiative
-- intent
-- Approved requirements
-- the initiative record
-- linked evidence when they exist.
-The [run settings](references/run-settings.md) define decision gates and agent flow.
-The [worker lifetime](references/worker-lifetime.md) rules define valid worker waits, resumes, and replacements.
-The `get_coordination_state` input includes the initiative identifier, even when the coordination state does not exist.
-The `update_coordination_state` input includes the current revision.
-Settings resolution supplies `changes.settings`.
-Initiative state updates supply current workers, blockers, next actions, and evidence paths.
-Missing records establish neither approval nor completion.
-The agent flow is immutable after active work starts.
-Dependent work requires its applicable gate under the resolved autonomy setting.
+1. Call `update_initiative` with `set_status` `in-progress`, and call `update_coordination_state` with an `activeOperations` `start` operation for the slice with the `design` activity, its workers, and the workspace.
+2. Run `design` for the slice, passing its slice folder and the parent's `slice.md`.
+3. When design returns `SPLIT`:
+   1. Check unique child slugs and exact requirement coverage, and return any defect to design.
+   2. Ask the design gate when autonomy requires it.
+   3. Call `update_initiative` with one `split` operation and the `set_dependencies` operations, and release the active operation.
+4. When design returns `FIT`:
+   1. Ask the design gate when autonomy requires it, with `slice.md` and the frozen tests as artifacts.
+   2. When the user asks for changes, return the note to design and repeat this step.
+   3. When commits are on, commit the design.
+   4. Call `update_initiative` with `accept_design`, the frozen test paths, and the review mark that design recommended or the user's answer asks for.
+5. Update the active operation to the `implementation` activity, then for each step of the design, or once when it lists none, run `implement` in a fresh session with the step number and set the operation's label to the step.
+6. Verify the slice through [verification](#4-verification).
+7. When the design's review mark is `required`, review the slice through [review](#5-review).
+8. Call `update_initiative` with `set_status` `done`, `finish` the active operation, accept the slice's Proposed ADRs, and push when push is on.
+9. When continuation is `stepwise`, pause and report the finished slice.
 
-## Design and worker invariants
+On resume, continue an `in-progress` slice at its first missing result: design when it has no accepted design, otherwise the step after the last committed one.
+When an implementer or reviewer reports a contract defect, return it to design, and accept the revised design before more implementation.
+When design or implementation returns `BLOCKED`, ask the user the exact question and continue with another eligible slice meanwhile.
 
-The design worker receives ancestor diagram and ADR paths, including inherited paths.
-Design can start before prerequisite implementation when available evidence supports it.
-The initiative record supplies each slice's title, outcome, and requirement assignment, and an existing `slice.md` supplies the design narrative.
-The configured `agentFlow` controls design and implementation routing.
-In `multi` flow, the `Develop <slice>` worker receives requirements, the initiative identifier, workspace, settings, and ancestor paths.
-The `Develop <slice>` worker remains available after `FIT` for implementation and corrections.
-The [initiative record](references/initiative-record.md) defines the slice graph rules and the `update_initiative` operations.
-When no initiative record exists, `update_initiative` receives `expectedRevision: null` and a `create` operation with the root slug, title, outcome, and complete Approved requirement assignment.
-When a legacy `map.puml` exists without an initiative record, `update_initiative` receives an `import_map` operation with its path instead of `create`.
-An accepted split reaches `update_initiative` as one `split` operation with each child's slug, title, outcome, and requirements, followed by any `set_dependencies` operations.
-Leaf status changes reach `update_initiative` as `set_status` operations with `in-progress` or `done`.
-The server refuses a `done` status until the slice's completion gate passes.
-The `update_roadmap` ship operation receives the initiative identifier and is refused until every leaf slice is done.
-`get_roadmap` derives the initiative's `planned` and `in-progress` states, so orchestration writes no roadmap state for them.
-A missing roadmap entry for the initiative is a missing initiative input, so its roadmap entry exists before the initiative record is created.
-A roadmap entry or priority change made during orchestration waits for user acceptance through a recorded `decision` gate unless `full` autonomy resolves roadmap priority.
-Graduation moves facts that later work needs from the initiative directory into durable sources under the [artifact rules](../workflow/references/artifact-rules.md).
-After the ship decision and graduation, coordination cleanup deletes the initiative directory and calls `update_initiative` with a single `remove_records` operation, and the roadmap keeps the shipped record.
-When the initiative directory holds uncommitted files, cleanup waits for a recorded `decision` gate, because the deletion cannot be undone.
+## 4. Verification
 
-A valid `SPLIT` has unique child slugs, an unchanged parent title, and exact collective requirement coverage.
-Child dependencies follow the parent design and the initiative record, and require acceptance under the autonomy setting.
-An accepted split parent never executes again.
-Its completion waits for all descendants and preserved findings.
-Late splits preserve completed work and original review lane paths in recovery evidence.
-A split result is persisted only when a later worker needs a fact that no existing artifact owns.
+1. Call `verify_slice` with the initiative and slice.
+2. When it returns `approval_needed`, call `wait_for_user_gate` with its gate id, then call `verify_slice` again with `approvalGate` set to that id.
+3. When it returns `running`, call it again with the same arguments.
+4. When it returns `declined`, stop and ask the user for the test command to use.
+5. When it fails, run a fresh `implement` session with the failure output, and verify again.
+6. After three failed attempts, report the slice as blocked with the last output.
 
-## Delivery invariants
+A frozen test changes only through a revised design, so a run that reports changed frozen tests goes back to an implementer to restore them.
 
-Delivery requires a current `FIT` result.
-The [review and correction rules](references/review-rules.md) apply to design audits and implementation reviews.
-The [delivery rules](references/delivery-rules.md) define implementation constraints.
-The [integration and completion rules](references/completion-rules.md) define integration and completion constraints.
+## 5. Review
 
-## User gate records
+1. Call `update_review` as the coordinator with a `start_wave` operation in `implementation-review` mode, one lane per review focus, a fresh reviewer identifier per lane, and the commit that implementation started from as `base`.
+2. Run `review` for each lane in a fresh child agent, and use a security-focused lane with the `securityReview` model for trust-boundary changes.
+3. When a lane returns `FINDINGS`, run a fresh `implement` session with the findings, verify again, and start a new wave with fresh reviewers.
+4. When every lane is `CLEAN`, call `update_review` with `accept_wave`.
 
-The orchestrator records each user gate before asking the user and resolves it after the answer.
-Every question to the user goes through a recorded gate, and related questions share one gate.
-The `update_coordination_state` input includes `changes.gateOperations` with one `ask` operation that supplies the gate kind, the slice slug when one applies, the question, and the project-relative artifact paths to inspect.
-Gate kinds are `visual-review` for design and final visual review, `correctness` for correctness confirmation, `decision` for requirement, decision, conflict, split, and dependency questions, and `assistance` for user actions such as a separate review task.
-A `decision` gate supplies `options` when its choices are known, so the user can pick one in the review browser.
-The user answers either in the conversation or in the review browser, which records the answer on the pending gate.
-After asking the user, the orchestrator calls `wait_for_user_gate` once with the ids of every gate it just recorded when the tool is available, so browser answers return as the tool result and resume the run.
-An `answered` wait result holds the user's answers to the listed gates, and gates it reports as still waiting get a new wait after the answers are acted on.
-A `resolved`, `timeout`, `unknown_gate`, or `unsupported_host` wait result, or an aborted wait, ends the turn, and the user's next message delivers the answer.
-A wait result for a gate that the orchestrator already resolved needs no action.
-After a wait times out, is aborted, or returns `unsupported_host`, later gates in the same session skip the wait.
-A recorded browser answer is the user's answer to that question.
-Before asking again, resuming, or continuing after a user message, read the pending gates and act on every recorded answer.
-An answered gate is never asked again.
-After acting on the answer, or when the question is withdrawn, a `resolve` operation receives the gate id that the `ask` result returned.
-A gate that the autonomy setting settles automatically is not recorded.
-The review browser lists recorded gates as waiting on the user.
+## 6. User gates
 
-## State and recovery invariants
+- Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, slice, question, artifacts, and options for a decision.
+- Use `visual-review` for design gates, `decision` for choices, and `assistance` for actions the user must take.
+- After asking, call `wait_for_user_gate` once with the ids just recorded, and when it returns without an answer, end the turn.
+- Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it.
 
-The initiative's coordination state records current coordination facts.
-Typed `activeOperations` use `start`, `update`, `finish`, and `release`; only `finish` claims completion after the server checks current review evidence.
-Activities are `design`, `implementation`, `review`, and `integration`, with descriptive labels stored separately.
-The initiative record alone owns slice topology, titles, outcomes, requirement assignments, dependencies, and status.
-The orchestrator is the only workflow writer for initiative state.
-Mono delivery records `orchestrator` as the active worker and the current workspace.
-State evidence paths resolve from the initiative directory unless absolute.
-Empty lists mean no current item.
-An old recovery note for an inactive parent slice is historical evidence, not an active pause failure.
+## 7. Finish or pause
 
-The `checkpoint_pause` input includes the initiative identifier, current revision, active slice, recovery content, and state changes, and the server writes `recovery.md` in the active slice folder.
-The fallback writes `recovery.md` in the active slice folder, and its `update_coordination_state` input includes the current revision, the recovery evidence path, and state changes.
-The fallback applies only when `checkpoint_pause` is unavailable and the other coordination-state tools work.
-A completed pause requires recovery and state updates.
-Replacement workers need retained recovery and ancestor evidence after compaction or handoff.
-Older coordination files remain until their required information has a durable home.
-Conversation-only facts belong in the owning slice folder only when a later worker needs them.
-The [delegation procedure](../workflow/references/delegation.md) governs child-worker delegation.
-
-- Don't
-  - Create user-owned tasks as child-agent substitutes.
+- When every leaf is done:
+  1. Call `update_roadmap` with a `ship` operation for the initiative.
+  2. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
+  3. When the slice folders hold uncommitted files, ask a `decision` gate before deleting them.
+  4. Delete the slice folders and call `update_initiative` with a single `remove_records` operation.
+- When work must pause, call `checkpoint_pause` with the initiative, the current revision, the active slice, recovery content that names the step and next action, and the state changes.

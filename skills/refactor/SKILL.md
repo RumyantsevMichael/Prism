@@ -21,11 +21,10 @@ The [workflow terms](../workflow/SKILL.md#common-terms) define semantic concepts
 4. For an analysis request, return recommendations without changing target artifacts.
 5. For an authorized transformation, preserve the initial source and available behavior evidence before edits.
 6. Reuse the caller's original baseline, or capture a retained repository snapshot when that capability is available.
-7. For a managed slice, follow [source evidence](../design/references/change-map.md#capture-source-evidence) and its existing gates.
 
 A focused invocation can inspect related consumers without authorizing changes to them.
 A repository-wide discovery request does not authorize a repository-wide rewrite.
-Outside a managed slice, retained source and verification evidence do not require new coordination artifacts or workflow initialization.
+Retained source and verification evidence do not require new coordination artifacts or workflow initialization.
 
 ## 2. Discover candidates
 
@@ -36,13 +35,11 @@ Outside a managed slice, retained source and verification evidence do not requir
 5. Use the [candidate signals and ranking](references/analysis.md#candidate-signals-and-ranking) to select a bounded investigation.
 6. If you delegate reading to subagents, give each subagent the discovery results for its part of the scope and the candidate signals.
 7. When semantic indexing is unavailable or incomplete, report its coverage limits and use available structural and text evidence.
-8. For managed additions, follow the [semantic reuse procedure](../design/references/change-map.md#semantic-reuse-search) before accepting `ADD`.
 
 Semantic similarity and design red flags identify candidates for investigation, not defects or equivalent concepts.
 Files, symbols, rules, sections, schemas, and paragraphs are evidence of concepts, not fixed conceptual boundaries.
 One concept can span several structural units, and one unit can contain several concepts.
 This capability reuses repository indexes instead of creating another indexing system.
-Fallback discovery does not satisfy a managed slice's required semantic evidence.
 
 ## 3. Derive the desired model
 
@@ -66,7 +63,7 @@ New abstractions can be useful when they hide complexity or reduce consumer know
 Requirement changes, behavior changes, unresolved domain distinctions, and architectural decisions outside authority belong to the caller.
 This skill reports those conditions without assuming design or product ownership.
 Design owns the intended `KEEP`, `MODIFY`, `REPLACE`, `DELETE`, and `ADD` transitions for requested behavior.
-Implementation retains the accepted design and returns material deviations for design revision and audit.
+Implementation retains the accepted design and returns material deviations to design.
 
 ## 4. Transform and verify
 
@@ -78,7 +75,6 @@ Implementation retains the accepted design and returns material deviations for d
 6. Repeat the same measurements over comparable final source and scope.
 7. Assess the independent complexity dimensions and behavior evidence together.
 8. If verification reveals changed behavior, correct the transformation or return the discrepancy before claiming preservation.
-9. For managed slices, return source references and checks for the caller's [comparison and convergence evidence](../design/references/change-map.md#compare-and-measure).
 
 Existing tests, acceptance checks, and characterization evidence can support equivalence.
 Executable proof is not mandatory for every artifact.

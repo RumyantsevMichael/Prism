@@ -7,7 +7,7 @@ sdm: "0.3"
 # Write a Gherkin acceptance feature
 
 A [feature file](../workflow/SKILL.md#common-terms) specifies observable behavior in domain language.
-Design authors it after atomic fit, including when corrections return from implementation or review.
+Design authors it for a fitted slice, including when corrections return from implementation or review.
 
 ## 1. Prepare
 

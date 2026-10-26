@@ -1,6 +1,6 @@
 ---
 name: ideate
-description: "Shape a raw idea into Approved EARS requirements before planning or design."
+description: "Shape a raw idea into Approved EARS requirements and a roadmap entry before design."
 argument-hint: '[idea]'
 sdm: "0.3"
 disable-model-invocation: true
@@ -37,9 +37,17 @@ Configured paths override `docs/Glossary.md`, `docs/roadmap.md`, and `docs/requi
 Existing capabilities use amendments under the requirement supersession rules.
 External constraints can be requirements, but internal technology choices are design decisions.
 
-## 4. Return the result
+## 4. Add the roadmap entry
 
-1. Report requirement paths, approval status, and any unresolved product question.
+1. When the approved requirements start a new initiative, read the roadmap with `get_roadmap` and keep its revision.
+2. Agree with the user on a stable initiative identifier, a title, a one-sentence intent, and a band of `Now`, `Next`, `Later`, or `Parked`.
+3. Call `update_roadmap` with an `add_initiative` operation that links the Approved requirements.
+4. When the requirements amend an existing initiative, link them through the `update_roadmap` operation `update_initiative` instead.
 
-Requirements are the primary output.
-Ideation does not create coordination files, change the roadmap, or start design, orchestration, or implementation.
+The identifier uses letters, digits, hyphens, or underscores, never changes, and names the initiative's plans folder.
+
+## 5. Return the result
+
+1. Report requirement paths, approval status, the roadmap entry, and any unresolved product question.
+
+Ideation does not create coordination files or start design, orchestration, or implementation.

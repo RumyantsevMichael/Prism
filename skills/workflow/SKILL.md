@@ -6,8 +6,7 @@ sdm: "0.3"
 
 # Prism workflow
 
-- Read `.prism/workflow.md` when present for project paths, verification commands, and gate settings.
-- Read [orchestrator run settings](../orchestrate/references/run-settings.md) when coordinating an initiative.
+- Read `.prism/workflow.md` when present for project paths, the test command, and settings.
 - Use project procedures before Prism fallbacks.
 - Make small changes directly when project conventions supply enough guidance.
 
@@ -16,13 +15,12 @@ sdm: "0.3"
 | Need | Skill |
 | --- | --- |
 | Configure a project | `workflow-init` |
-| Approve product intent | `ideate`, using `write-requirements` |
-| Prioritize initiatives | `roadmap` |
-| Coordinate recursive delivery | `orchestrate` |
-| Design an initiative or slice | `design` |
+| Approve product intent and add it to the roadmap | `ideate`, using `write-requirements` |
+| Run an initiative | `orchestrate` |
+| Design a slice | `design` |
+| Implement a designed slice | `implement` |
+| Review a verified slice | `review` |
 | Analyze reuse or restructure existing concepts | `refactor` |
-| Implement a fitted slice | `implement` |
-| Independently audit design or code | `review` |
 | Author a specific artifact | The matching `write-*` skill |
 
 These names resolve under the Prism plugin namespace.
@@ -30,24 +28,21 @@ A direct skill invocation does not require an earlier `orchestrate` invocation.
 
 ## Delivery lifecycle
 
-An initiative starts with a provisional root slice.
-Design returns `SPLIT` for smaller outcomes, `FIT` for independent audit, or `BLOCKED` for missing decisions or evidence.
-Orchestration passes ancestor diagrams and ADRs to child designs and repeats design until executable leaves fit.
-Each leaf keeps one `Develop <slice>` worker and uses fresh `Review <slice>` workers.
-Implementation requires a clean design audit, complete effective dependencies, renewed fit, and the orchestration gate.
-Completion requires verified integration, clean implementation review, and user correctness confirmation.
-A split parent never implements and requires aggregate completion.
+An initiative starts as one root slice.
+Each slice is designed when it is next, after its dependencies are done.
+Design returns `SPLIT` with child slices, `FIT` with a frozen contract, probed assumptions, and failing acceptance tests, or `BLOCKED`.
+After the design gate, fresh implementation sessions make the frozen tests pass, the server runs the project's test command, and a review follows only when the design asks for one.
 
 ## Artifact ownership
 
 Code establishes implemented behavior.
+Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves a slice's design, and tests enforce behavior.
 
-1. Read durable sources in this order: glossary, Approved requirements, relevant ADRs, and relevant feature files.
-
+- Read durable sources in this order: glossary, Approved requirements, relevant ADRs, and relevant feature files.
 - Stop and report conflicting durable sources for user resolution.
-- Change Prism records only through Prism MCP tools, never by importing, running, or editing the plugin's own files, and report a refusal that the tool's message does not resolve.
-- Use the initiative directory as the root slice folder, and keep every other slice folder directly under it.
-- Read [artifact rules](references/artifact-rules.md) before creating or reviewing workflow artifacts.
+- Change Prism records only through Prism MCP tools, never by editing their files or generated views, and report a refusal that the tool's message does not resolve.
+- Persist a fact only when a later session needs it and no existing artifact owns it.
+- Keep durable requirements, ADRs, features, and user guidance free of slice identities and scratch paths.
 
 ## Common terms
 
@@ -55,89 +50,55 @@ Code establishes implemented behavior.
 | --- | --- |
 | Initiative | A roadmap-owned item that groups related Approved outcomes, identified by a stable identifier that names its plans folder. |
 | Prism record | Machine JSON that only Prism MCP tools read and write, addressed by initiative and slice identifiers rather than file paths. |
-| Roadmap record | The Prism record owning initiative bands, order, required initiatives, rationale, open questions, and recorded ship and supersede decisions, read through `get_roadmap` and changed through `update_roadmap`; the configured roadmap Markdown is its generated view. |
+| Roadmap record | The Prism record owning initiative bands, order, required initiatives, rationale, open questions, and recorded ship and supersede decisions, read through `get_roadmap` and changed through `update_roadmap`. |
 | Initiative lifecycle | `envisioned`, `planned`, and `in-progress` derived by `get_roadmap` from the initiative record and coordination state, plus recorded `shipped` and `superseded` decisions. |
-| Initiative coordination | The initiative record, slice folders, design evidence, findings, and resume records. |
-| Slice | One observable outcome across required layers, recursively split until it fits one `Develop <slice>` worker. |
-| `slice.md` | Optional slice design narrative that no other artifact owns, with title, outcome, and requirements kept in the initiative record. |
-| Atomic slice | An outcome that one `Develop <slice>` worker can design, implement, and verify within its remaining context and risk budget. |
-| Slice title | A concise human-readable capability name, stored separately from the stable slice slug in the initiative record. |
-| Provisional root slice | The initial candidate from the initiative outcome and Approved requirements before `design` returns `FIT` or `SPLIT`. |
-| Design frontier | Unstarted leaf candidates eligible for exploration, including those with incomplete implementation dependencies. |
-| Implementation frontier | Audited fitted leaves with complete effective dependencies and permission to implement. |
-| Effective dependencies | A leaf's own dependencies plus the dependencies inherited from its ancestors. |
-| Dependency amendment | An orchestrator-managed change to direct prerequisites that preserves the slice outcome and requirement assignment. |
-| Integrated result verification | Delivery comparison and verification after integration, with fresh review and confirmation when behavior changes or equivalence is uncertain. |
-| Aggregate completion | A split parent's completion when every descendant leaf is confirmed, integrated, and done, and fresh reviewers confirm all preserved finding lanes `CLEAN`. |
-| Requirement assignment | Stable Approved requirement statement references whose coverage is preserved through each recursive split. |
-| Starting surface | The command, route, public function, event, job, or user action where a slice enters the system. |
-| Acceptance suite | Feature scenarios plus executable bindings or tests that prove one slice's observable outcome. |
+| Initiative record | The Prism record of slice titles, outcomes, topology, requirement assignments, dependencies, status, and accepted designs, read through `get_initiative` and changed through `update_initiative`; `initiative.md` is its generated view. |
+| Coordination state | The initiative's Prism record of settings, active work, pending user gate records, and next actions, read through `get_coordination_state` and changed through `update_coordination_state`. |
+| Slice | One observable outcome across required layers, split recursively until one design can fix its whole interface. |
+| `slice.md` | A slice's design document in its slice folder: contract, assumptions, steps, review recommendation, and frozen tests for a fitted slice, or the interfaces between children for a split one. |
 | Approved requirement | An accepted product or system obligation. |
-| Delivery context | The long-lived `Develop <slice>` worker and task that designs, implements, and corrects one slice. |
-| Orchestrator | The agent that owns coordination, parent relationships, dependencies, inherited design inputs, continuation, recovery, acceptance, and user gates. |
-| Reviewer | A fresh `Review <slice>` worker and task that audits design or implementation. |
-| Fresh context | An independent worker task without the authoring conversation. |
-| Design audit | An independent review of requirements, design artifacts, boundaries, security, and verification before implementation. |
-| Implementation review | An independent review of completed code and verified behavior after implementation. |
-| Accepted design | A slice's design recorded through `update_initiative` with its frozen tests and a review mark of `required` or `none`; it replaces the design audit as the implementation gate. |
-| Frozen tests | Acceptance test files whose digests are fixed when the design is accepted; verification refuses to run when one changed. |
+| Requirement assignment | Approved requirement references whose coverage is preserved through each split. |
+| Effective dependencies | A leaf's own dependencies plus the dependencies inherited from its ancestors. |
+| Starting surface | The command, route, public function, event, job, or user action where a slice enters the system. |
+| FIT | A design result with a frozen contract, probed assumptions, and failing acceptance tests. |
+| SPLIT | A design result with child slices, their order, and their shared interfaces, but no tests. |
+| BLOCKED | An unresolved requirement, decision, or external fact stops progress. |
+| Contract | The frozen observable interface of a fitted slice that fixes what the requirements leave open. |
+| Assumption probe | A small experiment against the real system that confirms a contract assumption, or a fail-safe clause where no probe is possible. |
+| Frozen tests | Acceptance test files fixed when the design is accepted; implementation must not change them, and verification refuses to run when one changed. |
+| Implementation step | One ordered part of a fitted slice that one fresh implementation session delivers against the shared contract and suite. |
+| Design gate | The user's acceptance of a design, which the autonomy setting may resolve automatically. |
+| Accepted design | A slice's design recorded through `update_initiative` with its frozen tests and a review mark of `required` or `none`. |
 | Verification run | A `verify_slice` run of the user-approved test command from `.prism/workflow.md`, recorded on the slice; a slice with an accepted design completes only on a fresh passing run. |
-| Design finding | A defect in approved intent, fit, boundaries, or planned verification that prevents a sound implementation gate. |
-| Implementation gap | Missing production behavior or implementation-owned wiring after design fit that does not reopen design unless it invalidates the design evidence. |
-| Gate | A user decision or correctness confirmation that controls progress. |
-| User gate record | A pending coordination state entry that records a gate while it waits on the user, with its kind, slice, question, artifacts, optional decision options, and any answer the user recorded in the review browser. |
-| Fit checkpoint | The design decision that an outcome fits the remaining context and risk budget with settled architecture and end-to-end verification. |
-| Workflow decision record | An opt-in local record of a structured decision, its reason codes, evidence paths, and identity coverage. |
-| Change map | MCP-managed version 2 design evidence binding the original baseline, requirements, native search receipts, planned changes, and growth policy to an audited revision. |
-| Conservation evidence | Immutable private B, A, and F source snapshots, semantic search and repository analysis receipts, observations, and measurements used by MCP review gates. |
-| Original baseline | Retained source before the first target edit, preserved for reuse discovery and later comparisons across corrections. |
-| Semantic reuse evidence | Snapshot-bound search candidates with model identity and reviewed reuse dispositions, recorded through the change-map MCP capability without treating similarity as equivalence. |
+| Implementation review | An independent review of the verified result of a slice whose design is marked `required`. |
+| Review record | The Prism record of one slice's review waves, lanes, and findings, read through `get_review` and changed through `update_review`. |
+| Review wave | One pass of fresh reviewers over one verified result of a slice. |
+| Review lane | One independently scoped review in a review wave. |
+| CLEAN | A review lane result with no unresolved finding. |
+| Review probe | A minimal failing test that a reviewer adds through a public surface to prove a finding. |
+| Gate | A user decision that controls progress. |
+| User gate record | A pending coordination state entry for a question to the user, with its kind, slice, question, artifacts, optional options, and any answer recorded in the review browser. |
+| Orchestrator | The agent that runs an initiative and alone writes its Prism records. |
+| Fresh context | A session that starts without the conversation that authored its inputs. |
+| Decision autonomy | A run setting that selects which gates wait for the user. |
+| Agent flow | A run setting that selects child agents or inline work for design and implementation. |
+| Slice continuation | A run setting that controls whether the next slice starts without the user. |
+| `recovery.md` | A slice note that preserves unfinished work when a run pauses. |
+| Pause checkpoint | An orchestrator action that writes `recovery.md` and updates coordination state together. |
+| Proposed ADR | An architectural decision recorded for acceptance after its slice passes verification. |
+| Executable contract | A machine-readable boundary consumed by production code, generated code, or verification. |
+| Feature file | Gherkin acceptance scenarios in domain language, authored by design for a fitted slice and bound to assertions during implementation when a BDD harness exists. |
+| Step definition | An implementation-owned binding from a feature step to setup, action, or an observable assertion. |
 | Refactoring | Behavior-preserving restructuring of existing concepts, with shared analysis for targeted cleanup and design reuse. |
 | Semantic concept | A unit of meaning or responsibility that can span several source units or share one with other concepts. |
 | Candidate relationship | An evidence-supported explanation of why concepts appear related, established before choosing a transformation. |
 | Desired conceptual model | The structure that fits current requirements and knowledge, including meaningful distinctions and knowledge ownership. |
 | Resynthesis | Reconstruction of affected text or declarations from current semantic requirements while preserving their observable obligations. |
 | Complexity delta | Independent before/after measurements and qualified judgments whose tradeoffs require conceptual and behavioral evidence. |
-| Context plan | An explainable commit-bound estimate of repository source ranges that implementation must, likely, or possibly reads. |
-| Session capacity profile | An exact host, provider, and model match, with an exact or minimum verified host version, that supplies capacity facts with provenance. |
-| Repository read budget | The context available for repository discovery after base, design, and implementation reserves are removed from the compaction threshold. |
-| FIT | A design result ready for independent audit, with design artifacts and verification evidence prepared. |
-| SPLIT | A design result reporting new child slice folders for orchestration to accept and continue. |
-| BLOCKED | An unresolved requirement, decision, or dependency stops progress. |
-| CLEAN | A review found no actionable finding. |
-| Proposed ADR | An architectural decision recorded for orchestration acceptance after implementation and verification. |
-| C4 code diagram | A PlantUML level 4 view stored in the slice folder, completed for atomic fit and verified against implementation. |
-| Contract decision | The canonical contract and consumers to use, or a specific reason that no contract is needed. |
-| Executable slice test | A test authored after the fit checkpoint through the selected starting surface that observes the required result or failure instead of a private helper. |
-| Executable contract | A machine-readable boundary consumed by production code, generated code, or verification. |
-| Feature file | Gherkin acceptance scenarios in domain language, authored during design after the fit checkpoint passes and bound to assertions during implementation when a BDD harness exists. |
-| Step definition | An implementation-owned binding from a feature step to setup, action, or an observable assertion. |
-| Shape-only scaffold | A non-behavioral seam authored after the fit checkpoint when the selected surface does not exist and replaced with complete behavior before verification. |
-| Red checkpoint | The exact test command and expected failure recorded before production behavior changes. |
-| Security surface | The declared trust boundaries and sensitive capabilities that determine security review scope. |
-| Review wave | One coordinated pass of fresh `Review <slice>` workers against one slice. |
-| Review lane | One independently scoped review in a review wave. |
-| Resolution exchange | A bounded direct conversation between a `Develop <slice>` worker and its assigned `Review <slice>` worker that resolves findings before a fresh review. |
-| Reporting slice | The slice that owns a finding's original evidence and lane in its review record. |
-| Escalation target | The affected slice or user gate named by a finding that exceeds its reporting slice. |
-| Review probe | A minimal failing regression test authored by implementation review through a public or system surface that proves a concrete finding. |
-| Design checkpoint | The commit after a clean design audit and visual review that becomes the implementation diff base. |
-| Review base | The immutable design checkpoint or working-tree snapshot used for implementation review and every correction wave. |
-| Decision autonomy | An orchestration setting that controls automatic internal decisions. |
-| Agent flow | An orchestration setting that selects inline or delegated delivery. |
-| Slice continuation | An orchestration setting that controls whether a confirmed slice proceeds automatically or pauses for user input. |
-| Coordination state | The initiative's Prism record of settings, active work, pending user gate records, next actions, evidence paths, and a revision, read through `get_coordination_state` and changed through `update_coordination_state`. |
-| Initiative record | The authoritative Prism record with slice titles, outcomes, topology, requirement assignments, dependencies, and status, read through `get_initiative` and changed through `update_initiative`; `initiative.md` is a generated view. |
-| Review record | The authoritative Prism record of one slice's review containing lanes, waves, findings, assessments, disagreements, and evidence bindings, read through `get_review` and changed through `update_review`; `review.md` is a generated view. |
-| `findings.md` | Legacy review evidence that remains readable and can be imported through MCP without carrying historical acceptance forward. |
-| Lane findings file | A legacy name for a lane now read and changed through the slice's review record. |
-| `recovery.md` | A slice-owned note that preserves unfinished work and evidence when its `Develop <slice>` worker must pause or be replaced. |
-| Pause checkpoint | An orchestrator action that writes an active slice recovery note before it updates coordination state at an expected revision. |
 
 ## Supporting procedures
 
-- Read [delegation.md](references/delegation.md) before delegated work.
+- Read [delegation.md](references/delegation.md) before starting child agents.
 - Read [visual-review.md](references/visual-review.md) before human artifact review.
-- Use the owning skill for artifact format and lifecycle rules.
 - State each decision in plain language before its artifact reference.
 - Ask only at a real gate or unresolved choice.
