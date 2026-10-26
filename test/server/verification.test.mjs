@@ -163,6 +163,18 @@ test("a changed command asks again", async (context) => {
   assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" })).status, "approval_needed");
 });
 
+test("the test command does not inherit the server's own proxy setting", async (context) => {
+  const root = await project(context, `${node} env.mjs`);
+  await writeFile(path.join(root, "env.mjs"), "process.exit(process.env.NODE_USE_ENV_PROXY === undefined ? 0 : 3);\n");
+  await accept(root);
+  const gateId = await approve(root);
+  const previous = process.env.NODE_USE_ENV_PROXY;
+  process.env.NODE_USE_ENV_PROXY = "1";
+  context.after(() => { if (previous === undefined) delete process.env.NODE_USE_ENV_PROXY; else process.env.NODE_USE_ENV_PROXY = previous; });
+  const result = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId });
+  assert.equal(result.status, "passed");
+});
+
 test("a run past its timeout fails, and an early return keeps the same run going", async (context) => {
   const root = await project(context, `${node} sleep.mjs 1500`);
   await accept(root);

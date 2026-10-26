@@ -52,6 +52,7 @@ Configure the command in `.prism/workflow.md`:
 
 The first run of a command asks you in the review browser to allow that exact command, and a changed command asks again.
 Approvals stay in Prism's local plugin data, never in your repository.
+The command runs with your shell in the project root and the environment of the Prism server, except `NODE_USE_ENV_PROXY`, which Prism sets only for its own downloads.
 Prism refuses to run when a frozen acceptance test changed after the design was accepted.
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
 When the design requires review, an independent reviewer also reviews the verified result, and a later change needs a new run and a new review.

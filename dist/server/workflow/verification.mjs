@@ -138,11 +138,18 @@ function killGroup(child, signal) {
   catch { try { child.kill(signal); } catch { /* The process already ended. */ } }
 }
 
+// The plugin's MCP definitions set NODE_USE_ENV_PROXY for the server's own downloads; a test command must not inherit it,
+// because Node then warns on stderr and tests that assert stderr fail only under verification.
+function commandEnvironment() {
+  const { NODE_USE_ENV_PROXY: _serverOnly, ...environment } = process.env;
+  return environment;
+}
+
 function execute(command, root, { signal, timeoutMs, onProgress }) {
   return new Promise((resolve) => {
     const started = Date.now();
     let output = "", timedOut = false, cancelled = false, forced = null;
-    const child = spawn(command, { cwd: root, shell: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, { cwd: root, env: commandEnvironment(), shell: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
     const collect = (chunk) => { output = tail(output + chunk.toString("utf8"), OUTPUT_TAIL_BYTES); };
     child.stdout.on("data", collect);
     child.stderr.on("data", collect);
