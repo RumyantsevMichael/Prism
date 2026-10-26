@@ -39,6 +39,24 @@ Requirements preserve intent, ADRs preserve decisions, and feature files preserv
 Tests and consumed contracts enforce behavior, diagrams explain structure, and code supplies implementation details.
 Design creates new artifacts only after the fit check passes.
 
+## Verification
+
+A slice whose design is accepted lists its frozen acceptance tests and says whether its implementation needs independent review.
+Before such a slice can be marked done, Prism runs your project's test command and records the run on the slice.
+Configure the command in `.prism/workflow.md`:
+
+```markdown
+## Stack
+- Test command: npm test
+```
+
+The first run of a command asks you in the review browser to allow that exact command, and a changed command asks again.
+Approvals stay in Prism's local plugin data, never in your repository.
+Prism refuses to run when a frozen acceptance test changed after the design was accepted.
+A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
+The slice page in the review browser shows the latest run with its command, exit code, and output tail.
+Verification runs need a git work tree, and `PRISM_VERIFY_TIMEOUT_MINUTES` changes the 30-minute default timeout.
+
 ## Questions and answers
 
 Each question that waits on you is recorded, and the review browser's Attention page lists it with the artifacts to inspect.

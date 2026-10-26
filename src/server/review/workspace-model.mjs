@@ -6,6 +6,7 @@ import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
 import { keyOfPath, listInitiatives, listSliceRecords, recordPath } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { latestVerification } from "../workflow/slice-gate.mjs";
 
 const LIBRARY_LIMIT = 500;
 const SLICE_FILE_LIMIT = 200;
@@ -238,6 +239,7 @@ export async function loadSliceView(projectRoot, id, slug) {
     complete: derived?.complete[slug] ?? false,
     active: initiative.active.filter((entry) => entry.slice === slug),
     artifacts: initiative.slices[slug],
+    verification: await latestVerification(projectRoot, id, slug).catch(() => null),
     titles: Object.fromEntries(Object.entries(initiative.record.slices).map(([key, value]) => [key, value.title]))
   };
 }

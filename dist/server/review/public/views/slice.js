@@ -1,4 +1,4 @@
-import { artifactChip, bindLinks, card, cardSource, emptyNote, escapeHtml, keyValues, plural, requirementLinks } from "./util.js";
+import { artifactChip, bindLinks, card, cardSource, emptyNote, escapeHtml, formatTime, keyValues, plural, requirementLinks } from "./util.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
@@ -18,6 +18,35 @@ function reviewCard(review, ctx) {
     ${review.currentWave ? `<p>Current wave <code>${escapeHtml(review.currentWave.id)}</code> (${escapeHtml(review.currentWave.mode)}) is ${review.currentWave.accepted ? "accepted" : "not accepted"}.</p>` : ""}
     ${statuses ? `<p>${statuses}</p>` : ""}
     <p>${artifactChip(review.path, ctx, "Open the findings board")}</p>`, { source: "review.json" });
+}
+
+const REASONS = {
+  frozen_tests_changed: "the frozen acceptance tests changed, so the command did not run",
+  cancelled: "the run was cancelled",
+  timed_out: "the command ran past its timeout",
+  command_failed: "the test command failed",
+  tracked_files_changed: "the command changed project files while it ran"
+};
+
+function seconds(durationMs) {
+  return durationMs >= 60000 ? `${Math.round(durationMs / 60000)} min` : durationMs >= 1000 ? `${Math.round(durationMs / 1000)} s` : "under 1 s";
+}
+
+// Verification shows the accepted design's frozen tests and the latest run of the project's test command.
+function verificationCard(design, run) {
+  if (!design && !run) return "";
+  const result = run ? `<p><span class="status-pill ${run.passed ? "is-good" : "is-bad"}">${run.passed ? "passed" : "failed"}</span> ${escapeHtml(formatTime(run.finishedAt))}${run.reason ? `: ${escapeHtml(REASONS[run.reason] ?? run.reason)}` : ""}</p>` : emptyNote("No verification run yet.");
+  return card("Verification", `
+    ${result}
+    ${keyValues([
+      ["Design accepted", design ? escapeHtml(formatTime(design.acceptedAt)) : null],
+      ["Review", design ? (design.review === "required" ? "required" : "not required") : null],
+      ["Frozen tests", design?.frozenTests.length ? design.frozenTests.map((item) => `<code>${escapeHtml(item.path)}</code>`).join(" ") : null],
+      ["Command", run ? `<code>${escapeHtml(run.command)}</code>` : null],
+      ["Duration", run?.durationMs ? seconds(run.durationMs) : null],
+      ["Exit code", run && run.exitCode !== null ? String(run.exitCode) : null]
+    ])}
+    ${run?.outputTail ? `<details><summary>Output tail</summary><pre>${escapeHtml(run.outputTail)}</pre></details>` : ""}`, { source: "runs" });
 }
 
 export async function render(container, entity, ctx) {
@@ -46,6 +75,7 @@ export async function render(container, entity, ctx) {
     <div class="artifact-cards">
       ${card("Change map", artifacts.changeMap ? `<p>The planned changes and their readiness.</p><p>${artifactChip(artifacts.changeMap, ctx, "Open the change map")}</p>` : emptyNote("No change map exists yet."), { source: artifacts.changeMap ? artifacts.changeMap.split("/").pop() : "change-map.json" })}
       ${reviewCard(artifacts.review, ctx)}
+      ${verificationCard(slice.design, data.verification)}
     </div>
     ${card("Other documents", others.length ? `<ul class="plain-list">${others.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder has no other files."), { eyebrow: plural(artifacts.files.length, "file") + " in the slice folder" })}
     ${artifacts.narrative ? `<section class="view-card"><header class="view-card-header"><div class="view-card-title"><h2>Design narrative</h2>${cardSource(artifacts.narrative.split("/").pop())}</div></header><div class="document-content" data-narrative><p class="rendering">Loading narrative</p></div></section>` : ""}`;

@@ -10,6 +10,7 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { locateRecord, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
+import { designProblems, digestFrozenTests, REVIEW_MARKS } from "./slice-design.mjs";
 
 const RECORD_NAME = "initiative.json";
 const PROJECTION_NAME = "initiative.md";
@@ -44,6 +45,7 @@ export const UPDATE_INITIATIVE_SCHEMA = object({
     object({ op: { const: "set_status" }, slug, status: { enum: LEAF_STATUSES } }),
     object({ op: { const: "set_dependencies" }, slug, dependencies: { type: "array", maxItems: 200, items: slug } }),
     object({ op: { const: "update_slice" }, slug, title: text, outcome: text }, ["op", "slug"]),
+    object({ op: { const: "accept_design" }, slug, frozenTests: { type: "array", minItems: 1, maxItems: 200, items: text }, review: { enum: REVIEW_MARKS } }),
     object({ op: { const: "import_map" }, path: text }),
     object({ op: { const: "regenerate_markdown" } }),
     object({ op: { const: "remove_records" } })
@@ -86,7 +88,8 @@ function canonicalRecord(record) {
       status: slice.status,
       parent: slice.parent,
       requirements: [...slice.requirements].sort(),
-      dependencies: [...slice.dependencies].sort()
+      dependencies: [...slice.dependencies].sort(),
+      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review } } : {})
     };
   }
   return { schemaVersion: 1, id: record.id, slices, history: record.history.slice(-HISTORY_LIMIT) };
@@ -104,6 +107,9 @@ function validateRecord(raw, initiative) {
   if (raw.schemaVersion !== 1) errors.push("schemaVersion must be 1.");
   if (raw.id !== initiative) errors.push(`id must equal the initiative folder name ${initiative}.`);
   if (!Array.isArray(raw.history)) errors.push("history must be an array.");
+  for (const [key, slice] of Object.entries(raw.slices ?? {})) {
+    for (const problem of designProblems(slice?.design)) errors.push(`${key}: ${problem}`);
+  }
   let analysis = null;
   try {
     analysis = analyzeInitiative(raw.slices);
@@ -174,6 +180,8 @@ function markdown(record) {
     if (slice.outcome) lines.push(`${indent}  - Outcome: ${slice.outcome}`);
     lines.push(`${indent}  - Requirements: ${slice.requirements.join(", ")}`);
     if (slice.dependencies.length) lines.push(`${indent}  - Depends on: ${slice.dependencies.map((item) => `\`${item}\``).join(", ")}`);
+    const design = record.slices[slugValue].design;
+    if (design) lines.push(`${indent}  - Design accepted ${design.acceptedAt.slice(0, 10)}: ${design.frozenTests.length} frozen test files, review ${design.review === "required" ? "required" : "not required"}`);
     for (const child of analysis.children[slugValue]) visit(child, depth + 1);
   };
   visit(analysis.root, 0);
@@ -209,9 +217,9 @@ async function sliceOutcome(resolved, slices, slugValue) {
 }
 
 async function completionGate(resolved, slugValue) {
-  const { checkReviewGate } = await import("../review/review-ledger.mjs");
+  const { checkSliceGate } = await import("./slice-gate.mjs");
   try {
-    return await checkReviewGate({ projectRoot: resolved.root, initiative: resolved.initiative, slice: slugValue, gate: "completion" });
+    return await checkSliceGate({ projectRoot: resolved.root, initiative: resolved.initiative, slice: slugValue, gate: "completion" });
   } catch (error) {
     return { ready: false, problems: [{ code: error.code ?? "evidence_missing", message: error.message }] };
   }
@@ -249,6 +257,7 @@ async function applyOperation(resolved, record, operation) {
         slices[child.slug] = { title: child.title, ...(child.outcome ? { outcome: child.outcome } : {}), status: "not-started", parent: operation.parent, requirements: normalizeRequirements(resolved, child.requirements), dependencies: [] };
       }
       parent.status = "split";
+      delete parent.design;
       break;
     }
     case "set_status": {
@@ -271,6 +280,13 @@ async function applyOperation(resolved, record, operation) {
       const slice = requireSlice(operation.slug);
       if (operation.title !== undefined) slice.title = operation.title;
       if (operation.outcome !== undefined) slice.outcome = operation.outcome;
+      break;
+    }
+    case "accept_design": {
+      const slice = requireSlice(operation.slug);
+      if (slice.status === "split") throw fail("validation_failed", "A split slice is designed through its children.");
+      if (slice.status === "done") throw fail("validation_failed", "A done slice cannot take a new design.");
+      slice.design = { acceptedAt: new Date().toISOString(), frozenTests: await digestFrozenTests(resolved.root, operation.frozenTests), review: operation.review };
       break;
     }
     case "regenerate_markdown":
@@ -349,7 +365,7 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, or import a legacy map.puml. Done transitions require a passing completion gate, and every write validates the whole slice graph and regenerates initiative.md. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review. Every write validates the whole slice graph and regenerates initiative.md. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

@@ -5,6 +5,7 @@ import { assertInput } from "../workflow/artifact-schema.mjs";
 import { resolveArtifactPath, readChangeMapDocument } from "../conservation/change-map.mjs";
 import { locateRecord, sameRecord, sliceDocumentFolder, writeRecord } from "../workflow/record-store.mjs";
 import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { acceptedDesign } from "../workflow/slice-design.mjs";
 import { conservationStore, canonical, digest, conservationError, withinScope } from "../conservation/conservation-store.mjs";
 import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "../conservation/conservation-analysis.mjs";
 import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "../conservation/conservation-schema.mjs";
@@ -71,7 +72,9 @@ function laneDigest(review: ReviewRecord, wave: Wave, lane: Lane) {
 }
 function waveDigest(review: ReviewRecord, wave: Wave) { return digest(canonical(wave.lanes.map(lane => ({ lane: lane.id, digest: laneDigest(review, wave, lane), result: lane.result })))); }
 // Implementation review needs the latest design audit accepted for the same delta revision and baseline, with unchanged accepted inputs.
-function designAudited(review: ReviewRecord, wave: Pick<Wave, "deltaRevision" | "baselineId">) {
+// A slice whose design was accepted on its initiative record has no design-audit wave, so its accepted design stands in for one.
+function designAudited(review: ReviewRecord, wave: Pick<Wave, "deltaRevision" | "baselineId">, designAccepted = false) {
+  if (designAccepted) return true;
   const audit = [...review.waves].reverse().find(item => item.mode === "design-audit");
   return Boolean(audit?.accepted && audit.deltaRevision === wave.deltaRevision && audit.baselineId === wave.baselineId && audit.accepted.evidenceDigest === waveDigest(review, audit));
 }
@@ -270,7 +273,7 @@ async function assessmentSkeleton(projectRoot: string, review: ReviewRecord, wav
   return operations;
 }
 
-async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wave, requireLaneResults: boolean) {
+async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wave, requireLaneResults: boolean, designAccepted = false) {
   const problems: { code: string; message: string; id?: string }[] = [];
   const add = (code: string, message: string, id?: string) => problems.push({ code, message, ...(id ? { id } : {}) });
   const loaded = await readChangeMapDocument(projectRoot, review.deltaPath, wave.deltaRevision), document = loaded.document as DeltaDocument;
@@ -292,7 +295,7 @@ async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wav
   for (const file of targetFiles(comparison)) if (!wave.lanes.some(lane => withinScope(file, lane.coverage))) add("review_coverage_missing", "Assign each original and resulting target file to a review lane.", file);
   if (requireLaneResults) for (const lane of wave.lanes) if (lane.result?.status !== "CLEAN" || lane.result.digest !== laneDigest(review, wave, lane)) add("lane_result_stale", "Every assigned lane needs a current CLEAN result.", lane.id);
   for (const lane of wave.lanes) if (lane.reviewer === review.coordinator || review.deliveryWorkers.includes(lane.reviewer) || review.exchangeWorkers.includes(lane.reviewer)) add("reviewer_not_independent", "A correction participant cannot verify the correction.", lane.id);
-  if (wave.mode === "implementation-review" && !designAudited(review, wave)) add("design_audit_missing", "Implementation review requires the latest accepted design revision.");
+  if (wave.mode === "implementation-review" && !designAudited(review, wave, designAccepted)) add("design_audit_missing", "Implementation review requires the latest accepted design revision.");
   await conservationStore.assertCurrent(projectRoot, wave.snapshotId);
   return problems;
 }
@@ -328,15 +331,16 @@ export async function checkReviewGate(input: SliceInput & { expectedRevision?: s
   if (input.expectedRevision && input.expectedRevision !== loaded.revision) throw conservationError("revision_conflict", "The review record changed.", { currentRevision: loaded.revision });
   const review = loaded.document;
   if (!review) return { ready: false, problems: [{ code: "evidence_missing", message: "The review record is missing." }] };
+  const designAccepted = Boolean(await acceptedDesign(input.projectRoot, input.initiative, input.slice));
   const mode = input.gate === "implementation" ? "design-audit" : "implementation-review", wave = [...review.waves].reverse().find(item => item.mode === mode);
   if (!wave?.accepted) {
-    const blockers = wave ? await waveProblems(input.projectRoot, review, wave, true).catch(() => []) : [];
+    const blockers = wave ? await waveProblems(input.projectRoot, review, wave, true, designAccepted).catch(() => []) : [];
     const message = blockers.length ? `The required review wave ${wave!.id} has no accepted result, and accepting it now would fail on: ${summarizeProblems(blockers)}.` : "The required review wave has no accepted result.";
     return { ready: false, revision: loaded.revision, problems: [{ code: "review_not_accepted", message }], ...(wave ? await nextSteps(input.projectRoot, review, wave) : {}) };
   }
-  const problems = await waveProblems(input.projectRoot, review, wave, true);
+  const problems = await waveProblems(input.projectRoot, review, wave, true, designAccepted);
   if (wave.accepted.evidenceDigest !== waveDigest(review, wave)) problems.push({ code: "review_result_stale", message: "The accepted review inputs changed." });
-  if (input.gate === "completion") {
+  if (input.gate === "completion" && !designAccepted) {
     const audit = [...review.waves].reverse().find(item => item.mode === "design-audit");
     if (!audit?.accepted || audit.baselineId !== wave.baselineId || audit.deltaRevision !== wave.deltaRevision) problems.push({ code: "design_audit_missing", message: "Completion requires the latest accepted design revision." });
   }
@@ -382,6 +386,7 @@ export async function updateReview(input: UpdateInput) {
     return withArtifactLock(deltaTarget.target, () => withFileLock(deltaTarget.target, async () => {
     const review: ReviewRecord = structuredClone(loaded.document || { schemaVersion: 1, deltaPath: deltaTarget.path, coordinator: input.actor.id, delivery: input.delivery!, deliveryWorkers: [input.delivery!], waves: [], findings: [], assessments: [], conflicts: [], exchangeWorkers: [], legacy: [], history: [] });
     if (!(await sameRecord(input.projectRoot, review.deltaPath, deltaTarget.path))) throw conservationError("invalid_path", "A review and its change map must belong to the same slice.");
+    const designAccepted = Boolean(await acceptedDesign(input.projectRoot, input.initiative, input.slice));
     const now = () => new Date().toISOString(), carry = { carried: [] as string[], notCarried: [] as { id: string; reason: string }[] };
     for (const operation of input.operations) {
       const wave = lastWave(review), op = operation.op;
@@ -396,7 +401,7 @@ export async function updateReview(input: UpdateInput) {
         if (!baselineId || (review.baselineId && review.baselineId !== baselineId)) throw conservationError("gate_blocked", "A review must preserve its original retained baseline.");
         const created: Wave = { id: next.id, mode: next.mode, deltaRevision: next.deltaRevision, snapshotId: next.snapshotId, comparisonId: next.comparisonId, baselineId, lanes: next.lanes };
         // Such a wave could never be accepted, so its review work would be lost.
-        if (created.mode === "implementation-review" && !designAudited(review, created)) throw conservationError("gate_blocked", `Implementation review requires the latest accepted design revision. Start and accept a design-audit wave for delta revision ${created.deltaRevision} before ${created.id}.`, { problems: [{ code: "design_audit_missing", message: "Implementation review requires the latest accepted design revision." }] });
+        if (created.mode === "implementation-review" && !designAudited(review, created, designAccepted)) throw conservationError("gate_blocked", `Implementation review requires the latest accepted design revision. Start and accept a design-audit wave for delta revision ${created.deltaRevision} before ${created.id}.`, { problems: [{ code: "design_audit_missing", message: "Implementation review requires the latest accepted design revision." }] });
         const comparison = await comparisonFor(input.projectRoot, review, created);
         const uncovered = targetFiles(comparison).filter(file => !created.lanes.some(lane => withinScope(file, lane.coverage)));
         if (uncovered.length) throw conservationError("validation_failed", "Lane coverage holds project-relative path prefixes, such as src/server/session, and each target file of the comparison needs a lane.", { problems: uncovered.map(file => ({ code: "review_coverage_missing", file, message: "no lane covers this target file" })) });
@@ -478,7 +483,7 @@ export async function updateReview(input: UpdateInput) {
           carry.carried.push(...chosen.map(item => item.id)); if (!requested) carry.notCarried.push(...notCarried);
         } else if (op === "accept_wave") {
           requireRole(review, input.actor, "coordinator");
-          const problems = await waveProblems(input.projectRoot, review, wave, true);
+          const problems = await waveProblems(input.projectRoot, review, wave, true, designAccepted);
           if (problems.length) throw conservationError("gate_blocked", `The review wave does not satisfy its acceptance gate: ${summarizeProblems(problems)}. check_review_gate lists the assessments that can carry forward from the previous wave and a ready-to-fill skeleton for the rest.`, { problems });
           wave.accepted = { evidenceDigest: waveDigest(review, wave), actor: input.actor.id, at: now() };
         }

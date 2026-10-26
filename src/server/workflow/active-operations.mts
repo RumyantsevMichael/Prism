@@ -3,7 +3,7 @@ import path from "node:path";
 import { mkdir, realpath } from "node:fs/promises";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { locateRecord } from "./record-store.mjs";
-import { checkReviewGate } from "../review/review-ledger.mjs";
+import { checkSliceGate } from "./slice-gate.mjs";
 import { conservationError } from "../conservation/conservation-store.mjs";
 import { objectSchema as obj, arraySchema as arr, textField as str } from "../conservation/conservation-schema.mjs";
 const fields = { activity: { enum: ["design", "implementation", "review", "integration"] }, label: str, workers: { ...arr(str), minItems: 1 }, workspace: str, reviewLanes: arr(obj({ id: str, reviewer: str })), findingsPath: str };
@@ -41,7 +41,7 @@ export async function applyActiveOperations(projectRoot: string, initiative: str
     const gate = operation.op === "finish" ? "completion" : entry.activity === "implementation" ? "implementation" : entry.activity === "integration" ? "completion" : null;
     if (gate) {
       if (await realpath(path.resolve(projectRoot, entry.workspace)) !== await realpath(projectRoot)) throw conservationError("gate_blocked", "The review must belong to the active slice's current workspace.");
-      const result = await checkReviewGate({ projectRoot, initiative, slice, gate });
+      const result = await checkSliceGate({ projectRoot, initiative, slice, gate });
       if (!result.ready) throw conservationError("gate_blocked", "The active-work mutation does not satisfy review prerequisites.", { problems: result.problems });
       if (operation.op === "finish") completions.push({ slice, ...result });
     }

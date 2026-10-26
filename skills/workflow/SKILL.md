@@ -79,6 +79,9 @@ Code establishes implemented behavior.
 | Fresh context | An independent worker task without the authoring conversation. |
 | Design audit | An independent review of requirements, design artifacts, boundaries, security, and verification before implementation. |
 | Implementation review | An independent review of completed code and verified behavior after implementation. |
+| Accepted design | A slice's design recorded through `update_initiative` with its frozen tests and a review mark of `required` or `none`; it replaces the design audit as the implementation gate. |
+| Frozen tests | Acceptance test files whose digests are fixed when the design is accepted; verification refuses to run when one changed. |
+| Verification run | A `verify_slice` run of the user-approved test command from `.prism/workflow.md`, recorded on the slice; a slice with an accepted design completes only on a fresh passing run. |
 | Design finding | A defect in approved intent, fit, boundaries, or planned verification that prevents a sound implementation gate. |
 | Implementation gap | Missing production behavior or implementation-owned wiring after design fit that does not reopen design unless it invalidates the design evidence. |
 | Gate | A user decision or correctness confirmation that controls progress. |

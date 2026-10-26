@@ -54,7 +54,7 @@ function sections(markdown) {
     }
     const entry = line.match(/^\s*-\s+([^:]+):\s*(.*?)\s*$/);
     if (current && entry) {
-      result.get(current).push({ label: entry[1].trim(), value: entry[2].replace(/^['"]|['"]$/g, "").trim() });
+      result.get(current).push({ label: entry[1].trim(), value: entry[2].replace(/^(['"])(.*)\1$/, "$2").trim() });
     }
   }
   return result;

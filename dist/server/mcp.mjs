@@ -30,6 +30,7 @@ import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-disco
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
+import { VERIFY_SLICE_SCHEMA, cancelVerifications, verifySlice } from "./workflow/verification.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
@@ -249,7 +250,7 @@ function stateErrorData(error) {
   if (error instanceof ChangeMapError) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
-  if (error instanceof InitiativeError || error instanceof RoadmapError || error?.name === "InitiativeGraphError") {
+  if (error instanceof InitiativeError || error instanceof RoadmapError || ["InitiativeGraphError", "VerificationError", "SliceDesignError"].includes(error?.name)) {
     return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
@@ -329,6 +330,12 @@ const sessionInputSchema = { oneOf: [explicitSessionInputSchema, activeSessionIn
 const tools = [
   ...ROADMAP_TOOLS,
   ...INITIATIVE_TOOLS,
+  {
+    name: "verify_slice",
+    description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. The first run of a command text asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run.",
+    inputSchema: VERIFY_SLICE_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
+  },
   ...CONSERVATION_TOOLS,
   ...NATIVE_INTELLIGENCE_TOOLS,
   {
@@ -975,9 +982,36 @@ async function callRepositoryTool(name, argumentsValue) {
   throw new Error(`Unknown repository-intelligence tool: ${name}`);
 }
 
+// Hosts that cannot keep a long call open get an early running answer before their own tool timeout, and call again to keep waiting.
+const VERIFY_EARLY_RETURN_MS = 45000;
+
+async function callVerifySlice(argumentsValue, metadata, requestId) {
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  const controller = new AbortController();
+  if (requestId !== undefined) pendingWaits.set(requestId, controller);
+  const progressToken = metadata?.progressToken;
+  try {
+    const value = await verifySlice({
+      ...argumentsValue,
+      projectRoot,
+      signal: controller.signal,
+      maxWaitMs: waitUnsupportedReason() ? Number(process.env.PRISM_VERIFY_EARLY_RETURN_MS) || VERIFY_EARLY_RETURN_MS : Infinity,
+      onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, `Running the test command (${seconds} s)`)
+    });
+    const { outputTail, ...summary } = value;
+    const text = [value.message ?? `Verification ${value.status}.`, JSON.stringify(summary), outputTail ? `Output tail:\n${outputTail}` : ""].filter(Boolean).join("\n");
+    return { content: [{ type: "text", text }], structuredContent: value };
+  } finally {
+    pendingWaits.delete(requestId);
+  }
+}
+
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
+  }
+  if (name === "verify_slice") {
+    return callVerifySlice(argumentsValue, metadata, requestId);
   }
   if (CONSERVATION_TOOLS.some(tool => tool.name === name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
@@ -1072,6 +1106,7 @@ input.on("line", async (line) => {
 
 input.on("close", async () => {
   for (const controller of pendingWaits.values()) controller.abort();
+  cancelVerifications();
   nativeSemanticRuntime.close();
   await reviewServers.close();
 });
