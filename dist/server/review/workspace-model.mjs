@@ -8,6 +8,7 @@ import { keyOfPath, listInitiatives, listSliceRecords, recordPath } from "../wor
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
+import { loadDesignView } from "../workflow/design-view.mjs";
 
 const LIBRARY_LIMIT = 500;
 const SLICE_FILE_LIMIT = 200;
@@ -232,7 +233,7 @@ async function derivedChangeMapState(projectRoot, id, slug, design, verification
   try { document = source === null ? null : JSON.parse(source); }
   catch { return { derived: false }; }
   if (document && !document.derived) return { derived: false };
-  if (document?.derived?.runId === verification.id) return { derived: true, runId: verification.id };
+  if (document?.derived?.runId === verification.id) return { derived: true, runId: verification.id, document };
   const key = { projectRoot, initiative: id, slice: slug };
   const last = lastChangeMapDerivation(key);
   if (last?.runId === verification.id && last.status === "empty") return { derived: true, empty: true, runId: verification.id };
@@ -247,6 +248,7 @@ export async function loadSliceView(projectRoot, id, slug) {
   const slice = initiative.record.slices[slug];
   const derived = initiative.derived;
   const verification = await latestVerification(projectRoot, id, slug).catch(() => null);
+  const { document: changeMapDocument, ...changeMap } = await derivedChangeMapState(projectRoot, id, slug, slice.design, verification) ?? {};
   return {
     id,
     initiativeTitle: initiative.roadmapItem?.title ?? initiative.record.slices[derived?.root]?.title ?? id,
@@ -259,7 +261,8 @@ export async function loadSliceView(projectRoot, id, slug) {
     active: initiative.active.filter((entry) => entry.slice === slug),
     artifacts: initiative.slices[slug],
     verification,
-    changeMap: await derivedChangeMapState(projectRoot, id, slug, slice.design, verification),
+    changeMap: Object.keys(changeMap).length ? changeMap : null,
+    designView: await loadDesignView(projectRoot, id, slug, { changeMap: changeMapDocument ?? null }).catch(() => null),
     titles: Object.fromEntries(Object.entries(initiative.record.slices).map(([key, value]) => [key, value.title]))
   };
 }

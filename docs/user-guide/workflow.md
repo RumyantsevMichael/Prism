@@ -24,7 +24,8 @@ On `SPLIT`, design proposes child slices, their order, and the interfaces betwee
 A long initiative therefore never freezes a contract for work that is weeks away.
 
 A fitted slice has a contract that fixes everything a user or caller observes, a list of assumptions about the system that design either probed or made fail safe, and acceptance tests that fail until the behavior exists.
-You approve the design in the review browser, unless the autonomy setting accepts it for you.
+The design also lists the files it expects to change, with the functions or types involved.
+You approve the design in the review browser, unless the autonomy setting accepts it for you, and the slice's [design view](review-browser.md) shows its acceptance tests as plain-language examples under the contract clauses they check.
 When a slice is too large for one implementation session, its design lists ordered steps, and each step runs in a fresh session.
 Implementers may not change the frozen tests, and a contract problem goes back to design.
 

@@ -27,6 +27,7 @@ test("keeps the core skills lean", async () => {
   let lines = 0;
   for (const name of coreSkills) lines += (await skill(name)).split("\n").length;
   for (const name of ["delegation.md", "visual-review.md"]) lines += (await reference("workflow", name)).split("\n").length;
+  lines += (await reference("orchestrate", "example-writer.md")).split("\n").length;
   assert.ok(lines < 500, `the core skills and their references have ${lines} lines`);
 });
 
@@ -49,6 +50,15 @@ test("design freezes a probed contract and failing acceptance tests, and splits 
   assert.match(design, /Write contracts or tests for the children; each child is designed when it is next/);
   assert.match(design, /A frozen test changes only through a revised design/);
   assert.match(design, /## Frozen tests/);
+});
+
+test("design lists its expected changes, and a gated design gets examples from a small-model writer", async () => {
+  assert.match(await skill("design"), /In \*\*Changes\*\*, list each file you expect to add, change, or remove/);
+  const orchestrate = await skill("orchestrate");
+  assert.match(orchestrate, /write the design view through the \[example writer\]\(references\/example-writer\.md\)/);
+  const writer = await reference("orchestrate", "example-writer.md");
+  assert.match(writer, /Call `update_design_view` once with every example/);
+  assert.match(writer, /Write anything a test does not assert/);
 });
 
 test("implementation works from files against frozen tests and makes no record calls", async () => {

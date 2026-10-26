@@ -43,6 +43,8 @@ async function frozenBytes(root, relative) {
   } finally { await handle.close(); }
 }
 
+export { frozenBytes as readFrozenTest };
+
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 /** Digest each frozen test at design acceptance; a missing file cannot be frozen. */

@@ -32,6 +32,7 @@ import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } fr
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verifySlice } from "./workflow/verification.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
+import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
@@ -251,7 +252,7 @@ function stateErrorData(error) {
   if (error instanceof ChangeMapError) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
-  if (error instanceof InitiativeError || error instanceof RoadmapError || ["InitiativeGraphError", "VerificationError", "SliceDesignError"].includes(error?.name)) {
+  if (error instanceof InitiativeError || error instanceof RoadmapError || ["InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError"].includes(error?.name)) {
     return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
@@ -336,6 +337,12 @@ const tools = [
     description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. The first run of a command text asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run.",
     inputSchema: VERIFY_SLICE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
+  },
+  {
+    name: "update_design_view",
+    description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes.",
+    inputSchema: UPDATE_DESIGN_VIEW_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   ...CONSERVATION_TOOLS,
   ...NATIVE_INTELLIGENCE_TOOLS,
@@ -671,7 +678,8 @@ const tools = [
                       properties: {
                         delivery: { type: "string", minLength: 1 },
                         review: { type: "string", minLength: 1 },
-                        securityReview: { type: "string", minLength: 1 }
+                        securityReview: { type: "string", minLength: 1 },
+                        examples: { type: "string", minLength: 1 }
                       }
                     }
                   ]
@@ -1019,6 +1027,10 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (CONSERVATION_TOOLS.some(tool => tool.name === name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const value = await callConservationTool(name, { ...argumentsValue, projectRoot });
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+  }
+  if (name === "update_design_view") {
+    const value = await updateDesignView({ ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) });
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (["get_change_map", "update_change_map"].includes(name)) {

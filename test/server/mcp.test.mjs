@@ -963,8 +963,10 @@ test("verify_slice reports a missing design and asks for command approval throug
   const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: data });
   await initialize(mcp);
   mcp.send({ id: 2, method: "tools/list" });
-  const verify = (await mcp.next()).result.tools.find((tool) => tool.name === "verify_slice");
+  const listed = (await mcp.next()).result.tools;
+  const verify = listed.find((tool) => tool.name === "verify_slice");
   assert.deepEqual(verify.inputSchema.required, ["projectRoot", "initiative", "slice"]);
+  assert.ok(listed.some((tool) => tool.name === "update_design_view"));
   await callTool(mcp, 3, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: null, operations: [{ op: "create", slug: "reports", title: "Signed reports", requirements: ["req.md#R1"] }] });
   const missing = await callTool(mcp, 4, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
   assert.equal(missing.error.data.code, "design_missing");
@@ -973,4 +975,7 @@ test("verify_slice reports a missing design and asks for command approval throug
   const asked = await callTool(mcp, 7, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
   assert.equal(asked.result.structuredContent.status, "approval_needed");
   assert.match(asked.result.content[0].text, /wait_for_user_gate/);
+  const view = await callTool(mcp, 8, "update_design_view", { projectRoot: root, initiative: "reports", slice: "reports", examples: [{ clause: 1, file: "docs/acceptance.test.mjs", test: "frozen", example: "x" }] });
+  assert.equal(view.error.data.code, "validation_failed");
+  assert.match(view.error.message, /slice\.md does not exist/);
 });

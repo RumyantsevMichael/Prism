@@ -32,6 +32,67 @@ function seconds(durationMs) {
   return durationMs >= 60000 ? `${Math.round(durationMs / 60000)} min` : durationMs >= 1000 ? `${Math.round(durationMs / 1000)} s` : "under 1 s";
 }
 
+// Inline code in a design line is the only markup the view renders.
+function inline(text) {
+  return escapeHtml(text).replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+const READINGS = {
+  "as-planned": ["as planned", "is-good"],
+  partly: ["partly as planned", "is-warn"],
+  untouched: ["planned but untouched", "is-warn"],
+  unplanned: ["unplanned", "is-info"]
+};
+
+const ACTIONS = { ADD: "added", MODIFY: "changed", DELETE: "removed" };
+const actualText = (item) => item.unit ? `${ACTIONS[item.action] ?? item.action} <code>${escapeHtml(item.unit)}</code>` : `${ACTIONS[item.action] ?? item.action} the file`;
+
+function readingText(row) {
+  const [label, tone] = READINGS[row.reading];
+  const notes = [
+    row.missing?.length ? `${row.missing.map((unit) => `<code>${escapeHtml(unit)}</code>`).join(", ")} not touched` : "",
+    row.extra?.length ? `${plural(row.extra.length, "extra unit")}` : ""
+  ].filter(Boolean).join("; ");
+  return `<span class="status-pill ${tone}">${label}</span>${notes ? ` <span class="muted">${notes}</span>` : ""}`;
+}
+
+function changesTable(view, ctx) {
+  if (view.comparison) {
+    if (!view.comparison.length) return emptyNote("The design lists no changes and the verified result changed no source.");
+    const limit = 6;
+    return `<div class="table-wrap"><table class="data-table design-changes"><thead><tr><th>Path</th><th>Planned</th><th>Actual</th><th>Reading</th></tr></thead><tbody>${view.comparison.map((row) => `<tr>
+      <td>${artifactChip(row.path, ctx)}</td>
+      <td>${row.planned ? `${escapeHtml(row.planned.action)} ${inline(row.planned.note)}` : '<span class="muted">not planned</span>'}</td>
+      <td>${row.actual.length ? `${row.actual.slice(0, limit).map(actualText).join(", ")}${row.actual.length > limit ? `, ${row.actual.length - limit} more` : ""}` : '<span class="muted">not touched</span>'}</td>
+      <td>${readingText(row)}</td></tr>`).join("")}</tbody></table></div>`;
+  }
+  if (!view.changes.length) return emptyNote("The design lists no expected changes.");
+  return `<div class="table-wrap"><table class="data-table design-changes"><thead><tr><th>Path</th><th>Change</th><th>Units and why</th></tr></thead><tbody>${view.changes.map((change) => `<tr>
+    <td>${artifactChip(change.path, ctx)}</td><td>${escapeHtml(change.action)}</td><td>${inline(change.note)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+// The design view answers what the code will be held to, where it will change, and what no test covers, before implementation.
+function designViewCard(view, ctx) {
+  if (!view) return "";
+  const total = view.clauses.reduce((sum, clause) => sum + clause.examples.length, 0);
+  const open = total <= 20;
+  const behavior = !view.clauses.length ? emptyNote("The design has no Contract clauses.")
+    : `${view.examplesWritten ? "" : emptyNote("No examples were written for this design yet, so only the contract clauses show.")}
+    ${view.clauses.map((clause) => `<details class="design-clause"${open || !clause.examples.length ? " open" : ""}>
+      <summary><span class="clause-number">${clause.number}</span> <span class="clause-text">${inline(clause.text)}</span> ${view.gaps.includes(clause.number) ? '<span class="status-pill is-warn">no test</span>' : `<span class="muted">${plural(clause.examples.length, "example")}</span>`}</summary>
+      ${clause.examples.length ? `<ul class="design-examples">${clause.examples.map((item) => `<li><span class="example-text">${inline(item.example)}</span> ${artifactChip(item.file, ctx, item.test)}</li>`).join("")}</ul>` : ""}
+    </details>`).join("")}`;
+  return card("Design view", `
+    ${view.stale.length ? `<div class="notice"><p>The examples describe an earlier version of this design: ${view.stale.map(escapeHtml).join(" ")}</p></div>` : ""}
+    ${view.gaps.length ? `<p><span class="status-pill is-warn">${view.gaps.length === 1 ? "1 clause without a test" : `${view.gaps.length} clauses without a test`}</span> ${view.gaps.map((number) => `<a href="#" class="clause-link" data-clause="${number}">${number}</a>`).join(", ")}</p>` : ""}
+    <h3>Behavior</h3>
+    ${behavior}
+    <h3>${view.comparison ? "Planned versus actual" : "Expected changes"}</h3>
+    ${view.changeProblems.length ? `<ul class="plain-list error">${view.changeProblems.map((problem) => `<li>${escapeHtml(problem)}</li>`).join("")}</ul>` : ""}
+    ${changesTable(view, ctx)}
+    <p>${artifactChip(view.path, ctx, "Open slice.md")}</p>`, { source: "slice.md", className: "design-view" });
+}
+
 // Verification shows the accepted design's frozen tests and the latest run of the project's test command.
 function changeMapCard(path, state, ctx) {
   const source = { source: path ? path.split("/").pop() : "change-map.json" };
@@ -82,6 +143,7 @@ export async function render(container, entity, ctx) {
         ["Active work", data.active.length ? data.active.map((entry) => `<span class="meta-pill">${escapeHtml(entry.activity)} · ${escapeHtml((entry.workers ?? []).join(", "))}${entry.label ? ` · ${escapeHtml(entry.label)}` : ""}</span>`).join(" ") : null]
       ])}
     </section>
+    ${designViewCard(data.designView, ctx)}
     <div class="artifact-cards">
       ${changeMapCard(artifacts.changeMap, data.changeMap, ctx)}
       ${reviewCard(artifacts.review, ctx)}
@@ -90,6 +152,13 @@ export async function render(container, entity, ctx) {
     ${card("Other documents", others.length ? `<ul class="plain-list">${others.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder has no other files."), { eyebrow: plural(artifacts.files.length, "file") + " in the slice folder" })}
     ${artifacts.narrative ? `<section class="view-card"><header class="view-card-header"><div class="view-card-title"><h2>Design narrative</h2>${cardSource(artifacts.narrative.split("/").pop())}</div></header><div class="document-content" data-narrative><p class="rendering">Loading narrative</p></div></section>` : ""}`;
   bindLinks(container, ctx);
+  for (const link of container.querySelectorAll("[data-clause]")) {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      const target = container.querySelectorAll(".design-clause")[Number(link.dataset.clause) - 1];
+      if (target) { target.open = true; target.scrollIntoView({ block: "center" }); }
+    });
+  }
   if (artifacts.narrative) {
     try {
       const narrative = await ctx.fetchArtifact(artifacts.narrative);

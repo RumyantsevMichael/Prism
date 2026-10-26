@@ -30,7 +30,7 @@ When `resolve_session_capacity` is available, judge step size against the implem
 ## 3. Write a fit design
 
 1. Write the slice folder's `slice.md` with the sections in the [design example](#design-example).
-2. In **Contract**, fix everything a user or caller observes that the requirements leave open: commands, arguments and flags, fields and types, identifiers, error cases, ordering, and stream or lifecycle behavior.
+2. In **Contract**, fix everything a user or caller observes that the requirements leave open, one list item per clause: commands, arguments and flags, fields and types, identifiers, error cases, ordering, and stream or lifecycle behavior.
 3. In **Assumptions**, list every contract clause that depends on behavior outside the new code, such as a framework, library, runtime, or input shape nobody planned for.
 4. For each assumption, do one of the following and record which:
    - Probe it with a small experiment against the real system and record the command and what you observed.
@@ -38,14 +38,16 @@ When `resolve_session_capacity` is available, judge step size against the implem
 5. Write acceptance tests in the project's test location, black-box through the starting surface, with one test per contract clause, covering error, edge, and interaction cases as well as the main path.
 6. Run the tests and confirm they build and fail because the behavior is absent, not because of setup defects.
 7. When the slice needs more than one implementation session, list ordered **Steps**, each with what it delivers, the acceptance tests it must turn green, and the shared internal interfaces later steps rely on.
-8. In **Review**, recommend `required` when an independent implementation review pays off, such as for authentication, authorization, secrets, untrusted input, or data loss risk, and `none` otherwise.
-9. When the project keeps Gherkin feature files, use `write-feature` for the slice's scenarios and list them as frozen tests.
-10. When production code, generated code, or verification consumes a changed boundary, use `write-contracts` after reusing governing types or schemas.
-11. Use `write-adr` for each settled architectural decision that outlives the slice.
+8. In **Changes**, list each file you expect to add, change, or remove, starting with `add`, `change`, or `remove` and the path in backticks, then the functions, types, or modules it adds or whose interface it changes, and a few words on why.
+9. In **Review**, recommend `required` when an independent implementation review pays off, such as for authentication, authorization, secrets, untrusted input, or data loss risk, and `none` otherwise.
+10. When the project keeps Gherkin feature files, use `write-feature` for the slice's scenarios and list them as frozen tests.
+11. When production code, generated code, or verification consumes a changed boundary, use `write-contracts` after reusing governing types or schemas.
+12. Use `write-adr` for each settled architectural decision that outlives the slice.
 
 - Don't
   - Implement production behavior.
   - Write tests that assert private helpers or internal structure.
+  - Write in **Changes** the code to insert; it names where the code changes, not how.
 
 ### Design example
 
@@ -63,6 +65,11 @@ When `resolve_session_capacity` is available, judge step size against the implem
 ## Steps
 1. Storage lookup and the error cases; turns green `download_unknown_id`.
 2. Streaming output; turns green `download_writes_bytes`; relies on `ReportSource` from step 1.
+
+## Changes
+- add `src/report/source.rs`: `ReportSource`, shared by both steps.
+- change `src/storage/client.rs`: `get` streams instead of buffering.
+- change `src/cli/report.rs`: `download` subcommand.
 
 ## Review
 none: no new trust boundary.

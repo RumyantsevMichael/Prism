@@ -55,7 +55,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Initiative record | The Prism record of slice titles, outcomes, topology, requirement assignments, dependencies, status, and accepted designs, read through `get_initiative` and changed through `update_initiative`; `initiative.md` is its generated view. |
 | Coordination state | The initiative's Prism record of settings, active work, pending user gate records, and next actions, read through `get_coordination_state` and changed through `update_coordination_state`. |
 | Slice | One observable outcome across required layers, split recursively until one design can fix its whole interface. |
-| `slice.md` | A slice's design document in its slice folder: contract, assumptions, steps, review recommendation, and frozen tests for a fitted slice, or the interfaces between children for a split one. |
+| `slice.md` | A slice's design document in its slice folder: contract, assumptions, steps, changes, review recommendation, and frozen tests for a fitted slice, or the interfaces between children for a split one. |
 | Approved requirement | An accepted product or system obligation. |
 | Requirement assignment | Approved requirement references whose coverage is preserved through each split. |
 | Effective dependencies | A leaf's own dependencies plus the dependencies inherited from its ancestors. |
@@ -67,7 +67,10 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Assumption probe | A small experiment against the real system that confirms a contract assumption, or a fail-safe clause where no probe is possible. |
 | Frozen tests | Acceptance test files fixed when the design is accepted; implementation must not change them, and verification refuses to run when one changed. |
 | Implementation step | One ordered part of a fitted slice that one fresh implementation session delivers against the shared contract and suite. |
+| Changes | The files a fitted design expects to add, change, or remove, with the units each adds or whose interface it changes; after verification the review browser compares them with what the verified result changed. |
 | Design gate | The user's acceptance of a design, which the autonomy setting may resolve automatically. |
+| Design view | The review browser's page for a design gate: one example per frozen test under its contract clause, clauses without a test, and the design's changes, written through `update_design_view` by the example writer. |
+| Example writer | A child agent on a small model that writes the design view from the contract and the frozen tests only. |
 | Accepted design | A slice's design recorded through `update_initiative` with its frozen tests and a review mark of `required` or `none`. |
 | Verification run | A `verify_slice` run of the user-approved test command from `.prism/workflow.md`, recorded on the slice; a slice with an accepted design completes only on a fresh passing run. |
 | Implementation review | An independent review of the verified result of a slice whose design is marked `required`. |
@@ -78,7 +81,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Review probe | A minimal failing test that a reviewer adds through a public surface to prove a finding. |
 | Gate | A user decision that controls progress. |
 | User gate record | A pending coordination state entry for a question to the user, with its kind, slice, question, artifacts, optional options, and any answer recorded in the review browser. |
-| Orchestrator | The agent that runs an initiative and alone writes its Prism records. |
+| Orchestrator | The agent that runs an initiative and writes its Prism records, apart from the design view. |
 | Fresh context | A session that starts without the conversation that authored its inputs. |
 | Decision autonomy | A run setting that selects which gates wait for the user. |
 | Agent flow | A run setting that selects child agents or inline work for design and implementation. |

@@ -8,8 +8,8 @@ sdm: "0.3"
 
 # Orchestrate an initiative
 
-The orchestrator is the only agent that writes Prism records for the initiative.
-Design, implementation, and review sessions get files and identifiers from it and return a status.
+The orchestrator is the only agent that writes Prism records for the initiative, apart from the design view that the example writer writes.
+Design, implementation, review, and example writer sessions get files and identifiers from it and return a status.
 The [workflow](../workflow/SKILL.md) defines the terms.
 
 ## 1. Settings
@@ -24,7 +24,7 @@ A stored value stays authoritative on resume, and `agentFlow` is fixed once work
 | `commit` | `on`, `off` | `on` under `full`, otherwise `off` | Whether design and implementation commit their changes. |
 | `push` | `on`, `off` | `off` | Whether finished slices are pushed; autonomy never turns it on. |
 | `continuation` | `auto`, `stepwise` | `auto` | Whether the next slice starts without the user. |
-| `models` | `host defaults` or `{delivery, review, securityReview}` | `host defaults` | Models for child agents. |
+| `models` | `host defaults` or `{delivery, review, securityReview, examples}` | `host defaults` | Models for child agents; `examples` is optional and defaults to the host's smallest model. |
 
 - `conservative` waits for the user at every design gate and decision.
 - `broad` accepts a design automatically unless it changes requirements, adds an ADR, or reports an open question.
@@ -48,7 +48,7 @@ Repeat for the next leaf that is `not-started` and whose effective dependencies 
    2. Ask the design gate when autonomy requires it.
    3. Call `update_initiative` with one `split` operation and the `set_dependencies` operations, and release the active operation.
 4. When design returns `FIT`:
-   1. Ask the design gate when autonomy requires it, with `slice.md` and the frozen tests as artifacts.
+   1. When autonomy requires the design gate, write the design view through the [example writer](references/example-writer.md), in a fresh child agent with the `examples` model under `multi` flow, and ask the gate with `slice.md` and the frozen tests as artifacts.
    2. When the user asks for changes, return the note to design and repeat this step.
    3. When commits are on, commit the design.
    4. Call `update_initiative` with `accept_design`, the frozen test paths, and the review mark that design recommended or the user's answer asks for.

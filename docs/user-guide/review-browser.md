@@ -57,7 +57,16 @@ An initiative page shows its slices as a board, a list, or a graph.
 The board has one column per slice status, and the card of an active slice also shows its activity, workers, and review lanes.
 The list shows the slice tree, and the graph orders leaf slices by execution order.
 Below them, the page lists the unstarted leaves that can be designed next.
-A slice page shows the slice's verification run, its review ledger, its change map when it has one, its other files, and the design from `slice.md`.
+A slice page shows the slice's design view, verification run, review ledger, change map when it has one, other files, and the design from `slice.md`.
+
+The design view is the page to read at a design gate.
+It shows each contract clause of `slice.md` with one plain-language example per frozen test that checks it, and each example opens its test file.
+A clause that no test checks is flagged, and the count of such clauses sits at the top.
+A small model writes the examples from the contract and the tests alone, so read the linked test when an example decides your answer.
+Prism checks that each example cites a real clause and a test name that occurs in its file, and marks the examples as stale when the contract or a test file changed after they were written.
+Below the examples, the design's expected changes list each file to add, change, or remove, with the functions or types involved.
+After a passing verification run, the same table compares that plan with what the verified result changed, and marks each file as planned, partly as planned, planned but untouched, or unplanned.
+An unplanned or untouched file is not an error, but it is the first place to look.
 
 For a slice with an accepted design, Prism derives the change map itself after a passing verification run, by comparing the source when the design was accepted with the source the run tested.
 It lists the functions, sections, and files that were added, changed, or removed, and the slice page says when it is still being built.

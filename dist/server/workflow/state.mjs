@@ -163,8 +163,11 @@ function validateModels(value, errors) {
       addError(errors, `settings.models.${role}`, "must be a non-empty model name");
     }
   }
+  if (value.examples !== undefined && (typeof value.examples !== "string" || !value.examples.trim())) {
+    addError(errors, "settings.models.examples", "must be a non-empty model name when present");
+  }
   for (const key of Object.keys(value)) {
-    if (!requiredRoles.includes(key)) {
+    if (!requiredRoles.includes(key) && key !== "examples") {
       addError(errors, `settings.models.${key}`, "is not a supported model role");
     }
   }

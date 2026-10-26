@@ -9,8 +9,8 @@ import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflo
 export const RECORD_DIRECTORY = ".prism";
 const INITIATIVES = `${RECORD_DIRECTORY}/initiatives`;
 const ROADMAP_RECORD = `${RECORD_DIRECTORY}/roadmap.json`;
-const RECORD_FILES = Object.freeze({ initiative: "initiative.json", state: "state.json", review: "review.json", "change-map": "change-map.json" });
-const SLICE_KINDS = new Set(["review", "change-map", "runs"]);
+const RECORD_FILES = Object.freeze({ initiative: "initiative.json", state: "state.json", review: "review.json", "change-map": "change-map.json", "design-view": "design-view.json" });
+const SLICE_KINDS = new Set(["review", "change-map", "design-view", "runs"]);
 const LEGACY_CHANGE_MAP = "concept-delta.json";
 const HOUSEKEEPING = Object.freeze({
   ".gitattributes": "# Prism writes these records through its MCP tools; hosts collapse them in pull request diffs.\n/roadmap.json linguist-generated=true gitlab-generated\n/initiatives/** linguist-generated=true gitlab-generated\n",
@@ -38,7 +38,7 @@ function requireSlug(value, label) {
   return value;
 }
 
-/** The project-relative location of a record key: { kind: "roadmap" | "initiative" | "state" | "review" | "change-map" | "runs", initiative?, slice? }. */
+/** The project-relative location of a record key: { kind: "roadmap" | "initiative" | "state" | "review" | "change-map" | "design-view" | "runs", initiative?, slice? }. */
 export function recordPath(key) {
   if (key?.kind === "roadmap") return ROADMAP_RECORD;
   const initiative = requireSlug(key?.initiative, "initiative");
@@ -59,6 +59,7 @@ export function parseRecordPath(relative) {
   const base = { initiative: parts[2], slice: parts[4] };
   if (parts.length === 6 && parts[5] === RECORD_FILES.review) return { kind: "review", ...base };
   if (parts.length === 6 && [RECORD_FILES["change-map"], LEGACY_CHANGE_MAP].includes(parts[5])) return { kind: "change-map", ...base };
+  if (parts.length === 6 && parts[5] === RECORD_FILES["design-view"]) return { kind: "design-view", ...base };
   if (parts[5] === "runs") return { kind: "runs", ...base };
   return null;
 }
