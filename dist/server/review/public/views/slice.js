@@ -33,6 +33,16 @@ function seconds(durationMs) {
 }
 
 // Verification shows the accepted design's frozen tests and the latest run of the project's test command.
+function changeMapCard(path, state, ctx) {
+  const source = { source: path ? path.split("/").pop() : "change-map.json" };
+  if (state?.pending) return card("Change map", `<p>Building the change map from the verified result.</p>${path ? `<p>${artifactChip(path, ctx, "Open the previous change map")}</p>` : ""}`, source);
+  if (state?.failed) return card("Change map", `<p class="error">The change map could not be derived: ${escapeHtml(state.failed)}</p>`, source);
+  if (state?.empty) return card("Change map", emptyNote("The verified result changed no source compared with the design."), source);
+  if (!path) return card("Change map", emptyNote("No change map exists yet."), source);
+  const text = state?.derived ? "What the verified result changed, compared with the source when the design was accepted." : "The planned changes and their readiness.";
+  return card("Change map", `<p>${text}</p><p>${artifactChip(path, ctx, "Open the change map")}</p>`, source);
+}
+
 function verificationCard(design, run) {
   if (!design && !run) return "";
   const result = run ? `<p><span class="status-pill ${run.passed ? "is-good" : "is-bad"}">${run.passed ? "passed" : "failed"}</span> ${escapeHtml(formatTime(run.finishedAt))}${run.reason ? `: ${escapeHtml(REASONS[run.reason] ?? run.reason)}` : ""}</p>` : emptyNote("No verification run yet.");
@@ -73,7 +83,7 @@ export async function render(container, entity, ctx) {
       ])}
     </section>
     <div class="artifact-cards">
-      ${card("Change map", artifacts.changeMap ? `<p>The planned changes and their readiness.</p><p>${artifactChip(artifacts.changeMap, ctx, "Open the change map")}</p>` : emptyNote("No change map exists yet."), { source: artifacts.changeMap ? artifacts.changeMap.split("/").pop() : "change-map.json" })}
+      ${changeMapCard(artifacts.changeMap, data.changeMap, ctx)}
       ${reviewCard(artifacts.review, ctx)}
       ${verificationCard(slice.design, data.verification)}
     </div>

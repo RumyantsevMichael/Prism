@@ -74,7 +74,8 @@ export function designProblems(design) {
   if (design === undefined) return [];
   if (design === null || typeof design !== "object" || Array.isArray(design)) return ["design must be an object."];
   const problems = [];
-  if (Object.keys(design).some((key) => !["acceptedAt", "frozenTests", "review"].includes(key))) problems.push("design holds only acceptedAt, frozenTests, and review.");
+  if (Object.keys(design).some((key) => !["acceptedAt", "frozenTests", "review", "baselineId"].includes(key))) problems.push("design holds only acceptedAt, frozenTests, review, and baselineId.");
+  if (design.baselineId !== undefined && !/^[0-9a-f]{64}$/.test(String(design.baselineId))) problems.push("design.baselineId must be a snapshot identifier.");
   if (typeof design.acceptedAt !== "string" || Number.isNaN(Date.parse(design.acceptedAt))) problems.push("design.acceptedAt must be an ISO timestamp.");
   if (!REVIEW_MARKS.includes(design.review)) problems.push(`design.review must be one of ${REVIEW_MARKS.join(", ")}.`);
   if (!Array.isArray(design.frozenTests) || design.frozenTests.some((item) => typeof item?.path !== "string" || !/^[0-9a-f]{64}$/.test(item?.sha256 ?? ""))) problems.push("design.frozenTests must list { path, sha256 } entries.");

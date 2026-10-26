@@ -59,7 +59,9 @@ The list shows the slice tree, and the graph orders leaf slices by execution ord
 Below them, the page lists the unstarted leaves that can be designed next.
 A slice page shows the slice's verification run, its review ledger, its change map when it has one, its other files, and the design from `slice.md`.
 
-The change map page starts with a readiness line that jumps to the first blocked change.
+For a slice with an accepted design, Prism derives the change map itself after a passing verification run, by comparing the source when the design was accepted with the source the run tested.
+It lists the functions, sections, and files that were added, changed, or removed, and the slice page says when it is still being built.
+An agent-planned change map, from slices designed before verification runs, starts with a readiness line that jumps to the first blocked change.
 Each change has one card with its reason, its before and after references, its own problems, and its reuse evidence.
 A reference opens the file, at the heading when the reference names one.
 Group changes by action or by file, and blocked changes come first.

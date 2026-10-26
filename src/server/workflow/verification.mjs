@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { conservationStore } from "../conservation/conservation-store.mjs";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { appendRecord, RECORD_DIRECTORY } from "./record-store.mjs";
@@ -187,7 +188,9 @@ async function verificationRun({ root, initiative, slice, command, key, config, 
     const outcome = await execute(command, root, { signal, timeoutMs, onProgress });
     const after = await contentTree(root, config).catch(() => null);
     const reason = outcome.cancelled ? "cancelled" : outcome.timedOut ? "timed_out" : outcome.exitCode !== 0 ? "command_failed" : after !== before ? "tracked_files_changed" : null;
-    entry = { ...base, finishedAt: new Date().toISOString(), durationMs: outcome.durationMs, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, passed: reason === null, ...(reason ? { reason } : {}), tree: before, ...(after !== before ? { treeAfter: after } : {}), outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), output: outcome.output };
+    // A passing run keeps a snapshot of the verified source, which the derived change map compares with the design baseline.
+    const snapshotId = reason === null && design.baselineId ? await conservationStore.capture(root, { initiative, slice }).then((captured) => captured.snapshotId, () => null) : null;
+    entry = { ...base, finishedAt: new Date().toISOString(), durationMs: outcome.durationMs, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, passed: reason === null, ...(reason ? { reason } : {}), tree: before, ...(after !== before ? { treeAfter: after } : {}), ...(snapshotId ? { snapshotId } : {}), outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), output: outcome.output };
   }
   const { output = entry.outputTail, ...recorded } = entry;
   const id = `verification-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;

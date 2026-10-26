@@ -31,6 +31,7 @@ import { checkpointPause, readCoordinationState, updateCoordinationState, valida
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verifySlice } from "./workflow/verification.mjs";
+import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
@@ -998,6 +999,8 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
       maxWaitMs: waitUnsupportedReason() ? Number(process.env.PRISM_VERIFY_EARLY_RETURN_MS) || VERIFY_EARLY_RETURN_MS : Infinity,
       onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, `Running the test command (${seconds} s)`)
     });
+    // A passing run with a source snapshot gets its change map derived in the background, so the review browser can show it.
+    if (value.status === "passed" && value.snapshotId) startChangeMapDerivation({ projectRoot, initiative: argumentsValue.initiative, slice: argumentsValue.slice });
     const { outputTail, ...summary } = value;
     const text = [value.message ?? `Verification ${value.status}.`, JSON.stringify(summary), outputTail ? `Output tail:\n${outputTail}` : ""].filter(Boolean).join("\n");
     return { content: [{ type: "text", text }], structuredContent: value };

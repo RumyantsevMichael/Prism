@@ -14,7 +14,7 @@ function referenceKey(side, reference) {
   return `${side}|${reference.path}|${JSON.stringify(reference.selector ?? "")}`;
 }
 
-function buildGraph(changes) {
+function buildGraph(changes, derived) {
   const nodes = new Map();
   const edges = [];
   const clusterLabels = new Map();
@@ -33,7 +33,7 @@ function buildGraph(changes) {
     for (const reference of change.before ?? []) addReference("b", reference, change);
     for (const reference of change.after ?? []) addReference("a", reference, change);
   }
-  return { graph: { label: "Planned changes", nodes: [...nodes.values()], edges, sameRank: [changes.map((change) => `c|${change.id}`)] }, clusterLabels };
+  return { graph: { label: derived ? "Verified changes" : "Planned changes", nodes: [...nodes.values()], edges, sameRank: [changes.map((change) => `c|${change.id}`)] }, clusterLabels };
 }
 
 // A reference opens its file in the review, at the named heading when the selector is one.
@@ -102,7 +102,8 @@ function groupsOf(changes, by) {
   return [...files.entries()].sort(([left], [right]) => left.localeCompare(right));
 }
 
-function readiness(summary, error, problems) {
+function readiness(summary, error, problems, derived) {
+  if (derived) return `<span class="status-pill is-good" title="Verification run ${escapeHtml(derived.runId)}">From the verified result</span>`;
   if (error) return `<span class="status-pill is-unknown" title="${escapeHtml(error)}">Status unavailable</span>`;
   if (!summary) return "";
   if (!summary.valid) return '<span class="status-pill is-bad">Invalid</span>';
@@ -114,6 +115,7 @@ function readiness(summary, error, problems) {
 
 function planLines(document, ctx) {
   return keyValues([
+    ["Derived", document.derived ? `Compared the source when the design was accepted with the source that verification run <code>${escapeHtml(document.derived.runId)}</code> tested, ${escapeHtml(new Date(document.derived.derivedAt).toLocaleString())}.` : null],
     ["Scope", (document.scope ?? []).map((item) => `<code>${escapeHtml(item)}</code>`).join(" ") || null],
     ["Requirements", document.requirements?.length ? document.requirements.map((reference) => referenceLink(reference, ctx)).join("") : null],
     ["Expected growth", document.expectedGrowth?.length ? document.expectedGrowth.map((item) => `<code>${escapeHtml(item.dimension)}</code> +${escapeHtml(item.increase)} — ${escapeHtml(item.reason)}`).join("<br>") : null],
@@ -142,7 +144,7 @@ export async function render(container, data, ctx) {
   container.innerHTML = `
     <section class="view-card summary-card">
       <div class="summary-row">
-        <div class="summary-status">${readiness(summary, data.summaryError, diagnostics)}${summary?.revision ? `<span class="meta-pill" title="${escapeHtml(summary.revision)}">rev ${escapeHtml(shortId(summary.revision))}</span>` : ""}</div>
+        <div class="summary-status">${readiness(summary, data.summaryError, diagnostics, document.derived)}${summary?.revision ? `<span class="meta-pill" title="${escapeHtml(summary.revision)}">rev ${escapeHtml(shortId(summary.revision))}</span>` : ""}</div>
         <div class="summary-links">${evidenceChip(document.baselineId, "Baseline snapshot")}</div>
       </div>
       ${planLines(document, ctx)}
@@ -161,7 +163,7 @@ export async function render(container, data, ctx) {
 
   const body = container.querySelector("[data-change-body]");
   if (state.mode === "graph") {
-    const { graph, clusterLabels } = buildGraph(visible);
+    const { graph, clusterLabels } = buildGraph(visible, document.derived);
     const section = graphCard({
       title: plural(visible.length, "change"),
       eyebrow: "Before → change → after",

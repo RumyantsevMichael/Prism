@@ -89,7 +89,7 @@ function canonicalRecord(record) {
       parent: slice.parent,
       requirements: [...slice.requirements].sort(),
       dependencies: [...slice.dependencies].sort(),
-      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review } } : {})
+      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}) } } : {})
     };
   }
   return { schemaVersion: 1, id: record.id, slices, history: record.history.slice(-HISTORY_LIMIT) };
@@ -225,6 +225,13 @@ async function completionGate(resolved, slugValue) {
   }
 }
 
+// The source at design acceptance is the baseline that the slice's derived change map compares with its verified result.
+// Capture is best effort: without a baseline the derived change map is unavailable, and nothing else depends on it.
+async function captureBaseline(root, initiative, slice) {
+  try { return (await conservationStore.capture(root, { initiative, slice })).snapshotId; }
+  catch { return null; }
+}
+
 async function applyOperation(resolved, record, operation) {
   const slices = record.slices;
   const requireSlice = (slugValue) => {
@@ -286,7 +293,9 @@ async function applyOperation(resolved, record, operation) {
       const slice = requireSlice(operation.slug);
       if (slice.status === "split") throw fail("validation_failed", "A split slice is designed through its children.");
       if (slice.status === "done") throw fail("validation_failed", "A done slice cannot take a new design.");
-      slice.design = { acceptedAt: new Date().toISOString(), frozenTests: await digestFrozenTests(resolved.root, operation.frozenTests), review: operation.review };
+      const frozenTests = await digestFrozenTests(resolved.root, operation.frozenTests);
+      const baselineId = await captureBaseline(resolved.root, resolved.initiative, operation.slug);
+      slice.design = { acceptedAt: new Date().toISOString(), frozenTests, review: operation.review, ...(baselineId ? { baselineId } : {}) };
       break;
     }
     case "regenerate_markdown":
