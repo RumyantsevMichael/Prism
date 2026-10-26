@@ -30,14 +30,15 @@ test("keeps the plugin MCP definition out of project MCP config", async () => {
   await assert.rejects(access(new URL("../../.mcp.json", import.meta.url)), { code: "ENOENT" });
 });
 
-test("describes the shared design audit in both host manifests", async () => {
+test("describes frozen-contract design in both host manifests", async () => {
   const claudeManifest = await json(".claude-plugin/plugin.json");
   const codexManifest = await json(".codex-plugin/plugin.json");
 
-  assert.match(claudeManifest.description, /design audits/);
-  assert.match(codexManifest.description, /design audits/);
-  assert.ok(codexManifest.interface.capabilities.includes("Design audits"));
-  assert.ok(codexManifest.interface.defaultPrompt.some((prompt) => /audit the design before implementation/i.test(prompt)));
+  assert.match(claudeManifest.description, /frozen contract/);
+  assert.match(codexManifest.description, /frozen contracts/);
+  assert.doesNotMatch(`${claudeManifest.description} ${codexManifest.description}`, /design audit/i);
+  assert.ok(codexManifest.interface.capabilities.includes("Frozen acceptance tests"));
+  assert.ok(codexManifest.interface.defaultPrompt.some((prompt) => /failing acceptance tests/i.test(prompt)));
 });
 
 test("packages compatible capacity and trace hooks at the default plugin path", async () => {

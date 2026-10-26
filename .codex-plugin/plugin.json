@@ -1,7 +1,7 @@
 {
   "name": "prism",
   "version": "0.14.0",
-  "description": "Spec-driven engineering workflow with EARS requirements, ADRs, design artifacts, design audits, implementation, and orchestration across tracks.",
+  "description": "Spec-driven engineering workflow with EARS requirements, ADRs, slices designed as frozen contracts with failing acceptance tests, verified implementation, and orchestration.",
   "author": {
     "name": "Michael Rumyantsev",
     "url": "https://github.com/RumyantsevMichael"
@@ -32,7 +32,7 @@
     "capabilities": [
       "Requirements authoring",
       "Product design",
-      "Design audits",
+      "Frozen acceptance tests",
       "Architecture decisions",
       "Implementation planning",
       "Visual artifact review",
@@ -40,7 +40,7 @@
     ],
     "defaultPrompt": [
       "Use Prism to design this change.",
-      "Use Prism to audit the design before implementation.",
+      "Use Prism to design this slice as a contract with failing acceptance tests.",
       "Use Prism to implement this approved specification."
     ]
   }
