@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { checkReviewGate } from "../review/review-ledger.mjs";
-import { listRecordEntries, RECORD_DIRECTORY } from "./record-store.mjs";
-import { acceptedDesign, checkFrozenTests, SliceDesignError } from "./slice-design.mjs";
+import { RECORD_DIRECTORY } from "./record-store.mjs";
+import { acceptedDesign, checkFrozenTests, latestVerification, SliceDesignError } from "./slice-design.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
 const run = promisify(execFile);
@@ -38,13 +38,6 @@ export async function contentTree(projectRoot, config) {
   }
 }
 
-/** The latest verification run of a slice, or null. */
-export async function latestVerification(projectRoot, initiative, slice) {
-  const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative, slice });
-  const latest = entries.filter((item) => item.entry?.kind === "verification").at(-1);
-  return latest ? { id: latest.id, ...latest.entry } : null;
-}
-
 // A slice with an accepted design starts implementation at once and completes on a fresh passing verification run,
 // plus an accepted implementation review when its design marks review as required.
 // A slice designed before verification runs existed keeps the review-ledger gates.
@@ -69,6 +62,7 @@ export async function checkSliceGate({ projectRoot, initiative, slice, gate }) {
   if (design.review === "required") {
     review = await checkReviewGate({ projectRoot, initiative, slice, gate: "completion" }).catch((error) => ({ ready: false, problems: [{ code: error.code ?? "evidence_missing", message: error.message }] }));
     problems.push(...(review.problems ?? []));
+    if (review.ready && review.tree && review.tree !== latest?.tree) problems.push({ code: "review_stale", message: `The accepted review ${review.wave} covers an earlier verified result. Review the current result in a new wave.` });
   }
   return { ready: problems.length === 0, design: true, ...(latest ? { verification: latest.id, tree: latest.tree } : {}), ...(review?.wave ? { wave: review.wave } : {}), problems };
 }

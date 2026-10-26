@@ -54,6 +54,7 @@ The first run of a command asks you in the review browser to allow that exact co
 Approvals stay in Prism's local plugin data, never in your repository.
 Prism refuses to run when a frozen acceptance test changed after the design was accepted.
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
+When the design requires review, an independent reviewer also reviews the verified result, and a later change needs a new run and a new review.
 The slice page in the review browser shows the latest run with its command, exit code, and output tail.
 Verification runs need a git work tree, and `PRISM_VERIFY_TIMEOUT_MINUTES` changes the 30-minute default timeout.
 

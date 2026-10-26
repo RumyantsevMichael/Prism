@@ -20,7 +20,7 @@ An agent could also edit the acceptance tests that encoded the agreed behavior a
 A slice MAY carry an accepted design on its initiative record that lists its frozen acceptance test files with their content digests and marks whether its implementation needs review.
 A slice with an accepted design MUST pass the implementation gate without a design audit.
 A slice with an accepted design MUST complete only on its latest verification run when that run passed, followed the current design acceptance, and tested the current project content.
-A slice whose accepted design requires review MUST also have an accepted implementation review, which MUST NOT require a design-audit wave.
+A slice whose accepted design requires review MUST also have an accepted implementation review of the tree that its latest passing run verified, which MUST NOT require a design-audit wave or change map evidence.
 A slice without an accepted design MUST keep the review-ledger gates unchanged.
 A verification run MUST run only the test command that the project configures, and only after the user allowed that exact command text in the review browser.
 Approvals MUST live in local plugin data, so that no repository change can approve a command.
@@ -48,7 +48,6 @@ Requiring review for every slice was rejected because the benchmark found no qua
 Completion now proves that the configured tests passed on the content being marked done.
 Projects need a git work tree and a configured test command to use the leaner flow.
 A long test suite holds a tool call open, so hosts that cannot keep it open receive an early running answer and call again to keep waiting.
-A review-required slice still needs the change map that the review ledger reads until the change map is derived from commits.
 Anyone who can open the review session URL can allow a command for the user, as with any other gate answer.
 
 ## Mechanism
@@ -56,6 +55,7 @@ Anyone who can open the review session URL can allow a command for the user, as 
 Design acceptance records the frozen test digests and the review mark on the slice through the initiative update tool.
 The verification tool reads the configured command, asks for approval through a recorded decision gate when the command text is new, and joins a run already in progress for the same slice.
 Each run checks the frozen digests, hashes the project content as a git tree that leaves out records, plans, and the roadmap, runs the command in the project root with a timeout, hashes the content again, and appends its result to the slice's run entries.
+A review of such a slice starts its wave on the tree of the latest passing run and an optional base commit, and records findings and lane results without conservation assessments.
 The done transition and active-work gates read the latest run, recheck the frozen digests and the content hash, and add the review gate when the design requires review.
 
 ## Decision Log

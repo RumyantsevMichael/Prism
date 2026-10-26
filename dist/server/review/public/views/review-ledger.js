@@ -30,10 +30,10 @@ function waveCard(wave, index, findings, current) {
       <p class="wave-accepted">${wave.accepted ? `Accepted by <strong>${escapeHtml(wave.accepted.actor)}</strong> · ${escapeHtml(formatTime(wave.accepted.at))}` : "Not accepted"}</p>
       <ul class="lane-list">${lanes}</ul>
       <div class="wave-evidence">
-        ${evidenceChip(wave.snapshotId, "Snapshot")}
+        ${wave.comparisonId ? `${evidenceChip(wave.snapshotId, "Snapshot")}
         ${evidenceChip(wave.comparisonId, "Comparison")}
         ${wave.baselineId && wave.baselineId !== wave.snapshotId ? evidenceChip(wave.baselineId, "Baseline") : ""}
-        <span class="meta-pill" title="${escapeHtml(wave.deltaRevision)}">delta ${escapeHtml(shortId(wave.deltaRevision))}</span>
+        <span class="meta-pill" title="${escapeHtml(wave.deltaRevision)}">delta ${escapeHtml(shortId(wave.deltaRevision))}</span>` : `<span class="meta-pill" title="${escapeHtml(wave.tree ?? "")}">verified tree ${escapeHtml(shortId(wave.tree ?? ""))}</span>${wave.base ? ` <span class="meta-pill">base ${escapeHtml(shortId(wave.base))}</span>` : ""}`}
       </div>
       <p class="wave-findings">${plural(waveFindings.length, "finding")} touched</p>
     </div>

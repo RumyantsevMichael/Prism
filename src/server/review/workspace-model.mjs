@@ -6,7 +6,7 @@ import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
 import { keyOfPath, listInitiatives, listSliceRecords, recordPath } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { latestVerification } from "../workflow/slice-gate.mjs";
+import { latestVerification } from "../workflow/slice-design.mjs";
 
 const LIBRARY_LIMIT = 500;
 const SLICE_FILE_LIMIT = 200;

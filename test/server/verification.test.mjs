@@ -11,6 +11,7 @@ delete process.env.CLAUDE_PLUGIN_DATA;
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { checkSliceGate } = await import("../../dist/server/workflow/slice-gate.mjs");
+const { getReview, updateReview } = await import("../../dist/server/review/review-ledger.mjs");
 const { answerUserGate, readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
@@ -190,14 +191,30 @@ test("cancelling the call stops the run", async (context) => {
   assert.ok(Date.now() - started < 10000);
 });
 
-test("a slice whose design requires review also needs an accepted implementation review", async (context) => {
+test("a slice whose design requires review completes on a review of its verified result", async (context) => {
   const root = await project(context);
   await accept(root, "download", "required");
+  const slice = { projectRoot: root, initiative: INITIATIVE, slice: "download" };
+  const review = async (actor, operations, extra = {}) => updateReview({ ...slice, expectedRevision: (await getReview(slice)).revision, actor, operations, ...extra });
+  const coordinator = { id: "orchestrator", role: "coordinator" }, reviewer = { id: "Review download", role: "reviewer" }, delivery = { id: "Develop download", role: "delivery" };
+  const lanes = [{ id: "security", reviewer: "Review download", coverage: ["."] }];
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w1", mode: "implementation-review", lanes }], { delivery: "Develop download" }), /Run verify_slice until it passes/);
   const gateId = await approve(root);
-  assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId })).status, "passed");
-  const gate = await checkSliceGate({ projectRoot: root, initiative: INITIATIVE, slice: "download", gate: "completion" });
-  assert.equal(gate.ready, false);
+  assert.equal((await verifySlice({ ...slice, approvalGate: gateId })).status, "passed");
+  let gate = await checkSliceGate({ ...slice, gate: "completion" });
   assert.deepEqual(gate.problems.map((problem) => problem.code), ["evidence_missing"]);
+  await review(coordinator, [{ op: "start_wave", id: "w1", mode: "implementation-review", base: "abc1234", lanes }], { delivery: "Develop download" });
+  await review(reviewer, [{ op: "open_finding", lane: "security", localId: "F1", title: "Signature is not checked", severity: "high", affectedPath: "source.mjs", evidence: "No check.", conditionToClose: "Downloads check the signature." }]);
+  await assert.rejects(review(reviewer, [{ op: "record_assessment", assessment: { id: "a1", lane: "security", kind: "manual", observationIds: ["x"], evidence: [{ path: "source.mjs" }], reason: "checked" } }]), /records findings and lane results only/);
+  await review(delivery, [{ op: "set_finding_status", id: "implementation-review/security/F1", status: "FIXED", evidence: "Added the check." }]);
+  await review(reviewer, [{ op: "set_finding_status", id: "implementation-review/security/F1", status: "VERIFIED", evidence: "Checked." }, { op: "submit_lane", lane: "security", status: "CLEAN" }]);
+  await review(coordinator, [{ op: "accept_wave" }]);
+  gate = await checkSliceGate({ ...slice, gate: "completion" });
+  assert.equal(gate.ready, true, JSON.stringify(gate.problems));
+  await writeFile(path.join(root, "source.mjs"), "export const value = 3;\n");
+  assert.equal((await verifySlice(slice)).status, "passed");
+  gate = await checkSliceGate({ ...slice, gate: "completion" });
+  assert.deepEqual(gate.problems.map((problem) => problem.code), ["review_stale"]);
   await accept(root, "audit", "none");
   assert.equal((await checkSliceGate({ projectRoot: root, initiative: INITIATIVE, slice: "audit", gate: "completion" })).problems[0].code, "verification_missing");
 });

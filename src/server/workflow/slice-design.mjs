@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { locateRecord } from "./record-store.mjs";
+import { listRecordEntries, locateRecord } from "./record-store.mjs";
 
 const FROZEN_TEST_MAX_BYTES = 4 * 1024 * 1024;
 export const REVIEW_MARKS = Object.freeze(["required", "none"]);
@@ -79,6 +79,13 @@ export function designProblems(design) {
   if (!REVIEW_MARKS.includes(design.review)) problems.push(`design.review must be one of ${REVIEW_MARKS.join(", ")}.`);
   if (!Array.isArray(design.frozenTests) || design.frozenTests.some((item) => typeof item?.path !== "string" || !/^[0-9a-f]{64}$/.test(item?.sha256 ?? ""))) problems.push("design.frozenTests must list { path, sha256 } entries.");
   return problems;
+}
+
+/** The latest verification run of a slice, or null. */
+export async function latestVerification(projectRoot, initiative, slice) {
+  const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative, slice });
+  const latest = entries.filter((item) => item.entry?.kind === "verification").at(-1);
+  return latest ? { id: latest.id, ...latest.entry } : null;
 }
 
 /** The accepted design of a slice, read from its initiative record, or null for a slice designed before verification runs existed. */
