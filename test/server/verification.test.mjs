@@ -8,8 +8,8 @@ import test from "node:test";
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-verify-data-")));
 process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
-const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
-const { verifySlice } = await import("../../dist/server/workflow/verification.mjs");
+const { getInitiative, initiativeAcknowledgement, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
+const { failingTests, verificationBrief, verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { checkSliceGate } = await import("../../dist/server/workflow/slice-gate.mjs");
 const { getReview, updateReview } = await import("../../dist/server/review/review-ledger.mjs");
 const { answerUserGate, readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
@@ -41,7 +41,8 @@ async function initiativeUpdate(root, operations) {
   return updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, operations });
 }
 
-const accept = (root, slug = "download", review = "none") => initiativeUpdate(root, [{ op: "accept_design", slug, frozenTests: ["test/acceptance.test.mjs"], review }]);
+// A started slice keeps its frozen tests in place when its design is accepted.
+const accept = (root, slug = "download", review = "none") => initiativeUpdate(root, [{ op: "set_status", slug, status: "in-progress" }, { op: "accept_design", slug, frozenTests: ["test/acceptance.test.mjs"], review }]);
 
 async function approve(root, slice = "download", choice = "allow") {
   const asked = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice });
@@ -112,12 +113,14 @@ test("an agent-opened gate answered Allow does not approve a command", async (co
   assert.notEqual(result.gateId, forgedId);
 });
 
-test("a passing run completes the slice until project content changes, and record writes never make it stale", async (context) => {
+test("a passing run completes the slice, and only project content changes make its gate stale", async (context) => {
   const root = await project(context);
   await accept(root);
   const gateId = await approve(root);
   const passed = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId });
   assert.equal(passed.status, "passed");
+  assert.equal(passed.sliceStatus, "done", "a slice whose design marks no review completes on its passing run");
+  assert.equal((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices.download.status, "done");
   assert.equal(passed.exitCode, 0);
   assert.match(passed.tree, /^[0-9a-f]{40,64}$/);
   assert.deepEqual(passed.frozen, { checked: 1, changed: [], missing: [] });
@@ -129,10 +132,10 @@ test("a passing run completes the slice until project content changes, and recor
   await writeFile(path.join(root, "source.mjs"), "export const value = 2;\n");
   const stale = await checkSliceGate({ projectRoot: root, initiative: INITIATIVE, slice: "download", gate: "completion" });
   assert.deepEqual(stale.problems.map((problem) => problem.code), ["verification_stale"]);
+  await initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "in-progress" }]);
   await assert.rejects(initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "done" }]), /changed after the verification run/);
   assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" })).status, "passed", "an approved command runs without asking again");
-  const done = await initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "done" }]);
-  assert.equal(done.record.slices.download.status, "done");
+  assert.equal((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices.download.status, "done");
 });
 
 test("a failing command or a changed frozen test blocks completion", async (context) => {
@@ -227,6 +230,77 @@ test("a slice whose design requires review completes on a review of its verified
   assert.equal((await verifySlice(slice)).status, "passed");
   gate = await checkSliceGate({ ...slice, gate: "completion" });
   assert.deepEqual(gate.problems.map((problem) => problem.code), ["review_stale"]);
-  await accept(root, "audit", "none");
+  assert.equal((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices.download.status, "in-progress", "a slice that requires review never completes on a run alone");
+  await writeFile(path.join(root, "test", "audit.test.mjs"), "// frozen audit test\n");
+  await initiativeUpdate(root, [{ op: "set_status", slug: "audit", status: "in-progress" }, { op: "accept_design", slug: "audit", frozenTests: ["test/audit.test.mjs"], review: "none" }]);
   assert.equal((await checkSliceGate({ projectRoot: root, initiative: INITIATIVE, slice: "audit", gate: "completion" })).problems[0].code, "verification_missing");
+});
+
+const exists = (file) => readFile(file).then(() => true, () => false);
+const git = (root, ...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+
+test("frozen tests of slices that have not started are staged and go in place when each slice starts", async (context) => {
+  const root = await project(context);
+  await writeFile(path.join(root, "test", "audit.test.mjs"), "// audit before the design\n");
+  git(root, "add", "-A");
+  git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "base");
+  await writeFile(path.join(root, "test", "audit.test.mjs"), "// frozen audit test\n");
+  const operations = [
+    { op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" },
+    { op: "accept_design", slug: "audit", frozenTests: ["test/audit.test.mjs"], review: "none" }
+  ];
+  const result = await initiativeUpdate(root, operations);
+  const brief = initiativeAcknowledgement(result, operations);
+  assert.equal(brief.record, undefined, "the acknowledgement leaves the record to get_initiative");
+  assert.deepEqual(brief.slices, { download: { status: "not-started", design: "staged", frozenTests: 1, review: "none" }, audit: { status: "not-started", design: "staged", frozenTests: 1, review: "none" } });
+  assert.deepEqual(brief.stagedTests.sort(), ["test/acceptance.test.mjs", "test/audit.test.mjs"]);
+  assert.equal(await readFile(path.join(root, "test", "audit.test.mjs"), "utf8"), "// audit before the design\n", "a file that existed goes back to its earlier content");
+  assert.equal(await exists(path.join(root, "test", "acceptance.test.mjs")), false, "a file committed with its frozen content goes back to the version before that commit, where it did not exist");
+  await assert.rejects(verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "audit" }), /has not started/);
+  await assert.rejects(initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/audit.test.mjs"], review: "none" }]), /already belongs to another slice/);
+  const started = await initiativeUpdate(root, [{ op: "set_status", slug: "audit", status: "in-progress" }]);
+  assert.deepEqual(started.installed, ["test/audit.test.mjs"]);
+  assert.equal(await readFile(path.join(root, "test", "audit.test.mjs"), "utf8"), "// frozen audit test\n");
+  assert.equal(started.record.slices.audit.design.staged, undefined);
+  const gateId = await approve(root, "audit");
+  const passed = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "audit", approvalGate: gateId });
+  assert.equal(passed.status, "passed");
+  assert.equal(passed.sliceStatus, "done");
+});
+
+test("accepting a design refuses a diagram that does not parse or shows too many elements", async (context) => {
+  const root = await project(context);
+  const folder = path.join(root, "docs", "plans", "reports", "download");
+  await mkdir(folder, { recursive: true });
+  await writeFile(path.join(folder, "code.puml"), "@startuml\nclass A {\nA -->> B ::\n@enduml\n");
+  await assert.rejects(accept(root), /code\.puml line 2 does not parse/);
+  await writeFile(path.join(folder, "code.puml"), `@startuml\n${Array.from({ length: 31 }, (_, index) => `class C${index}`).join("\n")}\n@enduml\n`);
+  await assert.rejects(accept(root), /shows 31 elements, more than 30/);
+  await writeFile(path.join(folder, "code.puml"), "@startuml\nclass Report\nclass Signer\nReport --> Signer\n@enduml\n");
+  await writeFile(path.join(root, "docs", "plans", "reports", "overview.puml"), "@startuml\npackage download {\n[Report]\n}\npackage audit {\n[Log]\n}\n[Log] ..> [Report]\n@enduml\n");
+  const operations = [{ op: "set_status", slug: "download", status: "in-progress" }, { op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" }];
+  const brief = initiativeAcknowledgement(await initiativeUpdate(root, operations), operations);
+  assert.deepEqual(brief.diagrams, [
+    { path: "docs/plans/reports/download/code.puml", elements: 2, relations: 1 },
+    { path: "docs/plans/reports/overview.puml", elements: 4, relations: 1 }
+  ]);
+});
+
+test("a brief verification names the failing tests and the full log", async (context) => {
+  const output = ["running 3 tests", "test tui::resize ... FAILED", "test tui::draw ... ok", "not ok 2 - renders the header", "FAILED tests/test_app.py::test_quit - assert 1 == 0", "--- FAIL: TestPane (0.00s)", "  ✖ keeps the cursor (3.2ms)"].join("\n");
+  assert.deepEqual(failingTests(output), ["tui::resize", "renders the header", "tests/test_app.py::test_quit", "TestPane", "keeps the cursor"]);
+  const brief = verificationBrief({ status: "failed", passed: false, reason: "command_failed", message: "The test command failed.", durationMs: 5, path: ".prism/run.json", log: "/data/run.log", outputTail: `${"x".repeat(5000)}\n${output}`, tree: "abc", frozen: { checked: 1, changed: [], missing: [] } });
+  assert.deepEqual(brief.failing.length, 5);
+  assert.equal(brief.log, "/data/run.log");
+  assert.equal(brief.tree, undefined);
+  assert.ok(brief.outputTail.length <= 1500);
+  const root = await project(context);
+  await writeFile(path.join(root, "check.mjs"), "console.log(\"not ok 1 - signs the report\");\nprocess.exit(3);\n");
+  await accept(root);
+  const gateId = await approve(root);
+  const failed = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId });
+  assert.equal(failed.status, "failed");
+  assert.deepEqual(verificationBrief(failed).failing, ["signs the report"]);
+  assert.match(await readFile(failed.log, "utf8"), /not ok 1 - signs the report/);
+  assert.equal(failed.log.startsWith(privateData), true, "the full log stays in plugin data, outside the project");
 });

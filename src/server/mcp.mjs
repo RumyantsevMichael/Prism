@@ -28,9 +28,9 @@ import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { opensAtStart } from "./review/open-at-start.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
-import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } from "./workflow/initiative.mjs";
+import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
-import { VERIFY_SLICE_SCHEMA, cancelVerifications, verifySlice } from "./workflow/verification.mjs";
+import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
@@ -334,13 +334,13 @@ const tools = [
   ...INITIATIVE_TOOLS,
   {
     name: "verify_slice",
-    description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. The first run of a command text asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run.",
+    description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. A passing run completes a slice whose design marks no review. The result is brief: the verdict, failing test names, the run record, and the path of the full output log. The first run of a command text asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run.",
     inputSchema: VERIFY_SLICE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   },
   {
     name: "update_design_view",
-    description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes.",
+    description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes. It also parses the PlantUML files beside slice.md and reports any that accept_design would refuse.",
     inputSchema: UPDATE_DESIGN_VIEW_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
@@ -1009,9 +1009,10 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
     });
     // A passing run with a source snapshot gets its change map derived in the background, so the review browser can show it.
     if (value.status === "passed" && value.snapshotId) startChangeMapDerivation({ projectRoot, initiative: argumentsValue.initiative, slice: argumentsValue.slice });
-    const { outputTail, ...summary } = value;
-    const text = [value.message ?? `Verification ${value.status}.`, JSON.stringify(summary), outputTail ? `Output tail:\n${outputTail}` : ""].filter(Boolean).join("\n");
-    return { content: [{ type: "text", text }], structuredContent: value };
+    const brief = verificationBrief(value);
+    const { outputTail, ...summary } = brief;
+    const text = [brief.message ?? `Verification ${brief.status}.`, JSON.stringify(summary), outputTail ? `Output tail:\n${outputTail}` : ""].filter(Boolean).join("\n");
+    return { content: [{ type: "text", text }], structuredContent: brief };
   } finally {
     pendingWaits.delete(requestId);
   }
@@ -1048,7 +1049,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     const value = name === "get_roadmap" ? await getRoadmap(input)
       : name === "update_roadmap" ? await updateRoadmap(input)
       : name === "get_initiative" ? await getInitiative(input)
-      : await updateInitiative(input);
+      : initiativeAcknowledgement(await updateInitiative(input), input.operations);
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (repositoryTools.has(name)) {

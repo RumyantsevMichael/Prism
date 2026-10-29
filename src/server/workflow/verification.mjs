@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { conservationStore } from "../conservation/conservation-store.mjs";
@@ -16,6 +16,8 @@ const APPROVALS_FILE = "verification-approvals.json";
 const OUTPUT_TAIL_BYTES = 64 * 1024;
 const RECORDED_TAIL_CHARS = 4000;
 const RETURNED_TAIL_CHARS = 20000;
+const BRIEF_TAIL_CHARS = 1500;
+const MAX_FAILING_NAMES = 20;
 const DEFAULT_TIMEOUT_MINUTES = 30;
 const PROGRESS_MS = 30000;
 const KILL_GRACE_MS = 5000;
@@ -175,7 +177,18 @@ function execute(command, root, { signal, timeoutMs, onProgress }) {
   });
 }
 
-async function verificationRun({ root, initiative, slice, command, key, config, design, signal, onProgress }) {
+// The full output stays in local plugin data, outside the project, so a caller reads it only when the brief result is not enough.
+async function writeLog(dataDirectory, root, initiative, slice, id, output) {
+  try {
+    const directory = path.join(dataDirectoryOf(dataDirectory), "verification-logs", digest(root).slice(0, 16), initiative, slice);
+    await mkdir(directory, { recursive: true });
+    const target = path.join(directory, `${id}.log`);
+    await writeFile(target, output);
+    return target;
+  } catch { return null; }
+}
+
+async function verificationRun({ root, initiative, slice, command, key, config, design, signal, onProgress, dataDirectory }) {
   const startedAt = new Date().toISOString();
   const frozen = await checkFrozenTests(root, design.frozenTests);
   const base = { kind: "verification", startedAt, command, commandDigest: key, designAcceptedAt: design.acceptedAt, frozen };
@@ -195,7 +208,8 @@ async function verificationRun({ root, initiative, slice, command, key, config, 
   const { output = entry.outputTail, ...recorded } = entry;
   const id = `verification-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
   const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, recorded);
-  return { id, path: stored.path, ...recorded, output };
+  const log = output ? await writeLog(dataDirectory, root, initiative, slice, id, output) : null;
+  return { id, path: stored.path, ...recorded, ...(log ? { log } : {}), output };
 }
 
 // One run per slice at a time: a repeated call joins the running one, so a host that returns early can call again to keep waiting.
@@ -221,6 +235,7 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
   const root = await realpath(projectRoot);
   const design = await acceptedDesign(root, initiative, slice);
   if (!design) throw fail("design_missing", `The slice ${slice} has no accepted design. Accept it with the update_initiative accept_design operation before verification.`);
+  if (design.staged) throw fail("slice_not_started", `The slice ${slice} has not started, so its frozen tests are not in place. Start it with the update_initiative set_status in-progress operation.`);
   const { config, command } = await configuredTestCommand(root);
   if (!command) throw fail("test_command_missing", "The project configures no test command. Add one under ## Stack in .prism/workflow.md as - Test command: <command>.");
   const allowed = await approval({ root, initiative, slice, command, approvalGate, dataDirectory });
@@ -234,7 +249,8 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
     const controller = new AbortController();
     const listeners = new Set();
     job = { command, controller, listeners, startedAt: new Date().toISOString(), promise: null };
-    job.promise = verificationRun({ root, initiative, slice, command, key: allowed.key, config, design, signal: controller.signal, onProgress: (seconds, latest) => listeners.forEach((listener) => listener(seconds, latest)) })
+    job.promise = verificationRun({ root, initiative, slice, command, key: allowed.key, config, design, dataDirectory, signal: controller.signal, onProgress: (seconds, latest) => listeners.forEach((listener) => listener(seconds, latest)) })
+      .then((run) => completeSlice(root, initiative, slice, design, run))
       .finally(() => { if (jobs.get(jobKey) === job) jobs.delete(jobKey); });
     // A caller that returned early no longer awaits the run, so its failure must not go unhandled.
     job.promise.catch(() => {});
@@ -256,6 +272,60 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
     signal?.removeEventListener("abort", abort);
     if (onProgress) job.listeners.delete(onProgress);
   }
+}
+
+// A passing run completes a slice whose design marks no review, so the coordinator never records that step itself.
+async function completeSlice(root, initiative, slice, design, run) {
+  if (!run.passed || design.review === "required") return run;
+  const { getInitiative, updateInitiative } = await import("./initiative.mjs");
+  try {
+    const current = await getInitiative({ projectRoot: root, initiative });
+    if (current.record?.slices?.[slice]?.status === "done") return { ...run, sliceStatus: "done" };
+    await updateInitiative({ projectRoot: root, initiative, expectedRevision: current.revision, actor: "verify_slice", operations: [{ op: "set_status", slug: slice, status: "done" }] });
+    return { ...run, sliceStatus: "done" };
+  } catch (error) {
+    return { ...run, sliceStatus: "unchanged", statusMessage: error.message };
+  }
+}
+
+// Test names a failing run reports, read from common runner formats: cargo, Node, TAP, pytest, Go, Jest, and Vitest.
+const FAILING_PATTERNS = [
+  /^test (\S+) \.\.\. FAILED$/,
+  /^---- (\S+) stdout ----$/,
+  /^not ok \d+ - (.+?)(?:\s+#.*)?$/,
+  /^FAILED (\S+)/,
+  /^--- FAIL: (\S+)/,
+  /^\s*[✖✕×] (.+?)(?: \(\d+(?:\.\d+)?\s*m?s\))?$/
+];
+
+export function failingTests(output) {
+  const names = new Set();
+  for (const line of String(output ?? "").split(/\r?\n/)) {
+    for (const pattern of FAILING_PATTERNS) {
+      const match = pattern.exec(line.trimEnd());
+      if (match) { names.add(match[1].trim()); break; }
+    }
+  }
+  return [...names];
+}
+
+/** What a coordinator needs from a run: the verdict, the failing tests, and where the full log is; the record keeps the rest. */
+export function verificationBrief(value) {
+  if (!["passed", "failed"].includes(value.status)) return value;
+  const failing = value.status === "failed" ? failingTests(value.outputTail) : [];
+  const frozen = value.frozen && (value.frozen.changed.length || value.frozen.missing.length) ? { frozenChanged: value.frozen.changed, frozenMissing: value.frozen.missing } : {};
+  return {
+    status: value.status,
+    ...(value.reason ? { reason: value.reason, message: value.message } : {}),
+    ...(failing.length ? { failing: failing.slice(0, MAX_FAILING_NAMES), failingCount: failing.length } : {}),
+    ...frozen,
+    ...(value.sliceStatus ? { sliceStatus: value.sliceStatus } : {}),
+    ...(value.statusMessage ? { statusMessage: value.statusMessage } : {}),
+    durationMs: value.durationMs,
+    run: value.path,
+    ...(value.log ? { log: value.log } : {}),
+    ...(value.status === "failed" && value.outputTail ? { outputTail: tail(value.outputTail, BRIEF_TAIL_CHARS) } : {})
+  };
 }
 
 /** Abort every running verification, as the server does when its host disconnects. */

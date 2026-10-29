@@ -55,7 +55,7 @@ async function project(context) {
 
 async function acceptAndVerify(root) {
   const current = await getInitiative({ projectRoot: root, initiative: INITIATIVE });
-  const accepted = await updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, operations: [{ op: "accept_design", slug: SLICE, frozenTests: ["test/acceptance.test.mjs"], review: "none" }] });
+  const accepted = await updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, operations: [{ op: "set_status", slug: SLICE, status: "in-progress" }, { op: "accept_design", slug: SLICE, frozenTests: ["test/acceptance.test.mjs"], review: "none" }] });
   return accepted.record.slices[SLICE].design;
 }
 

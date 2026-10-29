@@ -81,7 +81,7 @@ test("an accepted design limits examples to its frozen tests, and a changed cont
   const root = await project(context);
   await writeFile(path.join(root, "tests", "other.rs"), "fn download_writes_bytes() {}\n");
   const current = await getInitiative({ projectRoot: root, initiative: INITIATIVE });
-  await updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, operations: [{ op: "accept_design", slug: INITIATIVE, frozenTests: ["tests/report_download.rs"], review: "none" }] });
+  await updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, operations: [{ op: "set_status", slug: INITIATIVE, status: "in-progress" }, { op: "accept_design", slug: INITIATIVE, frozenTests: ["tests/report_download.rs"], review: "none" }] });
   await assert.rejects(updateDesignView({ projectRoot: root, initiative: INITIATIVE, slice: INITIATIVE, examples: [{ ...examples[0], file: "tests/other.rs" }] }), /not a frozen test/);
   await updateDesignView({ projectRoot: root, initiative: INITIATIVE, slice: INITIATIVE, examples });
 

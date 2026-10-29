@@ -10,7 +10,8 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { locateRecord, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
-import { designProblems, digestFrozenTests, REVIEW_MARKS } from "./slice-design.mjs";
+import { designProblems, digestFrozenTests, installFrozenTests, REVIEW_MARKS, stageFrozenTests, withdrawFrozenTests } from "./slice-design.mjs";
+import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 
 const RECORD_NAME = "initiative.json";
 const PROJECTION_NAME = "initiative.md";
@@ -89,7 +90,7 @@ function canonicalRecord(record) {
       parent: slice.parent,
       requirements: [...slice.requirements].sort(),
       dependencies: [...slice.dependencies].sort(),
-      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}) } } : {})
+      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}) } } : {})
     };
   }
   return { schemaVersion: 1, id: record.id, slices, history: record.history.slice(-HISTORY_LIMIT) };
@@ -181,7 +182,7 @@ function markdown(record) {
     lines.push(`${indent}  - Requirements: ${slice.requirements.join(", ")}`);
     if (slice.dependencies.length) lines.push(`${indent}  - Depends on: ${slice.dependencies.map((item) => `\`${item}\``).join(", ")}`);
     const design = record.slices[slugValue].design;
-    if (design) lines.push(`${indent}  - Design accepted ${design.acceptedAt.slice(0, 10)}: ${design.frozenTests.length} frozen test files, review ${design.review === "required" ? "required" : "not required"}`);
+    if (design) lines.push(`${indent}  - Design accepted ${design.acceptedAt.slice(0, 10)}: ${design.frozenTests.length} frozen test files${design.staged ? " staged until the slice starts" : ""}, review ${design.review === "required" ? "required" : "not required"}`);
     for (const child of analysis.children[slugValue]) visit(child, depth + 1);
   };
   visit(analysis.root, 0);
@@ -232,7 +233,14 @@ async function captureBaseline(root, initiative, slice) {
   catch { return null; }
 }
 
-async function applyOperation(resolved, record, operation) {
+const STARTED = new Set(["in-progress", "blocked"]);
+
+// A frozen test file belongs to one unfinished slice, because each slice's tests go in place only when that slice starts.
+function claimedTests(slices, slugValue, frozenTests) {
+  return frozenTests.map((item) => item.path).filter((file) => Object.entries(slices).some(([key, other]) => key !== slugValue && other.status !== "done" && other.design?.frozenTests.some((test) => test.path === file)));
+}
+
+async function applyOperation(resolved, record, operation, effects) {
   const slices = record.slices;
   const requireSlice = (slugValue) => {
     if (!Object.hasOwn(slices, slugValue)) throw fail("validation_failed", `The slice ${slugValue} does not exist.`);
@@ -270,6 +278,13 @@ async function applyOperation(resolved, record, operation) {
     case "set_status": {
       const slice = requireSlice(operation.slug);
       if (slice.status === "split") throw fail("validation_failed", "A split parent keeps the split status permanently.");
+      if (operation.status === "in-progress" && slice.design?.staged) {
+        const baselineId = await captureBaseline(resolved.root, resolved.initiative, operation.slug);
+        effects.installed.push(...await installFrozenTests(resolved.root, resolved.initiative, operation.slug, slice.design.frozenTests));
+        delete slice.design.staged;
+        if (baselineId) slice.design.baselineId = baselineId;
+        else delete slice.design.baselineId;
+      }
       if (operation.status === "done" && slice.status !== "done") {
         const gate = await completionGate(resolved, operation.slug);
         if (!gate.ready) {
@@ -294,8 +309,23 @@ async function applyOperation(resolved, record, operation) {
       if (slice.status === "split") throw fail("validation_failed", "A split slice is designed through its children.");
       if (slice.status === "done") throw fail("validation_failed", "A done slice cannot take a new design.");
       const frozenTests = await digestFrozenTests(resolved.root, operation.frozenTests);
-      const baselineId = await captureBaseline(resolved.root, resolved.initiative, operation.slug);
-      slice.design = { acceptedAt: new Date().toISOString(), frozenTests, review: operation.review, ...(baselineId ? { baselineId } : {}) };
+      const claimed = claimedTests(slices, operation.slug, frozenTests);
+      if (claimed.length) throw fail("validation_failed", `${claimed.join(", ")} already belongs to another slice that is not done; a frozen test file belongs to one slice.`);
+      // A slice's code view sits in its folder and the initiative's overview in the root folder; each folder is checked once per update.
+      const folders = [sliceFolder(resolved.directory, slices, operation.slug), resolved.directory].filter((folder) => !effects.checkedFolders.has(folder));
+      const diagrams = [];
+      for (const folder of new Set(folders)) { effects.checkedFolders.add(folder); diagrams.push(...await checkFolderDiagrams(resolved.root, folder)); }
+      const problems = diagramProblems(diagrams);
+      if (problems.length) throw fail("diagram_problems", `The design of ${operation.slug} was not accepted: ${problems.join(" ")}`, { problems });
+      effects.diagrams.push(...diagrams);
+      const acceptedAt = new Date().toISOString();
+      if (STARTED.has(slice.status)) {
+        const baselineId = await captureBaseline(resolved.root, resolved.initiative, operation.slug);
+        slice.design = { acceptedAt, frozenTests, review: operation.review, ...(baselineId ? { baselineId } : {}) };
+      } else {
+        effects.staged.push(...await stageFrozenTests(resolved.root, resolved.initiative, operation.slug, frozenTests));
+        slice.design = { acceptedAt, frozenTests, review: operation.review, staged: true };
+      }
       break;
     }
     case "regenerate_markdown":
@@ -339,8 +369,9 @@ export async function updateInitiative(input) {
     const record = current.record
       ? { id: current.record.id, slices: Object.assign(Object.create(null), structuredClone(current.record.slices)), history: [...current.record.history] }
       : { id: resolved.initiative, slices: Object.create(null), history: [] };
+    const effects = { staged: [], installed: [], diagrams: [], checkedFolders: new Set() };
     for (const operation of input.operations) {
-      await applyOperation(resolved, record, operation);
+      await applyOperation(resolved, record, operation, effects);
     }
     try {
       analyzeInitiative(record.slices);
@@ -354,6 +385,8 @@ export async function updateInitiative(input) {
     const contents = serialize(record);
     const changed = mutating.length > 0 && (!current.exists || contents !== (await readFile(resolved.target, "utf8").catch(() => null)));
     if (changed) await writeRecord(resolved.root, { kind: "initiative", initiative: resolved.initiative }, contents);
+    // Staged tests leave the work tree only after the record that keeps them is written.
+    const withdrawn = await withdrawFrozenTests(resolved.root, effects.staged);
     let projectionStale = false;
     try {
       projectionStale = !(await writeProjection(resolved.root, resolved.projectionTarget, markdown(canonicalRecord(record)), RECORD_NAME)).written;
@@ -361,8 +394,41 @@ export async function updateInitiative(input) {
       projectionStale = true;
     }
     const updated = await loadRecord(resolved);
-    return { ...publicResult(resolved, updated), created: !current.exists, previousRevision: current.revision, projectionStale };
+    return { ...publicResult(resolved, updated), created: !current.exists, previousRevision: current.revision, projectionStale, withdrawn, installed: effects.installed, diagrams: effects.diagrams };
   }, fail));
+}
+
+// The slugs an update names, so its acknowledgement reports only what the caller touched.
+function touchedSlugs(operations) {
+  return [...new Set(operations.flatMap((operation) => operation.op === "split" ? [operation.parent, ...operation.children.map((child) => child.slug)] : operation.slug ? [operation.slug] : []))];
+}
+
+/**
+ * What an agent needs back from an update: the new revision and the state of the slices it touched, not the whole record,
+ * which get_initiative reads when it is needed.
+ */
+export function initiativeAcknowledgement(result, operations) {
+  if (result.removed) return result;
+  const slices = result.record?.slices ?? {};
+  const touched = Object.fromEntries(touchedSlugs(operations).filter((key) => slices[key]).map((key) => [key, {
+    status: slices[key].status,
+    ...(slices[key].design ? { design: slices[key].design.staged ? "staged" : "accepted", frozenTests: slices[key].design.frozenTests.length, review: slices[key].design.review } : {})
+  }]));
+  const unchecked = result.diagrams.filter((item) => !item.checked);
+  return {
+    initiative: result.initiative,
+    revision: result.revision,
+    previousRevision: result.previousRevision,
+    ...(result.created ? { created: true } : {}),
+    ...(result.valid ? {} : { valid: false, errors: result.errors }),
+    slices: touched,
+    ...(result.derived?.readyToShip ? { readyToShip: true } : {}),
+    ...(result.withdrawn.length ? { stagedTests: result.withdrawn } : {}),
+    ...(result.installed.length ? { installedTests: result.installed } : {}),
+    ...(result.diagrams.length ? { diagrams: result.diagrams.filter((item) => item.checked).map(({ path: file, elements, relations }) => ({ path: file, elements, relations })) } : {}),
+    ...(unchecked.length ? { diagramsUnchecked: unchecked.map((item) => `${item.path}: ${item.message}`) } : {}),
+    ...(result.projectionStale ? { projectionStale: true } : {})
+  };
 }
 
 export const INITIATIVE_TOOLS = [
@@ -374,7 +440,7 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review. Every write validates the whole slice graph and regenerates initiative.md. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

@@ -3,7 +3,8 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { assertInput } from "./artifact-schema.mjs";
 import { readRecord, sliceDocumentFolder, withRecordLock, writeRecord } from "./record-store.mjs";
-import { acceptedDesign, readFrozenTest } from "./slice-design.mjs";
+import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
+import { acceptedDesign, readFrozenTestOf } from "./slice-design.mjs";
 
 const MAX_EXAMPLES = 400;
 const MAX_EXAMPLE_CHARS = 400;
@@ -132,7 +133,7 @@ export async function updateDesignView(input) {
   for (const file of new Set(input.examples.map((item) => item.file))) {
     if (frozen && !frozen.has(file)) { problems.push(`${file} is not a frozen test of the accepted design.`); continue; }
     try {
-      const bytes = await readFrozenTest(root, file);
+      const bytes = await readFrozenTestOf(root, initiative, file);
       if (bytes === null) problems.push(`${file} does not exist.`);
       else files.set(file, { sha256: sha256(bytes), content: bytes.toString("utf8") });
     } catch (error) { problems.push(error.message); }
@@ -155,7 +156,17 @@ export async function updateDesignView(input) {
   await withRecordLock(root, key, () => writeRecord(root, key, `${JSON.stringify(document, null, 2)}\n`), fail);
   const cited = new Set(document.examples.map((item) => item.clause));
   const gaps = clauses.map((text, index) => ({ clause: index + 1, text })).filter((item) => !cited.has(item.clause));
-  return { status: "written", clauses: clauses.length, examples: document.examples.length, gaps };
+  // The designer learns about a diagram the design gate would refuse here, before anyone accepts the design.
+  const diagrams = await checkFolderDiagrams(root, path.posix.dirname(design.path));
+  const refused = diagramProblems(diagrams);
+  return {
+    status: "written",
+    clauses: clauses.length,
+    examples: document.examples.length,
+    gaps,
+    ...(diagrams.length ? { diagrams: diagrams.filter((item) => item.checked && item.valid).map(({ path: file, elements, relations }) => ({ path: file, elements, relations })) } : {}),
+    ...(refused.length ? { diagramProblems: refused } : {})
+  };
 }
 
 async function storedView(root, initiative, slice) {
@@ -213,7 +224,7 @@ export async function loadDesignView(projectRoot, initiative, slice, { changeMap
     examples = stored.examples;
     if (stored.design?.contractSha256 !== contractDigest(clauses)) stale.push("The contract changed after the examples were written.");
     for (const test of stored.tests ?? []) {
-      const bytes = await readFrozenTest(root, test.path).catch(() => null);
+      const bytes = await readFrozenTestOf(root, initiative, test.path).catch(() => null);
       if (bytes === null) stale.push(`${test.path} no longer exists.`);
       else if (sha256(bytes) !== test.sha256) stale.push(`${test.path} changed after the examples were written.`);
     }

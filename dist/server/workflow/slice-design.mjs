@@ -1,8 +1,11 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { open, readFile, realpath } from "node:fs/promises";
+import { mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
-import { listRecordEntries, locateRecord } from "./record-store.mjs";
+import { promisify } from "node:util";
+import { writeAtomically } from "./artifact-store.mjs";
+import { listRecordEntries, listSliceRecords, locateRecord, readRecord, writeRecord } from "./record-store.mjs";
 
 const FROZEN_TEST_MAX_BYTES = 4 * 1024 * 1024;
 export const REVIEW_MARKS = Object.freeze(["required", "none"]);
@@ -76,7 +79,8 @@ export function designProblems(design) {
   if (design === undefined) return [];
   if (design === null || typeof design !== "object" || Array.isArray(design)) return ["design must be an object."];
   const problems = [];
-  if (Object.keys(design).some((key) => !["acceptedAt", "frozenTests", "review", "baselineId"].includes(key))) problems.push("design holds only acceptedAt, frozenTests, review, and baselineId.");
+  if (Object.keys(design).some((key) => !["acceptedAt", "frozenTests", "review", "baselineId", "staged"].includes(key))) problems.push("design holds only acceptedAt, frozenTests, review, baselineId, and staged.");
+  if (design.staged !== undefined && design.staged !== true) problems.push("design.staged must be true when present.");
   if (design.baselineId !== undefined && !/^[0-9a-f]{64}$/.test(String(design.baselineId))) problems.push("design.baselineId must be a snapshot identifier.");
   if (typeof design.acceptedAt !== "string" || Number.isNaN(Date.parse(design.acceptedAt))) problems.push("design.acceptedAt must be an ISO timestamp.");
   if (!REVIEW_MARKS.includes(design.review)) problems.push(`design.review must be one of ${REVIEW_MARKS.join(", ")}.`);
@@ -99,4 +103,83 @@ export async function acceptedDesign(projectRoot, initiative, slice) {
   catch { return null; }
   const design = raw?.slices?.[slice]?.design;
   return design && designProblems(design).length === 0 ? design : null;
+}
+
+const run = promisify(execFile);
+
+async function committed(root, revision, relative) {
+  try { return (await run("git", ["show", `${revision}:${relative}`], { cwd: root, encoding: "buffer", maxBuffer: FROZEN_TEST_MAX_BYTES * 2 })).stdout; }
+  catch { return null; }
+}
+
+// The content a frozen test file had before the design wrote it: the committed file when it differs,
+// or the version before the commit that wrote it, so a designer may commit the tests before acceptance.
+async function contentBefore(root, relative, frozen) {
+  const head = await committed(root, "HEAD", relative);
+  if (head === null || !head.equals(frozen)) return head;
+  try {
+    const { stdout } = await run("git", ["rev-list", "-n", "1", "HEAD", "--", relative], { cwd: root });
+    return stdout.trim() ? await committed(root, `${stdout.trim()}^`, relative) : null;
+  } catch { return null; }
+}
+
+async function restore(root, relative, bytes) {
+  const target = path.join(root, relative);
+  if (bytes === null) { await rm(target, { force: true }); return; }
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeAtomically(target, bytes);
+}
+
+/**
+ * Keep the frozen tests of a slice that has not started in its records, so withdrawFrozenTests can take them out of the work tree
+ * and the test command of an earlier slice never runs them; a file that existed before goes back to that content.
+ */
+export async function stageFrozenTests(projectRoot, initiative, slice, frozenTests) {
+  const root = await realpath(projectRoot);
+  const tests = [];
+  for (const item of frozenTests) {
+    const bytes = await frozenBytes(root, item.path);
+    if (bytes === null || sha256(bytes) !== item.sha256) throw fail("validation_failed", `The frozen test ${item.path} changed while the design was accepted.`);
+    const before = await contentBefore(root, item.path, bytes);
+    tests.push({ path: item.path, content: bytes.toString("base64"), before: before === null ? null : before.toString("base64") });
+  }
+  await writeRecord(root, { kind: "frozen-tests", initiative, slice }, `${JSON.stringify({ schemaVersion: 1, tests }, null, 2)}\n`);
+  return tests;
+}
+
+/** Take staged frozen tests out of the work tree once the record that stages them is written. */
+export async function withdrawFrozenTests(projectRoot, tests) {
+  const root = await realpath(projectRoot);
+  for (const item of tests) await restore(root, item.path, item.before === null ? null : Buffer.from(item.before, "base64"));
+  return tests.map((item) => item.path);
+}
+
+/** Put a staged slice's frozen tests in place when the slice starts. */
+export async function installFrozenTests(projectRoot, initiative, slice, frozenTests) {
+  const root = await realpath(projectRoot);
+  const { bytes } = await readRecord(root, { kind: "frozen-tests", initiative, slice });
+  const stored = bytes === null ? null : JSON.parse(bytes.toString("utf8"));
+  const byPath = new Map((stored?.tests ?? []).map((item) => [item.path, item]));
+  const contents = frozenTests.map((item) => {
+    const entry = byPath.get(item.path);
+    const content = entry && Buffer.from(entry.content, "base64");
+    if (!content || sha256(content) !== item.sha256) throw fail("frozen_tests_missing", `The staged frozen test ${item.path} of ${slice} is missing from its records. Accept the design again.`);
+    return [item.path, content];
+  });
+  for (const [relative, content] of contents) await restore(root, relative, content);
+  return contents.map(([relative]) => relative);
+}
+
+/** A frozen test's bytes from the work tree, or from the staged tests of a slice that has not started; null when neither holds it. */
+export async function readFrozenTestOf(projectRoot, initiative, relative) {
+  const root = await realpath(projectRoot);
+  const bytes = await frozenBytes(root, relative);
+  if (bytes !== null) return bytes;
+  for (const slice of await listSliceRecords(root, initiative)) {
+    const stored = await readRecord(root, { kind: "frozen-tests", initiative, slice }).catch(() => ({ bytes: null }));
+    if (stored.bytes === null) continue;
+    const entry = JSON.parse(stored.bytes.toString("utf8")).tests?.find((item) => item.path === relative);
+    if (entry) return Buffer.from(entry.content, "base64");
+  }
+  return null;
 }

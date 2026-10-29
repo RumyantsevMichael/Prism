@@ -971,7 +971,7 @@ test("verify_slice reports a missing design and asks for command approval throug
   const missing = await callTool(mcp, 4, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
   assert.equal(missing.error.data.code, "design_missing");
   const current = await callTool(mcp, 5, "get_initiative", { projectRoot: root, initiative: "reports" });
-  await callTool(mcp, 6, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: current.result.structuredContent.revision, operations: [{ op: "accept_design", slug: "reports", frozenTests: ["docs/acceptance.test.mjs"], review: "none" }] });
+  await callTool(mcp, 6, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: current.result.structuredContent.revision, operations: [{ op: "set_status", slug: "reports", status: "in-progress" }, { op: "accept_design", slug: "reports", frozenTests: ["docs/acceptance.test.mjs"], review: "none" }] });
   const asked = await callTool(mcp, 7, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
   assert.equal(asked.result.structuredContent.status, "approval_needed");
   assert.match(asked.result.content[0].text, /wait_for_user_gate/);
