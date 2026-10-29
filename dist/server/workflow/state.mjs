@@ -12,7 +12,7 @@ import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 const SCHEMA_VERSION = 1;
 
 const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence"]);
-const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "models"]);
+const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "review", "models"]);
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
 const GATE_KEYS = new Set(["id", "kind", "slice", "question", "artifacts", "options", "askedAt", "answer"]);
@@ -25,7 +25,8 @@ const SETTING_VALUES = {
   agentFlow: new Set(["mono", "multi"]),
   commit: new Set(["on", "off"]),
   push: new Set(["on", "off"]),
-  continuation: new Set(["auto", "stepwise"])
+  continuation: new Set(["auto", "stepwise"]),
+  review: new Set(["marked", "recommended", "all"])
 };
 
 export class CoordinationStateError extends Error {

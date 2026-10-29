@@ -668,6 +668,7 @@ const tools = [
                 commit: { type: "string", enum: ["on", "off"] },
                 push: { type: "string", enum: ["on", "off"] },
                 continuation: { type: "string", enum: ["auto", "stepwise"] },
+                review: { type: "string", enum: ["marked", "recommended", "all"] },
                 models: {
                   oneOf: [
                     { type: "string", enum: ["defaults", "host defaults"] },

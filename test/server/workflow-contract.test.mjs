@@ -41,23 +41,26 @@ test("keeps records, snapshots, change maps, and context plans out of the skills
   await assert.rejects(skill("roadmap"), /ENOENT/);
 });
 
-test("design freezes a probed contract and failing acceptance tests, and splits without tests", async () => {
+test("design freezes one probed contract with failing tests and a slice plan, and splits without tests", async () => {
   const design = await skill("design");
   assert.match(design, /Probe it with a small experiment against the real system/);
   assert.match(design, /produces a clear error or a documented observable fallback, never a silent wrong result/);
   assert.match(design, /confirm they build and fail because the behavior is absent/);
-  assert.match(design, /recommend `required` when an independent implementation review pays off/);
-  assert.match(design, /Write contracts or tests for the children; each child is designed when it is next/);
+  assert.match(design, /Recommend review `required` for a slice when an independent implementation review pays off/);
+  assert.match(design, /Give each slice its own test files, so that each file belongs to exactly one slice/);
+  assert.match(design, /## Slices/);
+  assert.match(design, /Write contracts or tests for the parts; each part is designed when it is next/);
   assert.match(design, /A frozen test changes only through a revised design/);
-  assert.match(design, /## Frozen tests/);
+  assert.match(design, /Write PlantUML source only/);
+  assert.match(design, /Render a diagram or look at a rendered image/);
 });
 
 test("design lists its expected changes, and a gated design gets examples from a small-model writer", async () => {
   assert.match(await skill("design"), /In \*\*Changes\*\*, list each file you expect to add, change, or remove/);
   const orchestrate = await skill("orchestrate");
-  assert.match(orchestrate, /write the design view through the \[example writer\]\(references\/example-writer\.md\)/);
+  assert.match(orchestrate, /write the design view for the scope through the \[example writer\]\(references\/example-writer\.md\)/);
   const writer = await reference("orchestrate", "example-writer.md");
-  assert.match(writer, /Call `update_design_view` once with every example/);
+  assert.match(writer, /Call `update_design_view` once for the scope with every example/);
   assert.match(writer, /Write anything a test does not assert/);
 });
 
@@ -69,18 +72,23 @@ test("implementation works from files against frozen tests and makes no record c
   assert.doesNotMatch(implement, /update_|get_initiative|get_review/);
 });
 
-test("orchestration designs just in time, gates the design, and completes on verification", async () => {
+test("orchestration designs one contract per scope, starts each slice, and completes on verification", async () => {
   const orchestrate = await skill("orchestrate");
   for (const value of ["conservative", "broad", "full", "mono", "multi", "on", "off", "auto", "stepwise", "host defaults"]) {
     assert.match(orchestrate, new RegExp(`\\\`${value}\\\``), value);
   }
   assert.match(orchestrate, /\| `commit` \| `on`, `off` \| `on` under `full`, otherwise `off` \|/);
   assert.match(orchestrate, /\| `push` \| `on`, `off` \| `off` \|/);
-  assert.match(orchestrate, /next leaf that is `not-started` and whose effective dependencies are done/);
-  assert.match(orchestrate, /`accept_design`, the frozen test paths, and the review mark/);
+  assert.match(orchestrate, /next leaf that is `not-started`, has an accepted design, and whose effective dependencies are done/);
+  assert.match(orchestrate, /an `accept_design` operation per slice with its frozen tests and its review mark/);
+  assert.match(orchestrate, /`set_status` `in-progress`, which puts its frozen tests in place/);
+  assert.match(orchestrate, /`restore_tests` for the scope/);
+  assert.match(orchestrate, /Run git, hash files, or read code while slices run/);
+  assert.match(orchestrate, /\| `review` \| `marked`, `recommended`, `all` \| `marked` \|/);
   assert.match(orchestrate, /call `wait_for_user_gate` with its gate id, then call `verify_slice` again with `approvalGate`/);
   assert.match(orchestrate, /When it returns `running`, call it again/);
-  assert.match(orchestrate, /When the design's review mark is `required`, review the slice/);
+  assert.match(orchestrate, /When the slice's review mark is `required`, review it/);
+  assert.match(orchestrate, /A passing run of a slice whose review mark is `none` marks it done/);
   assert.match(orchestrate, /`start_wave` operation in `implementation-review` mode/);
   assert.match(orchestrate, /Record every question to the user before asking it/);
   assert.match(orchestrate, /call `checkpoint_pause` with the initiative, the current revision, the active slice/);
@@ -105,16 +113,16 @@ test("ideation adds the roadmap entry that the removed roadmap skill used to add
 
 test("keeps common terms aligned with the workflow", async () => {
   const workflow = await skill("workflow");
-  for (const term of ["Contract", "Assumption probe", "Frozen tests", "Implementation step", "Design gate", "Accepted design", "Verification run", "Implementation review", "Review probe", "Feature file", "Step definition", "Executable contract", "`recovery.md`", "Pause checkpoint"]) {
+  for (const term of ["Contract", "Assumption probe", "Frozen tests", "Staged tests", "Contract scope", "Slice plan", "Design diagrams", "Review mark", "Child status", "Design gate", "Accepted design", "Verification run", "Implementation review", "Review probe", "Feature file", "Step definition", "Executable contract", "`recovery.md`", "Pause checkpoint"]) {
     assert.ok(workflow.includes(`| ${term} |`), term);
   }
-  for (const retired of ["Design audit", "Change map", "Context plan", "Red checkpoint", "Atomic slice", "Resolution exchange", "Review base"]) {
+  for (const retired of ["Design audit", "Change map", "Context plan", "Red checkpoint", "Atomic slice", "Resolution exchange", "Review base", "Implementation step"]) {
     assert.ok(!workflow.includes(`| ${retired} |`), retired);
   }
 });
 
 test("authors Gherkin during design and binds steps during implementation", async () => {
-  assert.match(await skill("design"), /use `write-feature` for the slice's scenarios and list them as frozen tests/);
+  assert.match(await skill("design"), /use `write-feature` for the scenarios and list them as frozen tests/);
   assert.match(await skill("write-feature"), /Design authors it for a fitted slice/);
   assert.match(await skill("implement"), /use `write-step-definitions` to bind their steps/);
 });

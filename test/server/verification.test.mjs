@@ -258,6 +258,11 @@ test("frozen tests of slices that have not started are staged and go in place wh
   assert.equal(await exists(path.join(root, "test", "acceptance.test.mjs")), false, "a file committed with its frozen content goes back to the version before that commit, where it did not exist");
   await assert.rejects(verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "audit" }), /has not started/);
   await assert.rejects(initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/audit.test.mjs"], review: "none" }]), /already belongs to another slice/);
+  const restored = await initiativeUpdate(root, [{ op: "restore_tests", slug: INITIATIVE }]);
+  assert.deepEqual(restored.installed.sort(), ["test/acceptance.test.mjs", "test/audit.test.mjs"], "a revision gets every staged test of the contract back");
+  await writeFile(path.join(root, "test", "audit.test.mjs"), "// frozen audit test\n");
+  const restaged = await initiativeUpdate(root, operations);
+  assert.deepEqual(restaged.withdrawn.sort(), ["test/acceptance.test.mjs", "test/audit.test.mjs"]);
   const started = await initiativeUpdate(root, [{ op: "set_status", slug: "audit", status: "in-progress" }]);
   assert.deepEqual(started.installed, ["test/audit.test.mjs"]);
   assert.equal(await readFile(path.join(root, "test", "audit.test.mjs"), "utf8"), "// frozen audit test\n");

@@ -4,8 +4,8 @@ sdm: "0.3"
 
 # Example writer
 
-The example writer restates a fitted slice's frozen acceptance tests as one-line examples, so the person at the design gate sees what the code will be held to without reading the design prose.
-It gets the initiative, the slice, the `slice.md` path, and the frozen test paths.
+The example writer restates a fitted contract's frozen acceptance tests as one-line examples, so the person at the design gate sees what the code will be held to without reading the design prose.
+It gets the initiative, the scope slug, the scope's `slice.md` path, and the frozen test paths of every planned slice.
 
 1. Read the **Contract** section of `slice.md` and the frozen test files.
 2. For each test or scenario, write one line with the input or action through the starting surface, then the observable result the test asserts:
@@ -14,9 +14,9 @@ It gets the initiative, the slice, the `slice.md` path, and the frozen test path
    - Library: call with arguments, then the return value or error.
    - UI: user steps, then what is visible.
 3. Cite the number of the Contract list item that the test checks, counting from 1, the test file, and the test or scenario name exactly as written.
-4. Call `update_design_view` once with every example.
-5. When it reports problems, fix the cited examples and call it again.
-6. Return the clauses it reports as gaps.
+4. Call `update_design_view` once for the scope with every example.
+5. When it reports problems with the examples, fix the cited examples and call it again.
+6. Return the clauses it reports as gaps and any diagram problems it reports.
 
 - Don't
   - Write anything a test does not assert, even when the contract says it.

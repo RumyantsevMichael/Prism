@@ -1,6 +1,6 @@
 ---
 name: review
-description: "Independently review the verified implementation of a slice whose design asks for review, and record findings until the result is clean."
+description: "Independently review the verified implementation of a slice marked for review, and record findings until the result is clean."
 sdm: "0.3"
 ---
 
@@ -13,7 +13,7 @@ It reviews the result that the slice's last passing verification run tested.
 
 1. Read `.prism/workflow.md` and the project instructions.
 2. Read the inputs that orchestration supplies: the initiative and slice identifiers, the wave and lane, your reviewer identifier, and the base commit.
-3. Read the slice's `slice.md`, its assigned Approved requirements, and the ADRs it links.
+3. Read the contract's `slice.md`, the slice's own `slice.md`, its assigned Approved requirements, and the ADRs they link.
 4. Read the current findings through `get_review`.
 5. Read the complete diff from the base commit to the working tree.
 

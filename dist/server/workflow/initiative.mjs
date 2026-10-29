@@ -47,6 +47,7 @@ export const UPDATE_INITIATIVE_SCHEMA = object({
     object({ op: { const: "set_dependencies" }, slug, dependencies: { type: "array", maxItems: 200, items: slug } }),
     object({ op: { const: "update_slice" }, slug, title: text, outcome: text }, ["op", "slug"]),
     object({ op: { const: "accept_design" }, slug, frozenTests: { type: "array", minItems: 1, maxItems: 200, items: text }, review: { enum: REVIEW_MARKS } }),
+    object({ op: { const: "restore_tests" }, slug }),
     object({ op: { const: "import_map" }, path: text }),
     object({ op: { const: "regenerate_markdown" } }),
     object({ op: { const: "remove_records" } })
@@ -311,10 +312,11 @@ async function applyOperation(resolved, record, operation, effects) {
       const frozenTests = await digestFrozenTests(resolved.root, operation.frozenTests);
       const claimed = claimedTests(slices, operation.slug, frozenTests);
       if (claimed.length) throw fail("validation_failed", `${claimed.join(", ")} already belongs to another slice that is not done; a frozen test file belongs to one slice.`);
-      // A slice's code view sits in its folder and the initiative's overview in the root folder; each folder is checked once per update.
-      const folders = [sliceFolder(resolved.directory, slices, operation.slug), resolved.directory].filter((folder) => !effects.checkedFolders.has(folder));
+      // A slice's code view sits in its folder and each contract's overview in the folder of the slice that owns the contract; each folder is checked once per update.
+      const folders = [];
+      for (let key = operation.slug; key !== null && key !== undefined; key = slices[key]?.parent) folders.push(sliceFolder(resolved.directory, slices, key));
       const diagrams = [];
-      for (const folder of new Set(folders)) { effects.checkedFolders.add(folder); diagrams.push(...await checkFolderDiagrams(resolved.root, folder)); }
+      for (const folder of new Set(folders.filter((item) => !effects.checkedFolders.has(item)))) { effects.checkedFolders.add(folder); diagrams.push(...await checkFolderDiagrams(resolved.root, folder)); }
       const problems = diagramProblems(diagrams);
       if (problems.length) throw fail("diagram_problems", `The design of ${operation.slug} was not accepted: ${problems.join(" ")}`, { problems });
       effects.diagrams.push(...diagrams);
@@ -326,6 +328,16 @@ async function applyOperation(resolved, record, operation, effects) {
         effects.staged.push(...await stageFrozenTests(resolved.root, resolved.initiative, operation.slug, frozenTests));
         slice.design = { acceptedAt, frozenTests, review: operation.review, staged: true };
       }
+      break;
+    }
+    case "restore_tests": {
+      // A design revision needs the staged tests of the slices it revises in the work tree; accepting each design again stages them again.
+      requireSlice(operation.slug);
+      const leaves = Object.keys(slices).filter((key) => {
+        for (let current = key; current !== null && current !== undefined; current = slices[current]?.parent) if (current === operation.slug) return true;
+        return false;
+      }).filter((key) => slices[key].design?.staged);
+      for (const key of leaves) effects.installed.push(...await installFrozenTests(resolved.root, resolved.initiative, key, slices[key].design.frozenTests));
       break;
     }
     case "regenerate_markdown":
@@ -440,7 +452,7 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }
