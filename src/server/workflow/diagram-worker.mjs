@@ -1,6 +1,8 @@
 // Parses PlantUML sources with the vendored browser runtime in a worker thread, so its browser globals never reach the server.
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 import { parentPort, workerData } from "node:worker_threads";
 
@@ -28,13 +30,13 @@ const escape = (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&l
 const serialize = (element) => `<${element.tagName}${[...element.attributes].map(([name, value]) => ` ${name}="${escape(value)}"`).join("")}>${escape(element.text)}${element.children.map(serialize).join("")}</${element.tagName}>`;
 
 globalThis.require = createRequire(import.meta.url);
-globalThis.__filename = `${vendor}/viz-global.js`;
+globalThis.__filename = path.join(vendor, "viz-global.js");
 globalThis.window = globalThis;
 globalThis.self = globalThis;
-vm.runInThisContext(readFileSync(`${vendor}/viz-global.js`, "utf8"));
+vm.runInThisContext(readFileSync(path.join(vendor, "viz-global.js"), "utf8"));
 // The runtime loads a standard library such as C4 on its first include, which a browser does with a script tag.
 globalThis.PLANTUML_STDLIB_LOADER = (name, ok, fail) => {
-  const file = `${vendor}/${String(name).split("/").at(-1)}`;
+  const file = path.join(vendor, path.basename(String(name)));
   try { vm.runInThisContext(readFileSync(file, "utf8")); ok(); }
   catch { fail(`The standard library ${name} is not available.`); }
   return true;
@@ -49,7 +51,7 @@ globalThis.document = {
 };
 globalThis.XMLSerializer = class { serializeToString(element) { return serialize(element); } };
 console.log = () => {};
-const { renderToString } = await import(new URL(`file://${vendor}/plantuml.js`).href);
+const { renderToString } = await import(pathToFileURL(path.join(vendor, "plantuml.js")).href);
 
 const RENDER_TIMEOUT_MS = 20000;
 const render = (source) => new Promise((resolve) => {
@@ -59,17 +61,22 @@ const render = (source) => new Promise((resolve) => {
   catch (error) { settle({ error: String(error) }); }
 });
 
-const texts = (svg, pattern) => [...svg.matchAll(pattern)].map((match) => match[1].trim()).filter(Boolean);
+const unescape = (value) => value.replace(/&lt;/g, "<").replace(/&quot;/g, "\"").replace(/&amp;/g, "&");
+const texts = (svg, pattern) => [...svg.matchAll(pattern)].map((match) => unescape(match[1]).trim()).filter(Boolean);
 
+// PlantUML draws every failure as a diagram: a syntax or include error names its source line, and an unknown diagram type says so.
 function summarize(svg) {
-  if (/Syntax Error\?/.test(svg)) {
-    const line = Number(/\[From [^\]]*\(line (\d+)\)/.exec(svg)?.[1]) || null;
+  const located = /\[From [^\]]*\(line (\d+)\)/.exec(svg);
+  if (located || /Diagram not supported/.test(svg)) {
     const errors = texts(svg, /<text[^>]*fill="#FF0000"[^>]*>([^<]*)/g);
-    return { valid: false, line, message: errors.join(" ") || "Syntax Error?" };
+    const fallback = located ? "PlantUML reported an error." : "PlantUML does not recognize the diagram; it needs @startuml and a supported diagram type.";
+    return { valid: false, line: Number(located?.[1]) || null, message: errors.join(" ") || fallback };
   }
   const entities = (svg.match(/<g class="(?:entity|cluster)"/g) ?? []).length;
   const participants = (svg.match(/<g><title>/g) ?? []).length;
-  return { valid: true, elements: entities || participants, relations: (svg.match(/<g class="link"/g) ?? []).length };
+  // Activity diagrams mark no elements, so their boxes stand in for them.
+  const boxes = (svg.match(/<rect /g) ?? []).length;
+  return { valid: true, elements: entities || participants || boxes, relations: (svg.match(/<g class="link"/g) ?? []).length };
 }
 
 const results = [];

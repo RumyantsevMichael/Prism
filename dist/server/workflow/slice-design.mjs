@@ -1,9 +1,7 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { writeAtomically } from "./artifact-store.mjs";
 import { listRecordEntries, listSliceRecords, locateRecord, readRecord, writeRecord } from "./record-store.mjs";
 
@@ -105,24 +103,6 @@ export async function acceptedDesign(projectRoot, initiative, slice) {
   return design && designProblems(design).length === 0 ? design : null;
 }
 
-const run = promisify(execFile);
-
-async function committed(root, revision, relative) {
-  try { return (await run("git", ["show", `${revision}:${relative}`], { cwd: root, encoding: "buffer", maxBuffer: FROZEN_TEST_MAX_BYTES * 2 })).stdout; }
-  catch { return null; }
-}
-
-// The content a frozen test file had before the design wrote it: the committed file when it differs,
-// or the version before the commit that wrote it, so a designer may commit the tests before acceptance.
-async function contentBefore(root, relative, frozen) {
-  const head = await committed(root, "HEAD", relative);
-  if (head === null || !head.equals(frozen)) return head;
-  try {
-    const { stdout } = await run("git", ["rev-list", "-n", "1", "HEAD", "--", relative], { cwd: root });
-    return stdout.trim() ? await committed(root, `${stdout.trim()}^`, relative) : null;
-  } catch { return null; }
-}
-
 async function restore(root, relative, bytes) {
   const target = path.join(root, relative);
   if (bytes === null) { await rm(target, { force: true }); return; }
@@ -130,28 +110,27 @@ async function restore(root, relative, bytes) {
   await writeAtomically(target, bytes);
 }
 
-/**
- * Keep the frozen tests of a slice that has not started in its records, so withdrawFrozenTests can take them out of the work tree
- * and the test command of an earlier slice never runs them; a file that existed before goes back to that content.
- */
-export async function stageFrozenTests(projectRoot, initiative, slice, frozenTests) {
+/** Read the frozen tests of a slice that has not started, so the update can keep them once its record is written. */
+export async function stageFrozenTests(projectRoot, slice, frozenTests) {
   const root = await realpath(projectRoot);
   const tests = [];
   for (const item of frozenTests) {
     const bytes = await frozenBytes(root, item.path);
     if (bytes === null || sha256(bytes) !== item.sha256) throw fail("validation_failed", `The frozen test ${item.path} changed while the design was accepted.`);
-    const before = await contentBefore(root, item.path, bytes);
-    tests.push({ path: item.path, content: bytes.toString("base64"), before: before === null ? null : before.toString("base64") });
+    tests.push({ path: item.path, content: bytes.toString("base64") });
   }
-  await writeRecord(root, { kind: "frozen-tests", initiative, slice }, `${JSON.stringify({ schemaVersion: 1, tests }, null, 2)}\n`);
-  return tests;
+  return { slice, tests };
 }
 
-/** Take staged frozen tests out of the work tree once the record that stages them is written. */
-export async function withdrawFrozenTests(projectRoot, tests) {
+/**
+ * Keep staged frozen tests in the slice's records, then take them out of the work tree, so the test command of an earlier slice never runs them.
+ * A staged file leaves the work tree whole until its slice starts, which is why each slice owns its own test files.
+ */
+export async function withdrawFrozenTests(projectRoot, initiative, staged) {
   const root = await realpath(projectRoot);
-  for (const item of tests) await restore(root, item.path, item.before === null ? null : Buffer.from(item.before, "base64"));
-  return tests.map((item) => item.path);
+  await writeRecord(root, { kind: "frozen-tests", initiative, slice: staged.slice }, `${JSON.stringify({ schemaVersion: 1, tests: staged.tests }, null, 2)}\n`);
+  for (const item of staged.tests) await restore(root, item.path, null);
+  return staged.tests.map((item) => item.path);
 }
 
 /** Put a staged slice's frozen tests in place when the slice starts. */

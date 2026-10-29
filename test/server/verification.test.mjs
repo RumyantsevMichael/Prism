@@ -237,13 +237,9 @@ test("a slice whose design requires review completes on a review of its verified
 });
 
 const exists = (file) => readFile(file).then(() => true, () => false);
-const git = (root, ...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
 
 test("frozen tests of slices that have not started are staged and go in place when each slice starts", async (context) => {
   const root = await project(context);
-  await writeFile(path.join(root, "test", "audit.test.mjs"), "// audit before the design\n");
-  git(root, "add", "-A");
-  git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "base");
   await writeFile(path.join(root, "test", "audit.test.mjs"), "// frozen audit test\n");
   const operations = [
     { op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" },
@@ -254,13 +250,12 @@ test("frozen tests of slices that have not started are staged and go in place wh
   assert.equal(brief.record, undefined, "the acknowledgement leaves the record to get_initiative");
   assert.deepEqual(brief.slices, { download: { status: "not-started", design: "staged", frozenTests: 1, review: "none" }, audit: { status: "not-started", design: "staged", frozenTests: 1, review: "none" } });
   assert.deepEqual(brief.stagedTests.sort(), ["test/acceptance.test.mjs", "test/audit.test.mjs"]);
-  assert.equal(await readFile(path.join(root, "test", "audit.test.mjs"), "utf8"), "// audit before the design\n", "a file that existed goes back to its earlier content");
-  assert.equal(await exists(path.join(root, "test", "acceptance.test.mjs")), false, "a file committed with its frozen content goes back to the version before that commit, where it did not exist");
+  assert.equal(await exists(path.join(root, "test", "audit.test.mjs")), false, "a staged file leaves the work tree until its slice starts");
   await assert.rejects(verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "audit" }), /has not started/);
-  await assert.rejects(initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/audit.test.mjs"], review: "none" }]), /already belongs to another slice/);
+  await assert.rejects(initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/audit.test.mjs"], review: "none" }]), /does not exist/);
   const restored = await initiativeUpdate(root, [{ op: "restore_tests", slug: INITIATIVE }]);
   assert.deepEqual(restored.installed.sort(), ["test/acceptance.test.mjs", "test/audit.test.mjs"], "a revision gets every staged test of the contract back");
-  await writeFile(path.join(root, "test", "audit.test.mjs"), "// frozen audit test\n");
+  await assert.rejects(initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/audit.test.mjs"], review: "none" }]), /already belongs to another slice/);
   const restaged = await initiativeUpdate(root, operations);
   assert.deepEqual(restaged.withdrawn.sort(), ["test/acceptance.test.mjs", "test/audit.test.mjs"]);
   const started = await initiativeUpdate(root, [{ op: "set_status", slug: "audit", status: "in-progress" }]);
@@ -271,6 +266,27 @@ test("frozen tests of slices that have not started are staged and go in place wh
   const passed = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "audit", approvalGate: gateId });
   assert.equal(passed.status, "passed");
   assert.equal(passed.sliceStatus, "done");
+  await assert.rejects(initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/audit.test.mjs"], review: "none" }]), /already belongs to another slice;/, "a staged slice never shares a file, even with a done slice");
+});
+
+test("accepting and starting a slice in one update keeps its tests in place", async (context) => {
+  const root = await project(context);
+  const result = await initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" }, { op: "set_status", slug: "download", status: "in-progress" }]);
+  assert.deepEqual(result.withdrawn, []);
+  assert.equal(result.record.slices.download.design.staged, undefined);
+  assert.equal(await exists(path.join(root, "test", "acceptance.test.mjs")), true);
+});
+
+test("an update that fails keeps the tests that an earlier update staged", async (context) => {
+  const root = await project(context);
+  await initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" }]);
+  await initiativeUpdate(root, [{ op: "restore_tests", slug: "download" }]);
+  await writeFile(path.join(root, "test", "acceptance.test.mjs"), "// revised\n");
+  await assert.rejects(initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" }, { op: "set_status", slug: "missing", status: "done" }]), /does not exist/);
+  await rm(path.join(root, "test", "acceptance.test.mjs"));
+  const started = await initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "in-progress" }]);
+  assert.deepEqual(started.installed, ["test/acceptance.test.mjs"]);
+  assert.equal(await readFile(path.join(root, "test", "acceptance.test.mjs"), "utf8"), "// frozen acceptance test\n");
 });
 
 test("accepting a design refuses a diagram that does not parse or shows too many elements", async (context) => {
@@ -281,6 +297,10 @@ test("accepting a design refuses a diagram that does not parse or shows too many
   await assert.rejects(accept(root), /code\.puml line 2 does not parse/);
   await writeFile(path.join(folder, "code.puml"), `@startuml\n${Array.from({ length: 31 }, (_, index) => `class C${index}`).join("\n")}\n@enduml\n`);
   await assert.rejects(accept(root), /shows 31 elements, more than 30/);
+  await writeFile(path.join(folder, "code.puml"), "@startuml\n!include <C4/Missing>\n@enduml\n");
+  await assert.rejects(accept(root), /code\.puml line 2 does not parse: cannot include <C4\/Missing>/);
+  await writeFile(path.join(folder, "code.puml"), "class Report\n");
+  await assert.rejects(accept(root), /code\.puml does not parse: PlantUML does not recognize the diagram/);
   await writeFile(path.join(folder, "code.puml"), "@startuml\nclass Report\nclass Signer\nReport --> Signer\n@enduml\n");
   await writeFile(path.join(root, "docs", "plans", "reports", "overview.puml"), "@startuml\npackage download {\n[Report]\n}\npackage audit {\n[Log]\n}\n[Log] ..> [Report]\n@enduml\n");
   const operations = [{ op: "set_status", slug: "download", status: "in-progress" }, { op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" }];

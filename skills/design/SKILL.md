@@ -36,7 +36,7 @@ Implementers later work from its output in fresh sessions, and they are judged o
 5. Plan the slices that implement the contract, each small enough for one fresh implementation session, in dependency order.
    When `resolve_session_capacity` is available, judge slice size against the implementer model's context window.
 6. Write acceptance tests in the project's test location, black-box through the starting surface, with one test per contract clause, covering error, edge, and interaction cases as well as the main path.
-   Give each slice its own test files, so that each file belongs to exactly one slice.
+   Give each slice its own new test files, so that each file belongs to exactly one slice; Prism keeps a slice's test files out of the work tree until the slice starts.
 7. Run the tests and confirm they build and fail because the behavior is absent, not because of setup defects.
 8. In **Slices**, list each slice with its slug, title, outcome, requirement references, dependencies, frozen test files, and review recommendation.
 9. For each slice, write `slice.md` in its slice folder, the folder named by its slug in the initiative's plans folder, with the sections in the [slice example](#slice-example).
@@ -121,7 +121,8 @@ Write PlantUML source only: Prism parses each `.puml` file when the design is ac
 
 - When orchestration returns a design question, a failed design gate, an implementer's contract defect, or changed dependencies:
   1. Read the feedback, the current contract, and the frozen tests that orchestration put back in the work tree.
-  2. Repeat the affected parts of sections 2 to 5, changing only slices that have not finished.
-  3. Return the result through section 6 with every unfinished slice of the scope.
+  2. Repeat the affected parts of sections 3 and 4 for the slices that have not finished, keeping the planned slices and their slugs.
+  3. When the revision needs other slices, return `BLOCKED` with the slices it needs.
+  4. Return the result through section 6 with every unfinished slice of the scope.
 
 A frozen test changes only through a revised design that orchestration accepts again.

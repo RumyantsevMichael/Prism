@@ -278,13 +278,17 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
 async function completeSlice(root, initiative, slice, design, run) {
   if (!run.passed || design.review === "required") return run;
   const { getInitiative, updateInitiative } = await import("./initiative.mjs");
-  try {
-    const current = await getInitiative({ projectRoot: root, initiative });
-    if (current.record?.slices?.[slice]?.status === "done") return { ...run, sliceStatus: "done" };
-    await updateInitiative({ projectRoot: root, initiative, expectedRevision: current.revision, actor: "verify_slice", operations: [{ op: "set_status", slug: slice, status: "done" }] });
-    return { ...run, sliceStatus: "done" };
-  } catch (error) {
-    return { ...run, sliceStatus: "unchanged", statusMessage: error.message };
+  // Another writer can update the record between the read and the write, so a revision conflict reads it again.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const current = await getInitiative({ projectRoot: root, initiative });
+      if (current.record?.slices?.[slice]?.status === "done") return { ...run, sliceStatus: "done" };
+      await updateInitiative({ projectRoot: root, initiative, expectedRevision: current.revision, actor: "verify_slice", operations: [{ op: "set_status", slug: slice, status: "done" }] });
+      return { ...run, sliceStatus: "done" };
+    } catch (error) {
+      if (error.code === "revision_conflict" && attempt < 3) continue;
+      return { ...run, sliceStatus: "unchanged", statusMessage: `The run passed, but the slice was not marked done: ${error.message} Call update_initiative with set_status done.` };
+    }
   }
 }
 

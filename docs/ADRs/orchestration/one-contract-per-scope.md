@@ -18,7 +18,7 @@ Agents also spent many turns rendering design diagrams and looking at the images
 
 Design MUST write one contract per scope, where a scope is the root slice or a part that a split design created, with its assumption probes, its frozen tests, and a plan of the slices that implement it.
 A scope too large for one contract MUST split into parts that each get their own contract when they are next.
-Each frozen test file MUST belong to one unfinished slice.
+Each frozen test file MUST belong to one unfinished slice, and a staged slice's file MUST NOT belong to any other slice.
 Accepting the design of a slice that has not started MUST stage its frozen tests: the server keeps them in the slice's records and takes them out of the work tree, and starting the slice MUST put them back.
 A passing verification run MUST complete a slice whose review mark is `none`.
 A slice MUST be reviewed only when the user marks it or the run's `review` setting selects it.
@@ -41,16 +41,16 @@ Rendering diagrams for the agent was rejected because its cost repeated on every
 ## Consequences
 
 A slice's frozen tests are absent from the work tree until the slice starts, so a design revision first puts them back with `restore_tests` and accepts each unfinished slice again.
-A frozen test file that existed before the design goes back to its earlier committed content while the slice is staged.
+A staged file leaves the work tree whole until its slice starts, so design gives each slice new test files rather than extending a shared one.
 The orchestrator starts each slice with one `set_status` call and no longer records active operations by hand.
 The diagram check runs the vendored PlantUML runtime in a worker thread with a minimal DOM, which measures text by length, so element counts and syntax errors are exact while layout is not computed faithfully.
 
 ## Mechanism
 
-The staged tests of a slice are a slice record with each file's content and the content it had before the design.
-The initiative update writes that record, writes the initiative record, and only then takes the files out of the work tree.
+The staged tests of a slice are a slice record with each file's content.
+The initiative update writes the initiative record, then the staged tests of each slice still staged at its end, and only then takes those files out of the work tree.
 Verification refuses a staged slice and, after a passing run of a slice marked `none`, records `done` through the same completion gate as before.
 Run output is written to a log under the plugin data directory, and the brief result reads failing test names from cargo, Node, TAP, pytest, Go, Jest, and Vitest output.
-The diagram check parses every `.puml` file in the slice's folder and its ancestors' folders and counts entities, packages, participants, and links in the drawn SVG.
+The diagram check parses every `.puml` file in the slice's folder and its ancestors' folders before the update takes the record lock, treats every error diagram PlantUML draws as a refusal, and counts entities, packages, participants, or activity boxes, and links, in the drawn SVG.
 
 ## Decision Log

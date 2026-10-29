@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { assertInput } from "./artifact-schema.mjs";
 import { readRecord, sliceDocumentFolder, withRecordLock, writeRecord } from "./record-store.mjs";
+import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { acceptedDesign, readFrozenTestOf } from "./slice-design.mjs";
 
@@ -157,7 +158,15 @@ export async function updateDesignView(input) {
   const cited = new Set(document.examples.map((item) => item.clause));
   const gaps = clauses.map((text, index) => ({ clause: index + 1, text })).filter((item) => !cited.has(item.clause));
   // The designer learns about a diagram the design gate would refuse here, before anyone accepts the design.
-  const diagrams = await checkFolderDiagrams(root, path.posix.dirname(design.path));
+  // The root scope's folder holds every slice folder, so its slices' code views are checked with it.
+  const folder = path.posix.dirname(design.path);
+  const folders = [folder];
+  if (initiativeDirectory(await readWorkflowConfig(root), initiative) === folder) {
+    const entries = await readdir(path.join(root, folder), { withFileTypes: true }).catch(() => []);
+    folders.push(...entries.filter((entry) => entry.isDirectory()).map((entry) => `${folder}/${entry.name}`).sort());
+  }
+  const diagrams = [];
+  for (const item of folders) diagrams.push(...await checkFolderDiagrams(root, item));
   const refused = diagramProblems(diagrams);
   return {
     status: "written",

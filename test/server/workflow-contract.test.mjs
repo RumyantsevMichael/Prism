@@ -47,7 +47,7 @@ test("design freezes one probed contract with failing tests and a slice plan, an
   assert.match(design, /produces a clear error or a documented observable fallback, never a silent wrong result/);
   assert.match(design, /confirm they build and fail because the behavior is absent/);
   assert.match(design, /Recommend review `required` for a slice when an independent implementation review pays off/);
-  assert.match(design, /Give each slice its own test files, so that each file belongs to exactly one slice/);
+  assert.match(design, /Give each slice its own new test files, so that each file belongs to exactly one slice/);
   assert.match(design, /## Slices/);
   assert.match(design, /Write contracts or tests for the parts; each part is designed when it is next/);
   assert.match(design, /A frozen test changes only through a revised design/);

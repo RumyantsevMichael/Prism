@@ -76,7 +76,7 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
   3. Accept the revised design of every unfinished slice of the scope again before more implementation.
 - When design or implementation returns `BLOCKED` or a question, ask the user the exact question and continue with another eligible slice meanwhile.
 
-On resume, continue an `in-progress` slice with a fresh implementation session.
+On resume, continue an `in-progress` slice with a fresh implementation session before starting another slice.
 
 ## 5. Verification
 
@@ -87,12 +87,12 @@ On resume, continue an `in-progress` slice with a fresh implementation session.
 5. When it fails, run a fresh `implement` session with its failing test names and log path, and verify again.
 6. After three failed attempts, call `update_initiative` with `set_status` `blocked` and ask the user with the failing test names and the log path.
 
-A passing run of a slice whose review mark is `none` marks it done.
+A passing run of a slice whose review mark is `none` marks it done; when its result says the slice is unchanged, call `update_initiative` with `set_status` `done`.
 A run that reports changed frozen tests goes back to an implementer to restore them.
 
 ## 6. Review
 
-1. Call `update_review` as the coordinator with a `start_wave` operation in `implementation-review` mode, one lane per review focus, a fresh reviewer identifier per lane, and the commit that the slice started from as `base`.
+1. Call `update_review` as the coordinator with a `start_wave` operation in `implementation-review` mode, one lane per review focus, a fresh reviewer identifier per lane, and, as `base`, the last commit that a child reported before the slice started, when one did.
 2. Run `review` for each lane in a fresh child agent, and use a security-focused lane with the `securityReview` model for trust-boundary changes.
 3. When a lane returns `FINDINGS`, run a fresh `implement` session with the findings, verify again, and start a new wave with fresh reviewers.
 4. When every lane is `CLEAN`, call `update_review` with `accept_wave`.
