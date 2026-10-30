@@ -47,7 +47,7 @@ async function fixture(context) {
   ] });
   await updateCoordinationState({ projectRoot: root, initiative: "reports", expectedRevision: null, changes: {
     pending: ["Confirm retention window"],
-    gateOperations: [{ op: "ask", kind: "visual-review", slice: "download", question: "Review the download design before implementation.", artifacts: ["docs/plans/reports/download/slice.md", "docs/plans/reports/download/missing.md"] }]
+    gateOperations: [{ op: "ask", kind: "visual-review", slice: "download", question: "Review the download design before implementation.", artifacts: ["docs/plans/reports/download/slice.md", "docs/plans/reports/download/missing.md", "docs/plans/reports/download/review.json"] }]
   } });
   return root;
 }
@@ -162,7 +162,7 @@ test("lists what waits on the user apart from agent-side state", async (context)
     assert.equal(needs[0].kind, "visual-review");
     assert.deepEqual(needs[0].slice, { slug: "download", title: "Download signed reports" });
     assert.deepEqual(needs[0].initiative, { id: "reports", title: "Export reports" });
-    assert.deepEqual(needs[0].artifacts, [{ path: "docs/plans/reports/download/slice.md", available: true }, { path: "docs/plans/reports/download/missing.md", available: false }]);
+    assert.deepEqual(needs[0].artifacts, [{ path: "docs/plans/reports/download/slice.md", available: true }, { path: "docs/plans/reports/download/missing.md", available: false }, { path: ".prism/initiatives/reports/slices/download/review.json", available: true }], "a gate asked before the records moved names the record where it lives now");
     assert.deepEqual(attention.data.watch.map((item) => item.type), ["findings", "findings"]);
     assert.deepEqual([attention.data.watch[0].unresolved, attention.data.watch[0].blocking], [1, 1]);
     const index = (await get(`${review.baseUrl}/api/index`)).json();
