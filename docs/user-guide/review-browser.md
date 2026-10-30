@@ -65,7 +65,7 @@ A reference opens the file, at the heading when the reference names one.
 Group changes by action or by file, and blocked changes come first.
 The graph mode shows the same changes as before, change, and after nodes, and a node jumps to its card.
 
-JSON records such as `state.json` have a Structured and a Raw view.
+JSON records such as the coordination state have a Structured and a Raw view.
 
 ## Documents and diagrams
 

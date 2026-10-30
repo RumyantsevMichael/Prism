@@ -45,7 +45,7 @@ async function fixture(t) {
     pending.set(next, { resolve, reject, timer });
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: next, method, params })}\n`);
   });
-  const input = { projectRoot, deltaPath: "docs/plans/demo/retry/change-map.json" };
+  const input = { projectRoot, initiative: "demo", slice: "retry" };
   return { input, rpc, call: (name, args) => rpc("tools/call", { name, arguments: args }) };
 }
 
@@ -84,7 +84,7 @@ test("discovers typed MCP tools and performs managed code and non-code edits", a
 test("MCP failures expose stable codes and preserve rejected batch bytes", async (t) => {
   const { input, call } = await fixture(t);
   const created = (await call("update_change_map", { ...input, expectedRevision: null, scope: examples.scope, operations: [] })).result.structuredContent;
-  const bytes = await readFile(path.join(input.projectRoot, input.deltaPath), "utf8");
+  const bytes = await readFile(path.join(input.projectRoot, ".prism/initiatives/demo/slices/retry/change-map.json"), "utf8");
   const invalid = await call("update_change_map", { ...input, expectedRevision: created.revision, operations: [
     { op: "insert", entry: examples.concepts[0] }, { op: "update", id: "missing", set: { reason: "Bad" } }
   ] });
@@ -92,10 +92,10 @@ test("MCP failures expose stable codes and preserve rejected batch bytes", async
   assert.match(invalid.error.data.errors[0], /operations\[1\]\.id/);
   assert.match(invalid.error.message, /operations\[1\]\.id/);
   assert.equal(invalid.error.message.split(invalid.error.data.errors[0]).length, 2);
-  assert.equal(await readFile(path.join(input.projectRoot, input.deltaPath), "utf8"), bytes);
+  assert.equal(await readFile(path.join(input.projectRoot, ".prism/initiatives/demo/slices/retry/change-map.json"), "utf8"), bytes);
   const unknown = await call("get_change_map", { ...input, extra: true });
   assert.equal(unknown.error.data.code, "validation_failed");
-  const escape = await call("get_change_map", { ...input, deltaPath: "../change-map.json" });
+  const escape = await call("get_change_map", { ...input, slice: ".." });
   assert.equal(escape.error.data.code, "invalid_path");
   const oversized = await call("get_change_map", { ...input, limit: 101 });
   assert.equal(oversized.error.data.code, "validation_failed");
@@ -113,24 +113,24 @@ test('public conservation MCP captures, compares, accepts review and enforces mu
  const c=(await call('compare_change_map',{...input,expectedRevision:d.revision,baselineId:b.snapshotId,resultSnapshotId:b.snapshotId})).result.structuredContent;
  assert.equal(c.status,'ready');
  const observations=(await call('get_conservation_evidence',{projectRoot:input.projectRoot,evidenceId:c.comparisonId,section:'observations',limit:1})).result.structuredContent;assert.equal(observations.totalCount,0);
- const reviewPath='docs/plans/demo/retry/review.json';
+ const slice={initiative:'demo',slice:'retry'};
  let revision=null;
- const mutate=async(actor,operations)=>{const response=await call('update_review',{projectRoot:input.projectRoot,reviewPath,deltaPath:input.deltaPath,delivery:'delivery',expectedRevision:revision,actor,operations});if(response.result)revision=response.result.structuredContent.revision;return response;};
+ const mutate=async(actor,operations)=>{const response=await call('update_review',{projectRoot:input.projectRoot,...slice,delivery:'delivery',expectedRevision:revision,actor,operations});if(response.result)revision=response.result.structuredContent.revision;return response;};
  const coordinator={id:'coordinator',role:'coordinator'},reviewer={id:'independent',role:'reviewer'};
- const blocked=await call('check_review_gate',{projectRoot:input.projectRoot,reviewPath,gate:'implementation'});assert.equal(blocked.result.structuredContent.ready,false);
+ const blocked=await call('check_review_gate',{projectRoot:input.projectRoot,...slice,gate:'implementation'});assert.equal(blocked.result.structuredContent.ready,false);
  await mutate(coordinator,[{op:'start_wave',id:'audit',mode:'design-audit',deltaRevision:d.revision,snapshotId:b.snapshotId,comparisonId:c.comparisonId,lanes:[{id:'main',reviewer:'independent',coverage:['src']}]}]);
  const noLane=await mutate(coordinator,[{op:'accept_wave'}]);assert.equal(noLane.error.data.code,'gate_blocked');assert.ok(noLane.error.data.problems.some(x=>x.code==='lane_result_stale'));assert.match(noLane.error.message,/acceptance gate.*\n?.*lane_result_stale/);assert.equal(noLane.error.message.match(/Every assigned lane needs a current CLEAN result/g).length,1);
  await mutate(reviewer,[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await mutate(coordinator,[{op:'accept_wave'}]);
- const gate=(await call('check_review_gate',{projectRoot:input.projectRoot,reviewPath,gate:'implementation'})).result.structuredContent;assert.equal(gate.ready,true);
- const statePath='docs/plans/demo/state.json';
- const relative=await call('update_coordination_state',{projectRoot:input.projectRoot,statePath,expectedRevision:null,changes:{activeOperations:[{op:'start',entry:{slice:'retry',activity:'design',workers:['delivery'],workspace:input.projectRoot,reviewPath:'retry/review.json'}}]}});
- assert.equal(relative.error.data.code,'validation_failed');assert.match(relative.error.message,/resolves from the project root, and retry is not a directory there/);
+ const gate=(await call('check_review_gate',{projectRoot:input.projectRoot,...slice,gate:'implementation'})).result.structuredContent;assert.equal(gate.ready,true);
+ const statePath={initiative:'demo'};
+ const legacy=await call('update_coordination_state',{projectRoot:input.projectRoot,...statePath,expectedRevision:null,changes:{activeOperations:[{op:'start',entry:{slice:'retry',activity:'design',workers:['delivery'],workspace:input.projectRoot,reviewPath:'retry/review.json'}}]}});
+ assert.equal(legacy.error.data.code,'validation_failed');
  const sections=await call('get_conservation_evidence',{projectRoot:input.projectRoot,evidenceId:c.comparisonId,section:'files'});assert.match(sections.error.message,/no section files\. Its sections are .*observations/);
- const started=await call('update_coordination_state',{projectRoot:input.projectRoot,statePath,expectedRevision:null,changes:{activeOperations:[{op:'start',entry:{slice:'retry',activity:'implementation',workers:['delivery'],workspace:input.projectRoot,reviewPath}}]}});assert.ok(started.result,JSON.stringify(started));
+ const started=await call('update_coordination_state',{projectRoot:input.projectRoot,...statePath,expectedRevision:null,changes:{activeOperations:[{op:'start',entry:{slice:'retry',activity:'implementation',workers:['delivery'],workspace:input.projectRoot}}]}});assert.ok(started.result,JSON.stringify(started));
  const revisionState=started.result.structuredContent.revision;
- const bypass=await call('update_coordination_state',{projectRoot:input.projectRoot,statePath,expectedRevision:revisionState,changes:{active:[]}});assert.equal(bypass.error.data.code,'gate_blocked');
- const finish=await call('update_coordination_state',{projectRoot:input.projectRoot,statePath,expectedRevision:revisionState,changes:{activeOperations:[{op:'finish',slice:'retry'}]}});assert.equal(finish.error.data.code,'gate_blocked');
- const invalid=await call('update_review',{projectRoot:input.projectRoot,reviewPath,expectedRevision:revision,actor:coordinator,operations:[{op:'accept_wave',gatePassed:true}]});assert.equal(invalid.error.data.code,'validation_failed');
+ const bypass=await call('update_coordination_state',{projectRoot:input.projectRoot,...statePath,expectedRevision:revisionState,changes:{active:[]}});assert.equal(bypass.error.data.code,'gate_blocked');
+ const finish=await call('update_coordination_state',{projectRoot:input.projectRoot,...statePath,expectedRevision:revisionState,changes:{activeOperations:[{op:'finish',slice:'retry'}]}});assert.equal(finish.error.data.code,'gate_blocked');
+ const invalid=await call('update_review',{projectRoot:input.projectRoot,...slice,expectedRevision:revision,actor:coordinator,operations:[{op:'accept_wave',gatePassed:true}]});assert.equal(invalid.error.data.code,'validation_failed');
  const search=(await call('search_repository_concepts',{projectRoot:input.projectRoot,snapshotId:b.snapshotId,query:'reuse',limit:1})).result.structuredContent;
  assert.equal(search.status,'degraded');assert.ok(search.receiptId);const receipt=(await call('get_conservation_evidence',{projectRoot:input.projectRoot,evidenceId:search.receiptId})).result.structuredContent;assert.equal(receipt.capabilities.semanticSearch,false);
 });

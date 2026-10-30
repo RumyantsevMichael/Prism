@@ -479,8 +479,9 @@ test("a project whose records cannot be read is listed with an unknown gate coun
   const current = await project(context, "intact");
   const currentUrl = await (await pool(context, { app: { directory } }).get(current, "task")).reviewUrl([]);
   const broken = await project(context, "broken");
-  // A file where the plans folder belongs makes the project's records unreadable.
-  await writeFile(path.join(broken, "docs", "plans"), "not a folder\n");
+  // A file where the initiative records belong makes the project's records unreadable.
+  await mkdir(path.join(broken, ".prism"), { recursive: true });
+  await writeFile(path.join(broken, ".prism", "initiatives"), "not a folder\n");
   await registerRecent(directory, broken);
   const entry = JSON.parse((await request(new URL("api/projects", currentUrl))).body).projects.find((item) => item.projectRoot === broken);
   assert.equal(entry.gates, null);
@@ -977,7 +978,7 @@ test("the app reads a project's evidence from every store that sessions of diffe
   assert.equal((await request(new URL(`api/evidence?id=${"0".repeat(64)}`, url))).status, 400, "evidence that no store holds is still refused");
 });
 
-test("the app records a gate answer in the most recently reported store", async (context) => {
+test("a gate answer from the app writes the state record without touching any evidence store", async (context) => {
   const directory = await appDirectory(context);
   const root = await gateProject(context, "answers", 1);
   const stores = [];
@@ -992,7 +993,10 @@ test("the app records a gate answer in the most recently reported store", async 
   const answered = await request(new URL("api/gates/answer", url), { method: "POST", headers: { "Content-Type": "application/json" }, body });
   assert.equal(answered.status, 200, answered.body);
   const contents = await Promise.all(stores.map((store) => readdir(store)));
-  assert.deepEqual(contents.map((entries) => entries.length > 0), [false, true], "only the newest reported store holds the answer's project records");
+  // State records sit outside conservation snapshots, so an answer has nothing to register in a store.
+  assert.deepEqual(contents.map((entries) => entries.length > 0), [false, false]);
+  const state = JSON.parse(await readFile(path.join(root, ".prism/initiatives/work/state.json"), "utf8"));
+  assert.equal(state.pending.find((gate) => gate.id === "gate-00000000").answer.note, "Answered from the page.");
 });
 
 test("a session falls back within the start deadline when a started app never answers", async (context) => {

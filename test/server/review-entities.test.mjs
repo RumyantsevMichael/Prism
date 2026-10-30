@@ -45,9 +45,9 @@ async function fixture(context) {
     { op: "add_initiative", id: "reports", title: "Export reports", intent: "Signed exports.", band: "Now" },
     { op: "add_initiative", id: "search", title: "Search", intent: "Find activity.", band: "Later", requires: ["reports"] }
   ] });
-  await updateCoordinationState({ projectRoot: root, statePath: "docs/plans/reports/state.json", expectedRevision: null, changes: {
+  await updateCoordinationState({ projectRoot: root, initiative: "reports", expectedRevision: null, changes: {
     pending: ["Confirm retention window"],
-    gateOperations: [{ op: "ask", kind: "visual-review", slice: "download", question: "Review the download design before implementation.", artifacts: ["docs/plans/reports/download/slice.md", "docs/plans/reports/download/missing.md"] }]
+    gateOperations: [{ op: "ask", kind: "visual-review", slice: "download", question: "Review the download design before implementation.", artifacts: ["docs/plans/reports/download/slice.md", "docs/plans/reports/download/missing.md", "docs/plans/reports/download/review.json"] }]
   } });
   return root;
 }
@@ -112,7 +112,7 @@ test("serves navigation and entity views built from Prism records", async (conte
     assert.deepEqual(roadmap.data.unlisted, ["orphan"]);
     const initiative = await entity("initiative:reports");
     assert.deepEqual(initiative.data.derived.effectiveDependencies.download, ["authorize"]);
-    assert.deepEqual(initiative.data.slices.download.files, ["docs/plans/reports/download/notes/extra.md", "docs/plans/reports/download/review.json", "docs/plans/reports/download/slice.md"]);
+    assert.deepEqual(initiative.data.slices.download.files, ["docs/plans/reports/download/notes/extra.md", "docs/plans/reports/download/slice.md"]);
     assert.equal(initiative.data.slices.download.review.byStatus.OPEN, 1);
     const slice = await entity("slice:reports/download");
     assert.equal(slice.data.slice.outcome, "A signed report downloads.");
@@ -162,7 +162,7 @@ test("lists what waits on the user apart from agent-side state", async (context)
     assert.equal(needs[0].kind, "visual-review");
     assert.deepEqual(needs[0].slice, { slug: "download", title: "Download signed reports" });
     assert.deepEqual(needs[0].initiative, { id: "reports", title: "Export reports" });
-    assert.deepEqual(needs[0].artifacts, [{ path: "docs/plans/reports/download/slice.md", available: true }, { path: "docs/plans/reports/download/missing.md", available: false }]);
+    assert.deepEqual(needs[0].artifacts, [{ path: "docs/plans/reports/download/slice.md", available: true }, { path: "docs/plans/reports/download/missing.md", available: false }, { path: ".prism/initiatives/reports/slices/download/review.json", available: true }], "a gate asked before the records moved names the record where it lives now");
     assert.deepEqual(attention.data.watch.map((item) => item.type), ["findings", "findings"]);
     assert.deepEqual([attention.data.watch[0].unresolved, attention.data.watch[0].blocking], [1, 1]);
     const index = (await get(`${review.baseUrl}/api/index`)).json();
@@ -180,12 +180,12 @@ test("gives every tab a breadcrumb trail and sidebar scope", async (context) => 
   try {
     const contextOf = async (ref) => (await get(`${review.baseUrl}/api/context?ref=${encodeURIComponent(ref)}`)).json();
     const labels = (value) => value.trail.map((crumb) => crumb.label);
-    const sliceFile = await contextOf("docs/plans/reports/download/review.json");
+    const sliceFile = await contextOf(".prism/initiatives/reports/slices/download/review.json");
     assert.deepEqual(labels(sliceFile), ["Roadmap", "Export reports", "Download signed reports", "review.json"]);
     assert.equal(sliceFile.scope.kind, "initiative");
     assert.equal(sliceFile.scope.current, "download");
     assert.deepEqual(sliceFile.scope.tree.map((node) => [node.slug, node.depth, node.status]), [["reports", 0, "split"], ["authorize", 1, "not-started"], ["download", 1, "in-progress"]]);
-    const state = await contextOf("docs/plans/reports/state.json");
+    const state = await contextOf(".prism/initiatives/reports/state.json");
     assert.deepEqual([labels(state), state.scope.current], [["Roadmap", "Export reports", "state.json"], null]);
     const requirement = await contextOf("docs/requirements/reports.md");
     assert.deepEqual(labels(requirement), ["Library", "Requirements", "Activity reports"]);
@@ -256,12 +256,12 @@ test("treats the initiative directory as the root slice folder", async (context)
     const root = (await get(`${review.baseUrl}/api/entity?ref=${encodeURIComponent("slice:reports/reports")}`)).json();
     assert.equal(root.data.artifacts.folder, "docs/plans/reports");
     assert.equal(root.data.artifacts.narrative, "docs/plans/reports/slice.md");
-    assert.deepEqual(root.data.artifacts.files, ["docs/plans/reports/review.json", "docs/plans/reports/slice.md"]);
+    assert.deepEqual(root.data.artifacts.files, ["docs/plans/reports/slice.md"]);
     assert.equal(root.data.artifacts.review.unresolved, 1);
     const roadmap = (await get(`${review.baseUrl}/api/entity?ref=roadmap`)).json();
     assert.deepEqual(roadmap.data.items.find((item) => item.id === "reports").findings, { unresolved: 2, blocking: 1 });
     const attention = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json();
-    assert.deepEqual(attention.data.watch.filter((item) => item.type === "findings").map((item) => item.path).sort(), ["docs/plans/reports/download/review.json", "docs/plans/reports/review.json"]);
+    assert.deepEqual(attention.data.watch.filter((item) => item.type === "findings").map((item) => item.path).sort(), [".prism/initiatives/reports/slices/download/review.json", ".prism/initiatives/reports/slices/reports/review.json"]);
   } finally {
     await review.close();
   }

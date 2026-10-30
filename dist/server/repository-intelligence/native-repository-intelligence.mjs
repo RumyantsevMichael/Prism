@@ -357,8 +357,9 @@ async function buildSnapshot(projectRoot, options) {
   const enumeration = await enumerateFiles(root, options);
   // Evidence paths are registered by server mutations, never supplied as caller exclusion patterns.
   const { conservationStore } = await import("../conservation/conservation-store.mjs");
+  const { isManagedRecordFile } = await import("../workflow/record-store.mjs");
   const evidenceOutputs = new Set(await conservationStore.outputs(root));
-  enumeration.files = enumeration.files.filter(file => !evidenceOutputs.has(file));
+  enumeration.files = enumeration.files.filter(file => !evidenceOutputs.has(file) && !isManagedRecordFile(file));
   const diagnostics = [...enumeration.diagnostics];
   const counters = {
     binary: 0,

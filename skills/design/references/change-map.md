@@ -1,15 +1,14 @@
 # MCP-managed change map and conservation
 
 A change map records intended changes to code, instructions, documentation, specifications, tests, and configuration.
-Design owns the slice's `change-map.json` through `get_change_map` and `update_change_map`.
-A slice designed before the rename keeps its `concept-delta.json`, and either file name reaches the slice's one change map.
+Design owns the slice's change map through `get_change_map` and `update_change_map`, addressed by the `initiative` and `slice` identifiers.
 The server owns serialization, validation, revisions, locking, atomic persistence, and retained evidence.
 Agents never edit managed JSON or its generated Markdown directly.
 Context-budget `FIT` and conservation acceptance are separate checks.
 
 ## Capture source evidence
 
-1. Before the first target edit, call `capture_repository_snapshot` with the absolute `projectRoot` and slice-relative `deltaPath`.
+1. Before the first target edit, call `capture_repository_snapshot` with the absolute `projectRoot` and the `initiative` and `slice` identifiers.
 2. Preserve the returned baseline identity as **B**, including dirty and untracked source.
 3. Bind governing requirements through source references in the change map.
 4. After design-authored tests and scaffolds, capture **A** for design audit.
@@ -32,7 +31,7 @@ A parent change map does not authorize child implementation.
 3. Insert, partially update, or remove entries in batches of at most 100 operations.
 4. After a revision conflict, reread the artifact before retrying.
 5. Before returning `FIT`, read every page at the same `expectedRevision` and confirm `valid: true` and `ready: true`.
-6. Return the change map path, exact revision, and baseline identity.
+6. Return the change map revision and baseline identity.
 7. If MCP or required semantic preparation is unavailable, return `BLOCKED` with the missing capability.
 
 New artifacts use `schemaVersion: 2`.
@@ -43,7 +42,7 @@ An invalid batch preserves existing artifact bytes, and a no-op preserves its re
 `remove` removes a planned entry rather than deleting its target.
 `ready` means ready for design audit, not approved for implementation.
 An empty change map can be ready when a retained baseline supports a design with no target changes.
-When `ADD` entries add units to several files that repeat the same functions, or `MODIFY` entries change copies of one function in several files, readiness reports `duplication_growth` until `REPLACE` or `DELETE` entries cover those functions in this change map or in a change map that `consolidations` names.
+When `ADD` entries add units to several files that repeat the same functions, or `MODIFY` entries change copies of one function in several files, readiness reports `duplication_growth` until `REPLACE` or `DELETE` entries cover those functions in this change map or in another slice's change map that `consolidations` names by `initiative` and `slice`.
 
 ## Entries and exact references
 
@@ -191,4 +190,3 @@ These gates control Prism records; they do not prevent direct filesystem edits.
 5. If the original source was not retained before edits, report the missing original baseline instead of fabricating B from the changed tree.
 
 Historical `CLEAN` is readable history and never current acceptance.
-Moving a `concept-delta.json` to `change-map.json` in the same slice folder keeps its revision, evidence ownership, and review bindings.

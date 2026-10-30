@@ -119,7 +119,7 @@ function planLines(document, ctx) {
     ["Expected growth", document.expectedGrowth?.length ? document.expectedGrowth.map((item) => `<code>${escapeHtml(item.dimension)}</code> +${escapeHtml(item.increase)} — ${escapeHtml(item.reason)}`).join("<br>") : null],
     ["Growth limits", document.growthThresholds?.length ? document.growthThresholds.map((item) => `<code>${escapeHtml(item.dimension)}</code> ≤ +${escapeHtml(item.maximumIncrease)}`).join(" ") : null],
     ["Growth reasons", document.growthJustifications?.length ? document.growthJustifications.map((item) => `${item.dimensions.map((dimension) => `<code>${escapeHtml(dimension)}</code>`).join(" ")} — ${escapeHtml(item.reason)}`).join("<br>") : null],
-    ["Consolidates with", document.consolidations?.length ? document.consolidations.map((item) => `${artifactChip(item.deltaPath, ctx)} ${escapeHtml(item.reason)}`).join("<br>") : null]
+    ["Consolidates with", document.consolidations?.length ? document.consolidations.map((item) => `${artifactChip(item.deltaPath ?? `.prism/initiatives/${item.initiative}/slices/${item.slice}/change-map.json`, ctx, item.slice)} ${escapeHtml(item.reason)}`).join("<br>") : null]
   ]);
 }
 

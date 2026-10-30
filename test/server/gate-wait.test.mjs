@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { answerUserGate, readCoordinationState, updateCoordinationState } from "../../dist/server/workflow/state.mjs";
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
-const STATE_PATH = "docs/plans/reports/state.json";
+const INITIATIVE = "reports";
 
 async function project(context) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-gate-wait-")));
@@ -17,7 +17,7 @@ async function project(context) {
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await writeFile(path.join(root, ".prism/workflow.md"), "## Paths\n- Plans (scratch): docs/plans/\n");
   await mkdir(path.join(root, "docs/plans/reports"), { recursive: true });
-  const created = await updateCoordinationState({ projectRoot: root, statePath: STATE_PATH, expectedRevision: null, changes: { gateOperations: [
+  const created = await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: null, changes: { gateOperations: [
     { op: "ask", kind: "decision", question: "Fresh login or active session?", artifacts: [], options: [{ id: "fresh-login", label: "Require a fresh login" }] },
     { op: "ask", kind: "visual-review", question: "Review the design.", artifacts: [] },
     { op: "ask", kind: "correctness", question: "Is it correct?", artifacts: [] }
@@ -65,7 +65,7 @@ function server(context, root, clientName, { version = "2.1.296", environment = 
 }
 
 function wait(mcp, id, root, gateId, extra = {}, meta = { progressToken: `wait-${id}` }) {
-  mcp.send({ id, method: "tools/call", params: { name: "wait_for_user_gate", arguments: { projectRoot: root, statePath: STATE_PATH, gateId, ...extra }, _meta: meta } });
+  mcp.send({ id, method: "tools/call", params: { name: "wait_for_user_gate", arguments: { projectRoot: root, initiative: INITIATIVE, gateId, ...extra }, _meta: meta } });
 }
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -78,7 +78,7 @@ test("returns the browser answer and sends progress while it waits", async (cont
   await delay(700);
   assert.ok(mcp.messages.filter((message) => message.method === "notifications/progress" && message.params.progressToken === "wait-2").length >= 2);
   assert.equal(mcp.messages.some((message) => message.id === 2), false);
-  await answerUserGate({ projectRoot: root, statePath: STATE_PATH, id: gateId, choice: "fresh-login", note: "Downloads are sensitive." });
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: gateId, choice: "fresh-login", note: "Downloads are sensitive." });
   const answered = await mcp.response(2);
   assert.equal(answered.result.structuredContent.status, "answered");
   assert.equal(answered.result.structuredContent.answered[0].answer.choice, "fresh-login");
@@ -98,8 +98,8 @@ test("ends when the gate is resolved, missing, timed out, or cancelled", async (
   mcp.send({ method: "notifications/cancelled", params: { requestId: 4, reason: "user pressed Esc" } });
   wait(mcp, 5, root, gateId);
   await delay(300);
-  const { revision } = await readCoordinationState({ projectRoot: root, statePath: STATE_PATH });
-  await updateCoordinationState({ projectRoot: root, statePath: STATE_PATH, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateId }] } });
+  const { revision } = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
+  await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateId }] } });
   assert.equal((await mcp.response(5)).result.structuredContent.status, "resolved");
   await delay(1200);
   assert.equal(mcp.messages.some((message) => message.id === 4), false);
@@ -139,17 +139,17 @@ test("waits on several gates and collects answers given in one visit", async (co
   const { root, gateIds } = await project(context);
   const mcp = server(context, root, "claude-code");
   await mcp.ready;
-  mcp.send({ id: 2, method: "tools/call", params: { name: "wait_for_user_gate", arguments: { projectRoot: root, statePath: STATE_PATH, gateIds } } });
+  mcp.send({ id: 2, method: "tools/call", params: { name: "wait_for_user_gate", arguments: { projectRoot: root, initiative: INITIATIVE, gateIds } } });
   await delay(300);
-  await answerUserGate({ projectRoot: root, statePath: STATE_PATH, id: gateIds[0], choice: "fresh-login" });
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: gateIds[0], choice: "fresh-login" });
   await delay(200);
-  await answerUserGate({ projectRoot: root, statePath: STATE_PATH, id: gateIds[1], choice: "approve" });
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: gateIds[1], choice: "approve" });
   const response = await mcp.response(2);
   const value = response.result.structuredContent;
   assert.equal(value.status, "answered");
   assert.deepEqual(value.answered.map((gate) => gate.id), gateIds.slice(0, 2));
   assert.deepEqual(value.waiting, [gateIds[2]]);
   assert.match(response.result.content[0].text, new RegExp(`Still waiting on: ${gateIds[2]}\\.`));
-  mcp.send({ id: 3, method: "tools/call", params: { name: "wait_for_user_gate", arguments: { projectRoot: root, statePath: STATE_PATH } } });
+  mcp.send({ id: 3, method: "tools/call", params: { name: "wait_for_user_gate", arguments: { projectRoot: root, initiative: INITIATIVE } } });
   assert.match((await mcp.response(3)).error.message, /Pass the recorded gate ids in gateIds/);
 });

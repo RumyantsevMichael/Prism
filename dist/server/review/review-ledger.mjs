@@ -1,14 +1,17 @@
 // Generated from src/server/review/review-ledger.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import { withArtifactLock, withFileLock } from "../workflow/artifact-store.mjs";
 import { assertInput } from "../workflow/artifact-schema.mjs";
-import { resolveArtifactPath, readChangeMapDocument, sameChangeMap } from "../conservation/change-map.mjs";
+import { resolveArtifactPath, readChangeMapDocument } from "../conservation/change-map.mjs";
+import { locateRecord, sameRecord, sliceDocumentFolder, writeRecord } from "../workflow/record-store.mjs";
 import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { conservationStore, canonical, digest, conservationError, withinScope } from "../conservation/conservation-store.mjs";
 import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "../conservation/conservation-analysis.mjs";
 import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "../conservation/conservation-schema.mjs";
 const revisionField = { oneOf: [hashField, { type: "null" }] };
-const common = { projectRoot: str, reviewPath: str, expectedRevision: revisionField };
+const sliceIdentity = { projectRoot: str, initiative: str, slice: str };
+const common = { ...sliceIdentity, expectedRevision: revisionField };
 const laneSchema = obj({ id: str, reviewer: str, coverage: arr(str) });
 const assessmentCommon = { id: str, lane: str, reason: str, evidence: arr(referenceSchema) };
 const assessmentSchema = { oneOf: [
@@ -17,8 +20,8 @@ const assessmentSchema = { oneOf: [
   obj({ ...assessmentCommon, kind: { const: "growth" }, growthIds: arr(str), justification: justificationSchema }),
   obj({ ...assessmentCommon, kind: { const: "convergence" }, section: referenceSchema, decision: { enum: ["retain", "replace", "consolidate", "delete"] }, conceptIds: arr(str), coverage: arr(obj({ requirement: referenceSchema, targets: arr(referenceSchema) })) })
 ] };
-const GET_REVIEW_SCHEMA = obj({ ...common, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, section: { enum: ["findings", "waves", "assessments", "conflicts", "legacy", "history"] } }, ["projectRoot", "reviewPath"]);
-const UPDATE_REVIEW_SCHEMA = obj({ ...common, deltaPath: str, delivery: str, actor: obj({ id: str, role: { enum: ["coordinator", "delivery", "reviewer"] } }), operations: arr({ oneOf: [
+const GET_REVIEW_SCHEMA = obj({ ...common, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, section: { enum: ["findings", "waves", "assessments", "conflicts", "legacy", "history"] } }, ["projectRoot", "initiative", "slice"]);
+const UPDATE_REVIEW_SCHEMA = obj({ ...common, delivery: str, actor: obj({ id: str, role: { enum: ["coordinator", "delivery", "reviewer"] } }), operations: arr({ oneOf: [
   obj({ op: { const: "start_wave" }, id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, snapshotId: hashField, comparisonId: hashField, lanes: arr(laneSchema) }),
   obj({ op: { const: "assign_delivery" }, worker: str }),
   obj({ op: { const: "open_finding" }, lane: str, localId: str, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str }, ["op", "lane", "localId", "title", "severity", "affectedPath", "evidence", "conditionToClose"]),
@@ -34,8 +37,8 @@ const UPDATE_REVIEW_SCHEMA = obj({ ...common, deltaPath: str, delivery: str, act
   obj({ op: { const: "accept_wave" } }),
   obj({ op: { const: "import_legacy" }, path: str }),
   obj({ op: { const: "regenerate_markdown" } })
-] }) }, ["projectRoot", "reviewPath", "expectedRevision", "actor", "operations"]);
-const CHECK_REVIEW_GATE_SCHEMA = obj({ projectRoot: str, reviewPath: str, expectedRevision: hashField, gate: { enum: ["implementation", "completion"] } }, ["projectRoot", "reviewPath", "gate"]);
+] }) }, ["projectRoot", "initiative", "slice", "expectedRevision", "actor", "operations"]);
+const CHECK_REVIEW_GATE_SCHEMA = obj({ ...sliceIdentity, expectedRevision: hashField, gate: { enum: ["implementation", "completion"] } }, ["projectRoot", "initiative", "slice", "gate"]);
 const lastWave = (review) => review.waves.at(-1);
 const laneOf = (wave, lane) => {
   const value = wave.lanes.find((item) => item.id === lane);
@@ -90,8 +93,8 @@ const recordSchema = obj({
   legacy: arr(obj({ path: str, hash: hashField, content: { type: "string", maxLength: 1024 * 1024 } })),
   history: arr(obj({ actor: str, operation: str, at: str }), 1e4)
 }, ["schemaVersion", "deltaPath", "coordinator", "delivery", "deliveryWorkers", "waves", "findings", "assessments", "conflicts", "exchangeWorkers", "legacy", "history"]);
-async function loadReview(projectRoot, reviewPath) {
-  const resolved = await resolveArtifactPath(projectRoot, reviewPath, false, "review.json");
+async function loadReview(projectRoot, initiative, slice) {
+  const resolved = await locateRecord(projectRoot, { kind: "review", initiative, slice });
   try {
     const bytes = await regularBytes(resolved.target, 4 * 1024 * 1024), document = JSON.parse(bytes.toString());
     assertInput(recordSchema, document);
@@ -104,7 +107,9 @@ async function loadReview(projectRoot, reviewPath) {
 async function comparisonFor(projectRoot, review, wave) {
   const comparison = await conservationStore.get(projectRoot, wave.comparisonId, "comparison");
   if (comparison.versions.comparison !== COMPARISON_VERSION) throw conservationError("evidence_missing", "Regenerate comparison evidence with the current identity and growth checks.");
-  const mismatched = [["deltaPath", comparison.deltaPath, review.deltaPath], ["deltaRevision", comparison.deltaRevision, wave.deltaRevision], ["baselineId", comparison.baselineId, wave.baselineId], ["snapshotId", comparison.resultSnapshotId, wave.snapshotId]].filter(([field, compared, given]) => field === "deltaPath" ? !sameChangeMap(compared, given) : compared !== given).map(([field, compared, given]) => ({ code: "comparison_input_mismatch", field, message: `the comparison has ${compared}, and the review has ${given}` }));
+  const fields = [["deltaPath", comparison.deltaPath, review.deltaPath], ["deltaRevision", comparison.deltaRevision, wave.deltaRevision], ["baselineId", comparison.baselineId, wave.baselineId], ["snapshotId", comparison.resultSnapshotId, wave.snapshotId]];
+  const mismatched = [];
+  for (const [field, compared, given] of fields) if (field === "deltaPath" ? !await sameRecord(projectRoot, compared, given) : compared !== given) mismatched.push({ code: "comparison_input_mismatch", field, message: `the comparison has ${compared}, and the review has ${given}` });
   if (mismatched.length) throw conservationError("evidence_missing", "The review inputs do not match the immutable comparison. Compare the change map again with the review inputs, or start the wave with the inputs of the comparison.", { problems: mismatched });
   for (const id of [wave.baselineId, wave.snapshotId]) {
     const snapshot = await conservationStore.get(projectRoot, id, "snapshot");
@@ -351,7 +356,7 @@ async function correctionScope(projectRoot, review, wave) {
 }
 async function checkReviewGate(input) {
   assertInput(CHECK_REVIEW_GATE_SCHEMA, input);
-  const loaded = await loadReview(input.projectRoot, input.reviewPath);
+  const loaded = await loadReview(input.projectRoot, input.initiative, input.slice);
   if (input.expectedRevision && input.expectedRevision !== loaded.revision) throw conservationError("revision_conflict", "The review record changed.", { currentRevision: loaded.revision });
   const review = loaded.document;
   if (!review) return { ready: false, problems: [{ code: "evidence_missing", message: "The review record is missing." }] };
@@ -389,15 +394,20 @@ function markdown(review) {
   for (const finding of review.findings) lines.push(`## ${finding.id}: ${finding.title}`, "", `- Status: ${finding.status}`, `- Severity: ${finding.severity}`, `- Evidence: ${finding.evidence}`, `- Condition to close: ${finding.conditionToClose}`, `- Implementer evidence: ${finding.implementerEvidence || "none"}`, "");
   return lines.join("\n") + "\n";
 }
+async function reviewProjection(input) {
+  const folder = await sliceDocumentFolder(input.projectRoot, input.initiative, input.slice);
+  if (folder === null) throw conservationError("invalid_path", "The workflow config disables the plans path.");
+  return resolveArtifactPath(input.projectRoot, `${folder}/review.md`, false, "review.md");
+}
 async function getReview(input) {
   assertInput(GET_REVIEW_SCHEMA, input);
-  const loaded = await loadReview(input.projectRoot, input.reviewPath);
+  const loaded = await loadReview(input.projectRoot, input.initiative, input.slice);
   if (input.expectedRevision !== void 0 && loaded.revision !== input.expectedRevision) throw conservationError("revision_conflict", "The review record changed.", { currentRevision: loaded.revision });
   if (!loaded.document) return { exists: false, revision: null };
   const section = input.section || "findings", list = loaded.document[section], offset = input.offset || 0, limit = input.limit || 50;
   let projectionStale = true;
   try {
-    const projection = await resolveArtifactPath(input.projectRoot, input.reviewPath.replace(/\.json$/, ".md"), false, "review.md");
+    const projection = await reviewProjection(input);
     projectionStale = (await regularBytes(projection.target, 4 * 1024 * 1024)).toString() !== markdown(loaded.document);
   } catch {
   }
@@ -419,15 +429,16 @@ async function getReview(input) {
 }
 async function updateReview(input) {
   assertInput(UPDATE_REVIEW_SCHEMA, input);
-  const resolved = await resolveArtifactPath(input.projectRoot, input.reviewPath, true, "review.json");
+  const resolved = await locateRecord(input.projectRoot, { kind: "review", initiative: input.initiative, slice: input.slice });
+  const deltaTarget = await locateRecord(input.projectRoot, { kind: "change-map", initiative: input.initiative, slice: input.slice });
+  await mkdir(path.dirname(resolved.target), { recursive: true });
   return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
-    const loaded = await loadReview(input.projectRoot, input.reviewPath);
+    const loaded = await loadReview(input.projectRoot, input.initiative, input.slice);
     if (loaded.revision !== input.expectedRevision) throw conservationError("revision_conflict", "The review record changed.", { currentRevision: loaded.revision });
-    if (!loaded.document && (!input.deltaPath || !input.delivery || input.actor.role !== "coordinator")) throw conservationError("validation_failed", "Review creation requires the coordinator, delivery worker, and delta path.");
-    const deltaTarget = await resolveArtifactPath(input.projectRoot, loaded.document?.deltaPath || input.deltaPath, false);
+    if (!loaded.document && (!input.delivery || input.actor.role !== "coordinator")) throw conservationError("validation_failed", "Review creation requires the coordinator and the delivery worker.");
     return withArtifactLock(deltaTarget.target, () => withFileLock(deltaTarget.target, async () => {
-      const review = structuredClone(loaded.document || { schemaVersion: 1, deltaPath: deltaTarget.deltaPath, coordinator: input.actor.id, delivery: input.delivery, deliveryWorkers: [input.delivery], waves: [], findings: [], assessments: [], conflicts: [], exchangeWorkers: [], legacy: [], history: [] });
-      if (path.posix.dirname(review.deltaPath) !== path.posix.dirname(input.reviewPath) || input.deltaPath && !sameChangeMap(input.deltaPath, review.deltaPath)) throw conservationError("invalid_path", "A review and its change map must share the slice directory.");
+      const review = structuredClone(loaded.document || { schemaVersion: 1, deltaPath: deltaTarget.path, coordinator: input.actor.id, delivery: input.delivery, deliveryWorkers: [input.delivery], waves: [], findings: [], assessments: [], conflicts: [], exchangeWorkers: [], legacy: [], history: [] });
+      if (!await sameRecord(input.projectRoot, review.deltaPath, deltaTarget.path)) throw conservationError("invalid_path", "A review and its change map must belong to the same slice.");
       const now = () => (/* @__PURE__ */ new Date()).toISOString(), carry = { carried: [], notCarried: [] };
       for (const operation of input.operations) {
         const wave2 = lastWave(review), op = operation.op;
@@ -570,15 +581,16 @@ async function updateReview(input) {
         }
         if (op !== "regenerate_markdown") review.history.push({ actor: input.actor.id, operation: op, at: now() });
       }
-      await conservationStore.registerSlice(input.projectRoot, review.deltaPath);
+      await conservationStore.registerSlice(input.projectRoot, input.initiative, input.slice);
       assertInput(recordSchema, review);
       const contents = canonical(review) + "\n";
       if (Buffer.byteLength(contents) > 4 * 1024 * 1024) throw conservationError("resource_limit", "The review record exceeds 4 MiB.");
       const changed = canonical(review) !== canonical(loaded.document);
-      if (changed) await conservationStore.writeManaged(resolved.root, resolved.target, contents);
+      if (changed) await writeRecord(input.projectRoot, { kind: "review", initiative: input.initiative, slice: input.slice }, contents);
       let projectionStale = false;
       try {
-        const projection = await resolveArtifactPath(input.projectRoot, input.reviewPath.replace(/\.json$/, ".md"), false, "review.md");
+        const projection = await reviewProjection(input);
+        await mkdir(path.dirname(projection.target), { recursive: true });
         await conservationStore.writeManaged(resolved.root, projection.target, markdown(review));
       } catch {
         projectionStale = true;

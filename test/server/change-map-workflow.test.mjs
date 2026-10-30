@@ -10,7 +10,7 @@ test("design authors planned changes through MCP and returns a ready revision", 
   const procedure = await source("design/references/change-map.md");
   assert.match(design, /change-map MCP capability/);
   assert.match(design, /Before `FIT`, validate the complete change map at one revision/);
-  assert.match(design, /ready change map path and exact revision/);
+  assert.match(design, /ready change map.s exact revision/);
   assert.match(procedure, /Agents never edit managed JSON/);
   assert.match(procedure, /MCP or required semantic preparation is unavailable, return `BLOCKED`/);
   assert.match(procedure, /parent change map does not authorize child implementation/);
@@ -28,7 +28,7 @@ test("implementation and review preserve the audited revision and detect deviati
   assert.match(review, /scope, coverage of planned changes, and reuse evidence/);
   assert.match(review, /immutable B→F comparison/);
   assert.match(delivery, /accepted design revision and current A snapshot/);
-  assert.match(reviewRules, /change map path and submitted or audited revision/);
+  assert.match(reviewRules, /slice identifiers and the submitted or audited change map revision/);
   assert.match(format, /Change map revision: <SHA-256>/);
 });
 test("the shared change map procedure has resolvable links and tested operation examples", async () => {
@@ -40,5 +40,5 @@ test("the shared change map procedure has resolvable links and tested operation 
     await readFile(new URL(`../../skills/design/references/${match[1]}`, import.meta.url));
   }
   assert.match(await source("workflow/SKILL.md"), /\| Change map \|/);
-  assert.match(await source("workflow/references/artifact-rules.md"), /Manage slice `change-map.json`/);
+  assert.match(await source("workflow/references/artifact-rules.md"), /Manage the slice change map/);
 });

@@ -3,12 +3,12 @@ import { conservationStore, conservationError } from "./conservation-store.mjs";
 import { compareChangeMap } from "./conservation-analysis.mjs";
 import { GET_REVIEW_SCHEMA, UPDATE_REVIEW_SCHEMA, CHECK_REVIEW_GATE_SCHEMA, getReview, updateReview, checkReviewGate } from "../review/review-ledger.mjs";
 import { objectSchema as obj, textField as str, hashField } from "./conservation-schema.mjs";
-const captureSchema = obj({ projectRoot: str, deltaPath: str }, ["projectRoot"]);
+const captureSchema = obj({ projectRoot: str, initiative: str, slice: str }, ["projectRoot"]);
 const evidenceSchema = obj({ projectRoot: str, evidenceId: hashField, section: { enum: ["files", "omissions", "diagnostics", "candidates", "observations", "measurements", "growth", "unitsBefore", "unitsAfter", "units", "requirements", "lines", "groups", "modules", "delegatingClasses", "containers", "shapes"] }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }, ["projectRoot", "evidenceId"]);
-const compareSchema = obj({ projectRoot: str, deltaPath: str, expectedRevision: hashField, baselineId: hashField, resultSnapshotId: hashField });
+const compareSchema = obj({ projectRoot: str, initiative: str, slice: str, expectedRevision: hashField, baselineId: hashField, resultSnapshotId: hashField });
 const annotations = (readOnlyHint: boolean, openWorldHint = false) => ({ readOnlyHint, destructiveHint: false, idempotentHint: readOnlyHint, openWorldHint });
 export const CONSERVATION_TOOLS = [
-  { name: "capture_repository_snapshot", description: "Retain immutable source evidence before edits, including dirty, untracked, opaque and symlink identities. Pass deltaPath to register exact slice evidence outputs before creating them. Returns the baseline or result snapshot identity.", inputSchema: captureSchema, annotations: annotations(false) },
+  { name: "capture_repository_snapshot", description: "Retain immutable source evidence before edits, including dirty, untracked, opaque and symlink identities. Pass the initiative and slice to register the slice's evidence outputs before creating them. Returns the baseline or result snapshot identity.", inputSchema: captureSchema, annotations: annotations(false) },
   { name: "get_conservation_evidence", description: "Read an immutable snapshot, search receipt, repository analysis receipt, comparison, or analysis in bounded pages. Evidence IDs bind every page without revision drift.", inputSchema: evidenceSchema, annotations: annotations(true) },
   { name: "compare_change_map", description: "Compare an exact change map revision with retained B and A/F snapshots. Prepare native extraction automatically and retain immutable observed facts and measurements. Similarity never proves equivalence.", inputSchema: compareSchema, annotations: annotations(false, true) },
   { name: "get_review", description: "Read the authoritative MCP review ledger and report stale Markdown projections. Page findings, waves, assessments, conflicts, migration history or operation history.", inputSchema: GET_REVIEW_SCHEMA, annotations: annotations(true) },
@@ -25,7 +25,8 @@ export async function callConservationTool(name: string, input: Record<string, u
   if (name === "compare_change_map") return compareChangeMap(input as unknown as Parameters<typeof compareChangeMap>[0]);
   const projectRoot = input.projectRoot as string;
   if (name === "capture_repository_snapshot") {
-    const { snapshotId, snapshot } = await conservationStore.capture(projectRoot, input.deltaPath as string | undefined);
+    if ((input.initiative === undefined) !== (input.slice === undefined)) throw conservationError("validation_failed", "Pass both initiative and slice, or neither.");
+    const { snapshotId, snapshot } = await conservationStore.capture(projectRoot, input.slice === undefined ? undefined : { initiative: input.initiative as string, slice: input.slice as string });
     return { snapshotId, fingerprint: snapshot.fingerprint, commit: snapshot.commit, capturePolicy: snapshot.capturePolicy, complete: snapshot.complete,
       counts: { files: snapshot.files.length, bytes: snapshot.files.reduce((sum, file) => sum + file.bytes, 0), omissions: snapshot.omissions.length }, diagnostics: snapshot.diagnostics.slice(0, 20), totalDiagnostics: snapshot.diagnostics.length };
   }

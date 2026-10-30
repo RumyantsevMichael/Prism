@@ -61,27 +61,26 @@ async function managedTrial() {
   await writeFile(path.join(projectRoot, "requirements.md"), "Preserve the retry result while removing the redundant local variable.\n");
   await mkdir(path.join(projectRoot, "vendor"));
   await writeFile(path.join(projectRoot, "vendor/large.js"), "// " + "x".repeat(2 * 1024 * 1024));
-  const deltaPath = "plans/managed/change-map.json", reviewPath = "plans/managed/review.json";
-  const omittedDeltaPath = "plans/omitted/change-map.json";
-  await call("capture_repository_snapshot", { deltaPath: omittedDeltaPath });
-  const baseline = await call("capture_repository_snapshot", { deltaPath });
+  const key = { initiative: "plans", slice: "managed" }, omittedKey = { initiative: "plans", slice: "omitted" };
+  await call("capture_repository_snapshot", omittedKey);
+  const baseline = await call("capture_repository_snapshot", key);
   assert.equal(baseline.complete, false);
-  const omitted = await call("update_change_map", { deltaPath: omittedDeltaPath, expectedRevision: null,
+  const omitted = await call("update_change_map", { ...omittedKey, expectedRevision: null,
     baselineId: baseline.snapshotId, scope: ["vendor/large.js"], operations: [] });
   assert.equal(omitted.ready, false);
   assert.ok(omitted.diagnostics.some(item => item.code === "evidence_missing"), JSON.stringify(omitted));
   const reference = { path: "retry.mjs", selector: { type: "symbol", value: "retryRequest" } };
-  const delta = await call("update_change_map", { deltaPath, expectedRevision: null, baselineId: baseline.snapshotId,
+  const delta = await call("update_change_map", { ...key, expectedRevision: null, baselineId: baseline.snapshotId,
     scope: ["retry.mjs"], requirements: [{ path: "requirements.md" }], operations: [{ op: "insert", entry: {
       id: "retry", kind: "function", label: "Retry result", action: "MODIFY", before: [reference], after: [reference],
       reason: "Remove the redundant local variable while preserving the result.", requirements: [{ path: "requirements.md" }]
     } }] });
   assert.equal(delta.ready, true, JSON.stringify(delta));
-  const compare = snapshotId => ready("compare_change_map", { deltaPath, expectedRevision: delta.revision,
+  const compare = snapshotId => ready("compare_change_map", { ...key, expectedRevision: delta.revision,
     baselineId: baseline.snapshotId, resultSnapshotId: snapshotId });
   let revision = null;
   const mutate = async (id, operations) => {
-    const result = await call("update_review", { reviewPath, deltaPath, delivery: "delivery", expectedRevision: revision,
+    const result = await call("update_review", { ...key, delivery: "delivery", expectedRevision: revision,
       actor: { id, role: id === "coordinator" ? "coordinator" : id === "delivery" ? "delivery" : "reviewer" }, operations });
     revision = result.revision;
     return result;
@@ -94,29 +93,29 @@ async function managedTrial() {
   await assert.rejects(mutate("delivery", [{ op: "submit_lane", lane: "main", status: "CLEAN" }]), error => error.data?.code === "gate_blocked");
   await mutate("reviewer", [{ op: "submit_lane", lane: "main", status: "CLEAN" }]);
   await mutate("coordinator", [{ op: "accept_wave" }]);
-  assert.equal((await call("check_review_gate", { reviewPath, gate: "implementation" })).ready, true);
+  assert.equal((await call("check_review_gate", { ...key, gate: "implementation" })).ready, true);
   assert.equal((await import(pathToFileURL(target).href + "?before")).retryRequest(), 1);
   await writeFile(target, refactored);
   assert.equal((await import(pathToFileURL(target).href + "?after")).retryRequest(), 1);
-  const final = await call("capture_repository_snapshot", { deltaPath });
+  const final = await call("capture_repository_snapshot", key);
   const comparison = await compare(final.snapshotId);
   assert.deepEqual(comparison.growth, [], JSON.stringify(comparison));
   await mutate("coordinator", [wave("implementation", "implementation-review", final.snapshotId, comparison.comparisonId)]);
   await mutate("reviewer", [{ op: "submit_lane", lane: "main", status: "CLEAN" }]);
   await mutate("coordinator", [{ op: "accept_wave" }]);
-  assert.equal((await call("check_review_gate", { reviewPath, gate: "completion" })).ready, true);
+  assert.equal((await call("check_review_gate", { ...key, gate: "completion" })).ready, true);
   await writeFile(target, refactored.replace("return 1", "return 2"));
-  await assert.rejects(call("check_review_gate", { reviewPath, gate: "completion" }), error => error.data?.code === "stale_snapshot");
+  await assert.rejects(call("check_review_gate", { ...key, gate: "completion" }), error => error.data?.code === "stale_snapshot");
   await writeFile(target, refactored.replace("before()", "after_()"));
-  const renamedMethod = await call("capture_repository_snapshot", { deltaPath });
+  const renamedMethod = await call("capture_repository_snapshot", key);
   const publicGrowth = await compare(renamedMethod.snapshotId);
   assert.ok(publicGrowth.growth.some(item => item.dimension === "code.publicDeclarationsAdded"), JSON.stringify(publicGrowth));
 }
 try {
   start();
   assert.equal((await call("discover_repository_intelligence")).status, "unprepared");
-  const deltaPath = "plans/demo/change-map.json";
-  const baseline = await call("capture_repository_snapshot", { deltaPath });
+  const key = { initiative: "plans", slice: "demo" };
+  const baseline = await call("capture_repository_snapshot", key);
   const cold = ready("search_repository_concepts", { snapshotId: baseline.snapshotId, query: "retryRequest", filters: { domains: ["code"] } });
   const begin = performance.now();
   assert.ok((await request("tools/list")).tools.some(tool => tool.name === "search_repository_concepts"));
@@ -134,7 +133,7 @@ try {
   const candidates = receipt.entries.map(candidate => ({ receiptId: retained.receiptId, candidateId: candidate.id,
     reference: { path: candidate.file, selector: candidate.span ? { type: "span", ...candidate.span, sourceHash: candidate.sourceHash } : candidate.selector || candidate.name },
     disposition: "PARTIAL", reason: "Fixture evidence: existing retry behavior can be reused but the proposed total deadline is distinct." }));
-  const delta = await call("update_change_map", { deltaPath, expectedRevision: null, baselineId: baseline.snapshotId, scope: ["retry.ts", "instructions.md"], requirements: [{ path: "instructions.md" }], operations: [{ op: "insert", entry: {
+  const delta = await call("update_change_map", { ...key, expectedRevision: null, baselineId: baseline.snapshotId, scope: ["retry.ts", "instructions.md"], requirements: [{ path: "instructions.md" }], operations: [{ op: "insert", entry: {
     id: "deadline", kind: "rule", label: "Total retry deadline", action: "ADD", before: [], after: [{ path: "instructions.md", selector: { type: "text", value: "Use one total retry deadline." } }], reason: "Fixture requirement for a total deadline.", requirements: [{ path: "instructions.md" }],
     reuseEvidence: { receiptIds: [retained.receiptId], candidates, justification: "The existing per-attempt behavior does not express a total deadline.", ...(candidates.length ? {} : { emptyResultReason: "The retained fixture contains no returned reuse candidate." }) }
   } }] });
@@ -157,19 +156,19 @@ try {
   assert.equal(retainedOffline.status, "ready"); assert.equal(retainedOffline.indexRevision, retained.indexRevision);
   const retryCandidate = retainedOffline.results.find(candidate => candidate.file === "retry.ts" && candidate.kind === "function");
   assert.ok(retryCandidate?.span, "The native parser must supply the function's exact source span.");
-  const deleted = await call("update_change_map", { deltaPath, expectedRevision: delta.revision, operations: [{ op: "update", id: "deadline", set: {
+  const deleted = await call("update_change_map", { ...key, expectedRevision: delta.revision, operations: [{ op: "update", id: "deadline", set: {
     action: "DELETE", kind: "function", before: [{ path: "retry.ts", selector: { type: "span", ...retryCandidate.span, sourceHash: retryCandidate.sourceHash } }], after: []
   } }] });
   await writeFile(path.join(projectRoot, "retry.ts"), "export function retryRequest() { return 2; }\n");
-  const changed = await call("capture_repository_snapshot", { deltaPath });
-  const retainedDeletion = await ready("compare_change_map", { deltaPath, expectedRevision: deleted.revision, baselineId: baseline.snapshotId, resultSnapshotId: changed.snapshotId });
+  const changed = await call("capture_repository_snapshot", key);
+  const retainedDeletion = await ready("compare_change_map", { ...key, expectedRevision: deleted.revision, baselineId: baseline.snapshotId, resultSnapshotId: changed.snapshotId });
   assert.ok(retainedDeletion.observations.some(item => item.code === "retained_source" && item.conceptId === "deadline"), JSON.stringify(retainedDeletion));
-  const falseAddition = await call("update_change_map", { deltaPath, expectedRevision: deleted.revision, operations: [{ op: "update", id: "deadline", set: {
+  const falseAddition = await call("update_change_map", { ...key, expectedRevision: deleted.revision, operations: [{ op: "update", id: "deadline", set: {
     action: "ADD", before: [], after: [{ path: "retry.ts", selector: { type: "symbol", value: "retryRequest" } }]
   } }] });
   assert.equal(falseAddition.ready, false);
   assert.ok(falseAddition.diagnostics.some(item => item.code === "addition_already_exists"));
-  const existingAddition = await ready("compare_change_map", { deltaPath, expectedRevision: falseAddition.revision, baselineId: baseline.snapshotId, resultSnapshotId: changed.snapshotId });
+  const existingAddition = await ready("compare_change_map", { ...key, expectedRevision: falseAddition.revision, baselineId: baseline.snapshotId, resultSnapshotId: changed.snapshotId });
   assert.ok(existingAddition.observations.some(item => item.code === "addition_already_exists"));
   await writeFile(path.join(projectRoot, "retry.ts"), "export function retryRequest() { return 1; }\n");
   await rename(path.join(projectRoot, "retry.ts"), path.join(projectRoot, "renamed.ts"));
@@ -180,7 +179,7 @@ try {
   const original = await ready("search_repository_concepts", { snapshotId: baseline.snapshotId, query: "retryRequest", filters: { domains: ["code"] } });
   assert.equal(original.results[0].file, "retry.ts", "Baseline search must never substitute renamed live source.");
   await rm(path.join(projectRoot, "renamed.ts")); await rm(path.join(projectRoot, "instructions.md"));
-  await rm(path.join(projectRoot, "plans"), { recursive: true });
+  await rm(path.join(projectRoot, ".prism"), { recursive: true, force: true });
   const empty = await ready("search_repository_concepts", { query: "retryRequest" });
   assert.equal(empty.status, "ready"); assert.deepEqual(empty.results, []);
   await managedTrial();

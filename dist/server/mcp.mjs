@@ -151,7 +151,7 @@ function stateContent(result) {
   const opened = result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : "";
   const answered = (result.state?.pending ?? []).filter((gate) => gate?.answer);
   const gates = `${opened}${answered.length ? `\nUser gates answered in the review browser: ${answered.map((gate) => gate.id).join(", ")}` : ""}`;
-  return `Coordination state ${validity}: ${result.statePath}\nRevision: ${revision}${gates}`;
+  return `Coordination state ${validity}: ${result.initiative}\nRevision: ${revision}${gates}`;
 }
 
 function contextPlanContent(plan) {
@@ -333,7 +333,7 @@ const tools = [
   ...NATIVE_INTELLIGENCE_TOOLS,
   {
     name: "get_change_map",
-    description: "Read a bounded page of a slice change map (change-map.json, or a legacy concept-delta.json) through MCP. Pin expectedRevision across pages and to the audited design. Reads never create files.",
+    description: "Read a bounded page of a slice change map, addressed by initiative and slice, through MCP. Pin expectedRevision across pages and to the audited design. Reads never create files.",
     inputSchema: GET_CHANGE_MAP_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
@@ -515,7 +515,7 @@ const tools = [
         projectRoot: { type: "string" },
         dataDirectory: { type: "string" },
         correlationKey: sessionCorrelationKeyInputSchema,
-        statePath: { type: "string" },
+        initiative: { type: "string", description: "The initiative whose coordination state and recovery notes to assess." },
         recoveryPaths: { type: "array", items: { type: "string" } }
       },
       required: ["projectRoot", "dataDirectory"],
@@ -563,10 +563,9 @@ const tools = [
       type: "object",
       properties: {
         projectRoot: { type: "string" },
-        statePath: { type: "string" },
+        initiative: { type: "string" },
         expectedRevision: { oneOf: [{ type: "string" }, { type: "null" }] },
         activeSlice: { type: "string" },
-        recoveryPath: { type: "string" },
         recoveryContent: { type: "string", maxLength: 65536 },
         changes: {
           type: "object", additionalProperties: false,
@@ -580,35 +579,35 @@ const tools = [
         dataDirectory: { type: "string" },
         correlationKey: sessionCorrelationKeyInputSchema
       },
-      required: ["projectRoot", "statePath", "expectedRevision", "activeSlice", "recoveryPath", "recoveryContent", "changes"],
+      required: ["projectRoot", "initiative", "expectedRevision", "activeSlice", "recoveryContent", "changes"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   },
   {
     name: "get_coordination_state",
-    description: "Read the initiative coordination state from state.json. Use this tool instead of reading and parsing the file manually. The statePath must be relative to the project root.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        statePath: { type: "string", description: "The project-relative path to the initiative state.json file." }
+        initiative: { type: "string", description: "The initiative identifier, which names its plans folder." }
       },
-      required: ["projectRoot", "statePath"],
+      required: ["projectRoot", "initiative"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "validate_coordination_state",
-    description: "Validate an initiative state.json file without changing it. Use this tool before recovery or when a state update reports invalid data.",
+    description: "Validate an initiative's coordination state without changing it. Use this tool before recovery or when a state update reports invalid data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        statePath: { type: "string", description: "The project-relative path to the initiative state.json file." }
+        initiative: { type: "string", description: "The initiative identifier, which names its plans folder." }
       },
-      required: ["projectRoot", "statePath"],
+      required: ["projectRoot", "initiative"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
@@ -620,24 +619,24 @@ const tools = [
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        statePath: { type: "string", description: "The project-relative path to the initiative state.json file that holds the gate." },
+        initiative: { type: "string", description: "The initiative whose coordination state holds the gates." },
         gateIds: { type: "array", minItems: 1, maxItems: MAX_WAIT_GATES, items: { type: "string", minLength: 1 }, description: "The gate ids that the ask operations returned." },
         gateId: { type: "string", minLength: 1, description: "One gate id; use gateIds for several." },
         maxWaitMinutes: { type: "number", exclusiveMinimum: 0, maximum: MAX_WAIT_MINUTES, description: `How long to wait before returning timeout. Defaults to ${DEFAULT_WAIT_MINUTES}.` }
       },
-      required: ["projectRoot", "statePath"],
+      required: ["projectRoot", "initiative"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   },
   {
     name: "update_coordination_state",
-    description: "Apply a validated atomic update to an initiative state.json file, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision. Do not edit state.json directly when this tool is available.",
+    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        statePath: { type: "string", description: "The project-relative path to the initiative state.json file." },
+        initiative: { type: "string", description: "The initiative identifier, which names its plans folder." },
         expectedRevision: { oneOf: [{ type: "string" }, { type: "null" }], description: "The revision returned by get_coordination_state, or null when creating a missing state file." },
         changes: {
           type: "object",
@@ -727,7 +726,7 @@ const tools = [
           }
         }
       },
-      required: ["projectRoot", "statePath", "expectedRevision", "changes"],
+      required: ["projectRoot", "initiative", "expectedRevision", "changes"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
@@ -784,7 +783,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
     try {
       value = await waitForUserGates({
         projectRoot,
-        statePath: argumentsValue.statePath,
+        initiative: argumentsValue.initiative,
         gateIds,
         maxWaitMinutes: argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES,
         signal: controller.signal,
@@ -824,7 +823,7 @@ async function callStateTool(name, argumentsValue) {
     const dataDirectory = decisionDataDirectory(argumentsValue);
     if (dataDirectory) {
       const recording = await recordAutomaticDecision({ projectRoot, dataDirectory, correlationKey: argumentsValue.correlationKey,
-        decision: { kind: "pause", outcome: "PAUSED", evidencePaths: [resultValue.recoveryPath, resultValue.statePath], stateRevision: resultValue.revision,
+        decision: { kind: "pause", outcome: "PAUSED", evidencePaths: [resultValue.recoveryPath], stateRevision: resultValue.revision,
           recoveryDigest: resultValue.recoveryDigest, activeSlices: [argumentsValue.activeSlice] } });
       resultValue = { ...resultValue, decisionRecording: recording };
     }
@@ -864,9 +863,9 @@ async function callRepositoryTool(name, argumentsValue) {
     return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
   }
   if (name === "read_workflow_decisions") {
-    assertExactToolArguments(argumentsValue, ["projectRoot", "dataDirectory", "correlationKey", "statePath", "recoveryPaths"], ["projectRoot", "dataDirectory"], "read_workflow_decisions arguments");
+    assertExactToolArguments(argumentsValue, ["projectRoot", "dataDirectory", "correlationKey", "initiative", "recoveryPaths"], ["projectRoot", "dataDirectory"], "read_workflow_decisions arguments");
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const result = await readDecisionHistory({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, statePath: argumentsValue.statePath, recoveryPaths: argumentsValue.recoveryPaths });
+    const result = await readDecisionHistory({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, initiative: argumentsValue.initiative, recoveryPaths: argumentsValue.recoveryPaths });
     return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
   }
   if (name === "record_workflow_decision") {
