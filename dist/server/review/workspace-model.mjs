@@ -376,7 +376,12 @@ async function computeAttention(projectRoot) {
     for (const entry of state?.state?.pending ?? []) {
       if (entry && typeof entry === "object") {
         const artifacts = [];
-        for (const artifact of entry.artifacts ?? []) artifacts.push({ path: artifact, available: await isFile(projectRoot, artifact) });
+        for (const artifact of entry.artifacts ?? []) {
+          // A gate asked before the records moved to .prism names a record by its old path.
+          const key = await keyOfPath(projectRoot, artifact).catch(() => null);
+          const current = key ? recordPath(key) : artifact;
+          artifacts.push({ path: current, available: await isFile(projectRoot, current) });
+        }
         const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, options: entry.options ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts };
         (gate.answer ? answered : needsYou).push(gate);
       } else if (typeof entry === "string") {
