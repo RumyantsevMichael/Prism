@@ -50,6 +50,8 @@ test("design freezes one probed contract with failing tests and a slice plan, an
   assert.match(design, /Give each slice its own new test files, so that each file belongs to exactly one slice/);
   assert.match(design, /## Slices/);
   assert.match(design, /Write contracts or tests for the parts; each part is designed when it is next/);
+  assert.match(design, /Return `SPLIT` only with \[split evidence\]/);
+  assert.match(design, /`contract_size` with the files that acceptance measured/);
   assert.match(design, /A frozen test changes only through a revised design/);
   assert.match(design, /Write PlantUML source only/);
   assert.match(design, /Render a diagram or look at a rendered image/);

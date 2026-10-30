@@ -27,6 +27,11 @@ await write("docs/ADRs/retries/total-retry-deadline.md", "# Bound retries by a t
 await write("docs/ADRs/reporting/signed-exports.md", "# Sign exported reports\n\nStatus: Accepted\nCreated: 2026-09-11\n\n## Decision\n\nExported reports MUST carry a detached signature.\n");
 await write("docs/ADRs/reporting/csv-only-exports.md", "# Export reports as CSV only\n\nStatus: Superseded\nCreated: 2026-07-01\n\n## Decision\n\nReports were CSV only.\n");
 await write("docs/Glossary.md", "# Glossary\n\nTerms used by the payments API team.\n\n| Term | Definition |\n| --- | --- |\n| Retry deadline | The total time a request may spend across all retry attempts. |\n| Attempt timeout | The time one attempt may take before it counts as failed. |\n| Signed report | An exported activity report with a detached signature. |\n");
+// A split into parts cites an Unprobed assumption that one part settles, because the server refuses a split without evidence.
+const unprobed = { kind: "unfrozen", settledBy: "timeout-retries", assumption: "the HTTP client reports a dropped connection apart from a timeout" };
+await write("docs/plans/retry-hardening/slice.md", `# Harden request retries\n\n## Assumptions\n- Unprobed: ${unprobed.assumption}; until timeout retries land, an unknown error is final.\n`);
+await write("docs/plans/retry-hardening/retry-observability/slice.md", "# Observe retry behavior\n\n## Assumptions\n- Unprobed: the metrics backend accepts one series per retry outcome; the dashboard waits for the metrics slice.\n");
+await write("docs/plans/activity-reports/slice.md", "# Export activity reports\n\n## Assumptions\n- Unprobed: the identity service returns report permissions in one call; downloads wait for authorization.\n");
 await write(`${slice}/slice.md`, "# Retry timed-out requests until a total deadline\n\n## Context\n\nThe existing strategy owns timeout retries, and a total deadline bounds every retry sequence.\nConnection retries stay out of scope until their own slice.\n");
 await write(`${slice}/timeout-retries.puml`, "@startuml\nclass RequestRetryStrategy\n@enduml\n");
 
@@ -79,11 +84,11 @@ try {
       { slug: "timeout-retries", title: "Retry timed-out requests until a total deadline", outcome: "Timed-out requests retry until the total deadline elapses.", requirements: [retries[0]] },
       { slug: "connection-retries", title: "Retry dropped connections", outcome: "Dropped connections retry at most three times.", requirements: [retries[1]] },
       { slug: "retry-observability", title: "Observe retry behavior", outcome: "Operators see retry attempts and outcomes.", requirements: [retries[2]] }
-    ] },
+    ], evidence: unprobed },
     { op: "split", parent: "retry-observability", children: [
       { slug: "retry-metrics", title: "Emit retry metrics", outcome: "Each attempt and outcome emits a metric.", requirements: [retries[2]] },
       { slug: "retry-dashboard", title: "Chart retries on the service dashboard", outcome: "The dashboard charts retry rates.", requirements: [retries[2]] }
-    ] },
+    ], evidence: { kind: "unfrozen", settledBy: "retry-metrics", assumption: "the metrics backend accepts one series per retry outcome" } },
     { op: "set_dependencies", slug: "connection-retries", dependencies: ["timeout-retries"] },
     { op: "set_dependencies", slug: "retry-dashboard", dependencies: ["retry-metrics"] },
     { op: "set_status", slug: "timeout-retries", status: "in-progress" },
@@ -95,7 +100,7 @@ try {
     { op: "split", parent: "activity-reports", children: [
       { slug: "download", title: "Download signed reports", outcome: "A signed report downloads.", requirements: ["docs/requirements/reports.md#1"] },
       { slug: "authorize", title: "Authorize report access", outcome: "Only authorized users download reports.", requirements: ["docs/requirements/reports.md#2"] }
-    ] },
+    ], evidence: { kind: "unfrozen", settledBy: "authorize", assumption: "the identity service returns report permissions in one call" } },
     { op: "set_dependencies", slug: "download", dependencies: ["authorize"] }
   ] });
   // The shipped initiative's record is written directly because its completion gates need accepted reviews this demo cannot produce offline.

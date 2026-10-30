@@ -60,6 +60,23 @@ export async function digestFrozenTests(projectRoot, paths) {
   return result;
 }
 
+// One implementer reads a whole contract and its frozen tests, so a contract estimated above this many tokens is split into parts.
+export const CONTRACT_TOKEN_BUDGET = 150000;
+const BYTES_PER_TOKEN = 4;
+
+/** Estimate from file sizes how many tokens the named contract files hold, and which of them are missing. */
+export async function measureContract(projectRoot, paths) {
+  const root = await realpath(projectRoot);
+  let bytes = 0;
+  const missing = [];
+  for (const relative of [...new Set(paths)].sort()) {
+    const content = await frozenBytes(root, relative);
+    if (content === null) missing.push(relative);
+    else bytes += content.length;
+  }
+  return { tokens: Math.ceil(bytes / BYTES_PER_TOKEN), missing };
+}
+
 /** Compare the frozen tests of an accepted design with the files on disk. */
 export async function checkFrozenTests(projectRoot, frozenTests) {
   const root = await realpath(projectRoot);

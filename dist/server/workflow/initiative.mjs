@@ -10,7 +10,8 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { locateRecord, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
-import { designProblems, digestFrozenTests, installFrozenTests, REVIEW_MARKS, stageFrozenTests, withdrawFrozenTests } from "./slice-design.mjs";
+import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, measureContract, REVIEW_MARKS, stageFrozenTests, withdrawFrozenTests } from "./slice-design.mjs";
+import { readCoordinationState } from "./state.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 
 const RECORD_NAME = "initiative.json";
@@ -33,6 +34,12 @@ const slug = { type: "string", minLength: 1, maxLength: 120 };
 const strings = { type: "array", maxItems: 200, items: text };
 const object = (properties, required = Object.keys(properties)) => ({ type: "object", additionalProperties: false, properties, required });
 const childSchema = object({ slug, title: text, outcome: text, requirements: strings }, ["slug", "title", "requirements"]);
+export const SPLIT_EVIDENCE_KINDS = Object.freeze(["contract_size", "unfrozen", "user_gate"]);
+const evidenceSchema = { oneOf: [
+  object({ kind: { const: "contract_size" }, files: { type: "array", minItems: 1, maxItems: 400, items: text } }),
+  object({ kind: { const: "unfrozen" }, assumption: text, settledBy: slug }),
+  object({ kind: { const: "user_gate" }, gate: text })
+] };
 
 export const GET_INITIATIVE_SCHEMA = object({ projectRoot: text, initiative: slug }, ["projectRoot", "initiative"]);
 export const UPDATE_INITIATIVE_SCHEMA = object({
@@ -42,7 +49,7 @@ export const UPDATE_INITIATIVE_SCHEMA = object({
   actor: text,
   operations: { type: "array", minItems: 1, maxItems: 50, items: { oneOf: [
     object({ op: { const: "create" }, slug, title: text, outcome: text, requirements: strings }, ["op", "slug", "title", "requirements"]),
-    object({ op: { const: "split" }, parent: slug, children: { type: "array", minItems: 1, maxItems: 50, items: childSchema } }),
+    object({ op: { const: "split" }, parent: slug, children: { type: "array", minItems: 1, maxItems: 50, items: childSchema }, evidence: evidenceSchema }, ["op", "parent", "children"]),
     object({ op: { const: "set_status" }, slug, status: { enum: LEAF_STATUSES } }),
     object({ op: { const: "set_dependencies" }, slug, dependencies: { type: "array", maxItems: 200, items: slug } }),
     object({ op: { const: "update_slice" }, slug, title: text, outcome: text }, ["op", "slug"]),
@@ -91,7 +98,8 @@ function canonicalRecord(record) {
       parent: slice.parent,
       requirements: [...slice.requirements].sort(),
       dependencies: [...slice.dependencies].sort(),
-      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}) } } : {})
+      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}) } } : {}),
+      ...(slice.splitEvidence ? { splitEvidence: slice.splitEvidence } : {})
     };
   }
   return { schemaVersion: 1, id: record.id, slices, history: record.history.slice(-HISTORY_LIMIT) };
@@ -111,6 +119,7 @@ function validateRecord(raw, initiative) {
   if (!Array.isArray(raw.history)) errors.push("history must be an array.");
   for (const [key, slice] of Object.entries(raw.slices ?? {})) {
     for (const problem of designProblems(slice?.design)) errors.push(`${key}: ${problem}`);
+    if (slice?.splitEvidence !== undefined && (slice.status !== "split" || !SPLIT_EVIDENCE_KINDS.includes(slice.splitEvidence?.kind))) errors.push(`${key}: splitEvidence belongs to a split slice and names its kind.`);
   }
   let analysis = null;
   try {
@@ -242,6 +251,57 @@ function claimedTests(slices, slugValue, frozenTests, staging) {
   return frozenTests.map((item) => item.path).filter((file) => Object.entries(slices).some(([key, other]) => key !== slugValue && (staging || other.status !== "done") && other.design?.frozenTests.some((test) => test.path === file)));
 }
 
+const normalized = (value) => value.toLowerCase().replace(/[`*_]/g, "").replace(/\s+/g, " ").trim();
+
+// Models judging a scope's size split it long before one contract stopped working, so a split into parts
+// that each get their own contract needs evidence that the server can check.
+async function splitEvidence(resolved, slices, operation) {
+  const refuse = (reason) => fail("split_unjustified", `The split of ${operation.parent} was not recorded: ${reason}`);
+  const evidence = operation.evidence;
+  if (!evidence) throw refuse("design it as one contract first. A split into parts needs evidence: contract files measured above the contract budget, an Unprobed assumption that one part settles, or a user gate where the person asked for the split. A split whose every part takes accept_design in the same update is a slice plan and needs none.");
+  if (evidence.kind === "contract_size") {
+    const { tokens, missing } = await measureContract(resolved.root, evidence.files);
+    if (missing.length) throw refuse(`${missing.join(", ")} does not exist.`);
+    if (tokens <= CONTRACT_TOKEN_BUDGET) throw refuse(`the named files hold about ${tokens} tokens, within the contract budget of ${CONTRACT_TOKEN_BUDGET}, so design the scope as one contract.`);
+    return { kind: evidence.kind, tokens, files: [...new Set(evidence.files)].sort() };
+  }
+  if (evidence.kind === "unfrozen") {
+    if (!operation.children.some((child) => child.slug === evidence.settledBy)) throw refuse(`${evidence.settledBy} is not one of its parts.`);
+    const quoted = normalized(evidence.assumption);
+    if (quoted.length < 12) throw refuse("quote the Unprobed assumption from the scope's slice.md.");
+    const source = await readFile(path.join(resolved.root, sliceFolder(resolved.directory, slices, operation.parent), "slice.md"), "utf8").catch(() => "");
+    const section = source.split(/^## Assumptions\s*$/m)[1]?.split(/^#{1,2} /m)[0] ?? "";
+    if (!section.split(/\r?\n/).some((line) => /unprobed/i.test(line) && normalized(line).includes(quoted))) throw refuse(`the Assumptions of its slice.md list no Unprobed assumption that contains ${JSON.stringify(evidence.assumption)}.`);
+    return { kind: evidence.kind, assumption: evidence.assumption, settledBy: evidence.settledBy };
+  }
+  // Only the review browser records a gate answer, so an answered gate is the person's own call.
+  const { state } = await readCoordinationState({ projectRoot: resolved.root, initiative: resolved.initiative });
+  const gate = (Array.isArray(state?.pending) ? state.pending : []).find((item) => item?.id === evidence.gate);
+  if (!gate?.answer) throw refuse(`the user gate ${evidence.gate} is not pending with an answer from the person.`);
+  if (gate.answer.choice === "request-changes") throw refuse(`the person requested changes at ${evidence.gate}.`);
+  if (gate.slice !== undefined && gate.slice !== operation.parent) throw refuse(`the user gate ${evidence.gate} is about ${gate.slice}.`);
+  return { kind: evidence.kind, gate: evidence.gate };
+}
+
+// One implementer reads the contract and the frozen tests of its slices, so a fit design above the budget splits instead.
+// The contract is the slice.md of the scope that this update splits into its slice plan, or of the accepted slice itself.
+async function checkContractBudget(resolved, slices, operations) {
+  const planOf = new Map(operations.filter((operation) => operation.op === "split").flatMap((operation) => operation.children.map((child) => [child.slug, operation.parent])));
+  const contracts = new Map();
+  for (const operation of operations.filter((item) => item.op === "accept_design")) {
+    const scope = planOf.get(operation.slug) ?? operation.slug;
+    if (!contracts.has(scope)) contracts.set(scope, new Set([`${sliceFolder(resolved.directory, slices, scope)}/slice.md`]));
+    for (const file of operation.frozenTests) contracts.get(scope).add(file);
+  }
+  for (const [scope, files] of contracts) {
+    const { tokens, missing } = await measureContract(resolved.root, [...files]);
+    if (tokens > CONTRACT_TOKEN_BUDGET) {
+      const measured = [...files].filter((file) => !missing.includes(file)).sort();
+      throw fail("contract_too_large", `The design of ${scope} was not accepted: its contract and frozen tests hold about ${tokens} tokens, more than the contract budget of ${CONTRACT_TOKEN_BUDGET} that one implementer reads. Split ${scope} into parts, citing these files as contract_size evidence.`, { scope, tokens, budget: CONTRACT_TOKEN_BUDGET, files: measured });
+    }
+  }
+}
+
 async function applyOperation(resolved, record, operation, effects) {
   const slices = record.slices;
   const requireSlice = (slugValue) => {
@@ -273,8 +333,11 @@ async function applyOperation(resolved, record, operation, effects) {
         if (Object.hasOwn(slices, child.slug)) throw fail("validation_failed", `The slice slug ${child.slug} is already used in this initiative.`);
         slices[child.slug] = { title: child.title, ...(child.outcome ? { outcome: child.outcome } : {}), status: "not-started", parent: operation.parent, requirements: normalizeRequirements(resolved, child.requirements), dependencies: [] };
       }
+      // A split whose every part takes its design in the same update is a contract's slice plan; any other split needs evidence.
+      const evidence = operation.children.every((child) => effects.accepted.has(child.slug)) ? null : await splitEvidence(resolved, slices, operation);
       parent.status = "split";
       delete parent.design;
+      if (evidence) parent.splitEvidence = evidence;
       break;
     }
     case "set_status": {
@@ -411,10 +474,12 @@ export async function updateInitiative(input) {
     const record = current.record
       ? { id: current.record.id, slices: Object.assign(Object.create(null), structuredClone(current.record.slices)), history: [...current.record.history] }
       : { id: resolved.initiative, slices: Object.create(null), history: [] };
-    const effects = { staged: [], installed: [], diagrams: [], checkedFolders: new Set(), diagramCache };
+    const accepted = new Set(input.operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug));
+    const effects = { staged: [], installed: [], diagrams: [], checkedFolders: new Set(), diagramCache, accepted };
     for (const operation of input.operations) {
       await applyOperation(resolved, record, operation, effects);
     }
+    await checkContractBudget(resolved, record.slices, input.operations);
     try {
       analyzeInitiative(record.slices);
     } catch (error) {
@@ -455,7 +520,8 @@ export function initiativeAcknowledgement(result, operations) {
   const slices = result.record?.slices ?? {};
   const touched = Object.fromEntries(touchedSlugs(operations).filter((key) => slices[key]).map((key) => [key, {
     status: slices[key].status,
-    ...(slices[key].design ? { design: slices[key].design.staged ? "staged" : "accepted", frozenTests: slices[key].design.frozenTests.length, review: slices[key].design.review } : {})
+    ...(slices[key].design ? { design: slices[key].design.staged ? "staged" : "accepted", frozenTests: slices[key].design.frozenTests.length, review: slices[key].design.review } : {}),
+    ...(slices[key].splitEvidence ? { splitEvidence: slices[key].splitEvidence.kind } : {})
   }]));
   const unchecked = result.diagrams.filter((item) => !item.checked);
   return {
@@ -483,7 +549,7 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

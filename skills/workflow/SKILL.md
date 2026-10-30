@@ -57,13 +57,14 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Slice | One observable outcome across required layers that one fresh implementation session delivers, planned by a contract. |
 | Contract scope | The root slice, or a part that a split design created, that one design gives one contract. |
 | Slice plan | The **Slices** section of a contract: each planned slice with its outcome, requirements, dependencies, frozen test files, and review recommendation. |
+| Split evidence | What Prism requires before a scope splits into parts that get their own contracts: `contract_size`, contract files estimated above the token budget that one implementer reads; `unfrozen`, an Unprobed assumption that one part settles; or `user_gate`, a gate where the person asked for the split. A split into a contract's slice plan needs none. |
 | `slice.md` | A design document in a slice folder: for a contract scope, the contract, assumptions, and slice plan, or the interfaces between parts after a split; for a planned slice, its changes. |
 | Approved requirement | An accepted product or system obligation. |
 | Requirement assignment | Approved requirement references whose coverage is preserved through each split. |
 | Effective dependencies | A leaf's own dependencies plus the dependencies inherited from its ancestors. |
 | Starting surface | The command, route, public function, event, job, or user action where a slice enters the system. |
 | FIT | A design result with a frozen contract, probed assumptions, failing acceptance tests, and a slice plan. |
-| SPLIT | A design result with parts of a scope too large for one contract, their order, and their shared interfaces, but no tests. |
+| SPLIT | A design result with parts of a scope that cannot be one contract, their order, their shared interfaces, and the split evidence, but no new tests. |
 | BLOCKED | An unresolved requirement, decision, or external fact stops progress. |
 | Contract | The frozen observable interface of a contract scope that fixes what the requirements leave open, shared by its planned slices. |
 | Assumption probe | A small experiment against the real system that confirms a contract assumption, or a fail-safe clause where no probe is possible. |

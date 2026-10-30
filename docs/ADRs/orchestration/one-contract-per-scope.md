@@ -18,6 +18,8 @@ Agents also spent many turns rendering design diagrams and looking at the images
 
 Design MUST write one contract per scope, where a scope is the root slice or a part that a split design created, with its assumption probes, its frozen tests, and a plan of the slices that implement it.
 A scope too large for one contract MUST split into parts that each get their own contract when they are next.
+A split into parts that get their own contracts MUST carry evidence that the server checks: contract files estimated above the token budget that one implementer reads, an Unprobed assumption of the scope's contract that one part settles, or a user gate where the person asked for the split; a split into a contract's slice plan needs none.
+Accepting a design MUST refuse a contract whose `slice.md` and frozen tests are estimated above that budget.
 Each frozen test file MUST belong to one unfinished slice, and a staged slice's file MUST NOT belong to any other slice.
 Accepting the design of a slice that has not started MUST stage its frozen tests: the server keeps them in the slice's records and takes them out of the work tree, and starting the slice MUST put them back.
 A passing verification run MUST complete a slice whose review mark is `none`.
@@ -28,6 +30,7 @@ Design MUST write diagrams as PlantUML source only, an overview per contract and
 ## Rationale
 
 One contract per scope keeps the gain that the benchmark attributed to the contract while paying for one design session instead of one per slice.
+In the October 2026 Nushell runs, the same design skill on the same task kept one contract once, at 311,000 tokens read, and split the root after 94,000 tokens read once, which cost 2.4 times as much; no task in those benchmarks needed a split, so the decision rests on evidence rather than on a model's sense that a scope is large.
 Staging keeps the test command of an earlier slice from running, and in compiled languages failing to build, the tests of later slices.
 Inferring completion and returning brief results removes the bookkeeping that filled the orchestrator's context, without weakening the verification gate.
 The server's parse check gives the designer the only feedback it needs from a diagram, and readability stays with the person who reads it.
@@ -36,6 +39,7 @@ The server's parse check gives the designer the only feedback it needs from a di
 
 Verifying once per initiative was rejected because a slice could not complete on its own evidence.
 A per-slice test command template was rejected because test runners select tests in incompatible ways, and a template is easy to get subtly wrong.
+Counting the design session's compactions as split evidence was deferred: Claude Code's compaction hooks do not name the subagent, so the count would depend on its internal transcript format, while Codex names it.
 Rendering diagrams for the agent was rejected because its cost repeated on every revision and the agent's judgment of readability did not replace the person's.
 
 ## Consequences
@@ -47,6 +51,8 @@ The diagram check runs the vendored PlantUML runtime in a worker thread with a m
 
 ## Mechanism
 
+The contract budget is 150,000 tokens, about twice the largest contract plus frozen tests of the benchmarks, estimated as four bytes per token; no measured failure sets it yet.
+A split's evidence is kept on the split slice in the initiative record.
 The staged tests of a slice are a slice record with each file's content.
 The initiative update writes the initiative record, then the staged tests of each slice still staged at its end, and only then takes those files out of the work tree.
 Verification refuses a staged slice and, after a passing run of a slice marked `none`, records `done` through the same completion gate as before.

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-verify-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -31,7 +32,7 @@ async function project(context, command = `${node} check.mjs`) {
   execFileSync("git", ["init", "-q"], { cwd: root });
   await updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: null, operations: [
     { op: "create", slug: INITIATIVE, title: "Signed reports", requirements: ["req.md#R1", "req.md#R2"] },
-    { op: "split", parent: INITIATIVE, children: [{ slug: "download", title: "Download reports", requirements: ["req.md#R1"] }, { slug: "audit", title: "Audit downloads", requirements: ["req.md#R2"] }] }
+    { op: "split", parent: INITIATIVE, children: [{ slug: "download", title: "Download reports", requirements: ["req.md#R1"] }, { slug: "audit", title: "Audit downloads", requirements: ["req.md#R2"] }], evidence: await splitEvidence(root, `docs/plans/${INITIATIVE}`, "download") }
   ] });
   return root;
 }
@@ -62,7 +63,7 @@ test("accepting a design stores frozen test digests, the review mark, and a proj
   await assert.rejects(initiativeUpdate(root, [{ op: "accept_design", slug: INITIATIVE, frozenTests: ["test/acceptance.test.mjs"], review: "none" }]), /split slice is designed through its children/);
   await assert.rejects(initiativeUpdate(root, [{ op: "accept_design", slug: "audit", frozenTests: ["test/missing.test.mjs"], review: "none" }]), /does not exist/);
   await assert.rejects(initiativeUpdate(root, [{ op: "accept_design", slug: "audit", frozenTests: ["../outside.mjs"], review: "none" }]), /normalized project-relative path/);
-  const split = await initiativeUpdate(root, [{ op: "split", parent: "download", children: [{ slug: "download-zip", title: "Zip download", requirements: ["req.md#R1"] }] }]);
+  const split = await initiativeUpdate(root, [{ op: "split", parent: "download", children: [{ slug: "download-zip", title: "Zip download", requirements: ["req.md#R1"] }], evidence: await splitEvidence(root, "docs/plans/reports/download", "download-zip") }]);
   assert.equal(split.record.slices.download.design, undefined);
 });
 

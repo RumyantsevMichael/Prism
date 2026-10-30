@@ -22,7 +22,7 @@ Implementers later work from its output in fresh sessions, and they are judged o
 ## 2. Decide fit
 
 - Return `FIT` when one contract can fix the whole observable interface of the scope now, with settled architecture.
-- Return `SPLIT` when the scope is too large or too uncertain for one contract, such as work of several weeks; each part gets its own contract later.
+- Return `SPLIT` only with [split evidence](../workflow/SKILL.md#common-terms), which Prism checks: `contract_size` with the files that acceptance measured when it refused the fit design as `contract_too_large`, `unfrozen` with an Unprobed assumption quoted from **Assumptions** that only one part's delivery can settle and that part, or `user_gate` when the person asked for the split in design feedback.
 - Return `BLOCKED` when a requirement, decision, or external fact that no probe can establish prevents a sound design.
 
 ## 3. Write a fit design
@@ -105,7 +105,8 @@ Write PlantUML source only: Prism parses each `.puml` file when the design is ac
 1. Group the required behavior into parts that each deliver observable behavior through a starting surface and can take one contract.
 2. Give each part a unique slug, a capability title, a one-sentence outcome, and its requirement references, so that the parts together cover the scope's assignment exactly.
 3. Order the parts by dependency.
-4. In the scope's `slice.md`, fix the interfaces between the parts that more than one part relies on.
+4. In the scope's `slice.md`, fix the interfaces between the parts that more than one part relies on, and keep the **Assumptions** that the evidence quotes.
+5. When the evidence is `contract_size`, keep the measured files in place; each part's design reuses or removes them.
 
 - Don't
   - Write contracts or tests for the parts; each part is designed when it is next.
@@ -114,7 +115,7 @@ Write PlantUML source only: Prism parses each `.puml` file when the design is ac
 
 - Return exactly one status with its evidence:
   - `FIT`: the scope's `slice.md` path, the **Slices** rows, the test command run in step 7 of section 3 with its failing result, and open questions.
-  - `SPLIT`: each part's slug, title, outcome, requirement references, and dependencies.
+  - `SPLIT`: the evidence, and each part's slug, title, outcome, requirement references, and dependencies.
   - `BLOCKED`: the exact question or missing fact.
 
 ## 7. Revise a design

@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-initiative-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -96,7 +97,7 @@ test("creates, splits, and updates an initiative through revision-checked operat
     { op: "split", parent: "reports", children: [
       { slug: "download", title: "Download signed reports", outcome: "A signed file downloads.", requirements: ["docs/requirements/reports.md#1"] },
       { slug: "auth", title: "Authorize report access", requirements: ["docs/requirements/reports.md#2"] }
-    ] },
+    ], evidence: await splitEvidence(projectRoot, "work/plans/reports", "auth") },
     { op: "set_dependencies", slug: "download", dependencies: ["auth"] },
     { op: "set_status", slug: "auth", status: "in-progress" }
   ] });
@@ -108,7 +109,7 @@ test("creates, splits, and updates an initiative through revision-checked operat
   assert.match(projection, /  - \*\*Download signed reports\*\* \(`download`\): not-started/);
   await assert.rejects(updateInitiative({ projectRoot, initiative: "reports", expectedRevision: created.revision, operations: [{ op: "update_slice", slug: "auth", title: "x" }] }), { code: "revision_conflict" });
   await assert.rejects(updateInitiative({ projectRoot, initiative: "reports", expectedRevision: split.revision, operations: [
-    { op: "split", parent: "download", children: [{ slug: "half", title: "Half", requirements: ["docs/requirements/reports.md#9"] }] }
+    { op: "split", parent: "download", children: [{ slug: "half", title: "Half", requirements: ["docs/requirements/reports.md#9"] }], evidence: await splitEvidence(projectRoot, "work/plans/reports/download", "half") }
   ] }), /Incomplete child coverage/);
   await assert.rejects(updateInitiative({ projectRoot, initiative: "reports", expectedRevision: split.revision, operations: [
     { op: "split", parent: "download", children: [{ slug: "auth", title: "Duplicate", requirements: ["docs/requirements/reports.md#1"] }] }
@@ -125,7 +126,7 @@ test("refuses a done transition without a passing completion gate", async (conte
     updateInitiative({ projectRoot, initiative: "solo", expectedRevision: created.revision, operations: [{ op: "set_status", slug: "solo", status: "done" }] }),
     (error) => error.code === "gate_blocked" && error.problems.length > 0 && error.slice === "solo"
   );
-  const split = await updateInitiative({ projectRoot, initiative: "solo", expectedRevision: created.revision, operations: [{ op: "split", parent: "solo", children: [{ slug: "child", title: "Child", requirements: ["r.md#1"] }] }] });
+  const split = await updateInitiative({ projectRoot, initiative: "solo", expectedRevision: created.revision, operations: [{ op: "split", parent: "solo", children: [{ slug: "child", title: "Child", requirements: ["r.md#1"] }], evidence: await splitEvidence(projectRoot, "work/plans/solo", "child") }] });
   await assert.rejects(
     updateInitiative({ projectRoot, initiative: "solo", expectedRevision: split.revision, operations: [{ op: "set_status", slug: "child", status: "done" }] }),
     (error) => error.code === "gate_blocked" && error.slice === "child"
@@ -155,7 +156,7 @@ test("stores requirement citations as configured requirement paths", async (cont
   const projectRoot = await project(context);
   const created = await updateInitiative({ projectRoot, initiative: "cited", expectedRevision: null, operations: [
     { op: "create", slug: "cited", title: "Cited", requirements: ["token-bucket.md§1", "token-bucket.md§2"] },
-    { op: "split", parent: "cited", children: [{ slug: "one", title: "One", requirements: ["token-bucket.md§1"] }, { slug: "two", title: "Two", requirements: ["docs/requirements/token-bucket.md#2"] }] }
+    { op: "split", parent: "cited", children: [{ slug: "one", title: "One", requirements: ["token-bucket.md§1"] }, { slug: "two", title: "Two", requirements: ["docs/requirements/token-bucket.md#2"] }], evidence: await splitEvidence(projectRoot, "work/plans/cited", "one") }
   ] });
   assert.deepEqual(created.record.slices.cited.requirements, ["docs/requirements/token-bucket.md#1", "docs/requirements/token-bucket.md#2"]);
   assert.deepEqual(created.record.slices.one.requirements, ["docs/requirements/token-bucket.md#1"]);

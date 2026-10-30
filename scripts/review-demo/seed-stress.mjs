@@ -25,6 +25,11 @@ await write("docs/wide.md", `# ${LONG} ${LONG}\n\n${PARA}\n\n| ${Array.from({ le
 for (let i = 0; i < 20; i += 1) {
   await write(`src/module-${i}/${i === 0 ? LONG : "file"}.ts`, `export class Unit${i} {}\n`);
 }
+// A split into parts cites an Unprobed assumption that one part settles, because the server refuses a split without evidence.
+const ASSUMPTION = "the upstream service answers within the page budget";
+const splitParents = { "huge-initiative": "docs/plans/huge-initiative", "slice-3": "docs/plans/huge-initiative/slice-3", "slice-8": "docs/plans/huge-initiative/slice-8", "slice-12": "docs/plans/huge-initiative/slice-12" };
+for (const folder of Object.values(splitParents)) await write(`${folder}/slice.md`, `# ${LONG}\n\n## Assumptions\n- Unprobed: ${ASSUMPTION}; a slow answer shows an error.\n`);
+const evidence = (settledBy) => ({ kind: "unfrozen", assumption: ASSUMPTION, settledBy });
 await write(`${slicePath}/slice.md`, `# ${LONG}\n\n${PARA.repeat(4)}\n`);
 await write(`${slicePath}/diagram.puml`, `@startuml\nclass ${LONG.replace(/-/g, "_")}\n${Array.from({ length: 13 }, (_, i) => `VeryLongClassNameNumber${i + 1}ForWideDiagrams --> VeryLongClassNameNumber${((i + 3) % 13) + 1}ForWideDiagrams`).join("\n")}\n@enduml\n`);
 await write(notesPath, `# Notes\n\n${PARA}\n`);
@@ -57,10 +62,10 @@ try {
   const slices = Array.from({ length: 16 }, (_, i) => ({ slug: `slice-${i}`, title: i === 0 ? LONG : `Slice number ${i} with a long and descriptive title that will need wrapping`, outcome: PARA, requirements: [`${requirementFiles[i < 8 ? i : 3]}#1`] }));
   await call("update_initiative", { projectRoot: realRoot, initiative: "huge-initiative", expectedRevision: null, actor: "orchestrator", operations: [
     { op: "create", slug: "huge-initiative", title: `A huge initiative with a very long title ${LONG}`, outcome: PARA.repeat(3), requirements: requirementFiles.slice(0, 8).map((file) => `${file}#1`) },
-    { op: "split", parent: "huge-initiative", children: [...slices.slice(0, 8), { slug: "slice-with-long-name", title: "The slice with artifacts", outcome: PARA, requirements: [`${requirementFiles[0]}#1`] }] },
-    { op: "split", parent: "slice-3", children: slices.slice(8, 12) },
-    { op: "split", parent: "slice-8", children: slices.slice(12, 14) },
-    { op: "split", parent: "slice-12", children: slices.slice(14, 16) },
+    { op: "split", parent: "huge-initiative", children: [...slices.slice(0, 8), { slug: "slice-with-long-name", title: "The slice with artifacts", outcome: PARA, requirements: [`${requirementFiles[0]}#1`] }], evidence: evidence("slice-0") },
+    { op: "split", parent: "slice-3", children: slices.slice(8, 12), evidence: evidence("slice-8") },
+    { op: "split", parent: "slice-8", children: slices.slice(12, 14), evidence: evidence("slice-12") },
+    { op: "split", parent: "slice-12", children: slices.slice(14, 16), evidence: evidence("slice-14") },
     { op: "set_status", slug: "slice-1", status: "in-progress" },
     { op: "set_status", slug: "slice-2", status: "blocked" },
     { op: "set_status", slug: "slice-with-long-name", status: "in-progress" },

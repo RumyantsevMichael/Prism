@@ -48,13 +48,13 @@ A stored value stays authoritative on resume, and `agentFlow` is fixed once work
 A scope is the root slice, or a part that a split design created; design it when its dependencies are done.
 
 1. Run `design` for the scope in a fresh child agent, passing its slug and folder.
-2. When design returns `SPLIT`, check unique slugs and exact requirement coverage, ask the design gate when autonomy requires it, and call `update_initiative` with one `split` and the `set_dependencies` operations.
+2. When design returns `SPLIT`, check unique slugs and exact requirement coverage, ask the design gate when autonomy requires it, and call `update_initiative` with one `split` that carries design's evidence, citing for `user_gate` the gate where the person asked for the split, and the `set_dependencies` operations.
 3. When design returns `FIT`:
    1. When autonomy requires the design gate, write the design view for the scope through the [example writer](references/example-writer.md) in a fresh child agent with the `examples` model, and ask the gate with the scope's `slice.md`, its diagrams, and the frozen tests as artifacts, offering to mark slices for review.
    2. When the user asks for changes, return the note to design and repeat this step.
    3. Call `update_initiative` once with a `split` of the scope into its planned slices, their `set_dependencies` operations, and an `accept_design` operation per slice with its frozen tests and its review mark.
    4. When the plan has one slice, call `accept_design` on the scope itself instead of a split.
-4. When acceptance reports a diagram problem or a claimed test file, return it to design.
+4. When acceptance reports a diagram problem, a claimed test file, or `contract_too_large` with its measured files, return it to design.
 
 A slice's review mark is `required` when the user marked it, when `review` is `recommended` and design recommended it, or when `review` is `all`; otherwise it is `none`.
 
