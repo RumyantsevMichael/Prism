@@ -38,8 +38,14 @@ export const SPLIT_EVIDENCE_KINDS = Object.freeze(["contract_size", "unfrozen", 
 const evidenceSchema = { oneOf: [
   object({ kind: { const: "contract_size" }, files: { type: "array", minItems: 1, maxItems: 400, items: text } }),
   object({ kind: { const: "unfrozen" }, assumption: text, settledBy: slug }),
-  object({ kind: { const: "user_gate" }, gate: text })
+  object({ kind: { const: "user_gate" }, gate: text }, ["kind"])
 ] };
+
+const splitOperation = object({ op: { const: "split" }, parent: slug, children: { type: "array", minItems: 1, maxItems: 50, items: childSchema }, evidence: evidenceSchema }, ["op", "parent", "children"]);
+const dependenciesOperation = object({ op: { const: "set_dependencies" }, slug, dependencies: { type: "array", maxItems: 200, items: slug } });
+const updateSliceOperation = object({ op: { const: "update_slice" }, slug, title: text, outcome: text }, ["op", "slug"]);
+const acceptDesignOperation = object({ op: { const: "accept_design" }, slug, frozenTests: { type: "array", minItems: 1, maxItems: 200, items: text }, review: { enum: REVIEW_MARKS } });
+const STANDALONE = new Set(["remove_records", "propose_design", "accept_proposal"]);
 
 export const GET_INITIATIVE_SCHEMA = object({ projectRoot: text, initiative: slug }, ["projectRoot", "initiative"]);
 export const UPDATE_INITIATIVE_SCHEMA = object({
@@ -49,11 +55,13 @@ export const UPDATE_INITIATIVE_SCHEMA = object({
   actor: text,
   operations: { type: "array", minItems: 1, maxItems: 50, items: { oneOf: [
     object({ op: { const: "create" }, slug, title: text, outcome: text, requirements: strings }, ["op", "slug", "title", "requirements"]),
-    object({ op: { const: "split" }, parent: slug, children: { type: "array", minItems: 1, maxItems: 50, items: childSchema }, evidence: evidenceSchema }, ["op", "parent", "children"]),
+    splitOperation,
     object({ op: { const: "set_status" }, slug, status: { enum: LEAF_STATUSES } }),
-    object({ op: { const: "set_dependencies" }, slug, dependencies: { type: "array", maxItems: 200, items: slug } }),
-    object({ op: { const: "update_slice" }, slug, title: text, outcome: text }, ["op", "slug"]),
-    object({ op: { const: "accept_design" }, slug, frozenTests: { type: "array", minItems: 1, maxItems: 200, items: text }, review: { enum: REVIEW_MARKS } }),
+    dependenciesOperation,
+    updateSliceOperation,
+    acceptDesignOperation,
+    object({ op: { const: "propose_design" }, slug, operations: { type: "array", minItems: 1, maxItems: 50, items: { oneOf: [splitOperation, dependenciesOperation, updateSliceOperation, acceptDesignOperation] } } }),
+    object({ op: { const: "accept_proposal" }, slug, reviewRequired: { type: "array", maxItems: 200, items: slug }, gate: text }, ["op", "slug", "reviewRequired"]),
     object({ op: { const: "restore_tests" }, slug }),
     object({ op: { const: "import_map" }, path: text }),
     object({ op: { const: "regenerate_markdown" } }),
@@ -102,7 +110,8 @@ function canonicalRecord(record) {
       ...(slice.splitEvidence ? { splitEvidence: slice.splitEvidence } : {})
     };
   }
-  return { schemaVersion: 1, id: record.id, slices, history: record.history.slice(-HISTORY_LIMIT) };
+  const proposals = Object.fromEntries(Object.keys(record.proposals ?? {}).sort().map((key) => [key, record.proposals[key]]));
+  return { schemaVersion: 1, id: record.id, slices, ...(Object.keys(proposals).length ? { proposals } : {}), history: record.history.slice(-HISTORY_LIMIT) };
 }
 
 function serialize(record) {
@@ -120,6 +129,10 @@ function validateRecord(raw, initiative) {
   for (const [key, slice] of Object.entries(raw.slices ?? {})) {
     for (const problem of designProblems(slice?.design)) errors.push(`${key}: ${problem}`);
     if (slice?.splitEvidence !== undefined && (slice.status !== "split" || !SPLIT_EVIDENCE_KINDS.includes(slice.splitEvidence?.kind))) errors.push(`${key}: splitEvidence belongs to a split slice and names its kind.`);
+  }
+  if (raw.proposals !== undefined) {
+    if (raw.proposals === null || typeof raw.proposals !== "object" || Array.isArray(raw.proposals)) errors.push("proposals must be an object keyed by scope.");
+    else for (const [key, proposal] of Object.entries(raw.proposals)) if (!Object.hasOwn(raw.slices ?? {}, key) || !Array.isArray(proposal?.operations)) errors.push(`proposals.${key} must name a slice and list its operations.`);
   }
   let analysis = null;
   try {
@@ -255,7 +268,7 @@ const normalized = (value) => value.toLowerCase().replace(/[`*_]/g, "").replace(
 
 // Models judging a scope's size split it long before one contract stopped working, so a split into parts
 // that each get their own contract needs evidence that the server can check.
-async function splitEvidence(resolved, slices, operation) {
+async function splitEvidence(resolved, slices, operation, effects) {
   const refuse = (reason) => fail("split_unjustified", `The split of ${operation.parent} was not recorded: ${reason}`);
   const evidence = operation.evidence;
   if (!evidence) throw refuse("design it as one contract first. A split into parts needs evidence: contract files measured above the contract budget, an Unprobed assumption that one part settles, or a user gate where the person asked for the split. A split whose every part takes accept_design in the same update is a slice plan and needs none.");
@@ -275,12 +288,18 @@ async function splitEvidence(resolved, slices, operation) {
     return { kind: evidence.kind, assumption: evidence.assumption, settledBy: evidence.settledBy };
   }
   // Only the review browser records a gate answer, so an answered gate is the person's own call.
+  // A proposed split waits for that answer: accept_proposal names the gate where the person approved it.
+  const gateId = evidence.gate ?? effects.gate;
+  if (!gateId) {
+    if (effects.dryRun) return { kind: evidence.kind };
+    throw refuse("name the user gate where the person approved the split.");
+  }
   const { state } = await readCoordinationState({ projectRoot: resolved.root, initiative: resolved.initiative });
-  const gate = (Array.isArray(state?.pending) ? state.pending : []).find((item) => item?.id === evidence.gate);
-  if (!gate?.answer) throw refuse(`the user gate ${evidence.gate} is not pending with an answer from the person.`);
-  if (gate.answer.choice === "request-changes") throw refuse(`the person requested changes at ${evidence.gate}.`);
-  if (gate.slice !== undefined && gate.slice !== operation.parent) throw refuse(`the user gate ${evidence.gate} is about ${gate.slice}.`);
-  return { kind: evidence.kind, gate: evidence.gate };
+  const gate = (Array.isArray(state?.pending) ? state.pending : []).find((item) => item?.id === gateId);
+  if (!gate?.answer) throw refuse(`the user gate ${gateId} is not pending with an answer from the person.`);
+  if (gate.answer.choice === "request-changes") throw refuse(`the person requested changes at ${gateId}.`);
+  if (gate.slice !== undefined && gate.slice !== operation.parent) throw refuse(`the user gate ${gateId} is about ${gate.slice}.`);
+  return { kind: evidence.kind, gate: gateId };
 }
 
 // One implementer reads the contract and the frozen tests of its slices, so a fit design above the budget splits instead.
@@ -300,6 +319,17 @@ async function checkContractBudget(resolved, slices, operations) {
       throw fail("contract_too_large", `The design of ${scope} was not accepted: its contract and frozen tests hold about ${tokens} tokens, more than the contract budget of ${CONTRACT_TOKEN_BUDGET} that one implementer reads. Split ${scope} into parts, citing these files as contract_size evidence.`, { scope, tokens, budget: CONTRACT_TOKEN_BUDGET, files: measured });
     }
   }
+}
+
+// The slugs a proposal changes outside its scope: it may split only the scope and change only the scope, the slices inside it, and the parts it creates.
+function proposalOutside(slices, scope, operations) {
+  const created = new Set(operations.filter((item) => item.op === "split").flatMap((item) => item.children.map((child) => child.slug)));
+  const inside = (key) => {
+    if (created.has(key)) return true;
+    for (let current = key, depth = 0; current !== null && current !== undefined && depth < 1000; current = slices[current]?.parent, depth += 1) if (current === scope) return true;
+    return false;
+  };
+  return [...new Set(operations.flatMap((item) => item.op === "split" ? (item.parent === scope ? [] : [item.parent]) : inside(item.slug) ? [] : [item.slug]))];
 }
 
 async function applyOperation(resolved, record, operation, effects) {
@@ -334,7 +364,7 @@ async function applyOperation(resolved, record, operation, effects) {
         slices[child.slug] = { title: child.title, ...(child.outcome ? { outcome: child.outcome } : {}), status: "not-started", parent: operation.parent, requirements: normalizeRequirements(resolved, child.requirements), dependencies: [] };
       }
       // A split whose every part takes its design in the same update is a contract's slice plan; any other split needs evidence.
-      const evidence = operation.children.every((child) => effects.accepted.has(child.slug)) ? null : await splitEvidence(resolved, slices, operation);
+      const evidence = operation.children.every((child) => effects.accepted.has(child.slug)) ? null : await splitEvidence(resolved, slices, operation, effects);
       parent.status = "split";
       delete parent.design;
       if (evidence) parent.splitEvidence = evidence;
@@ -390,6 +420,10 @@ async function applyOperation(resolved, record, operation, effects) {
       if (problems.length) throw fail("diagram_problems", `The design of ${operation.slug} was not accepted: ${problems.join(" ")}`, { problems });
       effects.diagrams.push(...diagrams);
       const acceptedAt = new Date().toISOString();
+      if (effects.dryRun) {
+        slice.design = { acceptedAt, frozenTests, review: operation.review, ...(staging ? { staged: true } : {}) };
+        break;
+      }
       effects.staged = effects.staged.filter((item) => item.slice !== operation.slug);
       if (!staging) {
         const baselineId = await captureBaseline(resolved.root, resolved.initiative, operation.slug);
@@ -408,6 +442,43 @@ async function applyOperation(resolved, record, operation, effects) {
         return false;
       }).filter((key) => slices[key].design?.staged);
       for (const key of leaves) effects.installed.push(...await installFrozenTests(resolved.root, resolved.initiative, key, slices[key].design.frozenTests));
+      break;
+    }
+    case "propose_design": {
+      // Design proposes its result itself, so Prism's refusals reach the designer while it can still fix them;
+      // the proposal is checked on a copy of the record and waits for the orchestrator to accept it after the design gate.
+      const scope = requireSlice(operation.slug);
+      if (scope.status === "done") throw fail("validation_failed", "A done slice cannot take a new design.");
+      const outside = proposalOutside(slices, operation.slug, operation.operations);
+      if (outside.length) throw fail("validation_failed", `A design proposal changes only its scope ${operation.slug} and the slices inside it, not ${outside.join(", ")}.`);
+      const trial = { slices: Object.assign(Object.create(null), structuredClone(slices)) };
+      const accepted = new Set(operation.operations.filter((item) => item.op === "accept_design").map((item) => item.slug));
+      const trialEffects = { staged: [], installed: [], diagrams: [], checkedFolders: new Set(), diagramCache: effects.diagramCache, accepted, applied: [], dryRun: true };
+      for (const inner of operation.operations) await applyOperation(resolved, trial, inner, trialEffects);
+      try {
+        analyzeInitiative(trial.slices);
+      } catch (error) {
+        throw fail("invalid_initiative", `The design proposal of ${operation.slug} was not recorded: ${error.message}`, { errors: [error.message] });
+      }
+      await checkContractBudget(resolved, trial.slices, operation.operations);
+      record.proposals[operation.slug] = { operations: structuredClone(operation.operations), proposedAt: new Date().toISOString(), ...(effects.actor ? { actor: effects.actor } : {}) };
+      effects.diagrams.push(...trialEffects.diagrams);
+      break;
+    }
+    case "accept_proposal": {
+      const proposal = record.proposals[operation.slug];
+      if (!proposal) throw fail("validation_failed", `The scope ${operation.slug} has no pending design proposal.`);
+      const required = new Set(operation.reviewRequired);
+      const replay = proposal.operations.map((inner) => inner.op === "accept_design" ? { ...inner, review: required.has(inner.slug) ? "required" : "none" } : inner);
+      const unmarked = [...required].filter((key) => !replay.some((inner) => inner.op === "accept_design" && inner.slug === key));
+      if (unmarked.length) throw fail("validation_failed", `${unmarked.join(", ")} takes no design in this proposal, so it cannot be marked for review.`);
+      for (const inner of replay) if (inner.op === "accept_design") effects.accepted.add(inner.slug);
+      effects.gate = operation.gate;
+      for (const inner of replay) {
+        await applyOperation(resolved, record, inner, effects);
+        effects.applied.push(inner);
+      }
+      delete record.proposals[operation.slug];
       break;
     }
     case "regenerate_markdown":
@@ -436,11 +507,13 @@ async function removeRecords(input) {
 
 // Parsing diagrams takes about a second per folder, so it runs before the record lock, which other writers wait on only briefly.
 // The folders come from the record as it is now plus this update's splits; a folder the record changes under it is checked again inside the lock.
-async function precheckDiagrams(resolved, operations) {
-  const accepted = operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug);
+async function precheckDiagrams(resolved, input) {
   const cache = new Map();
-  if (!accepted.length) return cache;
+  if (!input.some((operation) => ["accept_design", "propose_design", "accept_proposal"].includes(operation.op))) return cache;
   const current = await loadRecord(resolved).catch(() => null);
+  // A proposal's operations are checked when it is proposed and again when it is accepted.
+  const operations = input.flatMap((operation) => operation.op === "propose_design" ? operation.operations : operation.op === "accept_proposal" ? current?.record?.proposals?.[operation.slug]?.operations ?? [] : [operation]);
+  const accepted = operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug);
   const parents = new Map(Object.entries(current?.record?.slices ?? {}).map(([key, slice]) => [key, slice?.parent ?? null]));
   for (const operation of operations) {
     if (operation.op === "create") parents.set(operation.slug, null);
@@ -458,7 +531,9 @@ async function precheckDiagrams(resolved, operations) {
 
 export async function updateInitiative(input) {
   validateInput(UPDATE_INITIATIVE_SCHEMA, input);
-  if (input.operations.length === 1 && input.operations[0].op === "remove_records") return removeRecords(input);
+  const standalone = input.operations.find((operation) => STANDALONE.has(operation.op));
+  if (standalone && input.operations.length > 1) throw fail("validation_failed", `${standalone.op} must be the only operation of its update.`);
+  if (standalone?.op === "remove_records") return removeRecords(input);
   const resolved = await resolveInitiative(input.projectRoot, input.initiative, true);
   const diagramCache = await precheckDiagrams(resolved, input.operations);
   await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.projectionPath]);
@@ -472,14 +547,15 @@ export async function updateInitiative(input) {
       throw fail("invalid_initiative", "The existing initiative record is invalid and was not changed.", { errors: current.errors });
     }
     const record = current.record
-      ? { id: current.record.id, slices: Object.assign(Object.create(null), structuredClone(current.record.slices)), history: [...current.record.history] }
-      : { id: resolved.initiative, slices: Object.create(null), history: [] };
+      ? { id: current.record.id, slices: Object.assign(Object.create(null), structuredClone(current.record.slices)), proposals: Object.assign(Object.create(null), structuredClone(current.record.proposals ?? {})), history: [...current.record.history] }
+      : { id: resolved.initiative, slices: Object.create(null), proposals: Object.create(null), history: [] };
     const accepted = new Set(input.operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug));
-    const effects = { staged: [], installed: [], diagrams: [], checkedFolders: new Set(), diagramCache, accepted };
+    const effects = { staged: [], installed: [], diagrams: [], checkedFolders: new Set(), diagramCache, accepted, applied: [], actor: input.actor };
     for (const operation of input.operations) {
       await applyOperation(resolved, record, operation, effects);
+      if (!STANDALONE.has(operation.op)) effects.applied.push(operation);
     }
-    await checkContractBudget(resolved, record.slices, input.operations);
+    await checkContractBudget(resolved, record.slices, effects.applied);
     try {
       analyzeInitiative(record.slices);
     } catch (error) {
@@ -507,8 +583,12 @@ export async function updateInitiative(input) {
 }
 
 // The slugs an update names, so its acknowledgement reports only what the caller touched.
-function touchedSlugs(operations) {
-  return [...new Set(operations.flatMap((operation) => operation.op === "split" ? [operation.parent, ...operation.children.map((child) => child.slug)] : operation.slug ? [operation.slug] : []))];
+function touchedSlugs(operations, slices) {
+  const within = (scope) => Object.keys(slices).filter((key) => {
+    for (let current = key, depth = 0; current !== null && current !== undefined && depth < 1000; current = slices[current]?.parent, depth += 1) if (current === scope) return true;
+    return false;
+  });
+  return [...new Set(operations.flatMap((operation) => operation.op === "split" ? [operation.parent, ...operation.children.map((child) => child.slug)] : operation.op === "accept_proposal" ? within(operation.slug) : operation.slug ? [operation.slug] : []))];
 }
 
 /**
@@ -518,10 +598,11 @@ function touchedSlugs(operations) {
 export function initiativeAcknowledgement(result, operations) {
   if (result.removed) return result;
   const slices = result.record?.slices ?? {};
-  const touched = Object.fromEntries(touchedSlugs(operations).filter((key) => slices[key]).map((key) => [key, {
+  const touched = Object.fromEntries(touchedSlugs(operations, slices).filter((key) => slices[key]).map((key) => [key, {
     status: slices[key].status,
     ...(slices[key].design ? { design: slices[key].design.staged ? "staged" : "accepted", frozenTests: slices[key].design.frozenTests.length, review: slices[key].design.review } : {}),
-    ...(slices[key].splitEvidence ? { splitEvidence: slices[key].splitEvidence.kind } : {})
+    ...(slices[key].splitEvidence ? { splitEvidence: slices[key].splitEvidence.kind } : {}),
+    ...(result.record?.proposals?.[key] ? { proposal: "pending" } : {})
   }]));
   const unchecked = result.diagrams.filter((item) => !item.checked);
   return {
@@ -549,7 +630,7 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

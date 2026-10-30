@@ -29,8 +29,8 @@ A direct skill invocation does not require an earlier `orchestrate` invocation.
 ## Delivery lifecycle
 
 An initiative starts as one root slice, which is its first contract scope.
-Design returns `FIT` with one frozen contract, probed assumptions, failing acceptance tests, and a slice plan, `SPLIT` with parts that each get their own contract later, or `BLOCKED`.
-After the design gate, the orchestrator records the plan's slices and accepts their designs at once, and Prism stages each slice's frozen tests until that slice starts.
+Design proposes `FIT` with one frozen contract, probed assumptions, failing acceptance tests, and a slice plan, or `SPLIT` with parts that each get their own contract later, or returns `BLOCKED`.
+After the design gate, the orchestrator accepts the proposal, which records the plan's slices and their designs at once, and Prism stages each slice's frozen tests until that slice starts.
 One fresh implementation session per slice makes its frozen tests pass, the server runs the project's test command, and a review follows only for a slice marked for review.
 
 ## Artifact ownership
@@ -73,6 +73,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Design diagrams | PlantUML source written by design: an overview of each contract's slices, shared interfaces, and order, and a code view per slice; Prism parses them and refuses a view that does not parse or shows more than 30 elements. |
 | Changes | The files a planned slice is expected to add, change, or remove, with the units each adds or whose interface it changes; after verification the review browser compares them with what the verified result changed. |
 | Design gate | The user's acceptance of a design, which the autonomy setting may resolve automatically. |
+| Design proposal | A design result that design records through `update_initiative` and Prism checks at once, kept pending without changing any slice until the orchestrator accepts it after the design gate. |
 | Design view | The review browser's page for a design gate: one example per frozen test under its contract clause, clauses without a test, and the planned changes, written through `update_design_view` by the example writer. |
 | Example writer | A child agent on a small model that writes the design view from the contract and the frozen tests only. |
 | Accepted design | A planned slice's design recorded through `update_initiative` with its frozen tests and its review mark. |

@@ -19,8 +19,10 @@ Each slice is designed when it is next, implemented in fresh agent sessions agai
 
 The roadmap owns each initiative's name, intent, priority, and Approved requirement links.
 When those inputs are missing, orchestration runs `ideate` first.
-Design explores documents and focused code paths, then returns `FIT`, `SPLIT`, or `BLOCKED`.
-On `SPLIT`, design proposes child slices, their order, and the interfaces between them, and each child is designed only when the slices it depends on are done.
+Design explores documents and focused code paths, then proposes `FIT`, one contract with a plan of slices, or `SPLIT`, parts with their order and the interfaces between them, or returns `BLOCKED`.
+Prism checks a proposal as soon as design makes it and keeps it pending until the design gate accepts it.
+Design splits a scope only with evidence Prism can check: a contract too large for one implementer to read, an unprobed assumption that one part settles, or your own request at the design gate.
+Each part of a split is designed only when the parts it depends on are done.
 A long initiative therefore never freezes a contract for work that is weeks away.
 
 A fitted slice has a contract that fixes everything a user or caller observes, a list of assumptions about the system that design either probed or made fail safe, and acceptance tests that fail until the behavior exists.

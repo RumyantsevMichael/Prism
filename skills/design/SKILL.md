@@ -22,7 +22,7 @@ Implementers later work from its output in fresh sessions, and they are judged o
 ## 2. Decide fit
 
 - Return `FIT` when one contract can fix the whole observable interface of the scope now, with settled architecture.
-- Return `SPLIT` only with [split evidence](../workflow/SKILL.md#common-terms), which Prism checks: `contract_size` with the files that acceptance measured when it refused the fit design as `contract_too_large`, `unfrozen` with an Unprobed assumption quoted from **Assumptions** that only one part's delivery can settle and that part, or `user_gate` when the person asked for the split in design feedback.
+- Return `SPLIT` only with [split evidence](../workflow/SKILL.md#common-terms), which Prism checks: `contract_size` with the files that Prism measured when it refused the fit proposal as `contract_too_large`, `unfrozen` with an Unprobed assumption quoted from **Assumptions** that only one part's delivery can settle and that part, or `user_gate` when the person asked for the split in design feedback, which takes effect when the person approves it at the gate.
 - Return `BLOCKED` when a requirement, decision, or external fact that no probe can establish prevents a sound design.
 
 ## 3. Write a fit design
@@ -111,12 +111,13 @@ Write PlantUML source only: Prism parses each `.puml` file when the design is ac
 - Don't
   - Write contracts or tests for the parts; each part is designed when it is next.
 
-## 6. Return the result
+## 6. Propose the result
 
-- Return exactly one status with its evidence:
-  - `FIT`: the scope's `slice.md` path, the **Slices** rows, the test command run in step 7 of section 3 with its failing result, and open questions.
-  - `SPLIT`: the evidence, and each part's slug, title, outcome, requirement references, and dependencies.
-  - `BLOCKED`: the exact question or missing fact.
+1. Read the initiative's revision with `get_initiative`, and call `update_initiative` with one `propose_design` operation for the scope:
+   - `FIT`: a `split` of the scope into its planned slices, their `set_dependencies` operations, and an `accept_design` operation per slice with its frozen tests and review recommendation; for a one-slice plan, only `accept_design` on the scope.
+   - `SPLIT`: a `split` into the parts with the evidence, and their `set_dependencies` operations.
+2. When Prism refuses the proposal, fix the design and propose again; on `revision_conflict`, read the revision again.
+3. Return `PROPOSED` with the scope's `slice.md` path, the failing test result from step 7 of section 3, and open questions, or `BLOCKED` with the exact question or missing fact.
 
 ## 7. Revise a design
 
@@ -124,6 +125,6 @@ Write PlantUML source only: Prism parses each `.puml` file when the design is ac
   1. Read the feedback, the current contract, and the frozen tests that orchestration put back in the work tree.
   2. Repeat the affected parts of sections 3 and 4 for the slices that have not finished, keeping the planned slices and their slugs.
   3. When the revision needs other slices, return `BLOCKED` with the slices it needs.
-  4. Return the result through section 6 with every unfinished slice of the scope.
+  4. Propose the result through section 6 with every unfinished slice of the scope.
 
 A frozen test changes only through a revised design that orchestration accepts again.

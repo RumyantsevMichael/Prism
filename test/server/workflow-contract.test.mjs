@@ -51,7 +51,9 @@ test("design freezes one probed contract with failing tests and a slice plan, an
   assert.match(design, /## Slices/);
   assert.match(design, /Write contracts or tests for the parts; each part is designed when it is next/);
   assert.match(design, /Return `SPLIT` only with \[split evidence\]/);
-  assert.match(design, /`contract_size` with the files that acceptance measured/);
+  assert.match(design, /`contract_size` with the files that Prism measured/);
+  assert.match(design, /call `update_initiative` with one `propose_design` operation for the scope/);
+  assert.match(design, /When Prism refuses the proposal, fix the design and propose again/);
   assert.match(design, /A frozen test changes only through a revised design/);
   assert.match(design, /Write PlantUML source only/);
   assert.match(design, /Render a diagram or look at a rendered image/);
@@ -60,7 +62,7 @@ test("design freezes one probed contract with failing tests and a slice plan, an
 test("design lists its expected changes, and a gated design gets examples from a small-model writer", async () => {
   assert.match(await skill("design"), /In \*\*Changes\*\*, list each file you expect to add, change, or remove/);
   const orchestrate = await skill("orchestrate");
-  assert.match(orchestrate, /write the design view for the scope through the \[example writer\]\(references\/example-writer\.md\)/);
+  assert.match(orchestrate, /write the design view through the \[example writer\]\(references\/example-writer\.md\)/);
   const writer = await reference("orchestrate", "example-writer.md");
   assert.match(writer, /Call `update_design_view` once for the scope with every example/);
   assert.match(writer, /Write anything a test does not assert/);
@@ -82,7 +84,7 @@ test("orchestration designs one contract per scope, starts each slice, and compl
   assert.match(orchestrate, /\| `commit` \| `on`, `off` \| `on` under `full`, otherwise `off` \|/);
   assert.match(orchestrate, /\| `push` \| `on`, `off` \| `off` \|/);
   assert.match(orchestrate, /next leaf that is `not-started`, has an accepted design, and whose effective dependencies are done/);
-  assert.match(orchestrate, /an `accept_design` operation per slice with its frozen tests and its review mark/);
+  assert.match(orchestrate, /one `accept_proposal` operation for the scope, the slugs whose review mark is `required`/);
   assert.match(orchestrate, /`set_status` `in-progress`, which puts its frozen tests in place/);
   assert.match(orchestrate, /`restore_tests` for the scope/);
   assert.match(orchestrate, /Run git, hash files, or read code while slices run/);
@@ -115,7 +117,7 @@ test("ideation adds the roadmap entry that the removed roadmap skill used to add
 
 test("keeps common terms aligned with the workflow", async () => {
   const workflow = await skill("workflow");
-  for (const term of ["Contract", "Assumption probe", "Frozen tests", "Staged tests", "Contract scope", "Slice plan", "Design diagrams", "Review mark", "Child status", "Design gate", "Accepted design", "Verification run", "Implementation review", "Review probe", "Feature file", "Step definition", "Executable contract", "`recovery.md`", "Pause checkpoint"]) {
+  for (const term of ["Contract", "Assumption probe", "Frozen tests", "Staged tests", "Contract scope", "Slice plan", "Split evidence", "Design proposal", "Design diagrams", "Review mark", "Child status", "Design gate", "Accepted design", "Verification run", "Implementation review", "Review probe", "Feature file", "Step definition", "Executable contract", "`recovery.md`", "Pause checkpoint"]) {
     assert.ok(workflow.includes(`| ${term} |`), term);
   }
   for (const retired of ["Design audit", "Change map", "Context plan", "Red checkpoint", "Atomic slice", "Resolution exchange", "Review base", "Implementation step"]) {
