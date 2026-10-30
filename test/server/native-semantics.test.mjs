@@ -201,6 +201,8 @@ test("concurrent callers share preparation and reject stale expected snapshots",
   release(); await runtime.status(root, 100);
   assert.equal((await runtime.prepare(source)).status, "ready");
   await assert.rejects(runtime.prepare(source, "0".repeat(64)), { code: "stale_snapshot" });
+  // The job reports ready before its progress file is final, so let it finish before the fixture is removed.
+  await runtime.sequence;
 });
 test("complete native evidence supplies numeric FIT input while partial structure and semantic-only hints do not", async t => {
   const { root } = await fixture(t);
