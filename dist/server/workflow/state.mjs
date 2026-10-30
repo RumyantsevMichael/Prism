@@ -12,7 +12,7 @@ import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 const SCHEMA_VERSION = 1;
 
 const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence"]);
-const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "models"]);
+const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "review", "models"]);
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
 const GATE_KEYS = new Set(["id", "kind", "slice", "question", "artifacts", "options", "askedAt", "answer"]);
@@ -25,7 +25,8 @@ const SETTING_VALUES = {
   agentFlow: new Set(["mono", "multi"]),
   commit: new Set(["on", "off"]),
   push: new Set(["on", "off"]),
-  continuation: new Set(["auto", "stepwise"])
+  continuation: new Set(["auto", "stepwise"]),
+  review: new Set(["marked", "recommended", "all"])
 };
 
 export class CoordinationStateError extends Error {
@@ -163,8 +164,11 @@ function validateModels(value, errors) {
       addError(errors, `settings.models.${role}`, "must be a non-empty model name");
     }
   }
+  if (value.examples !== undefined && (typeof value.examples !== "string" || !value.examples.trim())) {
+    addError(errors, "settings.models.examples", "must be a non-empty model name when present");
+  }
   for (const key of Object.keys(value)) {
-    if (!requiredRoles.includes(key)) {
+    if (!requiredRoles.includes(key) && key !== "examples") {
       addError(errors, `settings.models.${key}`, "is not a supported model role");
     }
   }

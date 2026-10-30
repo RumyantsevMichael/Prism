@@ -20,7 +20,7 @@ The import keeps slugs, titles, statuses, dependencies, and requirement assignme
 
 ## What needs you
 
-An existing roadmap migrates through the `roadmap` skill.
+An existing roadmap migrates through `prism:workflow-init`.
 The agent proposes the record from your roadmap files, and you confirm it before anything is written.
 A hand-written `roadmap.md` is replaced by the generated view only after that confirmation.
 Older diagram files stay in place until you delete them.

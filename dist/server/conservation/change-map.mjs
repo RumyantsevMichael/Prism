@@ -44,7 +44,9 @@ export const UPDATE_CHANGE_MAP_SCHEMA = object({
     object({ op: { const: "remove" }, id: string })
   ] }, { maxItems: CHANGE_MAP_LIMITS.operations })
 }, ["projectRoot", "initiative", "slice", "expectedRevision", "operations"]);
-const documentSchema = object({ schemaVersion: { enum: [1, 2] }, scope: scopeSchema, concepts: array(entrySchema), ...deltaMetadata }, ["schemaVersion", "scope", "concepts"]);
+// A derived change map is written by the server from a slice's design baseline and its verified result, never by an agent.
+const derivedSchema = object({ runId: string, baselineId: { type: "string", pattern: "^[a-f0-9]{64}$" }, resultId: { type: "string", pattern: "^[a-f0-9]{64}$" }, derivedAt: string });
+const documentSchema = object({ schemaVersion: { enum: [1, 2] }, scope: scopeSchema, concepts: array(entrySchema), derived: derivedSchema, ...deltaMetadata }, ["schemaVersion", "scope", "concepts"]);
 
 export class ChangeMapError extends Error {
   constructor(code, message, details = {}) {
@@ -70,6 +72,7 @@ function canonicalReference(ref) {
 function canonicalDocument(doc) {
   return {
     schemaVersion: doc.schemaVersion,
+    ...(doc.derived === undefined ? {} : { derived: { ...doc.derived } }),
     ...Object.fromEntries(Object.keys(deltaMetadata).filter(key => doc[key] !== undefined).map(key => [key, doc[key]])),
     ...(doc.requirements === undefined ? {} : { requirements: doc.requirements.map(canonicalReference) }),
     ...(doc.growthJustifications === undefined ? {} : { growthJustifications: doc.growthJustifications.map(item => ({ ...item, requirements: item.requirements.map(canonicalReference) })) }),
@@ -128,7 +131,7 @@ function validateDocument(raw) {
     if (["KEEP", "MODIFY"].includes(entry.action) && (!before || !sameIdentity)) {
       errors.push(`${field}: ${entry.action} requires the same nonempty before and after references`);
     }
-    if (entry.action === "ADD" && entry.reuseEvidence === undefined) {
+    if (entry.action === "ADD" && entry.reuseEvidence === undefined && !document.derived) {
       diagnostics.push({ code: "addition_evidence_missing", id: entry.id, field: `${field}.reuseEvidence`, message: "Record a reuse search and an addition justification before FIT." });
     }
   }
@@ -211,6 +214,7 @@ async function loadDelta(resolved) {
 }
 async function assess(resolved, loaded) {
   if (!loaded.document || !loaded.valid) return loaded;
+  if (loaded.document.derived) return loaded;
   if (loaded.document.schemaVersion === 1) return { ...loaded, ready: false, diagnostics: [...loaded.diagnostics, { code: "legacy_evidence", message: "Migrate the change map with a retained baseline before a new audit." }] };
   const { assessDeltaReadiness } = await import("./conservation-analysis.mjs");
   const diagnostics = await assessDeltaReadiness(resolved.root, loaded.document);
@@ -220,6 +224,7 @@ function summary(resolved, loaded) {
   const counts = Object.fromEntries(CHANGE_ACTIONS.map((action) => [action, 0]));
   for (const entry of loaded.document?.concepts ?? []) counts[entry.action]++;
   return { deltaPath: resolved.deltaPath, exists: loaded.exists, revision: loaded.revision, schemaVersion: loaded.document?.schemaVersion ?? null,
+    ...(loaded.document?.derived ? { derived: loaded.document.derived } : {}),
     ...Object.fromEntries(Object.keys(deltaMetadata).filter(key => loaded.document?.[key] !== undefined).map(key => [key, loaded.document[key]])),
     scope: loaded.document?.scope ?? [], totalCount: loaded.document?.concepts.length ?? 0, counts,
     valid: loaded.valid, ready: loaded.ready, errors: loaded.errors.slice(0, 50), diagnostics: loaded.diagnostics.slice(0, 50), totalDiagnostics: loaded.diagnostics.length };
@@ -253,6 +258,7 @@ export async function updateChangeMap(input) {
     const current = await loadDelta(resolved);
     checkRevision(input.expectedRevision, current);
     if (!current.valid) throw failure("invalid_delta", "The existing change map is invalid and was not changed.", { errors: current.errors });
+    if (current.document?.derived) throw failure("validation_failed", "This change map is derived from the slice's verified result and updates itself after the next passing verify_slice run.");
     if (current.document?.schemaVersion === 1 && input.migrate !== true) throw failure("validation_failed", "Use migrate with a retained baseline before changing a legacy change map.");
     if (current.document?.baselineId && input.baselineId && current.document.baselineId !== input.baselineId) throw failure("validation_failed", "Corrections must preserve the original baseline.");
     const entries = new Map((current.document?.concepts ?? []).map((entry) => [entry.id, entry]));
@@ -288,6 +294,26 @@ export async function updateChangeMap(input) {
     if (changed) await writeRecord(resolved.root, { kind: "change-map", initiative: input.initiative, slice: input.slice }, contents);
     const updated = { ...assessed, exists: true, revision: changed ? createHash("sha256").update(contents).digest("hex") : current.revision };
     return { ...summary(resolved, updated), created: !current.exists, previousRevision: current.revision, changedIds, ...(migrationEvidenceId ? { migrationEvidenceId } : {}) };
+  }, failure));
+}
+
+/**
+ * Write a slice's derived change map. A change map that an agent wrote stays, so the derived one only creates or replaces a derived document.
+ * Returns whether it wrote, and the reason when it did not.
+ */
+export async function writeDerivedChangeMap(projectRoot, key, document) {
+  const resolved = await resolveChangeMap(projectRoot, key);
+  await mkdir(path.dirname(resolved.target), { recursive: true });
+  return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
+    const current = await loadDelta(resolved);
+    if (current.exists && !current.document?.derived) return { written: false, reason: "authored_change_map" };
+    const candidate = validateDocument(document);
+    if (!candidate.valid) throw failure("validation_failed", "The derived change map is invalid and was not written.", { errors: candidate.errors });
+    const contents = `${JSON.stringify(candidate.document, null, 2)}\n`;
+    if (Buffer.byteLength(contents) > CHANGE_MAP_LIMITS.bytes) return { written: false, reason: "too_large" };
+    if (current.exists && JSON.stringify(current.document) === JSON.stringify(candidate.document)) return { written: false, reason: "unchanged" };
+    await writeRecord(resolved.root, { kind: "change-map", initiative: key.initiative, slice: key.slice }, contents);
+    return { written: true };
   }, failure));
 }
 

@@ -1,149 +1,129 @@
 ---
 name: design
-description: "Design an initiative or slice, split work that exceeds what one `Develop <slice>` worker can handle, and prepare atomic slices for implementation."
+description: "Design an initiative or one part of it: write one frozen contract with probed assumptions, failing acceptance tests, and a plan of the slices that implement it, or split a scope too large for one contract into parts."
 argument-hint: '[initiative/slice]'
 sdm: "0.3"
 ---
 
-# Design an initiative or slice
+# Design a contract
 
-Design turns Approved requirements into a technical design for an initiative or slice.
-An initiative starts as one root slice and splits into smaller outcomes when its scope exceeds what one `Develop <slice>` worker can handle.
-The orchestrator repeats design for each child until every leaf is atomic.
-An atomic slice delivers one observable outcome within the remaining context and risk budget of the task that designs and implements it.
-
-- When orchestration returns findings, start at section 7 instead of section 1.
+Design does the quality work of the [workflow](../workflow/SKILL.md).
+It designs one contract scope: the root slice of an initiative, or a part that an earlier design split off.
+Implementers later work from its output in fresh sessions, and they are judged on correct behavior, not on passing its tests, so a contract or suite that is easy to pass but misses required behavior is a design defect.
 
 ## 1. Prepare
 
-1. Read `.prism/workflow.md`.
-2. Use the [workflow terms](../workflow/SKILL.md#common-terms).
-3. Read the initiative record through `get_initiative`, the glossary, assigned Approved requirements, relevant ADRs, feature files, and the current slice's `slice.md` narrative when present.
-4. Read the ancestor diagram source and ADRs supplied by orchestration before refining the current slice's design.
-5. Read [repository context planning](references/context-planning.md).
-6. Read [MCP-managed change map](references/change-map.md).
-7. Before any target edit, capture the original baseline through its [source evidence procedure](references/change-map.md#capture-source-evidence).
+1. Read `.prism/workflow.md`, the project instructions, and the glossary.
+2. Read the scope's title, outcome, and requirement assignment through `get_initiative`.
+3. Read the assigned Approved requirements, relevant ADRs, and the parent's `slice.md` when the scope has a parent.
+4. Explore the code where the required behavior enters the system and every part it must change, until a fit decision is supported.
+5. When existing concepts overlap the required behavior, use `refactor` in analysis mode before deciding to add a new one.
 
-## 2. Explore
+## 2. Decide fit
 
-1. Locate the starting surface where the required behavior enters the system.
-2. Use `refactor` in analysis mode to assess existing concepts against the required behavior before selecting planned changes.
-   - Supply the outcome, governing requirements, discovery scope, baseline, and known repository context.
-   - Include active artifacts and approved dependencies in the investigation.
-   - Use its relationship evidence to decide reuse, modification, replacement, generalization, consolidation, deletion, or addition.
-3. Use the [semantic reuse procedure](references/change-map.md#semantic-reuse-search) before accepting an `ADD` change.
-4. Use [delegation.md](../workflow/references/delegation.md) to research suitable 3rd party solutions.
-5. Inspect affected code, tests, boundaries, and dependency evidence until you can support a design and fit decision.
-6. When a technical uncertainty affects that decision, investigate it with a bounded experiment.
-7. When repository-context planning is available, generate a context plan from the outcome and discovered hints before the fit decision.
+- Return `FIT` when one contract can fix the whole observable interface of the scope now, with settled architecture.
+- Return `SPLIT` only with [split evidence](../workflow/SKILL.md#common-terms), which Prism checks: `contract_size` with the files that Prism measured when it refused the fit proposal as `contract_too_large`, `unfrozen` with an Unprobed assumption quoted from **Assumptions** that only one part's delivery can settle and that part, or `user_gate` when the person asked for the split in design feedback, which takes effect when the person approves it at the gate.
+- Return `BLOCKED` when a requirement, decision, or external fact that no probe can establish prevents a sound design.
 
-Incomplete dependency implementation does not block design when available evidence supports a sound fit decision.
+## 3. Write a fit design
 
-## 3. Form the technical design
-
-The resulting structure shall match the [desired conceptual model](../workflow/SKILL.md#common-terms), as if the current requirements had existed from the start.
-
-1. Read [C4 code diagrams](references/c4-code-diagrams.md) before writing diagram source.
-2. Create or update PlantUML source in the current slice folder, showing components and relationships needed to assess this scope.
-3. Use existing architecture where it satisfies the requirements.
-4. Use `write-adr` to record settled architectural decisions as Proposed ADRs, including shared decisions before atomic fit.
-5. For applicable failure, recovery, compatibility, migration, security, and operational cases, annotate diagram elements with conditions, responses, and resulting states.
-6. Link each annotation to its governing requirement or ADR.
-7. When no ADR diagram covers required ordering or state transitions, add a supplementary diagram in the slice folder.
-
-Large scopes can start with component views, while atomic slices require the referenced C4 code view.
-Child designs settle finer decisions within inherited boundaries.
-Parent diagrams remain in the parent slice folder as shared design input, while children author their own refined views.
-Implementation owns private helpers and local data structures.
-
-- After exploration, author every planned change through the change-map MCP capability.
-- Before `FIT`, validate the complete change map at one revision using the [change-map procedure](references/change-map.md).
-
-## 4. Check whether the scope is atomic
-
-1. Check every assigned requirement against planned behavior and observable verification.
-2. Check the design against code evidence, inherited decisions, and unresolved findings.
-3. When requirements, decisions, evidence, or durable-source conflicts prevent sound design, return `BLOCKED` with the exact unresolved issue.
-4. Count rendered diagram elements, links, and notes, then judge readability at normal review width.
-5. If the diagram is unreadable, assess a split and record why the scope can or cannot stay atomic.
-6. Apply the context-plan budget policy when session-capacity resolution is supported and every target-session cost is known.
-7. Treat a context-plan `UNCERTAIN` result as a request for more evidence or a safer split.
-8. Confirm atomic fit only with settled consequential decisions and one end-to-end verification path covering a safe, complete outcome.
-
-Diagram counts are a signal for the fit decision, not an automatic split rule.
-When recording is enabled, submit fit status, diagram counts, readability, split assessment, and evidence paths through the decision capability.
-If that capability is unavailable, include these facts in the returned result.
-
-## 5. Prepare the next stage
-
-The initiative directory is the root slice folder, other slice folders are flat under it, and folder names identify slices.
-The orchestrator manages parent relationships and dependencies in the initiative record.
-The initiative record owns each slice's title, outcome, and requirement assignment, so `slice.md` holds only design narrative.
-
-- If the scope is not atomic:
-  1. Group required behavior into smaller outcomes, each verifiable through a starting surface across all necessary layers.
-  2. Create `<configured plans>/<initiative>/<child-slug>/` for each outcome, using a slug unique within the initiative.
-  3. Give each child an observable capability title, a one-sentence observable outcome, and its requirement references for the `SPLIT` result.
-  4. When a child needs design context that no other artifact owns, write it in the child folder's `slice.md` using this shape:
-
-     ```markdown
-     # <Observable capability>
-
-     ## Context
-
-     <Constraints, decisions, or invariants a later worker needs and no other artifact owns.>
-     ```
-
-  5. Check that child requirement references collectively equal the parent assignment, allowing shared references.
-- If the scope is atomic:
-  1. For each changed boundary, record a [contract decision](../review/SKILL.md#contracts), reusing governing types or schemas before invoking `write-contracts`.
-  2. If the slice changes only documentation, select its verification command and record the red-checkpoint exemption.
-  3. Otherwise:
-     1. When the starting surface is absent, create the shape-only scaffold needed to test it.
-     2. Create or update the smallest executable slice test through that surface.
-     3. Run the test, confirming failure at the starting surface because required behavior is absent, not from setup defects.
-  4. Use `write-feature` to create or update requirement-linked acceptance scenarios.
-  5. Complete and validate the slice folder's C4 code diagram against the fitted design.
-  6. When a slice needs a runbook before verification, create or update `<configured plans>/<initiative>/<slice>/runbook-draft.md` in the slice folder.
-
-Design does not add production behavior or step definitions, change requirements, or mark findings `VERIFIED`.
-Tests, contracts, scaffolds, and feature files require atomic fit.
-Existing work remains preserved until the orchestrator accepts its disposition.
-Finding evidence remains in its original lane file.
-
-## 6. Return the result
-
-1. Assemble exactly one status with the applicable evidence:
-   - `SPLIT`: the unchanged parent title, parent diagram and ADR paths, and each new child's slug, folder path, title, outcome, and requirement references.
-   - `FIT`: the capability title, starting surface, artifact paths, contract decisions, verification command, and security surface or `none`.
-   - `BLOCKED`: the unresolved question or missing evidence.
-2. For `FIT`, include the ready change map's exact revision.
-3. For `FIT`, include the red checkpoint's exact command, exit status, and expected failure reason, or the exemption reason.
-4. For `FIT` or `SPLIT`, include diagram counts, readability, and the split assessment.
-5. When a findings path is assigned or resolved, include it for every status.
-6. When discovery changes prerequisites, include the affected slices and supporting evidence for orchestration.
-7. Return the result to end this invocation.
+1. Write the scope folder's `slice.md` with the sections in the [contract example](#contract-example).
+2. In **Contract**, fix everything a user or caller observes that the requirements leave open, one list item per clause: commands, arguments and flags, fields and types, identifiers, error cases, ordering, and stream or lifecycle behavior.
+3. In **Assumptions**, list every contract clause that depends on behavior outside the new code, such as a framework, library, runtime, or input shape nobody planned for.
+4. For each assumption, do one of the following and record which:
+   - Probe it with a small experiment against the real system and record the command and what you observed.
+   - When it cannot be probed, write the contract so that an uncovered case produces a clear error or a documented observable fallback, never a silent wrong result.
+5. Plan the slices that implement the contract, each small enough for one fresh implementation session, in dependency order.
+6. Write acceptance tests in the project's test location, black-box through the starting surface, with one test per contract clause, covering error, edge, and interaction cases as well as the main path.
+   Give each slice its own new test files, so that each file belongs to exactly one slice; Prism keeps a slice's test files out of the work tree until the slice starts.
+7. Run the tests and confirm they build and fail because the behavior is absent, not because of setup defects.
+8. In **Slices**, list each slice with its slug, title, outcome, requirement references, dependencies, frozen test files, and review recommendation.
+9. For each slice, write `slice.md` in its slice folder, the folder named by its slug in the initiative's plans folder, with the sections in the [slice example](#slice-example).
+   In **Changes**, list each file you expect to add, change, or remove, starting with `add`, `change`, or `remove` and the path in backticks, then the functions, types, or modules it adds or whose interface it changes, and a few words on why.
+10. Write the [diagrams](#4-diagrams).
+11. Recommend review `required` for a slice when an independent implementation review pays off, such as for authentication, authorization, secrets, untrusted input, or data loss risk, and `none` otherwise.
+12. When the project keeps Gherkin feature files, use `write-feature` for the scenarios and list them as frozen tests.
+13. When production code, generated code, or verification consumes a changed boundary, use `write-contracts` after reusing governing types or schemas.
+14. Use `write-adr` for each settled architectural decision that outlives the initiative.
+15. Commit the design when commits are on.
 
 - Don't
-  - Create a separate exploration or verification report when existing artifacts preserve the required facts.
+  - Implement production behavior.
+  - Write tests that assert private helpers or internal structure.
+  - Write in **Changes** the code to insert; it names where the code changes, not how.
 
-An accepted split makes the parent non-executable.
-The orchestrator owns lifecycle changes and the transition to implementation.
-`FIT` proceeds to independent design audit, not directly to implementation.
+When the plan has one slice, the scope itself is that slice: put **Changes** in the scope's `slice.md` and write no slice folder.
 
-## 7. Correct review findings
+### Contract example
 
-- When orchestration returns findings:
-  1. Read `.prism/workflow.md`.
-  2. Use its assigned slice review record and design-audit lane through MCP.
-  3. Read [review-format.md](../review/references/review-format.md) and the complete lane findings through `get_review` in the same `Develop <slice>` worker.
-  4. For each `OPEN`, `REOPENED`, or `IN PROGRESS` design finding:
-     1. Mark it `IN PROGRESS`.
-     2. Repeat affected design steps, including the fit check when the correction changes scope, boundaries, dependencies, or verification.
-     3. When corrections require splitting, follow section 5's non-atomic branch before returning `SPLIT` through section 6.
-     4. When a correction cannot proceed, return `BLOCKED` through section 6.
-     5. Run affected checks and record closure evidence.
-     6. When the closing condition is satisfied, mark it `FIXED`.
-  5. Return the resulting status and findings path through section 6 after correcting all actionable design findings.
+```markdown
+# Signed reports
 
-Implementation waits until the design audit is `CLEAN` and orchestration clears the implementation gate.
+## Contract
+1. `report download <id>` writes the report bytes to stdout and exits 0.
+2. An unknown id exits 2 with `error: no report <id>` on stderr and writes nothing to stdout.
+3. `report audit` lists one line per download: `<time> <id> <user>`.
+
+## Assumptions
+- Probed: the storage client returns `None` for a missing key (`cargo test probe_missing_key`, observed `None`).
+- Unprobed: report sizes above 2 GiB; the command refuses them with `error: report too large`.
+
+## Slices
+| Slug | Outcome | Requirements | Depends on | Frozen tests | Review |
+| --- | --- | --- | --- | --- | --- |
+| `download` | Users download a report by id. | `reports.md§1` | | `tests/report_download.rs` | none |
+| `audit` | Operators list downloads. | `reports.md§2` | `download` | `tests/report_audit.rs` | required: exposes user names |
+```
+
+### Slice example
+
+```markdown
+# Download reports
+
+## Changes
+- add `src/report/source.rs`: `ReportSource`, also used by `audit`.
+- change `src/storage/client.rs`: `get` streams instead of buffering.
+- change `src/cli/report.rs`: `download` subcommand.
+```
+
+## 4. Diagrams
+
+Diagrams are for the person at the design gate.
+Write PlantUML source only: Prism parses each `.puml` file when the design is accepted and reports a syntax error or a view with more than 30 elements as text.
+
+1. In the scope folder, write `overview.puml`: the slices as packages, the interfaces they share, and their dependency order.
+2. In each slice folder, write `code.puml`: the units that **Changes** names and how they depend on each other.
+3. When a view exceeds 30 elements, split it into views a person can read.
+4. When `update_design_view` or acceptance reports a diagram problem, fix the source.
+
+- Don't
+  - Render a diagram or look at a rendered image.
+
+## 5. Write a split
+
+1. Group the required behavior into parts that each deliver observable behavior through a starting surface and can take one contract.
+2. Give each part a unique slug, a capability title, a one-sentence outcome, and its requirement references, so that the parts together cover the scope's assignment exactly.
+3. Order the parts by dependency.
+4. In the scope's `slice.md`, fix the interfaces between the parts that more than one part relies on, and keep the **Assumptions** that the evidence quotes.
+5. When the evidence is `contract_size`, keep the measured files in place; each part's design reuses or removes them.
+
+- Don't
+  - Write contracts or tests for the parts; each part is designed when it is next.
+
+## 6. Propose the result
+
+1. Read the initiative's revision with `get_initiative`, and call `update_initiative` with one `propose_design` operation for the scope:
+   - `FIT`: a `split` of the scope into its planned slices, their `set_dependencies` operations, and an `accept_design` operation per slice with its frozen tests and review recommendation; for a one-slice plan, only `accept_design` on the scope.
+   - `SPLIT`: a `split` into the parts with the evidence, and their `set_dependencies` operations.
+2. When Prism refuses the proposal, fix the design and propose again; on `revision_conflict`, read the revision again.
+3. Return `PROPOSED` with the scope's `slice.md` path, the failing test result from step 7 of section 3, and open questions, or `BLOCKED` with the exact question or missing fact.
+
+## 7. Revise a design
+
+- When orchestration returns a design question, a failed design gate, an implementer's contract defect, or changed dependencies:
+  1. Read the feedback, the current contract, and the frozen tests that orchestration put back in the work tree.
+  2. Repeat the affected parts of sections 3 and 4 for the slices that have not finished, keeping the planned slices and their slugs.
+  3. When the revision needs other slices, return `BLOCKED` with the slices it needs.
+  4. Propose the result through section 6 with every unfinished slice of the scope.
+
+A frozen test changes only through a revised design that orchestration accepts again.

@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-roadmap-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -50,7 +51,7 @@ test("derives planned and in-progress from records and refuses to ship unfinishe
   let roadmap = await updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("reports", "Now")] });
   const initiative = await updateInitiative({ projectRoot, initiative: "reports", expectedRevision: null, operations: [
     { op: "create", slug: "reports", title: "Export reports", requirements: ["r.md#1", "r.md#2"] },
-    { op: "split", parent: "reports", children: [{ slug: "a", title: "A", requirements: ["r.md#1"] }, { slug: "b", title: "B", requirements: ["r.md#2"] }] }
+    { op: "split", parent: "reports", children: [{ slug: "a", title: "A", requirements: ["r.md#1"] }, { slug: "b", title: "B", requirements: ["r.md#2"] }], evidence: await splitEvidence(projectRoot, "docs/plans/reports", "a") }
   ] });
   roadmap = await getRoadmap({ projectRoot });
   assert.equal(roadmap.derived[0].state, "planned");

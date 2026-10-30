@@ -17,7 +17,8 @@ const manifestPath = fileURLToPath(new URL("./fixtures/native-manifest-unavailab
 async function fixture(t) {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-semantics-")));
   const root = path.join(directory, "project"); await mkdir(root);
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  // A preparation can still finish writing its cache after a test ends, so cleanup retries a directory that is not yet empty.
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
   return { directory, root };
 }
 test("discovery is passive and degraded lexical search retains filters and source hashes", async t => {

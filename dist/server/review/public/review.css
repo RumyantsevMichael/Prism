@@ -4590,3 +4590,43 @@ mark.find-hit {
   color: inherit;
   padding: 0 0.1rem;
 }
+
+/* Design view on the slice page */
+.design-view h3 {
+  font-size: 0.8rem;
+  margin: 1rem 0 0.4rem;
+}
+
+.design-clause {
+  border-top: 1px solid var(--line);
+  padding: 0.35rem 0;
+}
+
+.design-clause summary {
+  cursor: pointer;
+}
+
+.clause-number {
+  color: var(--ink-muted);
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  min-width: 1.4rem;
+}
+
+.design-examples {
+  list-style: none;
+  margin: 0.3rem 0 0.2rem 1.4rem;
+  padding: 0;
+}
+
+.design-examples li {
+  padding: 0.15rem 0;
+}
+
+.design-examples .link-chip {
+  margin-left: 0.3rem;
+}
+
+.design-changes .status-pill {
+  white-space: nowrap;
+}

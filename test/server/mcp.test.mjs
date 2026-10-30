@@ -953,3 +953,29 @@ test("native semantic MCP discovery is passive and search exposes bounded struct
   mcp.send({ id: 8, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: "relative/path", query: "retry" } } });
   assert.equal((await mcp.next()).error.data.code, "invalid_path");
 });
+
+test("verify_slice reports a missing design and asks for command approval through a review-browser gate", async (context) => {
+  const root = await realpath(await projectFixture(context, "verify-slice", "notes.md"));
+  const data = await mkdtemp(path.join(os.tmpdir(), "verify-slice-data-"));
+  context.after(() => rm(data, { recursive: true, force: true }));
+  await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans: docs/plans\n\n## Stack\n- Test command: npm test\n");
+  await writeFile(path.join(root, "docs", "acceptance.test.mjs"), "// frozen\n");
+  const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: data });
+  await initialize(mcp);
+  mcp.send({ id: 2, method: "tools/list" });
+  const listed = (await mcp.next()).result.tools;
+  const verify = listed.find((tool) => tool.name === "verify_slice");
+  assert.deepEqual(verify.inputSchema.required, ["projectRoot", "initiative", "slice"]);
+  assert.ok(listed.some((tool) => tool.name === "update_design_view"));
+  await callTool(mcp, 3, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: null, operations: [{ op: "create", slug: "reports", title: "Signed reports", requirements: ["req.md#R1"] }] });
+  const missing = await callTool(mcp, 4, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
+  assert.equal(missing.error.data.code, "design_missing");
+  const current = await callTool(mcp, 5, "get_initiative", { projectRoot: root, initiative: "reports" });
+  await callTool(mcp, 6, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: current.result.structuredContent.revision, operations: [{ op: "set_status", slug: "reports", status: "in-progress" }, { op: "accept_design", slug: "reports", frozenTests: ["docs/acceptance.test.mjs"], review: "none" }] });
+  const asked = await callTool(mcp, 7, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
+  assert.equal(asked.result.structuredContent.status, "approval_needed");
+  assert.match(asked.result.content[0].text, /wait_for_user_gate/);
+  const view = await callTool(mcp, 8, "update_design_view", { projectRoot: root, initiative: "reports", slice: "reports", examples: [{ clause: 1, file: "docs/acceptance.test.mjs", test: "frozen", example: "x" }] });
+  assert.equal(view.error.data.code, "validation_failed");
+  assert.match(view.error.message, /slice\.md does not exist/);
+});

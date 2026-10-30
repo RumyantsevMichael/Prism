@@ -4,6 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-review-entities-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -36,7 +37,7 @@ async function fixture(context) {
     { op: "split", parent: "reports", children: [
       { slug: "download", title: "Download signed reports", outcome: "A signed report downloads.", requirements: ["docs/requirements/reports.md#1"] },
       { slug: "authorize", title: "Authorize access", requirements: ["docs/requirements/reports.md#2"] }
-    ] },
+    ], evidence: await splitEvidence(root, "docs/plans/reports", "authorize") },
     { op: "set_dependencies", slug: "download", dependencies: ["authorize"] },
     { op: "set_status", slug: "download", status: "in-progress" }
   ] });

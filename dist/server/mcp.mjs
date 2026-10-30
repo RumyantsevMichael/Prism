@@ -28,8 +28,11 @@ import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { opensAtStart } from "./review/open-at-start.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
-import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } from "./workflow/initiative.mjs";
+import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
+import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
+import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
+import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
@@ -249,7 +252,7 @@ function stateErrorData(error) {
   if (error instanceof ChangeMapError) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
-  if (error instanceof InitiativeError || error instanceof RoadmapError || error?.name === "InitiativeGraphError") {
+  if (error instanceof InitiativeError || error instanceof RoadmapError || ["InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError"].includes(error?.name)) {
     return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
@@ -329,6 +332,18 @@ const sessionInputSchema = { oneOf: [explicitSessionInputSchema, activeSessionIn
 const tools = [
   ...ROADMAP_TOOLS,
   ...INITIATIVE_TOOLS,
+  {
+    name: "verify_slice",
+    description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. A passing run completes a slice whose design marks no review and returns the initiative revision that write produced. The result is brief: the verdict, failing test names, the run record, and the path of the full output log. The first run of a command text asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run. An implementer that finds the contract wrong calls it with contractDefects instead: nothing runs, the defects are kept as a run entry and on the slice, and the slice is blocked until design revises the contract.",
+    inputSchema: VERIFY_SLICE_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
+  },
+  {
+    name: "update_design_view",
+    description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes. It also parses the PlantUML files beside slice.md and reports any that accept_design would refuse.",
+    inputSchema: UPDATE_DESIGN_VIEW_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
   ...CONSERVATION_TOOLS,
   ...NATIVE_INTELLIGENCE_TOOLS,
   {
@@ -653,6 +668,7 @@ const tools = [
                 commit: { type: "string", enum: ["on", "off"] },
                 push: { type: "string", enum: ["on", "off"] },
                 continuation: { type: "string", enum: ["auto", "stepwise"] },
+                review: { type: "string", enum: ["marked", "recommended", "all"] },
                 models: {
                   oneOf: [
                     { type: "string", enum: ["defaults", "host defaults"] },
@@ -663,7 +679,8 @@ const tools = [
                       properties: {
                         delivery: { type: "string", minLength: 1 },
                         review: { type: "string", minLength: 1 },
-                        securityReview: { type: "string", minLength: 1 }
+                        securityReview: { type: "string", minLength: 1 },
+                        examples: { type: "string", minLength: 1 }
                       }
                     }
                   ]
@@ -975,13 +992,47 @@ async function callRepositoryTool(name, argumentsValue) {
   throw new Error(`Unknown repository-intelligence tool: ${name}`);
 }
 
+// Hosts that cannot keep a long call open get an early running answer before their own tool timeout, and call again to keep waiting.
+const VERIFY_EARLY_RETURN_MS = 45000;
+
+async function callVerifySlice(argumentsValue, metadata, requestId) {
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  const controller = new AbortController();
+  if (requestId !== undefined) pendingWaits.set(requestId, controller);
+  const progressToken = metadata?.progressToken;
+  try {
+    const value = await verifySlice({
+      ...argumentsValue,
+      projectRoot,
+      signal: controller.signal,
+      maxWaitMs: waitUnsupportedReason() ? Number(process.env.PRISM_VERIFY_EARLY_RETURN_MS) || VERIFY_EARLY_RETURN_MS : Infinity,
+      onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, `Running the test command (${seconds} s)`)
+    });
+    // A passing run with a source snapshot gets its change map derived in the background, so the review browser can show it.
+    if (value.status === "passed" && value.snapshotId) startChangeMapDerivation({ projectRoot, initiative: argumentsValue.initiative, slice: argumentsValue.slice });
+    const brief = verificationBrief(value);
+    const { outputTail, ...summary } = brief;
+    const text = [brief.message ?? `Verification ${brief.status}.`, JSON.stringify(summary), outputTail ? `Output tail:\n${outputTail}` : ""].filter(Boolean).join("\n");
+    return { content: [{ type: "text", text }], structuredContent: brief };
+  } finally {
+    pendingWaits.delete(requestId);
+  }
+}
+
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
   }
+  if (name === "verify_slice") {
+    return callVerifySlice(argumentsValue, metadata, requestId);
+  }
   if (CONSERVATION_TOOLS.some(tool => tool.name === name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const value = await callConservationTool(name, { ...argumentsValue, projectRoot });
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+  }
+  if (name === "update_design_view") {
+    const value = await updateDesignView({ ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) });
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (["get_change_map", "update_change_map"].includes(name)) {
@@ -999,7 +1050,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     const value = name === "get_roadmap" ? await getRoadmap(input)
       : name === "update_roadmap" ? await updateRoadmap(input)
       : name === "get_initiative" ? await getInitiative(input)
-      : await updateInitiative(input);
+      : initiativeAcknowledgement(await updateInitiative(input), input.operations);
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (repositoryTools.has(name)) {
@@ -1072,6 +1123,7 @@ input.on("line", async (line) => {
 
 input.on("close", async () => {
   for (const controller of pendingWaits.values()) controller.abort();
+  cancelVerifications();
   nativeSemanticRuntime.close();
   await reviewServers.close();
 });

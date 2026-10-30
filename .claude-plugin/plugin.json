@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "prism",
   "displayName": "Prism",
-  "description": "Prism uses EARS requirements, ADRs, Gherkin feature files, design audits, and dependency-ordered plans for a spec-driven engineering workflow.",
+  "description": "Prism designs each slice as a frozen contract with failing acceptance tests, implements it in fresh sessions, and completes it on a passing run of your tests, with EARS requirements, ADRs, and Gherkin features.",
   "version": "0.14.0",
   "author": {
     "name": "Michael Rumyantsev",

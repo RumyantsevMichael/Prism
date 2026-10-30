@@ -6,6 +6,9 @@ import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
 import { keyOfPath, listInitiatives, listSliceRecords, recordPath } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { latestVerification } from "../workflow/slice-design.mjs";
+import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
+import { loadDesignView } from "../workflow/design-view.mjs";
 
 const LIBRARY_LIMIT = 500;
 const SLICE_FILE_LIMIT = 200;
@@ -222,11 +225,30 @@ async function computeInitiativeView(projectRoot, id) {
   };
 }
 
+// A designed slice's change map is derived from its verified result; opening the slice starts a derivation the server has not finished yet.
+async function derivedChangeMapState(projectRoot, id, slug, design, verification) {
+  if (!design?.baselineId || !verification?.passed || !verification.snapshotId || verification.designAcceptedAt !== design.acceptedAt) return null;
+  const source = await readText(projectRoot, recordPath({ kind: "change-map", initiative: id, slice: slug }));
+  let document = null;
+  try { document = source === null ? null : JSON.parse(source); }
+  catch { return { derived: false }; }
+  if (document && !document.derived) return { derived: false };
+  if (document?.derived?.runId === verification.id) return { derived: true, runId: verification.id, document };
+  const key = { projectRoot, initiative: id, slice: slug };
+  const last = lastChangeMapDerivation(key);
+  if (last?.runId === verification.id && last.status === "empty") return { derived: true, empty: true, runId: verification.id };
+  if (last && ["failed", "unavailable"].includes(last.status)) return { derived: true, failed: last.reason ?? last.status };
+  startChangeMapDerivation(key);
+  return { derived: true, pending: true, runId: verification.id };
+}
+
 export async function loadSliceView(projectRoot, id, slug) {
   const initiative = await loadInitiativeView(projectRoot, id);
   if (!initiative.record || !Object.hasOwn(initiative.record.slices, slug)) throw new Error(`The initiative ${id} has no slice ${slug}.`);
   const slice = initiative.record.slices[slug];
   const derived = initiative.derived;
+  const verification = await latestVerification(projectRoot, id, slug).catch(() => null);
+  const { document: changeMapDocument, ...changeMap } = await derivedChangeMapState(projectRoot, id, slug, slice.design, verification) ?? {};
   return {
     id,
     initiativeTitle: initiative.roadmapItem?.title ?? initiative.record.slices[derived?.root]?.title ?? id,
@@ -238,6 +260,9 @@ export async function loadSliceView(projectRoot, id, slug) {
     complete: derived?.complete[slug] ?? false,
     active: initiative.active.filter((entry) => entry.slice === slug),
     artifacts: initiative.slices[slug],
+    verification,
+    changeMap: Object.keys(changeMap).length ? changeMap : null,
+    designView: await loadDesignView(projectRoot, id, slug, { changeMap: changeMapDocument ?? null }).catch(() => null),
     titles: Object.fromEntries(Object.entries(initiative.record.slices).map(([key, value]) => [key, value.title]))
   };
 }

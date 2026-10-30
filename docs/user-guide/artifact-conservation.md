@@ -3,6 +3,7 @@
 Prism retains original, audited, and final source evidence and checks planned changes before accepting implementation or completion.
 The source baseline includes dirty and untracked files, so a Git commit alone is not the baseline.
 The baseline follows the ignore rules also for tracked files, so force-adding an ignored file does not change it.
+A slice with an accepted design completes on a [verification run](workflow.md#verification) instead, so this procedure applies to slices designed without one.
 
 1. Capture B with `capture_repository_snapshot` before editing and pass the slice's `initiative` and `slice` identifiers to register its evidence outputs.
 2. Search reuse against B with `search_repository_concepts` and keep the returned receipt IDs.

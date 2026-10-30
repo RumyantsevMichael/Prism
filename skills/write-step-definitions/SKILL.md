@@ -31,7 +31,7 @@ Assertions preserve the feature's claims without adding behavior.
 
 1. Run the configured acceptance command, or the selected executable tests for specification-only features.
 2. If bindings or test setup fail, correct them before assessing product behavior.
-3. If the caller needs a red checkpoint, confirm failure at the selected surface because required behavior is absent.
+3. If the caller needs a failing acceptance check, confirm failure at the selected surface because required behavior is absent.
 4. If the caller needs implementation verification:
    1. Require passing acceptance tests.
    2. Unless features are specification-only, require every feature step bound.
