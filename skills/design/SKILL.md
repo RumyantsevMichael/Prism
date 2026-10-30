@@ -34,7 +34,6 @@ Implementers later work from its output in fresh sessions, and they are judged o
    - Probe it with a small experiment against the real system and record the command and what you observed.
    - When it cannot be probed, write the contract so that an uncovered case produces a clear error or a documented observable fallback, never a silent wrong result.
 5. Plan the slices that implement the contract, each small enough for one fresh implementation session, in dependency order.
-   When `resolve_session_capacity` is available, judge slice size against the implementer model's context window.
 6. Write acceptance tests in the project's test location, black-box through the starting surface, with one test per contract clause, covering error, edge, and interaction cases as well as the main path.
    Give each slice its own new test files, so that each file belongs to exactly one slice; Prism keeps a slice's test files out of the work tree until the slice starts.
 7. Run the tests and confirm they build and fail because the behavior is absent, not because of setup defects.
