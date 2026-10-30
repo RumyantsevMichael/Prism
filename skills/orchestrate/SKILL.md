@@ -87,7 +87,7 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 5. When it fails, run a fresh `implement` session with its failing test names and log path, and verify again.
 6. After three failed attempts, call `update_initiative` with `set_status` `blocked` and ask the user with the failing test names and the log path.
 
-A passing run of a slice whose review mark is `none` marks it done; when its result says the slice is unchanged, call `update_initiative` with `set_status` `done`.
+A passing run of a slice whose review mark is `none` marks it done and returns the `initiativeRevision` to use for the next `update_initiative` call; when its result says the slice is unchanged, call `update_initiative` with `set_status` `done`.
 A run that reports changed frozen tests goes back to an implementer to restore them.
 
 ## 6. Review

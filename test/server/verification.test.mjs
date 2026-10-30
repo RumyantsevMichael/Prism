@@ -120,6 +120,7 @@ test("a passing run completes the slice, and only project content changes make i
   const passed = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId });
   assert.equal(passed.status, "passed");
   assert.equal(passed.sliceStatus, "done", "a slice whose design marks no review completes on its passing run");
+  assert.equal(verificationBrief(passed).initiativeRevision, (await getInitiative({ projectRoot: root, initiative: INITIATIVE })).revision, "the caller gets the revision the completion wrote");
   assert.equal((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices.download.status, "done");
   assert.equal(passed.exitCode, 0);
   assert.match(passed.tree, /^[0-9a-f]{40,64}$/);

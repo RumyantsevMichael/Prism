@@ -282,9 +282,9 @@ async function completeSlice(root, initiative, slice, design, run) {
   for (let attempt = 0; ; attempt += 1) {
     try {
       const current = await getInitiative({ projectRoot: root, initiative });
-      if (current.record?.slices?.[slice]?.status === "done") return { ...run, sliceStatus: "done" };
-      await updateInitiative({ projectRoot: root, initiative, expectedRevision: current.revision, actor: "verify_slice", operations: [{ op: "set_status", slug: slice, status: "done" }] });
-      return { ...run, sliceStatus: "done" };
+      if (current.record?.slices?.[slice]?.status === "done") return { ...run, sliceStatus: "done", initiativeRevision: current.revision };
+      const updated = await updateInitiative({ projectRoot: root, initiative, expectedRevision: current.revision, actor: "verify_slice", operations: [{ op: "set_status", slug: slice, status: "done" }] });
+      return { ...run, sliceStatus: "done", initiativeRevision: updated.revision };
     } catch (error) {
       if (error.code === "revision_conflict" && attempt < 3) continue;
       return { ...run, sliceStatus: "unchanged", statusMessage: `The run passed, but the slice was not marked done: ${error.message} Call update_initiative with set_status done.` };
@@ -324,6 +324,8 @@ export function verificationBrief(value) {
     ...(failing.length ? { failing: failing.slice(0, MAX_FAILING_NAMES), failingCount: failing.length } : {}),
     ...frozen,
     ...(value.sliceStatus ? { sliceStatus: value.sliceStatus } : {}),
+    // Marking the slice done writes the initiative record, so the caller's next update needs this revision.
+    ...(value.initiativeRevision ? { initiativeRevision: value.initiativeRevision } : {}),
     ...(value.statusMessage ? { statusMessage: value.statusMessage } : {}),
     durationMs: value.durationMs,
     run: value.path,
