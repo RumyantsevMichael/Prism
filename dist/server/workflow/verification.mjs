@@ -39,7 +39,13 @@ const slug = { type: "string", minLength: 1, maxLength: 120 };
 export const VERIFY_SLICE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  properties: { projectRoot: text, initiative: slug, slice: slug, approvalGate: { type: "string", pattern: "^gate-[0-9a-f]{8,32}$" } },
+  properties: {
+    projectRoot: text,
+    initiative: slug,
+    slice: slug,
+    approvalGate: { type: "string", pattern: "^gate-[0-9a-f]{8,32}$" },
+    contractDefects: { type: "array", minItems: 1, maxItems: 50, items: { type: "object", additionalProperties: false, properties: { clause: text, reason: text }, required: ["clause", "reason"] } }
+  },
   required: ["projectRoot", "initiative", "slice"]
 };
 
@@ -229,13 +235,14 @@ function resultOf(run) {
 }
 
 /** Run the project's approved test command for a slice with an accepted design, check its frozen tests, and record the run. */
-export async function verifySlice({ projectRoot, initiative, slice, approvalGate, dataDirectory, signal, onProgress, maxWaitMs = Infinity }) {
-  try { assertInput(VERIFY_SLICE_SCHEMA, { projectRoot, initiative, slice, ...(approvalGate ? { approvalGate } : {}) }); }
+export async function verifySlice({ projectRoot, initiative, slice, approvalGate, contractDefects, dataDirectory, signal, onProgress, maxWaitMs = Infinity }) {
+  try { assertInput(VERIFY_SLICE_SCHEMA, { projectRoot, initiative, slice, ...(approvalGate ? { approvalGate } : {}), ...(contractDefects ? { contractDefects } : {}) }); }
   catch (error) { throw fail("validation_failed", `The verification arguments are invalid: ${describeErrors(error.errors)}`, { errors: error.errors }); }
   const root = await realpath(projectRoot);
   const design = await acceptedDesign(root, initiative, slice);
   if (!design) throw fail("design_missing", `The slice ${slice} has no accepted design. Accept it with the update_initiative accept_design operation before verification.`);
   if (design.staged) throw fail("slice_not_started", `The slice ${slice} has not started, so its frozen tests are not in place. Start it with the update_initiative set_status in-progress operation.`);
+  if (contractDefects) return reportContractDefects(root, initiative, slice, design, contractDefects);
   const { config, command } = await configuredTestCommand(root);
   if (!command) throw fail("test_command_missing", "The project configures no test command. Add one under ## Stack in .prism/workflow.md as - Test command: <command>.");
   const allowed = await approval({ root, initiative, slice, command, approvalGate, dataDirectory });
@@ -271,6 +278,23 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);
     if (onProgress) job.listeners.delete(onProgress);
+  }
+}
+
+// Reported defects are kept as a run entry, which outlives the initiative record, and block the slice until design revises the contract.
+async function reportContractDefects(root, initiative, slice, design, defects) {
+  const id = `contract-defect-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
+  const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, { kind: "contract-defect", reportedAt: new Date().toISOString(), designAcceptedAt: design.acceptedAt, defects });
+  const { getInitiative, updateInitiative } = await import("./initiative.mjs");
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const current = await getInitiative({ projectRoot: root, initiative });
+      const updated = await updateInitiative({ projectRoot: root, initiative, expectedRevision: current.revision, actor: "verify_slice", operations: [{ op: "report_contract_defects", slug: slice, defects }] });
+      return { status: "defects_recorded", sliceStatus: "blocked", initiativeRevision: updated.revision, run: stored.path, message: `The contract defects of ${slice} are recorded and the slice is blocked until design revises its contract. Stop implementing it.` };
+    } catch (error) {
+      if (error.code === "revision_conflict" && attempt < 3) continue;
+      throw error;
+    }
   }
 }
 

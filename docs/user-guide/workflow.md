@@ -46,6 +46,7 @@ Tests and consumed contracts enforce behavior, and code supplies implementation 
 
 A slice whose design is accepted lists its frozen acceptance tests and says whether its implementation needs independent review.
 Before such a slice can be marked done, Prism runs your project's test command and records the run on the slice.
+The implementer asks for that run itself and fixes failures in its own session; when it finds the contract wrong, it reports the clauses instead, and the slice waits for a revised design.
 Configure the command in `.prism/workflow.md`:
 
 ```markdown

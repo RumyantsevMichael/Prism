@@ -63,6 +63,7 @@ export const UPDATE_INITIATIVE_SCHEMA = object({
     object({ op: { const: "propose_design" }, slug, operations: { type: "array", minItems: 1, maxItems: 50, items: { oneOf: [splitOperation, dependenciesOperation, updateSliceOperation, acceptDesignOperation] } } }),
     object({ op: { const: "accept_proposal" }, slug, reviewRequired: { type: "array", maxItems: 200, items: slug }, gate: text }, ["op", "slug", "reviewRequired"]),
     object({ op: { const: "restore_tests" }, slug }),
+    object({ op: { const: "report_contract_defects" }, slug, defects: { type: "array", minItems: 1, maxItems: 50, items: object({ clause: text, reason: text }) } }),
     object({ op: { const: "import_map" }, path: text }),
     object({ op: { const: "regenerate_markdown" } }),
     object({ op: { const: "remove_records" } })
@@ -107,7 +108,8 @@ function canonicalRecord(record) {
       requirements: [...slice.requirements].sort(),
       dependencies: [...slice.dependencies].sort(),
       ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}) } } : {}),
-      ...(slice.splitEvidence ? { splitEvidence: slice.splitEvidence } : {})
+      ...(slice.splitEvidence ? { splitEvidence: slice.splitEvidence } : {}),
+      ...(slice.contractDefects ? { contractDefects: slice.contractDefects } : {})
     };
   }
   const proposals = Object.fromEntries(Object.keys(record.proposals ?? {}).sort().map((key) => [key, record.proposals[key]]));
@@ -128,6 +130,7 @@ function validateRecord(raw, initiative) {
   if (!Array.isArray(raw.history)) errors.push("history must be an array.");
   for (const [key, slice] of Object.entries(raw.slices ?? {})) {
     for (const problem of designProblems(slice?.design)) errors.push(`${key}: ${problem}`);
+    if (slice?.contractDefects !== undefined && (!Array.isArray(slice.contractDefects) || slice.contractDefects.some((item) => typeof item?.clause !== "string" || typeof item?.reason !== "string"))) errors.push(`${key}: contractDefects must list { clause, reason } entries.`);
     if (slice?.splitEvidence !== undefined && (slice.status !== "split" || !SPLIT_EVIDENCE_KINDS.includes(slice.splitEvidence?.kind))) errors.push(`${key}: splitEvidence belongs to a split slice and names its kind.`);
   }
   if (raw.proposals !== undefined) {
@@ -420,6 +423,8 @@ async function applyOperation(resolved, record, operation, effects) {
       if (problems.length) throw fail("diagram_problems", `The design of ${operation.slug} was not accepted: ${problems.join(" ")}`, { problems });
       effects.diagrams.push(...diagrams);
       const acceptedAt = new Date().toISOString();
+      // A new design answers the contract defects reported against the old one.
+      delete slice.contractDefects;
       if (effects.dryRun) {
         slice.design = { acceptedAt, frozenTests, review: operation.review, ...(staging ? { staged: true } : {}) };
         break;
@@ -442,6 +447,15 @@ async function applyOperation(resolved, record, operation, effects) {
         return false;
       }).filter((key) => slices[key].design?.staged);
       for (const key of leaves) effects.installed.push(...await installFrozenTests(resolved.root, resolved.initiative, key, slices[key].design.frozenTests));
+      break;
+    }
+    case "report_contract_defects": {
+      // An implementer that finds the contract wrong stops, and the slice waits for design with the defects on its record.
+      const slice = requireSlice(operation.slug);
+      if (!STARTED.has(slice.status) || !slice.design) throw fail("validation_failed", `Contract defects are reported for a started slice with an accepted design, and ${operation.slug} is ${slice.status}.`);
+      const reportedAt = new Date().toISOString();
+      slice.contractDefects = operation.defects.map((item) => ({ clause: item.clause, reason: item.reason, reportedAt }));
+      slice.status = "blocked";
       break;
     }
     case "propose_design": {
@@ -602,7 +616,8 @@ export function initiativeAcknowledgement(result, operations) {
     status: slices[key].status,
     ...(slices[key].design ? { design: slices[key].design.staged ? "staged" : "accepted", frozenTests: slices[key].design.frozenTests.length, review: slices[key].design.review } : {}),
     ...(slices[key].splitEvidence ? { splitEvidence: slices[key].splitEvidence.kind } : {}),
-    ...(result.record?.proposals?.[key] ? { proposal: "pending" } : {})
+    ...(result.record?.proposals?.[key] ? { proposal: "pending" } : {}),
+    ...(slices[key].contractDefects ? { contractDefects: slices[key].contractDefects.length } : {})
   }]));
   const unchecked = result.diagrams.filter((item) => !item.checked);
   return {
@@ -630,7 +645,7 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

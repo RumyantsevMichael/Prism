@@ -68,11 +68,14 @@ test("design lists its expected changes, and a gated design gets examples from a
   assert.match(writer, /Write anything a test does not assert/);
 });
 
-test("implementation works from files against frozen tests and makes no record calls", async () => {
+test("implementation works from files against frozen tests and verifies its own slice", async () => {
   const implement = await skill("implement");
-  assert.match(implement, /makes no Prism record calls/);
+  assert.match(implement, /its only Prism calls are `verify_slice` and `wait_for_user_gate`/);
   assert.match(implement, /Modify, rename, or delete a frozen test/);
-  assert.match(implement, /A contract defect goes back to design/);
+  assert.match(implement, /call `verify_slice` with `contractDefects`/);
+  assert.match(implement, /call `wait_for_user_gate` with its gate id, then call `verify_slice` again with `approvalGate`/);
+  assert.match(implement, /When it returns `running`, call it again/);
+  assert.match(implement, /A passing run of a slice whose review mark is `none` marks it done/);
   assert.doesNotMatch(implement, /update_|get_initiative|get_review/);
 });
 
@@ -89,10 +92,9 @@ test("orchestration designs one contract per scope, starts each slice, and compl
   assert.match(orchestrate, /`restore_tests` for the scope/);
   assert.match(orchestrate, /Run git, hash files, or read code while slices run/);
   assert.match(orchestrate, /\| `review` \| `marked`, `recommended`, `all` \| `marked` \|/);
-  assert.match(orchestrate, /call `wait_for_user_gate` with its gate id, then call `verify_slice` again with `approvalGate`/);
-  assert.match(orchestrate, /When it returns `running`, call it again/);
-  assert.match(orchestrate, /When the slice's review mark is `required`, review it/);
-  assert.match(orchestrate, /A passing run of a slice whose review mark is `none` marks it done/);
+  assert.match(orchestrate, /it verifies the slice through `verify_slice` itself/);
+  assert.match(orchestrate, /when its review mark is `required`, review it/);
+  assert.match(orchestrate, /When the slice is `blocked` with contract defects/);
   assert.match(orchestrate, /`start_wave` operation in `implementation-review` mode/);
   assert.match(orchestrate, /Record every question to the user before asking it/);
   assert.match(orchestrate, /call `checkpoint_pause` with the initiative, the current revision, the active slice/);

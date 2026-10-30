@@ -31,7 +31,7 @@ A direct skill invocation does not require an earlier `orchestrate` invocation.
 An initiative starts as one root slice, which is its first contract scope.
 Design proposes `FIT` with one frozen contract, probed assumptions, failing acceptance tests, and a slice plan, or `SPLIT` with parts that each get their own contract later, or returns `BLOCKED`.
 After the design gate, the orchestrator accepts the proposal, which records the plan's slices and their designs at once, and Prism stages each slice's frozen tests until that slice starts.
-One fresh implementation session per slice makes its frozen tests pass, the server runs the project's test command, and a review follows only for a slice marked for review.
+One fresh implementation session per slice makes its frozen tests pass and has Prism run the project's test command, and a review follows only for a slice marked for review.
 
 ## Artifact ownership
 
@@ -68,6 +68,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | BLOCKED | An unresolved requirement, decision, or external fact stops progress. |
 | Contract | The frozen observable interface of a contract scope that fixes what the requirements leave open, shared by its planned slices. |
 | Assumption probe | A small experiment against the real system that confirms a contract assumption, or a fail-safe clause where no probe is possible. |
+| Contract defect | A contract clause that an implementer finds wrong and reports through `verify_slice`, which blocks the slice until design revises the contract. |
 | Frozen tests | Acceptance test files of one slice, fixed when its design is accepted; implementation must not change them, and verification refuses to run when one changed. |
 | Staged tests | Frozen tests of a slice that has not started, which Prism keeps out of the work tree until `set_status` `in-progress` starts the slice, or until `restore_tests` puts them back for a design revision. |
 | Design diagrams | PlantUML source written by design: an overview of each contract's slices, shared interfaces, and order, and a code view per slice; Prism parses them and refuses a view that does not parse or shows more than 30 elements. |
@@ -78,7 +79,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Example writer | A child agent on a small model that writes the design view from the contract and the frozen tests only. |
 | Accepted design | A planned slice's design recorded through `update_initiative` with its frozen tests and its review mark. |
 | Review mark | `required` or `none` on an accepted design, set by the user at the design gate or by the `review` setting. |
-| Verification run | A `verify_slice` run of the user-approved test command from `.prism/workflow.md`, recorded on the slice; a slice with an accepted design completes only on a fresh passing run, which completes a slice marked `none` by itself. |
+| Verification run | An implementer's `verify_slice` run of the user-approved test command from `.prism/workflow.md`, recorded on the slice; a slice with an accepted design completes only on a fresh passing run, which completes a slice marked `none` by itself. |
 | Implementation review | An independent review of the verified result of a slice marked `required`. |
 | Review record | The Prism record of one slice's review waves, lanes, and findings, read through `get_review` and changed through `update_review`. |
 | Review wave | One pass of fresh reviewers over one verified result of a slice. |
@@ -88,7 +89,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Gate | A user decision that controls progress. |
 | User gate record | A pending coordination state entry for a question to the user, with its kind, slice, question, artifacts, optional options, and any answer recorded in the review browser. |
 | Orchestrator | The agent that coordinates an initiative: it runs design, implementation, and review in child sessions, starts slices, and keeps gates, while Prism records progress from its calls. |
-| Child status | The short fixed result a child session returns: result, last commit, a one-sentence summary, contract defects, and questions. |
+| Child status | The short fixed result a child session returns: result, last commit, a one-sentence summary, and questions. |
 | Fresh context | A session that starts without the conversation that authored its inputs. |
 | Decision autonomy | A run setting that selects which gates wait for the user. |
 | Agent flow | A run setting that selects child agents or inline work for design and implementation. |

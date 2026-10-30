@@ -331,3 +331,37 @@ test("a brief verification names the failing tests and the full log", async (con
   assert.match(await readFile(failed.log, "utf8"), /not ok 1 - signs the report/);
   assert.equal(failed.log.startsWith(privateData), true, "the full log stays in plugin data, outside the project");
 });
+
+test("an implementer's contract defects block the slice without running anything until design revises the contract", async (context) => {
+  const root = await project(context);
+  const defects = [{ clause: "Contract 2", reason: "The storage client raises on a missing key instead of returning None." }];
+  await assert.rejects(verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", contractDefects: defects }), /has no accepted design/);
+  await accept(root);
+  await assert.rejects(verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", contractDefects: [] }), /arguments are invalid/);
+  const reported = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", contractDefects: defects });
+  assert.equal(reported.status, "defects_recorded", "no approval is asked, because nothing runs");
+  assert.equal(reported.sliceStatus, "blocked");
+  const run = JSON.parse(await readFile(path.join(root, reported.run), "utf8"));
+  assert.equal(run.kind, "contract-defect");
+  assert.deepEqual(run.defects, defects);
+  const record = await getInitiative({ projectRoot: root, initiative: INITIATIVE });
+  assert.equal(record.revision, reported.initiativeRevision);
+  assert.equal(record.record.slices.download.status, "blocked");
+  assert.deepEqual(record.record.slices.download.contractDefects.map(({ clause, reason }) => ({ clause, reason })), defects);
+  const operations = [{ op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" }];
+  const revised = await initiativeUpdate(root, operations);
+  assert.equal(revised.record.slices.download.contractDefects, undefined, "the next accepted design clears the defects");
+  assert.equal(revised.record.slices.download.design.staged, undefined, "a blocked slice keeps its tests in place");
+  const restarted = await initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "in-progress" }]);
+  assert.equal(restarted.record.slices.download.status, "in-progress");
+  await assert.rejects(initiativeUpdate(root, [{ op: "report_contract_defects", slug: "audit", defects }]), /started slice with an accepted design/);
+});
+
+test("the acknowledgement counts a slice's contract defects", async (context) => {
+  const root = await project(context);
+  await accept(root);
+  const operations = [{ op: "report_contract_defects", slug: "download", defects: [{ clause: "Contract 1", reason: "Bytes need a trailing newline." }] }];
+  const brief = initiativeAcknowledgement(await initiativeUpdate(root, operations), operations);
+  assert.equal(brief.slices.download.status, "blocked");
+  assert.equal(brief.slices.download.contractDefects, 1);
+});

@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Run or resume an initiative: design one contract per scope, gate it, start each planned slice, implement it in a fresh session, verify it, review it only when marked, and keep the user's gates."
+description: "Run or resume an initiative: design one contract per scope, gate it, start each planned slice, implement and verify it in a fresh session, review it only when marked, and keep the user's gates."
 disable-model-invocation: true
 argument-hint: '[initiative]'
 sdm: "0.3"
@@ -10,7 +10,7 @@ sdm: "0.3"
 
 The orchestrator coordinates; it judges order, contract defects, and gates, and leaves the work to child sessions.
 Design, implementation, review, and example writer sessions get identifiers and folders from it and return a short status.
-Prism records progress from the orchestrator's `update_initiative` and `verify_slice` calls, so the orchestrator makes no other bookkeeping calls.
+Prism records progress from `update_initiative` calls and from the `verify_slice` calls of implementers, so the orchestrator makes no other bookkeeping calls.
 The [workflow](../workflow/SKILL.md) defines the terms.
 
 - Don't
@@ -62,47 +62,35 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
 
 1. Read the slice's state with `get_initiative`.
 2. Call `update_initiative` with `set_status` `in-progress`, which puts its frozen tests in place.
-3. Run `implement` for the slice in one fresh session, passing the contract's `slice.md` and the slice folder.
-4. When it returns `DONE`, verify the slice through [verification](#5-verification).
-5. When the slice's review mark is `required`, review it through [review](#6-review), then call `update_initiative` with `set_status` `done`.
-6. Accept the slice's Proposed ADRs, and push when push is on.
-7. When continuation is `stepwise`, pause and report the finished slice.
+3. Run `implement` for the slice in one fresh session, passing the contract's `slice.md` and the slice folder; it verifies the slice through `verify_slice` itself.
+4. When it returns `DONE`, read the slice with `get_initiative`: when its review mark is `required`, review it through [review](#5-review), then call `update_initiative` with `set_status` `done`; when it is not done otherwise, call `set_status` `done`, which refuses without a fresh passing run.
+5. Accept the slice's Proposed ADRs, and push when push is on.
+6. When continuation is `stepwise`, pause and report the finished slice.
 
-- When an implementer reports a contract defect or changed dependencies:
+- When the slice is `blocked` with contract defects, or its dependencies changed:
   1. Call `update_initiative` with `restore_tests` for the scope.
-  2. Return the defect to design with the scope.
-  3. Accept design's revised proposal before more implementation.
+  2. Return the defects to design with the scope.
+  3. Accept design's revised proposal, then start the slice again with a fresh implementation session.
+- When the implementer returns `BLOCKED` on an approval gate, wait for it as in [user gates](#6-user-gates), then run a fresh implementation session.
 - When design or implementation returns `BLOCKED` or a question, ask the user the exact question and continue with another eligible slice meanwhile.
 
 On resume, continue an `in-progress` slice with a fresh implementation session before starting another slice.
 
-## 5. Verification
-
-1. Call `verify_slice` with the initiative and slice.
-2. When it returns `approval_needed`, call `wait_for_user_gate` with its gate id, then call `verify_slice` again with `approvalGate` set to that id.
-3. When it returns `running`, call it again with the same arguments.
-4. When it returns `declined`, stop and ask the user for the test command to use.
-5. When it fails, run a fresh `implement` session with its failing test names and log path, and verify again.
-6. After three failed attempts, call `update_initiative` with `set_status` `blocked` and ask the user with the failing test names and the log path.
-
-A passing run of a slice whose review mark is `none` marks it done and returns the `initiativeRevision` to use for the next `update_initiative` call; when its result says the slice is unchanged, call `update_initiative` with `set_status` `done`.
-A run that reports changed frozen tests goes back to an implementer to restore them.
-
-## 6. Review
+## 5. Review
 
 1. Call `update_review` as the coordinator with a `start_wave` operation in `implementation-review` mode, one lane per review focus, a fresh reviewer identifier per lane, and, as `base`, the last commit that a child reported before the slice started, when one did.
 2. Run `review` for each lane in a fresh child agent, and use a security-focused lane with the `securityReview` model for trust-boundary changes.
-3. When a lane returns `FINDINGS`, run a fresh `implement` session with the findings, verify again, and start a new wave with fresh reviewers.
+3. When a lane returns `FINDINGS`, run a fresh `implement` session with the findings, and start a new wave with fresh reviewers once it returns `DONE`.
 4. When every lane is `CLEAN`, call `update_review` with `accept_wave`.
 
-## 7. User gates
+## 6. User gates
 
 - Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, slice, question, artifacts, and options for a decision.
 - Use `visual-review` for design gates, `decision` for choices, and `assistance` for actions the user must take.
 - After asking, call `wait_for_user_gate` once with the ids just recorded, and when it returns without an answer, end the turn.
 - Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it.
 
-## 8. Finish or pause
+## 7. Finish or pause
 
 - When every leaf is done:
   1. Call `update_roadmap` with a `ship` operation for the initiative.

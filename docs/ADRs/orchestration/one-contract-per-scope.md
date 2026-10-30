@@ -24,6 +24,7 @@ Design MUST record its result as a proposal through `update_initiative`, which t
 Each frozen test file MUST belong to one unfinished slice, and a staged slice's file MUST NOT belong to any other slice.
 Accepting the design of a slice that has not started MUST stage its frozen tests: the server keeps them in the slice's records and takes them out of the work tree, and starting the slice MUST put them back.
 A passing verification run MUST complete a slice whose review mark is `none`.
+The implementer MUST run verification itself and fix failures in its own session, and MUST report a contract defect through `verify_slice`, which records it and blocks the slice until design revises the contract.
 A slice MUST be reviewed only when the user marks it or the run's `review` setting selects it.
 `update_initiative` MUST return an acknowledgement of the touched slices, and `verify_slice` MUST return the verdict, failing test names, and the path of a full output log kept outside the project.
 Design MUST write diagrams as PlantUML source only, an overview per contract and a code view per slice, and accepting a design MUST refuse a diagram that does not parse or shows more than 30 elements.
@@ -35,6 +36,7 @@ In the October 2026 Nushell runs, the same design skill on the same task kept on
 Staging keeps the test command of an earlier slice from running, and in compiled languages failing to build, the tests of later slices.
 A design that proposes its own result gets the server's refusals, such as a diagram problem, a claimed test file, or a missing split evidence, while it can still fix them, instead of after a round trip through the orchestrator and a fresh design session.
 Inferring completion and returning brief results removes the bookkeeping that filled the orchestrator's context, without weakening the verification gate.
+An implementer that verifies its own slice fixes a failure with the code still in its context, instead of a fresh session rereading it, and a contract defect kept by the server survives the implementer's session and can later show which contracts held.
 The server's parse check gives the designer the only feedback it needs from a diagram, and readability stays with the person who reads it.
 
 ## Alternatives
@@ -59,6 +61,7 @@ A proposal is kept in the initiative record under its scope as the operations th
 The staged tests of a slice are a slice record with each file's content.
 The initiative update writes the initiative record, then the staged tests of each slice still staged at its end, and only then takes those files out of the work tree.
 Verification refuses a staged slice and, after a passing run of a slice marked `none`, records `done` through the same completion gate as before.
+Reported contract defects are a run entry, which outlives the initiative record, and stay on the slice in the initiative record until its next accepted design; nothing runs when they are reported.
 Run output is written to a log under the plugin data directory, and the brief result reads failing test names from cargo, Node, TAP, pytest, Go, Jest, and Vitest output.
 The diagram check parses every `.puml` file in the slice's folder and its ancestors' folders before the update takes the record lock, treats every error diagram PlantUML draws as a refusal, and counts entities, packages, participants, or activity boxes, and links, in the drawn SVG.
 
