@@ -61,7 +61,12 @@ function configuredRoots(config) {
 }
 
 async function walkArtifacts(projectRoot, relativeRoot, results) {
-  const { root, target: absoluteRoot } = await resolveRecordFile(projectRoot, relativeRoot);
+  // An unavailable record store hides only the records, so human documents still list.
+  const located = await resolveRecordFile(projectRoot, relativeRoot).catch((error) => { if (error.code === "store_unavailable") return null; throw error; });
+  if (!located) {
+    return;
+  }
+  const { root, target: absoluteRoot } = located;
   if (!isInside(root, absoluteRoot)) {
     return;
   }
@@ -134,7 +139,7 @@ export async function listArtifacts(projectRoot) {
   // Machine records live under .prism, which the walk above skips as a hidden folder.
   await walkArtifacts(projectRoot, `${RECORD_DIRECTORY}/initiatives`, results);
   const roadmap = recordPath({ kind: "roadmap" });
-  if (await stat((await resolveRecordFile(projectRoot, roadmap)).target).then((info) => info.isFile(), () => false)) results.add(roadmap);
+  if (await resolveRecordFile(projectRoot, roadmap).then(({ target }) => stat(target)).then((info) => info.isFile(), () => false)) results.add(roadmap);
   return [...results].sort();
 }
 

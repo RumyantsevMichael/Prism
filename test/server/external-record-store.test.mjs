@@ -10,7 +10,7 @@ const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-s
 process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
 const {
-  appendRecord, ensureRecords, forgetMigrations, keyOfPath, listInitiatives, listRecordEntries, locateRecord, readRecord, sameRecord, writeRecord
+  appendRecord, ensureRecords, forgetMigrations, keyOfPath, listInitiatives, listRecordEntries, locateRecord, readRecord, removeInitiativeRecords, sameRecord, writeRecord
 } = await import("../../dist/server/workflow/record-store.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
@@ -32,9 +32,10 @@ async function workspace(context, { config = STORE_CONFIG, store = true } = {}) 
 }
 
 // Two Git worktrees of one repository whose committed config names the same store.
-async function worktrees(context) {
+async function worktrees(context, committed = {}) {
   const { parent, root, store } = await workspace(context);
   const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=Prism", "-c", "user.email=prism@example.invalid", ...args], { cwd, stdio: "pipe" });
+  for (const [relative, contents] of Object.entries(committed)) await put(root, relative, contents);
   git(root, "init", "-q");
   git(root, "add", ".");
   git(root, "commit", "-q", "-m", "init");
@@ -186,4 +187,45 @@ test("appends run entries into the store and lists entries appended from either 
   await assert.rejects(appendRecord(b, key, "run-1", { from: "b" }), { code: "entry_exists" });
   assert.deepEqual((await readdir(path.join(store, "initiatives/reports/slices/download/runs"))).filter((name) => name.endsWith(".json")).sort(), ["run-1.json", "run-2.json"]);
   for (const root of [a, b]) assert.deepEqual((await listRecordEntries(root, key)).map((item) => [item.id, item.entry.from]), [["run-1", "a"], ["run-2", "b"]]);
+});
+
+test("migrates a repository's committed records once, so a record removed later stays removed", async (context) => {
+  const { a, b, store } = await worktrees(context, { ".prism/initiatives/x/state.json": "{}\n", ".prism/initiatives/y/state.json": "{}\n" });
+  assert.deepEqual(await listInitiatives(a), ["x", "y"]);
+  await removeInitiativeRecords(a, "x");
+  forgetMigrations();
+  assert.equal(await exists(path.join(b, ".prism/initiatives/x/state.json")), true);
+  assert.deepEqual(await listInitiatives(b), ["y"]);
+  assert.equal(await exists(path.join(store, "initiatives/x")), false);
+  const markers = await readdir(path.join(store, "migrations"));
+  assert.equal(markers.length, 1);
+  const marker = JSON.parse(await readFile(path.join(store, "migrations", markers[0]), "utf8"));
+  assert.match(marker.repository, /^[0-9a-f]{40,64}$/);
+  assert.equal(marker.moved, 2);
+});
+
+test("records a migration conflict in the store's migration record and keeps both files", async (context) => {
+  const { root, store } = await workspace(context);
+  await put(root, ".prism/initiatives/other/state.json", "project state");
+  await put(store, "initiatives/other/state.json", "store state");
+  await ensureRecords(root);
+  const [name] = await readdir(path.join(store, "migrations"));
+  const marker = JSON.parse(await readFile(path.join(store, "migrations", name), "utf8"));
+  assert.equal(marker.repository, root);
+  assert.deepEqual(marker.conflicts, [{ from: ".prism/initiatives/other/state.json", to: ".prism/initiatives/other/state.json" }]);
+  assert.equal(await readFile(path.join(root, ".prism/initiatives/other/state.json"), "utf8"), "project state");
+  assert.equal(await readFile(path.join(store, "initiatives/other/state.json"), "utf8"), "store state");
+});
+
+test("still lists human documents in the review browser when the store is missing", async (context) => {
+  const { root } = await workspace(context, { store: false });
+  await put(root, "docs/plans/reports/slice.md", "# Reports\n");
+  const review = await startReviewServer({ projectRoot: root });
+  try {
+    const index = JSON.parse((await fetchJson(`${review.baseUrl}/api/index`)).body);
+    assert.equal(index.artifacts.includes("docs/plans/reports/slice.md"), true);
+  } finally {
+    await review.close();
+  }
+  await assert.rejects(readRecord(root, { kind: "state", initiative: "reports" }), { code: "store_unavailable" });
 });

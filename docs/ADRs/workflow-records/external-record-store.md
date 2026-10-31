@@ -25,6 +25,9 @@ A configured store that does not exist, is not a folder, or resolves inside or c
 Containment and symbolic link checks MUST apply against the store folder when a store is set.
 The workflow configuration and every human document MUST stay in the project.
 When a store is configured, the project's in-repo and legacy records MUST move into it under the existing migration rules, and a differing record already in the store MUST NOT be overwritten.
+Records MUST move into a store at most once per repository, because committed records exist in every checkout and a later copy would bring back records removed since.
+A conflict found during that migration MUST be kept in the store's migration record, with both files left in place.
+An unavailable store MUST hide only records from the review browser, so human documents still list.
 
 ## Rationale
 
@@ -46,11 +49,19 @@ The user syncs a store between machines by hand for now, because Prism does not 
 A cloud session whose store folder does not exist cannot read or write records until the store is provided.
 Records in a store no longer travel with a branch or appear in its pull requests.
 
+Known limits remain.
+The first migration can race a concurrent writer of the same record in another checkout.
+A change to the `Store` setting can take up to the five-second migration cache to apply in a running server.
+In-repo record files left in other checkouts after the migration are ignored, and the user can delete them.
+
 ## Mechanism
 
 The workflow configuration's `Workspace` section names the store, relative to the project root or absolute.
 The record store resolves that folder once per access, refuses it when it is missing, inside the project, or containing it, and maps each `.prism` record address into it.
 Every server component that reads, lists, or serves records asks the record store for the physical file, and all other project paths still resolve from the project root.
 Before the first record access, migration copies records from the project's `.prism` and from legacy plan locations into the store, removes each copied or identical source, and reports a differing target as a conflict.
+The repository's identity is its root commit, or the project folder outside Git.
+Under the store-wide migration lock, the first checkout of a repository migrates and then writes a migration record named by that identity with the time, the number of moved records, and the conflicts.
+Every later checkout of the same repository finds that record and skips migration.
 
 ## Decision Log

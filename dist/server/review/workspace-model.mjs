@@ -48,7 +48,8 @@ async function walk(root, relative, depth, accept, results, limit) {
   try {
     entries = await readdir((await resolveRecordFile(root, relative)).target, { withFileTypes: true });
   } catch (error) {
-    if (["ENOENT", "ENOTDIR"].includes(error.code)) return;
+    // An unavailable record store hides only the records, so human documents still list.
+    if (["ENOENT", "ENOTDIR", "store_unavailable"].includes(error.code)) return;
     throw error;
   }
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
@@ -108,9 +109,14 @@ async function sliceArtifacts(root, directory, slices, slug, id) {
   };
 }
 
+// An unavailable record store lists no initiatives, so the pages still show human documents; the roadmap view reports the store error.
+function storedInitiatives(root) {
+  return listInitiatives(root).catch((error) => { if (error.code === "store_unavailable") return []; throw error; });
+}
+
 async function initiativeFolders(root) {
   const ids = [];
-  for (const id of await listInitiatives(root)) if ((await readText(root, recordPath({ kind: "initiative", initiative: id }))) !== null) ids.push(id);
+  for (const id of await storedInitiatives(root)) if ((await readText(root, recordPath({ kind: "initiative", initiative: id }))) !== null) ids.push(id);
   return ids;
 }
 
@@ -362,7 +368,7 @@ async function computeAttention(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
   const items = new Map(roadmap.items.map((item) => [item.id, item]));
-  const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await listInitiatives(projectRoot))])];
+  const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await storedInitiatives(projectRoot))])];
   const needsYou = [];
   const answered = [];
   const watch = [];

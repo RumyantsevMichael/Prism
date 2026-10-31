@@ -1,4 +1,6 @@
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, rmdir, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
@@ -259,12 +261,41 @@ async function moveRecord(root, store, move, report) {
   report.moved.push(move);
 }
 
+// Every checkout and clone of one repository shares its root commit; a project outside Git falls back to its own folder.
+function repositoryIdentity(root) {
+  return new Promise((resolve) => {
+    execFile("git", ["-C", root, "rev-list", "--max-parents=0", "HEAD"], { timeout: 10000 }, (error, stdout) => {
+      resolve((error ? "" : stdout.split(/\s+/).filter(Boolean).sort()[0]) || root);
+    });
+  });
+}
+
+// Committed records exist in every checkout, so a store takes them from a repository only once; later copies would bring back removed records.
+async function migrateIntoStore(root, store, config, report) {
+  const repository = await repositoryIdentity(root);
+  const name = /^[0-9a-f]{40,64}$/.test(repository) ? repository : createHash("sha256").update(repository).digest("hex");
+  const marker = path.join(store.base, "migrations", `${name}.json`);
+  if (await regularFile(marker)) return report;
+  await ensureHousekeeping(store);
+  const lock = path.join(store.base, "migration");
+  await withArtifactLock(lock, () => withFileLock(lock, async () => {
+    if (await regularFile(marker)) return;
+    // Records already under the project's .prism come first, so they win over a legacy copy as they do without a store.
+    for (const move of [...await inRepoRecords(root), ...await legacyRecords(root, store, config)]) await moveRecord(root, store, move, report);
+    await mkdir(path.dirname(marker), { recursive: true });
+    await assertContained(store.contain, marker, "the record store");
+    await writeAtomically(marker, `${JSON.stringify({ schemaVersion: 1, repository, migratedAt: new Date().toISOString(), moved: report.moved.length, conflicts: report.conflicts }, null, 2)}\n`);
+  }, fail, { timeoutMs: 30000 }));
+  await pruneEmptyFolders(path.join(root, INITIATIVES));
+  return report;
+}
+
 async function migrate(root) {
   const report = { moved: [], conflicts: [] };
   const store = await recordStoreOf(root);
   const config = await readWorkflowConfig(root);
-  // Records already under the project's .prism come first, so they win over a legacy copy as they do without a store.
-  const moves = [...(store.external ? await inRepoRecords(root) : []), ...await legacyRecords(root, store, config)];
+  if (store.external) return migrateIntoStore(root, store, config, report);
+  const moves = await legacyRecords(root, store, config);
   const pending = [];
   for (const move of moves) if (await regularFile(path.join(root, move.from))) pending.push(move);
   // Reads never create files, so a project without legacy records stays untouched until its first record write.
@@ -274,7 +305,6 @@ async function migrate(root) {
   await withArtifactLock(lock, () => withFileLock(lock, async () => {
     for (const move of pending) await moveRecord(root, store, move, report);
   }, fail, { timeoutMs: 30000 }));
-  if (store.external) await pruneEmptyFolders(path.join(root, INITIATIVES));
   return report;
 }
 
