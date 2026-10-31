@@ -21,7 +21,7 @@ Without that setting, records MUST stay under the project's `.prism` directory, 
 A record's `.prism` path MUST remain its address in every stored reference, tool result, and review browser link, whichever folder holds the file.
 Only the record store MAY map a record address to a physical file.
 The store MUST hold the same layout as `.prism`, without the leading `.prism` segment.
-A configured store that does not exist, is not a folder, or resolves inside the project root MUST make every record operation fail, and Prism MUST NOT create the store or fall back to `.prism`.
+A configured store that does not exist, is not a folder, or resolves inside or contains the project root MUST make every record operation fail, and Prism MUST NOT create the store or fall back to `.prism`.
 Containment and symbolic link checks MUST apply against the store folder when a store is set.
 The workflow configuration and every human document MUST stay in the project.
 When a store is configured, the project's in-repo and legacy records MUST move into it under the existing migration rules, and a differing record already in the store MUST NOT be overwritten.
@@ -49,7 +49,7 @@ Records in a store no longer travel with a branch or appear in its pull requests
 ## Mechanism
 
 The workflow configuration's `Workspace` section names the store, relative to the project root or absolute.
-The record store resolves that folder once per access, refuses it when it is missing or inside the project, and maps each `.prism` record address into it.
+The record store resolves that folder once per access, refuses it when it is missing, inside the project, or containing it, and maps each `.prism` record address into it.
 Every server component that reads, lists, or serves records asks the record store for the physical file, and all other project paths still resolve from the project root.
 Before the first record access, migration copies records from the project's `.prism` and from legacy plan locations into the store, removes each copied or identical source, and reports a differing target as a conflict.
 

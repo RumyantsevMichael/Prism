@@ -116,6 +116,12 @@ test("refuses a store inside the project root", async (context) => {
   assert.deepEqual(await readdir(path.join(root, "records")), []);
 });
 
+test("refuses a store that contains the project root", async (context) => {
+  const { root } = await workspace(context, { config: "## Workspace\n- Store: ..\n", store: false });
+  await assert.rejects(readRecord(root, { kind: "roadmap" }), (error) => error.code === "store_unavailable" && error.message.includes("contains the project root"));
+  await assert.rejects(writeRecord(root, { kind: "roadmap" }, "{}\n"), { code: "store_unavailable" });
+});
+
 test("moves in-repo and legacy records into the store and reports a differing target", async (context) => {
   const { root, store } = await workspace(context);
   const initiative = JSON.stringify({ slices: { export: { parent: null } } });

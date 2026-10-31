@@ -110,6 +110,7 @@ export async function recordStoreOf(projectRootPath) {
   }
   if (!(await stat(base)).isDirectory()) throw unavailable("is not a directory. Create or clone the store there; Prism never creates it.");
   if (inside(root, base)) throw unavailable("is inside the project root. Place the store outside the project, so every checkout can share it.");
+  if (inside(base, root)) throw unavailable("contains the project root. Place the store beside the project, so records and project files never share a folder.");
   return { root, base, contain: base, external: true };
 }
 
