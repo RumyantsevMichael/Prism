@@ -4,7 +4,7 @@ import { readInitiative, sliceFolder } from "../workflow/initiative.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
-import { keyOfPath, listInitiatives, listSliceRecords, recordPath } from "../workflow/record-store.mjs";
+import { keyOfPath, listInitiatives, listSliceRecords, recordPath, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
@@ -36,7 +36,7 @@ const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap
 
 async function readText(root, relative) {
   try {
-    return await readFile(path.join(root, relative), "utf8");
+    return await readFile((await resolveRecordFile(root, relative)).target, "utf8");
   } catch (error) {
     if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) return null;
     throw error;
@@ -46,7 +46,7 @@ async function readText(root, relative) {
 async function walk(root, relative, depth, accept, results, limit) {
   let entries;
   try {
-    entries = await readdir(path.join(root, relative), { withFileTypes: true });
+    entries = await readdir((await resolveRecordFile(root, relative)).target, { withFileTypes: true });
   } catch (error) {
     if (["ENOENT", "ENOTDIR"].includes(error.code)) return;
     throw error;
@@ -324,7 +324,7 @@ export async function loadGlossary(projectRoot) {
 
 async function isFile(root, relative) {
   try {
-    return (await stat(path.join(root, relative))).isFile();
+    return (await stat((await resolveRecordFile(root, relative)).target)).isFile();
   } catch {
     return false;
   }

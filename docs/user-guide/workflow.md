@@ -100,6 +100,19 @@ The roadmap Markdown and each initiative's `initiative.md` are generated views o
 Slices have titles such as `Download signed reports`, while stable slugs identify slices and artifact paths.
 The analysis runtime, models, indexes, and retained evidence live in the plugin data directory or your private Prism cache, never in your repository.
 
+Machine records live under `.prism` by default.
+To share them between linked worktrees or clones, name a record store folder outside the project in `.prism/workflow.md`:
+
+```markdown
+## Workspace
+- Store: ../prism-store
+```
+
+`Store` is relative to the project root or absolute, and it must not resolve inside the project.
+Create or clone the store folder yourself, because Prism never creates it, and a missing folder makes every record operation fail with `store_unavailable`.
+On the first record access, Prism moves the project's existing records into the store, and it keeps both copies and reports a conflict when the store already holds different bytes.
+Every checkout whose configuration names the same store reads and writes the same records, and Prism does not commit, push, or pull the store.
+
 ## Migrate an older setup
 
 Prism no longer reads `.claude/workflow-config.md`, and `prism:workflow-init` migrates its values into `.prism/workflow.md` without changing the old file.
