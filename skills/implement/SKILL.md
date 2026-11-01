@@ -77,6 +77,8 @@ Implementation never rewrites the accepted change map to match its output.
 8. Apply [text convergence](../design/references/change-map.md#text-convergence) after all target updates, then capture F and compare B→F through MCP.
 9. If any target changes afterward, recapture F, compare B→F, and refresh assessments before returning review evidence.
 
+When a [task-start snapshot](../design/references/change-map.md#capture-source-evidence) T is recorded, every B→F comparison in steps 8 and 9 passes it as `startSnapshotId`.
+
 In-process tests do not replace required cross-process or cross-surface proof.
 Feature scenarios retain their approved intent, and durable documentation does not cite coordination records or slice identities.
 - Don't

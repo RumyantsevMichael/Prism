@@ -15,8 +15,13 @@ Context-budget `FIT` and conservation acceptance are separate checks.
 4. After design-authored tests and scaffolds, capture **A** for design audit.
 5. After implementation or corrections finish, capture **F** for implementation review.
 6. Preserve B through all corrections and child assignments.
+7. When out-of-scope work from others lands after B, such as a merge from `main` or another slice's plans, capture **T** before the task's next edit.
+8. Record T as the task-start snapshot, and pass it as `startSnapshotId` to every later `compare_change_map` call.
 
 B→A measures design changes, and B→F measures the complete task.
+T only attributes out-of-scope changes, and files inside the scope keep their judgment against B.
+After a later merge from `main`, capture T again before the next edit.
+Capture T only while the working tree holds none of the task's own out-of-scope edits.
 A identifies the source accepted for implementation entry.
 Snapshots retain verified text, opaque bytes, symlink identities without following links, modes, capture policy, and omissions.
 Missing or corrupt affected source evidence prevents acceptance.
@@ -129,7 +134,7 @@ Replace them with the receipt and source hashes returned by the search.
 
 ## Compare and measure
 
-1. Call `compare_change_map` with the exact change map revision, B, and A or F.
+1. Call `compare_change_map` with the exact change map revision, B, A or F, and the recorded T when one exists.
 2. Read all observations, measurements, growth records, and applicable diagnostics through `get_conservation_evidence`.
 3. Return material deviations for design revision and audit before continuing implementation.
 4. Record requirement-linked justification for every positive measured increase through MCP review assessments.
@@ -146,6 +151,9 @@ Parser, tokenizer, and metric versions bind the comparison, which retains its ex
 Markdown list items become identified obligations only through explicit source-bound classification and review.
 Default growth tolerance is zero; `expectedGrowth`, requirement-linked `growthJustifications`, and `growthThresholds` are audited design inputs, and every actual positive increase still needs reviewed justification.
 Comparisons preserve observed facts; review decisions cannot erase a retained deletion, scope escape, changed `KEEP`, or undeclared public declaration.
+An out-of-scope file that T already holds as it is in the result gets an `outside_scope_before_start` review check, not an `outside_scope` failure.
+An out-of-scope file that changed after T stays an `outside_scope` failure.
+Detector findings do not name a file that T attributes to work before the task.
 
 ## Text convergence
 
@@ -163,6 +171,14 @@ An assessment binds to its review wave's source, requirement, comparison, and ch
 A fresh assigned reviewer can carry an accepted assessment into a later wave with `carry_assessments` while its observations, justified growth, and cited files are unchanged.
 An unsupported check needs a `manual` assessment naming exact observation IDs, evidence, reason, and the assigned reviewer.
 A changed private helper outside a planned reference needs an `implementation-detail` assessment naming its owning change, and a `manual` assessment cannot clear it.
+Each `outside_scope_before_start` observation names the `startSnapshotId` that attributed it.
+Before the reviewer clears these observations, the reviewer compares that `startSnapshotId` with the T of earlier waves.
+To read an earlier wave's T, get its comparison from `get_review`, then read `startSnapshotId` in the comparison metadata from `get_conservation_evidence`.
+When T changed after an earlier wave reported `outside_scope` for a file, the reviewer rejects the assessment and records a finding.
+The reviewer also confirms each attributed file against its upstream source, such as the merge commit or the other slice's plan.
+After these checks, one reviewed `manual` assessment can name all `outside_scope_before_start` observations.
+Prism does not bind T to a capture time, so these checks are the only control on a recaptured T.
+An `outside_scope` failure stays a scope violation that no assessment can clear.
 Manual evidence cannot override missing semantic search, stale or missing source evidence, scope violations, or demonstrably retained deletion targets.
 Scripted assessment fixtures test enforcement; they do not prove semantic correctness.
 
