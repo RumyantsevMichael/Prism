@@ -4846,18 +4846,11 @@ mark.find-hit {
   color: var(--ink);
 }
 
-.diagram-tabs-label {
-  align-self: center;
-  color: var(--ink-muted);
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  margin-right: 0.4rem;
-  text-transform: uppercase;
-}
 
+/* The selected tab joins the diagram card below it. */
 .diagram-tabs + .diagram-slot .diagram-card {
   border-top-left-radius: 0;
+  margin-top: 0;
 }
 
 /* A preview of a line range: numbered lines from the file, as in the source view. */

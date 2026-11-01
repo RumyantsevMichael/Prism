@@ -238,7 +238,7 @@ function diagramLabel(file) {
 function diagramsCard(diagrams, folder, ctx) {
   if (!diagrams.length) return "";
   const selected = diagrams.includes(ctx.state.diagram) ? ctx.state.diagram : diagrams[0];
-  const tabs = diagrams.length > 1 ? `<div class="diagram-tabs" role="tablist" aria-label="Diagrams"><span class="diagram-tabs-label">${diagrams.length} diagrams</span>${diagrams.map((file) => `<button type="button" role="tab" class="diagram-tab" data-diagram="${escapeHtml(file)}" aria-selected="${file === selected}" title="${escapeHtml(file.slice(folder.length + 1))}">${escapeHtml(diagramLabel(file))}</button>`).join("")}</div>` : "";
+  const tabs = diagrams.length > 1 ? `<div class="diagram-tabs" role="tablist" aria-label="Diagrams">${diagrams.map((file) => `<button type="button" role="tab" class="diagram-tab" data-diagram="${escapeHtml(file)}" aria-selected="${file === selected}" title="${escapeHtml(file.slice(folder.length + 1))}">${escapeHtml(diagramLabel(file))}</button>`).join("")}</div>` : "";
   return `<section class="slice-diagrams" data-diagrams>${tabs}<div class="diagram-slot" data-diagram-slot="${escapeHtml(selected)}"></div></section>`;
 }
 
