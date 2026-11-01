@@ -45,7 +45,7 @@ A git ref or records branch keeps records out of the working tree, but cloud ses
 ## Consequences
 
 Linked worktrees and clones on one machine share initiatives, reviews, and runs once their configuration names the same store.
-The user syncs a store between machines by hand for now, because Prism does not commit, push, or pull it.
+Without [store sync](record-store-git-sync.md), the user syncs a store between machines by hand, because Prism does not commit, push, or pull it.
 A cloud session whose store folder does not exist cannot read or write records until the store is provided.
 Records in a store no longer travel with a branch or appear in its pull requests.
 

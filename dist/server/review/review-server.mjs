@@ -8,7 +8,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, ensureRecords, keyOfPath, recordPath, resolveRecordFile } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, ensureRecords, keyOfPath, recordPath, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
@@ -563,7 +563,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/events" && request.method === "GET") {
       openViewerStream(response);
     } else if (route === "/api/index") {
-      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts: await listArtifacts(projectRoot), sources: await listSourceFiles(projectRoot), navigation: await loadNavigation(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts: await listArtifacts(projectRoot), sources: await listSourceFiles(projectRoot), navigation: await loadNavigation(projectRoot), storeSync: await recordSyncStatus(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "GET") {
       send(response, 200, JSON.stringify(sessionSnapshot()), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "PUT") {

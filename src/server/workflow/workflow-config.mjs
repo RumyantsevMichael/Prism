@@ -77,8 +77,8 @@ function normalizePath(value, label, diagnostics) {
 }
 
 // Unlike Paths, the record store may leave the project root, so its value stays as written; the record store resolves and checks it.
-function workspaceStore(parsed) {
-  const entry = (parsed.get("Workspace") ?? []).find(({ label }) => label.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase() === "store");
+function workspaceValue(parsed, key) {
+  const entry = (parsed.get("Workspace") ?? []).find(({ label }) => label.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase() === key);
   return !entry?.value || /^n\/a$/i.test(entry.value) ? null : entry.value;
 }
 
@@ -104,7 +104,7 @@ export function parseWorkflowConfig(markdown) {
     paths[key] = normalizePath(value, label, diagnostics);
   }
   const values = Object.fromEntries([...parsed].map(([name, entries]) => [name, Object.fromEntries(entries.map((entry) => [entry.label, entry.value]))]));
-  return { paths, configured: [...configured].sort(), sections: values, workspace: { store: workspaceStore(parsed) }, diagnostics };
+  return { paths, configured: [...configured].sort(), sections: values, workspace: { store: workspaceValue(parsed, "store"), sync: /^on$/i.test(workspaceValue(parsed, "store sync") ?? "") }, diagnostics };
 }
 
 export async function readWorkflowConfig(projectRoot) {

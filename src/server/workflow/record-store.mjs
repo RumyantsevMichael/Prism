@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
+import { pullRecordStoreIfStale, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
 import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
 // Machine records live under .prism beside the workflow config, or in the record store the workflow config names; human documents and generated views stay under the configured paths.
@@ -17,7 +18,7 @@ const SLICE_KINDS = new Set(["review", "change-map", "design-view", "frozen-test
 const LEGACY_CHANGE_MAP = "concept-delta.json";
 const HOUSEKEEPING = Object.freeze({
   ".gitattributes": "# Prism writes these records through its MCP tools; hosts collapse them in pull request diffs.\n/roadmap.json linguist-generated=true gitlab-generated\n/initiatives/** linguist-generated=true gitlab-generated\n",
-  ".gitignore": "# Transient lock and write files of Prism records.\n*.lock\n.*.tmp\n"
+  ".gitignore": "# Transient lock and write files of Prism records, and the store's sync state.\n*.lock\n.*.tmp\n/.prism-sync/\n"
 });
 const RECORD_MAX_BYTES = 64 * 1024 * 1024;
 const ENTRY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -100,8 +101,9 @@ const physical = (store, relative) => path.join(store.base, relative.slice(RECOR
  */
 export async function recordStoreOf(projectRootPath) {
   const root = await projectRoot(projectRootPath);
-  const configured = (await readWorkflowConfig(root)).workspace?.store ?? null;
-  if (configured === null) return { root, base: path.join(root, RECORD_DIRECTORY), contain: root, external: false };
+  const { workspace } = await readWorkflowConfig(root);
+  const configured = workspace?.store ?? null;
+  if (configured === null) return { root, base: path.join(root, RECORD_DIRECTORY), contain: root, external: false, sync: false };
   const resolved = path.resolve(root, configured);
   const unavailable = (reason) => fail("store_unavailable", `The record store ${configured} named under Workspace in .prism/workflow.md resolves to ${resolved}, which ${reason}`, { store: configured, resolved });
   let base;
@@ -113,7 +115,13 @@ export async function recordStoreOf(projectRootPath) {
   if (!(await stat(base)).isDirectory()) throw unavailable("is not a directory. Create or clone the store there; Prism never creates it.");
   if (inside(root, base)) throw unavailable("is inside the project root. Place the store outside the project, so every checkout can share it.");
   if (inside(base, root)) throw unavailable("contains the project root. Place the store beside the project, so records and project files never share a folder.");
-  return { root, base, contain: base, external: true };
+  return { root, base, contain: base, external: true, sync: workspace.sync === true };
+}
+
+/** The latest sync outcome of a project's record store, or null when the store does not sync or has not synced yet. */
+export async function recordSyncStatus(projectRootPath) {
+  const store = await recordStoreOf(projectRootPath).catch(() => null);
+  return store?.sync ? readSyncStatus(store.base) : null;
 }
 
 /** The physical file of a project-relative path, { root, target }: a record path maps into the record store, any other path stays under the project root. */
@@ -327,9 +335,17 @@ export function forgetMigrations() {
 
 const storeLabel = (store) => store.external ? "the record store" : "the project root";
 
+// A synced store pulls in the background when its last fetch is old, and record access waits while a merge replaces record files.
+async function synced(store) {
+  if (!store.sync) return;
+  pullRecordStoreIfStale(store.base);
+  await waitForStableStore(store.base);
+}
+
 async function locate(projectRootPath, key) {
   const store = await recordStoreOf(projectRootPath);
   await ensureRecords(store.root);
+  await synced(store);
   const relative = recordPath(key);
   const target = physical(store, relative);
   await assertContained(store.contain, target, storeLabel(store));
@@ -355,6 +371,7 @@ export async function writeRecord(projectRootPath, key, contents) {
   await assertContained(store.contain, located.target, storeLabel(store));
   await ensureHousekeeping(store);
   await writeAtomically(located.target, contents);
+  if (store.sync) scheduleRecordSync(store.base);
   return located;
 }
 
@@ -374,11 +391,13 @@ export async function appendRecord(projectRootPath, key, id, entry) {
   await ensureHousekeeping(store);
   await mkdir(located.target, { recursive: true });
   await assertContained(store.contain, target, storeLabel(store));
-  return withArtifactLock(target, () => withFileLock(target, async () => {
+  const appended = await withArtifactLock(target, () => withFileLock(target, async () => {
     if (await regularFile(target)) throw fail("entry_exists", `The entry ${id} already exists.`);
     await writeAtomically(target, `${JSON.stringify(entry, null, 2)}\n`);
     return { ...located, path: `${located.path}/${id}.json`, target };
   }, fail));
+  if (store.sync) scheduleRecordSync(store.base);
+  return appended;
 }
 
 /** List the entries of a list key in id order. */
@@ -404,6 +423,7 @@ async function directoryNames(target) {
 export async function listInitiatives(projectRootPath) {
   const store = await recordStoreOf(projectRootPath);
   await ensureRecords(store.root);
+  await synced(store);
   const ids = [];
   for (const initiative of await directoryNames(physical(store, INITIATIVES))) {
     for (const kind of ["initiative", "state"]) if (await regularFile(physical(store, recordPath({ kind, initiative })))) { ids.push(initiative); break; }
@@ -415,6 +435,7 @@ export async function listInitiatives(projectRootPath) {
 export async function listSliceRecords(projectRootPath, initiative) {
   const store = await recordStoreOf(projectRootPath);
   await ensureRecords(store.root);
+  await synced(store);
   return directoryNames(path.join(physical(store, INITIATIVES), requireSlug(initiative, "initiative"), "slices"));
 }
 
@@ -422,6 +443,7 @@ export async function listSliceRecords(projectRootPath, initiative) {
 export async function removeInitiativeRecords(projectRootPath, initiative) {
   const store = await recordStoreOf(projectRootPath);
   await ensureRecords(store.root);
+  await synced(store);
   const target = path.join(physical(store, INITIATIVES), requireSlug(initiative, "initiative"));
   await assertContained(store.contain, path.join(target, "x"), storeLabel(store));
   for (const kind of ["initiative", "state"]) await rm(physical(store, recordPath({ kind, initiative })), { force: true });
@@ -434,6 +456,7 @@ export async function removeInitiativeRecords(projectRootPath, initiative) {
   await rmdir(path.join(target, "slices")).catch(() => {});
   await rmdir(target).catch(() => {});
   await rmdir(physical(store, INITIATIVES)).catch(() => {});
+  if (store.sync) scheduleRecordSync(store.base);
 }
 
 /** The legacy and current location of a slice's human documents: the root slice shares the initiative folder. */

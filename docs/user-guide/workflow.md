@@ -112,7 +112,13 @@ To share them between linked worktrees or clones, name a record store folder out
 Create or clone the store folder yourself, because Prism never creates it, and a missing folder makes every record operation fail with `store_unavailable`.
 On the first record access from any checkout of a repository, Prism moves that checkout's existing records into the store once, and it keeps both copies of a record whose bytes differ and lists the conflict in the store's `migrations` folder.
 Record files that other checkouts still hold under `.prism` are then ignored, and you can delete them.
-Every checkout whose configuration names the same store reads and writes the same records, and Prism does not commit, push, or pull the store.
+Every checkout whose configuration names the same store reads and writes the same records.
+
+To share records between machines, make the store a Git checkout whose branch has an upstream, and add `- Store sync: on` under `Store`.
+Prism then commits record changes a few seconds after each write, merges the upstream without rebasing, and pushes, and a record read fetches in the background when the last fetch is older than 30 seconds.
+When two machines change the same record, the first push wins, and the store saves the other version under `.prism-sync/conflicts/`.
+Records keep working locally when Git, the network, or the upstream is unavailable, and the review browser shows a small chip when the last sync did not succeed.
+Without `Store sync: on`, Prism never runs Git in the store.
 
 ## Migrate an older setup
 
