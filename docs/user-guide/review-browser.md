@@ -45,6 +45,10 @@ The page keeps checking and recovers on its own when the same app or its upgrade
 
 Attention lists the questions that an agent recorded for you, with the artifacts to inspect, including read-only source files.
 Answer a question on Attention or in the conversation.
+A design or correctness review needs Approve or Request changes, and Request changes also needs a note that says what should change.
+A decision takes one of its options, a note in your own words, or both.
+An action request needs only Mark as done, with an optional note.
+The button that sends your answer stays disabled until the answer is complete, and the text beside it says what is missing.
 In Claude Code a waiting agent resumes on its own shortly after your answer.
 Elsewhere the agent receives the answer with your next message, even a short one such as "go".
 Attention also lists blocked slices, open findings, and active work.
