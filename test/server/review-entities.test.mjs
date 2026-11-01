@@ -267,3 +267,19 @@ test("treats the initiative directory as the root slice folder", async (context)
     await review.close();
   }
 });
+
+test("flags an open question whose every attached file is gone", async (context) => {
+  const projectRoot = await fixture(context);
+  const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  const current = await readCoordinationState({ projectRoot, initiative: "reports" });
+  await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: {
+    gateOperations: [{ op: "ask", kind: "decision", question: "Keep the dropped attribution file?", artifacts: ["docs/requirements/dropped.md"], options: [{ id: "keep", label: "Keep" }, { id: "drop", label: "Drop" }] }]
+  } });
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const gates = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data.needsYou.filter((item) => item.type === "gate");
+    assert.deepEqual(gates.map((gate) => [gate.kind, gate.stale ?? false]), [["visual-review", false], ["decision", true]], "a question with some files left is not flagged");
+  } finally {
+    await review.close();
+  }
+});

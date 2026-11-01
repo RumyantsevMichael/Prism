@@ -389,6 +389,8 @@ async function computeAttention(projectRoot) {
           artifacts.push({ path: current, available: await isFile(projectRoot, current) });
         }
         const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, options: entry.options ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts };
+        // A question whose every attached file is gone was likely overtaken by later work, so the page says it may no longer apply.
+        if (!gate.answer && artifacts.length && artifacts.every((artifact) => !artifact.available)) gate.stale = true;
         (gate.answer ? answered : needsYou).push(gate);
       } else if (typeof entry === "string") {
         needsYou.push({ type: "pending-note", text: entry, initiative });

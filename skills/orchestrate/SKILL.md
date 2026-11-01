@@ -87,7 +87,7 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 - Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, slice, question, artifacts, and options for a decision.
 - Use `visual-review` for design gates, `decision` for choices, and `assistance` for actions the user must take.
 - After asking, call `wait_for_user_gate` once with the ids just recorded, and when it returns without an answer, end the turn.
-- Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it.
+- Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it or as soon as it no longer applies, such as when its artifacts are gone.
 
 ## 7. Finish or pause
 
