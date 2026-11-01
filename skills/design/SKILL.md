@@ -40,6 +40,7 @@ Implementers later work from its output in fresh sessions, and they are judged o
 8. In **Slices**, list each slice with its slug, title, outcome, requirement references, dependencies, frozen test files, and review recommendation.
 9. For each slice, write `slice.md` in its slice folder, the folder named by its slug in the initiative's plans folder, with the sections in the [slice example](#slice-example).
    In **Changes**, list each file you expect to add, change, or remove, starting with `add`, `change`, or `remove` and one or more comma-separated paths in backticks, then a colon, the functions, types, or modules it adds or whose interface it changes, a few words on why, and, in parentheses, the Contract clauses it serves, such as `(§1, §3)`, unless it supports every clause.
+   Include the files the project's own instructions require the change to update, such as docs, glossaries, or term lists.
 10. Write the [diagrams](#4-diagrams).
 11. Recommend review `required` for a slice when an independent implementation review pays off, such as for authentication, authorization, secrets, untrusted input, or data loss risk, and `none` otherwise.
 12. When the project keeps Gherkin feature files, use `write-feature` for the scenarios and list them as frozen tests.
@@ -93,6 +94,7 @@ Write PlantUML source only: Prism parses each `.puml` file when the design is ac
 
 1. In the scope folder, write `overview.puml`: the slices as packages, the interfaces they share, and their dependency order.
 2. In each slice folder, write `code.puml`: the units that **Changes** names and how they depend on each other.
+   A one-slice plan writes `code.puml` in the scope folder and no `overview.puml`.
 3. When a view exceeds 30 elements, split it into views a person can read.
 4. When `update_design_view` or acceptance reports a diagram problem, fix the source.
 
