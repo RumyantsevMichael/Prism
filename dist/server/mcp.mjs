@@ -148,8 +148,12 @@ function requestedTabs(argumentsValue) {
   return hasArtifact ? argumentsValue.artifact : undefined;
 }
 
-function reviewContent(url) {
-  return `Human review URL: ${url}`;
+// A session that fell back to its own review server tells the agent, so two review pages for one project reach the user as a known cause.
+function reviewContent(url, review) {
+  const fallback = review.privateServer?.();
+  return fallback
+    ? `Human review URL: ${url}\nThis session serves the project from its own review server, because the shared review app could not be reached: ${fallback.reason} Another session may show the same project at a different URL, so tell the user that this link belongs to this session.`
+    : `Human review URL: ${url}`;
 }
 
 function stateContent(result) {
@@ -212,6 +216,11 @@ function sessionConsumptionContent(summary) {
     `Source reads: ${summary.preEdit.sourceReadCount}.`,
     `Compactions before first edit: ${summary.compaction.countBeforeFirstEdit}.`
   ].join("\n");
+}
+
+function privateServerContent(review) {
+  const fallback = review.privateServer?.();
+  return fallback ? { privateServer: fallback } : {};
 }
 
 function reviewSessionContent(review) {
@@ -1082,11 +1091,11 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
       await review.setOpenTabs(tabs);
     }
     const url = await review.reviewUrl(tabs);
-    return { content: [{ type: "text", text: reviewContent(url) }], structuredContent: { url, ...await reviewSessionContent(review) } };
+    return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "present_review") {
     const opened = await review.open(requestedTabs(argumentsValue));
-    return { content: [{ type: "text", text: reviewContent(opened.url) }], structuredContent: { ...opened, ...await reviewSessionContent(review) } };
+    return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {
     const artifacts = await listArtifacts(review.projectRoot);

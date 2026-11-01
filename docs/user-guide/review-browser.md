@@ -147,6 +147,8 @@ Add `- Review browser on start: off` under `## Interaction` in `.prism/workflow.
 `Review browser: internal` also turns it off, because only the agent can open the internal browser.
 It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.
 A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
+When a session falls back on its own, its page shows a banner with the reason, and the agent's review links say that the link belongs to that session, because another session may show the same project at a different link.
+Each fallback also adds a line with the time, project, and reason to `fallbacks.log` in that state directory and to the session's error output.
 
 `prism review` opens the project in the shared review app and returns.
 It opens the system browser only when no review tab is open, and an open tab shows the project or a notice with a link to it instead.

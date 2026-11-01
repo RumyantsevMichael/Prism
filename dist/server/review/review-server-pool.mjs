@@ -2,7 +2,8 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { ConservationStore } from "../conservation/conservation-store.mjs";
 import { createReviewAppClient } from "./review-app-client.mjs";
-import { reviewAppDirectory, reviewAppDisabled } from "./review-app-discovery.mjs";
+import { pluginVersion } from "../plugin-root.mjs";
+import { recordFallback, reviewAppDirectory, reviewAppDisabled } from "./review-app-discovery.mjs";
 import { normalizeTabs, openBrowser, startReviewServer } from "./review-server.mjs";
 
 const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1000;
@@ -13,11 +14,17 @@ function tabUrl(baseUrl, tabs) {
 }
 
 // A project served by the shared review app until the app cannot be reached, then by its own session server for the rest of the session.
-async function appBackedReview(client, projectRoot, { startSession, openBrowser: browserOpener }) {
+// The fallback is recorded with its reason, and both its page and the agent's review links say that this session alone serves it.
+async function appBackedReview(client, projectRoot, { startSession, openBrowser: browserOpener, onFallback = recordFallback }) {
   let session = null;
-  const fallBack = async () => {
-    if (!session) client.release(projectRoot);
-    session ??= startSession({ projectRoot, openBrowser: browserOpener });
+  let privateServer = null;
+  const fallBack = async (error) => {
+    if (!session) {
+      client.release(projectRoot);
+      privateServer = { reason: error?.message || "The review app could not be reached." };
+      void onFallback(client.directory, { projectRoot, reason: privateServer.reason, pluginVersion: pluginVersion() });
+      session = startSession({ projectRoot, openBrowser: browserOpener, privateServer });
+    }
     return session;
   };
   async function viaApp(action, fallback) {
@@ -26,14 +33,14 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
       return await action();
     } catch (error) {
       if (error.reachable) throw error;
-      return fallback(await fallBack());
+      return fallback(await fallBack(error));
     }
   }
   try {
     await client.register(projectRoot);
   } catch (error) {
     if (error.reachable) throw error;
-    await fallBack();
+    await fallBack(error);
   }
   return {
     projectRoot,
@@ -48,6 +55,7 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
       return { url: answer.url, opened, ...answer.session };
     }, (review) => review.open(tabs)),
     viewerCount: () => session ? session.then((review) => review.viewerCount()) : 1,
+    privateServer: () => privateServer,
     heldServer: async () => session && await session,
     close: async () => session && (await session).close()
   };
@@ -57,7 +65,7 @@ export function createReviewServerPool({ start = startReviewServer, app } = {}) 
   const reviewServers = new Map();
   const taskRoots = new Map();
   const client = app ? createReviewAppClient(app) : null;
-  const startReview = client ? (options) => appBackedReview(client, options.projectRoot, { startSession: start, openBrowser: app.openBrowser ?? openBrowser }) : start;
+  const startReview = client ? (options) => appBackedReview(client, options.projectRoot, { startSession: start, openBrowser: app.openBrowser ?? openBrowser, ...(app.onFallback ? { onFallback: app.onFallback } : {}) }) : start;
 
   function refreshIdleTimeout(projectRoot, binding) {
     clearTimeout(binding.idleTimeout);

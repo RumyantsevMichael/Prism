@@ -819,6 +819,34 @@ test("a session serves its own review server when the shared app cannot start", 
   assert.equal(index.projectRoot, root);
   assert.ok(!url.pathname.includes("/p/"), "the fallback is a single-project session server");
   assert.equal((await request(new URL("api/projects", url))).status, 404, "a session server has no project list, so its page keeps a plain label");
+  assert.match(index.privateServer.reason, /not private to this user/, "the page learns that this session alone serves the project, and why");
+  assert.match(review.privateServer().reason, /not private to this user/, "the agent's review links say so too");
+});
+
+test("a fallback records why the shared app could not be reached", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "fallback-log");
+  const launch = () => spawn(process.execPath, ["-e", "process.exit(7)"], { stdio: "ignore" });
+  const review = await pool(context, { app: { directory, launch, startTimeoutMs: 1500 } }).get(root, "task");
+  const reason = review.privateServer().reason;
+  assert.match(reason, /did not start within 1\.5 seconds, and its process exited with code 7/);
+  await eventually(async () => Boolean(await readFile(path.join(directory, "fallbacks.log"), "utf8").catch(() => "")));
+  const [entry] = (await readFile(path.join(directory, "fallbacks.log"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(entry.projectRoot, root);
+  assert.equal(entry.reason, reason);
+  assert.equal(entry.pid, process.pid);
+  const index = JSON.parse((await request(new URL("api/index", await review.reviewUrl([])))).body);
+  assert.equal(index.privateServer.reason, reason);
+});
+
+test("a session on the shared app is not marked private", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "shared-not-private");
+  const review = await pool(context, { app: { directory } }).get(root, "task");
+  assert.ok(new URL(await review.reviewUrl([])).pathname.includes("/p/"));
+  assert.equal(review.privateServer(), null);
+  const index = JSON.parse((await request(new URL("api/index", await review.reviewUrl([])))).body);
+  assert.equal(index.privateServer, undefined);
 });
 
 // A standalone review whose held server, if any, closes with the test.

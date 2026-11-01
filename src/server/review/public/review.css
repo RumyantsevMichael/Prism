@@ -533,6 +533,41 @@ a {
   display: none;
 }
 
+/* A private session server is a warning, not an outage: the page works, but other sessions may show the same project elsewhere. */
+.app-gone-banner.is-private {
+  background: color-mix(in srgb, var(--warn, #b26f00) 9%, var(--surface-raised));
+  border-bottom-color: color-mix(in srgb, var(--warn, #b26f00) 30%, var(--line));
+}
+
+.app-gone-banner.is-private .app-gone-mark {
+  background: var(--warn, #b26f00);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn, #b26f00) 22%, transparent);
+}
+
+.app-gone-text .private-server-reason {
+  color: var(--ink-muted);
+  margin-top: 0.2rem;
+}
+
+.banner-dismiss {
+  background: none;
+  border: 0;
+  border-radius: 0.3rem;
+  color: var(--ink-muted);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 1.1rem;
+  line-height: 1;
+  margin-left: auto;
+  padding: 0.15rem 0.4rem;
+}
+
+.banner-dismiss:hover,
+.banner-dismiss:focus-visible {
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
 .app-gone-mark {
   background: var(--danger);
   border-radius: 50%;

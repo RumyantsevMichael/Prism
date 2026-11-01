@@ -393,7 +393,7 @@ async function readJson(request) {
 
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory] }) {
+export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null }) {
   let fingerprint = null;
   function currentFingerprint() {
     if (!fingerprint || Date.now() - fingerprint.at >= FRESHNESS_CHECK_MS) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
@@ -610,7 +610,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
-      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, sources, navigation: await loadNavigation(projectRoot), ...snapshot, missingTabs }), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, sources, navigation: await loadNavigation(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "GET") {
       send(response, 200, JSON.stringify(await currentSession()), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "PUT") {
@@ -737,7 +737,7 @@ export async function startReviewServer(options = {}) {
   });
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}${prefix}`;
-  review = createProjectReview({ projectRoot, baseUrl });
+  review = createProjectReview({ projectRoot, baseUrl, ...(options.privateServer ? { privateServer: options.privateServer } : {}) });
   return {
     baseUrl,
     projectRoot,

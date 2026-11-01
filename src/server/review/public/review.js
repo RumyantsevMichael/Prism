@@ -18,6 +18,7 @@ const appShell = document.getElementById("app-shell");
 const sidebarToggle = document.getElementById("sidebar-toggle");
 const connectionBanner = document.getElementById("connection");
 const appGoneBanner = document.getElementById("app-gone");
+const privateServerBanner = document.getElementById("private-server");
 const artifact = document.getElementById("artifact");
 const tabs = document.getElementById("tabs");
 const toast = document.getElementById("toast");
@@ -488,6 +489,14 @@ function reportRefresh(ok) {
   if (sessionStream?.readyState === EventSource.CLOSED) connectSessionEvents();
   lastSnapshot = "";
   void refreshProjects();
+}
+
+// A session that could not reach the shared app serves this page itself, so the page says why another link may show the same project.
+function showPrivateServer(privateServer) {
+  if (!privateServer) return;
+  document.getElementById("private-server-reason").textContent = privateServer.reason ? `Reason: ${privateServer.reason}` : "";
+  document.getElementById("private-server-dismiss").addEventListener("click", () => { privateServerBanner.hidden = true; }, { once: true });
+  privateServerBanner.hidden = false;
 }
 
 // Actions that need the server explain why they cannot run while the app is stopped instead of failing silently.
@@ -1172,6 +1181,7 @@ async function initialize() {
   const requestedPath = selectedPath;
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
   setProjectLabel(workspaceIdentity(data), data.projectRoot);
+  showPrivateServer(data.privateServer);
   setSidebarCollapsed(readSidebarPreference(), { remember: false });
   sidebarToggle.addEventListener("click", () => setSidebarCollapsed(!appShell.classList.contains("sidebar-collapsed")));
   tabs.addEventListener("scroll", updateTabFades, { passive: true });
