@@ -69,11 +69,17 @@ const ACTION_TITLES = { add: "A new file", change: "An existing file changes", r
 // A unit chip names where the change lands; hovering it previews those lines, and clicking opens the file there.
 function placeChips(change, ctx) {
   if (change.action === "add") return '<span class="change-where-new">new file</span>';
-  if (!change.places) return change.units.map((unit) => `<code>${escapeHtml(unit)}</code>`).join(" ");
+  // Without a published index the page says so once above the design, rather than on every card.
+  if (!change.places) return "";
   if (!change.places.length) return change.units.length ? '<span class="muted">not in the code index</span>' : '<span class="muted">the whole file</span>';
-  const label = (place) => `<code>${escapeHtml(place.unit)}</code><span class="code-span-lines">${place.startLine}–${place.endLine}</span>`;
-  if (!ctx.hasArtifact(change.path)) return change.places.map((place) => `<span class="link-chip disabled code-span-chip">${label(place)}</span>`).join(" ");
-  return change.places.map((place) => `<button type="button" class="link-chip artifact-chip code-span-chip" data-artifact="${escapeHtml(change.path)}" data-doc-anchor="L${place.startLine}-${place.endLine}" title="Open ${escapeHtml(change.path)} at line ${place.startLine}">${label(place)}</button>`).join(" ");
+  const linked = ctx.hasArtifact(change.path);
+  return change.places.map((place) => {
+    if (place.startLine === null) return `<span class="link-chip disabled code-span-chip" title="The code index has no ${escapeHtml(place.unit)} in this file, so the change adds it"><code>${escapeHtml(place.unit)}</code><span class="code-span-lines">new</span></span>`;
+    const label = `<code>${escapeHtml(place.unit)}</code><span class="code-span-lines">${place.startLine}–${place.endLine}</span>`;
+    return linked
+      ? `<button type="button" class="link-chip artifact-chip code-span-chip" data-artifact="${escapeHtml(change.path)}" data-doc-anchor="L${place.startLine}-${place.endLine}" title="Open ${escapeHtml(change.path)} at line ${place.startLine}">${label}</button>`
+      : `<span class="link-chip disabled code-span-chip">${label}</span>`;
+  }).join(" ");
 }
 
 function clauseLinks(clauses) {
@@ -160,7 +166,7 @@ function designNotices(view) {
   if (view.stale.length) notes.push(`<div class="notice"><p>The test examples describe an earlier version of this design: ${view.stale.map(escapeHtml).join(" ")}</p></div>`);
   if (view.gaps.length) notes.push(`<p><span class="status-pill is-warn">${view.gaps.length === 1 ? "1 clause without a test" : `${view.gaps.length} clauses without a test`}</span> ${view.gaps.map((number) => `<a href="#" class="clause-link" data-clause="${number}">§${number}</a>`).join(", ")}</p>`);
   if (view.changeProblems.length) notes.push(`<ul class="plain-list error">${view.changeProblems.map((problem) => `<li>${escapeHtml(problem)}</li>`).join("")}</ul>`);
-  if (!view.indexed && !view.comparison && view.changes.some((change) => change.action !== "add")) notes.push('<p class="muted">The code index is not ready yet, so the places of planned changes are not shown.</p>');
+  if (!view.indexed && !view.comparison && view.changes.some((change) => change.action !== "add")) notes.push('<p class="muted">The code index has no unit locations for this project yet, so the cards do not show the lines each change touches. Prism builds the index in the background when its server starts, and the lines appear once that build finishes.</p>');
   if (!view.examplesWritten && view.clauses.length) notes.push('<p class="muted">No test examples were written for this design, so the tests behind each clause are not shown.</p>');
   return notes.join("");
 }
@@ -241,8 +247,6 @@ export async function render(container, entity, ctx) {
   const artifacts = data.artifacts ?? { files: [] };
   // Diagrams directly in the slice folder, such as the code view, show above the document as the design's picture.
   const diagrams = artifacts.files.filter((file) => file.endsWith(".puml") && file.slice(artifacts.folder.length + 1).indexOf("/") === -1).sort((left, right) => Number(right.endsWith("/code.puml")) - Number(left.endsWith("/code.puml")) || left.localeCompare(right));
-  const known = new Set([artifacts.narrative, artifacts.changeMap, artifacts.review?.path, ...diagrams].filter(Boolean));
-  const others = artifacts.files.filter((file) => !known.has(file));
   container.innerHTML = `
     <section class="view-card summary-card">
       <div class="summary-row">
@@ -268,7 +272,7 @@ export async function render(container, entity, ctx) {
       ${reviewCard(artifacts.review, ctx)}
       ${slice.design ? "" : legacyChangeMapCard(artifacts.changeMap, ctx)}
     </div>
-    ${card("Other documents", others.length ? `<ul class="plain-list">${others.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder has no other files."), { eyebrow: plural(artifacts.files.length, "file") + " in the slice folder" })}`;
+    ${card("Slice folder", artifacts.files.length ? `<ul class="plain-list">${artifacts.files.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder is empty."), { eyebrow: `${plural(artifacts.files.length, "file")} in ${artifacts.folder}` })}`;
   bindLinks(container, ctx);
   container.addEventListener("click", (event) => {
     const link = event.target.closest("[data-clause]");

@@ -97,7 +97,9 @@ export function plannedChanges(source, contractSource = source) {
     if (tag) note = note.slice(0, tag.index).trim();
     const missing = clauses.filter((number) => number < 1 || number > clauseCount);
     if (missing.length) problems.push(`Changes line ${JSON.stringify(line)} cites ${missing.map((number) => `§${number}`).join(", ")}, which the Contract does not have.`);
-    const units = [...note.matchAll(/`([^`]+)`/g)].map((match) => match[1].trim()).filter(Boolean);
+    // The units are the code names the note starts with, such as "`get`, `put` and `List`: why"; code later in the reason is not a unit.
+    const lead = /^`[^`]+`(?:\s*(?:,\s*(?:and\s+)?|and\s+)`[^`]+`)*/.exec(note)?.[0] ?? "";
+    const units = [...lead.matchAll(/`([^`]+)`/g)].map((match) => match[1].trim()).filter(Boolean);
     for (const [, raw] of parsed[2].matchAll(/`([^`]+)`/g)) {
       const target = raw.trim();
       const normalized = path.posix.normalize(target.replaceAll("\\", "/"));
@@ -242,15 +244,16 @@ export function comparePlannedChanges(changes, concepts) {
   return rows;
 }
 
-// Where each named unit of a change lives in the published code index; a name the indexed file does not have is a problem, and an added unit has no place yet.
-function unitPlaces(index, change, problems) {
+// Where each named unit of a change lives in the published code index; an added unit has no place yet.
+function unitPlaces(index, change) {
   if (change.action === "add" || !change.units.length) return [];
   const inFile = (index.units ?? []).filter((unit) => unit.file === change.path);
   if (!inFile.length) return [];
   const places = [];
   for (const name of change.units) {
     const found = inFile.filter((unit) => unit.name === name || unit.qualifiedName === name || lastSegment(unit.qualifiedName ?? unit.name) === lastSegment(name));
-    if (!found.length) problems.push(`\`${name}\` is not a unit of ${change.path} in the code index.`);
+    // A name the index does not have is a unit the change adds to the file.
+    if (!found.length) places.push({ unit: name, kind: null, startLine: null, endLine: null });
     for (const unit of found) places.push({ unit: name, kind: unit.kind, startLine: unit.range.startLine, endLine: unit.range.endLine });
   }
   return places;
@@ -302,7 +305,7 @@ export async function loadDesignView(projectRoot, initiative, slice, { changeMap
   for (const change of planned.changes) {
     const cited = allClauses.filter((clause) => change.clauses.includes(clause.number)).flatMap((clause) => clause.examples.map((item) => ({ file: item.file, test: item.test })));
     change.tests = [...new Map(cited.map((item) => [`${item.file}\0${item.test}`, item])).values()];
-    change.places = units ? unitPlaces(units, change, changeProblems) : null;
+    change.places = units ? unitPlaces(units, change) : null;
   }
   return {
     path: design.path,

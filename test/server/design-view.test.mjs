@@ -63,7 +63,9 @@ test("a design's contract clauses and planned changes are read from slice.md", (
   // One line may name several paths; each becomes its own change with the shared note, and a line that runs on after its paths is refused.
   const listed = plannedChanges("## Changes\n- change `dist/a.mjs`, `dist/b.mjs`: regenerated output of `build`.\n");
   assert.deepEqual(listed.problems, []);
-  assert.deepEqual(listed.changes.map((change) => [change.path, change.units, change.note]), [["dist/a.mjs", ["build"], "regenerated output of `build`."], ["dist/b.mjs", ["build"], "regenerated output of `build`."]]);
+  assert.deepEqual(listed.changes.map((change) => [change.path, change.units, change.note]), [["dist/a.mjs", [], "regenerated output of `build`."], ["dist/b.mjs", [], "regenerated output of `build`."]], "code in the reason is not a unit");
+  // The units are the names the note starts with, joined by commas or "and".
+  assert.deepEqual(plannedChanges("## Changes\n- change `a.ts`: `get`, `put` and `List` take `id?: string | null`.\n").changes[0].units, ["get", "put", "List"]);
   assert.equal(plannedChanges("## Changes\n- change `a.mjs` and `b.mjs`: x\n").problems.length, 1);
 });
 
@@ -127,9 +129,10 @@ test("the design view places changed units through the code index and lists the 
   assert.deepEqual(added.places, [], "an added file has no place yet");
   assert.deepEqual(client.places, [{ unit: "get", kind: "function", startLine: 1, endLine: 1 }]);
   assert.deepEqual(client.tests.map((item) => item.test), ["download_writes_bytes"]);
-  assert.deepEqual(cli.places.map((place) => [place.unit, place.startLine, place.endLine]), [["download", 4, 9]]);
+  assert.deepEqual(cli.places.map((place) => [place.unit, place.startLine, place.endLine]), [["download", 4, 9], ["print_error", null, null]]);
   assert.deepEqual(cli.tests.map((item) => item.test), ["download_unknown_id"], "clause 3 has no example, so only clause 2's test is listed");
-  assert.deepEqual(view.changeProblems, ["`print_error` is not a unit of src/cli/report.rs in the code index."]);
+  assert.deepEqual(cli.places[1], { unit: "print_error", kind: null, startLine: null, endLine: null }, "a name the index lacks is a unit the change adds");
+  assert.deepEqual(view.changeProblems, []);
   const unindexed = await loadDesignView(root, INITIATIVE, INITIATIVE);
   assert.equal(unindexed.indexed, null);
   assert.equal(unindexed.changes[1].places, null);

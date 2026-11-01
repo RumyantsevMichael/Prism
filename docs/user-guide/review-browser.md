@@ -59,7 +59,7 @@ The board has one column per slice status, and the card of an active slice also 
 A slice whose design waits for your answer at its design gate shows as in design review until the agent accepts the design, even though its record still says not started.
 The list shows the slice tree, and the graph orders leaf slices by execution order.
 Below them, the page lists the unstarted leaves that can be designed next, leaving out those in design review.
-A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, and other files.
+A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, and every file in the slice folder.
 It is the page to read at a design gate.
 
 Every PlantUML file directly in the slice folder gets a tab above the design, with `code.puml` first when it exists.
