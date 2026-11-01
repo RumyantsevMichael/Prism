@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { execFile, spawn } from "node:child_process";
 import { access, chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
@@ -28,7 +29,7 @@ async function projectFixture(context, name, artifact) {
 }
 
 function mcpProcess(context, cwd, projectRoot, environment = {}) {
-  const env = { ...process.env, PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), ...environment };
+  const env = isolatedEnv({ PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), ...environment });
   if (projectRoot) {
     env.CLAUDE_PROJECT_DIR = projectRoot;
   } else {

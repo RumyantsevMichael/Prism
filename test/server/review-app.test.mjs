@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
@@ -561,7 +562,7 @@ test("reading the review URL without tabs leaves the session unchanged", async (
 test("an MCP server lists its project in the app from start until it exits", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "registered");
-  const env = { ...process.env, CLAUDE_PROJECT_DIR: root, PRISM_REVIEW_APP_DIR: directory, PRISM_REVIEW_BROWSER_ON_START: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
+  const env = isolatedEnv({ CLAUDE_PROJECT_DIR: root, PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) });
   delete env.PRISM_REVIEW_APP;
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
   context.after(() => child.kill());
@@ -585,7 +586,7 @@ test("an MCP server lists its project in the app from start until it exits", asy
 test("an MCP server in a host that names no project starts the app at once and lists the project from its first Prism tool call", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "codex");
-  const env = { ...process.env, PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
+  const env = isolatedEnv({ PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) });
   delete env.PRISM_REVIEW_APP;
   delete env.CLAUDE_PROJECT_DIR;
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -926,7 +927,7 @@ test("the prism review command exits after presenting through a running app", as
   const events = await viewerEvents(context, await review.reviewUrl([]));
   await eventually(() => events.some((event) => event.name === "session"));
   const before = await readDiscovery(directory);
-  const child = spawn(process.execPath, [CLI_PATH, "review"], { cwd: root, env: { ...process.env, PRISM_REVIEW_APP_DIR: directory }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [CLI_PATH, "review"], { cwd: root, env: isolatedEnv({ PRISM_REVIEW_APP_DIR: directory }), stdio: ["ignore", "pipe", "pipe"] });
   context.after(() => child.kill());
   let stdout = "";
   child.stdout.on("data", (chunk) => { stdout += chunk; });
