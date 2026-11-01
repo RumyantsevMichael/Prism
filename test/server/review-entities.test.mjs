@@ -128,7 +128,7 @@ test("serves navigation and entity views built from Prism records", async (conte
     assert.deepEqual(decisions.data.entries.map((entry) => [entry.topic, entry.status]), [["reporting", "Accepted"]]);
     const glossary = await entity("glossary");
     assert.deepEqual([glossary.data.path, glossary.data.exists], ["docs/Glossary.md", false]);
-    assert.equal((await get(`${review.baseUrl}/api/entity?ref=slice%3Areports%2Fmissing`)).status, 400);
+    assert.equal((await get(`${review.baseUrl}/api/entity?ref=slice%3Areports%2Fmissing`)).status, 404);
     assert.equal((await get(`${review.baseUrl}/api/entity?ref=docs%2Froadmap.md`)).status, 400);
   } finally {
     await review.close();

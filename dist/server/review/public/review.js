@@ -7,6 +7,7 @@ import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurren
 import { createLinkPreview } from "./views/preview.js";
 import { createIndexingStatus } from "./views/indexing.js";
 import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connection.js";
+import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-tab.js";
 
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
@@ -55,6 +56,8 @@ let pendingAnchor = null;
 let pendingFind = null;
 let toastTimer;
 let availableArtifacts = new Set();
+// Open tabs whose file was moved or deleted, or whose entity no longer resolves, as the server's snapshot reports them.
+let missingTabs = new Set();
 let navigation = { attention: {}, glossary: {}, diagnostics: [], index: [] };
 let currentContext = null;
 let contextSnapshot = "";
@@ -109,15 +112,16 @@ function renderTabs() {
   for (const path of openTabs) {
     const isPreview = path === previewTab;
     const isAgent = agentTabs.includes(path);
+    const isMissing = missingTabs.has(path);
     const tab = document.createElement("div");
-    tab.className = `artifact-tab${isPreview ? " is-preview" : ""}${isAgent ? " is-agent" : ""}`;
+    tab.className = `artifact-tab${isPreview ? " is-preview" : ""}${isAgent ? " is-agent" : ""}${isMissing ? " is-missing" : ""}`;
     tab.setAttribute("role", "presentation");
     const select = document.createElement("button");
     select.className = "artifact-tab-select";
     select.type = "button";
     select.setAttribute("role", "tab");
     select.setAttribute("aria-selected", String(path === selectedPath));
-    select.title = [path, isPreview ? "Preview tab: the next link replaces it. Double-click to keep it open." : "", isAgent ? "Presented by the agent." : ""].filter(Boolean).join("\n");
+    select.title = [isMissing ? missingNotice(path, { entity: Boolean(parseEntityRef(path)), label: tabLabel(path) }).tooltip : path, isPreview ? "Preview tab: the next link replaces it. Double-click to keep it open." : "", isAgent ? "Presented by the agent." : ""].filter(Boolean).join("\n");
     if (isAgent) {
       const mark = document.createElement("span");
       mark.className = "agent-mark";
@@ -128,6 +132,7 @@ function renderTabs() {
     label.className = "tab-label";
     label.textContent = tabLabel(path);
     select.appendChild(label);
+    if (isMissing) select.appendChild(element("span", "sr-only", ", no longer exists"));
     select.addEventListener("click", () => openRef(path));
     select.addEventListener("dblclick", () => keepTab(path));
     tab.appendChild(select);
@@ -933,8 +938,31 @@ function endRebuild(memory) {
   });
 }
 
+// A tab whose file or entity is gone shows a short page with a button that closes it; the next refresh restores a target that comes back.
+function showMissing(path) {
+  if (!missingTabs.has(path)) {
+    missingTabs.add(path);
+    renderTabs();
+  }
+  if (lastSnapshot === `missing:${path}` || path !== selectedPath) return;
+  lastSnapshot = `missing:${path}`;
+  renderedPath = null;
+  document.body.classList.remove("has-maximized");
+  renderMissing(artifact, path, { entity: Boolean(parseEntityRef(path)), label: tabLabel(path), onClose: () => closeTab(path) });
+}
+
+function updateMissingTabs(reported) {
+  const { next, changed } = nextMissingTabs(missingTabs, reported);
+  missingTabs = next;
+  if (changed) renderTabs();
+}
+
 async function showEntity(path) {
   const response = await fetch(`./api/entity?ref=${encodeURIComponent(path)}`, { cache: "no-store" });
+  if (response.status === 404) {
+    showMissing(path);
+    return;
+  }
   if (!response.ok) {
     artifact.innerHTML = `<div class="document-card"><p class="error">${escapeHtml(await response.text())}</p></div>`;
     return;
@@ -985,6 +1013,10 @@ async function showArtifact(path) {
     return;
   }
   const response = await fetch(`./api/artifact?path=${encodeURIComponent(path)}`, { cache: "no-store" });
+  if (response.status === 404) {
+    showMissing(path);
+    return;
+  }
   if (!response.ok) {
     artifact.innerHTML = `<div class="document-card"><p class="error">${escapeHtml(await response.text())}</p></div>`;
     return;
@@ -1172,6 +1204,7 @@ async function initialize() {
     fetchJson
   });
   availableArtifacts = new Set([...data.artifacts, ...(data.sources ?? [])]);
+  missingTabs = new Set(data.missingTabs ?? []);
   navigation = data.navigation;
   palette = createPalette({
     dialog: document.getElementById("palette"),
@@ -1264,6 +1297,7 @@ async function initialize() {
       if (refreshed?.ok) {
         const snapshot = await refreshed.json();
         availableArtifacts = new Set([...snapshot.artifacts, ...(snapshot.sources ?? [])]);
+        updateMissingTabs(snapshot.missingTabs);
         if (JSON.stringify(snapshot.navigation) !== JSON.stringify(navigation)) {
           navigation = snapshot.navigation;
           renderNavigation();

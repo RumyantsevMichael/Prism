@@ -335,6 +335,28 @@ export function openBrowser(url) {
   }
 }
 
+/** The open tabs whose file the review no longer lists, or whose entity no longer resolves, in tab order. */
+export async function findMissingTabs(tabs, available, entityResolves) {
+  const missing = [];
+  for (const tab of tabs) {
+    if (parseEntityRef(tab) ? !(await entityResolves(tab)) : !available.has(tab)) missing.push(tab);
+  }
+  return missing;
+}
+
+/** Each tab on a record that Prism moved from a legacy location, mapped to the record's current path by the record store's own mapping. */
+export async function movedRecordTabs(projectRoot, tabs, available) {
+  const moves = new Map();
+  for (const tab of tabs) {
+    if (available.has(tab) || parseEntityRef(tab)) continue;
+    const key = await keyOfPath(projectRoot, tab).catch(() => null);
+    if (!key || key.kind === "runs") continue;
+    const target = recordPath(key);
+    if (target !== tab && available.has(target)) moves.set(tab, target);
+  }
+  return moves;
+}
+
 export function normalizeTabs(value) {
   if (value === undefined) {
     return [];
@@ -451,13 +473,31 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     onViewer?.((event, data) => writeEvent(response, event, data));
   }
 
-  async function assertAvailable(tabs) {
-    const availableArtifacts = new Set([...await listArtifacts(projectRoot), ...await listSourceFiles(projectRoot)]);
+  async function reviewableFiles() {
+    return new Set([...await listArtifacts(projectRoot), ...await listSourceFiles(projectRoot)]);
+  }
+
+  async function assertAvailable(tabs, availableArtifacts) {
     for (const tab of tabs) {
       if (!availableArtifacts.has(tab) && !(parseEntityRef(tab) && await entityExists(projectRoot, tab))) {
         throw new Error(`The artifact is not available for review: ${tab}`);
       }
     }
+  }
+
+  // A tab on a record that Prism moved out of its legacy location follows the record to where it now lives.
+  async function followMovedRecords(available) {
+    const moves = await movedRecordTabs(projectRoot, session.openTabs, available);
+    if (!moves.size) return sessionSnapshot();
+    const follow = (tab) => moves.get(tab) ?? tab;
+    const agentTabs = [...new Set(session.agentTabs.map(follow))];
+    const previewTab = session.previewTab && follow(session.previewTab);
+    return commitSession({ openTabs: [...new Set(session.openTabs.map(follow))], activeTab: session.activeTab && follow(session.activeTab), previewTab: agentTabs.includes(previewTab) ? null : previewTab, agentTabs });
+  }
+
+  // Reading the session first lets moved records' tabs follow them, so every reader sees the records where they now live.
+  async function currentSession() {
+    return followMovedRecords(await reviewableFiles());
   }
 
   function commitSession(next) {
@@ -471,9 +511,18 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // The browser owns the preview tab: one replaceable tab for browsing, while kept and agent tabs stay open.
-  async function updateSession(body) {
-    const requestedTabs = normalizeTabs(body.openTabs);
-    await assertAvailable(requestedTabs);
+  async function updateSession(request) {
+    const available = await reviewableFiles();
+    await followMovedRecords(available);
+    // A page that has not yet seen a record move still names its old path, which follows the record the same way.
+    const moves = await movedRecordTabs(projectRoot, normalizeTabs(request.openTabs), available);
+    const follow = (tab) => typeof tab === "string" ? moves.get(tab) ?? tab : tab;
+    const body = { ...request, openTabs: [...new Set(normalizeTabs(request.openTabs).map(follow))] };
+    for (const key of ["activeTab", "previewTab"]) if (Object.hasOwn(request, key)) body[key] = follow(request[key]);
+    if (Object.hasOwn(request, "agentTabs")) body.agentTabs = [...new Set(normalizeTabs(request.agentTabs).map(follow))];
+    const requestedTabs = body.openTabs;
+    // A tab that is already open may name a file that is gone, so the page can keep it open and offer to close it.
+    await assertAvailable(requestedTabs.filter((tab) => !session.openTabs.includes(tab)), available);
     let nextActiveTab;
     if (Object.hasOwn(body, "activeTab")) {
       if (body.activeTab !== null && (typeof body.activeTab !== "string" || !requestedTabs.includes(body.activeTab))) {
@@ -512,7 +561,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // present_review adds agent tabs beside the human's tabs and focuses the first one without replacing the preview.
   async function presentTabs(tabs) {
     const requestedTabs = normalizeTabs(tabs);
-    await assertAvailable(requestedTabs);
+    const available = await reviewableFiles();
+    await assertAvailable(requestedTabs, available);
+    await followMovedRecords(available);
     if (requestedTabs.length === 0) {
       if (session.openTabs.includes("attention")) {
         return commitSession({ ...session, activeTab: "attention" });
@@ -555,9 +606,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/events" && request.method === "GET") {
       openViewerStream(response);
     } else if (route === "/api/index") {
-      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts: await listArtifacts(projectRoot), sources: await listSourceFiles(projectRoot), navigation: await loadNavigation(projectRoot), ...sessionSnapshot() }), "application/json; charset=utf-8");
+      const artifacts = await listArtifacts(projectRoot), sources = await listSourceFiles(projectRoot);
+      const available = new Set([...artifacts, ...sources]);
+      const snapshot = await followMovedRecords(available);
+      const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
+      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, sources, navigation: await loadNavigation(projectRoot), ...snapshot, missingTabs }), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "GET") {
-      send(response, 200, JSON.stringify(sessionSnapshot()), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await currentSession()), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "PUT") {
       const body = await readJson(request);
       send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
@@ -578,7 +633,12 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/context") {
       send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
     } else if (route === "/api/entity") {
-      send(response, 200, JSON.stringify(await loadEntity(projectRoot, url.searchParams.get("ref"), { intelligenceDirectories: intelligenceDirectories() })), "application/json; charset=utf-8");
+      const ref = url.searchParams.get("ref");
+      if (["initiative", "slice"].includes(parseEntityRef(ref)?.kind) && !(await entityExists(projectRoot, ref))) {
+        send(response, 404, "The item no longer exists in this project.");
+        return;
+      }
+      send(response, 200, JSON.stringify(await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() })), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
     } else if (route === "/api/indexing" && request.method === "GET") {
@@ -588,12 +648,24 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/artifact") {
       const artifactPath = url.searchParams.get("path");
       // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.
-      await resolveProjectFile(projectRoot, artifactPath);
+      // A path that leaves the project still fails here, while a moved or deleted file answers 404 below.
+      await resolveProjectFile(projectRoot, artifactPath).catch((error) => {
+        if (error.code !== "ENOENT") throw error;
+      });
       if (!(await listArtifacts(projectRoot)).includes(artifactPath) && !(await listSourceFiles(projectRoot)).includes(artifactPath)) {
         send(response, 404, "The file is not available for review.");
         return;
       }
-      send(response, 200, JSON.stringify(await loadArtifact(projectRoot, artifactPath)), "application/json; charset=utf-8");
+      let loaded;
+      try {
+        loaded = await loadArtifact(projectRoot, artifactPath);
+      } catch (error) {
+        // A file deleted after the listing above answers the same as an unlisted one.
+        if (error.code !== "ENOENT") throw error;
+        send(response, 404, "The file is not available for review.");
+        return;
+      }
+      send(response, 200, JSON.stringify(loaded), "application/json; charset=utf-8");
     } else {
       send(response, 404, "Not found");
     }
@@ -609,6 +681,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     getSession() {
       return sessionSnapshot();
     },
+    currentSession,
     viewerCount() {
       return viewers.size;
     },

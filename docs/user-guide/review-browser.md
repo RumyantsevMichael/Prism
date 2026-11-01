@@ -32,6 +32,9 @@ Press `[` or the sidebar toggle to collapse the sidebar to an icon rail that kee
 A link opens in the preview tab, which the next link replaces.
 Ctrl-click or Cmd-click a link, double-click its tab, or choose Keep on the tab to keep it open.
 Tabs that an agent presents stay open until you close them.
+A tab whose file was moved or deleted, or whose initiative or slice no longer exists, is dimmed and struck through, and opening it offers to close it.
+The tab returns to normal on its own when the file comes back, for example after a checkout.
+When Prism moves a record from its legacy location into `.prism/`, a tab on that record follows it to the new path.
 
 A banner appears when the review server stops responding, and it clears when the connection returns.
 When the server stays silent for about 15 seconds, the banner says that the review app stopped and the page is no longer live, and actions that need the server say so instead of failing silently.

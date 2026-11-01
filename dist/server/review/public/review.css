@@ -3998,6 +3998,69 @@ th {
   outline: 0;
 }
 
+/* Missing tabs: the file was moved or deleted, or the entity no longer resolves, so the tab is dimmed until its target returns. */
+
+.artifact-tab.is-missing .artifact-tab-select {
+  color: #77729a;
+}
+
+.artifact-tab.is-missing .artifact-tab-select[aria-selected="true"] {
+  color: #aaa5c8;
+}
+
+.artifact-tab.is-missing .tab-label {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, currentColor 60%, transparent);
+}
+
+.missing-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  box-shadow: var(--shadow-soft);
+  margin: 12vh auto 0;
+  max-width: 34rem;
+  padding: 3rem clamp(1.25rem, 5vw, 3.5rem);
+  text-align: center;
+}
+
+.missing-card .eyebrow {
+  color: var(--ink-muted);
+  margin-top: 1rem;
+}
+
+.missing-card h1 {
+  font-size: 1.6rem;
+  margin: 0.2rem 0 0.8rem;
+}
+
+.missing-mark {
+  border: 2px dashed var(--line-strong);
+  border-radius: 0.7rem;
+  display: inline-block;
+  height: 2.6rem;
+  margin: 0.5rem;
+  transform: rotate(45deg);
+  width: 2.6rem;
+}
+
+.missing-path {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  margin: 0 auto 0.9rem;
+  overflow-wrap: anywhere;
+  padding: 0.45rem 0.7rem;
+}
+
+.missing-detail {
+  color: var(--ink-muted);
+  font-size: 0.86rem;
+  margin: 0 0 1.4rem;
+}
+
 /* Breadcrumbs */
 
 .breadcrumbs {
