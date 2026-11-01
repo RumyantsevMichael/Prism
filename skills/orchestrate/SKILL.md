@@ -1,7 +1,6 @@
 ---
 name: orchestrate
-description: "Run or resume an initiative: design one contract per scope, gate it, start each planned slice, implement and verify it in a fresh session, review it only when marked, and keep the user's gates."
-disable-model-invocation: true
+description: "Run or resume an initiative: design one contract per scope, gate it, start each planned slice, implement and verify it in a fresh session, review it only when marked, and keep the user's gates. Use only when the user or a coordinating agent asks to run or resume a named initiative, issue, or idea through Prism."
 argument-hint: '[initiative]'
 sdm: "0.3"
 ---
@@ -39,7 +38,7 @@ A stored value stays authoritative on resume, and `agentFlow` is fixed once work
 ## 2. Start
 
 1. Read `.prism/workflow.md`, the settings, and the pending user gates, and act on every recorded answer.
-2. When the initiative has no Approved requirements or no roadmap entry, run `ideate`.
+2. When the initiative has no Approved requirements or no roadmap entry, run `triage` in a fresh child agent for a reported defect, and `ideate` for new intent or when triage returns `NOT_A_DEFECT`.
 3. Read the initiative record with `get_initiative`.
 4. When the record does not exist, call `update_initiative` with `expectedRevision: null` and a `create` operation for the root slice with its slug, title, outcome, and every Approved requirement of the initiative.
 
@@ -47,7 +46,7 @@ A stored value stays authoritative on resume, and `agentFlow` is fixed once work
 
 A scope is the root slice, or a part that a split design created; design it when its dependencies are done.
 
-1. Run `design` for the scope in a fresh child agent, passing its slug and folder.
+1. Run `design` for the scope in a fresh child agent, passing its slug, its folder, and any reproduction that triage returned.
 2. When design returns `PROPOSED`, read the proposal with `get_initiative`.
 3. When autonomy requires the design gate, or the proposal splits the scope with `user_gate` evidence, ask the gate with the scope's `slice.md`, its diagrams, and the frozen tests as artifacts, offering to mark slices for review; for a fit design, first write the design view through the [example writer](references/example-writer.md) in a fresh child agent with the `examples` model.
 4. When the user asks for changes, return the note to design and repeat from step 2.

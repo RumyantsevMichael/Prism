@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const productiveSkills = [
-  "design", "ideate", "implement", "orchestrate", "refactor", "review",
+  "design", "ideate", "implement", "orchestrate", "refactor", "review", "triage",
   "workflow-init", "workflow", "write-adr", "write-contracts", "write-feature",
   "write-requirements", "write-step-definitions", "write-user-docs"
 ];

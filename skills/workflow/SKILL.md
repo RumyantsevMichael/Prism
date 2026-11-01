@@ -16,6 +16,7 @@ sdm: "0.3"
 | --- | --- |
 | Configure a project | `workflow-init` |
 | Approve product intent and add it to the roadmap | `ideate`, using `write-requirements` |
+| Trace a reported defect to the requirement it breaks | `triage` |
 | Run an initiative | `orchestrate` |
 | Design a contract | `design` |
 | Implement a planned slice | `implement` |
@@ -60,6 +61,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Split evidence | What Prism requires before a scope splits into parts that get their own contracts: `contract_size`, contract files estimated above the token budget that one implementer reads; `unfrozen`, an Unprobed assumption that one part settles; or `user_gate`, a gate where the person asked for the split. A split into a contract's slice plan needs none. |
 | `slice.md` | A design document in a slice folder: for a contract scope, the contract, assumptions, and slice plan, or the interfaces between parts after a split; for a planned slice, its changes. |
 | Approved requirement | An accepted product or system obligation. |
+| Defect | Reported behavior that contradicts an Approved requirement; `triage` reproduces it and links that requirement, so the fix needs no new requirement. |
 | Requirement assignment | Approved requirement references whose coverage is preserved through each split. |
 | Effective dependencies | A leaf's own dependencies plus the dependencies inherited from its ancestors. |
 | Starting surface | The command, route, public function, event, job, or user action where a slice enters the system. |

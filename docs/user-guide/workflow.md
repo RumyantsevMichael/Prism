@@ -8,6 +8,7 @@ Each slice is designed when it is next, implemented in fresh agent sessions agai
 | Stage | Skill | Result |
 |---|---|---|
 | Shape | `prism:ideate` | Approved EARS requirement files and a roadmap entry, or a decision to stop |
+| Triage a bug | `prism:triage` | A reproduction and the Approved requirements it breaks, with a roadmap entry, or a hand-off to ideate |
 | Run an initiative | `prism:orchestrate` | One root slice, then each slice in turn |
 | Design | `prism:design` | A frozen contract, probed assumptions, and failing acceptance tests, or a split into child slices |
 | Implement | `prism:implement` | Working code for one step of a designed slice, committed |

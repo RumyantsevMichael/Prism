@@ -1,9 +1,8 @@
 ---
 name: ideate
-description: "Shape a raw idea into Approved EARS requirements and a roadmap entry before design."
+description: "Shape a raw idea into Approved EARS requirements and a roadmap entry before design. Use when the user brings a new capability idea, or orchestration or triage finds behavior that no Approved requirement covers; not for a defect against an existing requirement."
 argument-hint: '[idea]'
 sdm: "0.3"
-disable-model-invocation: true
 ---
 
 # Shape product intent

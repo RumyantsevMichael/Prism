@@ -647,7 +647,7 @@ const tools = [
   },
   {
     name: "update_coordination_state",
-    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision.",
+    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision; an update that only resolves gates by id goes through after other changes, such as the browser answer that prompted it.",
     inputSchema: {
       type: "object",
       properties: {

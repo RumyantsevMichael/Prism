@@ -549,9 +549,15 @@ export async function updateCoordinationState({ projectRoot, initiative, expecte
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => applyStateChange(resolved, expectedRevision, changes), error, { renew: Boolean(changes.activeOperations?.length) }));
 }
 
+// Resolving a gate by its id removes only that gate, so it holds after any other change, such as the browser answer that prompted it.
+function resolvesGatesOnly(changes) {
+  const keys = Object.keys(changes ?? {});
+  return keys.length === 1 && keys[0] === "gateOperations" && changes.gateOperations.length > 0 && changes.gateOperations.every((operation) => operation?.op === "resolve");
+}
+
 async function applyStateChange(resolved, expectedRevision, changes) {
     const current = await loadState(resolved.path);
-    if (current.revision !== expectedRevision) {
+    if (current.revision !== expectedRevision && !(current.exists && resolvesGatesOnly(changes))) {
       throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });
     }
     if (current.exists && !current.valid) {

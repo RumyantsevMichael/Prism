@@ -227,4 +227,12 @@ test("records one browser answer per gate and keeps agents from forging answers"
   const resolved = await updateCoordinationState({ ...fixture, expectedRevision: kept.revision, changes: { gateOperations: [{ op: "resolve", id: decision }] } });
   assert.equal(resolved.state.pending.some((gate) => gate.id === decision), false);
   assert.equal((await answerUserGate({ ...fixture, id: decision, choice: "sqlite" }).catch(error => error)).code, "unknown_gate");
+  // A browser answer changes the revision, and resolving a gate by its id still goes through.
+  const asked = await updateCoordinationState({ ...fixture, expectedRevision: resolved.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question: "Which cache?", artifacts: [], options: [{ id: "none", label: "None" }, { id: "lru", label: "LRU" }] }] } });
+  const cache = asked.openedGates[0].id;
+  await answerUserGate({ ...fixture, id: cache, choice: "lru" });
+  const late = await updateCoordinationState({ ...fixture, expectedRevision: asked.revision, changes: { gateOperations: [{ op: "resolve", id: cache }] } });
+  assert.equal(late.state.pending.some((gate) => gate.id === cache), false);
+  const stale = await updateCoordinationState({ ...fixture, expectedRevision: asked.revision, changes: { next: ["Anything else"] } }).catch(error => error);
+  assert.equal(stale.code, "revision_conflict", "any other change still needs the current revision");
 });
