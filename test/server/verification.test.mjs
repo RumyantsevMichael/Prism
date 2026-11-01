@@ -238,6 +238,41 @@ test("a slice whose design requires review completes on a review of its verified
   assert.equal((await checkSliceGate({ projectRoot: root, initiative: INITIATIVE, slice: "audit", gate: "completion" })).problems[0].code, "verification_missing");
 });
 
+test("a review stops for the user after two waves with findings, and a finding the contract causes goes back to design", async (context) => {
+  const root = await project(context);
+  await accept(root, "download", "required");
+  const slice = { projectRoot: root, initiative: INITIATIVE, slice: "download" };
+  const review = async (actor, operations, extra = {}) => updateReview({ ...slice, expectedRevision: (await getReview(slice)).revision, actor, operations, ...extra });
+  const coordinator = { id: "orchestrator", role: "coordinator" }, delivery = { id: "Develop download", role: "delivery" };
+  const lanes = (wave) => [{ id: "correctness", reviewer: `Review ${wave}`, coverage: ["."] }];
+  const reviewer = (wave) => ({ id: `Review ${wave}`, role: "reviewer" });
+  assert.equal((await verifySlice({ ...slice, approvalGate: await approve(root) })).status, "passed");
+  const round = async (wave, extra = {}) => {
+    await review(coordinator, [{ op: "start_wave", id: wave, mode: "implementation-review", lanes: lanes(wave), ...extra }], wave === "w1" ? { delivery: "Develop download" } : {});
+    await review(reviewer(wave), [{ op: "open_finding", lane: "correctness", localId: "F", title: `Edge case ${wave}`, severity: "high", affectedPath: "source.mjs", evidence: "Wrong.", conditionToClose: "Right." }, { op: "submit_lane", lane: "correctness", status: "FINDINGS" }]);
+    await review(delivery, [{ op: "set_finding_status", id: "implementation-review/correctness/F", status: "FIXED", evidence: "Fixed." }].filter(() => wave === "w1"));
+  };
+  await round("w1");
+  await review(coordinator, [{ op: "start_wave", id: "w2", mode: "implementation-review", lanes: lanes("w2") }]);
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w3", mode: "implementation-review", lanes: lanes("w3") }]), (error) => error.code === "gate_blocked" && /2 review waves since its design was accepted/.test(error.message));
+  const ask = async () => {
+    const current = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
+    const before = new Set((current.state?.pending ?? []).map((gate) => gate.id));
+    await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", slice: "download", question: "Keep reviewing?", options: [{ id: "continue", label: "Continue" }, { id: "redesign", label: "Back to design" }] }] } });
+    return (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state.pending.find((gate) => !before.has(gate.id)).id;
+  };
+  const first = await ask();
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w3", mode: "implementation-review", lanes: lanes("w3"), afterGate: first }]), /that the user answered/, "an unanswered gate does not let the loop go on");
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: first, choice: "continue" });
+  await review(coordinator, [{ op: "start_wave", id: "w3", mode: "implementation-review", lanes: lanes("w3"), afterGate: first }]);
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w4", mode: "implementation-review", lanes: lanes("w4"), afterGate: first }]), /its own answered decision gate/);
+  await review(reviewer("w3"), [{ op: "open_finding", lane: "correctness", localId: "C6", title: "Clause 6 drops attributed files", severity: "high", affectedPath: "source.mjs", evidence: "Any code meeting clause 6 misses this case.", conditionToClose: "The contract handles attributed files.", clause: "Contract 6" }]);
+  const second = await ask();
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: second, choice: "continue" });
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w4", mode: "implementation-review", lanes: lanes("w4"), afterGate: second }]), (error) => error.code === "gate_blocked" && /name contract clauses \(Contract 6\)/.test(error.message) && /contractDefects/.test(error.message));
+  assert.equal((await getReview(slice)).entries.find((item) => item.localId === "C6").clause, "Contract 6");
+});
+
 const exists = (file) => readFile(file).then(() => true, () => false);
 
 test("frozen tests of slices that have not started are staged and go in place when each slice starts", async (context) => {

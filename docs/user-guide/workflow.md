@@ -61,6 +61,8 @@ The command runs with your shell in the project root and the environment of the 
 Prism refuses to run when a frozen acceptance test changed after the design was accepted.
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
 When the design requires review, an independent reviewer also reviews the verified result, and a later change needs a new run and a new review.
+A finding that a contract clause itself causes sends the slice back to design instead of into another fix.
+After two review waves for one accepted design, Prism asks you whether to continue the review, return the slice to design, or narrow it before each further wave.
 The slice page in the review browser shows the latest run with its command, exit code, and output tail, and a failed run also names the failing tests that Prism found anywhere in the output.
 Verification runs need a git work tree, and `PRISM_VERIFY_TIMEOUT_MINUTES` changes the 30-minute default timeout.
 

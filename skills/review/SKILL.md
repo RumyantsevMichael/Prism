@@ -30,7 +30,7 @@ It reviews the result that the slice's last passing verification run tested.
 
 ## 3. Record
 
-1. For each defect, call `update_review` with an `open_finding` operation that names the lane, a local identifier, the title, severity, affected path, evidence, and a condition to close that you can check.
+1. For each defect, call `update_review` with an `open_finding` operation that names the lane, a local identifier, the title, severity, affected path, evidence, and a condition to close that you can check, and, when code that meets a contract clause would still have the defect, that clause as `clause`, such as `Contract 6`.
 2. For each `FIXED` finding, check its implementer evidence and the code:
    - When the condition to close holds, set it `VERIFIED`.
    - Otherwise set it `REOPENED` with the remaining failure.

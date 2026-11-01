@@ -7,6 +7,7 @@ import { resolveArtifactPath, readChangeMapDocument } from "../conservation/chan
 import { locateRecord, moveLegacyRecords, sameRecord, sliceDocumentFolder, writeRecord } from "../workflow/record-store.mjs";
 import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { acceptedDesign, latestVerification } from "../workflow/slice-design.mjs";
+import { readCoordinationState } from "../workflow/state.mjs";
 import { conservationStore, canonical, digest, conservationError, withinScope } from "../conservation/conservation-store.mjs";
 import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "../conservation/conservation-analysis.mjs";
 import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "../conservation/conservation-schema.mjs";
@@ -24,9 +25,9 @@ const assessmentSchema = { oneOf: [
 ] };
 const GET_REVIEW_SCHEMA = obj({ ...common, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, section: { enum: ["findings", "waves", "assessments", "conflicts", "legacy", "history"] } }, ["projectRoot", "initiative", "slice"]);
 const UPDATE_REVIEW_SCHEMA = obj({ ...common, delivery: str, actor: obj({ id: str, role: { enum: ["coordinator", "delivery", "reviewer"] } }), operations: arr({ oneOf: [
-  obj({ op: { const: "start_wave" }, id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, snapshotId: hashField, comparisonId: hashField, base: str, lanes: arr(laneSchema) }, ["op", "id", "mode", "lanes"]),
+  obj({ op: { const: "start_wave" }, id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, snapshotId: hashField, comparisonId: hashField, base: str, lanes: arr(laneSchema), afterGate: str }, ["op", "id", "mode", "lanes"]),
   obj({ op: { const: "assign_delivery" }, worker: str }),
-  obj({ op: { const: "open_finding" }, lane: str, localId: str, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str }, ["op", "lane", "localId", "title", "severity", "affectedPath", "evidence", "conditionToClose"]),
+  obj({ op: { const: "open_finding" }, lane: str, localId: str, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, clause: str }, ["op", "lane", "localId", "title", "severity", "affectedPath", "evidence", "conditionToClose"]),
   obj({ op: { const: "set_finding_status" }, id: str, status: { enum: ["IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, evidence: str }),
   obj({ op: { const: "record_assessment" }, assessment: assessmentSchema }),
   obj({ op: { const: "accept_assessment" }, id: str }),
@@ -42,6 +43,22 @@ const UPDATE_REVIEW_SCHEMA = obj({ ...common, delivery: str, actor: obj({ id: st
 ] }) }, ["projectRoot", "initiative", "slice", "expectedRevision", "actor", "operations"]);
 const CHECK_REVIEW_GATE_SCHEMA = obj({ ...sliceIdentity, expectedRevision: hashField, gate: { enum: ["implementation", "completion"] } }, ["projectRoot", "initiative", "slice", "gate"]);
 const lastWave = (review) => review.waves.at(-1);
+const FREE_REVIEW_WAVES = 2;
+async function assertReviewMayContinue(input, review, next, acceptedAt) {
+  const fromContract = review.findings.filter((item) => item.mode === "implementation-review" && item.clause && item.status !== "VERIFIED" && (item.history[0]?.at ?? "") >= acceptedAt);
+  if (fromContract.length) {
+    const clauses = [...new Set(fromContract.map((item) => item.clause))].join(", ");
+    throw conservationError("gate_blocked", `Findings ${fromContract.map((item) => item.id).join(", ")} name contract clauses (${clauses}), so the contract needs revision: call verify_slice with contractDefects for those clauses and return the slice to design instead of starting another wave.`, { problems: fromContract.map((item) => ({ code: "contract_defect_found", finding: item.id, clause: item.clause })) });
+  }
+  const waves = review.waves.filter((item) => item.mode === "implementation-review" && (item.startedAt ?? acceptedAt) >= acceptedAt);
+  if (waves.length < FREE_REVIEW_WAVES) return;
+  if (!next.afterGate) throw conservationError("gate_blocked", `The slice had ${waves.length} review waves since its design was accepted. Ask the user a decision gate for this slice whether to continue the review, return the slice to design, or narrow it, and pass the answered gate's id as afterGate.`, { problems: [{ code: "review_loop_limit", waves: waves.length }] });
+  if (review.waves.some((item) => item.afterGate === next.afterGate)) throw conservationError("gate_blocked", "Each further review wave needs its own answered decision gate.");
+  const state = (await readCoordinationState({ projectRoot: input.projectRoot, initiative: input.initiative })).state;
+  const gate = [...state?.pending ?? [], ...state?.closed ?? []].find((item) => item.id === next.afterGate);
+  const asked = gate?.askedAt ?? "", lastStart = waves.at(-1)?.startedAt ?? acceptedAt;
+  if (!gate || gate.kind !== "decision" || gate.slice !== input.slice || !(gate.answer || gate.closedAt) || asked < lastStart) throw conservationError("gate_blocked", `afterGate must name a decision gate for slice ${input.slice} that was asked after the last review wave started and that the user answered.`);
+}
 const laneOf = (wave, lane) => {
   const value = wave.lanes.find((item) => item.id === lane);
   if (!value) throw conservationError("validation_failed", "The review lane is not assigned.");
@@ -88,10 +105,12 @@ const recordSchema = obj({
     comparisonId: hashField,
     tree: str,
     base: str,
+    startedAt: str,
+    afterGate: str,
     lanes: arr(obj({ ...laneSchema.properties, result: obj({ status: { enum: ["CLEAN", "FINDINGS"] }, digest: hashField, reviewer: str }) }, ["id", "reviewer", "coverage"])),
     accepted: obj({ evidenceDigest: hashField, actor: str, at: str })
   }, ["id", "mode", "lanes"]), 1e3),
-  findings: arr(obj({ id: str, localId: str, lane: str, mode: { enum: ["design-audit", "implementation-review"] }, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, implementerEvidence: { type: "string" }, history: arr(obj({ actor: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, wave: str, at: str, evidence: str }), 1e4) }, ["id", "localId", "lane", "mode", "title", "severity", "affectedPath", "evidence", "conditionToClose", "aliases", "escalationTarget", "status", "implementerEvidence", "history"]), 1e4),
+  findings: arr(obj({ id: str, localId: str, lane: str, mode: { enum: ["design-audit", "implementation-review"] }, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, clause: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, implementerEvidence: { type: "string" }, history: arr(obj({ actor: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, wave: str, at: str, evidence: str }), 1e4) }, ["id", "localId", "lane", "mode", "title", "severity", "affectedPath", "evidence", "conditionToClose", "aliases", "escalationTarget", "status", "implementerEvidence", "history"]), 1e4),
   assessments: arr({ oneOf: assessmentSchema.oneOf.map((schema) => obj({ ...schema.properties, wave: str, author: str, acceptedBy: str }, [...schema.required, "wave", "author"])) }, 1e4),
   conflicts: arr(obj({ id: str, wave: str, lanes: arr(str), reason: str, resolved: obj({ actor: str, reason: str }) }, ["id", "wave", "lanes", "reason"]), 1e4),
   exchangeWorkers: arr(str, 1e4),
@@ -464,18 +483,21 @@ async function updateReview(input) {
           if (review.waves.some((item) => item.id === next.id) || !next.lanes.length || new Set(next.lanes.map((lane) => lane.id)).size !== next.lanes.length || next.lanes.some((lane) => !lane.coverage.length || lane.reviewer === review.coordinator || review.deliveryWorkers.includes(lane.reviewer))) throw conservationError("validation_failed", "Assign distinct review lanes and independent reviewers.");
           const requiredLanes = review.waves.filter((item) => item.mode === next.mode).flatMap((item) => item.lanes.map((lane) => lane.id));
           if (requiredLanes.some((id) => !next.lanes.some((lane) => lane.id === id))) throw conservationError("gate_blocked", "A correction wave must retain every required lane from earlier waves in this review mode.");
+          const design = await acceptedDesign(input.projectRoot, input.initiative, input.slice);
+          if (next.mode === "implementation-review" && design?.acceptedAt) await assertReviewMayContinue(input, review, next, design.acceptedAt);
+          const started = { startedAt: now(), ...next.afterGate ? { afterGate: next.afterGate } : {} };
           const evidenceFields = [next.deltaRevision, next.snapshotId, next.comparisonId].filter(Boolean).length;
           if (evidenceFields === 0) {
             if (!designAccepted || next.mode !== "implementation-review") throw conservationError("validation_failed", "A wave without change map evidence reviews the implementation of a slice with an accepted design; other waves need deltaRevision, snapshotId, and comparisonId.");
             const verified = await latestVerification(input.projectRoot, input.initiative, input.slice);
             if (!verified?.passed) throw conservationError("gate_blocked", "Run verify_slice until it passes before starting the review, so the review reads a verified result.");
-            review.waves.push({ id: next.id, mode: next.mode, tree: verified.tree, ...next.base ? { base: next.base } : {}, lanes: next.lanes });
+            review.waves.push({ id: next.id, mode: next.mode, tree: verified.tree, ...next.base ? { base: next.base } : {}, ...started, lanes: next.lanes });
           } else {
             if (evidenceFields !== 3) throw conservationError("validation_failed", "Pass deltaRevision, snapshotId, and comparisonId together.");
             const delta = await readChangeMapDocument(input.projectRoot, review.deltaPath, next.deltaRevision);
             const baselineId = delta.document?.baselineId;
             if (!baselineId || review.baselineId && review.baselineId !== baselineId) throw conservationError("gate_blocked", "A review must preserve its original retained baseline.");
-            const created = { id: next.id, mode: next.mode, deltaRevision: next.deltaRevision, snapshotId: next.snapshotId, comparisonId: next.comparisonId, baselineId, lanes: next.lanes };
+            const created = { id: next.id, mode: next.mode, deltaRevision: next.deltaRevision, snapshotId: next.snapshotId, comparisonId: next.comparisonId, baselineId, ...started, lanes: next.lanes };
             if (created.mode === "implementation-review" && !designAudited(review, created, designAccepted)) throw conservationError("gate_blocked", `Implementation review requires the latest accepted design revision. Start and accept a design-audit wave for delta revision ${created.deltaRevision} before ${created.id}.`, { problems: [{ code: "design_audit_missing", message: "Implementation review requires the latest accepted design revision." }] });
             const comparison = await comparisonFor(input.projectRoot, review, created);
             const uncovered = targetFiles(comparison).filter((file) => !created.lanes.some((lane) => withinScope(file, lane.coverage)));
@@ -517,6 +539,7 @@ async function updateReview(input) {
               aliases: fields.aliases || [],
               escalationTarget: fields.escalationTarget || "NONE",
               ...fields.probe ? { probe: fields.probe } : {},
+              ...fields.clause ? { clause: fields.clause } : {},
               status: "OPEN",
               implementerEvidence: "",
               history: [{ actor: input.actor.id, status: "OPEN", wave: wave2.id, at: now(), evidence: fields.evidence }]
