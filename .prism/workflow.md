@@ -8,7 +8,7 @@
 ## Paths
 - Requirements: docs/requirements/
 - ADRs: docs/ADRs/
-- Plans (scratch): docs/plans/
+- Plans: docs/plans/
 - Feature files: docs/Features/
 - Roadmap: docs/roadmap.md
 - Glossary: docs/Glossary.md
