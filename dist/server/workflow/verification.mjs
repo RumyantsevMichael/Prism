@@ -149,11 +149,12 @@ function killGroup(child, signal) {
   catch { try { child.kill(signal); } catch { /* The process already ended. */ } }
 }
 
-// The plugin's MCP definitions set NODE_USE_ENV_PROXY for the server's own downloads; a test command must not inherit it,
-// because Node then warns on stderr and tests that assert stderr fail only under verification.
+// The plugin's MCP definitions set NODE_USE_ENV_PROXY for the server's own downloads, and the host sets the plugin's root and data
+// directories for the server. A test command inherits none of them, so it runs as it would in the user's shell: Node would warn on
+// stderr under the proxy setting, and a project that reads plugin data, such as Prism itself, would read the host's.
+const SERVER_ONLY = /^(?:NODE_USE_ENV_PROXY|CLAUDE_PLUGIN_\w+|PLUGIN_DATA|PLUGIN_ROOT)$/;
 function commandEnvironment() {
-  const { NODE_USE_ENV_PROXY: _serverOnly, ...environment } = process.env;
-  return environment;
+  return Object.fromEntries(Object.entries(process.env).filter(([name]) => !SERVER_ONLY.test(name)));
 }
 
 function execute(command, root, { signal, timeoutMs, onProgress, logPath = null }) {

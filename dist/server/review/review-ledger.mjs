@@ -469,7 +469,7 @@ async function updateReview(input) {
   return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
     const loaded = await loadReview(input.projectRoot, input.initiative, input.slice);
     if (loaded.revision !== input.expectedRevision) throw conservationError("revision_conflict", "The review record changed.", { currentRevision: loaded.revision });
-    if (!loaded.document && (!input.delivery || input.actor.role !== "coordinator")) throw conservationError("validation_failed", "Review creation requires the coordinator and the delivery worker.");
+    if (!loaded.document && (!input.delivery || input.actor.role !== "coordinator")) throw conservationError("validation_failed", "The first update of a slice's review creates it, so it needs the coordinator as actor and the implementer's worker id as delivery.");
     return withArtifactLock(deltaTarget.target, () => withFileLock(deltaTarget.target, async () => {
       const review = structuredClone(loaded.document || { schemaVersion: 1, deltaPath: deltaTarget.path, coordinator: input.actor.id, delivery: input.delivery, deliveryWorkers: [input.delivery], waves: [], findings: [], assessments: [], conflicts: [], exchangeWorkers: [], legacy: [], history: [] });
       if (!await sameRecord(input.projectRoot, review.deltaPath, deltaTarget.path)) throw conservationError("invalid_path", "A review and its change map must belong to the same slice.");

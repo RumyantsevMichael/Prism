@@ -168,16 +168,18 @@ test("a changed command asks again", async (context) => {
   assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" })).status, "approval_needed");
 });
 
-test("the test command does not inherit the server's own proxy setting", async (context) => {
+test("the test command inherits neither the server's proxy setting nor the host's plugin directories", async (context) => {
   const root = await project(context, `${node} env.mjs`);
-  await writeFile(path.join(root, "env.mjs"), "process.exit(process.env.NODE_USE_ENV_PROXY === undefined ? 0 : 3);\n");
+  const serverOnly = ["NODE_USE_ENV_PROXY", "CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "PLUGIN_DATA", "PLUGIN_ROOT"];
+  await writeFile(path.join(root, "env.mjs"), `const leaked = ${JSON.stringify(serverOnly)}.filter((name) => process.env[name] !== undefined);\nif (leaked.length) console.log(leaked.join(" "));\nprocess.exit(leaked.length ? 3 : process.env.PRISM_KEPT === "1" ? 0 : 4);\n`);
   await accept(root);
   const gateId = await approve(root);
-  const previous = process.env.NODE_USE_ENV_PROXY;
-  process.env.NODE_USE_ENV_PROXY = "1";
-  context.after(() => { if (previous === undefined) delete process.env.NODE_USE_ENV_PROXY; else process.env.NODE_USE_ENV_PROXY = previous; });
-  const result = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId });
-  assert.equal(result.status, "passed");
+  const previous = Object.fromEntries([...serverOnly, "PRISM_KEPT"].map((name) => [name, process.env[name]]));
+  for (const name of serverOnly) process.env[name] = name.includes("PROXY") ? "1" : path.join(root, "host");
+  process.env.PRISM_KEPT = "1";
+  context.after(() => { for (const [name, value] of Object.entries(previous)) if (value === undefined) delete process.env[name]; else process.env[name] = value; });
+  const result = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId, dataDirectory: privateData });
+  assert.equal(result.status, "passed", result.outputTail);
 });
 
 test("a run past its timeout fails, and an early return keeps the same run going", async (context) => {
@@ -271,6 +273,15 @@ test("a review stops for the user after two waves with findings, and a finding t
   await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: second, choice: "continue" });
   await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w4", mode: "implementation-review", lanes: lanes("w4"), afterGate: second }]), (error) => error.code === "gate_blocked" && /name contract clauses \(Contract 6\)/.test(error.message) && /contractDefects/.test(error.message));
   assert.equal((await getReview(slice)).entries.find((item) => item.localId === "C6").clause, "Contract 6");
+});
+
+test("review errors say which worker and which revision form an update needs", async (context) => {
+  const root = await project(context);
+  await accept(root, "download", "required");
+  const slice = { projectRoot: root, initiative: INITIATIVE, slice: "download" };
+  const lanes = [{ id: "correctness", reviewer: "Review download", coverage: ["."] }];
+  await assert.rejects(updateReview({ ...slice, expectedRevision: null, actor: { id: "orchestrator", role: "coordinator" }, operations: [{ op: "start_wave", id: "w1", mode: "implementation-review", lanes }] }), /the implementer's worker id as delivery/);
+  await assert.rejects(updateReview({ ...slice, expectedRevision: "abc1234", actor: { id: "orchestrator", role: "coordinator" }, operations: [{ op: "accept_wave" }] }), /expectedRevision: must be the full 64-character SHA-256 revision/);
 });
 
 const exists = (file) => readFile(file).then(() => true, () => false);
