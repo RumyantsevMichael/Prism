@@ -5138,3 +5138,13 @@ mark.find-hit {
   cursor: help;
   opacity: 0.6;
 }
+
+/* The Attention summary offers desktop notifications under its counts. */
+.notify-control {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+}

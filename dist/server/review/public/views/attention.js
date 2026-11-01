@@ -1,4 +1,5 @@
 import { artifactChip, bindLinks, card, emptyNote, escapeHtml, plural } from "./util.js";
+import { notifyControl } from "./attention-signal.js";
 
 const GATE_LABELS = {
   "visual-review": "Visual review",
@@ -232,6 +233,7 @@ export function render(container, entity, ctx) {
         <div class="stat"><span class="stat-value">${notes.length}</span><span class="stat-label">other ${notes.length === 1 ? "item needs" : "items need"} you</span></div>
         <div class="stat"><span class="stat-value">${data.watch.length}</span><span class="stat-label">agent-side ${data.watch.length === 1 ? "signal" : "signals"}</span></div>
       </div>
+      ${notifyControl(typeof Notification === "undefined" ? null : Notification.permission)}
     </section>
     ${card("Needs you", data.needsYou.length
       ? `<ul class="attention-list">${gates.map((item) => gateCard(item, ctx, drafts[item.id] ?? { choice: null, note: "" })).join("")}${notes.map((item) => noteCard(item, ctx)).join("")}</ul>`
@@ -244,4 +246,7 @@ export function render(container, entity, ctx) {
     ${earlier.length ? card("Earlier questions", `<ul class="attention-list">${earlier.map((item) => closedCard(item, ctx)).join("")}</ul>`, { eyebrow: "Most recent first" }) : ""}`;
   bindLinks(container, ctx);
   bindAnswers(container, ctx, gates);
+  container.querySelector("[data-notify]")?.addEventListener("click", () => {
+    void Notification.requestPermission().finally(() => ctx.rerender());
+  });
 }

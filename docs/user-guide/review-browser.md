@@ -49,6 +49,9 @@ A design or correctness review needs Approve or Request changes, and Request cha
 A decision takes one of its options, a note in your own words, or both.
 An action request needs only Mark as done, with an optional note.
 The button that sends your answer stays disabled until the answer is complete, and the text beside it says what is missing.
+While a question waits, the tab title starts with the number of waiting questions and the tab icon shows a dot, so a background tab shows it too.
+Choose "Notify me about new questions" on Attention to also get a desktop notification when a question arrives while the page is in the background.
+The browser keeps that permission per review app address, and a restarted review app uses a new address, so it can ask again.
 In Claude Code a waiting agent resumes on its own shortly after your answer.
 Elsewhere the agent receives the answer with your next message, even a short one such as "go".
 Attention also lists blocked slices, open findings, and active work.

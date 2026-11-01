@@ -7,6 +7,7 @@ import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurren
 import { createLinkPreview } from "./views/preview.js";
 import { createIndexingStatus } from "./views/indexing.js";
 import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connection.js";
+import { badgedIcon, notificationText, shouldNotify, signalTitle } from "./views/attention-signal.js";
 import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-tab.js";
 
 const project = document.getElementById("project");
@@ -384,6 +385,42 @@ async function refreshProjects() {
 function setProjectLabel(identity, projectRoot) {
   project.replaceChildren(projectLabel(identity));
   projectButton.title = projectTitle(identity, projectRoot);
+  signals.project = [identity.repository ?? folderName(projectRoot), workspaceName(identity)].filter(Boolean).join("/");
+  document.title = signalTitle(baseTitle(), signals.count ?? 0);
+}
+
+const baseTitle = () => signals.project ? `${signals.project} · Prism` : "Prism review";
+
+// The tab title, the tab icon, and an installed app's badge count the recorded questions, so a waiting question shows in a background tab.
+const signals = { project: null, count: null, icon: document.querySelector('link[rel="icon"]'), plainIcon: null, badged: null };
+signals.plainIcon = signals.icon?.getAttribute("href") ?? null;
+
+async function updateAttentionSignals(count) {
+  const previous = signals.count;
+  signals.count = count;
+  document.title = signalTitle(baseTitle(), count);
+  if (signals.icon && signals.plainIcon) {
+    if (count > 0) {
+      signals.badged ??= await fetch(signals.plainIcon).then((response) => response.ok ? response.text() : null).then((svg) => svg && `data:image/svg+xml,${encodeURIComponent(badgedIcon(svg))}`).catch(() => null);
+      if (signals.badged && signals.count > 0) signals.icon.setAttribute("href", signals.badged);
+    } else {
+      signals.icon.setAttribute("href", signals.plainIcon);
+    }
+  }
+  if (navigator.setAppBadge) void (count > 0 ? navigator.setAppBadge(count) : navigator.clearAppBadge()).catch(() => {});
+  const permission = typeof Notification === "undefined" ? null : Notification.permission;
+  if (!shouldNotify({ previous, count, permission, visible: document.visibilityState === "visible" && document.hasFocus() })) return;
+  const text = notificationText(count, signals.project ?? "this project");
+  try {
+    const notification = new Notification(text.title, { body: text.body, tag: `prism-attention-${signals.project}` });
+    notification.addEventListener("click", () => {
+      window.focus();
+      openRef("attention");
+      notification.close();
+    });
+  } catch {
+    // A browser that allows the permission but not page notifications, such as some mobile browsers, keeps the title and icon only.
+  }
 }
 
 const SIDEBAR_KEY = "prism.review.sidebar";
@@ -744,6 +781,7 @@ function libraryBranch(scope) {
 function renderNavigation() {
   const scope = currentContext?.ref === selectedPath ? currentContext.value.scope : { kind: "global" };
   const attention = navigation.attention ?? {};
+  void updateAttentionSignals(attention.gates ?? 0);
   const badge = attention.needsYou ? `<span class="count-badge${attention.gates ? " is-alert" : ""}" title="${attention.gates} recorded ${attention.gates === 1 ? "question" : "questions"} and ${attention.needsYou - attention.gates} other ${attention.needsYou - attention.gates === 1 ? "item" : "items"} need you">${attention.needsYou}</span>` : "";
   navPlaces.replaceChildren(
     navLink("attention", "Attention", { meta: badge, className: "nav-place place-attention", current: selectedPath === "attention", iconName: "attention" }),
