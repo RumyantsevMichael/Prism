@@ -58,7 +58,12 @@ test("a design's contract clauses and planned changes are read from slice.md", (
     ["change", "src/storage/client.rs", ["get"]],
     ["change", "src/cli/report.rs", ["download"]]
   ]);
-  assert.match(plannedChanges("## Changes\n- tweak `a.rs`\n- change `../b.rs`: x\n").problems.join(" "), /does not start with add[\s\S]*not a normalized/);
+  assert.match(plannedChanges("## Changes\n- tweak `a.rs`\n- change `../b.rs`: x\n").problems.join(" "), /must be add, change, or remove[\s\S]*not a normalized/);
+  // One line may name several paths; each becomes its own change with the shared note, and a line that runs on after its paths is refused.
+  const listed = plannedChanges("## Changes\n- change `dist/a.mjs`, `dist/b.mjs`: regenerated output of `build`.\n");
+  assert.deepEqual(listed.problems, []);
+  assert.deepEqual(listed.changes.map((change) => [change.path, change.units, change.note]), [["dist/a.mjs", ["build"], "regenerated output of `build`."], ["dist/b.mjs", ["build"], "regenerated output of `build`."]]);
+  assert.equal(plannedChanges("## Changes\n- change `a.mjs` and `b.mjs`: x\n").problems.length, 1);
 });
 
 test("the design view keeps only examples that cite a real clause and test, and lists clauses without one as gaps", async (context) => {

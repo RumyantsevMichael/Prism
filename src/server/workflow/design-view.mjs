@@ -77,22 +77,28 @@ export function contractClauses(source) {
   return text === null ? [] : items(text);
 }
 
-/** The planned changes of a design's Changes section: `- <add|change|remove> \`path\`: units and why`. */
+/**
+ * The planned changes of a design's Changes section: `- <add|change|remove> \`path\`[, \`path\`]: units and why`.
+ * Each path becomes its own change with the shared note, and any other line shape is a problem rather than a guess.
+ */
 export function plannedChanges(source) {
   const text = section(source, "Changes");
   if (text === null) return { changes: [], problems: [] };
   const changes = [], problems = [];
   for (const line of items(text)) {
-    const parsed = /^(add|change|remove)\s+`([^`]+)`\s*[:;,.-]?\s*(.*)$/i.exec(line);
-    if (!parsed) { problems.push(`Changes line ${JSON.stringify(line)} does not start with add, change, or remove and a path in backticks.`); continue; }
-    const target = parsed[2].trim();
-    const normalized = path.posix.normalize(target.replaceAll("\\", "/"));
-    if (path.posix.isAbsolute(normalized) || normalized === ".." || normalized.startsWith("../") || normalized.replace(/\/$/, "") !== target.replace(/\/$/, "")) {
-      problems.push(`Changes path ${JSON.stringify(target)} is not a normalized project-relative path.`);
-      continue;
+    const parsed = /^(add|change|remove)\s+((?:`[^`]+`\s*,\s*)*`[^`]+`)\s*(?::\s*(.*))?$/i.exec(line);
+    if (!parsed) { problems.push(`Changes line ${JSON.stringify(line)} must be add, change, or remove, then one or more comma-separated paths in backticks, then a colon and the note.`); continue; }
+    const note = (parsed[3] ?? "").trim();
+    const units = [...note.matchAll(/`([^`]+)`/g)].map((match) => match[1].trim()).filter(Boolean);
+    for (const [, raw] of parsed[2].matchAll(/`([^`]+)`/g)) {
+      const target = raw.trim();
+      const normalized = path.posix.normalize(target.replaceAll("\\", "/"));
+      if (path.posix.isAbsolute(normalized) || normalized === ".." || normalized.startsWith("../") || normalized.replace(/\/$/, "") !== target.replace(/\/$/, "")) {
+        problems.push(`Changes path ${JSON.stringify(target)} is not a normalized project-relative path.`);
+        continue;
+      }
+      changes.push({ action: parsed[1].toLowerCase(), path: target, units, note });
     }
-    const note = parsed[3].trim();
-    changes.push({ action: parsed[1].toLowerCase(), path: target, units: [...note.matchAll(/`([^`]+)`/g)].map((match) => match[1].trim()).filter(Boolean), note });
   }
   return { changes, problems };
 }
