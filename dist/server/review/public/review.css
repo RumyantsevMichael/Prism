@@ -4476,6 +4476,13 @@ th {
   background: var(--accent-strong);
 }
 
+/* The dark accent is a light violet, so white text on it is hard to read; dark text keeps primary buttons legible. */
+@media (prefers-color-scheme: dark) {
+  .tool-button.primary:not(:disabled) {
+    color: #16141f;
+  }
+}
+
 .tool-button.primary.is-negative {
   background: var(--danger);
   border-color: var(--danger);
