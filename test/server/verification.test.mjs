@@ -341,7 +341,7 @@ test("a failing run names failures that scrolled out of the kept output, includi
     "console.log(\"    not ok 1 - signs the report\");",
     "console.error(\"not ok 2 - checks the archive\");",
     "for (let index = 0; index < 4000; index += 1) console.log(`ok ${index + 3} - passes case ${index}\\n  ---\\n  duration_ms: 1.25\\n  ...`);",
-    "process.exit(1);"
+    "process.exitCode = 1;"
   ].join("\n");
   await writeFile(path.join(root, "check.mjs"), `${script}\n`);
   await accept(root);
@@ -354,6 +354,10 @@ test("a failing run names failures that scrolled out of the kept output, includi
   assert.deepEqual([...verificationBrief(failed).failing].sort(), names);
   const recorded = JSON.parse(await readFile(path.join(root, failed.path), "utf8"));
   assert.deepEqual([...recorded.failing].sort(), names, "the run record keeps the names for the slice page");
+  const log = await readFile(failed.log, "utf8");
+  assert.ok(log.length > 64 * 1024, `the log keeps more than the output kept in memory (${log.length})`);
+  assert.match(log, /signs the report/);
+  assert.match(log, /passes case 3999\n/, "the log holds the whole output, start to end");
 });
 
 test("an implementer's contract defects block the slice without running anything until design revises the contract", async (context) => {

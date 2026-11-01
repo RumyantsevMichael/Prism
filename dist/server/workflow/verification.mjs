@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, readFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { conservationStore } from "../conservation/conservation-store.mjs";
@@ -155,8 +156,11 @@ function commandEnvironment() {
   return environment;
 }
 
-function execute(command, root, { signal, timeoutMs, onProgress }) {
+function execute(command, root, { signal, timeoutMs, onProgress, logPath = null }) {
   return new Promise((resolve) => {
+    // The log receives every byte as it arrives, so it holds the whole output while memory keeps only the end.
+    let log = logPath ? createWriteStream(logPath) : null;
+    log?.on("error", () => { log = null; });
     const started = Date.now();
     let output = "", timedOut = false, cancelled = false, forced = null;
     const child = spawn(command, { cwd: root, env: commandEnvironment(), shell: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
@@ -170,6 +174,7 @@ function execute(command, root, { signal, timeoutMs, onProgress }) {
     };
     const collect = (stream) => (chunk) => {
       const text = chunk.toString("utf8");
+      log?.write(chunk);
       output = tail(output + text, OUTPUT_TAIL_BYTES);
       scan(stream, text);
     };
@@ -190,7 +195,11 @@ function execute(command, root, { signal, timeoutMs, onProgress }) {
       if (ticker) clearInterval(ticker);
       signal?.removeEventListener("abort", abort);
       for (const stream of scanners.keys()) scan(stream, "", true);
-      resolve({ exitCode, signal: exitSignal, timedOut, cancelled, output: spawnError ? `${output}${spawnError.message}\n` : output, failing: [...failing], durationMs: Date.now() - started });
+      if (spawnError) log?.write(`${spawnError.message}\n`);
+      const done = { exitCode, signal: exitSignal, timedOut, cancelled, output: spawnError ? `${output}${spawnError.message}\n` : output, failing: [...failing], durationMs: Date.now() - started };
+      if (!log) { resolve({ ...done, logged: false }); return; }
+      const written = log;
+      written.end(() => resolve({ ...done, logged: log === written }));
     };
     child.on("error", (error) => finish(null, null, error));
     child.on("close", (code, exitSignal) => finish(code, exitSignal));
@@ -198,19 +207,19 @@ function execute(command, root, { signal, timeoutMs, onProgress }) {
 }
 
 // The full output stays in local plugin data, outside the project, so a caller reads it only when the brief result is not enough.
-async function writeLog(dataDirectory, root, initiative, slice, id, output) {
+async function logPathFor(dataDirectory, root, initiative, slice, id) {
   try {
     const directory = path.join(dataDirectoryOf(dataDirectory), "verification-logs", digest(root).slice(0, 16), initiative, slice);
     await mkdir(directory, { recursive: true });
-    const target = path.join(directory, `${id}.log`);
-    await writeFile(target, output);
-    return target;
+    return path.join(directory, `${id}.log`);
   } catch { return null; }
 }
 
 async function verificationRun({ root, initiative, slice, command, key, config, design, signal, onProgress, dataDirectory }) {
   const startedAt = new Date().toISOString();
+  const id = `verification-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
   const frozen = await checkFrozenTests(root, design.frozenTests);
+  let log = null;
   const base = { kind: "verification", startedAt, command, commandDigest: key, designAcceptedAt: design.acceptedAt, frozen };
   let entry;
   if (frozen.changed.length || frozen.missing.length) {
@@ -218,7 +227,9 @@ async function verificationRun({ root, initiative, slice, command, key, config, 
   } else {
     const before = await contentTree(root, config);
     const timeoutMs = Number(process.env.PRISM_VERIFY_TIMEOUT_MINUTES || DEFAULT_TIMEOUT_MINUTES) * 60000;
-    const outcome = await execute(command, root, { signal, timeoutMs, onProgress });
+    const logPath = await logPathFor(dataDirectory, root, initiative, slice, id);
+    const outcome = await execute(command, root, { signal, timeoutMs, onProgress, logPath });
+    if (outcome.logged) log = logPath;
     const after = await contentTree(root, config).catch(() => null);
     const reason = outcome.cancelled ? "cancelled" : outcome.timedOut ? "timed_out" : outcome.exitCode !== 0 ? "command_failed" : after !== before ? "tracked_files_changed" : null;
     // A passing run keeps a snapshot of the verified source, which the derived change map compares with the design baseline.
@@ -226,9 +237,7 @@ async function verificationRun({ root, initiative, slice, command, key, config, 
     entry = { ...base, finishedAt: new Date().toISOString(), durationMs: outcome.durationMs, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, passed: reason === null, ...(reason ? { reason } : {}), tree: before, ...(after !== before ? { treeAfter: after } : {}), ...(snapshotId ? { snapshotId } : {}), ...(reason === "command_failed" && outcome.failing.length ? { failing: outcome.failing.slice(0, MAX_FAILING_NAMES), failingCount: outcome.failing.length } : {}), outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), output: outcome.output };
   }
   const { output = entry.outputTail, ...recorded } = entry;
-  const id = `verification-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
   const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, recorded);
-  const log = output ? await writeLog(dataDirectory, root, initiative, slice, id, output) : null;
   return { id, path: stored.path, ...recorded, ...(log ? { log } : {}), output };
 }
 
