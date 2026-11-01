@@ -36,6 +36,7 @@ import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs"
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
+import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
 // PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
@@ -120,6 +121,8 @@ async function requestedProjectRoot(argumentsValue) {
   }
   // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call.
   reviewServers.register(resolvedRoot);
+  // The native index starts building once the project is known, so a later search finds it ready; this never waits for the build.
+  void startBackgroundPreparation(resolvedRoot);
   return resolvedRoot;
 }
 
@@ -1092,10 +1095,13 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   throw new Error(`Unknown tool: ${name}`);
 }
 
-// A host that names the project at start gets it listed in the review app before any tool call, without delaying initialize,
-// and opens the review browser when nobody watches one; a host that names no project still gets a running app.
+// A host that names the project at start gets it listed in the review app and its native index preparing before any tool call, without
+// delaying initialize, and opens the review browser when nobody watches one; a host that names no project still gets a running app.
 if (process.env.CLAUDE_PROJECT_DIR) {
-  void realpath(process.env.CLAUDE_PROJECT_DIR).then(async (root) => reviewServers.register(root, { open: await opensAtStart(root) }), () => {});
+  void realpath(process.env.CLAUDE_PROJECT_DIR).then(async (root) => {
+    void startBackgroundPreparation(root);
+    reviewServers.register(root, { open: await opensAtStart(root) });
+  }, () => {});
 } else {
   reviewServers.startApp();
 }

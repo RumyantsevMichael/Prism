@@ -1,7 +1,7 @@
 // Generated from src/server/repository-intelligence/index-status.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
-import { readFile, stat } from "node:fs/promises";
-import { nativeSemanticRuntime } from "./native-semantic-runtime.mjs";
+import { readFile, realpath, stat } from "node:fs/promises";
+import { nativeSemanticRuntime, unitsFile } from "./native-semantic-runtime.mjs";
 import { HEARTBEAT_MS, freshnessFile, processAlive, projectStorageKey, readProgressRecords, sameFingerprint } from "./index-progress.mjs";
 const ABANDONED_MS = 12 * HEARTBEAT_MS;
 const time = (value) => {
@@ -48,6 +48,18 @@ async function readIndexingStatus(projectRoot, directories, options = {}) {
   const availability = await (options.availability ?? (() => nativeSemanticRuntime.availability()))().catch(() => null);
   return status(availability && availability.supported && availability.published ? "none" : "unavailable");
 }
+async function readPublishedUnits(projectRoot, directories = [nativeSemanticRuntime.directory]) {
+  const key = projectStorageKey(await realpath(projectRoot).catch(() => projectRoot));
+  const storages = [...new Set(directories)].map((directory) => path.join(directory, "projects", key));
+  const pointers = (await Promise.all(storages.map(async (storage) => ({ storage, pointer: await readPointer(storage) })))).filter((entry) => entry.pointer !== null);
+  const newest = pointers.sort((left, right) => time(right.pointer.builtAt) - time(left.pointer.builtAt))[0];
+  const revision = newest?.pointer.revision;
+  if (!newest || !revision || !/^[a-f\d]{64}$/.test(revision)) return null;
+  const sidecar = await readJson(path.join(newest.storage, unitsFile(revision)));
+  if (sidecar?.schemaVersion !== 1 || sidecar.revision !== revision || sidecar.snapshot !== newest.pointer.snapshot || !Array.isArray(sidecar.units) || !Array.isArray(sidecar.edges)) return null;
+  return { snapshot: newest.pointer.snapshot, revision, builtAt: newest.pointer.builtAt, units: sidecar.units, edges: sidecar.edges };
+}
 export {
-  readIndexingStatus
+  readIndexingStatus,
+  readPublishedUnits
 };

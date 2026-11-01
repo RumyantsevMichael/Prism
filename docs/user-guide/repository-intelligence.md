@@ -124,8 +124,10 @@ Embedding counts only fragments that need a new embedding, so a rebuild after a 
 The project switcher marks other projects whose build runs or failed.
 
 The browser only shows the index.
-An agent's search starts or retries a build, and the browser has no button for it.
-`Not indexed` means no search has built the index yet, and `Indexing stopped` means the session that ran the build ended before it finished.
+The Prism MCP server starts a build in the background once it knows the project, at startup when the host names the project or else at the first Prism tool call, and a later search joins that build instead of starting another.
+An agent's search also starts or retries a build, and the browser has no button for it.
+To keep a project from building at startup, add `- Background indexing: off` under `## Repository intelligence` in `.prism/workflow.md`, and searches still build the index on first use.
+`Not indexed` means no build has run yet, and `Indexing stopped` means the session that ran the build ended before it finished.
 `Index rebuild pending` means files changed during the build, and the next search builds from the current files.
 
 `Index out of date` is a hint from Git, not a comparison of file contents.

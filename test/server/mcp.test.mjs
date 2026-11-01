@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { access, chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -997,4 +998,48 @@ test("a read leaves legacy records in place, and the first write reports the fil
   assert.match(written.result.content.at(-1).text, /moved 1 record files[\s\S]*docs\/plans\/reports\/state\.json -> \.prism\/initiatives\/reports\/state\.json/);
   const again = await callTool(mcp, 4, "get_coordination_state", { projectRoot: root, initiative: "reports" });
   assert.doesNotMatch(again.result.content.map((item) => item.text).join("\n"), /moved/);
+});
+
+test("a server that knows its project starts the native index in the background without delaying a tool call", async (context) => {
+  const root = await realpath(await projectFixture(context, "background-index", "artifact.md"));
+  const data = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-background-index-")));
+  // The runtime download goes to a socket that never answers, so the build stays in its first step for the whole test.
+  const sockets = new Set();
+  const silent = net.createServer((socket) => { sockets.add(socket); socket.on("error", () => {}); });
+  await new Promise((resolve) => silent.listen(0, "127.0.0.1", resolve));
+  const stopSilent = () => { for (const socket of sockets) socket.destroy(); silent.close(); };
+  context.after(stopSilent);
+  const platform = `${process.platform}-${process.arch}`;
+  const manifest = path.join(data, "manifest.json");
+  await writeFile(manifest, JSON.stringify({ schemaVersion: 1, assetVersion: "test-hanging", model: { id: "test/model", revision: "test-revision", files: [] },
+    bundles: { [platform]: { url: `https://127.0.0.1:${silent.address().port}/runtime.tar.gz`, bytes: 1024, sha256: "0".repeat(64) } } }));
+  const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: data, PRISM_NATIVE_ASSET_MANIFEST: manifest, NO_PROXY: "127.0.0.1", no_proxy: "127.0.0.1" });
+  // After hooks run in order, so the data directory is removed only after the server has exited and stopped writing progress there.
+  context.after(() => rm(data, { recursive: true, force: true, maxRetries: 3 }));
+  const storage = path.join(data, "native-intelligence", "projects");
+  const record = async () => {
+    for (const project of await readdir(storage).catch(() => [])) {
+      for (const name of await readdir(path.join(storage, project)).catch(() => [])) {
+        if (/^progress-\d+\.json$/.test(name)) return JSON.parse(await readFile(path.join(storage, project, name), "utf8"));
+      }
+    }
+    return null;
+  };
+  // No tool call yet: the build starts from the project the host named at start.
+  let progress = null;
+  for (let attempt = 0; attempt < 100 && progress?.progress?.phase !== "runtime-download"; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    progress = await record();
+  }
+  assert.equal(progress?.state, "preparing", JSON.stringify(progress));
+  assert.equal(progress.progress.phase, "runtime-download");
+  const begin = performance.now();
+  await initialize(mcp);
+  const roadmap = await callTool(mcp, 2, "get_roadmap", { projectRoot: root });
+  assert.equal(roadmap.error, undefined, JSON.stringify(roadmap.error));
+  const status = await callTool(mcp, 3, "get_repository_intelligence_status", { projectRoot: root });
+  assert.ok(performance.now() - begin < 2000, "Initialize and tool calls must not wait for background preparation.");
+  assert.equal(status.result.structuredContent.status, "preparing");
+  assert.equal(status.result.structuredContent.preparationId, progress.preparationId, "a tool call reports the background build, not a second one");
+  stopSilent();
 });

@@ -298,18 +298,19 @@ test("repeated source edits keep a bounded set of reusable index generations", a
   assert.equal(reused.prepared.revision, revisions[6]);
   assert.equal(builds, 8);
 });
-test("index pruning removes abandoned snapshot mirrors and pointers to removed revisions", async t => {
+test("index pruning removes abandoned snapshot mirrors and the pointers and units sidecars of removed revisions", async t => {
   const { directory } = await fixture(t), storage = path.join(directory, "storage"), hour = 60 * 60 * 1000;
   await mkdir(path.join(storage, "snapshot-abandoned", "src"), { recursive: true });
   const [current, recent, old] = ["c", "b", "a"].map(value => value.repeat(64));
   for (const [index, revision] of [current, recent, old].entries()) {
     await writeFile(path.join(storage, `${revision}.json`), "{}");
+    await writeFile(path.join(storage, `units-${revision}.json`), "{}");
     await writeFile(path.join(storage, `generation-${index}-assets.json`), JSON.stringify({ revision }));
     const used = new Date(Date.now() - index * hour); await utimes(path.join(storage, `${revision}.json`), used, used);
   }
   await writeFile(path.join(storage, "current.json"), JSON.stringify({ revision: current }));
   await pruneIndexes(storage, current, 2);
-  assert.deepEqual((await readdir(storage)).sort(), [`${current}.json`, `${recent}.json`, "current.json", "generation-0-assets.json", "generation-1-assets.json"].sort());
+  assert.deepEqual((await readdir(storage)).sort(), [`${current}.json`, `${recent}.json`, `units-${current}.json`, `units-${recent}.json`, "current.json", "generation-0-assets.json", "generation-1-assets.json"].sort());
 });
 test("model files fall back from the release mirror to the model host", async t => {
   const { directory, root } = await fixture(t), localManifest = path.join(directory, "manifest.json"), platform = `${process.platform}-${process.arch}`;

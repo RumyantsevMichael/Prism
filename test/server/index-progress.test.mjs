@@ -1,14 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { NativeSemanticRuntime } from "../../dist/server/repository-intelligence/native-semantic-runtime.mjs";
 import { openNativeRepositoryIntelligence } from "../../dist/server/repository-intelligence/native-repository-intelligence.mjs";
 import { ProgressRecorder, gitFingerprint } from "../../dist/server/repository-intelligence/index-progress.mjs";
-import { readIndexingStatus } from "../../dist/server/repository-intelligence/index-status.mjs";
+import { readIndexingStatus, readPublishedUnits } from "../../dist/server/repository-intelligence/index-status.mjs";
 const manifestPath = fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url));
 const available = async () => ({ supported: true, published: true });
 
@@ -148,4 +148,40 @@ test("the recorder throttles progress writes but always writes a new step", asyn
   const record = JSON.parse(await readFile(path.join(directory, `progress-${process.pid}.json`), "utf8"));
   assert.equal(record.state, "failed");
   assert.ok(record.finishedAt);
+});
+
+test("a published index carries a units sidecar that is read without the full index and without preparing", async t => {
+  const { root, cache, runtime } = await fixture(t);
+  assert.equal(await readPublishedUnits(root, [cache]), null);
+  const units = [
+    { id: "a", file: "a.ts", kind: "function", name: "x", qualifiedName: "a.x", range: { startLine: 1, endLine: 1 }, sourceHash: "h", rangeComplete: true, signature: "x()", span: { start: 0, end: 5 } },
+    { id: "b", file: "a.ts", kind: "variable", name: "y", range: { startLine: 2, endLine: 3 }, rangeComplete: true }
+  ];
+  const edges = [{ source: "a", target: "b", kind: "calls" }, { source: "a", target: "b", kind: "references" }, { source: "b", target: "a", kind: "references" }, { source: "a", target: "b", kind: "contains" }];
+  runtime.helper = () => ({ request: async (_method, args) => ({ ...index(args, [{ embeddingKey: "k", embedding: [1, 2] }]), units, edges }) });
+  const prepared = await runtime.prepare(await openNativeRepositoryIntelligence(root));
+  const storage = (await runtime.location(root)).directory, revision = prepared.prepared.revision;
+  const sidecar = path.join(storage, `units-${revision}.json`);
+  assert.equal((await stat(sidecar)).mode & 0o777, 0o600);
+  // An index published before sidecars existed reads as no units until a later preparation reuses it and writes its sidecar.
+  await rm(sidecar);
+  assert.equal(await readPublishedUnits(root, [cache]), null);
+  const later = new NativeSemanticRuntime({ directory: cache, manifestPath });
+  later.assets = runtime.assets;
+  later.helper = () => { throw new Error("A reused index must not rebuild."); };
+  assert.equal((await later.prepare(await openNativeRepositoryIntelligence(root))).prepared.revision, revision);
+  await stat(sidecar);
+  // A damaged full index does not matter, because only the pointer and the sidecar are read.
+  await writeFile(path.join(storage, `${revision}.json`), "not json");
+  const before = (await readdir(storage)).sort();
+  const published = await readPublishedUnits(root, [cache]);
+  assert.deepEqual((await readdir(storage)).sort(), before, "reading changes no file");
+  assert.equal(published.snapshot, prepared.snapshot);
+  assert.equal(published.revision, revision);
+  assert.ok(Date.parse(published.builtAt) > 0);
+  assert.deepEqual(published.units, [
+    { id: "a", file: "a.ts", kind: "function", name: "x", qualifiedName: "a.x", range: { startLine: 1, endLine: 1 }, sourceHash: "h" },
+    { id: "b", file: "a.ts", kind: "variable", name: "y", range: { startLine: 2, endLine: 3 } }
+  ]);
+  assert.deepEqual(published.edges, [["a", "b"], ["b", "a"]]);
 });

@@ -140,6 +140,27 @@ async function downloadFirst(asset, urls, destination, allowFile, onBytes) {
 const modelAssetName = (file) => `model-${file.split("/").join("-")}`;
 const STALE_ASSET_MS = 14 * 24 * 60 * 60 * 1e3;
 const KEPT_INDEX_REVISIONS = 4;
+const UNITS_FILE = /^units-([a-f\d]{64})\.json$/;
+const unitsFile = (revision) => `units-${revision}.json`;
+function publishedUnits(index, revision) {
+  const edges = /* @__PURE__ */ new Map();
+  for (const edge of index.edges) if (edge.kind === "calls" || edge.kind === "references") edges.set(`${edge.source}\0${edge.target}`, [edge.source, edge.target]);
+  return {
+    schemaVersion: 1,
+    snapshot: index.snapshot,
+    revision,
+    units: index.units.map(({ id, file, kind, name, qualifiedName, range, sourceHash }) => ({
+      id,
+      file,
+      kind,
+      name,
+      ...qualifiedName === void 0 ? {} : { qualifiedName },
+      range: { startLine: range.startLine, endLine: range.endLine },
+      ...sourceHash === void 0 ? {} : { sourceHash }
+    })),
+    edges: [...edges.values()]
+  };
+}
 async function pruneIndexes(directory, current, keep = KEPT_INDEX_REVISIONS) {
   const entries = await readdir(directory);
   const revisions = await Promise.all(entries.filter((name) => /^[a-f\d]{64}\.json$/.test(name)).map(async (name) => ({ name, used: (await lstat(path.join(directory, name)).catch(() => null))?.mtimeMs ?? 0 })));
@@ -148,6 +169,11 @@ async function pruneIndexes(directory, current, keep = KEPT_INDEX_REVISIONS) {
   for (const name of entries) {
     if (name.startsWith("snapshot-")) {
       await rm(path.join(directory, name), { recursive: true, force: true });
+      continue;
+    }
+    const sidecar = UNITS_FILE.exec(name);
+    if (sidecar) {
+      if (!kept.has(`${sidecar[1]}.json`)) await rm(path.join(directory, name), { force: true });
       continue;
     }
     if (!/^generation-.+\.json$/.test(name)) continue;
@@ -436,6 +462,9 @@ class NativeSemanticRuntime {
             const used = /* @__PURE__ */ new Date();
             await utimes(indexPath, used, used).catch(() => {
             });
+            const sidecar = path.join(directory, unitsFile(pointer.revision));
+            await lstat(sidecar).catch(() => writeAtomically(sidecar, JSON.stringify(publishedUnits(previous, pointer.revision)), { mode: 384 })).catch(() => {
+            });
             return { ...assets, index: indexMetadata(previous), indexPath, revision: pointer.revision };
           }
         } catch (error) {
@@ -480,6 +509,7 @@ class NativeSemanticRuntime {
           const contents = JSON.stringify(index), revision = sha(contents), indexPath = path.join(directory, `${revision}.json`);
           if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The semantic index exceeds 512 MiB.");
           await writeAtomically(indexPath, contents, { mode: 384 });
+          await writeAtomically(path.join(directory, unitsFile(revision)), JSON.stringify(publishedUnits(index, revision)), { mode: 384 });
           const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
           const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics, builtAt: (/* @__PURE__ */ new Date()).toISOString() });
           await writeAtomically(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`), pointerContents, { mode: 384 });
@@ -533,6 +563,8 @@ export {
   privateDirectory,
   pruneAssets,
   pruneIndexes,
+  publishedUnits,
   regularBytes,
-  semanticError
+  semanticError,
+  unitsFile
 };
