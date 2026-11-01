@@ -119,3 +119,24 @@ test("explains why a revision does not match", async (context) => {
   await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: null, operations: more }), new RegExp(`already exists, so expectedRevision cannot be null\\. Read it and pass its current revision ${created.revision}`));
   await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: "null", operations: more }), new RegExp(`or the current revision ${created.revision}`));
 });
+
+test("a roadmap item cites requirement sections in the same form an initiative accepts", async (context) => {
+  const projectRoot = await project(context, "- Roadmap: docs/roadmap.md\n- Requirements: docs/requirements/\n- Plans: docs/plans/\n");
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("alpha", "Now", { requirements: ["docs/requirements/reports.md"] })] }), { code: "validation_failed", message: /Invalid requirement reference "docs\/requirements\/reports\.md"/ });
+  const created = await updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("alpha", "Now", { requirements: ["reports.md§1", "docs/requirements/reports.md#2"] })] });
+  assert.deepEqual(created.record.initiatives[0].requirements, ["docs/requirements/reports.md#1", "docs/requirements/reports.md#2"]);
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: created.revision, operations: [{ op: "update_initiative", id: "alpha", requirements: ["reports.md"] }] }), { code: "validation_failed" });
+});
+
+test("a roadmap written before references were checked still updates", async (context) => {
+  const projectRoot = await project(context, "- Roadmap: docs/roadmap.md\n- Requirements: docs/requirements/\n");
+  const created = await updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("alpha", "Now")] });
+  const file = path.join(projectRoot, ".prism", "roadmap.json");
+  const record = JSON.parse(await readFile(file, "utf8"));
+  record.initiatives[0].requirements = ["docs/requirements/reports.md"];
+  await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
+  const current = await getRoadmap({ projectRoot });
+  const updated = await updateRoadmap({ projectRoot, expectedRevision: current.revision, operations: [{ op: "update_initiative", id: "alpha", title: "Renamed" }] });
+  assert.deepEqual(updated.record.initiatives[0].requirements, ["docs/requirements/reports.md"], "an untouched reference is kept as it was");
+  void created;
+});

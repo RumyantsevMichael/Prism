@@ -40,7 +40,7 @@ External constraints can be requirements, but internal technology choices are de
 
 1. When the approved requirements start a new initiative, read the roadmap with `get_roadmap` and keep its revision.
 2. Agree with the user on a stable initiative identifier, a title, a one-sentence intent, and a band of `Now`, `Next`, `Later`, or `Parked`.
-3. Call `update_roadmap` with an `add_initiative` operation that links the Approved requirements.
+3. Call `update_roadmap` with an `add_initiative` operation that cites each Approved requirement section as `<file>.md§<number>`, the same form initiatives use.
 4. When the requirements amend an existing initiative, link them through the `update_roadmap` operation `update_initiative` instead.
 
 The identifier uses letters, digits, hyphens, or underscores, never changes, and names the initiative's plans folder.

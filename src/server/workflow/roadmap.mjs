@@ -4,7 +4,7 @@ import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { readInitiative } from "./initiative.mjs";
+import { normalizeRequirementReference, readInitiative } from "./initiative.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
@@ -242,7 +242,17 @@ function insertInBand(record, item, targetBand, positionValue) {
   record.initiatives.splice(index, 0, item);
 }
 
+// Only references an operation adds or changes are checked, so a roadmap written before this check still loads and updates.
+function roadmapRequirements(resolved, references) {
+  return references.map((reference) => {
+    const normalized = normalizeRequirementReference(resolved.config.paths.requirements, reference);
+    if (normalized.problem) throw fail("validation_failed", normalized.problem);
+    return normalized.reference;
+  });
+}
+
 async function applyOperation(resolved, record, operation, actor, at) {
+  if (operation.requirements !== undefined && (operation.op === "add_initiative" || operation.op === "update_initiative")) operation = { ...operation, requirements: roadmapRequirements(resolved, operation.requirements) };
   switch (operation.op) {
     case "set_serves":
       record.serves = operation.serves;

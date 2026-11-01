@@ -217,14 +217,21 @@ function markdown(record) {
 }
 
 // Requirement files cite obligations as <file>.md§<n>, so that form is accepted and stored as <requirements dir>/<file>.md#<n>.
+// The roadmap validates its references the same way, so an initiative created from a roadmap item never refuses them.
+export function normalizeRequirementReference(requirementsDirectory, reference) {
+  const cited = /^([^\s/#§]+\.md)§([^\s#§]+)$/.exec(reference);
+  if (cited && requirementsDirectory) return { reference: `${requirementsDirectory}/${cited[1]}#${cited[2]}` };
+  if (!/^[^\s#]+#[^\s#]+$/.test(reference)) {
+    return { problem: `Invalid requirement reference ${JSON.stringify(reference)}: use <requirements path>.md#<number>, such as ${requirementsDirectory ?? "docs/requirements"}/capability.md#1, or <file>.md§<number>.` };
+  }
+  return { reference };
+}
+
 function normalizeRequirements(resolved, references) {
   return references.map((reference) => {
-    const cited = /^([^\s/#§]+\.md)§([^\s#§]+)$/.exec(reference);
-    if (cited && resolved.requirementsDirectory) return `${resolved.requirementsDirectory}/${cited[1]}#${cited[2]}`;
-    if (!/^[^\s#]+#[^\s#]+$/.test(reference)) {
-      throw fail("validation_failed", `Invalid requirement reference ${JSON.stringify(reference)}: use <requirements path>.md#<number>, such as ${resolved.requirementsDirectory ?? "docs/requirements"}/capability.md#1, or <file>.md§<number>.`);
-    }
-    return reference;
+    const normalized = normalizeRequirementReference(resolved.requirementsDirectory, reference);
+    if (normalized.problem) throw fail("validation_failed", normalized.problem);
+    return normalized.reference;
   });
 }
 

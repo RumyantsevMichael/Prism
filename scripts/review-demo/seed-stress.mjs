@@ -74,7 +74,7 @@ try {
 
   const operations = [
     { op: "set_serves", serves: `${PARA}${LONG}` },
-    { op: "add_initiative", id: "huge-initiative", title: `A huge initiative with a very long title ${LONG}`, intent: PARA, pillar: `Pillar ${LONG}`, band: "Now", requirements: requirementFiles.slice(0, 3), rationale: PARA.repeat(2) }
+    { op: "add_initiative", id: "huge-initiative", title: `A huge initiative with a very long title ${LONG}`, intent: PARA, pillar: `Pillar ${LONG}`, band: "Now", requirements: requirementFiles.slice(0, 3).map((file) => `${file}#1`), rationale: PARA.repeat(2) }
   ];
   for (let i = 0; i < 28; i += 1) {
     const pillar = ["Reliability", "Compliance", "Insight", null][i % 4];

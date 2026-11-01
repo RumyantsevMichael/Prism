@@ -112,7 +112,7 @@ test("review is one independent mode that records findings through MCP", async (
 
 test("ideation adds the roadmap entry that the removed roadmap skill used to add", async () => {
   const ideate = await skill("ideate");
-  assert.match(ideate, /Call `update_roadmap` with an `add_initiative` operation that links the Approved requirements/);
+  assert.match(ideate, /Call `update_roadmap` with an `add_initiative` operation that cites each Approved requirement section as `<file>.md§<number>`/);
   assert.match(await skill("workflow-init"), /Call `update_roadmap` with `expectedRevision: null`, the accepted operations, and `replace_hand_written_projection`/);
   assert.doesNotMatch(await skill("write-requirements"), /`roadmap`/);
 });
