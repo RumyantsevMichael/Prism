@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { withArtifactLock, withFileLock } from "../workflow/artifact-store.mjs";
 import { assertInput } from "../workflow/artifact-schema.mjs";
 import { resolveArtifactPath, readChangeMapDocument } from "../conservation/change-map.mjs";
-import { locateRecord, sameRecord, sliceDocumentFolder, writeRecord } from "../workflow/record-store.mjs";
+import { locateRecord, moveLegacyRecords, sameRecord, sliceDocumentFolder, writeRecord } from "../workflow/record-store.mjs";
 import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { acceptedDesign, latestVerification } from "../workflow/slice-design.mjs";
 import { conservationStore, canonical, digest, conservationError, withinScope } from "../conservation/conservation-store.mjs";
@@ -443,6 +443,7 @@ async function getReview(input) {
 }
 async function updateReview(input) {
   assertInput(UPDATE_REVIEW_SCHEMA, input);
+  await moveLegacyRecords(input.projectRoot);
   const resolved = await locateRecord(input.projectRoot, { kind: "review", initiative: input.initiative, slice: input.slice });
   const deltaTarget = await locateRecord(input.projectRoot, { kind: "change-map", initiative: input.initiative, slice: input.slice });
   await mkdir(path.dirname(resolved.target), { recursive: true });

@@ -9,7 +9,7 @@ import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { locateRecord, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
+import { locateRecord, moveLegacyRecords, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
 import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, measureContract, REVIEW_MARKS, stageFrozenTests, withdrawFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
@@ -547,6 +547,7 @@ export async function updateInitiative(input) {
   validateInput(UPDATE_INITIATIVE_SCHEMA, input);
   const standalone = input.operations.find((operation) => STANDALONE.has(operation.op));
   if (standalone && input.operations.length > 1) throw fail("validation_failed", `${standalone.op} must be the only operation of its update.`);
+  await moveLegacyRecords(input.projectRoot);
   if (standalone?.op === "remove_records") return removeRecords(input);
   const resolved = await resolveInitiative(input.projectRoot, input.initiative, true);
   const diagramCache = await precheckDiagrams(resolved, input.operations);

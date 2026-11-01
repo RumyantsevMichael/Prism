@@ -11,7 +11,7 @@ import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { locateRecord, writeRecord } from "./record-store.mjs";
+import { locateRecord, moveLegacyRecords, writeRecord } from "./record-store.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
@@ -297,6 +297,7 @@ async function applyOperation(resolved, record, operation, actor, at) {
 
 export async function updateRoadmap(input) {
   validateInput(UPDATE_ROADMAP_SCHEMA, input);
+  await moveLegacyRecords(input.projectRoot);
   const resolved = await resolveRoadmap(input.projectRoot, true);
   const managed = [resolved.projectionPath].filter((file) => path.posix.basename(file) === "roadmap.md");
   if (managed.length) await conservationStore.registerCoordinationOutputs(resolved.root, managed);

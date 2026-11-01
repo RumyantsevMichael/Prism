@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { access, chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -978,4 +978,23 @@ test("verify_slice reports a missing design and asks for command approval throug
   const view = await callTool(mcp, 8, "update_design_view", { projectRoot: root, initiative: "reports", slice: "reports", examples: [{ clause: 1, file: "docs/acceptance.test.mjs", test: "frozen", example: "x" }] });
   assert.equal(view.error.data.code, "validation_failed");
   assert.match(view.error.message, /slice\.md does not exist/);
+});
+
+test("a read leaves legacy records in place, and the first write reports the files it moved", async (context) => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "legacy-move-")));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".prism"), { recursive: true });
+  await mkdir(path.join(root, "docs", "plans", "reports"), { recursive: true });
+  await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans (scratch): docs/plans/\n");
+  await writeFile(path.join(root, "docs", "plans", "reports", "state.json"), JSON.stringify({ schemaVersion: 1, settings: {}, active: [], pending: [], next: [], evidence: [] }));
+  const mcp = mcpProcess(context, root, root);
+  await initialize(mcp);
+  const read = await callTool(mcp, 2, "get_coordination_state", { projectRoot: root, initiative: "reports" });
+  assert.equal(read.result.structuredContent.exists, true);
+  assert.deepEqual(await readdir(path.join(root, ".prism")), ["workflow.md"]);
+  const written = await callTool(mcp, 3, "update_coordination_state", { projectRoot: root, initiative: "reports", expectedRevision: read.result.structuredContent.revision, changes: { next: ["Design the export."] } });
+  assert.equal(written.error, undefined, JSON.stringify(written.error));
+  assert.match(written.result.content.at(-1).text, /moved 1 record files[\s\S]*docs\/plans\/reports\/state\.json -> \.prism\/initiatives\/reports\/state\.json/);
+  const again = await callTool(mcp, 4, "get_coordination_state", { projectRoot: root, initiative: "reports" });
+  assert.doesNotMatch(again.result.content.map((item) => item.text).join("\n"), /moved/);
 });
