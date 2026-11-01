@@ -18,6 +18,7 @@ const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore 
 const { forgetMigrations, listInitiatives, readRecord, writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
+const { withFileLock } = await import("../../dist/server/workflow/artifact-store.mjs");
 // Syncs run only when a test calls them, so each test controls its own ordering.
 configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 });
 test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive: true, force: true }); });
@@ -175,4 +176,72 @@ test("includes the store's sync status in the review index", async (context) => 
   } finally {
     await review.close();
   }
+});
+
+const STATE_FILE = "initiatives/reports/state.json";
+const remoteFile = (remote, file) => git(remote, "show", `main:${file}`);
+
+// Both machines hold the same state record, and B has pushed its own change to it.
+async function upstreamChange(context) {
+  const machinesValue = await machines(context);
+  const { a, b, storeA, storeB } = machinesValue;
+  await writeRecord(a, STATE, "{\"v\":0}\n");
+  await syncRecordStore(storeA);
+  await syncRecordStore(storeB);
+  await writeRecord(b, STATE, "{\"v\":\"b\"}\n");
+  assert.equal((await syncRecordStore(storeB)).state, "ok");
+  return machinesValue;
+}
+
+test("keeps the branch and the upstream change when a record stays locked during the merge", async (context) => {
+  const { storeA, remote } = await upstreamChange(context);
+  const head = git(storeA, "rev-parse", "HEAD");
+  configureRecordSync({ applyLockMs: 100 });
+  let status;
+  try {
+    await withFileLock(path.join(storeA, STATE_FILE), async () => { status = await syncRecordStore(storeA); });
+  } finally {
+    configureRecordSync({ applyLockMs: 2000 });
+  }
+  assert.equal(status.state, "merge_failed");
+  assert.equal(git(storeA, "rev-parse", "HEAD"), head);
+  assert.equal(await readFile(path.join(storeA, STATE_FILE), "utf8"), "{\"v\":0}\n");
+  assert.equal((await syncRecordStore(storeA)).state, "ok");
+  assert.equal(await readFile(path.join(storeA, STATE_FILE), "utf8"), "{\"v\":\"b\"}\n");
+  assert.equal(remoteFile(remote, STATE_FILE), "{\"v\":\"b\"}");
+});
+
+test("turns a local write that lands before the merge step into a saved conflict", async (context) => {
+  const { storeA, remote } = await upstreamChange(context);
+  let injected = false;
+  const status = await syncRecordStore(storeA, { beforeApply: async () => {
+    if (injected) return;
+    injected = true;
+    await writeFile(path.join(storeA, STATE_FILE), "{\"v\":\"a\"}\n");
+  } });
+  assert.equal(status.state, "conflicts");
+  assert.deepEqual(status.conflicts.map((item) => item.path), [STATE_FILE]);
+  assert.equal(await readFile(path.join(storeA, status.conflicts[0].savedAs), "utf8"), "{\"v\":\"a\"}\n");
+  assert.equal(await readFile(path.join(storeA, STATE_FILE), "utf8"), "{\"v\":\"b\"}\n");
+  assert.equal(remoteFile(remote, STATE_FILE), "{\"v\":\"b\"}");
+  assert.equal(git(storeA, "status", "--porcelain"), "");
+});
+
+test("syncs again when a write is scheduled while a sync is running", async (context) => {
+  const { a, storeA, remote } = await machines(context);
+  await writeRecord(a, STATE, "{}\n");
+  configureRecordSync({ debounceMs: 20 });
+  try {
+    await syncRecordStore(storeA, { beforePush: async () => {
+      await writeRecord(a, { kind: "state", initiative: "later" }, "{}\n");
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    } });
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline && !git(remote, "ls-tree", "-r", "--name-only", "main").includes("initiatives/later/state.json")) await new Promise((resolve) => setTimeout(resolve, 50));
+  } finally {
+    configureRecordSync({ debounceMs: 3600000 });
+  }
+  // The follow-up sync may still be writing its status, so it finishes before the folder goes.
+  await syncRecordStore(storeA);
+  assert.match(git(remote, "ls-tree", "-r", "--name-only", "main"), /initiatives\/later\/state\.json/);
 });

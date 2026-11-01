@@ -1087,7 +1087,7 @@ function paletteEntries() {
   return [...places, ...indexed, ...files];
 }
 
-const SYNC_LABELS = { no_upstream: "Records not shared", not_a_repository: "Records not synced", push_rejected: "Records not pushed", merge_failed: "Records not merged", fetch_failed: "Records not fetched", conflicts: "Record conflicts saved" };
+const SYNC_LABELS = { no_upstream: "Records not shared", not_a_repository: "Records not synced", push_rejected: "Records not pushed", merge_failed: "Records not merged", fetch_failed: "Records not fetched", git_failed: "Records not synced", conflicts: "Record conflicts saved" };
 
 // The record store's sync stays quiet while it is fine, and a small chip names any other state.
 function renderStoreSync(status) {

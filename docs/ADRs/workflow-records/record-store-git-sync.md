@@ -44,7 +44,9 @@ Colleagues share initiatives, reviews, and runs once their stores clone one remo
 A pending debounced sync can be lost when a process exits, and the next sync from any process commits the change because it stages everything uncommitted.
 Cloud sessions cannot sync until the later increment adds their branch and the merge Action.
 Mutable records resolve concurrent edits by first push until records become append-only event files, so the later edit is saved aside rather than merged.
-A record written locally while a merge replaces it keeps its local bytes, and the next sync commits them over the upstream version, which stays in history.
+A record written or locked while a merge would replace it keeps the branch where it was, so the next attempt commits the local bytes and resolves them against the upstream as a saved conflict.
+A record that stays locked through every attempt delays the merge to a later sync, which the status reports as `merge_failed`.
+A leftover Git lock in the store stops syncing with `git_failed` until a person removes it, because Prism never deletes Git's locks.
 Merging without the working tree requires Git 2.38 or later, and an older Git reports `merge_failed`.
 
 ## Mechanism
@@ -53,9 +55,13 @@ The `Workspace` section's `Store sync` key turns sync on.
 A write or append schedules a debounced sync, and a read starts a background sync when the last fetch is older than the pull interval.
 A sync takes the store-wide sync lock, stages everything except the sync folder and ignored files, commits, fetches the upstream, merges, and pushes, and it repeats fetch, merge, and push up to three times when another machine pushed first.
 The merge runs in Git's object store without touching the working tree, and a record conflict takes the upstream entry while the local blob is saved under the sync folder.
-The merge step then marks the working tree as changing and replaces each changed file by an atomic rename under that file's record lock, only while the file still holds the previous commit's bytes.
+The merge step then marks the working tree as changing, takes the record lock of every changed file, and checks that each file still holds the previous commit's bytes.
+Only then does it replace each file by an atomic rename and check that each holds the merged bytes, and only after both checks does the branch move.
+When a check fails or a lock stays held, the branch stays at the pre-merge commit, the next attempt commits what the working tree holds, and the merge runs again, so an upstream change is never reverted silently.
 Record reads and writes in every process wait, for at most ten seconds, while that mark is held by a live process, and the atomic rename means a reader that started earlier still sees a whole old or new file.
-After the files are replaced, the branch and index move to the merge commit, and the mark is removed.
+The branch and index move to the merge commit while the locks are still held, then the locks and the mark are released.
+A write scheduled while a sync runs starts another sync after it, because the running sync may have committed before the write.
+SSH runs in batch mode unless the user configured an SSH command, so no prompt can hold the sync lock.
 Every sync writes its outcome, ahead and behind counts, and saved conflicts to a status file in the ignored sync folder, and the review index includes it.
 
 ## Decision Log
