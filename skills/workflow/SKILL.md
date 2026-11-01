@@ -85,8 +85,9 @@ Code establishes implemented behavior.
 | Fit checkpoint | The design decision that an outcome fits the remaining context and risk budget with settled architecture and end-to-end verification. |
 | Workflow decision record | An opt-in local record of a structured decision, its reason codes, evidence paths, and identity coverage. |
 | Change map | MCP-managed version 2 design evidence binding the original baseline, requirements, native search receipts, planned changes, and growth policy to an audited revision; slices designed earlier keep it as `concept-delta.json`. |
-| Conservation evidence | Immutable private B, A, and F source snapshots, semantic search and repository analysis receipts, observations, and measurements used by MCP review gates. |
+| Conservation evidence | Immutable private B, A, T, and F source snapshots, semantic search and repository analysis receipts, observations, and measurements used by MCP review gates. |
 | Original baseline | Retained source before the first target edit, preserved for reuse discovery and later comparisons across corrections. |
+| Task-start snapshot | T, a retained snapshot captured before the task's next edit after out-of-scope work from others lands after B. A comparison turns an out-of-scope change that T already holds into a review check, and files inside the scope keep their judgment against B. |
 | Semantic reuse evidence | Snapshot-bound search candidates with model identity and reviewed reuse dispositions, recorded through the change-map MCP capability without treating similarity as equivalence. |
 | Refactoring | Behavior-preserving restructuring of existing concepts, with shared analysis for targeted cleanup and design reuse. |
 | Semantic concept | A unit of meaning or responsibility that can span several source units or share one with other concepts. |

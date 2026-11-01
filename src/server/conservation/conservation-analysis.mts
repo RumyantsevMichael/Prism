@@ -5,8 +5,8 @@ import { nativeSemanticRuntime } from "../repository-intelligence/native-semanti
 import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
 import { CHUNKER_VERSION } from "../../native-runtime/versions.mjs";
 import { sameNameGroups } from "../repository-intelligence/same-name-units.mjs";
-import { detectorDiff, DUPLICATE_MIN_LINES } from "./detector-diff.mjs";
-import type { NativeSource, PreparedIndex, SemanticRuntime } from "../repository-intelligence/repository-unit-types.mjs";
+import { detectorDiff, DUPLICATE_MIN_LINES, type DetectorSide } from "./detector-diff.mjs";
+import type { NativeSource, PreparedIndex, SemanticRuntime, SourceUnit } from "../repository-intelligence/repository-unit-types.mjs";
 import type { Evidence, SnapshotEvidence, SearchReceipt, Reference, Resolution, ResolvedUnit, DeltaDocument, ComparisonEvidence, Measurement, Observation } from "./conservation-types.mjs";
 
 type Analysis = Extract<Evidence, { kind: "analysis" }>;
@@ -253,11 +253,14 @@ async function measurements(projectRoot: string, before: SnapshotEvidence, after
   return values;
 }
 
-export async function compareChangeMap(input: { projectRoot: string; deltaPath: string; expectedRevision: string; baselineId: string; resultSnapshotId: string }, options: Options = {}) {
+export async function compareChangeMap(input: { projectRoot: string; deltaPath: string; expectedRevision: string; baselineId: string; resultSnapshotId: string; startSnapshotId?: string }, options: Options = {}) {
   const store = options.store || conservationStore;
   const loaded = await readChangeMapDocument(input.projectRoot, input.deltaPath, input.expectedRevision), document = loaded.document as DeltaDocument;
   if (document.schemaVersion !== 2 || document.baselineId !== input.baselineId) throw conservationError("validation_failed", "The comparison must use the delta's original baseline.");
   const before = await store.get<SnapshotEvidence>(input.projectRoot, input.baselineId, "snapshot"), after = await store.get<SnapshotEvidence>(input.projectRoot, input.resultSnapshotId, "snapshot");
+  // The task-start snapshot T only attributes out-of-scope changes that were already present when the task started; files inside the scope keep their judgment against B.
+  const startSnapshotId = input.startSnapshotId ?? null;
+  const start = startSnapshotId ? await store.get<SnapshotEvidence>(input.projectRoot, startSnapshotId, "snapshot") : null;
   const preparedA = await prepareAnalysis(input.projectRoot, input.baselineId, options);
   if (preparedA.status === "preparing") return preparedA;
   const preparedB = input.baselineId === input.resultSnapshotId ? preparedA : await prepareAnalysis(input.projectRoot, input.resultSnapshotId, options);
@@ -320,7 +323,13 @@ export async function compareChangeMap(input: { projectRoot: string; deltaPath: 
   }
   const changedPaths = new Set([...before.files, ...after.files].map(file => file.file).filter(file => !excluded.includes(file)
     && canonical(before.files.find(item => item.file === file)) !== canonical(after.files.find(item => item.file === file))));
+  // A file that T omits or excludes has no T evidence, so T cannot attribute it.
+  const beforeStart = new Set([...changedPaths].filter(file => start && !withinScope(file, document.scope)
+    && !start.exclusions.includes(file) && !start.omissions.some(item => item.file === file)
+    && canonical(start.files.find(item => item.file === file)) === canonical(after.files.find(item => item.file === file))));
   for (const file of changedPaths) {
+    // The observation names T, so that a reviewer sees it and a different T gives a different observation ID.
+    if (beforeStart.has(file)) { observe("outside_scope_before_start", "review_required", "The task-start snapshot already holds this out-of-scope change. A reviewer must confirm that the task did not make it.", { file, startSnapshotId: startSnapshotId! }); continue; }
     if (!withinScope(file, document.scope)) { observe("outside_scope", "failure", "A source change is outside the accepted scope.", { file }); continue; }
     const currentFile = after.files.find(item => item.file === file) || before.files.find(item => item.file === file)!;
     if (currentFile.kind !== "source" || (before.files.some(item => item.file === file) && !a?.fileCoverage[file]) || (after.files.some(item => item.file === file) && !b?.fileCoverage[file])) observe("structure_unknown", "review_required", "Structural coverage needs an explicit manual check.", { file });
@@ -354,16 +363,55 @@ export async function compareChangeMap(input: { projectRoot: string; deltaPath: 
     if (original && final && (original.mode !== final.mode || original.kind !== final.kind) && !sourceRefs.some(ref => ref.unit.file === file && ref.unit.kind === "file" && ref.action !== "KEEP")) observe("unclassified_unit", "review_required", "Attribute the file kind or mode change to a planned change.", { file, unit: right.find(unit => unit.file === file && unit.kind === "file") });
   }
   // Detector findings that the change adds, so that a review judges new duplication and complexity rather than the baseline's.
-  const changedSource = [...changedPaths].filter(file => after.files.some(item => item.file === file && item.kind === "source"));
+  // The baseline side takes each attributed file as F holds it, which T also holds, so that work before the task counts as baseline.
+  // Attributed files then leave the changed set: a finding that only upstream work made is not new, and a task finding names a file that the task changed.
+  const changedSource = [...changedPaths].filter(file => !beforeStart.has(file) && after.files.some(item => item.file === file && item.kind === "source"));
   if (changedSource.length && a && b) {
-    const side = async (snapshot: SnapshotEvidence, analysis: Analysis) => {
-      const files = new Set(analysis.units.map(unit => unit.file)), contents = new Map<string, string>();
-      for (const file of snapshot.files) if (file.kind === "source" && files.has(file.file) && !excluded.includes(file.file)) contents.set(file.file, (await store.bytes(input.projectRoot, file)).toString("utf8"));
-      return { index: { units: analysis.units.filter(unit => contents.has(unit.file) && unit.range && unit.span), edges: analysis.edges || [], unresolvedReferences: analysis.unresolvedReferences }, contents };
+    const side = async (parts: [SnapshotEvidence, Analysis, (file: string) => boolean][]): Promise<DetectorSide> => {
+      const contents = new Map<string, string>(), index: DetectorSide["index"] = { units: [], edges: [], unresolvedReferences: undefined };
+      const taken: Set<string>[] = [];
+      for (const [snapshot, analysis, keep] of parts) {
+        const files = new Set(analysis.units.map(unit => unit.file).filter(keep));
+        for (const file of snapshot.files) if (file.kind === "source" && files.has(file.file) && !excluded.includes(file.file)) contents.set(file.file, (await store.bytes(input.projectRoot, file)).toString("utf8"));
+        const units = analysis.units.filter(unit => files.has(unit.file) && contents.has(unit.file) && unit.range && unit.span);
+        taken.push(new Set(units.map(unit => unit.id)));
+        index.units.push(...units);
+      }
+      if (parts.length === 1) {
+        index.edges.push(...(parts[0][1].edges || []));
+        index.unresolvedReferences = parts[0][1].unresolvedReferences;
+        return { index, contents };
+      }
+      // Unit IDs include the line, so an edge that crosses parts names a unit ID of its own analysis that the merged side does not hold.
+      // Such an edge end moves to the merged unit with the same file, kind, and selector.
+      // When several units share that identity, the end moves to the unit at the same position in line order, or to the first one when no unit is at that position.
+      // An end with no match stays as it was.
+      const identity = (unit: SourceUnit) => `${unit.file}\0${unit.kind}\0${unit.selector ?? unit.name}`, mergedIds = new Set(index.units.map(unit => unit.id));
+      const byIdentity = (units: SourceUnit[]) => {
+        const groups = new Map<string, SourceUnit[]>();
+        for (const unit of units) { const group = groups.get(identity(unit)); if (group) group.push(unit); else groups.set(identity(unit), [unit]); }
+        for (const group of groups.values()) group.sort((left, right) => (left.range?.startLine ?? 0) - (right.range?.startLine ?? 0));
+        return groups;
+      };
+      const merged = byIdentity(index.units);
+      for (const [position, [, analysis]] of parts.entries()) {
+        const byId = new Map(analysis.units.map(unit => [unit.id, unit])), own = byIdentity(analysis.units);
+        const remap = (id: string) => {
+          const unit = byId.get(id), targets = unit && merged.get(identity(unit));
+          if (mergedIds.has(id) || !unit || !targets) return id;
+          return (targets[own.get(identity(unit))!.indexOf(unit)] ?? targets[0]).id;
+        };
+        // A merged side keeps only the relationships that start in the units it takes from each analysis.
+        const owned = (source: string) => taken[position].has(source);
+        index.edges.push(...(analysis.edges || []).filter(edge => owned(edge.source)).map(edge => ({ ...edge, target: remap(edge.target) })));
+        if (analysis.unresolvedReferences) (index.unresolvedReferences ||= []).push(...analysis.unresolvedReferences.filter(reference => owned(reference.source)));
+      }
+      return { index, contents };
     };
-    for (const finding of detectorDiff(await side(before, a), await side(after, b), new Set(changedSource))) observe(finding.code, finding.severity, finding.message, { file: finding.file });
+    const baselineSide = await side(beforeStart.size ? [[before, a, file => !beforeStart.has(file)], [after, b, file => beforeStart.has(file)]] : [[before, a, () => true]]);
+    for (const finding of detectorDiff(baselineSide, await side([[after, b, () => true]]), new Set(changedSource))) observe(finding.code, finding.severity, finding.message, { file: finding.file });
   } else if (changedSource.length) observe("detector_diff_unknown", "review_required", "The structural analysis is unavailable, so a review must check the change for new duplication and complexity.");
-  for (const snapshot of [before, after]) if (!snapshot.complete && (snapshot.unknownOmissions !== false || snapshot.omissions.some(item => withinScope(item.file, document.scope)))) observe("source_inventory_incomplete", "failure", "The affected source inventory is incomplete.");
+  for (const snapshot of start ? [before, start, after] : [before, after]) if (!snapshot.complete && (snapshot.unknownOmissions !== false || snapshot.omissions.some(item => withinScope(item.file, document.scope)))) observe("source_inventory_incomplete", "failure", "The affected source inventory is incomplete.");
   const measured = await measurements(input.projectRoot, before, after, a, b, document, store);
   for (const metric of measured.filter(item => item.increase === null)) observe("measurement_unknown", "review_required", `The ${metric.dimension} measurement is unsupported and needs a scoped review check.`);
   const growth = measured.filter(item => !item.dimension.startsWith("planned.") && item.increase !== null && item.increase > 0)
@@ -377,12 +425,12 @@ export async function compareChangeMap(input: { projectRoot: string; deltaPath: 
     else if (result.status !== "resolved") observe("requirement_unknown", "review_required", "The governing requirement needs an explicit review check.", { file: reference.path });
   }
   const evidence: ComparisonEvidence = { kind: "comparison", schemaVersion: 1, project: before.project, deltaPath: loaded.deltaPath, deltaRevision: input.expectedRevision,
-    baselineId: input.baselineId, resultSnapshotId: input.resultSnapshotId, scope: document.scope, requirements,
+    baselineId: input.baselineId, resultSnapshotId: input.resultSnapshotId, startSnapshotId, scope: document.scope, requirements,
     analysisIds: { before: a ? await store.put(input.projectRoot, a) : null, after: b ? await store.put(input.projectRoot, b) : null },
     versions: { ...(a?.versions || { metrics: ANALYSIS_VERSION, structure: "unavailable" }), comparison: COMPARISON_VERSION }, observations: [...new Map(observations.map(item => [item.id, item])).values()],
     measurements: measured, growth, units: { before: left.filter(unit => withinScope(unit.file, document.scope)), after: right.filter(unit => withinScope(unit.file, document.scope)) },
     diagnostics: [...before.diagnostics, ...after.diagnostics, ...(a?.diagnostics || []), ...(b?.diagnostics || [])] };
   const comparisonId = await store.put(input.projectRoot, evidence);
-  return { status: "ready", comparisonId, baselineId: input.baselineId, resultSnapshotId: input.resultSnapshotId,
+  return { status: "ready", comparisonId, baselineId: input.baselineId, resultSnapshotId: input.resultSnapshotId, startSnapshotId,
     observations: evidence.observations.slice(0, 50), totalObservations: evidence.observations.length, measurements: measured, growth, nextOffset: evidence.observations.length > 50 ? 50 : null };
 }

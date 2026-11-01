@@ -27,7 +27,9 @@ async function projectFixture(context, name, artifact) {
 }
 
 function mcpProcess(context, cwd, projectRoot, environment = {}) {
-  const env = { ...process.env, PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), ...environment };
+  // A host plugin data directory, such as the one verify_slice inherits from the MCP server, overrides the test's dataDirectory.
+  const { CLAUDE_PLUGIN_DATA: _hostData, PLUGIN_DATA: _pluginData, ...inherited } = process.env;
+  const env = { ...inherited, PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), ...environment };
   if (projectRoot) {
     env.CLAUDE_PROJECT_DIR = projectRoot;
   } else {
