@@ -332,6 +332,30 @@ test("a brief verification names the failing tests and the full log", async (con
   assert.equal(failed.log.startsWith(privateData), true, "the full log stays in plugin data, outside the project");
 });
 
+test("a failing run names failures that scrolled out of the kept output, including nested subtests", async (context) => {
+  assert.deepEqual(failingTests(["    not ok 2 - keeps the cursor", "not ok 3 - waits for the network # TODO", "not ok 4 - skipped on Windows # SKIP"].join("\n")), ["keeps the cursor"]);
+  const root = await project(context);
+  const script = [
+    "console.log(\"TAP version 13\");",
+    "console.log(\"# Subtest: download\");",
+    "console.log(\"    not ok 1 - signs the report\");",
+    "console.error(\"not ok 2 - checks the archive\");",
+    "for (let index = 0; index < 4000; index += 1) console.log(`ok ${index + 3} - passes case ${index}\\n  ---\\n  duration_ms: 1.25\\n  ...`);",
+    "process.exit(1);"
+  ].join("\n");
+  await writeFile(path.join(root, "check.mjs"), `${script}\n`);
+  await accept(root);
+  const failed = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: await approve(root) });
+  assert.equal(failed.status, "failed");
+  assert.doesNotMatch(failed.outputTail, /signs the report/, "the failures are no longer in the kept output");
+  const names = ["checks the archive", "signs the report"];
+  assert.deepEqual([...failed.failing].sort(), names, "stdout and stderr are both read");
+  assert.equal(failed.failingCount, 2);
+  assert.deepEqual([...verificationBrief(failed).failing].sort(), names);
+  const recorded = JSON.parse(await readFile(path.join(root, failed.path), "utf8"));
+  assert.deepEqual([...recorded.failing].sort(), names, "the run record keeps the names for the slice page");
+});
+
 test("an implementer's contract defects block the slice without running anything until design revises the contract", async (context) => {
   const root = await project(context);
   const defects = [{ clause: "Contract 2", reason: "The storage client raises on a missing key instead of returning None." }];

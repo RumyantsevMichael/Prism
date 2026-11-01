@@ -211,6 +211,11 @@ function legacyChangeMapCard(path, ctx) {
   return card("Change map", `<p>The planned changes and their readiness.</p><p>${artifactChip(path, ctx, "Open the change map")}</p>`, { source: path.split("/").pop() });
 }
 
+function failingList(run) {
+  const more = (run.failingCount ?? run.failing.length) - run.failing.length;
+  return `${run.failing.map((name) => `<code>${escapeHtml(name)}</code>`).join(" ")}${more > 0 ? ` and ${more} more` : ""}`;
+}
+
 // Verification shows the accepted design's frozen tests, the latest run of the project's test command, and the derived change map.
 function verificationCard(design, run, changeMap = "") {
   if (!design && !run) return "";
@@ -223,7 +228,8 @@ function verificationCard(design, run, changeMap = "") {
       ["Frozen tests", design?.frozenTests.length ? design.frozenTests.map((item) => `<code>${escapeHtml(item.path)}</code>`).join(" ") : null],
       ["Command", run ? `<code>${escapeHtml(run.command)}</code>` : null],
       ["Duration", run?.durationMs ? seconds(run.durationMs) : null],
-      ["Exit code", run && run.exitCode !== null ? String(run.exitCode) : null]
+      ["Exit code", run && run.exitCode !== null ? String(run.exitCode) : null],
+      ["Failing tests", run?.failing?.length ? failingList(run) : null]
     ])}
     ${run?.outputTail ? `<details><summary>Output tail</summary><pre>${escapeHtml(run.outputTail)}</pre></details>` : ""}
     ${changeMap}`, { source: "runs" });
