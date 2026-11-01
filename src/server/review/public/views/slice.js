@@ -129,7 +129,7 @@ export async function render(container, entity, ctx) {
   container.innerHTML = `
     <section class="view-card summary-card">
       <div class="summary-row">
-        <div class="summary-status"><span class="slice-status status-${escapeHtml(slice.status)}">${escapeHtml(slice.status)}</span>${data.complete && slice.status === "split" ? '<span class="status-pill is-good">all descendants done</span>' : ""}</div>
+        <div class="summary-status">${data.designReview ? `<span class="slice-status status-design-review">design review</span><span class="muted">${data.designReview === "answered" ? "You answered the design question; the agent accepts or revises the design next." : "The design waits for your answer on the Attention page."}</span>` : `<span class="slice-status status-${escapeHtml(slice.status)}">${escapeHtml(slice.status)}</span>`}${data.complete && slice.status === "split" ? '<span class="status-pill is-good">all descendants done</span>' : ""}</div>
         <div class="summary-links">${artifactChip(`initiative:${data.id}`, ctx, data.initiativeTitle)}</div>
       </div>
       ${slice.outcome ? `<p class="initiative-intent large">${escapeHtml(slice.outcome)}</p>` : '<p class="muted">No outcome is recorded for this slice.</p>'}

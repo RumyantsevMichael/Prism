@@ -5,11 +5,16 @@ import { artifactChip, bindLinks, card, emptyNote, escapeHtml, keyValues, plural
 
 const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 // These columns always show; another status, such as deferred, gets a column only while a slice has it.
-const STATUS_COLUMNS = [["not-started", "Not started"], ["in-progress", "In progress"], ["blocked", "Blocked"], ["deferred", "Deferred"], ["done", "Done"]];
+const STATUS_COLUMNS = [["not-started", "Not started"], ["design-review", "Design review"], ["in-progress", "In progress"], ["blocked", "Blocked"], ["deferred", "Deferred"], ["done", "Done"]];
 const FIXED_COLUMNS = new Set(["not-started", "in-progress", "blocked", "done"]);
 
 function statusBadge(status) {
-  return `<span class="slice-status status-${escapeHtml(status)}">${escapeHtml(status)}</span>`;
+  return `<span class="slice-status status-${escapeHtml(status)}">${escapeHtml(status === "design-review" ? "design review" : status)}</span>`;
+}
+
+// A not-started slice whose design waits at its gate shows as in design review; the record keeps not-started until acceptance.
+function statusOf(data, slug) {
+  return data.designReview?.[slug] ? "design-review" : data.record.slices[slug].status;
 }
 
 
@@ -28,7 +33,7 @@ function tree(data, slug, depth, ctx) {
   const children = data.derived.children[slug] ?? [];
   return `<li class="slice-row depth-${Math.min(depth, 4)}">
     <div class="slice-row-main">
-      ${statusBadge(slice.status)}
+      ${statusBadge(statusOf(data, slug))}
       <button type="button" class="text-button slice-title" data-artifact="slice:${escapeHtml(data.id)}/${escapeHtml(slug)}">${escapeHtml(slice.title)}</button>
       <code class="slice-slug">${escapeHtml(slug)}</code>
       <span class="slice-tags">${sliceSignals(data.slices[slug])}</span>
@@ -49,7 +54,7 @@ function boardCard(data, slug, ctx) {
   // The root slice is the initiative itself, so the card names only the slices between it and this one.
   const path = clusterPath(data, slug).split(" › ").slice(1).join(" › ");
   const active = data.active.filter((entry) => entry.slice === slug);
-  return `<li class="slice-card slice-board-card status-${escapeHtml(slice.status)}">
+  return `<li class="slice-card slice-board-card status-${escapeHtml(statusOf(data, slug))}">
     ${path ? `<p class="slice-path">${escapeHtml(path)}</p>` : ""}
     <h3><button type="button" class="text-button" data-artifact="slice:${escapeHtml(data.id)}/${escapeHtml(slug)}">${escapeHtml(slice.title)}</button></h3>
     ${slice.outcome ? `<p class="initiative-intent">${escapeHtml(slice.outcome)}</p>` : ""}
@@ -63,10 +68,10 @@ function board(data, ctx) {
   const slugs = [...data.derived.leaves, ...data.active.map((entry) => entry.slice).filter((slug) => data.record.slices[slug] && !data.derived.leaves.includes(slug))];
   const unique = [...new Set(slugs)];
   const known = new Set(STATUS_COLUMNS.map(([status]) => status));
-  const extra = [...new Set(unique.map((slug) => data.record.slices[slug].status).filter((status) => !known.has(status)))].map((status) => [status, status]);
-  const columns = [...STATUS_COLUMNS, ...extra].filter(([status]) => FIXED_COLUMNS.has(status) || unique.some((slug) => data.record.slices[slug].status === status));
+  const extra = [...new Set(unique.map((slug) => statusOf(data, slug)).filter((status) => !known.has(status)))].map((status) => [status, status]);
+  const columns = [...STATUS_COLUMNS, ...extra].filter(([status]) => FIXED_COLUMNS.has(status) || unique.some((slug) => statusOf(data, slug) === status));
   return `<div class="slice-board">${columns.map(([status, label]) => {
-    const members = unique.filter((slug) => data.record.slices[slug].status === status);
+    const members = unique.filter((slug) => statusOf(data, slug) === status);
     return `<div class="board-column"><h3><span class="slice-status status-${escapeHtml(status)}">${escapeHtml(label)}</span><span class="column-count">${members.length}</span></h3><ul>${members.map((slug) => boardCard(data, slug, ctx)).join("") || '<li class="column-empty">—</li>'}</ul></div>`;
   }).join("")}</div>`;
 }
@@ -76,7 +81,7 @@ async function graph(container, data, ctx) {
   container.appendChild(section);
   const nodes = data.derived.leaves.map((slug) => {
     const slice = data.record.slices[slug];
-    return { id: slug, title: slice.title, subtitle: `${slice.status}${data.slices[slug]?.review?.blocking ? ` · ${data.slices[slug].review.blocking} blocking` : ""}`, tooltip: slice.outcome ?? slice.title, cluster: clusterPath(data, slug) || undefined, className: `slice-node status-${slice.status}` };
+    return { id: slug, title: slice.title, subtitle: `${statusOf(data, slug) === "design-review" ? "design review" : slice.status}${data.slices[slug]?.review?.blocking ? ` · ${data.slices[slug].review.blocking} blocking` : ""}`, tooltip: slice.outcome ?? slice.title, cluster: clusterPath(data, slug) || undefined, className: `slice-node status-${statusOf(data, slug)}` };
   });
   const edges = Object.entries(data.derived.effectiveDependencies).flatMap(([slug, targets]) => targets.map((target) => ({ from: target, to: slug, className: "requires-edge" })));
   const viewport = section.querySelector(".graph-viewport");

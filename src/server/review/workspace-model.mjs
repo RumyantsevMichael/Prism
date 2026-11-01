@@ -213,6 +213,11 @@ async function computeInitiativeView(projectRoot, id) {
     for (const slug of Object.keys(loaded.record.slices)) slices[slug] = await sliceArtifacts(projectRoot, resolved.directory, loaded.record.slices, slug, id);
   }
   const analysis = loaded.analysis;
+  // A design waits at its gate until the orchestrator accepts it, while the record still says not-started, so the browser shows that wait instead.
+  const designReview = {};
+  for (const gate of state?.pending ?? []) {
+    if (gate && typeof gate === "object" && gate.kind === "visual-review" && gate.slice && loaded.record?.slices?.[gate.slice]?.status === "not-started") designReview[gate.slice] = gate.answer ? "answered" : "waiting";
+  }
   return {
     id,
     directory: resolved.directory,
@@ -224,8 +229,9 @@ async function computeInitiativeView(projectRoot, id) {
     errors: loaded.errors,
     revision: loaded.revision,
     record: loaded.record,
-    derived: analysis ? { root: analysis.root, children: analysis.children, leaves: analysis.leaves, counts: analysis.counts, effectiveDependencies: analysis.effectiveDependencies, complete: analysis.complete, designCandidates: analysis.designCandidates, dependenciesComplete: analysis.dependenciesComplete } : null,
+    derived: analysis ? { root: analysis.root, children: analysis.children, leaves: analysis.leaves, counts: analysis.counts, effectiveDependencies: analysis.effectiveDependencies, complete: analysis.complete, designCandidates: analysis.designCandidates.filter((slug) => !designReview[slug]), dependenciesComplete: analysis.dependenciesComplete } : null,
     active: state?.active ?? [],
+    designReview,
     slices,
     config: { paths: config.paths }
   };
@@ -265,6 +271,7 @@ export async function loadSliceView(projectRoot, id, slug) {
     dependents: Object.entries(initiative.record.slices).filter(([, other]) => other.dependencies.includes(slug)).map(([other]) => other),
     complete: derived?.complete[slug] ?? false,
     active: initiative.active.filter((entry) => entry.slice === slug),
+    designReview: initiative.designReview[slug] ?? null,
     artifacts: initiative.slices[slug],
     verification,
     changeMap: Object.keys(changeMap).length ? changeMap : null,
@@ -371,6 +378,7 @@ async function computeAttention(projectRoot) {
   const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await listInitiatives(projectRoot))])];
   const needsYou = [];
   const answered = [];
+  const earlier = [];
   const watch = [];
   for (const id of ids) {
     const snapshot = await initiativeSnapshot(projectRoot, config, id, items.get(id));
@@ -395,6 +403,9 @@ async function computeAttention(projectRoot) {
       } else if (typeof entry === "string") {
         needsYou.push({ type: "pending-note", text: entry, initiative });
       }
+    }
+    for (const entry of state?.valid ? state.state?.closed ?? [] : []) {
+      earlier.push({ type: "closed-gate", id: entry.id, kind: entry.kind, question: entry.question, options: entry.options ?? null, askedAt: entry.askedAt, closedAt: entry.closedAt, answer: entry.answer ?? null, reason: entry.reason ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null });
     }
     if (snapshot.record.exists && !snapshot.record.valid) {
       watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "initiative", initiative: id }), message: snapshot.record.errors.join(" ") });
@@ -430,7 +441,9 @@ async function computeAttention(projectRoot) {
   const blockingOrder = (entry) => ({ "record-problem": 0, blocked: 1, findings: entry.blocking ? 2 : 3, "ready-to-ship": 4, active: 5 })[entry.type] ?? 6;
   watch.sort((left, right) => blockingOrder(left) - blockingOrder(right));
   answered.sort((left, right) => String(left.answer.answeredAt).localeCompare(String(right.answer.answeredAt)));
-  return { needsYou, answered, watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
+  // The newest closed questions come first, across initiatives, so the list stays short.
+  earlier.sort((left, right) => String(right.closedAt).localeCompare(String(left.closedAt)));
+  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
 }
 
 // The browser names the initiative and gate; the state record is always the initiative's own, never a client path.

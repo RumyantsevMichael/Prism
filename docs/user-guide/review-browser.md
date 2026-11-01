@@ -42,6 +42,7 @@ Answer a question on Attention or in the conversation.
 In Claude Code a waiting agent resumes on its own shortly after your answer.
 Elsewhere the agent receives the answer with your next message, even a short one such as "go".
 Attention also lists blocked slices, open findings, and active work.
+Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
 
 Anyone who can open the review page's URL can answer for you, so do not share that URL.
 See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-the-browser) for the tool timeout that the Claude Code wait needs.
@@ -55,8 +56,9 @@ Shipped and superseded initiatives appear only with "Show shipped and superseded
 
 An initiative page shows its slices as a board, a list, or a graph.
 The board has one column per slice status, and the card of an active slice also shows its activity, workers, and review lanes.
+A slice whose design waits for your answer at its design gate shows as in design review until the agent accepts the design, even though its record still says not started.
 The list shows the slice tree, and the graph orders leaf slices by execution order.
-Below them, the page lists the unstarted leaves that can be designed next.
+Below them, the page lists the unstarted leaves that can be designed next, leaving out those in design review.
 A slice page shows the slice's design view, verification run, review ledger, change map when it has one, other files, and the design from `slice.md`.
 
 The design view is the page to read at a design gate.

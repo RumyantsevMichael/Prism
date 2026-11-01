@@ -283,3 +283,41 @@ test("flags an open question whose every attached file is gone", async (context)
     await review.close();
   }
 });
+
+test("lists closed questions with their answer or the reason they were withdrawn", async (context) => {
+  const projectRoot = await fixture(context);
+  const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  const current = await readCoordinationState({ projectRoot, initiative: "reports" });
+  const gate = current.state.pending.find((entry) => entry && typeof entry === "object");
+  await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: {
+    gateOperations: [{ op: "resolve", id: gate.id, reason: "The design was replaced, so this review no longer applies." }]
+  } });
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const data = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
+    assert.equal(data.needsYou.some((item) => item.id === gate.id), false);
+    assert.deepEqual(data.earlier.map((item) => [item.id, item.kind, item.reason, item.answer, item.initiative.id]), [[gate.id, gate.kind, "The design was replaced, so this review no longer applies.", null, "reports"]]);
+  } finally {
+    await review.close();
+  }
+});
+
+test("shows a not-started slice whose design waits at its gate as in design review", async (context) => {
+  const projectRoot = await fixture(context);
+  const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  const current = await readCoordinationState({ projectRoot, initiative: "reports" });
+  await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: {
+    gateOperations: [{ op: "ask", kind: "visual-review", slice: "authorize", question: "Review the authorize design.", artifacts: [] }]
+  } });
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const initiative = (await get(`${review.baseUrl}/api/entity?ref=initiative%3Areports`)).json().data;
+    assert.equal(initiative.record.slices.authorize.status, "not-started", "the record itself is unchanged");
+    assert.deepEqual(initiative.designReview, { authorize: "waiting" }, "an in-progress slice's gate does not count");
+    assert.equal(initiative.derived.designCandidates.includes("authorize"), false);
+    const slice = (await get(`${review.baseUrl}/api/entity?ref=slice%3Areports%2Fauthorize`)).json().data;
+    assert.equal(slice.designReview, "waiting");
+  } finally {
+    await review.close();
+  }
+});

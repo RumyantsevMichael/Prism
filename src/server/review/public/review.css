@@ -2672,6 +2672,7 @@ th {
 
 .slice-board-card.status-not-started { --status-color: var(--status-not-started); }
 .slice-board-card.status-in-progress { --status-color: var(--status-in-progress); }
+.slice-board-card.status-design-review { --status-color: var(--warn); }
 .slice-board-card.status-blocked { --status-color: var(--status-blocked); }
 .slice-board-card.status-deferred { --status-color: var(--status-deferred); }
 .slice-board-card.status-done { --status-color: var(--status-done); }
@@ -3579,6 +3580,7 @@ th {
 
 .slice-status.status-not-started { background: var(--line-strong); color: var(--ink); }
 .slice-status.status-in-progress { background: var(--status-in-progress); }
+.slice-status.status-design-review { background: var(--warn); }
 .slice-status.status-blocked { background: var(--status-blocked); }
 .slice-status.status-deferred { background: var(--status-deferred); }
 .slice-status.status-done { background: var(--status-done); }
@@ -3617,6 +3619,7 @@ th {
 .slice-node { --action-color: var(--status-not-started); }
 .slice-node.status-in-progress { --action-color: var(--status-in-progress); }
 .slice-node.status-blocked { --action-color: var(--status-blocked); }
+.slice-node.status-design-review { --action-color: var(--warn); }
 .slice-node.status-deferred { --action-color: var(--status-deferred); }
 .slice-node.status-done { --action-color: var(--status-done); }
 
@@ -4258,6 +4261,11 @@ th {
 
 .attention-card.is-answered {
   border-left-color: var(--good);
+}
+
+.attention-card.is-closed {
+  border-left-color: var(--line-strong);
+  opacity: 0.85;
 }
 
 .gate-given {

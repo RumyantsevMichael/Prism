@@ -19,7 +19,7 @@ Triage decides whether a reported problem breaks an obligation that already exis
 
 1. Read the Approved requirements, relevant ADRs, and feature files for the behavior.
 2. Find each Approved requirement whose stated behavior the reproduction contradicts, and cite it as `<file>.md§<number>`.
-3. When that file has no numbered sections, propose to the user only numbering its existing statements as `write-requirements` numbers sections, with their wording unchanged and no sections added, and cite the numbers once the user approves.
+3. When that file does not follow the `write-requirements` format, such as having no numbered sections, return `BLOCKED` with the file and what does not conform.
 4. When no Approved requirement states the behavior the report expects, the report is not a defect.
 5. When Approved requirements or Accepted ADRs conflict about the behavior, return `BLOCKED` with the conflict.
 
@@ -32,8 +32,8 @@ Triage decides whether a reported problem breaks an obligation that already exis
 
 - `DEFECT`: the initiative identifier, the requirement references, the issue, and the reproduction steps.
 - `NOT_A_DEFECT`: what the report expects that no requirement states, for `ideate`.
-- `NOT_REPRODUCED` or `BLOCKED`: what you tried, or the exact question.
+- `NOT_REPRODUCED` or `BLOCKED`: what you tried, the nonconforming file, or the exact question.
 
 - Don't
   - Fix the defect or add tests to the project.
-  - Write new requirements or restructure a requirement file.
+  - Write new requirements or edit a requirement file.

@@ -182,12 +182,21 @@ test("records and resolves user gates beside legacy pending items", async (conte
     const rejected = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [operation] } }).catch(error => error);
     assert.equal(rejected.code, "invalid_changes", JSON.stringify(operation));
   }
-  const forged = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { pending: [{ id: "not-a-gate", kind: "decision", question: "Q", artifacts: [], askedAt: "2026-10-13T00:00:00Z" }] } }).catch(error => error);
+  const forged = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { pending: [...created.state.pending, { id: "not-a-gate", kind: "decision", question: "Q", artifacts: [], askedAt: "2026-10-13T00:00:00Z" }] } }).catch(error => error);
   assert.equal(forged.code, "invalid_state");
 
-  const resolved = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "resolve", id: gate.id }] } });
+  // An unanswered question leaves only with a reason, so the user can later see why it went away.
+  const silent = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "resolve", id: gate.id }] } }).catch(error => error);
+  assert.equal(silent.code, "invalid_changes");
+  const dropped = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { pending: ["User decision: retention"] } }).catch(error => error);
+  assert.equal(dropped.code, "invalid_changes", "replacing the pending list cannot drop an unanswered gate");
+  const resolved = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "resolve", id: gate.id, reason: "  The user chose 30 days in the conversation.  " }] } });
   assert.deepEqual(resolved.state.pending, ["User decision: retention"]);
   assert.deepEqual(resolved.openedGates, []);
+  assert.deepEqual(resolved.state.closed.map(({ id, reason }) => ({ id, reason })), [{ id: gate.id, reason: "The user chose 30 days in the conversation." }]);
+  assert.ok(!Number.isNaN(Date.parse(resolved.state.closed[0].closedAt)));
+  const forgedHistory = await updateCoordinationState({ ...fixture, expectedRevision: resolved.revision, changes: { closed: [] } }).catch(error => error);
+  assert.equal(forgedHistory.code, "invalid_changes", "only the server writes closed gates");
 });
 
 test("records one browser answer per gate and keeps agents from forging answers", async (context) => {
@@ -233,6 +242,10 @@ test("records one browser answer per gate and keeps agents from forging answers"
   await answerUserGate({ ...fixture, id: cache, choice: "lru" });
   const late = await updateCoordinationState({ ...fixture, expectedRevision: asked.revision, changes: { gateOperations: [{ op: "resolve", id: cache }] } });
   assert.equal(late.state.pending.some((gate) => gate.id === cache), false);
+  // Answered gates need no reason, and they keep their answer in the closed list, newest last.
+  assert.deepEqual(late.state.closed.map((gate) => [gate.id, gate.answer.choice, gate.reason]), [[decision, "sqlite", undefined], [cache, "lru", undefined]]);
+  const replaced = await updateCoordinationState({ ...fixture, expectedRevision: late.revision, changes: { pending: late.state.pending.filter((gate) => gate.id !== review) } });
+  assert.deepEqual(replaced.state.closed.map((gate) => gate.id), [decision, cache, review], "an answered gate dropped from the pending list is kept too");
   const stale = await updateCoordinationState({ ...fixture, expectedRevision: asked.revision, changes: { next: ["Anything else"] } }).catch(error => error);
   assert.equal(stale.code, "revision_conflict", "any other change still needs the current revision");
 });

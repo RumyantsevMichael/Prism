@@ -69,6 +69,18 @@ function answeredCard(item, ctx) {
   </li>`;
 }
 
+// A closed question shows the browser answer, or the reason the agent gave when it resolved the question without one.
+function closedCard(item, ctx) {
+  const outcome = item.answer
+    ? `<span class="choice-given${item.answer.choice === "request-changes" ? " is-negative" : ""}">${escapeHtml(choiceLabel(item, item.answer.choice))}</span>${item.answer.note ? ` ${escapeHtml(item.answer.note)}` : ""}`
+    : `<span class="choice-given">Closed by the agent</span>`;
+  return `<li class="attention-card is-closed gate-${escapeHtml(item.kind)}">
+    ${gateHead(item, ctx, item.closedAt)}
+    <p class="gate-given">${outcome}</p>
+    ${item.reason ? `<p class="muted">${escapeHtml(item.reason)}</p>` : ""}
+  </li>`;
+}
+
 function bindAnswers(container, ctx) {
   const drafts = (ctx.state.drafts ??= {});
   for (const form of container.querySelectorAll(".gate-answer")) {
@@ -152,6 +164,7 @@ export function render(container, entity, ctx) {
   const data = entity.data;
   const drafts = (ctx.state.drafts ??= {});
   const answered = data.answered ?? [];
+  const earlier = data.earlier ?? [];
   const gates = data.needsYou.filter((item) => item.type === "gate");
   const notes = data.needsYou.filter((item) => item.type !== "gate");
   container.innerHTML = `
@@ -169,7 +182,8 @@ export function render(container, entity, ctx) {
     ${answered.length ? card("Answered, waiting for the agent", `<ul class="attention-list">${answered.map((item) => answeredCard(item, ctx)).join("")}</ul><p class="attention-footnote muted">An agent waiting in Claude Code resumes on its own shortly after your last answer. Otherwise the agent receives these answers with your next message in the conversation, even a short one such as “go”.</p>`, { eyebrow: plural(answered.length, "answer") }) : ""}
     ${card("Watch", data.watch.length
       ? `<div class="table-wrap"><table class="data-table attention-watch"><tbody>${data.watch.map((item) => watchRow(item, ctx)).join("")}</tbody></table></div>`
-      : emptyNote("No blocked slices, open findings, or active work."), { eyebrow: "Agent-side state" })}`;
+      : emptyNote("No blocked slices, open findings, or active work."), { eyebrow: "Agent-side state" })}
+    ${earlier.length ? card("Earlier questions", `<ul class="attention-list">${earlier.map((item) => closedCard(item, ctx)).join("")}</ul>`, { eyebrow: "Most recent first" }) : ""}`;
   bindLinks(container, ctx);
   bindAnswers(container, ctx);
 }

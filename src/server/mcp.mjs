@@ -707,7 +707,7 @@ const tools = [
             },
             gateOperations: {
               type: "array",
-              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
+              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
               items: {
                 oneOf: [
                   {
@@ -733,7 +733,7 @@ const tools = [
                     type: "object",
                     required: ["op", "id"],
                     additionalProperties: false,
-                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 } }
+                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 }, reason: { type: "string", minLength: 1, maxLength: 1000, description: "Required for an unanswered gate: the user's answer in the conversation, or why the question no longer applies. The review browser shows it with the closed question." } }
                   }
                 ]
               }
@@ -847,6 +847,11 @@ async function callStateTool(name, argumentsValue) {
     }
   } else {
     throw new Error(`Unknown state tool: ${name}`);
+  }
+  // Closed gates are history for the review browser; agents never need them.
+  if (resultValue?.state?.closed) {
+    const { closed, ...state } = resultValue.state;
+    resultValue = { ...resultValue, state };
   }
   return { content: [{ type: "text", text: stateContent(resultValue) }], structuredContent: resultValue };
 }

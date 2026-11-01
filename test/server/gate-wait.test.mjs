@@ -99,7 +99,7 @@ test("ends when the gate is resolved, missing, timed out, or cancelled", async (
   wait(mcp, 5, root, gateId);
   await delay(300);
   const { revision } = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
-  await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateId }] } });
+  await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateId, reason: "Answered in the conversation." }] } });
   assert.equal((await mcp.response(5)).result.structuredContent.status, "resolved");
   await delay(1200);
   assert.equal(mcp.messages.some((message) => message.id === 4), false);
