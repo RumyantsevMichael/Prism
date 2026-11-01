@@ -1,3 +1,4 @@
+import { chipState, currentIndexStatus } from "./indexing.js";
 import { artifactChip, bindLinks, card, cardSource, emptyNote, escapeHtml, formatTime, keyValues, plural, requirementLinks } from "./util.js";
 
 function sliceChip(data, slug, ctx) {
@@ -69,8 +70,8 @@ const ACTION_TITLES = { add: "A new file", change: "An existing file changes", r
 // A unit chip names where the change lands; hovering it previews those lines, and clicking opens the file there.
 function placeChips(change, ctx) {
   if (change.action === "add") return '<span class="change-where-new">new file</span>';
-  // Without a published index the page says so once above the design, rather than on every card.
-  if (!change.places) return "";
+  // Without unit locations each named unit still shows, disabled, and its tooltip says why its lines are missing.
+  if (!change.places) return change.units.map((unit) => `<span class="link-chip disabled code-span-chip" data-index-wait title="${escapeHtml(indexReason(currentIndexStatus()))}"><code>${escapeHtml(unit)}</code><span class="code-span-lines">lines –</span></span>`).join(" ");
   if (!change.places.length) return change.units.length ? '<span class="muted">not in the code index</span>' : '<span class="muted">the whole file</span>';
   const linked = ctx.hasArtifact(change.path);
   return change.places.map((place) => {
@@ -149,9 +150,30 @@ function decorateDesign(root, view, ctx) {
       // A line Prism could not read stays as written, inside a card, so the reader still sees it.
       return named.length ? changeCard(named, view, ctx) : `<article class="change-card is-unread"><p>${item.innerHTML}</p></article>`;
     });
-    changes.insertAdjacentHTML("afterend", `<div class="change-list">${cards.join("")}</div>`);
+    changes.insertAdjacentHTML("afterend", `${indexNotice(view, currentIndexStatus())}<div class="change-list">${cards.join("")}</div>`);
     changes.remove();
   }
+}
+
+// Without unit locations the cards cannot show the lines a change touches, so the notice above them says why, following the index chip live.
+function indexReason(status) {
+  const chip = chipState(status);
+  return !status
+    ? "Checking the code index for the lines each change touches."
+    : status.state === "unavailable"
+    ? "Prism has no code index on this platform, so the cards cannot show the lines each change touches."
+    : status.state === "preparing"
+      ? `The code index is being built (${escapeHtml([chip.label, chip.detail].filter(Boolean).join(", "))}). The lines each change touches appear here when it finishes.`
+      : status.state === "failed" || status.state === "interrupted"
+        ? "The last code index build did not finish, so the cards cannot show the lines each change touches. Open the index chip at the top for details."
+        : status.state === "none"
+          ? "The project has no code index yet, so the cards cannot show the lines each change touches. Prism starts building it when its server starts."
+          : "The current code index was built before Prism recorded unit locations. They appear after the next index build, which starts when the Prism server restarts.";
+}
+
+function indexNotice(view, status) {
+  if (!view || view.indexed || view.comparison || !view.changes.some((change) => change.action !== "add")) return "";
+  return `<div class="notice index-notice" data-index-notice>${indexReason(status)}</div>`;
 }
 
 // A slice of a split scope has no Contract of its own, so the page lists the scope's clauses its Changes serve.
@@ -166,7 +188,6 @@ function designNotices(view) {
   if (view.stale.length) notes.push(`<div class="notice"><p>The test examples describe an earlier version of this design: ${view.stale.map(escapeHtml).join(" ")}</p></div>`);
   if (view.gaps.length) notes.push(`<p><span class="status-pill is-warn">${view.gaps.length === 1 ? "1 clause without a test" : `${view.gaps.length} clauses without a test`}</span> ${view.gaps.map((number) => `<a href="#" class="clause-link" data-clause="${number}">§${number}</a>`).join(", ")}</p>`);
   if (view.changeProblems.length) notes.push(`<ul class="plain-list error">${view.changeProblems.map((problem) => `<li>${escapeHtml(problem)}</li>`).join("")}</ul>`);
-  if (!view.indexed && !view.comparison && view.changes.some((change) => change.action !== "add")) notes.push('<p class="muted">The code index has no unit locations for this project yet, so the cards do not show the lines each change touches. Prism builds the index in the background when its server starts, and the lines appear once that build finishes.</p>');
   if (!view.examplesWritten && view.clauses.length) notes.push('<p class="muted">No test examples were written for this design, so the tests behind each clause are not shown.</p>');
   return notes.join("");
 }
@@ -217,7 +238,7 @@ function diagramLabel(file) {
 function diagramsCard(diagrams, folder, ctx) {
   if (!diagrams.length) return "";
   const selected = diagrams.includes(ctx.state.diagram) ? ctx.state.diagram : diagrams[0];
-  const tabs = diagrams.length > 1 ? `<div class="diagram-tabs" role="tablist">${diagrams.map((file) => `<button type="button" role="tab" class="diagram-tab" data-diagram="${escapeHtml(file)}" aria-selected="${file === selected}" title="${escapeHtml(file.slice(folder.length + 1))}">${escapeHtml(diagramLabel(file))}</button>`).join("")}</div>` : "";
+  const tabs = diagrams.length > 1 ? `<div class="diagram-tabs" role="tablist" aria-label="Diagrams"><span class="diagram-tabs-label">${diagrams.length} diagrams</span>${diagrams.map((file) => `<button type="button" role="tab" class="diagram-tab" data-diagram="${escapeHtml(file)}" aria-selected="${file === selected}" title="${escapeHtml(file.slice(folder.length + 1))}">${escapeHtml(diagramLabel(file))}</button>`).join("")}</div>` : "";
   return `<section class="slice-diagrams" data-diagrams>${tabs}<div class="diagram-slot" data-diagram-slot="${escapeHtml(selected)}"></div></section>`;
 }
 
@@ -292,4 +313,20 @@ export async function render(container, entity, ctx) {
     }
   }
   await mountDiagrams(container, diagrams, ctx);
+  // While the cards wait for unit locations, the notice follows the index chip, and a finished build redraws the page with the lines.
+  if (container.querySelector("[data-index-notice]")) {
+    const builtAt = (status) => status?.state === "ready" ? status.index?.builtAt ?? "" : null;
+    let seen = builtAt(currentIndexStatus());
+    const follow = (event) => {
+      const notice = container.querySelector("[data-index-notice]");
+      if (!container.isConnected || !notice) { document.removeEventListener("prism:indexing", follow); return; }
+      // Only a newly published index can carry the locations, so an index already seen does not redraw the page again.
+      const now = builtAt(event.detail);
+      if (now !== null && now !== seen) { document.removeEventListener("prism:indexing", follow); ctx.rerender(); return; }
+      seen = now ?? seen;
+      notice.outerHTML = indexNotice(view, event.detail);
+      container.querySelectorAll("[data-index-wait]").forEach((chip) => { chip.title = indexReason(event.detail); });
+    };
+    document.addEventListener("prism:indexing", follow);
+  }
 }

@@ -4664,6 +4664,10 @@ mark.find-hit {
   margin: 0.3rem 0 0;
 }
 
+.index-notice {
+  margin: 0.5rem 0;
+}
+
 /* Each Changes line is a card: a colored action rail, the file and where it lands, why, and what checks it. */
 .change-list {
   display: grid;
@@ -4834,7 +4838,22 @@ mark.find-hit {
 
 .diagram-tab[aria-selected="true"] {
   background: var(--surface-raised);
+  box-shadow: inset 0 2px 0 var(--accent);
   color: var(--accent-strong);
+}
+
+.diagram-tab:not([aria-selected="true"]):hover {
+  color: var(--ink);
+}
+
+.diagram-tabs-label {
+  align-self: center;
+  color: var(--ink-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-right: 0.4rem;
+  text-transform: uppercase;
 }
 
 .diagram-tabs + .diagram-slot .diagram-card {
@@ -4865,4 +4884,10 @@ mark.find-hit {
 
 .source-lines li.in-range {
   background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+/* A unit waiting for the code index is dimmed, and its tooltip says why its lines are missing. */
+.code-span-chip[data-index-wait] {
+  cursor: help;
+  opacity: 0.6;
 }
