@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { assertInput } from "./artifact-schema.mjs";
-import { readRecord, sliceDocumentFolder, withRecordLock, writeRecord } from "./record-store.mjs";
+import { locateRecord, readRecord, sliceDocumentFolder, withRecordLock, writeRecord } from "./record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { acceptedDesign, readFrozenTestOf } from "./slice-design.mjs";
@@ -78,17 +78,25 @@ export function contractClauses(source) {
 }
 
 /**
- * The planned changes of a design's Changes section: `- <add|change|remove> \`path\`[, \`path\`]: units and why`.
+ * The planned changes of a design's Changes section: `- <add|change|remove> \`path\`[, \`path\`]: units and why (§clause, …)`.
  * Each path becomes its own change with the shared note, and any other line shape is a problem rather than a guess.
+ * A slice of a split scope cites the scope's Contract, so the caller passes that design as `contractSource`.
  */
-export function plannedChanges(source) {
+export function plannedChanges(source, contractSource = source) {
   const text = section(source, "Changes");
   if (text === null) return { changes: [], problems: [] };
+  const clauseCount = contractClauses(contractSource).length;
   const changes = [], problems = [];
-  for (const line of items(text)) {
+  for (const [item, line] of items(text).entries()) {
     const parsed = /^(add|change|remove)\s+((?:`[^`]+`\s*,\s*)*`[^`]+`)\s*(?::\s*(.*))?$/i.exec(line);
     if (!parsed) { problems.push(`Changes line ${JSON.stringify(line)} must be add, change, or remove, then one or more comma-separated paths in backticks, then a colon and the note.`); continue; }
-    const note = (parsed[3] ?? "").trim();
+    // A note may end with the Contract clauses the change serves, such as `(§1, §3)`; a change without them supports the slice as a whole.
+    let note = (parsed[3] ?? "").trim();
+    const tag = /\s*\(\s*(§\s*\d+(?:\s*,\s*§\s*\d+)*)\s*\)\s*\.?\s*$/.exec(note);
+    const clauses = tag ? [...new Set([...tag[1].matchAll(/\d+/g)].map((match) => Number(match[0])))] : [];
+    if (tag) note = note.slice(0, tag.index).trim();
+    const missing = clauses.filter((number) => number < 1 || number > clauseCount);
+    if (missing.length) problems.push(`Changes line ${JSON.stringify(line)} cites ${missing.map((number) => `§${number}`).join(", ")}, which the Contract does not have.`);
     const units = [...note.matchAll(/`([^`]+)`/g)].map((match) => match[1].trim()).filter(Boolean);
     for (const [, raw] of parsed[2].matchAll(/`([^`]+)`/g)) {
       const target = raw.trim();
@@ -97,7 +105,7 @@ export function plannedChanges(source) {
         problems.push(`Changes path ${JSON.stringify(target)} is not a normalized project-relative path.`);
         continue;
       }
-      changes.push({ action: parsed[1].toLowerCase(), path: target, units, note });
+      changes.push({ action: parsed[1].toLowerCase(), path: target, units, note, clauses, item });
     }
   }
   return { changes, problems };
@@ -112,6 +120,21 @@ async function designSource(root, initiative, slice) {
     if (error.code === "ENOENT") return { path: relative, source: null };
     throw error;
   }
+}
+
+// A slice of a split scope has only its Changes; its Contract is the nearest ancestor design that has one.
+async function governingDesign(root, initiative, slice, own) {
+  if (own.source !== null && contractClauses(own.source).length) return { slug: slice, design: own };
+  let slices = {};
+  try { slices = JSON.parse(await readFile((await locateRecord(root, { kind: "initiative", initiative })).target, "utf8"))?.slices ?? {}; }
+  catch { return { slug: slice, design: own }; }
+  const seen = new Set([slice]);
+  for (let parent = slices[slice]?.parent; parent && !seen.has(parent); parent = slices[parent]?.parent) {
+    seen.add(parent);
+    const design = await designSource(root, initiative, parent).catch(() => ({ source: null }));
+    if (design.source !== null && contractClauses(design.source).length) return { slug: parent, design };
+  }
+  return { slug: slice, design: own };
 }
 
 // A test is named in its file when the exact name occurs there, as a whole word when the name is one.
@@ -130,10 +153,11 @@ export async function updateDesignView(input) {
   assertInput(UPDATE_DESIGN_VIEW_SCHEMA, input);
   const root = await realpath(input.projectRoot);
   const { initiative, slice } = input;
-  const design = await designSource(root, initiative, slice);
-  if (design.source === null) throw fail("validation_failed", `${design.path} does not exist, so there is no contract to cite.`);
+  const own = await designSource(root, initiative, slice);
+  if (own.source === null) throw fail("validation_failed", `${own.path} does not exist, so there is no contract to cite.`);
+  const { design } = await governingDesign(root, initiative, slice, own);
   const clauses = contractClauses(design.source);
-  if (!clauses.length) throw fail("validation_failed", `${design.path} has no Contract section with list items to cite.`);
+  if (!clauses.length) throw fail("validation_failed", `${own.path} has no Contract section with list items to cite, and neither has a design it belongs to.`);
   const accepted = await acceptedDesign(root, initiative, slice);
   const frozen = accepted ? new Set(accepted.frozenTests.map((item) => item.path)) : null;
   const problems = [], files = new Map();
@@ -165,7 +189,7 @@ export async function updateDesignView(input) {
   const gaps = clauses.map((text, index) => ({ clause: index + 1, text })).filter((item) => !cited.has(item.clause));
   // The designer learns about a diagram the design gate would refuse here, before anyone accepts the design.
   // The root scope's folder holds every slice folder, so its slices' code views are checked with it.
-  const folder = path.posix.dirname(design.path);
+  const folder = path.posix.dirname(own.path);
   const folders = [folder];
   if (initiativeDirectory(await readWorkflowConfig(root), initiative) === folder) {
     const entries = await readdir(path.join(root, folder), { withFileTypes: true }).catch(() => []);
@@ -218,20 +242,37 @@ export function comparePlannedChanges(changes, concepts) {
   return rows;
 }
 
+// Where each named unit of a change lives in the published code index; a name the indexed file does not have is a problem, and an added unit has no place yet.
+function unitPlaces(index, change, problems) {
+  if (change.action === "add" || !change.units.length) return [];
+  const inFile = (index.units ?? []).filter((unit) => unit.file === change.path);
+  if (!inFile.length) return [];
+  const places = [];
+  for (const name of change.units) {
+    const found = inFile.filter((unit) => unit.name === name || unit.qualifiedName === name || lastSegment(unit.qualifiedName ?? unit.name) === lastSegment(name));
+    if (!found.length) problems.push(`\`${name}\` is not a unit of ${change.path} in the code index.`);
+    for (const unit of found) places.push({ unit: name, kind: unit.kind, startLine: unit.range.startLine, endLine: unit.range.endLine });
+  }
+  return places;
+}
+
 export const describeActual = (item) => item.unit ? `${ACTUAL[item.action] ?? item.action} \`${item.unit}\`` : `${ACTUAL[item.action] ?? item.action} the file`;
 
 /**
  * What the review browser shows for a designed slice: the contract's clauses with their examples and gaps,
  * the planned changes, and, once the verified result has a derived change map, planned versus actual.
  */
-export async function loadDesignView(projectRoot, initiative, slice, { changeMap = null } = {}) {
+export async function loadDesignView(projectRoot, initiative, slice, { changeMap = null, units = null } = {}) {
   const root = await realpath(projectRoot);
   const design = await designSource(root, initiative, slice).catch(() => ({ source: null }));
   if (design.source === null) return null;
-  const clauses = contractClauses(design.source);
-  const planned = plannedChanges(design.source);
+  const governing = await governingDesign(root, initiative, slice, design);
+  const inherited = governing.slug !== slice;
+  const clauses = contractClauses(governing.design.source);
+  const planned = plannedChanges(design.source, governing.design.source);
   if (!clauses.length && !planned.changes.length) return null;
-  const stored = await storedView(root, initiative, slice);
+  // A slice of a split scope reads the scope's examples, unless it has its own.
+  const stored = await storedView(root, initiative, slice) ?? (inherited ? await storedView(root, initiative, governing.slug) : null);
   const stale = [];
   let examples = [];
   if (stored?.invalid || (stored && !Array.isArray(stored.examples))) stale.push("The stored examples are not readable.");
@@ -244,7 +285,10 @@ export async function loadDesignView(projectRoot, initiative, slice, { changeMap
       else if (sha256(bytes) !== test.sha256) stale.push(`${test.path} changed after the examples were written.`);
     }
   }
-  const byClause = clauses.map((text, index) => ({ number: index + 1, text, examples: examples.filter((item) => item.clause === index + 1) }));
+  const allClauses = clauses.map((text, index) => ({ number: index + 1, text, examples: examples.filter((item) => item.clause === index + 1) }));
+  // A slice of a split scope shows only the clauses its Changes say it serves.
+  const served = new Set(planned.changes.flatMap((change) => change.clauses));
+  const byClause = inherited ? allClauses.filter((clause) => served.has(clause.number)) : allClauses;
   const changeProblems = [...planned.problems];
   const verified = Boolean(changeMap);
   if (!verified) {
@@ -254,8 +298,16 @@ export async function loadDesignView(projectRoot, initiative, slice, { changeMap
       if (!found) changeProblems.push(`${change.path} is planned to ${change.action} but does not exist.`);
     }
   }
+  // A change's tests are those cited for the clauses it serves, which is design's claim until coverage confirms it.
+  for (const change of planned.changes) {
+    const cited = allClauses.filter((clause) => change.clauses.includes(clause.number)).flatMap((clause) => clause.examples.map((item) => ({ file: item.file, test: item.test })));
+    change.tests = [...new Map(cited.map((item) => [`${item.file}\0${item.test}`, item])).values()];
+    change.places = units ? unitPlaces(units, change, changeProblems) : null;
+  }
   return {
     path: design.path,
+    contract: inherited ? { path: governing.design.path, slice: governing.slug } : null,
+    indexed: units ? { snapshot: units.snapshot ?? null } : null,
     clauses: byClause,
     examplesWritten: stored && !stored.invalid ? stored.writtenAt ?? null : null,
     gaps: stored && !stale.length ? byClause.filter((clause) => !clause.examples.length).map((clause) => clause.number) : [],

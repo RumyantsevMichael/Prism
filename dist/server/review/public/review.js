@@ -3,7 +3,7 @@ import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, parseEntityRef, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
-import { anchorTarget, decorateDocuments, markCurrentSection, renderText } from "./views/markdown.js";
+import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
 import { createIndexingStatus } from "./views/indexing.js";
 
@@ -806,6 +806,12 @@ function beginRebuild(path) {
 function scrollToAnchor(anchor) {
   const target = anchorTarget(artifact, anchor);
   if (!target) return false;
+  // A line range stays marked in the source view, so the reader sees which lines a link meant.
+  const range = anchor.match(LINE_RANGE);
+  artifact.querySelectorAll(".source-lines li.in-range").forEach((line) => line.classList.remove("in-range"));
+  if (range?.[2]) {
+    for (let line = target; line && Number(line.id.slice(HEADING_PREFIX.length + 1)) <= Number(range[2]); line = line.nextElementSibling) line.classList.add("in-range");
+  }
   workspace.scrollTop += target.getBoundingClientRect().top - workspace.getBoundingClientRect().top - 16;
   target.classList.remove("is-target");
   void target.offsetWidth;
@@ -970,7 +976,7 @@ async function showArtifact(path) {
   const source = data.kind === "source";
   const structured = Boolean(data.kind) && !source;
   const documentCard = source
-    ? `<section class="document-card source-card"><ol class="source-lines">${data.content.replace(/\n$/, "").split(/\r?\n/).map((line) => `<li><code>${escapeHtml(line) || " "}</code></li>`).join("")}</ol></section>`
+    ? `<section class="document-card source-card"><ol class="source-lines">${data.content.replace(/\n$/, "").split(/\r?\n/).map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${escapeHtml(line) || " "}</code></li>`).join("")}</ol></section>`
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
       : `<section class="document-card"><div class="document-content">${renderText(data.path, data.content, markdownOptions(data.path))}</div></section>`;
@@ -1058,6 +1064,15 @@ function viewContext(path, state) {
       openRef(artifactPath, rest);
     },
     openEvidence: (id, label) => openEvidence(id, label, viewContext(path, state)),
+    // A view embeds a PlantUML file as the same diagram card that opening the file shows.
+    async mountDiagram(target, diagramPath) {
+      const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(diagramPath)}`);
+      for (const diagram of data.diagrams ?? []) {
+        const section = diagramCard(diagram);
+        target.appendChild(section);
+        await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section);
+      }
+    },
     async answerGate(payload) {
       const response = await fetch("./api/gates/answer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));

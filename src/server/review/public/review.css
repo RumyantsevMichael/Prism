@@ -1357,6 +1357,16 @@ th {
   transition: height 120ms ease, width 120ms ease;
 }
 
+/* PlantUML draws black lines and text on a transparent canvas, so in dark mode the diagram sits on a light sheet that keeps its own colors readable. */
+@media (prefers-color-scheme: dark) {
+  .diagram-output svg {
+    background: #f8f7fb;
+    border-radius: 8px;
+    box-sizing: content-box;
+    padding: 12px;
+  }
+}
+
 .rendering {
   align-items: center;
   color: var(--ink-muted);
@@ -4599,32 +4609,40 @@ mark.find-hit {
   padding: 0 0.1rem;
 }
 
-/* Design view on the slice page */
-.design-view h3 {
-  font-size: 0.8rem;
-  margin: 1rem 0 0.4rem;
+/* Design document on the slice page: Prism's checks sit inside slice.md's Contract and Changes items */
+.design-document .notice,
+.design-document > .plain-list,
+.design-document > p {
+  margin: 0.4rem 0;
 }
 
-.design-clause {
-  border-top: 1px solid var(--line);
-  padding: 0.35rem 0;
-}
-
-.design-clause summary {
-  cursor: pointer;
-}
-
-.clause-number {
-  color: var(--ink-muted);
+.design-badge {
   display: inline-block;
-  font-variant-numeric: tabular-nums;
-  min-width: 1.4rem;
+  margin-left: 0.4rem;
+  vertical-align: baseline;
+}
+
+.design-badge summary {
+  cursor: pointer;
+  display: inline;
+  list-style: none;
+}
+
+.design-badge summary::-webkit-details-marker {
+  display: none;
+}
+
+.design-badge[open] {
+  display: block;
+  margin: 0.3rem 0 0.4rem;
 }
 
 .design-examples {
+  background: var(--surface-soft);
+  border-radius: 6px;
   list-style: none;
-  margin: 0.3rem 0 0.2rem 1.4rem;
-  padding: 0;
+  margin: 0.3rem 0 0;
+  padding: 0.35rem 0.6rem;
 }
 
 .design-examples li {
@@ -4635,6 +4653,216 @@ mark.find-hit {
   margin-left: 0.3rem;
 }
 
-.design-changes .status-pill {
-  white-space: nowrap;
+.served-clauses {
+  background: var(--surface-soft);
+  border-radius: 8px;
+  margin: 0.5rem 0 0.8rem;
+  padding: 0.6rem 0.9rem;
+}
+
+.served-clauses ol {
+  margin: 0.3rem 0 0;
+}
+
+/* Each Changes line is a card: a colored action rail, the file and where it lands, why, and what checks it. */
+.change-list {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.change-card {
+  --rail: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--rail);
+  border-radius: 8px;
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.65rem 0.85rem 0.55rem;
+}
+
+.change-card.action-add { --action: var(--good); --rail: var(--good); }
+.change-card.action-change { --action: var(--info); --rail: var(--info); }
+.change-card.action-remove { --action: var(--danger); --rail: var(--danger); }
+.change-card.is-unread { --rail: var(--line-strong); }
+.change-card.reading-partly,
+.change-card.reading-untouched { --rail: var(--warn); }
+
+.change-card p {
+  margin: 0;
+}
+
+/* The badge keeps the action's color even when a verified reading recolors the rail. */
+.change-action {
+  background: color-mix(in srgb, var(--action, var(--accent)) 14%, transparent);
+  border-radius: 999px;
+  color: var(--action, var(--accent));
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.05rem 0.5rem;
+  text-transform: uppercase;
+}
+
+.change-paths {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.change-path-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+}
+
+.change-path-row > .link-chip.artifact-chip,
+.change-path-row > .link-chip.disabled {
+  background: none;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 600;
+  padding-left: 0;
+}
+
+.change-where {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+
+.change-where-new {
+  color: var(--good);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.code-span-chip {
+  background: var(--surface-soft);
+  border-color: var(--line);
+  color: var(--ink);
+  font-family: var(--mono);
+}
+
+.code-span-lines {
+  color: var(--ink-muted);
+  font-size: 0.7rem;
+}
+
+.change-why {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.change-actual {
+  font-size: 0.8rem;
+}
+
+.change-card-footer {
+  align-items: center;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  gap: 0.35rem 1.2rem;
+  padding-top: 0.4rem;
+}
+
+.change-serves,
+.change-tests {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.change-label {
+  color: var(--ink-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-right: 0.15rem;
+  text-transform: uppercase;
+}
+
+.clause-tag {
+  background: var(--accent-soft);
+  border-radius: 999px;
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.05rem 0.45rem;
+  text-decoration: none;
+}
+
+.test-chip .link-chip {
+  background: var(--surface-soft);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+/* A slice folder holds any number of diagrams; tabs switch between them when there is more than one. */
+.slice-diagrams {
+  margin-bottom: 1rem;
+}
+
+.diagram-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: -1px;
+  position: relative;
+}
+
+.diagram-tab {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.35rem 0.9rem;
+}
+
+.diagram-tab[aria-selected="true"] {
+  background: var(--surface-raised);
+  color: var(--accent-strong);
+}
+
+.diagram-tabs + .diagram-slot .diagram-card {
+  border-top-left-radius: 0;
+}
+
+/* A preview of a line range: numbered lines from the file, as in the source view. */
+.link-preview:has(.preview-lines) {
+  max-width: min(44rem, calc(100vw - 1rem));
+}
+
+.link-preview .preview-lines {
+  background: var(--surface-soft);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  margin-top: 0.3rem;
+  max-height: 17rem;
+  overflow: hidden;
+  padding: 0.3rem 0.5rem 0.3rem 0;
+}
+
+/* The page's content policy refuses inline styles, so a preview names each line number itself. */
+.link-preview .preview-lines li::before {
+  content: attr(data-line);
+  flex-basis: 2.8rem;
+  padding-right: 0.8rem;
+}
+
+.source-lines li.in-range {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }

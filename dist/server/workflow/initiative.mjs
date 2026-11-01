@@ -13,7 +13,7 @@ import { locateRecord, moveLegacyRecords, removeInitiativeRecords, writeRecord }
 import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, measureContract, REVIEW_MARKS, stageFrozenTests, withdrawFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
-import { plannedChanges } from "./design-view.mjs";
+import { contractClauses, plannedChanges } from "./design-view.mjs";
 
 const RECORD_NAME = "initiative.json";
 const PROJECTION_NAME = "initiative.md";
@@ -423,8 +423,15 @@ async function applyOperation(resolved, record, operation, effects) {
       const problems = diagramProblems(diagrams);
       if (problems.length) throw fail("diagram_problems", `The design of ${operation.slug} was not accepted: ${problems.join(" ")}`, { problems });
       // The person reads Changes as the plan, so a line Prism cannot read is refused here, while design can still fix it.
-      const designText = await readFile(path.join(resolved.root, sliceFolder(resolved.directory, slices, operation.slug), "slice.md"), "utf8").catch(() => null);
-      const changeProblems = designText === null ? [] : plannedChanges(designText).problems;
+      const designOf = (slug) => readFile(path.join(resolved.root, sliceFolder(resolved.directory, slices, slug), "slice.md"), "utf8").catch(() => null);
+      const designText = await designOf(operation.slug);
+      // A slice of a split scope cites the Contract of the nearest ancestor design that has one.
+      let contractText = designText;
+      for (let parent = slices[operation.slug]?.parent, seen = new Set([operation.slug]); designText !== null && !contractClauses(contractText ?? "").length && parent && !seen.has(parent); parent = slices[parent]?.parent) {
+        seen.add(parent);
+        contractText = await designOf(parent);
+      }
+      const changeProblems = designText === null ? [] : plannedChanges(designText, contractText ?? designText).problems;
       if (changeProblems.length) throw fail("validation_failed", `The design of ${operation.slug} was not accepted: ${changeProblems.join(" ")}`, { problems: changeProblems });
       effects.diagrams.push(...diagrams);
       const acceptedAt = new Date().toISOString();

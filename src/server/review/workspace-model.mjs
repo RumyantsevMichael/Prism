@@ -9,6 +9,7 @@ import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-co
 import { latestVerification } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { loadDesignView } from "../workflow/design-view.mjs";
+import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 
 const LIBRARY_LIMIT = 500;
 const SLICE_FILE_LIMIT = 200;
@@ -254,7 +255,8 @@ async function derivedChangeMapState(projectRoot, id, slug, design, verification
   return { derived: true, pending: true, runId: verification.id };
 }
 
-export async function loadSliceView(projectRoot, id, slug) {
+// The published code index, when there is one, places each planned change in the code; the view never starts a build.
+export async function loadSliceView(projectRoot, id, slug, { intelligenceDirectories } = {}) {
   const initiative = await loadInitiativeView(projectRoot, id);
   if (!initiative.record || !Object.hasOwn(initiative.record.slices, slug)) throw new Error(`The initiative ${id} has no slice ${slug}.`);
   const slice = initiative.record.slices[slug];
@@ -275,7 +277,7 @@ export async function loadSliceView(projectRoot, id, slug) {
     artifacts: initiative.slices[slug],
     verification,
     changeMap: Object.keys(changeMap).length ? changeMap : null,
-    designView: await loadDesignView(projectRoot, id, slug, { changeMap: changeMapDocument ?? null }).catch(() => null),
+    designView: await loadDesignView(projectRoot, id, slug, { changeMap: changeMapDocument ?? null, units: await readPublishedUnits(projectRoot, ...(intelligenceDirectories ? [intelligenceDirectories] : [])).catch(() => null) }).catch(() => null),
     titles: Object.fromEntries(Object.entries(initiative.record.slices).map(([key, value]) => [key, value.title]))
   };
 }
@@ -612,7 +614,7 @@ export async function entityExists(projectRoot, ref) {
   return Boolean(loaded.record?.slices && Object.hasOwn(loaded.record.slices, parsed.slug));
 }
 
-export async function loadEntity(projectRoot, ref) {
+export async function loadEntity(projectRoot, ref, options = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
   if (parsed.kind === "attention") return { ref, kind: "attention", data: await loadAttention(projectRoot) };
@@ -620,5 +622,5 @@ export async function loadEntity(projectRoot, ref) {
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
   if (parsed.kind === "initiative") return { ref, kind: "initiative", data: await loadInitiativeView(projectRoot, parsed.id) };
-  return { ref, kind: "slice", data: await loadSliceView(projectRoot, parsed.id, parsed.slug) };
+  return { ref, kind: "slice", data: await loadSliceView(projectRoot, parsed.id, parsed.slug, options) };
 }

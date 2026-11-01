@@ -59,15 +59,28 @@ The board has one column per slice status, and the card of an active slice also 
 A slice whose design waits for your answer at its design gate shows as in design review until the agent accepts the design, even though its record still says not started.
 The list shows the slice tree, and the graph orders leaf slices by execution order.
 Below them, the page lists the unstarted leaves that can be designed next, leaving out those in design review.
-A slice page shows the slice's design view, verification run, review ledger, change map when it has one, other files, and the design from `slice.md`.
+A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, and other files.
+It is the page to read at a design gate.
 
-The design view is the page to read at a design gate.
-It shows each contract clause of `slice.md` with one plain-language example per frozen test that checks it, and each example opens its test file.
+Every PlantUML file directly in the slice folder gets a tab above the design, with `code.puml` first when it exists.
+In dark mode a diagram sits on a light sheet, because PlantUML draws black lines and text.
+
+The design is `slice.md` itself, with Prism's checks placed in it.
+Each contract clause shows how many frozen tests check it, and opening that count shows one plain-language example per test, each linked to its test file.
 A clause that no test checks is flagged, and the count of such clauses sits at the top.
+A slice of a split scope has no Contract of its own, so its page lists the scope's clauses that its Changes serve, with the same test counts.
 A small model writes the examples from the contract and the tests alone, so read the linked test when an example decides your answer.
 Prism checks that each example cites a real clause and a test name that occurs in its file, and marks the examples as stale when the contract or a test file changed after they were written.
-Below the examples, the design's expected changes list each file to add, change, or remove, with the functions or types involved.
-After a passing verification run, the same table compares that plan with what the verified result changed, and marks each file as planned, partly as planned, planned but untouched, or unplanned.
+
+Each line of the design's Changes section becomes a card.
+A colored badge after the file name says whether the file is added, changed, or removed.
+For a changed or removed file, the card names each function or type involved with the lines it spans in the project's code index.
+Hover one to see those lines, or click it to open the file with them marked.
+Line numbers come from the latest published index, so they can drift if the file changed after that build, and they are missing until the first build finishes.
+Below the file, the card gives the reason for the change, then the contract clauses it serves and the tests cited for those clauses.
+A change that names no clause supports the slice as a whole.
+After a passing verification run, each card also says what the verified result actually changed, and marks each file "as planned", "partly as planned", or "planned but untouched".
+Files the result changed that the Changes section does not name are listed under "Changed without a plan".
 An unplanned or untouched file is not an error, but it is the first place to look.
 
 For a slice with an accepted design, Prism derives the change map itself after a passing verification run, by comparing the source when the design was accepted with the source the run tested.

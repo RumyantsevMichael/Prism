@@ -578,7 +578,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/context") {
       send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
     } else if (route === "/api/entity") {
-      send(response, 200, JSON.stringify(await loadEntity(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await loadEntity(projectRoot, url.searchParams.get("ref"), { intelligenceDirectories: intelligenceDirectories() })), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
     } else if (route === "/api/indexing" && request.method === "GET") {

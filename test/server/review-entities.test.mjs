@@ -321,3 +321,29 @@ test("shows a not-started slice whose design waits at its gate as in design revi
     await review.close();
   }
 });
+
+test("a slice page places planned changes through the published code index without building one", async (context) => {
+  const projectRoot = await fixture(context);
+  const { loadEntity } = await import("../../dist/server/review/workspace-model.mjs");
+  const { projectStorageKey } = await import("../../dist/server/repository-intelligence/index-progress.mjs");
+  await writeFile(path.join(projectRoot, "docs/plans/reports/download/slice.md"), "# Download\n\n## Contract\n1. `report download <id>` writes the bytes.\n\n## Changes\n- change `src/client.rs`: `get` streams (§1).\n");
+  await mkdir(path.join(projectRoot, "src"), { recursive: true });
+  await writeFile(path.join(projectRoot, "src/client.rs"), "fn get() {}\n");
+  const cache = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-review-units-")));
+  context.after(() => rm(cache, { recursive: true, force: true }));
+  const ref = "slice:reports/download";
+
+  const before = (await loadEntity(projectRoot, ref, { intelligenceDirectories: [cache] })).data.designView;
+  assert.equal(before.indexed, null, "no published index means no places");
+  assert.equal(before.changes[0].places, null);
+
+  const storage = path.join(cache, "projects", projectStorageKey(projectRoot));
+  const revision = "a".repeat(64);
+  await mkdir(storage, { recursive: true });
+  await writeFile(path.join(storage, "current.json"), JSON.stringify({ snapshot: "s1", revision, builtAt: new Date().toISOString() }));
+  await writeFile(path.join(storage, `units-${revision}.json`), JSON.stringify({ schemaVersion: 1, snapshot: "s1", revision, units: [{ id: "u", file: "src/client.rs", kind: "function", name: "get", range: { startLine: 1, endLine: 1 } }], edges: [] }));
+  const after = (await loadEntity(projectRoot, ref, { intelligenceDirectories: [cache] })).data.designView;
+  assert.deepEqual(after.indexed, { snapshot: "s1" });
+  assert.deepEqual(after.changes[0].places, [{ unit: "get", kind: "function", startLine: 1, endLine: 1 }]);
+  assert.deepEqual(after.changes[0].clauses, [1]);
+});

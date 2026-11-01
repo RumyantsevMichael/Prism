@@ -39,7 +39,7 @@ Implementers later work from its output in fresh sessions, and they are judged o
 7. Run the tests and confirm they build and fail because the behavior is absent, not because of setup defects.
 8. In **Slices**, list each slice with its slug, title, outcome, requirement references, dependencies, frozen test files, and review recommendation.
 9. For each slice, write `slice.md` in its slice folder, the folder named by its slug in the initiative's plans folder, with the sections in the [slice example](#slice-example).
-   In **Changes**, list each file you expect to add, change, or remove, starting with `add`, `change`, or `remove` and one or more comma-separated paths in backticks, then a colon, the functions, types, or modules it adds or whose interface it changes, and a few words on why.
+   In **Changes**, list each file you expect to add, change, or remove, starting with `add`, `change`, or `remove` and one or more comma-separated paths in backticks, then a colon, the functions, types, or modules it adds or whose interface it changes, a few words on why, and, in parentheses, the Contract clauses it serves, such as `(§1, §3)`, unless it supports every clause.
 10. Write the [diagrams](#4-diagrams).
 11. Recommend review `required` for a slice when an independent implementation review pays off, such as for authentication, authorization, secrets, untrusted input, or data loss risk, and `none` otherwise.
 12. When the project keeps Gherkin feature files, use `write-feature` for the scenarios and list them as frozen tests.
@@ -82,8 +82,8 @@ When the plan has one slice, the scope itself is that slice: put **Changes** in 
 
 ## Changes
 - add `src/report/source.rs`: `ReportSource`, also used by `audit`.
-- change `src/storage/client.rs`: `get` streams instead of buffering.
-- change `src/cli/report.rs`: `download` subcommand.
+- change `src/storage/client.rs`: `get` streams instead of buffering (§2).
+- change `src/cli/report.rs`: `download` subcommand (§1, §3).
 ```
 
 ## 4. Diagrams

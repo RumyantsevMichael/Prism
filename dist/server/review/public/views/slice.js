@@ -56,55 +56,136 @@ function readingText(row) {
   return `<span class="status-pill ${tone}">${label}</span>${notes ? ` <span class="muted">${notes}</span>` : ""}`;
 }
 
-function changesTable(view, ctx) {
-  if (view.comparison) {
-    if (!view.comparison.length) return emptyNote("The design lists no changes and the verified result changed no source.");
-    const limit = 6;
-    return `<div class="table-wrap"><table class="data-table design-changes"><thead><tr><th>Path</th><th>Planned</th><th>Actual</th><th>Reading</th></tr></thead><tbody>${view.comparison.map((row) => `<tr>
-      <td>${artifactChip(row.path, ctx)}</td>
-      <td>${row.planned ? `${escapeHtml(row.planned.action)} ${inline(row.planned.note)}` : '<span class="muted">not planned</span>'}</td>
-      <td>${row.actual.length ? `${row.actual.slice(0, limit).map(actualText).join(", ")}${row.actual.length > limit ? `, ${row.actual.length - limit} more` : ""}` : '<span class="muted">not touched</span>'}</td>
-      <td>${readingText(row)}</td></tr>`).join("")}</tbody></table></div>`;
+// Each Contract clause gets a badge for the tests cited for it, which opens their examples.
+function clauseBadge(clause, view, ctx) {
+  if (!view.examplesWritten) return "";
+  if (!clause.examples.length) return '<span class="design-badge"><span class="status-pill is-warn">no test</span></span>';
+  return `<details class="design-badge"><summary><span class="meta-pill">${plural(clause.examples.length, "test")}</span></summary><ul class="design-examples">${clause.examples.map((item) => `<li><span class="example-text">${inline(item.example)}</span> ${artifactChip(item.file, ctx, item.test)}</li>`).join("")}</ul></details>`;
+}
+
+const ACTION_LABELS = { add: "add", change: "change", remove: "remove" };
+const ACTION_TITLES = { add: "A new file", change: "An existing file changes", remove: "An existing file is removed" };
+
+// A unit chip names where the change lands; hovering it previews those lines, and clicking opens the file there.
+function placeChips(change, ctx) {
+  if (change.action === "add") return '<span class="change-where-new">new file</span>';
+  if (!change.places) return change.units.map((unit) => `<code>${escapeHtml(unit)}</code>`).join(" ");
+  if (!change.places.length) return change.units.length ? '<span class="muted">not in the code index</span>' : '<span class="muted">the whole file</span>';
+  const label = (place) => `<code>${escapeHtml(place.unit)}</code><span class="code-span-lines">${place.startLine}–${place.endLine}</span>`;
+  if (!ctx.hasArtifact(change.path)) return change.places.map((place) => `<span class="link-chip disabled code-span-chip">${label(place)}</span>`).join(" ");
+  return change.places.map((place) => `<button type="button" class="link-chip artifact-chip code-span-chip" data-artifact="${escapeHtml(change.path)}" data-doc-anchor="L${place.startLine}-${place.endLine}" title="Open ${escapeHtml(change.path)} at line ${place.startLine}">${label(place)}</button>`).join(" ");
+}
+
+function clauseLinks(clauses) {
+  return clauses.map((number) => `<a href="#" class="clause-link clause-tag" data-clause="${number}">§${number}</a>`).join("");
+}
+
+// The footer says which Contract clauses a change serves and which tests stand behind them.
+function changeFooter(changes, ctx) {
+  const clauses = [...new Set(changes.flatMap((change) => change.clauses))].sort((left, right) => left - right);
+  if (!clauses.length) return '<footer class="change-card-footer"><span class="muted">Supports the whole slice</span></footer>';
+  const tests = [...new Map(changes.flatMap((change) => change.tests ?? []).map((item) => [`${item.file}#${item.test}`, item])).values()];
+  return `<footer class="change-card-footer">
+    <span class="change-serves"><span class="change-label">Serves</span>${clauseLinks(clauses)}</span>
+    <span class="change-tests">${tests.length ? `<span class="change-label">Tests</span>${tests.map((item) => `<span class="test-chip">${artifactChip(item.file, ctx, item.test)}</span>`).join("")}` : '<span class="status-pill is-warn">no test cited</span>'}</span>
+  </footer>`;
+}
+
+function verifiedRow(change, view) {
+  return view.comparison?.find((item) => item.planned && item.planned.item === change.item && item.path === change.path) ?? null;
+}
+
+// One Changes line becomes one card: what happens to which file, where, why, and what checks it.
+function changeCard(changes, view, ctx) {
+  const action = changes[0].action;
+  const rows = changes.map((change) => verifiedRow(change, view));
+  const verified = rows.some(Boolean);
+  const reading = verified ? (rows.every((row) => row?.reading === "as-planned") ? "as-planned" : rows.some((row) => row?.reading === "untouched") && rows.every((row) => !row || row.reading === "untouched") ? "untouched" : "partly") : null;
+  const badge = `<span class="change-action" title="${escapeHtml(ACTION_TITLES[action] ?? action)}">${ACTION_LABELS[action] ?? escapeHtml(action)}</span>`;
+  const paths = changes.map((change, index) => `<div class="change-path-row">
+      ${artifactChip(change.path, ctx)}${badge}
+      <span class="change-where">${verified ? (rows[index] ? readingText(rows[index]) : "") : placeChips(change, ctx)}</span>
+    </div>`).join("");
+  // After verification, what the result actually did follows the plan's reason, path by path.
+  const actual = rows.map((row, index) => row?.actual.length ? `<p class="change-actual"><span class="change-label">Actual</span>${changes.length > 1 ? `<code>${escapeHtml(changes[index].path)}</code>: ` : ""}${row.actual.slice(0, 6).map(actualText).join(", ")}${row.actual.length > 6 ? `, ${row.actual.length - 6} more` : ""}</p>` : "").join("");
+  return `<article class="change-card action-${escapeHtml(action)}${reading ? ` reading-${reading}` : ""}">
+    <header class="change-paths">${paths}</header>
+    ${changes[0].note ? `<p class="change-why">${inline(changes[0].note)}</p>` : ""}
+    ${actual}
+    ${changeFooter(changes, ctx)}
+  </article>`;
+}
+
+function listAfterHeading(root, title) {
+  const heading = [...root.querySelectorAll("h2")].find((element) => element.textContent.trim().replace(/\s*#$/, "") === title);
+  for (let node = heading?.nextElementSibling; node && node.tagName !== "H2"; node = node.nextElementSibling) {
+    if (node.tagName === "OL" || node.tagName === "UL") return node;
   }
-  if (!view.changes.length) return emptyNote("The design lists no expected changes.");
-  return `<div class="table-wrap"><table class="data-table design-changes"><thead><tr><th>Path</th><th>Change</th><th>Units and why</th></tr></thead><tbody>${view.changes.map((change) => `<tr>
-    <td>${artifactChip(change.path, ctx)}</td><td>${escapeHtml(change.action)}</td><td>${inline(change.note)}</td></tr>`).join("")}</tbody></table></div>`;
+  return null;
 }
 
-// The design view answers what the code will be held to, where it will change, and what no test covers, before implementation.
-function designViewCard(view, ctx) {
+// The rendered slice.md is the page; Prism's checks decorate its Contract items and turn its Changes items into cards.
+function decorateDesign(root, view, ctx) {
+  const contract = listAfterHeading(root, "Contract");
+  if (contract) {
+    [...contract.children].filter((item) => item.tagName === "LI").forEach((item, index) => {
+      const clause = view.clauses[index];
+      if (!clause) return;
+      item.classList.add("design-clause");
+      item.dataset.clauseNumber = String(clause.number);
+      item.insertAdjacentHTML("beforeend", clauseBadge(clause, view, ctx));
+    });
+  }
+  const changes = listAfterHeading(root, "Changes");
+  if (changes) {
+    const cards = [...changes.children].filter((item) => item.tagName === "LI").map((item, index) => {
+      const named = view.changes.filter((change) => change.item === index);
+      // A line Prism could not read stays as written, inside a card, so the reader still sees it.
+      return named.length ? changeCard(named, view, ctx) : `<article class="change-card is-unread"><p>${item.innerHTML}</p></article>`;
+    });
+    changes.insertAdjacentHTML("afterend", `<div class="change-list">${cards.join("")}</div>`);
+    changes.remove();
+  }
+}
+
+// A slice of a split scope has no Contract of its own, so the page lists the scope's clauses its Changes serve.
+function servedClauses(view, ctx) {
+  if (!view?.contract || !view.clauses.length) return "";
+  return `<div class="served-clauses"><p class="change-label">Contract clauses this slice serves, from ${artifactChip(view.contract.path, ctx)}</p><ol>${view.clauses.map((clause) => `<li value="${clause.number}" class="design-clause" data-clause-number="${clause.number}">${inline(clause.text)}${clauseBadge(clause, view, ctx)}</li>`).join("")}</ol></div>`;
+}
+
+function designNotices(view) {
   if (!view) return "";
-  const total = view.clauses.reduce((sum, clause) => sum + clause.examples.length, 0);
-  const open = total <= 20;
-  const behavior = !view.clauses.length ? emptyNote("The design has no Contract clauses.")
-    : `${view.examplesWritten ? "" : emptyNote("No examples were written for this design yet, so only the contract clauses show.")}
-    ${view.clauses.map((clause) => `<details class="design-clause"${open || !clause.examples.length ? " open" : ""}>
-      <summary><span class="clause-number">${clause.number}</span> <span class="clause-text">${inline(clause.text)}</span> ${view.gaps.includes(clause.number) ? '<span class="status-pill is-warn">no test</span>' : `<span class="muted">${plural(clause.examples.length, "example")}</span>`}</summary>
-      ${clause.examples.length ? `<ul class="design-examples">${clause.examples.map((item) => `<li><span class="example-text">${inline(item.example)}</span> ${artifactChip(item.file, ctx, item.test)}</li>`).join("")}</ul>` : ""}
-    </details>`).join("")}`;
-  return card("Design view", `
-    ${view.stale.length ? `<div class="notice"><p>The examples describe an earlier version of this design: ${view.stale.map(escapeHtml).join(" ")}</p></div>` : ""}
-    ${view.gaps.length ? `<p><span class="status-pill is-warn">${view.gaps.length === 1 ? "1 clause without a test" : `${view.gaps.length} clauses without a test`}</span> ${view.gaps.map((number) => `<a href="#" class="clause-link" data-clause="${number}">${number}</a>`).join(", ")}</p>` : ""}
-    <h3>Behavior</h3>
-    ${behavior}
-    <h3>${view.comparison ? "Planned versus actual" : "Expected changes"}</h3>
-    ${view.changeProblems.length ? `<ul class="plain-list error">${view.changeProblems.map((problem) => `<li>${escapeHtml(problem)}</li>`).join("")}</ul>` : ""}
-    ${changesTable(view, ctx)}
-    <p>${artifactChip(view.path, ctx, "Open slice.md")}</p>`, { source: "slice.md", className: "design-view" });
+  const notes = [];
+  if (view.stale.length) notes.push(`<div class="notice"><p>The test examples describe an earlier version of this design: ${view.stale.map(escapeHtml).join(" ")}</p></div>`);
+  if (view.gaps.length) notes.push(`<p><span class="status-pill is-warn">${view.gaps.length === 1 ? "1 clause without a test" : `${view.gaps.length} clauses without a test`}</span> ${view.gaps.map((number) => `<a href="#" class="clause-link" data-clause="${number}">§${number}</a>`).join(", ")}</p>`);
+  if (view.changeProblems.length) notes.push(`<ul class="plain-list error">${view.changeProblems.map((problem) => `<li>${escapeHtml(problem)}</li>`).join("")}</ul>`);
+  if (!view.indexed && !view.comparison && view.changes.some((change) => change.action !== "add")) notes.push('<p class="muted">The code index is not ready yet, so the places of planned changes are not shown.</p>');
+  if (!view.examplesWritten && view.clauses.length) notes.push('<p class="muted">No test examples were written for this design, so the tests behind each clause are not shown.</p>');
+  return notes.join("");
 }
 
-// Verification shows the accepted design's frozen tests and the latest run of the project's test command.
-function changeMapCard(path, state, ctx) {
-  const source = { source: path ? path.split("/").pop() : "change-map.json" };
-  if (state?.pending) return card("Change map", `<p>Building the change map from the verified result.</p>${path ? `<p>${artifactChip(path, ctx, "Open the previous change map")}</p>` : ""}`, source);
-  if (state?.failed) return card("Change map", `<p class="error">The change map could not be derived: ${escapeHtml(state.failed)}</p>`, source);
-  if (state?.empty) return card("Change map", emptyNote("The verified result changed no source compared with the design."), source);
-  if (!path) return card("Change map", emptyNote("No change map exists yet."), source);
-  const text = state?.derived ? "What the verified result changed, compared with the source when the design was accepted." : "The planned changes and their readiness.";
-  return card("Change map", `<p>${text}</p><p>${artifactChip(path, ctx, "Open the change map")}</p>`, source);
+function unplannedCard(view, ctx) {
+  const rows = view?.comparison?.filter((row) => !row.planned) ?? [];
+  if (!rows.length) return "";
+  return card("Changed without a plan", `<ul class="plain-list">${rows.map((row) => `<li>${artifactChip(row.path, ctx)} <span class="muted">${row.actual.slice(0, 6).map(actualText).join(", ")}${row.actual.length > 6 ? `, ${row.actual.length - 6} more` : ""}</span></li>`).join("")}</ul>`, { eyebrow: "The verified result changed these files, and Changes does not name them" });
 }
 
-function verificationCard(design, run) {
+function changeMapLine(path, state, ctx) {
+  if (state?.pending) return "<p>Building the change map from the verified result.</p>";
+  if (state?.failed) return `<p class="error">The change map could not be derived: ${escapeHtml(state.failed)}</p>`;
+  if (state?.empty) return "<p>The verified result changed no source compared with the design.</p>";
+  return path ? `<p>${artifactChip(path, ctx, "Open the change map")}</p>` : "";
+}
+
+// A slice designed before slice.md carried a contract may still have a hand-written change map.
+function legacyChangeMapCard(path, ctx) {
+  if (!path) return "";
+  return card("Change map", `<p>The planned changes and their readiness.</p><p>${artifactChip(path, ctx, "Open the change map")}</p>`, { source: path.split("/").pop() });
+}
+
+// Verification shows the accepted design's frozen tests, the latest run of the project's test command, and the derived change map.
+function verificationCard(design, run, changeMap = "") {
   if (!design && !run) return "";
   const result = run ? `<p><span class="status-pill ${run.passed ? "is-good" : "is-bad"}">${run.passed ? "passed" : "failed"}</span> ${escapeHtml(formatTime(run.finishedAt))}${run.reason ? `: ${escapeHtml(REASONS[run.reason] ?? run.reason)}` : ""}</p>` : emptyNote("No verification run yet.");
   return card("Verification", `
@@ -117,14 +198,50 @@ function verificationCard(design, run) {
       ["Duration", run?.durationMs ? seconds(run.durationMs) : null],
       ["Exit code", run && run.exitCode !== null ? String(run.exitCode) : null]
     ])}
-    ${run?.outputTail ? `<details><summary>Output tail</summary><pre>${escapeHtml(run.outputTail)}</pre></details>` : ""}`, { source: "runs" });
+    ${run?.outputTail ? `<details><summary>Output tail</summary><pre>${escapeHtml(run.outputTail)}</pre></details>` : ""}
+    ${changeMap}`, { source: "runs" });
+}
+
+// The slice folder may hold any number of diagrams, or none; the code view comes first when it exists.
+function diagramLabel(file) {
+  const name = file.split("/").pop().replace(/\.puml$/, "");
+  return name === "code" ? "Code view" : name.replace(/[-_]+/g, " ").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function diagramsCard(diagrams, folder, ctx) {
+  if (!diagrams.length) return "";
+  const selected = diagrams.includes(ctx.state.diagram) ? ctx.state.diagram : diagrams[0];
+  const tabs = diagrams.length > 1 ? `<div class="diagram-tabs" role="tablist">${diagrams.map((file) => `<button type="button" role="tab" class="diagram-tab" data-diagram="${escapeHtml(file)}" aria-selected="${file === selected}" title="${escapeHtml(file.slice(folder.length + 1))}">${escapeHtml(diagramLabel(file))}</button>`).join("")}</div>` : "";
+  return `<section class="slice-diagrams" data-diagrams>${tabs}<div class="diagram-slot" data-diagram-slot="${escapeHtml(selected)}"></div></section>`;
+}
+
+async function mountDiagrams(container, diagrams, ctx) {
+  const area = container.querySelector("[data-diagrams]");
+  if (!area) return;
+  const show = async (file) => {
+    ctx.state.diagram = file;
+    area.querySelectorAll(".diagram-tab").forEach((tab) => tab.setAttribute("aria-selected", String(tab.dataset.diagram === file)));
+    const slot = area.querySelector("[data-diagram-slot]");
+    slot.dataset.diagramSlot = file;
+    slot.innerHTML = "";
+    try { await ctx.mountDiagram(slot, file); }
+    catch (error) { slot.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; }
+  };
+  area.addEventListener("click", (event) => {
+    const tab = event.target.closest(".diagram-tab");
+    if (tab && tab.getAttribute("aria-selected") !== "true") void show(tab.dataset.diagram);
+  });
+  await show(area.querySelector("[data-diagram-slot]").dataset.diagramSlot);
 }
 
 export async function render(container, entity, ctx) {
   const data = entity.data;
   const slice = data.slice;
+  const view = data.designView;
   const artifacts = data.artifacts ?? { files: [] };
-  const known = new Set([artifacts.narrative, artifacts.changeMap, artifacts.review?.path].filter(Boolean));
+  // Diagrams directly in the slice folder, such as the code view, show above the document as the design's picture.
+  const diagrams = artifacts.files.filter((file) => file.endsWith(".puml") && file.slice(artifacts.folder.length + 1).indexOf("/") === -1).sort((left, right) => Number(right.endsWith("/code.puml")) - Number(left.endsWith("/code.puml")) || left.localeCompare(right));
+  const known = new Set([artifacts.narrative, artifacts.changeMap, artifacts.review?.path, ...diagrams].filter(Boolean));
   const others = artifacts.files.filter((file) => !known.has(file));
   container.innerHTML = `
     <section class="view-card summary-card">
@@ -143,28 +260,32 @@ export async function render(container, entity, ctx) {
         ["Active work", data.active.length ? data.active.map((entry) => `<span class="meta-pill">${escapeHtml(entry.activity)} · ${escapeHtml((entry.workers ?? []).join(", "))}${entry.label ? ` · ${escapeHtml(entry.label)}` : ""}</span>`).join(" ") : null]
       ])}
     </section>
-    ${designViewCard(data.designView, ctx)}
+    ${diagramsCard(diagrams, artifacts.folder, ctx)}
+    ${artifacts.narrative ? `<section class="view-card design-document"><header class="view-card-header"><div class="view-card-title"><h2>Design</h2>${cardSource(artifacts.narrative.split("/").pop())}</div></header>${designNotices(view)}${servedClauses(view, ctx)}<div class="document-content" data-narrative><p class="rendering">Loading the design</p></div></section>` : ""}
+    ${unplannedCard(view, ctx)}
     <div class="artifact-cards">
-      ${changeMapCard(artifacts.changeMap, data.changeMap, ctx)}
+      ${verificationCard(slice.design, data.verification, slice.design ? changeMapLine(artifacts.changeMap, data.changeMap, ctx) : "")}
       ${reviewCard(artifacts.review, ctx)}
-      ${verificationCard(slice.design, data.verification)}
+      ${slice.design ? "" : legacyChangeMapCard(artifacts.changeMap, ctx)}
     </div>
-    ${card("Other documents", others.length ? `<ul class="plain-list">${others.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder has no other files."), { eyebrow: plural(artifacts.files.length, "file") + " in the slice folder" })}
-    ${artifacts.narrative ? `<section class="view-card"><header class="view-card-header"><div class="view-card-title"><h2>Design narrative</h2>${cardSource(artifacts.narrative.split("/").pop())}</div></header><div class="document-content" data-narrative><p class="rendering">Loading narrative</p></div></section>` : ""}`;
+    ${card("Other documents", others.length ? `<ul class="plain-list">${others.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder has no other files."), { eyebrow: plural(artifacts.files.length, "file") + " in the slice folder" })}`;
   bindLinks(container, ctx);
-  for (const link of container.querySelectorAll("[data-clause]")) {
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      const target = container.querySelectorAll(".design-clause")[Number(link.dataset.clause) - 1];
-      if (target) { target.open = true; target.scrollIntoView({ block: "center" }); }
-    });
-  }
-  if (artifacts.narrative) {
+  container.addEventListener("click", (event) => {
+    const link = event.target.closest("[data-clause]");
+    if (!link || !container.contains(link)) return;
+    event.preventDefault();
+    const target = container.querySelector(`.design-clause[data-clause-number="${CSS.escape(link.dataset.clause)}"]`);
+    if (target) { target.scrollIntoView({ block: "center" }); target.classList.remove("is-target"); void target.offsetWidth; target.classList.add("is-target"); }
+  });
+  const narrativeTarget = container.querySelector("[data-narrative]");
+  if (narrativeTarget) {
     try {
       const narrative = await ctx.fetchArtifact(artifacts.narrative);
-      container.querySelector("[data-narrative]").innerHTML = ctx.renderMarkdown(narrative.content, artifacts.narrative);
+      narrativeTarget.innerHTML = ctx.renderMarkdown(narrative.content, artifacts.narrative);
+      if (view) decorateDesign(narrativeTarget, view, ctx);
     } catch (error) {
-      container.querySelector("[data-narrative]").innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+      narrativeTarget.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
     }
   }
+  await mountDiagrams(container, diagrams, ctx);
 }
