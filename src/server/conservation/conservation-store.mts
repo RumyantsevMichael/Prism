@@ -229,9 +229,9 @@ export class ConservationStore {
     const before = await this.get<SnapshotEvidence>(projectRoot, snapshotId, "snapshot");
     for (const file of before.files) await this.bytes(projectRoot, file);
     const current = await this.capture(projectRoot), exclusions = [...await this.outputs(projectRoot), ...current.snapshot.exclusions];
-    // Records that moved into .prism leave their old location, which older snapshots may still list.
+    // Records that moved into .prism leave their old location, which older snapshots may still list, and records that no write has moved yet still sit there.
     const moved: string[] = [];
-    for (const entry of before.files) if (isManagedRecordFile(entry.file) || await keyOfPath(projectRoot, entry.file)) moved.push(entry.file);
+    for (const entry of [...before.files, ...current.snapshot.files]) if (!moved.includes(entry.file) && (isManagedRecordFile(entry.file) || await keyOfPath(projectRoot, entry.file))) moved.push(entry.file);
     const allowed = [...exclusions.filter(file => !before.files.some(entry => entry.file === file)), ...moved];
     const selected = (record: SnapshotEvidence) => canonical({ files: record.files.filter(file => !allowed.includes(file.file)), omissions: record.omissions, complete: record.complete });
     if (selected(before) !== selected(current.snapshot)) {

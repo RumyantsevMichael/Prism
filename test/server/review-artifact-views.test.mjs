@@ -51,25 +51,25 @@ test("lists JSON artifacts and identifies Prism artifact kinds", async (context)
   try {
     const index = (await fetchReview(`${review.baseUrl}/api/index`)).json();
     assert.deepEqual(index.artifacts, [
-      ".prism/initiatives/demo/slices/deadline/change-map.json",
-      ".prism/initiatives/demo/slices/retry/change-map.json",
-      ".prism/initiatives/demo/slices/retry/review.json",
-      ".prism/initiatives/demo/state.json",
       "docs/plans/demo/broken.json",
-      "docs/plans/demo/notes.json"
+      "docs/plans/demo/deadline/change-map.json",
+      "docs/plans/demo/notes.json",
+      "docs/plans/demo/retry/concept-delta.json",
+      "docs/plans/demo/retry/review.json",
+      "docs/plans/demo/state.json"
     ]);
     const load = async (artifact) => (await fetchReview(`${review.baseUrl}/api/artifact?path=${encodeURIComponent(artifact)}`)).json();
-    const delta = await load(".prism/initiatives/demo/slices/retry/change-map.json");
+    const delta = await load("docs/plans/demo/retry/concept-delta.json");
     assert.equal(delta.kind, "change-map");
-    assert.equal((await load(".prism/initiatives/demo/slices/deadline/change-map.json")).kind, "change-map");
+    assert.equal((await load("docs/plans/demo/deadline/change-map.json")).kind, "change-map");
     assert.equal(delta.data.concepts.length, 6);
     assert.equal(delta.summary.totalCount, 6);
     assert.equal(delta.summary.counts.REPLACE, 2);
     assert.equal(typeof delta.summary.ready, "boolean");
     assert.equal(Object.hasOwn(delta.summary, "concepts"), false);
     assert.deepEqual(delta.diagrams, []);
-    assert.equal((await load(".prism/initiatives/demo/slices/retry/review.json")).kind, "review-ledger");
-    assert.equal((await load(".prism/initiatives/demo/state.json")).kind, "coordination-state");
+    assert.equal((await load("docs/plans/demo/retry/review.json")).kind, "review-ledger");
+    assert.equal((await load("docs/plans/demo/state.json")).kind, "coordination-state");
     assert.equal((await load("docs/plans/demo/notes.json")).kind, "json");
     const broken = await load("docs/plans/demo/broken.json");
     assert.equal(broken.kind, "json");

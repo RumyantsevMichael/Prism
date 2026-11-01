@@ -8,7 +8,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, ensureRecords, keyOfPath, recordPath } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, keyOfPath, recordPath } from "../workflow/record-store.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
@@ -125,8 +125,6 @@ export async function listSourceFiles(projectRoot) {
 export async function listArtifacts(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const results = new Set();
-  // Move legacy records first, so the listing never shows a record at both locations.
-  await ensureRecords(await realpath(projectRoot)).catch(() => {});
   for (const root of configuredRoots(config)) {
     await walkArtifacts(projectRoot, root, results);
   }

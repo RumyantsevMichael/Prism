@@ -39,9 +39,10 @@ Prism now keeps every machine record in the project's `.prism` directory, beside
 ```
 
 Slice narratives, diagrams, recovery notes, and the generated `roadmap.md`, `initiative.md`, and `review.md` stay in the configured paths, because those are what people read.
-The first time Prism reads or writes a record, it moves every record from the earlier layout for all initiatives at once, including a `concept-delta.json`, which becomes `change-map.json`.
+Reading records changes nothing: Prism and the review browser read each record from the earlier layout until something writes one.
+The first time Prism writes a record, it moves every record from the earlier layout for all initiatives at once, including a `concept-delta.json`, which becomes `change-map.json`.
 The move keeps each file's bytes, so open reviews and accepted gates stay valid.
-Commit the moved files together with the deleted originals.
+The result of the tool call that moved them lists the moved files, so you can commit the move on its own, apart from the task's changes.
 If both locations hold different versions of one record, Prism keeps both and uses the one under `.prism`; compare them and delete the older copy yourself.
 Prism also writes `.prism/.gitattributes`, which marks records as generated so GitHub and GitLab collapse them in pull request diffs, and `.prism/.gitignore` for transient lock files.
 MCP tools now take `initiative` and `slice` identifiers instead of record paths, so a script that passed `statePath`, `reviewPath`, or `deltaPath` needs the identifiers instead.

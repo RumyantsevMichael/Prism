@@ -7,6 +7,7 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import { takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -975,6 +976,16 @@ async function callRepositoryTool(name, argumentsValue) {
   throw new Error(`Unknown repository-intelligence tool: ${name}`);
 }
 
+// The first write after an upgrade moves files in the user's work tree, so its result says which, to commit on their own.
+function withMigrationNote(value) {
+  const reports = takeMigrationReports();
+  if (!reports.length || !Array.isArray(value?.content)) return value;
+  const moved = reports.flatMap((report) => report.moved), conflicts = reports.flatMap((report) => report.conflicts);
+  const lines = [`Prism moved ${moved.length} record files from their old locations into .prism; commit these moves on their own, apart from the task's changes.`, ...moved.map((move) => `- ${move.from} -> ${move.to}`)];
+  if (conflicts.length) lines.push(`${conflicts.length} old files were kept because .prism already holds a different record: ${conflicts.map((move) => move.from).join(", ")}.`);
+  return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
+}
+
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
@@ -1052,7 +1063,7 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
-      const value = await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id);
+      const value = withMigrationNote(await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id));
       // A cancelled request gets no response, as the MCP cancellation rules require.
       if (value.structuredContent?.status !== "cancelled") {
         result(request.id, value);

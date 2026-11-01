@@ -9,7 +9,7 @@ import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { locateRecord, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
+import { locateRecord, moveLegacyRecords, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
 
 const RECORD_NAME = "initiative.json";
 const PROJECTION_NAME = "initiative.md";
@@ -299,6 +299,7 @@ async function removeRecords(input) {
 
 export async function updateInitiative(input) {
   validateInput(UPDATE_INITIATIVE_SCHEMA, input);
+  await moveLegacyRecords(input.projectRoot);
   if (input.operations.length === 1 && input.operations[0].op === "remove_records") return removeRecords(input);
   const resolved = await resolveInitiative(input.projectRoot, input.initiative, true);
   await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.projectionPath]);

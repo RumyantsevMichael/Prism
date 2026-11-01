@@ -5,7 +5,7 @@ import { mkdir, readFile, realpath, rm, lstat } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { locateRecord, sliceDocumentFolder, writeRecord } from "./record-store.mjs";
+import { locateRecord, moveLegacyRecords, sliceDocumentFolder, writeRecord } from "./record-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 
@@ -539,6 +539,7 @@ export async function updateCoordinationState({ projectRoot, initiative, expecte
   if (expectedRevision !== null && typeof expectedRevision !== "string") {
     throw error("invalid_revision", "The expectedRevision argument must be a state revision string or null.");
   }
+  await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => applyStateChange(resolved, expectedRevision, changes), error, { renew: Boolean(changes.activeOperations?.length) }));
@@ -587,6 +588,7 @@ async function applyStateChange(resolved, expectedRevision, changes) {
 }
 
 export async function answerUserGate({ projectRoot, initiative, id, choice = null, note = null, write = writeRecord }) {
+  await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
@@ -626,6 +628,7 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
   if (typeof activeSlice !== "string" || !SLUG_PATTERN.test(activeSlice) || typeof recoveryContent !== "string" || !recoveryContent.trim() || Buffer.byteLength(recoveryContent) > 65536) {
     throw error("invalid_pause", "An active slice and a recovery note of at most 64 KiB are required.");
   }
+  await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   const folder = await sliceDocumentFolder(resolved.root, resolved.initiative, activeSlice);
   if (folder === null || resolved.directory === null) {
