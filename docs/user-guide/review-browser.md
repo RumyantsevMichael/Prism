@@ -34,6 +34,9 @@ Ctrl-click or Cmd-click a link, double-click its tab, or choose Keep on the tab 
 Tabs that an agent presents stay open until you close them.
 
 A banner appears when the review server stops responding, and it clears when the connection returns.
+When the server stays silent for about 15 seconds, the banner says that the review app stopped and the page is no longer live, and actions that need the server say so instead of failing silently.
+A restarted app uses a new link, so ask the agent to open the review browser to get one, or run `./bin/prism review` from a Prism checkout.
+The page keeps checking and recovers on its own when the same app or its upgraded successor answers.
 
 ## Attention
 

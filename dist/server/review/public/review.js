@@ -6,6 +6,7 @@ import { createPalette } from "./views/palette.js";
 import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
 import { createIndexingStatus } from "./views/indexing.js";
+import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connection.js";
 
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
@@ -15,6 +16,7 @@ const workspace = document.getElementById("workspace");
 const appShell = document.getElementById("app-shell");
 const sidebarToggle = document.getElementById("sidebar-toggle");
 const connectionBanner = document.getElementById("connection");
+const appGoneBanner = document.getElementById("app-gone");
 const artifact = document.getElementById("artifact");
 const tabs = document.getElementById("tabs");
 const toast = document.getElementById("toast");
@@ -44,7 +46,9 @@ let lastSnapshot = "";
 let renderedPath = null;
 let rebuilding = false;
 const scrollPositions = new Map();
-let failedRefreshes = 0;
+let probes = { failures: 0, failingSince: null };
+// Live, retrying, or stopped: a stopped tab keeps checking, and it returns to live when the same app or a handed-off successor answers.
+let connection = "live";
 // A link to a heading in another document scrolls there once that document has rendered.
 let pendingAnchor = null;
 // A text match chosen in the palette is highlighted once its document has rendered.
@@ -179,7 +183,7 @@ function saveSession() {
 }
 
 function openRef(path, { keep = false, fromHistory = false } = {}) {
-  if (!path) {
+  if (!path || !requireApp()) {
     return;
   }
   if (openTabs.includes(path)) {
@@ -206,7 +210,7 @@ function openRef(path, { keep = false, fromHistory = false } = {}) {
 }
 
 function keepTab(path) {
-  if (previewTab !== path) {
+  if (previewTab !== path || !requireApp()) {
     return;
   }
   previewTab = null;
@@ -215,6 +219,7 @@ function keepTab(path) {
 }
 
 function closeTab(path) {
+  if (!requireApp()) return;
   scrollPositions.delete(path);
   openTabs = openTabs.filter((tab) => tab !== path);
   agentTabs = agentTabs.filter((tab) => tab !== path);
@@ -432,6 +437,7 @@ function connectSessionEvents() {
   sessionStream = new EventSource("./api/events");
   sessionStream.onopen = () => {
     sessionConnected = true;
+    reportRefresh(true);
   };
   sessionStream.onerror = () => {
     sessionConnected = false;
@@ -463,10 +469,27 @@ function markdownOptions(basePath) {
   return { basePath, isKnown: (path) => availableArtifacts.has(path) };
 }
 
-// One failed poll can be a restart in progress, so the banner waits for a second one and clears on the next success.
+// A short outage shows the retrying banner; one that outlasts the grace period shows the stopped banner, and any answer clears both.
 function reportRefresh(ok) {
-  failedRefreshes = ok ? 0 : failedRefreshes + 1;
-  connectionBanner.hidden = failedRefreshes < 2;
+  probes = recordProbe(probes, ok, Date.now());
+  const next = connectionState({ ...probes, now: Date.now(), streamOpen: sessionStream?.readyState === EventSource.OPEN });
+  if (next === connection) return;
+  const recovered = connection === "stopped" && next === "live";
+  connection = next;
+  connectionBanner.hidden = next !== "retrying";
+  appGoneBanner.hidden = next !== "stopped";
+  if (!recovered) return;
+  // A stream that met another listener on the port gave up, so a returning app needs a new one; the next poll redraws the open view.
+  if (sessionStream?.readyState === EventSource.CLOSED) connectSessionEvents();
+  lastSnapshot = "";
+  void refreshProjects();
+}
+
+// Actions that need the server explain why they cannot run while the app is stopped instead of failing silently.
+function requireApp() {
+  if (connection !== "stopped") return true;
+  showToast(STOPPED_MESSAGE);
+  return false;
 }
 
 function showToast(message) {
@@ -1038,6 +1061,7 @@ function viewState(path) {
 }
 
 async function fetchJson(url) {
+  if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -1074,7 +1098,10 @@ function viewContext(path, state) {
       }
     },
     async answerGate(payload) {
-      const response = await fetch("./api/gates/answer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
+      const response = await fetch("./api/gates/answer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(() => {
+        throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
+      });
       const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
       if (!response.ok) {
         throw Object.assign(new Error(result.message ?? "The answer was not recorded."), { code: result.code });
@@ -1245,9 +1272,10 @@ async function initialize() {
         if (!sessionConnected) {
           synchronizeSession(snapshot);
         }
-      }
-      if (selectedPath) {
-        await showArtifact(selectedPath);
+        // A failed probe leaves the open view as it is rather than replacing it with an error.
+        if (selectedPath) {
+          await showArtifact(selectedPath);
+        }
       }
     } catch {
     }
