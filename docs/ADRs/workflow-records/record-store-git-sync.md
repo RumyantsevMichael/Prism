@@ -22,6 +22,7 @@ At most one process MUST sync a store at a time, and a process that finds the st
 A record read MUST NOT wait for the network.
 Record reads and writes MUST NOT see a partially written record file while a merge updates the store.
 A merge conflict on a record MUST keep the upstream version in the store and save the local version beside it, and a conflict on any other file MUST leave the store unchanged.
+Every Prism server that uses the store MUST report each saved local version once, on its next tool result, so the agent whose change lost learns of it.
 A sync problem MUST NOT fail a record operation, and the store MUST report the latest sync outcome for the review browser.
 
 ## Rationale
@@ -45,6 +46,7 @@ A pending debounced sync can be lost when a process exits, and the next sync fro
 A cloud session that attached the store repository with push access pushed to its `main` branch in a test on 2 November 2026, so cloud sessions sync without a merge Action.
 A session limited to its own `claude/...` branch would report `push_rejected` and keep its records in its own clone, which a merge Action could later fold in.
 Mutable records resolve concurrent edits by first push until records become append-only event files, so the later edit is saved aside rather than merged.
+Because every write appends to a record's history list, two concurrent writes to one record file conflict even when they change different initiatives or slices, as a test on 2 November 2026 showed.
 A record written or locked while a merge would replace it keeps the branch where it was, so the next attempt commits the local bytes and resolves them against the upstream as a saved conflict.
 A record that stays locked through every attempt delays the merge to a later sync, which the status reports as `merge_failed`.
 A leftover Git lock in the store stops syncing with `git_failed` until a person removes it, because Prism never deletes Git's locks.
@@ -66,5 +68,8 @@ The branch and index move to the merge commit while the locks are still held, th
 A write scheduled while a sync runs starts another sync after it, because the running sync may have committed before the write.
 SSH runs in batch mode unless the user configured an SSH command, so no prompt can hold the sync lock.
 Every sync writes its outcome, ahead and behind counts, and saved conflicts to a status file in the ignored sync folder, and the review index includes it.
+Each server remembers the stores it synced or pulled, and on every tool result it lists record versions saved under the sync folder since the server started that it has not reported yet.
 
 ## Decision Log
+
+2026-11-02: A two-machine test showed that the agent whose change lost was never told and that history appends make every concurrent write to one record conflict; tool results now report saved local versions.

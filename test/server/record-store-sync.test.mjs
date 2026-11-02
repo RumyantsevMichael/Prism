@@ -14,7 +14,7 @@ Object.assign(process.env, {
   GIT_AUTHOR_NAME: "Prism Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Prism Test", GIT_COMMITTER_EMAIL: "test@example.invalid"
 });
 delete process.env.CLAUDE_PLUGIN_DATA;
-const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
+const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
 const { forgetMigrations, listInitiatives, readRecord, writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
@@ -106,6 +106,9 @@ test("keeps the first pushed version of a concurrently edited record and saves t
   assert.equal(await readFile(path.join(storeA, "initiatives/reports/state.json"), "utf8"), "{\"v\":\"b\"}\n");
   assert.equal(await readFile(path.join(storeA, status.conflicts[0].savedAs), "utf8"), "{\"v\":\"a\"}\n");
   assert.deepEqual((await readSyncStatus(storeA)).conflicts, status.conflicts);
+  const saved = (await takeSavedConflicts()).filter((item) => item.savedAs.startsWith(storeA));
+  assert.deepEqual(saved.map((item) => [item.record, item.savedAs]), [[".prism/initiatives/reports/state.json", path.join(storeA, status.conflicts[0].savedAs)]]);
+  assert.deepEqual((await takeSavedConflicts()).filter((item) => item.savedAs.startsWith(storeA)), []);
   assert.equal(git(remote, "rev-parse", "main"), git(storeA, "rev-parse", "HEAD"));
   assert.equal(git(storeA, "status", "--porcelain"), "");
 });

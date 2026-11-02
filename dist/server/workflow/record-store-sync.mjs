@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm, rmdir } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 
@@ -14,6 +14,10 @@ const running = new Map();
 // Stores whose debounced sync came due while a sync was running; that sync may have committed before the write.
 const rerun = new Set();
 const lastFetch = new Map();
+// Stores this process synced or pulled, and the saved conflicts it already reported, so each agent hears once about a change the upstream won.
+const PROCESS_START = Date.now();
+const watched = new Set();
+const reported = new Set();
 // Variables that could point Git at another repository, index, or object store than the store's own.
 const REDIRECTING = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE)$/;
 
@@ -73,6 +77,7 @@ export async function waitForStableStore(base) {
 
 /** Debounce a sync after a record write; a sync problem never reaches the write. */
 export function scheduleRecordSync(base) {
+  watched.add(base);
   clearTimeout(scheduled.get(base));
   const timer = setTimeout(() => {
     scheduled.delete(base);
@@ -85,9 +90,39 @@ export function scheduleRecordSync(base) {
 
 /** Start a background sync after a record read when the last fetch is older than the pull interval; the read never waits for it. */
 export function pullRecordStoreIfStale(base) {
+  watched.add(base);
   if (running.has(base) || Date.now() - (lastFetch.get(base) ?? 0) < SETTINGS.pullIntervalMs) return;
   lastFetch.set(base, Date.now());
   syncRecordStore(base).catch(() => {});
+}
+
+/** Local record versions that a sync saved because the upstream changed the same record, in stores this process uses, since this process started and not reported before. */
+export async function takeSavedConflicts() {
+  const found = [];
+  for (const base of watched) {
+    const directory = syncPath(base, "conflicts");
+    let stamps = [];
+    try { stamps = (await readdir(directory)).sort(); } catch { continue; }
+    for (const stamp of stamps) {
+      const at = Date.parse(stamp.replace(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, "$1:$2:$3.$4Z"));
+      const key = `${base}\0${stamp}`;
+      if (!(at >= PROCESS_START) || reported.has(key)) continue;
+      reported.add(key);
+      const files = [];
+      const visit = async (relative) => {
+        let entries = [];
+        try { entries = await readdir(path.join(directory, stamp, relative), { withFileTypes: true }); } catch { return; }
+        for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+          const child = relative ? `${relative}/${entry.name}` : entry.name;
+          if (entry.isDirectory()) await visit(child);
+          else if (entry.isFile() && isRecordFile(child)) files.push(child);
+        }
+      };
+      await visit("");
+      for (const file of files) found.push({ record: `.prism/${file}`, savedAs: path.join(directory, stamp, file), at: new Date(at).toISOString() });
+    }
+  }
+  return found;
 }
 
 /** The latest sync outcome of a store, or null before its first sync. */

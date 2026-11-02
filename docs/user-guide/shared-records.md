@@ -65,7 +65,9 @@ SSH runs in batch mode unless you configured an SSH command, so a remote that ne
 ## When two people change the same record
 
 Until records become append-only, the first push wins.
+Two changes to one record file collide even when they touch different initiatives or slices, because each change also adds to the record's history.
 The machine whose push lost keeps the upstream version and saves its own version under `.prism-sync/conflicts/<time>/` in the store, so no bytes are lost.
+The next Prism tool result on that machine names the record and the saved file, so the agent that made the change learns of it.
 Compare the saved file with the current record, and redo the change through Prism's tools if it still matters.
 Prism never replaces a record that changed while a merge was running: it leaves the branch where it was and resolves the change on the next sync.
 
