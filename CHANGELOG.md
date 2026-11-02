@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.0](https://github.com/RumyantsevMichael/Prism/compare/v0.15.0...v0.16.0) (2026-11-02)
+
+
+### Added
+
+* collect run statistics per wave, slice and initiative ([973f888](https://github.com/RumyantsevMichael/Prism/commit/973f8883e75b82a8322b070cc3a6f127b90abb85))
+* share machine records through an external record store synced by git ([#57](https://github.com/RumyantsevMichael/Prism/issues/57)) ([76d1771](https://github.com/RumyantsevMichael/Prism/commit/76d1771b37aa12f5e92d5fc2c91d01f093047c8c))
+
 ## [0.15.0](https://github.com/RumyantsevMichael/Prism/compare/v0.14.1...v0.15.0) (2026-11-02)
 
 
