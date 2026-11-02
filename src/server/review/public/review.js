@@ -1208,8 +1208,21 @@ function paletteEntries() {
   return [...places, ...indexed, ...files];
 }
 
+const SYNC_LABELS = { no_upstream: "Records not shared", not_a_repository: "Records not synced", push_rejected: "Records not pushed", merge_failed: "Records not merged", fetch_failed: "Records not fetched", git_failed: "Records not synced", conflicts: "Record conflicts saved" };
+
+// The record store's sync stays quiet while it is fine, and a small chip names any other state.
+function renderStoreSync(status) {
+  const root = document.getElementById("store-sync");
+  const label = SYNC_LABELS[status?.state];
+  root.hidden = !label;
+  if (!label) return;
+  document.getElementById("store-sync-label").textContent = label;
+  root.title = [status.message, ...(status.conflicts ?? []).map((item) => `${item.path} saved as ${item.savedAs}`)].filter(Boolean).join("\n");
+}
+
 async function initialize() {
   const data = await fetchJson("./api/index");
+  renderStoreSync(data.storeSync);
   openTabs = data.openTabs;
   previewTab = openTabs.includes(data.previewTab) ? data.previewTab : null;
   agentTabs = (data.agentTabs ?? []).filter((tab) => openTabs.includes(tab));
@@ -1344,6 +1357,7 @@ async function initialize() {
       reportRefresh(Boolean(refreshed?.ok));
       if (refreshed?.ok) {
         const snapshot = await refreshed.json();
+        renderStoreSync(snapshot.storeSync);
         availableArtifacts = new Set([...snapshot.artifacts, ...(snapshot.sources ?? [])]);
         updateMissingTabs(snapshot.missingTabs);
         if (JSON.stringify(snapshot.navigation) !== JSON.stringify(navigation)) {

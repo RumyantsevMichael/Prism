@@ -32,6 +32,7 @@ import { checkpointPause, readCoordinationState, updateCoordinationState, valida
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
+import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
@@ -1155,6 +1156,7 @@ input.on("line", async (line) => {
 input.on("close", async () => {
   for (const controller of pendingWaits.values()) controller.abort();
   cancelVerifications();
+  cancelRecordSyncs();
   nativeSemanticRuntime.close();
   await reviewServers.close();
 });

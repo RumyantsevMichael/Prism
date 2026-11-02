@@ -4,7 +4,7 @@ import { readInitiative, sliceFolder } from "../workflow/initiative.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
-import { keyOfPath, listInitiatives, listSliceRecords, locateRecord, recordPath } from "../workflow/record-store.mjs";
+import { keyOfPath, listInitiatives, listSliceRecords, locateRecord, recordPath, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
@@ -38,12 +38,13 @@ const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap
 // A record is read where it lives: under .prism, or beside its Markdown until the first write moves it there.
 async function recordFile(root, key) {
   const located = await locateRecord(root, key);
-  return path.relative(located.root, located.target).split(path.sep).join("/");
+  // A record not yet moved is shown where it lies; any other keeps its .prism address, also when a record store holds its file.
+  return located.legacy ?? located.path;
 }
 
 async function readText(root, relative) {
   try {
-    return await readFile(path.join(root, relative), "utf8");
+    return await readFile((await resolveRecordFile(root, relative)).target, "utf8");
   } catch (error) {
     if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) return null;
     throw error;
@@ -53,9 +54,10 @@ async function readText(root, relative) {
 async function walk(root, relative, depth, accept, results, limit) {
   let entries;
   try {
-    entries = await readdir(path.join(root, relative), { withFileTypes: true });
+    entries = await readdir((await resolveRecordFile(root, relative)).target, { withFileTypes: true });
   } catch (error) {
-    if (["ENOENT", "ENOTDIR"].includes(error.code)) return;
+    // An unavailable record store hides only the records, so human documents still list.
+    if (["ENOENT", "ENOTDIR", "store_unavailable"].includes(error.code)) return;
     throw error;
   }
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
@@ -115,9 +117,14 @@ async function sliceArtifacts(root, directory, slices, slug, id) {
   };
 }
 
+// An unavailable record store lists no initiatives, so the pages still show human documents; the roadmap view reports the store error.
+function storedInitiatives(root) {
+  return listInitiatives(root).catch((error) => { if (error.code === "store_unavailable") return []; throw error; });
+}
+
 async function initiativeFolders(root) {
   const ids = [];
-  for (const id of await listInitiatives(root)) if ((await readText(root, await recordFile(root, { kind: "initiative", initiative: id }))) !== null) ids.push(id);
+  for (const id of await storedInitiatives(root)) if ((await readText(root, await recordFile(root, { kind: "initiative", initiative: id }))) !== null) ids.push(id);
   return ids;
 }
 
@@ -339,7 +346,7 @@ export async function loadGlossary(projectRoot) {
 
 async function isFile(root, relative) {
   try {
-    return (await stat(path.join(root, relative))).isFile();
+    return (await stat((await resolveRecordFile(root, relative)).target)).isFile();
   } catch {
     return false;
   }
@@ -377,7 +384,7 @@ async function computeAttention(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
   const items = new Map(roadmap.items.map((item) => [item.id, item]));
-  const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await listInitiatives(projectRoot))])];
+  const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await storedInitiatives(projectRoot))])];
   const needsYou = [];
   const answered = [];
   const earlier = [];
