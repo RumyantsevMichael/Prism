@@ -88,7 +88,7 @@ function welcome() {
   renderedPath = null;
   document.body.classList.remove("has-maximized");
   artifact.innerHTML = `<div class="welcome-card">
-    <span class="welcome-mark" aria-hidden="true"></span>
+    <img class="welcome-mark" src="./prism-mark.svg" alt="" aria-hidden="true">
     <p class="eyebrow">Human review</p>
     <h1>Nothing is open</h1>
     <p>Choose Attention, the roadmap, or a library section, or press Ctrl K to jump.</p>
