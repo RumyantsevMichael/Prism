@@ -3,6 +3,7 @@ import { open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { initiativeDirectory, parseWorkflowConfig, runStatisticsCollection } from "../workflow/workflow-config.mjs";
+import { isRemoteStore, managedStoreId, managedStoresDirectory } from "../workflow/remote-url.mjs";
 
 // Reads the Prism target a tool call names and the shared workflow facts at that call, for run-cost attribution.
 // Records are read where Prism keeps them, under .prism or in the configured record store, or where an older Prism kept them before the first write moved them.
@@ -116,8 +117,13 @@ export async function readRunStatisticsCollection(projectRoot, { deadline = Numb
 async function recordBase(root, config) {
   const configured = config.workspace?.store ?? null;
   if (configured === null) return path.join(root, ".prism");
+  // A store named by its remote is read from the clone Prism keeps of it, which this read never creates.
+  const remote = isRemoteStore(configured);
+  const directory = remote ? managedStoresDirectory() : null;
+  const id = remote ? managedStoreId(configured) : null;
+  if (remote && !(directory && id)) return null;
   try {
-    const base = await realpath(path.resolve(root, configured));
+    const base = await realpath(remote ? path.join(directory, id) : path.resolve(root, configured));
     const within = (outer, inner) => !path.relative(outer, inner).startsWith("..") && !path.isAbsolute(path.relative(outer, inner));
     return (await stat(base)).isDirectory() && !within(root, base) && !within(base, root) ? base : null;
   } catch {

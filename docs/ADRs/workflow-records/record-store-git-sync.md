@@ -89,3 +89,4 @@ Each server remembers the stores it synced or pulled, and on every tool result i
 
 2026-11-02: A two-machine test showed that the agent whose change lost was never told and that history appends make every concurrent write to one record conflict; tool results now report saved local versions.
 2026-11-02: Roadmap and initiative records that changed on both sides now merge by structure, and only a unit changed differently on both sides or an invalid result falls back to the upstream version.
+2026-11-02: A store cloned from an empty remote reported `ok` without pushing, because its upstream branch did not exist yet; a sync now pushes a branch whose upstream the remote lacks, a managed clone without an upstream pushes its branch with the upstream set, and status messages drop the user information of any URL.

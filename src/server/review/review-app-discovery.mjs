@@ -134,8 +134,8 @@ export async function readProjectDirectories(directory, field) {
   }
 }
 
-export async function writeProjectRoots(directory, roots, { evidence = {}, intelligence = {} } = {}) {
-  await writeAtomically(projectsPath(directory), `${JSON.stringify({ projects: roots, evidence, intelligence }, null, 2)}\n`, { mode: 0o600 });
+export async function writeProjectRoots(directory, roots, { evidence = {}, intelligence = {}, records = {} } = {}) {
+  await writeAtomically(projectsPath(directory), `${JSON.stringify({ projects: roots, evidence, intelligence, records }, null, 2)}\n`, { mode: 0o600 });
 }
 
 export const newCredential = () => randomBytes(24).toString("base64url");

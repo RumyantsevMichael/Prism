@@ -117,25 +117,37 @@ While collection is off, or while Prism cannot read `.prism/workflow.md`, the ho
 Its `runMeasures.recorded` totals then report every measure as `unavailable` rather than zero, while existing run records still report `runTotals` through `get_review` and `get_initiative`, as described in [Run records](repository-intelligence.md#run-records).
 
 Machine records live under `.prism` by default.
-To share them between linked worktrees or clones, name a record store folder outside the project in `.prism/workflow.md`:
+To share them between machines, name the store's Git remote in `.prism/workflow.md`:
+
+```markdown
+## Workspace
+- Store: git@github.com:you/prism-store.git
+```
+
+`Store` names a remote when it is a URL with the scheme `https`, `http`, `ssh`, `git`, or `file`, or the scp form `user@host:path`, and any other value is a folder path.
+Prism clones a remote store once per machine into its plugin data directory on the first record access, and every checkout on the machine that names the same remote shares that clone.
+Store sync is on by default for a remote store, and `- Store sync: off` keeps the clone without fetching, committing, or pushing after the first clone.
+Without a plugin data directory, after a failed clone, or when another repository's clone already sits at the clone path, every record operation fails with `store_unavailable`.
+
+To share records only between linked worktrees or clones on one machine, name a record store folder outside the project instead:
 
 ```markdown
 ## Workspace
 - Store: ../prism-store
 ```
 
-`Store` is relative to the project root or absolute, and it must neither resolve inside the project nor contain it.
+A `Store` path is relative to the project root or absolute, and it must neither resolve inside the project nor contain it.
 Create or clone the store folder yourself, because Prism never creates it, and a missing folder makes every record operation fail with `store_unavailable`.
 On the first record access from a checkout, Prism moves each existing record into the store unless an earlier checkout already brought it, and it keeps both copies of a record whose bytes differ and lists the conflict in the store's `migrations` folder.
 Record files that other checkouts still hold under `.prism` are then ignored, and you can delete them.
 Every checkout whose configuration names the same store reads and writes the same records.
 
-To share records between machines, make the store a Git checkout whose branch has an upstream, and add `- Store sync: on` under `Store`.
+To sync a path store between machines yourself, make it a Git checkout whose branch has an upstream, and add `- Store sync: on` under `Store`.
 Prism then commits record changes a few seconds after each write, merges the upstream without rebasing, and pushes, and a record read fetches in the background when the last fetch is older than 30 seconds.
 When two machines change different initiatives or slices of one record, the changes merge.
 When they change the same initiative or slice, the first push wins, and the store saves the other version under `.prism-sync/conflicts/`.
 Records keep working locally when Git, the network, or the upstream is unavailable, and the review browser shows a small chip when the last sync did not succeed.
-Without `Store sync: on`, Prism never runs Git in the store.
+Without `Store sync: on`, Prism never runs Git in a path store.
 See [Share Prism state across worktrees and machines](shared-records.md) for setup, conflicts, sync status, and cloud sessions.
 
 ## Migrate an older setup

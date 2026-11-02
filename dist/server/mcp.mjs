@@ -35,6 +35,7 @@ import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledge
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
 import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
+import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
@@ -43,7 +44,7 @@ import { startBackgroundPreparation } from "./repository-intelligence/background
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
 // PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
-const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory(), evidenceDirectory: conservationStore.directory, intelligenceDirectory: nativeSemanticRuntime.directory } });
+const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory(), evidenceDirectory: conservationStore.directory, intelligenceDirectory: nativeSemanticRuntime.directory, recordStoreDirectory: managedStoresDirectory() ?? undefined } });
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));
 
 function decisionDataDirectory(argumentsValue) {

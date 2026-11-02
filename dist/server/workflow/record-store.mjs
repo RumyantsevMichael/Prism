@@ -6,6 +6,8 @@ import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { pullRecordStoreIfStale, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
+import { managedRecordStore } from "./record-store-remote.mjs";
+import { isRemoteStore } from "./remote-url.mjs";
 import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
 // Machine records live under .prism beside the workflow config, or in the record store the workflow config names; human documents and generated views stay under the configured paths.
@@ -97,15 +99,21 @@ function storeRelative(relative) {
 const physical = (store, relative) => path.join(store.base, relative.slice(RECORD_DIRECTORY.length + 1));
 
 /**
- * Where a project's records live: { root, base, contain, external }.
+ * Where a project's records live: { root, base, contain, external, sync }.
  * base holds what .prism holds in the project, and contain is the folder no record may resolve outside.
  * A configured store is never created or replaced by a fallback, because either would split the records of checkouts that share it.
+ * A store named by its remote resolves to the clone Prism keeps of it, which the first access clones, and is then an external store like any other.
  */
 export async function recordStoreOf(projectRootPath) {
   const root = await projectRoot(projectRootPath);
   const { workspace } = await readWorkflowConfig(root);
   const configured = workspace?.store ?? null;
   if (configured === null) return { root, base: path.join(root, RECORD_DIRECTORY), contain: root, external: false, sync: false };
+  if (isRemoteStore(configured)) {
+    const base = await managedRecordStore(root, configured, (message, store) => fail("store_unavailable", message, { store }));
+    if (inside(root, base) || inside(base, root)) throw fail("store_unavailable", `The clone ${base} of the record store named under Workspace in .prism/workflow.md overlaps the project root. Keep the host's plugin data directory outside the project.`, { resolved: base });
+    return { root, base, contain: base, external: true, sync: workspace.sync === true };
+  }
   const resolved = path.resolve(root, configured);
   const unavailable = (reason) => fail("store_unavailable", `The record store ${configured} named under Workspace in .prism/workflow.md resolves to ${resolved}, which ${reason}`, { store: configured, resolved });
   let base;

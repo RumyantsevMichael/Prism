@@ -4,6 +4,7 @@ import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { ConservationStore, conservationStore } from "../conservation/conservation-store.mjs";
 import { withFileLock } from "../workflow/artifact-store.mjs";
+import { useManagedStores } from "../workflow/record-store-remote.mjs";
 import {
   REVIEW_APP_PROTOCOL,
   lockBase,
@@ -34,6 +35,7 @@ const LOCK_STALE_MS = 30 * 1000;
 const LOCK_TIMEOUT_MS = 1000;
 const OPEN_LEASE_MS = 10 * 1000;
 const STORAGE_DIRECTORY_LIMIT = 4;
+const STORAGE_FIELDS = [["evidenceDirectory", "evidenceDirectories"], ["intelligenceDirectory", "intelligenceDirectories"], ["recordStoreDirectory", "recordStoreDirectories"]];
 const NOTICE_MS = 60 * 1000;
 const RECENT_LIMIT = 20;
 
@@ -130,7 +132,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   function savedProjects() {
     const ordered = byRecency();
     const reported = (field) => Object.fromEntries(ordered.filter((project) => project[field].length).map((project) => [project.root, project[field]]));
-    return { roots: ordered.map(({ root }) => root), directories: { evidence: reported("evidenceDirectories"), intelligence: reported("intelligenceDirectories") } };
+    return { roots: ordered.map(({ root }) => root), directories: { evidence: reported("evidenceDirectories"), intelligence: reported("intelligenceDirectories"), records: reported("recordStoreDirectories") } };
   }
 
   // Keeps at most RECENT_LIMIT projects that are neither live nor watched, and saves the projects most recent first whenever that changes.
@@ -177,21 +179,27 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     };
   }
 
-  // Sessions report where they keep evidence and index storage, which depends on each host's plugin data directory.
+  // A remote record store resolves in the clone folder of the session that reported the project most recently, which need not be this app's host.
+  function useReportedStores(project) {
+    if (project.recordStoreDirectories.length) useManagedStores(project.root, project.recordStoreDirectories[0]);
+  }
+
+  // Sessions report where they keep evidence, index storage, and managed record-store clones, which depends on each host's plugin data directory.
   async function reportDirectories(project, body) {
     let changed = false;
-    for (const [name, field] of [["evidenceDirectory", "evidenceDirectories"], ["intelligenceDirectory", "intelligenceDirectories"]]) {
+    for (const [name, field] of STORAGE_FIELDS) {
       if (body[name] === undefined) continue;
       const resolved = path.resolve(body[name]);
       if (project[field][0] === resolved) continue;
       project[field] = [resolved, ...project[field].filter((known) => known !== resolved)].slice(0, STORAGE_DIRECTORY_LIMIT);
       changed = true;
     }
+    useReportedStores(project);
     if (changed) await rememberProjects();
   }
 
   function checkDirectories(body) {
-    for (const name of ["evidenceDirectory", "intelligenceDirectory"]) {
+    for (const [name] of STORAGE_FIELDS) {
       if (body[name] !== undefined && (typeof body[name] !== "string" || !path.isAbsolute(body[name]))) {
         throw statusError(400, `The ${name} must be an absolute path.`);
       }
@@ -234,7 +242,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const baseUrl = `http://127.0.0.1:${port}${viewerPrefix()}/p/${id}`;
       const onViewer = (sendNotice) => deliverPendingNotices(id, sendNotice);
       // A new project starts as the most recent, so the recent limit never drops the project being registered.
-      project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [], intelligenceDirectories: [] };
+      project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [], intelligenceDirectories: [], recordStoreDirectories: [] };
       project.review = createProjectReview({ projectRoot: root, baseUrl, instance, appVersion: pluginVersion, onViewer, evidenceStore: () => evidenceStoreOf(project),
         intelligenceDirectories: () => intelligenceDirectoriesOf(project) });
       projects.set(id, project);
@@ -442,12 +450,15 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   const restored = await readProjectRoots(directory);
   const restoredEvidence = await readProjectDirectories(directory, "evidence");
   const restoredIntelligence = await readProjectDirectories(directory, "intelligence");
+  const restoredRecords = await readProjectDirectories(directory, "records");
   for (const [index, root] of restored.entries()) {
     const project = await projectFor(root, { persist: false }).catch(() => null);
     if (project) {
       project.lastSeen = restored.length - index;
       project.evidenceDirectories = restoredEvidence[root] ?? [];
       project.intelligenceDirectories = restoredIntelligence[root] ?? [];
+      project.recordStoreDirectories = restoredRecords[root] ?? [];
+      useReportedStores(project);
     }
   }
   sequence = restored.length;

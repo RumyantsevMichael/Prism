@@ -104,10 +104,10 @@ async function lockCleared(directory, deadline) {
 
 // A client finds the user's review app, starts it when none proves itself, and replaces an app with an older protocol or plugin version.
 // It never replaces a newer app, so sessions of two installed versions settle on the newer one instead of replacing each other.
-// Every registration and presentation names the evidence store and index storage this process writes, so the app reads each project's
-// evidence and indexing state from them.
-export function createReviewAppClient({ directory = reviewAppDirectory(), launch = launchReviewApp, startTimeoutMs = START_TIMEOUT_MS, reconnectGraceMs = RECONNECT_GRACE_MS, pluginVersion = installedVersion(), evidenceDirectory, intelligenceDirectory } = {}) {
-  const storage = Object.fromEntries(Object.entries({ evidenceDirectory, intelligenceDirectory }).filter(([, value]) => value !== undefined));
+// Every registration and presentation names the evidence store, index storage, and managed record-store clones this process uses, so the app reads each project's
+// evidence, indexing state, and remote record store from them.
+export function createReviewAppClient({ directory = reviewAppDirectory(), launch = launchReviewApp, startTimeoutMs = START_TIMEOUT_MS, reconnectGraceMs = RECONNECT_GRACE_MS, pluginVersion = installedVersion(), evidenceDirectory, intelligenceDirectory, recordStoreDirectory } = {}) {
+  const storage = Object.fromEntries(Object.entries({ evidenceDirectory, intelligenceDirectory, recordStoreDirectory }).filter(([, value]) => value !== undefined));
   let current = null;
   let connecting = null;
   let replaced = false;

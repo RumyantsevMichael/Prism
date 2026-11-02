@@ -54,11 +54,11 @@ Pattern: Unwanted behavior
 
 Disposition: Active
 
-Requirement: If the configured record store is missing, is not a folder, lies inside the project, or contains the project, then Prism shall refuse every record operation with an error that names the configured and resolved locations, without creating the store or using the project's `.prism` folder instead.
+Requirement: If the record store path that the configuration names is missing, is not a folder, lies inside the project, or contains the project, then Prism shall refuse every record operation with an error that names the configured and resolved locations, without creating the store or using the project's `.prism` folder instead.
 
 Rationale: A silent fallback or a store created from a typo would split state between checkouts without notice.
 
-Related: [§1](#1)
+Related: [§1](#1), [§17](#17)
 
 <a id="3"></a>
 ## 3. Keep record addresses stable
@@ -241,3 +241,29 @@ Requirement: When a person or agent reads an initiative or opens a slice in the 
 Rationale: The code location is useful only where people already look at slice results.
 
 Related: [§14](#14)
+
+<a id="17"></a>
+## 17. Clone a store named by its remote
+
+Pattern: Optional feature
+
+Disposition: Active
+
+Requirement: Where a project's workflow configuration names the record store by a Git remote, when a record access finds no clone of that remote on the machine, Prism shall clone it once into the host's plugin data directory, share that clone with every checkout on the machine whose configuration names the same remote, and sync it unless store sync is off.
+
+Rationale: No checkout then has to agree on a store folder or clone it by hand, and every machine and cloud session finds the same records from the configuration alone.
+
+Related: [§1](#1), [§7](#7), [§18](#18)
+
+<a id="18"></a>
+## 18. Refuse an unusable remote store
+
+Pattern: Unwanted behavior
+
+Disposition: Active
+
+Requirement: If a store named by its remote has no plugin data directory to live in, cannot be cloned, or finds another repository's clone at its clone path, then Prism shall refuse every record operation with an error that names the remote without its user information, leave no partial clone, and leave a folder it did not create unchanged.
+
+Rationale: A failed or misdirected clone must neither split state between checkouts nor touch a folder that holds someone else's work.
+
+Related: [§2](#2), [§15](#15), [§17](#17)

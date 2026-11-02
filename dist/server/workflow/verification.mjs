@@ -12,6 +12,9 @@ import { contentTree } from "./slice-gate.mjs";
 import { acceptedDesign, checkFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState, updateCoordinationState } from "./state.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
+import { publicRemote } from "./remote-url.mjs";
+
+export { publicRemote };
 
 const APPROVALS_FILE = "verification-approvals.json";
 const OUTPUT_TAIL_BYTES = 64 * 1024;
@@ -248,23 +251,6 @@ function gitValue(root, args) {
   return new Promise((resolve) => {
     execFile("git", ["-C", root, ...args], { timeout: 10000 }, (error, stdout) => resolve(error ? null : stdout.trim() || null));
   });
-}
-
-/** A remote URL without its user, password, or token, so no credential ever reaches a record. */
-// Only network remotes name a place others can find; local paths and helper transports such as ext:: are left out.
-const REMOTE_SCHEMES = new Set(["https:", "http:", "ssh:", "git:"]);
-export function publicRemote(url) {
-  if (typeof url !== "string" || !url) return null;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
-    try {
-      const parsed = new URL(url);
-      // Scheme, host, and path only: user information, query, and fragment can all carry a token.
-      return REMOTE_SCHEMES.has(parsed.protocol) && parsed.hostname ? `${parsed.protocol}//${parsed.host}${parsed.pathname}` : null;
-    } catch { return null; }
-  }
-  // A scp-like address such as git@host:owner/repo names its user, and sometimes a password, before the host.
-  const scp = /^(?:[^@/\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]+):([^:?#\s][^?#\s]*)$/.exec(url.split(/[?#]/)[0]);
-  return scp ? `${scp[1]}:${scp[2]}` : null;
 }
 
 // Hashing the committed content reads the head commit's tree into a scratch index, which a huge repository must not let stall a run.
