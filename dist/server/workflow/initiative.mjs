@@ -10,6 +10,7 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { locateRecord, moveLegacyRecords, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
+import { mergeHistory, mergeKeyed, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, measureContract, REVIEW_MARKS, stageFrozenTests, verifiedCode, withdrawFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
@@ -145,6 +146,36 @@ function validateRecord(raw, initiative) {
     errors.push(error.message);
   }
   return { errors, analysis };
+}
+
+/**
+ * Merge three versions of an initiative record by structure for store sync: each slice by slug, each proposal by scope, and each scalar.
+ * Returns { contents } with the canonical bytes of a merged record that passes validation and graph analysis, or { conflict } otherwise.
+ */
+export function mergeInitiativeRecord(versions) {
+  const initiative = versions.path.split("/")[1];
+  try {
+    const { base, local, upstream } = parseVersions(versions, () => ({ schemaVersion: 1, id: initiative, slices: {}, history: [] }));
+    if ([base, local, upstream].some((record) => !record || typeof record !== "object" || Array.isArray(record) || !record.slices || typeof record.slices !== "object" || !Array.isArray(record.history))) throw new MergeConflict("A version of the initiative record has no slices or history.");
+    // Slices compare in their canonical form, so a reordered requirement or dependency list is no change.
+    const [b, l, u] = [base, local, upstream].map((record) => ({ ...canonicalRecord(record), schemaVersion: record.schemaVersion, proposals: record.proposals ?? {} }));
+    const merged = {
+      schemaVersion: mergeUnit("schemaVersion", b.schemaVersion, l.schemaVersion, u.schemaVersion),
+      id: mergeUnit("id", b.id, l.id, u.id),
+      slices: mergeKeyed("Slice", b.slices, l.slices, u.slices),
+      proposals: mergeKeyed("Proposal", b.proposals, l.proposals, u.proposals),
+      history: mergeHistory(base.history, local.history, upstream.history, HISTORY_LIMIT)
+    };
+    const contents = serialize(merged);
+    if (Buffer.byteLength(contents) > RECORD_MAX_BYTES) return { conflict: "The merged initiative record exceeds 1 MiB." };
+    const raw = JSON.parse(contents);
+    const { errors } = validateRecord(raw, initiative);
+    if (merged.schemaVersion !== 1) errors.unshift("schemaVersion must be 1.");
+    if (errors.length) return { conflict: `The merged initiative record is invalid: ${errors[0]}` };
+    return { contents };
+  } catch (error) {
+    return { conflict: error instanceof MergeConflict ? error.message : `The initiative record versions could not be merged: ${error.message}` };
+  }
 }
 
 async function loadRecord(resolved) {

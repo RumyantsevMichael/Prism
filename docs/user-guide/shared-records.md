@@ -64,8 +64,11 @@ SSH runs in batch mode unless you configured an SSH command, so a remote that ne
 
 ## When two people change the same record
 
-Until records become append-only, the first push wins.
-Two changes to one record file collide even when they touch different initiatives or slices, because each change also adds to the record's history.
+Changes to different initiatives in the roadmap, or to different slices or proposals of one initiative, merge, and both history entries are kept.
+A roadmap reordered on one machine keeps that order, and an initiative added on the other machine lands after the initiative it followed there.
+Two changes collide when they change the same initiative or slice differently, reorder the roadmap differently, or merge into a record that fails validation, such as a dependency cycle between two slices.
+Other records, such as coordination state, collide whenever Git cannot merge their lines.
+In a collision the first push wins.
 The machine whose push lost keeps the upstream version and saves its own version under `.prism-sync/conflicts/<time>/` in the store, so no bytes are lost.
 The next Prism tool result on that machine names the record and the saved file, so the agent that made the change learns of it.
 Compare the saved file with the current record, and redo the change through Prism's tools if it still matters.
@@ -78,7 +81,7 @@ The review browser shows a small chip when the last sync did not succeed, and `.
 | State | Meaning | What to do |
 | --- | --- | --- |
 | `ok` | The last sync committed, merged, and pushed. | Nothing. |
-| `conflicts` | A record changed on both sides; the local version is saved under `.prism-sync/conflicts/`. | Review the saved file. |
+| `conflicts` | A record changed on both sides in a way that does not merge; the local version is saved under `.prism-sync/conflicts/`. | Review the saved file. |
 | `no_upstream` | The store's branch has no upstream, so Prism only commits locally. | Set an upstream with `git branch --set-upstream-to`. |
 | `not_a_repository` | Sync is on, but the store is not the top of a Git checkout. | Clone the store, or turn sync off. |
 | `fetch_failed` or `push_rejected` | The remote could not be reached, refused the push, or kept moving for three attempts. | Check access to the remote; Prism retries on the next write or read. |

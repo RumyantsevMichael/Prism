@@ -5,6 +5,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 // Git runs with a private home and configuration, a fixed identity, and only local repositories.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-sync-env-")));
@@ -17,6 +18,7 @@ delete process.env.CLAUDE_PLUGIN_DATA;
 const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
 const { forgetMigrations, listInitiatives, readRecord, writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
+const { getRoadmap, updateRoadmap } = await import("../../dist/server/workflow/roadmap.mjs");
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
 const { withFileLock } = await import("../../dist/server/workflow/artifact-store.mjs");
 // Syncs run only when a test calls them, so each test controls its own ordering.
@@ -247,4 +249,167 @@ test("syncs again when a write is scheduled while a sync is running", async (con
   // The follow-up sync may still be writing its status, so it finishes before the folder goes.
   await syncRecordStore(storeA);
   assert.match(git(remote, "ls-tree", "-r", "--name-only", "main"), /initiatives\/later\/state\.json/);
+});
+
+// Structural merges of roadmap and initiative records that changed on both machines.
+const ROADMAP_FILE = "roadmap.json";
+const INITIATIVE_FILE = "initiatives/reports/initiative.json";
+const add = (id, band, extra = {}) => ({ op: "add_initiative", id, title: `Title ${id}`, intent: `Intent ${id}.`, band, ...extra });
+const roadmapOf = (root) => getRoadmap({ projectRoot: root });
+const roadmapWrite = async (root, operations) => updateRoadmap({ projectRoot: root, expectedRevision: (await roadmapOf(root)).revision, actor: path.basename(root), operations });
+const initiativeOf = (root) => getInitiative({ projectRoot: root, initiative: "reports" });
+const initiativeWrite = async (root, operations) => updateInitiative({ projectRoot: root, initiative: "reports", expectedRevision: (await initiativeOf(root)).revision, actor: path.basename(root), operations });
+const savedConflicts = (store) => exists(path.join(store, ".prism-sync", "conflicts"));
+
+// Both machines hold one shared base written on A, with a roadmap projection path configured.
+async function sharedBase(context, write) {
+  const value = await machines(context);
+  for (const [root, store] of [[value.a, "store-a"], [value.b, "store-b"]]) await writeFile(path.join(root, ".prism/workflow.md"), `## Paths\n- Roadmap: product/roadmap.md\n- Plans (scratch): docs/plans/\n\n## Workspace\n- Store: ../${store}\n- Store sync: on\n`);
+  await write(value.a);
+  assert.equal((await syncRecordStore(value.storeA)).state, "ok");
+  assert.equal((await syncRecordStore(value.storeB)).state, "ok");
+  return value;
+}
+
+const roadmapBase = (context, extra = []) => sharedBase(context, (root) => updateRoadmap({ projectRoot: root, expectedRevision: null, operations: [add("alpha", "Now"), add("beta", "Now"), add("gamma", "Next"), ...extra] }));
+const initiativeBase = (context) => sharedBase(context, async (root) => updateInitiative({ projectRoot: root, initiative: "reports", expectedRevision: null, operations: [
+  { op: "create", slug: "reports", title: "Reports", requirements: ["r.md#R1", "r.md#R2"] },
+  { op: "split", parent: "reports", children: [{ slug: "s1", title: "First", requirements: ["r.md#R1"] }, { slug: "s2", title: "Second", requirements: ["r.md#R2"] }], evidence: await splitEvidence(root, "docs/plans/reports", "s1") }
+] }));
+
+// A pushes first, B merges A's push into its own change, and A then takes B's merge.
+async function syncBoth({ storeA, storeB }) {
+  assert.equal((await syncRecordStore(storeA)).state, "ok");
+  const status = await syncRecordStore(storeB);
+  assert.equal((await syncRecordStore(storeA)).state, "ok");
+  return status;
+}
+
+async function assertMerged(value, status, file, read) {
+  assert.equal(status.state, "ok");
+  assert.deepEqual(status.conflicts, []);
+  assert.equal(await savedConflicts(value.storeB), false);
+  const [onA, onB] = [await read(value.a), await read(value.b)];
+  assert.equal(onA.valid, true);
+  assert.equal(onA.revision, onB.revision);
+  assert.equal(git(value.remote, "show", `main:${file}`), (await readFile(path.join(value.storeB, file), "utf8")).trimEnd());
+  assert.equal(git(value.storeB, "status", "--porcelain"), "");
+  return onB.record;
+}
+
+async function assertFellBack(value, status, file, upstreamBytes, localBytes) {
+  assert.equal(status.state, "conflicts");
+  assert.deepEqual(status.conflicts.map((item) => item.path), [file]);
+  assert.equal(await readFile(path.join(value.storeB, file), "utf8"), upstreamBytes);
+  assert.equal(await readFile(path.join(value.storeB, status.conflicts[0].savedAs), "utf8"), localBytes);
+  const saved = (await takeSavedConflicts()).filter((item) => item.savedAs.startsWith(value.storeB));
+  assert.deepEqual(saved.map((item) => item.record), [`.prism/${file}`]);
+}
+
+const storeBytes = (store, file) => readFile(path.join(store, file), "utf8");
+const historyHas = (record, actor, operation, id) => record.history.some((entry) => entry.actor === actor && entry.operation === operation && (entry.id ?? entry.slug) === id);
+
+test("merges concurrent changes to different roadmap initiatives and keeps both history entries", async (context) => {
+  const value = await roadmapBase(context);
+  const baseHistory = (await roadmapOf(value.a)).record.history.length;
+  await roadmapWrite(value.a, [{ op: "update_initiative", id: "alpha", title: "Alpha from A" }]);
+  await roadmapWrite(value.b, [{ op: "update_initiative", id: "beta", title: "Beta from B" }]);
+  const status = await syncBoth(value);
+  const record = await assertMerged(value, status, ROADMAP_FILE, roadmapOf);
+  assert.deepEqual(record.initiatives.map((item) => [item.id, item.title]), [["alpha", "Alpha from A"], ["beta", "Beta from B"], ["gamma", "Title gamma"]]);
+  assert.equal(record.history.length, baseHistory + 2);
+  assert.ok(historyHas(record, "project-a", "update_initiative", "alpha"));
+  assert.ok(historyHas(record, "project-b", "update_initiative", "beta"));
+  const bytes = await storeBytes(value.storeB, ROADMAP_FILE);
+  assert.equal(`${JSON.stringify(JSON.parse(bytes), null, 2)}\n`, bytes, "the merged roadmap is written as the roadmap tools write it");
+});
+
+test("keeps the upstream roadmap when both machines change the same initiative differently", async (context) => {
+  const value = await roadmapBase(context);
+  await roadmapWrite(value.a, [{ op: "update_initiative", id: "alpha", title: "Alpha from A" }]);
+  await roadmapWrite(value.b, [{ op: "update_initiative", id: "alpha", title: "Alpha from B" }]);
+  const [upstream, local] = [await storeBytes(value.storeA, ROADMAP_FILE), await storeBytes(value.storeB, ROADMAP_FILE)];
+  await assertFellBack(value, await syncBoth(value), ROADMAP_FILE, upstream, local);
+});
+
+test("merges concurrent changes to different slices of one initiative", async (context) => {
+  const value = await initiativeBase(context);
+  await initiativeWrite(value.a, [{ op: "update_slice", slug: "s1", title: "First from A" }]);
+  await initiativeWrite(value.b, [{ op: "update_slice", slug: "s2", title: "Second from B" }]);
+  const record = await assertMerged(value, await syncBoth(value), INITIATIVE_FILE, initiativeOf);
+  assert.deepEqual([record.slices.s1.title, record.slices.s2.title], ["First from A", "Second from B"]);
+  assert.ok(historyHas(record, "project-a", "update_slice", "s1"));
+  assert.ok(historyHas(record, "project-b", "update_slice", "s2"));
+});
+
+test("keeps the upstream initiative when both machines change the same slice differently", async (context) => {
+  const value = await initiativeBase(context);
+  await initiativeWrite(value.a, [{ op: "update_slice", slug: "s1", title: "First from A" }]);
+  await initiativeWrite(value.b, [{ op: "update_slice", slug: "s1", title: "First from B" }]);
+  const [upstream, local] = [await storeBytes(value.storeA, INITIATIVE_FILE), await storeBytes(value.storeB, INITIATIVE_FILE)];
+  await assertFellBack(value, await syncBoth(value), INITIATIVE_FILE, upstream, local);
+});
+
+test("keeps one machine's reordering and places the other machine's new initiative after its predecessor", async (context) => {
+  const value = await roadmapBase(context);
+  const reordered = await roadmapWrite(value.a, [{ op: "place", id: "gamma", band: "Now", position: 0 }]);
+  assert.deepEqual(reordered.record.initiatives.map((item) => item.id), ["gamma", "alpha", "beta"]);
+  const added = await roadmapWrite(value.b, [add("delta", "Now", { position: 1 })]);
+  assert.deepEqual(added.record.initiatives.map((item) => item.id), ["alpha", "delta", "beta", "gamma"]);
+  const record = await assertMerged(value, await syncBoth(value), ROADMAP_FILE, roadmapOf);
+  assert.deepEqual(record.initiatives.map((item) => [item.id, item.band]), [["gamma", "Now"], ["alpha", "Now"], ["delta", "Now"], ["beta", "Now"]]);
+});
+
+test("keeps the upstream roadmap when both machines reorder it differently", async (context) => {
+  const value = await roadmapBase(context);
+  await roadmapWrite(value.a, [{ op: "place", id: "beta", band: "Now", position: 0 }]);
+  await roadmapWrite(value.b, [{ op: "place", id: "gamma", band: "Now", position: 0 }]);
+  const [upstream, local] = [await storeBytes(value.storeA, ROADMAP_FILE), await storeBytes(value.storeB, ROADMAP_FILE)];
+  await assertFellBack(value, await syncBoth(value), ROADMAP_FILE, upstream, local);
+});
+
+test("keeps the upstream initiative when two valid dependency changes merge into a cycle", async (context) => {
+  const value = await initiativeBase(context);
+  assert.equal((await initiativeWrite(value.a, [{ op: "set_dependencies", slug: "s1", dependencies: ["s2"] }])).valid, true);
+  assert.equal((await initiativeWrite(value.b, [{ op: "set_dependencies", slug: "s2", dependencies: ["s1"] }])).valid, true);
+  const [upstream, local] = [await storeBytes(value.storeA, INITIATIVE_FILE), await storeBytes(value.storeB, INITIATIVE_FILE)];
+  await assertFellBack(value, await syncBoth(value), INITIATIVE_FILE, upstream, local);
+  assert.equal((await initiativeOf(value.b)).valid, true);
+});
+
+test("caps a merged roadmap history at 500 entries and keeps both new entries", async (context) => {
+  const questions = (count) => Array.from({ length: count }, (_, index) => ({ op: "set_open_questions", questions: [`Question ${index}?`] }));
+  const value = await sharedBase(context, async (root) => {
+    await updateRoadmap({ projectRoot: root, expectedRevision: null, operations: [add("alpha", "Now"), add("beta", "Now"), ...questions(98)] });
+    for (let round = 0; round < 4; round++) await roadmapWrite(root, questions(100));
+  });
+  assert.equal((await roadmapOf(value.a)).record.history.length, 500);
+  await roadmapWrite(value.a, [{ op: "update_initiative", id: "alpha", title: "Alpha from A" }]);
+  await roadmapWrite(value.b, [{ op: "update_initiative", id: "beta", title: "Beta from B" }]);
+  const record = await assertMerged(value, await syncBoth(value), ROADMAP_FILE, roadmapOf);
+  assert.equal(record.history.length, 500);
+  assert.ok(historyHas(record, "project-a", "update_initiative", "alpha"));
+  assert.ok(historyHas(record, "project-b", "update_initiative", "beta"));
+});
+
+test("keeps Git's line merge for a record kind without a structural merge", async (context) => {
+  const value = await machines(context);
+  const lines = (first, last) => `{\n"first": ${first},\n"second": 0,\n"third": 0,\n"fourth": 0,\n"last": ${last}\n}\n`;
+  await writeRecord(value.a, STATE, lines(0, 0));
+  await syncRecordStore(value.storeA);
+  await syncRecordStore(value.storeB);
+  await writeRecord(value.a, STATE, lines(1, 0));
+  await writeRecord(value.b, STATE, lines(0, 2));
+  const status = await syncBoth(value);
+  assert.equal(status.state, "ok");
+  assert.equal(await storeBytes(value.storeB, STATE_FILE), lines(1, 2));
+  assert.equal(await savedConflicts(value.storeB), false);
+});
+
+test("keeps the upstream roadmap when both machines add the same initiative differently", async (context) => {
+  const value = await roadmapBase(context);
+  await roadmapWrite(value.a, [add("delta", "Later", { title: "Delta from A" })]);
+  await roadmapWrite(value.b, [add("delta", "Later", { title: "Delta from B" })]);
+  const [upstream, local] = [await storeBytes(value.storeA, ROADMAP_FILE), await storeBytes(value.storeB, ROADMAP_FILE)];
+  await assertFellBack(value, await syncBoth(value), ROADMAP_FILE, upstream, local);
 });

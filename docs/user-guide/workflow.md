@@ -132,7 +132,8 @@ Every checkout whose configuration names the same store reads and writes the sam
 
 To share records between machines, make the store a Git checkout whose branch has an upstream, and add `- Store sync: on` under `Store`.
 Prism then commits record changes a few seconds after each write, merges the upstream without rebasing, and pushes, and a record read fetches in the background when the last fetch is older than 30 seconds.
-When two machines change the same record, the first push wins, and the store saves the other version under `.prism-sync/conflicts/`.
+When two machines change different initiatives or slices of one record, the changes merge.
+When they change the same initiative or slice, the first push wins, and the store saves the other version under `.prism-sync/conflicts/`.
 Records keep working locally when Git, the network, or the upstream is unavailable, and the review browser shows a small chip when the last sync did not succeed.
 Without `Store sync: on`, Prism never runs Git in the store.
 See [Share Prism state across worktrees and machines](shared-records.md) for setup, conflicts, sync status, and cloud sessions.

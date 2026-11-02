@@ -12,6 +12,7 @@ import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { locateRecord, moveLegacyRecords, writeRecord } from "./record-store.mjs";
+import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
@@ -119,6 +120,40 @@ function validateRoadmap(raw) {
     try { graph.forEach((_, node) => visit(node)); } catch (error) { errors.push(error.message); }
   }
   return errors;
+}
+
+function serializeRoadmap(record) {
+  return `${JSON.stringify(record, null, 2)}\n`;
+}
+
+/**
+ * Merge three versions of the roadmap record by structure for store sync: each initiative entry by id, their order, open questions, and each scalar.
+ * Returns { contents } with the canonical bytes of a valid merged record, or { conflict } when a unit changed differently on both sides or the result is invalid.
+ */
+export function mergeRoadmapRecord(versions) {
+  try {
+    const { base, local, upstream } = parseVersions(versions, emptyRoadmap);
+    if ([base, local, upstream].some((record) => !record || typeof record !== "object" || Array.isArray(record) || !Array.isArray(record.initiatives) || !Array.isArray(record.history))) throw new MergeConflict("A version of the roadmap record has no initiatives or history list.");
+    const byId = (record) => Object.fromEntries(record.initiatives.map((item) => [item?.id, item]));
+    const ids = (record) => record.initiatives.map((item) => item?.id);
+    const entries = mergeKeyed("Initiative", byId(base), byId(local), byId(upstream));
+    const order = mergeOrder("The initiative order", ids(base), ids(local), ids(upstream), new Set(Object.keys(entries)));
+    // The open questions are one unit, like a scalar, and the merged record keeps the upstream's key order, as a tool write would.
+    const scalars = mergeScalars(base, local, upstream, ["initiatives", "history"]);
+    const merged = {};
+    for (const key of new Set([...Object.keys(upstream), ...Object.keys(local), ...Object.keys(base)])) {
+      if (key === "initiatives") merged.initiatives = order.map((id) => entries[id]);
+      else if (key === "history") merged.history = mergeHistory(base.history, local.history, upstream.history, HISTORY_LIMIT);
+      else if (Object.hasOwn(scalars, key)) merged[key] = scalars[key];
+    }
+    const errors = validateRoadmap(merged);
+    if (errors.length) return { conflict: `The merged roadmap record is invalid: ${errors[0]}` };
+    const contents = serializeRoadmap(merged);
+    if (Buffer.byteLength(contents) > RECORD_MAX_BYTES) return { conflict: "The merged roadmap record exceeds 1 MiB." };
+    return { contents };
+  } catch (error) {
+    return { conflict: error instanceof MergeConflict ? error.message : `The roadmap record versions could not be merged: ${error.message}` };
+  }
 }
 
 async function loadRoadmap(resolved) {
@@ -327,7 +362,7 @@ export async function updateRoadmap(input) {
     const mutating = input.operations.filter((operation) => !["regenerate_markdown", "replace_hand_written_projection"].includes(operation.op));
     for (const operation of mutating) record.history.push({ actor, operation: operation.op, ...(operation.id ? { id: operation.id } : {}), at });
     record.history = record.history.slice(-HISTORY_LIMIT);
-    const contents = `${JSON.stringify(record, null, 2)}\n`;
+    const contents = serializeRoadmap(record);
     if (mutating.length && contents !== (await readFile(resolved.target, "utf8").catch(() => null))) {
       await writeRecord(resolved.root, { kind: "roadmap" }, contents);
     }
