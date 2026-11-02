@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { realpath as defaultRealpath, stat as defaultStat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readClaudeCodeMessageUsage } from "../server/session/host-adapters/claude-code.mjs";
 import { inspectCodexTranscriptMetadata } from "../server/session/host-adapters/codex-transcript.mjs";
+import { readPrismCallTarget } from "../server/session/prism-call-target.mjs";
 import { approximateTokenCounter } from "../server/repository-intelligence/repository-intelligence.mjs";
 import { resolveSessionTraceBehavior } from "../server/session/session-trace-behavior.mjs";
 import {
@@ -10,14 +12,28 @@ import {
   SESSION_TRACE_EVENT_TYPES,
   SESSION_TRACE_GAP_REASONS,
   SESSION_TRACE_HOST_EVENTS,
-  createSessionTraceEvent
+  createSessionTraceEvent,
+  createSessionTraceIdentity,
+  hashSessionTraceValue
 } from "../server/session/session-trace.mjs";
 import {
   SESSION_TRACE_REASON,
-  appendSessionTraceEvent
+  appendSessionTraceEvent,
+  markRunsPending,
+  recordSessionTraceLoss
 } from "../server/session/session-trace-store.mjs";
+import { recordFinishedRuns } from "../server/session/run-records.mjs";
+import { readWorkflowConfig, runStatisticsCollection } from "../server/workflow/workflow-config.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
+const DEFAULT_USAGE_READ_BUDGET_MS = 1500;
+// Run finalization starts no trace read and no append after this point of the hook, which the host stops after 5 s.
+const FINALIZATION_BUDGET_MS = 2500;
+const RUN_ENDING_EVENTS = new Set(["SessionEnd", "SubagentStop"]);
+const AGENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const USAGE_READ_EVENTS = new Set(["PostToolUse", "PostToolUseFailure", "PreCompact", "SubagentStop", "SessionEnd"]);
+const TOOL_EVENTS = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure"]);
+const TOOL_RESULT_EVENTS = new Set(["PostToolUse", "PostToolUseFailure"]);
 const MAX_ESTIMATED_RESPONSE_BYTES = 1024 * 1024;
 const CUSTOM_EVENT_KEYS = [
   "event_id",
@@ -271,7 +287,7 @@ function baseEvent({ input, eventType, occurredAt, hostEvent, collector, suffix,
 }
 
 function normalizeCustomEvent({ input, custom, occurredAt, collector }) {
-  if (!exactCustomEvent(custom) || !EVENT_TYPES.has(custom.event_type) || custom.event_type === "first_edit") {
+  if (!exactCustomEvent(custom) || !EVENT_TYPES.has(custom.event_type) || ["first_edit", "prism_call"].includes(custom.event_type)) {
     return null;
   }
   const eventType = custom.event_type === "edit" && custom.confirmed_success !== true
@@ -309,12 +325,218 @@ function normalizeCustomEvent({ input, custom, occurredAt, collector }) {
   return event;
 }
 
+async function readRunStatisticsSwitch(projectRoot) {
+  try {
+    return runStatisticsCollection(await readWorkflowConfig(projectRoot));
+  } catch {
+    return "unknown";
+  }
+}
+
+// A run-statistics trace is keyed by the digest of "<session digest>\0<execution>", so a reader holding only the
+// session correlation key finds the root execution's trace, and link events name each subagent trace by that digest.
+function executionKeyFor(sessionId, execution) {
+  return `${hashSessionTraceValue(sessionId, "sessionId")}\0${execution}`;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+// Run-statistics events go to execution traces keyed by executionKey, never to the root session trace.
+function runStatisticsEvent({ base, executionKey, executionHash, eventType, eventId, occurredAt, counts = {}, call = null, prismCall = null }) {
+  return {
+    ...(eventType === "prism_call" ? { prismCall } : {}),
+    sessionId: base.sessionId,
+    projectRoot: base.projectRoot,
+    executionKey,
+    eventId: `run-statistics:${eventId}`,
+    eventType,
+    occurredAt,
+    counts,
+    hashValues: { execution: executionHash, ...(call ? { call } : {}) },
+    coverage: eventType === "session_start" ? "exact" : null,
+    gapReason: null,
+    provenance: { collector: base.collector, hostEvent: base.hostEvent }
+  };
+}
+
+function runStatisticsGap(options, gapReason, coverage = "partial") {
+  const event = runStatisticsEvent({ ...options, eventType: "coverage_gap" });
+  event.coverage = coverage;
+  event.gapReason = gapReason;
+  return event;
+}
+
+function claudeUsageEvents(result, options) {
+  if (result.status === "absent" || result.status === "empty") return [];
+  const gapId = `usage-unavailable:${options.base.hostEvent}:${options.base.callId ?? ""}:${options.occurredAt}`;
+  if (result.status === "cut-short") {
+    return [runStatisticsGap({ ...options, eventId: gapId }, "usage-unavailable", "partial")];
+  }
+  if (result.status !== "counted") {
+    return [runStatisticsGap({ ...options, eventId: gapId }, "usage-unavailable", "unavailable")];
+  }
+  const counts = { ...result.totals, messageCount: result.messageCount };
+  const totals = Object.values(result.totals).join(":");
+  return [runStatisticsEvent({
+    ...options,
+    eventType: "usage",
+    eventId: `usage:${options.executionKey}:${result.messageCount}:${sha256(result.latestMessageId)}:${totals}`,
+    occurredAt: result.latestAt ?? options.occurredAt,
+    counts
+  })];
+}
+
+function codexUsageEvents(metadata, options) {
+  const usage = metadata?.totalTokenUsage ?? null;
+  if (metadata?.status === "SUPPORTED" && usage === null && metadata.contextWindowTokens === undefined) {
+    return [];
+  }
+  if (usage === null) {
+    return [runStatisticsGap({
+      ...options,
+      eventId: `usage-unavailable:${options.base.hostEvent}:${options.base.callId ?? ""}:${options.occurredAt}`
+    }, "usage-unavailable", "unavailable")];
+  }
+  const counts = {
+    inputTokens: usage.inputTokens - usage.cachedInputTokens,
+    cacheReadTokens: usage.cachedInputTokens,
+    outputTokens: usage.outputTokens
+  };
+  return [runStatisticsEvent({
+    ...options,
+    eventType: "usage",
+    eventId: `codex-usage:${options.executionHash}:${usage.inputTokens}:${usage.cachedInputTokens}:${usage.outputTokens}`,
+    counts
+  })];
+}
+
+async function runStatisticsEvents({
+  hookInput,
+  hostEvent,
+  occurredAt,
+  collector,
+  projectRoot,
+  sessionId,
+  transcriptMetadata,
+  deadline,
+  readClaudeUsage,
+  readCallTarget
+}) {
+  if (!sessionId || !["claude-code-hook", "codex-hook"].includes(collector)) return [];
+  const rootKey = executionKeyFor(sessionId, "root");
+  const callId = nonemptyString(hookInput.tool_use_id);
+  const base = { sessionId, projectRoot, collector, hostEvent, callId };
+  const rootOptions = { base, executionKey: rootKey, executionHash: rootKey, occurredAt };
+  const incomplete = (options = rootOptions) => [runStatisticsGap({
+    ...options,
+    eventId: `observation-incomplete:${hostEvent}:${callId ?? ""}:${occurredAt}`
+  }, "observation-incomplete")];
+  const lifecycle = (options) => {
+    if (hostEvent === "SessionStart") {
+      return [runStatisticsEvent({ ...options, eventType: "session_start", eventId: `session-start:${sha256(options.executionHash)}` })];
+    }
+    if (hostEvent === "SessionEnd") {
+      return [runStatisticsEvent({ ...options, eventType: "session_end", eventId: `session-end:${sha256(options.executionHash)}` })];
+    }
+    return [];
+  };
+  const toolSpan = (options) => {
+    if (!TOOL_EVENTS.has(hostEvent)) return [];
+    if (!callId) return incomplete(options);
+    const eventType = hostEvent === "PreToolUse" ? "tool_start" : "tool_end";
+    return [runStatisticsEvent({ ...options, eventType, eventId: `${eventType}:${callId}`, call: callId })];
+  };
+  // A Prism call that names a target adds one prism_call after its tool_end and before the usage read.
+  // A target whose project config cannot be read adds a prism_call without target facts, which lowers the following cost.
+  const prismCall = async (options) => {
+    if (!TOOL_RESULT_EVENTS.has(hostEvent) || !callId) return [];
+    let target = null;
+    try {
+      target = await readCallTarget({
+        toolName: nonemptyString(hookInput.tool_name),
+        toolInput: hookInput.tool_input,
+        projectRoot,
+        deadline
+      });
+    } catch {
+      target = null;
+    }
+    if (!isObject(target)) return [];
+    return [runStatisticsEvent({
+      ...options,
+      eventType: "prism_call",
+      eventId: `prism-call:${sha256(options.executionHash)}:${callId}`,
+      call: callId,
+      prismCall: target.collected === false ? null : target
+    })];
+  };
+
+  if (collector === "codex-hook") {
+    const threadId = nonemptyString(transcriptMetadata?.threadId);
+    const usesThread = ["SessionStart", "SessionEnd", "PreCompact", ...TOOL_EVENTS].includes(hostEvent);
+    if (!usesThread) return [];
+    if (!threadId || !["root", "subagent"].includes(transcriptMetadata?.execution)) return incomplete();
+    const options = { ...rootOptions, executionHash: threadId };
+    const events = [...lifecycle(options), ...toolSpan(options), ...await prismCall(options)];
+    if (USAGE_READ_EVENTS.has(hostEvent)) events.push(...codexUsageEvents(transcriptMetadata, options));
+    return events;
+  }
+
+  const hasAgent = Object.hasOwn(hookInput, "agent_id");
+  const agentId = hasAgent && typeof hookInput.agent_id === "string" && AGENT_ID_PATTERN.test(hookInput.agent_id)
+    ? hookInput.agent_id
+    : null;
+  if (hasAgent && agentId === null) {
+    return ["SubagentStart", "SubagentStop", ...TOOL_EVENTS].includes(hostEvent) ? incomplete() : [];
+  }
+  const executionKey = agentId === null ? rootKey : executionKeyFor(sessionId, `agent:${agentId}`);
+  const options = { base, executionKey, executionHash: executionKey, occurredAt };
+  const events = [];
+  if (agentId === null) {
+    events.push(...lifecycle(options));
+  } else if (hostEvent === "SubagentStart" || hostEvent === "SubagentStop") {
+    const eventType = hostEvent === "SubagentStart" ? "subagent_start" : "subagent_stop";
+    const link = { eventType, eventId: `${eventType}:${agentId}` };
+    events.push(
+      runStatisticsEvent({ ...options, ...link, executionKey: rootKey }),
+      runStatisticsEvent({ ...options, ...link })
+    );
+  }
+  events.push(...toolSpan(options));
+  events.push(...await prismCall(options));
+  if (!USAGE_READ_EVENTS.has(hostEvent) || (agentId === null && hostEvent === "SubagentStop")) return events;
+
+  const rootTranscript = nonemptyString(hookInput.transcript_path);
+  let transcriptPath = rootTranscript;
+  if (agentId !== null) {
+    transcriptPath = nonemptyString(hookInput.agent_transcript_path)
+      ?? (rootTranscript && path.isAbsolute(rootTranscript) && AGENT_ID_PATTERN.test(sessionId)
+        ? path.join(path.dirname(rootTranscript), sessionId, "subagents", `agent-${agentId}.jsonl`)
+        : null);
+  }
+  let result;
+  try {
+    result = transcriptPath
+      ? await readClaudeUsage({ transcriptPath, sessionId, agentId, deadline })
+      : { status: "unreadable" };
+  } catch {
+    result = { status: "unreadable" };
+  }
+  events.push(...claudeUsageEvents(result, options));
+  return events;
+}
+
 export function createSessionTraceNormalizer({
   now = () => new Date(),
   inspectCodexTranscript = inspectCodexTranscriptMetadata,
   realpath = defaultRealpath,
   stat = defaultStat,
-  resolveTraceBehavior = resolveSessionTraceBehavior
+  resolveTraceBehavior = resolveSessionTraceBehavior,
+  readClaudeUsage = readClaudeCodeMessageUsage,
+  readCallTarget = readPrismCallTarget,
+  usageReadBudgetMs = DEFAULT_USAGE_READ_BUDGET_MS
 } = {}) {
   if (typeof now !== "function") {
     throw new TypeError("The session trace clock must be a function.");
@@ -325,8 +547,16 @@ export function createSessionTraceNormalizer({
   if (typeof realpath !== "function" || typeof stat !== "function" || typeof resolveTraceBehavior !== "function") {
     throw new TypeError("The session trace path and behavior resolvers must be functions.");
   }
+  if (typeof readClaudeUsage !== "function" || !Number.isFinite(usageReadBudgetMs) || usageReadBudgetMs < 0) {
+    throw new TypeError("The usage reader must be a function with a nonnegative time budget.");
+  }
+  if (typeof readCallTarget !== "function") {
+    throw new TypeError("The Prism call target reader must be a function.");
+  }
   return {
-    async normalize({ hookInput = {}, environment = {} } = {}) {
+    // `collection` resolves the run-statistics switch for the project root; without it no run-statistics event is produced.
+    // `startedAt` is the monotonic time at which the hook invocation began, so each invocation gets its own usage-read budget.
+    async normalize({ hookInput = {}, environment = {}, collection = null, startedAt = performance.now() } = {}) {
       if (!isObject(hookInput) || !isObject(environment)) {
         return [];
       }
@@ -345,7 +575,8 @@ export function createSessionTraceNormalizer({
           transcriptMetadata = await inspectCodexTranscript({
             transcriptPath: hookInput.transcript_path,
             sessionId,
-            projectRoot: rawHookDirectory
+            projectRoot: rawHookDirectory,
+            includeUsage: true
           });
         } catch {
           transcriptMetadata = null;
@@ -385,211 +616,272 @@ export function createSessionTraceNormalizer({
         return [];
       }
 
-      const currentWorkingDirectory = await canonicalDirectory(hookInput.cwd, realpath, stat);
-      const normalizedInput = {
-        ...hookInput,
-        cwd: projectRoot,
-        project_root: projectRoot
-      };
-      const pathAliases = [
-        ...(collector === "claude-code-hook"
-          ? [{ raw: environment.CLAUDE_PROJECT_DIR, canonical: projectRoot }]
-          : []),
-        ...(rawHookDirectory === nonemptyString(hookInput.project_root)
-          ? [{ raw: hookInput.project_root, canonical: projectRoot }]
-          : []),
-        { raw: hookInput.cwd, canonical: currentWorkingDirectory }
-      ];
-      const makeExecutionGap = () => {
-        const event = baseEvent({
-          input: normalizedInput,
-          eventType: "coverage_gap",
-          occurredAt,
-          hostEvent,
-          collector,
-          suffix: `coverage-gap:observation-incomplete:${occurredAt}`
-        });
-        event.counts = {};
-        event.coverage = "partial";
-        event.gapReason = "observation-incomplete";
-        return event;
-      };
-      if (codexSubagent) {
-        return [makeExecutionGap()];
-      }
-      if (Object.hasOwn(hookInput, "prism_trace_event")) {
+      // A hook input carrying agent_id is a subagent execution and never reaches the root session trace.
+      const rootSessionEvents = async () => {
+        if (Object.hasOwn(hookInput, "agent_id")) {
+          return [];
+        }
+        const currentWorkingDirectory = await canonicalDirectory(hookInput.cwd, realpath, stat);
+        const normalizedInput = {
+          ...hookInput,
+          cwd: projectRoot,
+          project_root: projectRoot
+        };
+        const pathAliases = [
+          ...(collector === "claude-code-hook"
+            ? [{ raw: environment.CLAUDE_PROJECT_DIR, canonical: projectRoot }]
+            : []),
+          ...(rawHookDirectory === nonemptyString(hookInput.project_root)
+            ? [{ raw: hookInput.project_root, canonical: projectRoot }]
+            : []),
+          { raw: hookInput.cwd, canonical: currentWorkingDirectory }
+        ];
+        const makeExecutionGap = () => {
+          const event = baseEvent({
+            input: normalizedInput,
+            eventType: "coverage_gap",
+            occurredAt,
+            hostEvent,
+            collector,
+            suffix: `coverage-gap:observation-incomplete:${occurredAt}`
+          });
+          event.counts = {};
+          event.coverage = "partial";
+          event.gapReason = "observation-incomplete";
+          return event;
+        };
+        if (codexSubagent) {
+          return [makeExecutionGap()];
+        }
+        if (Object.hasOwn(hookInput, "prism_trace_event")) {
+          if (codexExecutionUncertain) {
+            return [makeExecutionGap()];
+          }
+          const custom = normalizeCustomEvent({
+            input: normalizedInput,
+            custom: hookInput.prism_trace_event,
+            occurredAt,
+            collector
+          });
+          return custom ? [custom] : [];
+        }
+        if (hostEvent === "SessionStart") {
+          const event = baseEvent({
+            input: normalizedInput,
+            eventType: "session_start",
+            occurredAt,
+            hostEvent,
+            collector,
+            suffix: "session-start"
+          });
+          event.coverage = !codexExecutionUncertain && COVERAGE.has(hookInput.instrumentation_coverage)
+            ? hookInput.instrumentation_coverage
+            : "partial";
+          if (model) {
+            event.hashValues.model = model;
+          }
+          return [event];
+        }
         if (codexExecutionUncertain) {
           return [makeExecutionGap()];
         }
-        const custom = normalizeCustomEvent({
-          input: normalizedInput,
-          custom: hookInput.prism_trace_event,
-          occurredAt,
-          collector
-        });
-        return custom ? [custom] : [];
-      }
-      if (hostEvent === "SessionStart") {
-        const event = baseEvent({
-          input: normalizedInput,
-          eventType: "session_start",
-          occurredAt,
-          hostEvent,
-          collector,
-          suffix: "session-start"
-        });
-        event.coverage = !codexExecutionUncertain && COVERAGE.has(hookInput.instrumentation_coverage)
-          ? hookInput.instrumentation_coverage
-          : "partial";
-        if (model) {
-          event.hashValues.model = model;
-        }
-        return [event];
-      }
-      if (codexExecutionUncertain) {
-        return [makeExecutionGap()];
-      }
-      if (hostEvent === "PostModelSwitch" || hostEvent === "ModelSwitch") {
-        const event = baseEvent({
-          input: normalizedInput,
-          eventType: "model_switch",
-          occurredAt,
-          hostEvent,
-          collector,
-          suffix: `model-switch:${model ?? occurredAt}`
-        });
-        if (model) {
-          event.hashValues.model = model;
-        }
-        return [event];
-      }
-      if (hostEvent === "PreCompact" || hostEvent === "PostCompact") {
-        return [baseEvent({
-          input: normalizedInput,
-          eventType: "compaction",
-          occurredAt,
-          hostEvent,
-          collector,
-          suffix: `compaction:${occurredAt}`
-        })];
-      }
-      if (hostEvent === "SessionEnd") {
-        return [baseEvent({
-          input: normalizedInput,
-          eventType: "session_end",
-          occurredAt,
-          hostEvent,
-          collector,
-          suffix: "session-end"
-        })];
-      }
-
-      if (!["PreToolUse", "PostToolUse", "PostToolUseFailure"].includes(hostEvent)) {
-        return [];
-      }
-      const toolName = nonemptyString(hookInput.tool_name);
-      const category = toolCategory(toolName);
-      const locationResult = await sourceLocation(hookInput.tool_input, {
-        projectRoot,
-        currentWorkingDirectory,
-        pathAliases,
-        realpath
-      });
-      const location = locationResult.location;
-      const makeToolEvent = (eventType, suffix, source = location) => {
-        const event = baseEvent({
-          input: normalizedInput,
-          eventType,
-          occurredAt,
-          hostEvent,
-          collector,
-          suffix,
-          source
-        });
-        if (toolName) {
-          event.hashValues.tool = toolName;
-        }
-        return event;
-      };
-      const makeGap = (gapReason) => {
-        const event = makeToolEvent("coverage_gap", `coverage-gap:${gapReason}:${occurredAt}`, null);
-        event.coverage = "partial";
-        event.gapReason = gapReason;
-        return event;
-      };
-      const withRenderedTokenObservation = (event) => {
-        const estimate = estimatedCodexResponseTokens(hookInput, collector, traceBehavior);
-        if (estimate === null) {
+        if (hostEvent === "PostModelSwitch" || hostEvent === "ModelSwitch") {
+          const event = baseEvent({
+            input: normalizedInput,
+            eventType: "model_switch",
+            occurredAt,
+            hostEvent,
+            collector,
+            suffix: `model-switch:${model ?? occurredAt}`
+          });
+          if (model) {
+            event.hashValues.model = model;
+          }
           return [event];
         }
-        if (estimate.status === "missing") {
-          return [makeGap("missing-token-count"), event];
+        if (hostEvent === "PreCompact" || hostEvent === "PostCompact") {
+          return [baseEvent({
+            input: normalizedInput,
+            eventType: "compaction",
+            occurredAt,
+            hostEvent,
+            collector,
+            suffix: `compaction:${occurredAt}`
+          })];
         }
-        event.counts.renderedTokens = estimate.count;
-        return approximateTokenCounter.exact
-          ? [event]
-          : [makeGap("estimated-token-count"), event];
-      };
+        if (hostEvent === "SessionEnd") {
+          return [baseEvent({
+            input: normalizedInput,
+            eventType: "session_end",
+            occurredAt,
+            hostEvent,
+            collector,
+            suffix: "session-end"
+          })];
+        }
 
-      if (hostEvent === "PreToolUse") {
+        if (!["PreToolUse", "PostToolUse", "PostToolUseFailure"].includes(hostEvent)) {
+          return [];
+        }
+        const toolName = nonemptyString(hookInput.tool_name);
+        const category = toolCategory(toolName);
+        const locationResult = await sourceLocation(hookInput.tool_input, {
+          projectRoot,
+          currentWorkingDirectory,
+          pathAliases,
+          realpath
+        });
+        const location = locationResult.location;
+        const makeToolEvent = (eventType, suffix, source = location) => {
+          const event = baseEvent({
+            input: normalizedInput,
+            eventType,
+            occurredAt,
+            hostEvent,
+            collector,
+            suffix,
+            source
+          });
+          if (toolName) {
+            event.hashValues.tool = toolName;
+          }
+          return event;
+        };
+        const makeGap = (gapReason) => {
+          const event = makeToolEvent("coverage_gap", `coverage-gap:${gapReason}:${occurredAt}`, null);
+          event.coverage = "partial";
+          event.gapReason = gapReason;
+          return event;
+        };
+        const withRenderedTokenObservation = (event) => {
+          const estimate = estimatedCodexResponseTokens(hookInput, collector, traceBehavior);
+          if (estimate === null) {
+            return [event];
+          }
+          if (estimate.status === "missing") {
+            return [makeGap("missing-token-count"), event];
+          }
+          event.counts.renderedTokens = estimate.count;
+          return approximateTokenCounter.exact
+            ? [event]
+            : [makeGap("estimated-token-count"), event];
+        };
+
+        if (hostEvent === "PreToolUse") {
+          if (category === "edit") {
+            if (locationResult.pathProvided && !locationResult.insideProject) {
+              return [makeGap("unsupported-mutation-path")];
+            }
+            return [makeToolEvent("edit_attempt", `edit-attempt:${occurredAt}`)];
+          }
+          if (category === "shell") {
+            return [makeGap("unsupported-mutation-path")];
+          }
+          if (category === "unknown") {
+            return [makeGap("unsupported-event")];
+          }
+          return [];
+        }
+        if (hostEvent === "PostToolUseFailure") {
+          if (category === "edit") {
+            if (locationResult.pathProvided && !locationResult.insideProject) {
+              return [makeGap("unsupported-mutation-path")];
+            }
+            return [makeToolEvent("edit_attempt", `edit-attempt:${occurredAt}`)];
+          }
+          if (category === "shell") {
+            return [makeGap("unsupported-mutation-path")];
+          }
+          return [];
+        }
+        if (category === "read") {
+          return location
+            ? withRenderedTokenObservation(makeToolEvent("source_read", `source-read:${occurredAt}`))
+            : [makeGap("unsupported-read-path")];
+        }
+        if (category === "search") {
+          return withRenderedTokenObservation(makeToolEvent("search", `search:${occurredAt}`, null));
+        }
         if (category === "edit") {
           if (locationResult.pathProvided && !locationResult.insideProject) {
             return [makeGap("unsupported-mutation-path")];
           }
-          return [makeToolEvent("edit_attempt", `edit-attempt:${occurredAt}`)];
-        }
-        if (category === "shell") {
-          return [makeGap("unsupported-mutation-path")];
-        }
-        if (category === "unknown") {
-          return [makeGap("unsupported-event")];
-        }
-        return [];
-      }
-      if (hostEvent === "PostToolUseFailure") {
-        if (category === "edit") {
-          if (locationResult.pathProvided && !locationResult.insideProject) {
-            return [makeGap("unsupported-mutation-path")];
+          const confirmedCodexMutation = collector === "codex-hook"
+            && traceBehavior?.postToolUseSuccessTools.includes(toolName);
+          const confirmedClaudeMutation = collector === "claude-code-hook";
+          if (!confirmedCodexMutation && !confirmedClaudeMutation) {
+            return [
+              makeGap("unproved-mutation-success"),
+              makeToolEvent("edit_attempt", `edit-attempt:${occurredAt}`)
+            ];
           }
-          return [makeToolEvent("edit_attempt", `edit-attempt:${occurredAt}`)];
+          return [makeToolEvent("edit", `edit:${occurredAt}`)];
+        }
+        if (category === "test") {
+          return [makeToolEvent("test", `test:${occurredAt}`)];
         }
         if (category === "shell") {
           return [makeGap("unsupported-mutation-path")];
         }
-        return [];
-      }
-      if (category === "read") {
-        return location
-          ? withRenderedTokenObservation(makeToolEvent("source_read", `source-read:${occurredAt}`))
-          : [makeGap("unsupported-read-path")];
-      }
-      if (category === "search") {
-        return withRenderedTokenObservation(makeToolEvent("search", `search:${occurredAt}`, null));
-      }
-      if (category === "edit") {
-        if (locationResult.pathProvided && !locationResult.insideProject) {
-          return [makeGap("unsupported-mutation-path")];
+        return [makeGap("unsupported-event")];
+      };
+      const rootEvents = await rootSessionEvents();
+      let switchState = "off";
+      if (typeof collection === "function") {
+        try {
+          switchState = await collection(projectRoot);
+        } catch {
+          switchState = "unknown";
         }
-        const confirmedCodexMutation = collector === "codex-hook"
-          && traceBehavior?.postToolUseSuccessTools.includes(toolName);
-        const confirmedClaudeMutation = collector === "claude-code-hook";
-        if (!confirmedCodexMutation && !confirmedClaudeMutation) {
-          return [
-            makeGap("unproved-mutation-success"),
-            makeToolEvent("edit_attempt", `edit-attempt:${occurredAt}`)
-          ];
-        }
-        return [makeToolEvent("edit", `edit:${occurredAt}`)];
       }
-      if (category === "test") {
-        return [makeToolEvent("test", `test:${occurredAt}`)];
+      if (switchState !== "on") {
+        return rootEvents;
       }
-      if (category === "shell") {
-        return [makeGap("unsupported-mutation-path")];
+      let runEvents = [];
+      try {
+        runEvents = await runStatisticsEvents({
+          hookInput,
+          hostEvent,
+          occurredAt,
+          collector,
+          projectRoot,
+          sessionId,
+          transcriptMetadata,
+          deadline: startedAt + usageReadBudgetMs,
+          readClaudeUsage,
+          readCallTarget
+        });
+      } catch {
+        runEvents = [];
       }
-      return [makeGap("unsupported-event")];
+      return [...rootEvents, ...runEvents];
     }
   };
+}
+
+// The trace identity of a run-statistics event that could not be built, so its loss can still be recorded.
+function lostEventIdentity(eventInput) {
+  return {
+    sessionDigest: hashSessionTraceValue(eventInput.executionKey, "executionKey"),
+    projectDigest: createSessionTraceIdentity({ sessionId: eventInput.executionKey, projectRoot: eventInput.projectRoot }).projectDigest,
+    eventType: eventInput.eventType,
+    hashes: {}
+  };
+}
+
+// Run-statistics events exist only while collection is on, so the hook marks the session pending after its appends and
+// records finished runs: its own at an observed end or a newly opened run, and other quiet sessions of the project.
+async function finishRuns({ dataDirectory, eventInput, latestStored, ownSession, deadline }) {
+  try {
+    const sessionDigest = hashSessionTraceValue(eventInput.sessionId, "sessionId");
+    const projectRoot = eventInput.projectRoot;
+    if (latestStored !== null) {
+      await markRunsPending({ dataDirectory, projectRoot, sessionDigest, at: latestStored });
+    }
+    await recordFinishedRuns({ dataDirectory, projectRoot, sessionDigest, own: ownSession, sweep: true, deadline });
+  } catch {
+    // A run that cannot be recorded now stays pending for the next Prism hook or session consumption read.
+  }
 }
 
 async function readHookInput(input = process.stdin) {
@@ -610,8 +902,11 @@ export async function recordSessionTrace({
   input = process.stdin,
   environment = process.env,
   normalizer = createSessionTraceNormalizer(),
-  storeEvent = appendSessionTraceEvent
+  storeEvent = appendSessionTraceEvent,
+  recordLoss = recordSessionTraceLoss,
+  readCollection = readRunStatisticsSwitch
 } = {}) {
+  const startedAt = performance.now();
   try {
     const inputText = await readHookInput(input);
     const parsedHookInput = JSON.parse(inputText);
@@ -622,7 +917,7 @@ export async function recordSessionTrace({
     if (typeof normalize !== "function" || typeof storeEvent !== "function") {
       return { status: "ignored", reasonCode: SESSION_TRACE_REASON.INVALID_EVENT };
     }
-    const normalized = await normalize({ hookInput, environment });
+    const normalized = await normalize({ hookInput, environment, collection: readCollection, startedAt });
     const eventInputs = Array.isArray(normalized) ? normalized : normalized ? [normalized] : [];
     if (eventInputs.length === 0) {
       return { status: "ignored", reasonCode: SESSION_TRACE_REASON.INVALID_EVENT };
@@ -633,11 +928,49 @@ export async function recordSessionTrace({
     }
 
     const results = [];
-    for (const eventInput of eventInputs) {
+    for (const eventInput of eventInputs.filter((candidate) => !candidate?.executionKey)) {
       const event = createSessionTraceEvent(eventInput);
       const result = await storeEvent(event, { dataDirectory });
       results.push(result);
       if (!["appended", "duplicate"].includes(result?.status)) break;
+    }
+    // Run-statistics events are stored after the root session events, and their failures only lower run-measure coverage.
+    // After the first refused append, that event and every later one are recorded as lost instead of being retried
+    // under the same contended lock, so the affected executions report below exact rather than an exact undercount.
+    let refused = false;
+    let latestStored = null;
+    let openedRun = false;
+    const runInputs = eventInputs.filter((candidate) => candidate?.executionKey);
+    for (const eventInput of runInputs) {
+      let event = null;
+      let result;
+      try {
+        event = createSessionTraceEvent(eventInput);
+        result = refused ? null : await storeEvent(event, { dataDirectory });
+      } catch {
+        result = { status: "ignored", reasonCode: SESSION_TRACE_REASON.INVALID_EVENT };
+      }
+      if (result) results.push(result);
+      if (result && ["appended", "duplicate"].includes(result.status)) {
+        latestStored = Math.max(latestStored ?? 0, Date.parse(event.occurredAt));
+        openedRun ||= result.appendedEventTypes?.includes("run_start") ?? false;
+        continue;
+      }
+      refused = true;
+      try {
+        await recordLoss(event ?? lostEventIdentity(eventInput), { dataDirectory });
+      } catch {
+        // A loss that cannot be recorded stays undetectable; the host action still proceeds.
+      }
+    }
+    if (runInputs.length > 0) {
+      await finishRuns({
+        dataDirectory,
+        eventInput: runInputs[0],
+        latestStored,
+        ownSession: openedRun || RUN_ENDING_EVENTS.has(runInputs[0].provenance?.hostEvent),
+        deadline: startedAt + FINALIZATION_BUDGET_MS
+      });
     }
     return { status: "processed", results };
   } catch {

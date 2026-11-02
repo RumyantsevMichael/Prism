@@ -2,6 +2,7 @@ import { activeDetails } from "./coordination-state.js";
 import { applyWidths, progressBar, stateBadge } from "./entities.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
 import { artifactChip, bindLinks, card, emptyNote, escapeHtml, keyValues, plural, requirementLinks } from "./util.js";
+import { runTotalsHtml } from "./run-totals.js";
 
 const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 // These columns always show; another status, such as deferred, gets a column only while a slice has it.
@@ -113,6 +114,7 @@ export async function render(container, entity, ctx) {
         ["Requirements", item?.requirements.length ? requirementLinks(item.requirements, ctx) : null],
         ["Records", [artifactChip(data.recordPath, ctx, "initiative.json"), ctx.hasArtifact(data.statePath) ? artifactChip(data.statePath, ctx, "state.json") : ""].join(" ")]
       ])}
+      ${data.runTotals ? runTotalsHtml(data.runTotals.initiative, "initiative") : ""}
     </section>`;
   if (!data.exists) {
     container.innerHTML = `${head}${card("No slices yet", `<p>No initiative record exists at <code>${escapeHtml(data.recordPath)}</code>.</p><p class="muted">Orchestration creates it when the initiative starts.</p>`, { eyebrow: "Envisioned" })}`;

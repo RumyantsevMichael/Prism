@@ -123,6 +123,17 @@ export async function readWorkflowConfig(projectRoot) {
   return { exists, ...result };
 }
 
+// Run statistics are collected unless "Collection: off" sits under "## Run statistics"; a config that cannot be read reports unknown.
+export function runStatisticsCollection(config) {
+  if (!config || typeof config !== "object" || !config.sections || typeof config.sections !== "object") {
+    return "unknown";
+  }
+  const sectionName = Object.keys(config.sections).find((name) => name.toLowerCase() === "run statistics");
+  const entries = sectionName ? config.sections[sectionName] ?? {} : {};
+  const label = Object.keys(entries).find((name) => name.trim().toLowerCase() === "collection");
+  return label !== undefined && String(entries[label]).trim().toLowerCase() === "off" ? "off" : "on";
+}
+
 // The roadmap record sits beside the configured roadmap projection and shares its base name.
 export function roadmapPaths(config) {
   const projection = config.paths.roadmap;

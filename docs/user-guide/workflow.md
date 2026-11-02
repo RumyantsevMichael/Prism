@@ -103,6 +103,19 @@ The roadmap Markdown and each initiative's `initiative.md` are generated views o
 Slices have titles such as `Download signed reports`, while stable slugs identify slices and artifact paths.
 The analysis runtime, models, indexes, and retained evidence live in the plugin data directory or your private Prism cache, never in your repository.
 
+Prism collects run statistics by default whenever its hooks are installed.
+To stop collection for a project, add this section to `.prism/workflow.md`:
+
+```markdown
+## Run statistics
+- Collection: off
+```
+
+The value is case-insensitive, and any other value or an absent section leaves collection on.
+While collection is off, or while Prism cannot read `.prism/workflow.md`, the hooks store no run-statistics trace and read no transcript usage, and pre-edit observations continue unchanged.
+`summarize_session_consumption` then reports `runMeasures.collection` as `off` or `unknown` with no executions, as described in [Summarize pre-edit consumption](repository-intelligence.md#summarize-pre-edit-consumption).
+Its `runMeasures.recorded` totals then report every measure as `unavailable` rather than zero, while existing run records still report `runTotals` through `get_review` and `get_initiative`, as described in [Run records](repository-intelligence.md#run-records).
+
 ## Migrate an older setup
 
 Prism no longer reads `.claude/workflow-config.md`, and `prism:workflow-init` migrates its values into `.prism/workflow.md` without changing the old file.

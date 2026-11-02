@@ -131,3 +131,4 @@ The trace store serializes cleanup with token-owned directory locks and evicts e
 2026-09-19: Replaced response-text success inference with exact versioned Codex lifecycle evidence, stable host roots, chronological derivation, bounded string token estimation, and token-owned trace storage.
 2026-09-19: Clarified that fact-store mutation remains under exclusive ownership and that aged locks are reclaimed only after the matching owner is confirmed dead.
 2026-10-17: [Cover later host versions with verified minimum profiles](minimum-version-host-profiles.md) proposes replacing exact-version profile matching.
+2026-10-22: [Keep traces local and share only finished content-free run records](../workflow-records/shared-run-records.md) proposes amending local tracing, transcript reads, and subagent exclusion for run statistics.

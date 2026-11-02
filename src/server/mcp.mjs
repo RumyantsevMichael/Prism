@@ -23,6 +23,7 @@ import {
   resolveSessionCapacity
 } from "./session/session-capacity.mjs";
 import { summarizeSessionConsumption } from "./session/session-trace-store.mjs";
+import { readInitiativeRecordRunTotals, readReviewRunTotals } from "./session/run-totals.mjs";
 import { appendDecision, readDecisionHistory, setDecisionRecording } from "./workflow/decision-history.mjs";
 import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
@@ -214,13 +215,49 @@ function sessionConsumptionContent(summary) {
     `Pre-edit window: ${summary.preEdit.window}.`,
     `Rendered tokens: ${summary.preEdit.renderedTokens ?? "unavailable"}.`,
     `Source reads: ${summary.preEdit.sourceReadCount}.`,
-    `Compactions before first edit: ${summary.compaction.countBeforeFirstEdit}.`
+    `Compactions before first edit: ${summary.compaction.countBeforeFirstEdit}.`,
+    ...runMeasuresContent(summary.runMeasures)
   ].join("\n");
 }
 
 function privateServerContent(review) {
   const fallback = review.privateServer?.();
   return fallback ? { privateServer: fallback } : {};
+}
+
+function runMeasureText({ value, coverage }) {
+  return value === null ? coverage : `${value} (${coverage})`;
+}
+
+function attributedTargetText({ initiative, slice, kind, wave, designRun }) {
+  if (kind === "wave") return `${initiative}/${slice} wave ${wave}`;
+  if (kind === "design-run") return `${initiative}/${slice} design run ${designRun}`;
+  return `${initiative}/${slice}`;
+}
+
+function attributedMeasuresText(measures) {
+  return `wall ms ${runMeasureText(measures.wallTimeMs)}, active ms ${runMeasureText(measures.activeTimeMs)}, input ${runMeasureText(measures.inputTokens)}, cache-write ${runMeasureText(measures.cacheWriteTokens)}, cache-read ${runMeasureText(measures.cacheReadTokens)}, output ${runMeasureText(measures.outputTokens)}, tool calls ${runMeasureText(measures.toolCalls)}`;
+}
+
+function runTotalsText(totals) {
+  return `runs ${runMeasureText(totals.runs)}, wall ms ${runMeasureText(totals.wallTimeMs)}, elapsed active ms ${runMeasureText(totals.elapsedActiveTimeMs)}, summed active ms ${runMeasureText(totals.summedActiveTimeMs)}, input ${runMeasureText(totals.inputTokens)}, cache-write ${runMeasureText(totals.cacheWriteTokens)}, cache-read ${runMeasureText(totals.cacheReadTokens)}, output ${runMeasureText(totals.outputTokens)}, tool calls ${runMeasureText(totals.toolCalls)}`;
+}
+
+function runMeasuresContent(runMeasures) {
+  if (!runMeasures) return [];
+  const attribution = runMeasures.attribution;
+  return [
+    `Run statistics collection: ${runMeasures.collection}.`,
+    ...runMeasures.executions.map((row) => `Run measures ${row.execution}${row.host ? ` ${row.host}` : ""}: wall ms ${runMeasureText(row.wallTimeMs)}, active ms ${runMeasureText(row.activeTimeMs)} (idle over ${runMeasures.idleThresholdMs} ms excluded), input ${runMeasureText(row.inputTokens)}, cache-write ${runMeasureText(row.cacheWriteTokens)}, cache-read ${runMeasureText(row.cacheReadTokens)}, output ${runMeasureText(row.outputTokens)}, tool calls ${runMeasureText(row.toolCalls)}${row.ended ? ", ended" : ""}${row.belowSession ? `, below session ${row.belowSession}` : ""}.`),
+    ...(attribution
+      ? [
+          ...attribution.targets.map((entry) => `Attributed to ${attributedTargetText(entry.target)} as ${entry.role} (${entry.attribution}): ${attributedMeasuresText(entry)}.`),
+          `Unattributed: ${attributedMeasuresText(attribution.unattributed)}.`
+        ]
+      : []),
+    ...(runMeasures.recorded ? [`Recorded run totals: ${runTotalsText(runMeasures.recorded)}.`] : []),
+    ...(runMeasures.inProgress?.targets ?? []).map((entry) => `In progress for ${attributedTargetText(entry.target)} as ${entry.role} (${entry.attribution}), not yet recorded: ${attributedMeasuresText(entry)}.`)
+  ];
 }
 
 function reviewSessionContent(review) {
@@ -506,7 +543,7 @@ const tools = [
   },
   {
     name: "summarize_session_consumption",
-    description: "Summarize content-free repository context observations before the first successful edit in the same active host session identified by the hook-emitted correlation key and plugin data directory. Missing or incomplete instrumentation stays explicit.",
+    description: "Summarize content-free repository context observations before the first successful edit in the same active host session identified by the hook-emitted correlation key and plugin data directory, and report run measures (wall time, active time, input, cache-write, cache-read, and output tokens, and tool calls) for the root session and each subagent, attributed by review wave, design run, or slice and by role at each Prism call, with the cost no call attributes reported as unattributed. Finished runs are recorded first, the session's recorded runs are totaled from their run records, and the session's runs not yet recorded are reported as in progress. Missing or incomplete instrumentation stays explicit.",
     inputSchema: {
       type: "object",
       properties: {
@@ -517,7 +554,7 @@ const tools = [
       required: ["projectRoot", "correlationKey", "dataDirectory"],
       additionalProperties: false
     },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "set_workflow_recording",
@@ -1056,7 +1093,8 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   }
   if (CONSERVATION_TOOLS.some(tool => tool.name === name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const value = await callConservationTool(name, { ...argumentsValue, projectRoot });
+    let value = await callConservationTool(name, { ...argumentsValue, projectRoot });
+    if (name === "get_review") value = { ...value, runTotals: await readReviewRunTotals(projectRoot, argumentsValue) };
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (name === "update_design_view") {
@@ -1075,10 +1113,11 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (["get_roadmap", "update_roadmap", "get_initiative", "update_initiative"].includes(name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const input = { ...argumentsValue, projectRoot };
-    const value = name === "get_roadmap" ? await getRoadmap(input)
+    let value = name === "get_roadmap" ? await getRoadmap(input)
       : name === "update_roadmap" ? await updateRoadmap(input)
       : name === "get_initiative" ? await getInitiative(input)
       : initiativeAcknowledgement(await updateInitiative(input), input.operations);
+    if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (repositoryTools.has(name)) {

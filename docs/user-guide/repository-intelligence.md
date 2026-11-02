@@ -484,6 +484,209 @@ Trace storage rejects symbolic-link directories and records, rejects multiply li
 Cleanup and commit use token-owned locks, reclaim an aged lock only when its matching process is confirmed dead, and fail an append that loses ownership before commit.
 The summary is measurement evidence for future calibration and does not change the current deterministic fit formula.
 
+### Run measures
+
+The summary also returns `runMeasures` with one row per execution: the root session and, on Claude Code, each subagent.
+
+```json
+{
+  "runMeasures": {
+    "collection": "on",
+    "idleThresholdMs": 300000,
+    "executions": [
+      {
+        "execution": "root",
+        "executionDigest": "<64 hex>",
+        "host": "claude-code",
+        "firstObservedAt": "2026-10-22T10:00:00.000Z",
+        "lastObservedAt": "2026-10-22T10:20:00.000Z",
+        "ended": false,
+        "wallTimeMs": { "value": 1200000, "coverage": "exact" },
+        "activeTimeMs": { "value": 540000, "coverage": "exact" },
+        "inputTokens": { "value": 120, "coverage": "exact" },
+        "cacheWriteTokens": { "value": 40000, "coverage": "exact" },
+        "cacheReadTokens": { "value": 900000, "coverage": "exact" },
+        "outputTokens": { "value": 8000, "coverage": "exact" },
+        "toolCalls": { "value": 42, "coverage": "exact" }
+      }
+    ]
+  }
+}
+```
+
+`collection` is `on`, `off`, or `unknown`, and only `on` returns executions; see [Project files](workflow.md#project-files) for the off switch.
+Wall time runs from the first to the last observed event of the execution, starting at session start when it was observed.
+Active time adds every interval between consecutive observed events except an interval longer than `idleThresholdMs`, five minutes, during which no tool call of that execution was running.
+Token measures count each model message once, however many transcript records repeat it.
+Tool calls count distinct tool calls seen at start or end, including failed calls.
+A root row is `ended` after its session end, and a subagent row after its subagent stop.
+
+Every measure carries a coverage mark of `exact`, `approximate`, `partial`, or `unavailable`, and `value` is `null` exactly when the mark is `unavailable`.
+An unreadable or unrecognized transcript leaves the token measures `unavailable` instead of zero, while tool calls and times stay reported.
+A transcript usage read stops at 64 MiB or after 1.5 seconds of one hook call, and the token measures then keep the last complete totals marked `partial`.
+A tool call without an observed end lowers active time to `partial`.
+A lost observation, a subagent identifier Prism cannot use, or a full run-statistics trace lowers every measure of that execution to at most `partial`.
+A hook write that the local trace refuses, for example while many concurrent hooks hold its lock, also lowers that execution to at most `partial`, and the execution keeps its row.
+
+On Codex, the root row is the session total of every thread, including subagent threads, and no subagent rows are returned.
+Codex has no cache-write category, so `cacheWriteTokens` is `unavailable`, Codex rows are never `ended`, and `belowSession` is `partial` because no thread's share is reported.
+
+Run statistics use separate local traces in the plugin data directory, so they never change the pre-edit coverage, reason codes, or trace limit.
+Subagent observations never enter the root pre-edit summary.
+For usage, Prism reads only per-message usage counts, timestamps, and message identifiers from Claude Code transcripts, and only the latest bounded `token_count` record from Codex transcripts.
+The traces store only counts, timestamps, coverage, and SHA-256 digests, never transcript paths, content, or raw identifiers.
+The MCP text output adds one line per execution with the same measures.
+
+`runMeasures.attribution` splits the same cost by the Prism target and role current when it was spent.
+
+```json
+{
+  "attribution": {
+    "targets": [
+      {
+        "target": { "initiative": "demo", "slice": "alpha", "kind": "wave", "wave": "design-2" },
+        "role": "coordinator",
+        "attribution": "exact",
+        "wallTimeMs": { "value": 129000, "coverage": "exact" },
+        "activeTimeMs": { "value": 129000, "coverage": "exact" },
+        "inputTokens": { "value": 45, "coverage": "exact" },
+        "cacheWriteTokens": { "value": 0, "coverage": "exact" },
+        "cacheReadTokens": { "value": 0, "coverage": "exact" },
+        "outputTokens": { "value": 45, "coverage": "exact" },
+        "toolCalls": { "value": 3, "coverage": "exact" }
+      }
+    ],
+    "unattributed": { "wallTimeMs": { "value": 30000, "coverage": "exact" } }
+  }
+}
+```
+
+Each Prism tool call that names an initiative or slice starts a new target for the calling execution, from the call's start until its next such call.
+A call that names only an initiative, through `initiative` without `slice`, targets the initiative's root slice.
+The target `kind` is `wave` with the `wave` id when the slice's latest review wave is not accepted and the role is `reviewer` or `coordinator`, `design-run` with the `designRun` number while the slice is in design, and `slice` otherwise.
+Design runs are numbered one more than the count of design-audit waves already started for the slice.
+The `role` is the call's `actor.role` when it declares one, otherwise the role the same execution declared for that slice, otherwise `coordinator` for the root session and `delivery` for a subagent.
+A Claude Code subagent's cost before its own first Prism call counts toward the root session's target and role current when the subagent started.
+
+`attribution` is `exact`, `approximate`, or `partial`, and each measure's coverage is at most the attribution and the execution's own coverage.
+A role taken from the same execution's own declaration for that slice keeps the attribution `exact`, and only the default `coordinator` or `delivery` role makes it `approximate`.
+Naming a slice while a different slice the same execution named earlier still has active work in coordination state makes the attribution to both slices `approximate`.
+A state file or review ledger that cannot be read, is larger than 8 MiB, or takes too long to read attributes the call to its slice with `partial` attribution.
+Entries with the same target and role are summed over executions, and their times are summed per execution.
+
+`unattributed` carries the same seven measures for cost that no Prism call or subagent start attributes, such as work before the first Prism call.
+Attributed and unattributed tokens and tool calls add up to the executions' totals, so no cost is dropped or spread across targets.
+A call whose project switches run statistics off records no target, and its following cost stays with the previous target.
+A call whose project's workflow config cannot be read, exceeds 256 KiB, or takes too long to read stores nothing from that project, and its following cost stays with the previous target at `partial` attribution, or stays unattributed at `partial` coverage before the execution's first target.
+A hook write that the local trace refuses also leaves that cost with the previous target and lowers the affected measures to at most `partial`.
+On Codex, each thread is replayed alone, every attributed and unattributed measure is at most `partial`, and a subagent thread's cost before its own first Prism call is unattributed.
+Because Codex threads overlap, their summed attributed time can exceed the root row's wall time.
+With collection `off` or `unknown`, `targets` is empty and every unattributed measure is `unavailable`.
+
+The traces store only the initiative and slice slugs, the declared role, the open wave id, the design run number, the active slice slugs, and the canonical project root of each Prism call, never other argument content.
+The project root stays in the local trace and never enters a run record or the MCP output.
+The MCP text output adds one line per attributed target and role and one line for unattributed cost.
+
+#### Run records
+
+Each finished run becomes one immutable run record per slice it served, written to `.prism/initiatives/<initiative>/slices/<slice>/runs/<run-id>.json`.
+A run is the run-statistics work of one execution from its start until it ends, so one Claude Code subagent, one Claude Code session, or one Codex session can hold several runs over time.
+A Claude Code run finishes at its subagent stop or session end.
+Any run also finishes after 30 minutes without events while no tool is running, or after 24 hours, and Codex runs finish only this way because Codex reports no reliable end.
+A new event after a finished run starts a new run.
+
+A record goes to the project whose records the attributing Prism call read: the call's `projectRoot` argument when it names a directory, otherwise the project where the session runs.
+A worktree initiative's records therefore land in that worktree, on the branch that carries the initiative.
+Records are shared only through the working tree, like other committed project files.
+
+```json
+{
+  "schemaVersion": 1,
+  "runId": "<64 hex>",
+  "host": "claude-code",
+  "initiative": "demo",
+  "slice": "alpha",
+  "startedAt": "2026-10-23T10:00:00.000Z",
+  "endedAt": "2026-10-23T10:04:00.000Z",
+  "idleThresholdMs": 300000,
+  "segments": [
+    {
+      "kind": "wave",
+      "wave": "design-2",
+      "role": "coordinator",
+      "attribution": "exact",
+      "wallTimeMs": { "value": 150000, "coverage": "exact" },
+      "activeTimeMs": { "value": 150000, "coverage": "exact" },
+      "inputTokens": { "value": 4, "coverage": "exact" },
+      "cacheWriteTokens": { "value": 0, "coverage": "exact" },
+      "cacheReadTokens": { "value": 0, "coverage": "exact" },
+      "outputTokens": { "value": 4, "coverage": "exact" },
+      "toolCalls": { "value": 2, "coverage": "exact" },
+      "activeIntervals": { "value": [[1792749630000, 1792749780000]], "coverage": "exact" }
+    }
+  ]
+}
+```
+
+A record holds one segment per target and role of the run within that slice, with the same measures and coverage marks as `attribution`.
+`activeIntervals` lists the active periods as pairs of epoch milliseconds, at most 512, and becomes `approximate` when Prism joins the closest periods to stay within that bound.
+A record holds only counts, durations, timestamps, coverage marks, the host, roles, the run identifier, and target identifiers, never content, paths, session identifiers, or model names.
+Cost that no Prism call attributes creates no record and stays in the local session totals.
+
+Prism never changes or replaces a record, so recording the same run again leaves the existing file as it is.
+Records stay after coordination cleanup removes an initiative's plans folder and coordination state.
+The first record also writes `.prism/.gitignore`, which ignores only transient `*.lock` and `.*.tmp` files, so the records themselves can be committed.
+Files under `.prism/initiatives/` and `.prism/.gitignore` never count as source in repository snapshots, so a record written while a review is open does not make that review stale.
+
+The trace hook records a run when it observes the run's end, and it records other sessions of the project that have been quiet for over 30 minutes at its next call.
+`summarize_session_consumption` records finished runs before it reports.
+A record that cannot be written now, for example because its folder is unusable, stays pending and is recorded by a later hook call or summary, and the hook still lets the host action proceed.
+The hook starts no record work after 2.5 seconds, so whatever remains waits for the next call.
+A project whose run statistics are `off` receives no new records, and its existing records stay readable.
+
+`runMeasures.inProgress` reports the calling session's runs that are not recorded yet, with the same `{ targets, unattributed }` shape as `attribution`.
+The session's current run is always in progress, and a finished run whose record could not be written stays in progress with every measure at most `partial`.
+With collection `off` or `unknown`, `inProgress.targets` is empty and every unattributed measure is `unavailable`.
+The MCP text output adds one line per in-progress target and role.
+
+`runMeasures.recorded` totals the calling session's recorded runs from their run records, and it counts no other session's records in the same slice.
+A run is either recorded or in progress, never both.
+With collection `off` or `unknown`, or when recording could not finish, every `recorded` measure, including `runs`, is `unavailable`.
+The MCP text output adds one `Recorded run totals:` line.
+
+`get_review` and `get_initiative` also report `runTotals`, computed from run records at each read and never stored.
+`get_review` reports `{ slice, waves, designRuns }` for the slice its `initiative` and `slice` name: the slice total, one `{ wave, totals }` per review wave, and one `{ designRun, totals }` per design run.
+Its `runTotals` is `null` when those identifiers are invalid, and it appears on every page and section, including a review that does not exist yet.
+`get_initiative` reports `{ initiative, slices }`, where each `slices.<slug>` also holds `withDescendants`, the slice's own runs and all of its descendants' runs, and `initiative` covers every slice.
+Its `runTotals` is `null` when the initiative record is absent or invalid.
+Every total has this shape:
+
+```json
+{
+  "runs": { "value": 2, "coverage": "exact" },
+  "wallTimeMs": { "value": 630000, "coverage": "exact" },
+  "elapsedActiveTimeMs": { "value": 120000, "coverage": "exact" },
+  "summedActiveTimeMs": { "value": 150000, "coverage": "exact" },
+  "inputTokens": { "value": 31, "coverage": "exact" },
+  "cacheWriteTokens": { "value": 0, "coverage": "exact" },
+  "cacheReadTokens": { "value": 5, "coverage": "exact" },
+  "outputTokens": { "value": 8, "coverage": "exact" },
+  "toolCalls": { "value": 6, "coverage": "exact" },
+  "idleThresholdMs": 300000
+}
+```
+
+`runs` counts distinct runs.
+`wallTimeMs` is the calendar span from the earliest run start to the latest run end, not a sum, so overlapping or repeated runs count the time between them once.
+Records store no start or end time for a wave or design run, so its wall time spans its active periods and is at best `approximate`.
+`elapsedActiveTimeMs` counts overlapping active periods once, while `summedActiveTimeMs` adds every agent's active time.
+Token and tool-call totals add every included measure.
+A slice without records reports `runs` as `0` and every other measure as `unavailable`, never zero.
+When a slice's record folder cannot be read, for example because one file exceeds 1 MiB or is not valid JSON, every measure of that slice is `unavailable` and its waves and design runs are omitted.
+A record outside the allowed shape is skipped and makes its slice's totals `partial`.
+Because a skipped record could belong to any wave or design run, it also makes every wave and design-run total of that slice `partial`.
+Either way the parent and initiative totals that include the slice are at most `partial`, and the read still succeeds.
+
 ## Evaluate repository fit
 
 Use the read-only `evaluate_repository_fit` tool after `plan_repository_context` returns its token estimate.

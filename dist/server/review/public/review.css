@@ -5164,3 +5164,31 @@ mark.find-hit {
   gap: 0.5rem;
   margin: 0.75rem 0 0;
 }
+
+/* Run totals on wave cards, slice pages, and initiative pages */
+.run-totals {
+  margin-top: 0.6rem;
+  min-width: 0;
+}
+
+.run-totals .stat-row {
+  margin-bottom: 0.4rem;
+}
+
+.run-total.is-unavailable .stat-value {
+  color: var(--ink-muted);
+}
+
+.run-coverage {
+  color: var(--ink-muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+.run-totals-note,
+.run-totals-empty {
+  color: var(--ink-muted);
+  font-size: 0.74rem;
+  margin: 0.2rem 0 0;
+}

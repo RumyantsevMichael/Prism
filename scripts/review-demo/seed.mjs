@@ -3,6 +3,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ROOT, prepareProject, startTools } from "./project.mjs";
+import { appendRecord } from "../../dist/server/workflow/record-store.mjs";
+import { runRecord, segment } from "../../test/server/fixtures/run-records.mjs";
 
 const examples = JSON.parse(await readFile(path.join(ROOT, "test/server/fixtures/change-map.json"), "utf8"));
 const { realRoot, dataDir, write } = await prepareProject(process.argv[2], "prism-review-demo-");
@@ -95,6 +97,19 @@ try {
     { op: "set_status", slug: "retry-metrics", status: "in-progress" },
     { op: "set_status", slug: "connection-retries", status: "blocked" }
   ] });
+  // Finished run records go through the record store seam, so wave cards and slice and initiative pages show run totals.
+  // The leaf spans hours with an approximate wave measure, and the child's unavailable measure makes its parent partial.
+  const runs = async (sliceSlug, runId, record) => appendRecord(realRoot, { kind: "runs", initiative: "retry-hardening", slice: sliceSlug }, runId, { ...record, initiative: "retry-hardening" });
+  const auditWave = segment({ kind: "wave", wave: "design-audit" }, { role: "reviewer", wall: 7200, from: 0, to: 5400, tokens: [48200, 210000, 12900000, 9400], tools: 86 });
+  await runs("timeout-retries", "1".repeat(64), runRecord("1".repeat(64), "timeout-retries", [
+    { ...auditWave, inputTokens: { value: 48200, coverage: "approximate" } },
+    segment({ kind: "slice" }, { role: "coordinator", wall: 5100, from: 7200, to: 12300, tokens: [31500, 96000, 4100000, 6200], tools: 41 })
+  ], [0, 12300]));
+  await runs("retry-observability", "2".repeat(64), runRecord("2".repeat(64), "retry-observability", [
+    segment({ kind: "slice" }, { role: "coordinator", wall: 1500, from: 13000, to: 14200, tokens: [9800, 22000, 640000, 1900], tools: 17 })
+  ]));
+  const metrics = segment({ kind: "slice" }, { role: "delivery", wall: 2700, from: 15000, to: 17400, tokens: [26400, 0, 1800000, 5100], tools: 58 });
+  await runs("retry-metrics", "3".repeat(64), { ...runRecord("3".repeat(64), "retry-metrics", [{ ...metrics, cacheWriteTokens: { value: null, coverage: "unavailable" } }]), host: "codex" });
   await call("update_initiative", { projectRoot: realRoot, initiative: "activity-reports", expectedRevision: null, actor: "orchestrator", operations: [
     { op: "create", slug: "activity-reports", title: "Export activity reports", outcome: "Users export signed activity reports.", requirements: ["docs/requirements/reports.md#1", "docs/requirements/reports.md#2"] },
     { op: "split", parent: "activity-reports", children: [
