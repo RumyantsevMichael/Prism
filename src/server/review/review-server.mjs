@@ -8,7 +8,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, keyOfPath, recordPath } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, keyOfPath, recordPath, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
@@ -39,12 +39,13 @@ async function resolveProjectFile(projectRoot, requestedPath) {
   if (!requestedPath || path.isAbsolute(requestedPath)) {
     throw new Error("The artifact path must be relative to the project root.");
   }
-  const candidate = path.resolve(projectRoot, requestedPath);
-  if (!isInside(projectRoot, candidate)) {
+  // A record path keeps its .prism address and is served from the record store; its containment is checked there.
+  const { root, target: candidate } = await resolveRecordFile(projectRoot, requestedPath);
+  if (!isInside(root, candidate)) {
     throw new Error("The artifact path leaves the project root.");
   }
   const resolved = await realpath(candidate);
-  if (!isInside(projectRoot, resolved)) {
+  if (!isInside(root, resolved)) {
     throw new Error("The artifact resolves outside the project root.");
   }
   return resolved;
@@ -61,8 +62,13 @@ function configuredRoots(config) {
 }
 
 async function walkArtifacts(projectRoot, relativeRoot, results) {
-  const absoluteRoot = path.resolve(projectRoot, relativeRoot);
-  if (!isInside(projectRoot, absoluteRoot)) {
+  // An unavailable record store hides only the records, so human documents still list.
+  const located = await resolveRecordFile(projectRoot, relativeRoot).catch((error) => { if (error.code === "store_unavailable") return null; throw error; });
+  if (!located) {
+    return;
+  }
+  const { root, target: absoluteRoot } = located;
+  if (!isInside(root, absoluteRoot)) {
     return;
   }
   let entries;
@@ -132,7 +138,7 @@ export async function listArtifacts(projectRoot) {
   // Machine records live under .prism, which the walk above skips as a hidden folder.
   await walkArtifacts(projectRoot, `${RECORD_DIRECTORY}/initiatives`, results);
   const roadmap = recordPath({ kind: "roadmap" });
-  if (await stat(path.join(projectRoot, roadmap)).then((info) => info.isFile(), () => false)) results.add(roadmap);
+  if (await resolveRecordFile(projectRoot, roadmap).then(({ target }) => stat(target)).then((info) => info.isFile(), () => false)) results.add(roadmap);
   return [...results].sort();
 }
 
@@ -615,7 +621,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
-      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, sources, navigation: await loadNavigation(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, sources, navigation: await loadNavigation(projectRoot), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "GET") {
       send(response, 200, JSON.stringify(await currentSession()), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "PUT") {

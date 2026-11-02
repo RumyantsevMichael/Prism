@@ -13,7 +13,7 @@ import {
   runSealedByTraceLimit
 } from "./session-trace-store.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
-import { appendRecord, listRecordEntries, recordPath } from "../workflow/record-store.mjs";
+import { appendRecord, listRecordEntries, recordPath, resolveRecordFile } from "../workflow/record-store.mjs";
 
 const RUN_RECORD_SCHEMA_VERSION = 1;
 const QUIET_SESSION_MS = 30 * 60 * 1000;
@@ -178,7 +178,7 @@ function runEndFor(run) {
 // A young entry lock means a live writer, and appendRecord would wait for it longer than the hook may run.
 async function entryLocked(projectRoot, key, runId, nowMs) {
   try {
-    const info = await lstat(path.join(projectRoot, recordPath(key), `${runId}.json.lock`));
+    const info = await lstat((await resolveRecordFile(projectRoot, `${recordPath(key)}/${runId}.json.lock`)).target);
     return nowMs - info.mtimeMs <= ENTRY_LOCK_STALE_MS;
   } catch {
     return false;

@@ -531,7 +531,7 @@ test("a run record appended after a source snapshot leaves the snapshot current 
   await writeFile(path.join(runsFolder(root, "alpha"), `.${appended[0].id}.json.1.0123abcd.tmp`), "{}");
 
   await conservationStore.assertCurrent(root, snapshot.snapshotId);
-  assert.equal(await readFile(path.join(root, ".prism", ".gitignore"), "utf8"), "# Transient lock and write files of Prism records.\n*.lock\n.*.tmp\n");
+  assert.equal(await readFile(path.join(root, ".prism", ".gitignore"), "utf8"), "# Transient lock and write files of Prism records, and the store's sync state.\n*.lock\n.*.tmp\n/.prism-sync/\n");
 });
 
 test("records a quiet Codex session's run with attribution below the session marked partial", async (context) => {

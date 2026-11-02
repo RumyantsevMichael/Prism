@@ -44,6 +44,19 @@ test("reads records an older Prism kept under the plans path until a write moves
   assert.deepEqual([target.slice, target.openWave, target.activeSlices, target.facts], ["core", "impl-1", ["core"], "exact"]);
 });
 
+test("reads records from the record store that the workflow config names", async (context) => {
+  const store = await project(context, {
+    "initiatives/demo/initiative.json": INITIATIVE,
+    "initiatives/demo/state.json": STATE,
+    "initiatives/demo/slices/core/review.json": LEDGER
+  });
+  const root = await project(context, {});
+  await mkdir(path.join(root, ".prism"), { recursive: true });
+  await writeFile(path.join(root, ".prism", "workflow.md"), `# Workflow config\n\n## Workspace\n- Store: ${store}\n`);
+  const target = await read(root, { initiative: "demo" });
+  assert.deepEqual([target.slice, target.openWave, target.activeSlices, target.facts], ["core", "impl-1", ["core"], "exact"]);
+});
+
 test("names no target for a call without an initiative", async (context) => {
   const root = await project(context, {});
   assert.equal(await read(root, { slice: "core" }), null);

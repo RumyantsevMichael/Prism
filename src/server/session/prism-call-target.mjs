@@ -5,7 +5,7 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { initiativeDirectory, parseWorkflowConfig, runStatisticsCollection } from "../workflow/workflow-config.mjs";
 
 // Reads the Prism target a tool call names and the shared workflow facts at that call, for run-cost attribution.
-// Records are read where Prism keeps them under .prism, or where an older Prism kept them before the first write moved them.
+// Records are read where Prism keeps them, under .prism or in the configured record store, or where an older Prism kept them before the first write moved them.
 // The hook runs under a host time limit, so every read is bounded, lock-free, no-follow, and checked against the deadline.
 
 const CONFIG_MAX_BYTES = 256 * 1024;
@@ -112,11 +112,24 @@ export async function readRunStatisticsCollection(projectRoot, { deadline = Numb
   }
 }
 
-const recordFolder = (initiative) => path.join(".prism", "initiatives", initiative);
+// The folder that holds what .prism holds: .prism itself, or the record store that Workspace names, checked as the record store checks it; null when that store is unusable.
+async function recordBase(root, config) {
+  const configured = config.workspace?.store ?? null;
+  if (configured === null) return path.join(root, ".prism");
+  try {
+    const base = await realpath(path.resolve(root, configured));
+    const within = (outer, inner) => !path.relative(outer, inner).startsWith("..") && !path.isAbsolute(path.relative(outer, inner));
+    return (await stat(base)).isDirectory() && !within(root, base) && !within(base, root) ? base : null;
+  } catch {
+    return null;
+  }
+}
 
-// Reads a record from .prism, or from its legacy location when .prism has none; an absent legacy location reads as absent.
+const recordFolder = (base, initiative) => base && path.join(base, "initiatives", initiative);
+
+// Reads a record from its current file, or from its legacy location when there is none; an absent legacy location reads as absent.
 async function readCurrentOrLegacy(root, current, legacy, deadline) {
-  const record = await readJsonRecord(path.join(root, current), deadline);
+  const record = current ? await readJsonRecord(current, deadline) : { status: "partial", value: null };
   return record.status !== "absent" || !legacy ? record : readJsonRecord(path.join(root, legacy), deadline);
 }
 
@@ -128,8 +141,9 @@ function legacyInitiativeFolder(config, initiative) {
 }
 
 // The root slice of an initiative's record, or the initiative identifier when the record has no single readable root.
-async function rootSlice(root, initiative, legacyFolder, deadline) {
-  const record = await readCurrentOrLegacy(root, path.join(recordFolder(initiative), "initiative.json"), legacyFolder && path.join(legacyFolder, "initiative.json"), deadline);
+async function rootSlice(root, base, initiative, legacyFolder, deadline) {
+  const folder = recordFolder(base, initiative);
+  const record = await readCurrentOrLegacy(root, folder && path.join(folder, "initiative.json"), legacyFolder && path.join(legacyFolder, "initiative.json"), deadline);
   const slices = isObject(record.value?.slices) ? Object.entries(record.value.slices) : [];
   const roots = slices.filter(([, slice]) => isObject(slice) && slice.parent === null).map(([slug]) => slug);
   return roots.length === 1 && validSlug(roots[0]) ? roots[0] : initiative;
@@ -142,12 +156,12 @@ function resolveRecordPath(value, root) {
 }
 
 // Top-level arguments name a target: slice or activeSlice with initiative, else the initiative's root slice.
-async function namedTarget(toolInput, root, legacyFolder, deadline) {
+async function namedTarget(toolInput, root, base, legacyFolder, deadline) {
   const initiative = nonemptyString(toolInput.initiative);
   if (!initiative || !validSlug(initiative)) return null;
   const explicitSlice = nonemptyString(toolInput.slice) ?? nonemptyString(toolInput.activeSlice);
   if (explicitSlice) return { initiative, slice: explicitSlice, namesSlice: true };
-  return { initiative, slice: await rootSlice(root, initiative, legacyFolder, deadline), namesSlice: false };
+  return { initiative, slice: await rootSlice(root, base, initiative, legacyFolder, deadline), namesSlice: false };
 }
 
 /**
@@ -167,15 +181,16 @@ export async function readPrismCallTarget({ toolName, toolInput, projectRoot, de
   if (collection !== "on") return null;
 
   const legacyFolder = legacyInitiativeFolder(config, nonemptyString(toolInput.initiative));
-  const target = await namedTarget(toolInput, root, legacyFolder, deadline);
+  const base = await recordBase(root, config);
+  const target = await namedTarget(toolInput, root, base, legacyFolder, deadline);
   if (!target || !validSlug(target.initiative) || !validSlug(target.slice)) return null;
   const role = isObject(toolInput.actor) && ROLES.has(toolInput.actor.role) ? toolInput.actor.role : null;
-  const folder = recordFolder(target.initiative);
+  const folder = recordFolder(base, target.initiative);
 
   let facts = "exact";
   let activeSlices = null;
   let entry = null;
-  const state = await readCurrentOrLegacy(root, path.join(folder, "state.json"), legacyFolder && path.join(legacyFolder, "state.json"), deadline);
+  const state = await readCurrentOrLegacy(root, folder && path.join(folder, "state.json"), legacyFolder && path.join(legacyFolder, "state.json"), deadline);
   if (state.status === "partial" || (state.status === "read" && !Array.isArray(state.value.active ?? []))) {
     facts = "partial";
   } else {
@@ -190,7 +205,7 @@ export async function readPrismCallTarget({ toolName, toolInput, projectRoot, de
   if (facts === "exact") {
     const legacySliceFolder = legacyFolder && (!target.namesSlice || target.slice === target.initiative ? legacyFolder : path.join(legacyFolder, target.slice));
     const legacyLedger = resolveRecordPath(entry?.reviewPath, root) ?? (legacySliceFolder && path.join(root, legacySliceFolder, "review.json"));
-    const ledger = await readCurrentOrLegacy(root, path.join(folder, "slices", target.slice, "review.json"), legacyLedger && path.relative(root, legacyLedger), deadline);
+    const ledger = await readCurrentOrLegacy(root, folder && path.join(folder, "slices", target.slice, "review.json"), legacyLedger && path.relative(root, legacyLedger), deadline);
     const waves = ledger.value?.waves ?? [];
     if (ledger.status === "partial" || !Array.isArray(waves) || !waves.every(isObject)) {
       facts = "partial";

@@ -320,6 +320,10 @@ a {
   background: #a392ff;
 }
 
+.store-sync .indexing-chip {
+  cursor: default;
+}
+
 .indexing-label {
   color: #f8f7ff;
   font-weight: 600;

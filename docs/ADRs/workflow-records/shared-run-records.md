@@ -44,6 +44,7 @@ Token usage MUST be counted once per model message identifier, regardless of how
 Prism MUST write run records only through `appendRecord(projectRoot, {kind: "runs", initiative, slice}, id, entry)`, MUST read them back only through `listRecordEntries(projectRoot, key)`, which returns `[{id, entry}]` in id order, and MUST compute totals from those records at read time.
 The run record key MUST be `slice/<initiative>/<slice>/runs/<run-id>`, with one record for each slice a run's cost is attributed to.
 The record store keeps each key at `.prism/initiatives/<initiative>/slices/<slice>/runs/<run-id>.json`, where every slice, including the root slice, has a folder under `slices/` keyed by its slug, and writes each record by temporary file and rename.
+When `.prism/workflow.md` names a record store under Workspace, the same keys live in that store, and attribution reads the coordination state and review ledger from it.
 A run record MUST be immutable, and an append to an existing key MUST leave the existing record unchanged.
 A run record MUST contain only counts, durations, timestamps, coverage marks, host, model, role, random run and session-group identifiers, and Prism target identifiers.
 A run record MUST NOT contain prompts, source text, command text, model responses, transcript content, transcript paths, raw host session identifiers, session correlation keys, user names, or machine names.
@@ -139,3 +140,4 @@ The lifecycle is shown in [run-record-lifecycle.puml](run-record-lifecycle.puml)
 2026-10-23: Design audit of run-records made a full trace refuse every later event and keyed limit sealing on the trace's own limit flag alone, excluding a full shared directory.
 2026-10-23: Design re-audit of run-records scoped that refusal to run-statistics traces, so the root pre-edit trace keeps its limit behavior.
 2026-11-02: The temporary local adapter was replaced by the merged record store in `src/server/workflow/record-store.mjs`.
+2026-11-02: Run records and attribution reads follow the configured record store from #57.
