@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { isRemoteStore } from "./remote-url.mjs";
 
 const CONFIG_PATH = path.join(".prism", "workflow.md");
 const CONFIG_MAX_BYTES = 256 * 1024;
@@ -104,7 +105,10 @@ export function parseWorkflowConfig(markdown) {
     paths[key] = normalizePath(value, label, diagnostics);
   }
   const values = Object.fromEntries([...parsed].map(([name, entries]) => [name, Object.fromEntries(entries.map((entry) => [entry.label, entry.value]))]));
-  return { paths, configured: [...configured].sort(), sections: values, workspace: { store: workspaceValue(parsed, "store"), sync: /^on$/i.test(workspaceValue(parsed, "store sync") ?? "") }, diagnostics };
+  // A store named by its remote syncs unless Store sync is off, while a path store syncs only when Store sync is on.
+  const store = workspaceValue(parsed, "store");
+  const sync = workspaceValue(parsed, "store sync") ?? "";
+  return { paths, configured: [...configured].sort(), sections: values, workspace: { store, sync: isRemoteStore(store) ? !/^off$/i.test(sync) : /^on$/i.test(sync) }, diagnostics };
 }
 
 export async function readWorkflowConfig(projectRoot) {

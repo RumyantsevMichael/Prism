@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
+import { withoutCredentials } from "./remote-url.mjs";
 
 // A record store that is a Git checkout exchanges its records with its upstream.
 // One process at a time syncs a store, and record reads and writes wait while a merge replaces record files.
@@ -19,6 +20,8 @@ const lastFetch = new Map();
 const PROCESS_START = Date.now();
 const watched = new Set();
 const reported = new Set();
+// Clones that Prism made of a remote store, whose branch may publish itself to an empty origin.
+const managed = new Set();
 // Variables that could point Git at another repository, index, or object store than the store's own.
 const REDIRECTING = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE)$/;
 
@@ -43,6 +46,19 @@ function gitEnvironment(extra = {}) {
   // An SSH password or host-key prompt would hang a sync that holds the store lock, so SSH never asks unless the user configured it.
   const ssh = env.GIT_SSH_COMMAND || env.GIT_SSH ? {} : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };
   return { ...env, ...ssh, GIT_TERMINAL_PROMPT: "0", GIT_MERGE_AUTOEDIT: "no", LC_ALL: "C", ...extra };
+}
+
+/** The Git timeout that every store command, including a managed clone, runs within. */
+export const gitTimeoutMs = () => SETTINGS.gitTimeoutMs;
+
+/** Mark a store as a clone Prism made of a remote store, so a sync gives its branch an upstream on origin when it has none. */
+export function markManagedStore(base) {
+  managed.add(base);
+}
+
+/** Run Git in a folder with the sanitized store environment and timeout: { ok, code, missing, stdout, text, stderr }. */
+export function runGit(base, args, options) {
+  return git(base, args, options);
 }
 
 function git(base, args, { env = {}, input } = {}) {
@@ -134,6 +150,8 @@ export async function readSyncStatus(base) {
 
 async function writeStatus(base, status) {
   const value = { at: new Date().toISOString(), state: "ok", ahead: 0, behind: 0, conflicts: [], message: "", ...status };
+  // Git names a remote as configured, and a configured remote can carry a token.
+  value.message = withoutCredentials(value.message);
   await mkdir(syncPath(base), { recursive: true });
   await writeAtomically(syncPath(base, "status.json"), `${JSON.stringify(value, null, 2)}\n`);
   return value;
@@ -154,7 +172,7 @@ export function syncRecordStore(base, options = {}) {
       // The holder may have committed before this process wrote, so a later sync picks the change up.
       if (error.code === "lock_timeout") { scheduleRecordSync(base); return { state: "skipped" }; }
       // A Git error outside fetch, merge, and push, such as a leftover index lock, is reported as it is and never repaired here.
-      return writeStatus(base, { state: "git_failed", message: error.message }).catch(() => ({ state: "git_failed", message: error.message }));
+      return writeStatus(base, { state: "git_failed", message: error.message }).catch(() => ({ state: "git_failed", message: withoutCredentials(error.message) }));
     }
   })().finally(() => {
     running.delete(base);
@@ -196,13 +214,23 @@ async function counts(base) {
   return { ahead: ahead || 0, behind: behind || 0 };
 }
 
+// A branch whose upstream names a branch the remote does not have yet, as a clone of an empty remote has, counts nothing ahead but still has commits to push.
+async function unpublished(base) {
+  return !(await git(base, ["rev-parse", "--verify", "--quiet", "@{upstream}"])).ok && (await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"])).ok;
+}
+
 async function sync(base, options) {
   const top = await git(base, ["rev-parse", "--show-toplevel"]);
   if (top.missing) return writeStatus(base, { state: "not_a_repository", message: "Git is not available, so the record store is not synced." });
   if (!top.ok || path.resolve(top.text) !== path.resolve(base)) return writeStatus(base, { state: "not_a_repository", message: "The record store is not the top of a Git checkout, so it is not synced." });
   const author = await identity(base);
   await commitLocal(base, author);
-  const upstream = await upstreamOf(base);
+  let upstream = await upstreamOf(base);
+  if (!upstream && managed.has(base)) {
+    const published = await publishBranch(base, options);
+    if (published.status) return writeStatus(base, published.status);
+    upstream = published.upstream;
+  }
   if (!upstream) return writeStatus(base, { state: "no_upstream", message: "The store's branch has no upstream, so records are committed locally only." });
   const conflicts = [];
   let busy = false;
@@ -218,7 +246,7 @@ async function sync(base, options) {
     if (busy) continue;
     conflicts.push(...merged.conflicts);
     const { ahead } = await counts(base);
-    if (!ahead) return writeStatus(base, { state: conflicts.length ? "conflicts" : "ok", conflicts, message: conflicts.length ? "Concurrent record changes were resolved for the upstream; the local versions are saved." : "" });
+    if (!ahead && !(await unpublished(base))) return writeStatus(base, { state: conflicts.length ? "conflicts" : "ok", conflicts, message: conflicts.length ? "Concurrent record changes were resolved for the upstream; the local versions are saved." : "" });
     await options.beforePush?.();
     const pushed = await git(base, ["push", "--quiet", upstream.remote, `HEAD:${upstream.merge}`]);
     if (pushed.ok) return writeStatus(base, { state: conflicts.length ? "conflicts" : "ok", conflicts, message: conflicts.length ? "Concurrent record changes were resolved for the upstream; the local versions are saved." : "", ...await counts(base) });
@@ -229,6 +257,32 @@ async function sync(base, options) {
     return writeStatus(base, { state: "merge_failed", conflicts, message: "Record files changed or stayed locked while the upstream was merged, so the store kept its branch and the next sync merges again.", ...await counts(base) });
   }
   return writeStatus(base, { state: "push_rejected", conflicts, message: `The push was rejected ${PUSH_ATTEMPTS} times because others pushed first.`, ...await counts(base) });
+}
+
+/**
+ * Give a managed clone's branch its upstream on origin: adopt the branch another machine pushed first, or push this one with its upstream set.
+ * A clone of an empty remote has no upstream until then, so its first sync publishes it instead of reporting no_upstream.
+ * Returns { upstream } to continue the sync, or { status } to report.
+ */
+async function publishBranch(base, options) {
+  const branch = (await git(base, ["symbolic-ref", "--quiet", "--short", "HEAD"])).text;
+  if (!branch || !(await git(base, ["config", "--local", "--get", "remote.origin.url"])).ok) return { upstream: null };
+  const fetched = await git(base, ["fetch", "--quiet", "origin"]);
+  if (!fetched.ok) return { status: { state: "fetch_failed", message: fetched.stderr } };
+  lastFetch.set(base, Date.now());
+  const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  const theirs = await git(base, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`]);
+  if (theirs.ok) {
+    // An unborn branch has nothing local to keep, so it takes the pushed branch's files before it tracks it.
+    if (!head.ok && !(await apply(base, null, theirs.text, options))) return { status: { state: "merge_failed", message: "Record files changed or stayed locked while the upstream was applied, so the next sync applies it again." } };
+    await required(base, ["branch", "--quiet", `--set-upstream-to=origin/${branch}`, branch]);
+    return { upstream: await upstreamOf(base) };
+  }
+  if (!head.ok) return { status: { state: "ok", message: "The store and its remote are still empty, so there is nothing to sync yet." } };
+  await options.beforePush?.();
+  const pushed = await git(base, ["push", "--quiet", "-u", "origin", "HEAD"]);
+  if (!pushed.ok) return { status: { state: "push_rejected", message: pushed.stderr } };
+  return { upstream: await upstreamOf(base) };
 }
 
 const changedPaths = async (base, from, to) => (await required(base, ["diff", "--name-only", "--no-renames", "-z", from, to])).stdout.toString("utf8").split("\0").filter(Boolean);

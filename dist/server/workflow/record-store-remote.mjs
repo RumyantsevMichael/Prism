@@ -1,0 +1,102 @@
+import { randomBytes } from "node:crypto";
+import { lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
+import path from "node:path";
+import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
+import { gitTimeoutMs, markManagedStore, runGit } from "./record-store-sync.mjs";
+import { managedStoreId, managedStoresDirectory, normalizeRemote, remoteLabel, withoutCredentials } from "./remote-url.mjs";
+
+// A record store named by its remote lives in a clone Prism keeps under the host's plugin data directory, one per remote, shared by every checkout that names it.
+// Prism creates that clone because no checkout owns it, and never changes, replaces, or deletes a folder it finds there.
+const clones = new Map();
+// The review app serves projects of sessions whose hosts keep their data in different folders, so each project uses the folder its sessions report.
+const reportedDirectories = new Map();
+const LOCK_STALE_MS = 30000;
+
+/** Use this folder of managed clones for one project's remote store, as the session that registered the project reports it. */
+export function useManagedStores(projectRoot, directory) {
+  reportedDirectories.set(projectRoot, directory);
+}
+
+/** The folder of managed clones a project's remote store resolves in: the one its sessions reported, or this host's, or null. */
+export function managedStoresOf(projectRoot) {
+  return reportedDirectories.get(projectRoot) ?? managedStoresDirectory();
+}
+
+const exists = (target) => lstat(target).then(() => true, (error) => { if (error.code === "ENOENT") return false; throw error; });
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code !== "ESRCH"; } };
+
+// A folder already at the clone path is used only when it is the top of a Git checkout whose origin is the configured remote.
+async function adopt(target, configured, unavailable) {
+  if (!(await exists(target))) return null;
+  const label = remoteLabel(configured) ?? "the configured remote";
+  const refuse = (reason) => unavailable(`Its clone at ${target} ${reason} Prism never changes or deletes that folder; move it away, or name its remote under Workspace.`);
+  let base;
+  try { base = await realpath(target); } catch { throw refuse("cannot be resolved."); }
+  const top = await runGit(base, ["rev-parse", "--show-toplevel"]);
+  if (top.missing) throw unavailable("Git is not available, so the remote store cannot be used.");
+  if (!top.ok || await realpath(top.text).catch(() => null) !== base) throw refuse("is not a Git clone.");
+  const origin = await runGit(base, ["config", "--local", "--get", "remote.origin.url"]);
+  if (!origin.ok || normalizeRemote(origin.text) !== normalizeRemote(configured)) throw refuse(`has ${origin.ok ? `the origin ${remoteLabel(origin.text) ?? "of another remote"}` : "no origin"}, not ${label}.`);
+  return base;
+}
+
+// A clone that a killed process left half done keeps its temporary name, and only the clone lock's holder removes it.
+async function sweepAbandoned(directory, id) {
+  const pattern = new RegExp(`^\\.${id}\\.(\\d+)\\.[0-9a-f]+\\.tmp$`);
+  for (const name of await readdir(directory).catch(() => [])) {
+    const owner = pattern.exec(name);
+    if (owner && !alive(Number(owner[1]))) await rm(path.join(directory, name), { recursive: true, force: true });
+  }
+}
+
+// One process at a time clones a remote, into a temporary sibling that is renamed into place, so the clone path never holds a partial clone.
+async function cloneOnce(directory, id, target, configured, unavailable) {
+  const found = await adopt(target, configured, unavailable);
+  if (found) return found;
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const lockError = () => unavailable("Another process is still cloning it; try again when that clone finishes.");
+  return withArtifactLock(target, () => withFileLock(target, async () => {
+    const again = await adopt(target, configured, unavailable);
+    if (again) return again;
+    await sweepAbandoned(directory, id);
+    const temporary = path.join(directory, `.${id}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+    try {
+      const cloned = await runGit(directory, ["clone", "--quiet", "--", configured, temporary]);
+      if (cloned.missing) throw unavailable("Git is not available, so the remote store cannot be cloned.");
+      if (!cloned.ok) throw unavailable(`Git could not clone it: ${withoutCredentials(cloned.stderr) || `git clone exited with code ${cloned.code}.`}`);
+      await rename(temporary, target);
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+    return realpath(target);
+  }, lockError, { timeoutMs: gitTimeoutMs() + LOCK_STALE_MS, renew: true, staleMs: LOCK_STALE_MS }));
+}
+
+/**
+ * The folder of a remote store's managed clone, cloned on first use and reused by every later access in this process.
+ * makeUnavailable(message, remote) builds the store_unavailable error, so every refusal names the remote without its user information.
+ */
+export async function managedRecordStore(projectRoot, configured, makeUnavailable) {
+  const label = remoteLabel(configured);
+  const unavailable = (reason) => makeUnavailable(`The record store ${label ? `${label} ` : ""}named under Workspace in .prism/workflow.md is a Git remote. ${reason}`, label);
+  const directory = managedStoresOf(projectRoot);
+  if (!directory) throw unavailable("A remote store needs the host's plugin data directory (PLUGIN_DATA or CLAUDE_PLUGIN_DATA) for its clone, and this process has none.");
+  const id = managedStoreId(configured);
+  if (!id) throw unavailable("It is not a usable remote address.");
+  const target = path.join(directory, id);
+  const cached = clones.get(target);
+  // A clone that disappeared since it was cached is looked for again, so the access reports what is there now.
+  if (cached && (!cached.done || await exists(target))) return cached.pending;
+  const entry = { done: false };
+  entry.pending = cloneOnce(directory, id, target, configured, unavailable).then((base) => {
+    entry.done = true;
+    markManagedStore(base);
+    return base;
+  }, (error) => {
+    // A failed clone is not remembered, so the next access tries again.
+    if (clones.get(target) === entry) clones.delete(target);
+    throw error;
+  });
+  clones.set(target, entry);
+  return entry.pending;
+}
