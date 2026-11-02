@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 
 export const SESSION_TRACE_SCHEMA_VERSION = 1;
 export const SESSION_TRACE_EVENT_TYPES = Object.freeze([
@@ -13,7 +14,15 @@ export const SESSION_TRACE_EVENT_TYPES = Object.freeze([
   "test",
   "compaction",
   "coverage_gap",
-  "session_end"
+  "session_end",
+  "tool_start",
+  "tool_end",
+  "usage",
+  "subagent_start",
+  "subagent_stop",
+  "prism_call",
+  "run_start",
+  "run_end"
 ]);
 export const SESSION_TRACE_COVERAGE = Object.freeze(["exact", "partial", "unavailable"]);
 export const SESSION_TRACE_GAP_REASONS = Object.freeze([
@@ -25,7 +34,8 @@ export const SESSION_TRACE_GAP_REASONS = Object.freeze([
   "estimated-token-count",
   "malformed-host-event",
   "observation-disabled",
-  "observation-incomplete"
+  "observation-incomplete",
+  "usage-unavailable"
 ]);
 export const SESSION_TRACE_PROVENANCE = Object.freeze([
   "codex-hook",
@@ -44,6 +54,8 @@ export const SESSION_TRACE_HOST_EVENTS = Object.freeze([
   "PreCompact",
   "PostCompact",
   "SessionEnd",
+  "SubagentStart",
+  "SubagentStop",
   "Custom",
   "Unknown"
 ]);
@@ -62,9 +74,32 @@ const EVENT_KEYS = [
   "gapReason",
   "provenance"
 ];
+// prismCall is an optional event field, present exactly on prism_call events, so stored schema-version-1 traces stay valid.
+// A null prismCall records a call whose target could not be collected.
+const OPTIONAL_EVENT_KEYS = ["prismCall"];
+const PRISM_CALL_KEYS = ["initiative", "slice", "role", "namesSlice", "openWave", "designRun", "activeSlices", "facts"];
+// The canonical project root whose records the call read stays in the local trace and never enters a record or output.
+const OPTIONAL_PRISM_CALL_KEYS = ["projectRoot"];
+const MAX_PRISM_PROJECT_ROOT_BYTES = 4096;
+const PRISM_CALL_ROLES = new Set(["coordinator", "delivery", "reviewer"]);
+const PRISM_CALL_FACTS = new Set(["exact", "partial"]);
+const MAX_PRISM_SLUG_LENGTH = 120;
+const MAX_PRISM_ACTIVE_SLICES = 32;
+const PRISM_WAVE_ID_PATTERN = /^[A-Za-z0-9._-]{1,120}$/;
 const SOURCE_LOCATION_KEYS = ["path", "startLine", "endLine"];
-const COUNT_KEYS = ["renderedTokens", "resultCount", "byteCount", "durationMs", "exitCode"];
-const HASH_KEYS = ["model", "tool"];
+const COUNT_KEYS = [
+  "renderedTokens",
+  "resultCount",
+  "byteCount",
+  "durationMs",
+  "exitCode",
+  "inputTokens",
+  "cacheWriteTokens",
+  "cacheReadTokens",
+  "outputTokens",
+  "messageCount"
+];
+const HASH_KEYS = ["model", "tool", "execution", "call", "run"];
 const PROVENANCE_KEYS = ["collector", "hostEvent"];
 const EVENT_TYPE_SET = new Set(SESSION_TRACE_EVENT_TYPES);
 const COVERAGE_SET = new Set(SESSION_TRACE_COVERAGE);
@@ -245,8 +280,69 @@ function normalizeProvenance(value = {}) {
   return { collector: value.collector, hostEvent: value.hostEvent };
 }
 
+function assertPrismSlug(value, name) {
+  if (typeof value !== "string" || value.length > MAX_PRISM_SLUG_LENGTH || !SLUG_PATTERN.test(value)) {
+    throw new Error(`${name} must be a slug.`);
+  }
+}
+
+// A prism_call event stores only target identifiers, a role enum, numbers, and a bounded slug list.
+function assertPrismCall(value) {
+  assertExactKeys(value, [...PRISM_CALL_KEYS, ...OPTIONAL_PRISM_CALL_KEYS], PRISM_CALL_KEYS, "sessionTraceEvent.prismCall");
+  if (Object.hasOwn(value, "projectRoot") && (
+    typeof value.projectRoot !== "string"
+    || !path.isAbsolute(value.projectRoot)
+    || path.normalize(value.projectRoot) !== value.projectRoot
+    || Buffer.byteLength(value.projectRoot, "utf8") > MAX_PRISM_PROJECT_ROOT_BYTES
+  )) {
+    throw new Error("sessionTraceEvent.prismCall.projectRoot must be an absolute normalized path.");
+  }
+  assertPrismSlug(value.initiative, "sessionTraceEvent.prismCall.initiative");
+  assertPrismSlug(value.slice, "sessionTraceEvent.prismCall.slice");
+  if (value.role !== null && !PRISM_CALL_ROLES.has(value.role)) {
+    throw new Error("sessionTraceEvent.prismCall.role is invalid.");
+  }
+  if (typeof value.namesSlice !== "boolean") {
+    throw new Error("sessionTraceEvent.prismCall.namesSlice must be a boolean.");
+  }
+  if (value.openWave !== null && (typeof value.openWave !== "string" || !PRISM_WAVE_ID_PATTERN.test(value.openWave))) {
+    throw new Error("sessionTraceEvent.prismCall.openWave is invalid.");
+  }
+  if (value.designRun !== null && (!Number.isSafeInteger(value.designRun) || value.designRun < 1)) {
+    throw new Error("sessionTraceEvent.prismCall.designRun must be null or a positive integer.");
+  }
+  if (value.activeSlices !== null) {
+    if (!Array.isArray(value.activeSlices) || value.activeSlices.length > MAX_PRISM_ACTIVE_SLICES) {
+      throw new Error("sessionTraceEvent.prismCall.activeSlices must be null or at most 32 slugs.");
+    }
+    value.activeSlices.forEach((slug, index) => assertPrismSlug(slug, `sessionTraceEvent.prismCall.activeSlices[${index}]`));
+  }
+  if (!PRISM_CALL_FACTS.has(value.facts)) {
+    throw new Error("sessionTraceEvent.prismCall.facts is invalid.");
+  }
+}
+
+function normalizePrismCall(value) {
+  if (value === null) return null;
+  if (!isObject(value)) {
+    throw new TypeError("prismCall must be an object.");
+  }
+  assertExactKeys(value, [...PRISM_CALL_KEYS, ...OPTIONAL_PRISM_CALL_KEYS], PRISM_CALL_KEYS, "prismCall");
+  return {
+    ...(Object.hasOwn(value, "projectRoot") ? { projectRoot: value.projectRoot } : {}),
+    initiative: value.initiative,
+    slice: value.slice,
+    role: value.role,
+    namesSlice: value.namesSlice,
+    openWave: value.openWave,
+    designRun: value.designRun,
+    activeSlices: Array.isArray(value.activeSlices) ? [...value.activeSlices].sort() : value.activeSlices,
+    facts: value.facts
+  };
+}
+
 export function validateSessionTraceEvent(event) {
-  assertExactKeys(event, EVENT_KEYS, EVENT_KEYS, "sessionTraceEvent");
+  assertExactKeys(event, [...EVENT_KEYS, ...OPTIONAL_EVENT_KEYS], EVENT_KEYS, "sessionTraceEvent");
   if (event.schemaVersion !== SESSION_TRACE_SCHEMA_VERSION) {
     throw new Error(`Unsupported session trace schema version: ${event.schemaVersion}.`);
   }
@@ -307,6 +403,15 @@ export function validateSessionTraceEvent(event) {
     throw new Error("sessionTraceEvent.provenance.hostEvent is invalid.");
   }
 
+  if (event.eventType === "prism_call") {
+    if (!Object.hasOwn(event, "prismCall")) {
+      throw new Error("A prism_call event requires prismCall.");
+    }
+    if (event.prismCall !== null) assertPrismCall(event.prismCall);
+  } else if (Object.hasOwn(event, "prismCall")) {
+    throw new Error("Only prism_call events can contain prismCall.");
+  }
+
   if (event.eventType === "session_start") {
     if (event.coverage === null) {
       throw new Error("A session_start event requires coverage.");
@@ -338,7 +443,9 @@ export function createSessionTraceEvent({
   hashValues = {},
   coverage = null,
   gapReason = null,
-  provenance
+  provenance,
+  executionKey = null,
+  prismCall = null
 }) {
   const normalizedRoot = normalizedProjectRoot(projectRoot);
   const normalizedEventId = normalizedIdentifier(eventId, "eventId");
@@ -348,7 +455,9 @@ export function createSessionTraceEvent({
   const identity = createSessionTraceIdentity({ sessionId, projectRoot: normalizedRoot });
   const event = {
     schemaVersion: SESSION_TRACE_SCHEMA_VERSION,
-    sessionDigest: identity.sessionDigest,
+    sessionDigest: executionKey === null
+      ? identity.sessionDigest
+      : hashSessionTraceValue(executionKey, "executionKey"),
     projectDigest: identity.projectDigest,
     eventIdDigest: digest(`${eventType}\0${normalizedEventId}`),
     eventType,
@@ -358,7 +467,8 @@ export function createSessionTraceEvent({
     hashes: normalizeHashes(hashValues),
     coverage,
     gapReason,
-    provenance: normalizeProvenance(provenance)
+    provenance: normalizeProvenance(provenance),
+    ...(eventType === "prism_call" ? { prismCall: normalizePrismCall(prismCall) } : {})
   };
   validateSessionTraceEvent(event);
   return event;

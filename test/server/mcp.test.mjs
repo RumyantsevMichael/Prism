@@ -286,7 +286,10 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.deepEqual(tools.evaluate_repository_fit.inputSchema.required, ["session", "costs", "tokenEstimate"]);
   assert.equal(tools.resolve_session_capacity.annotations.readOnlyHint, true);
   assert.deepEqual(tools.resolve_session_capacity.inputSchema.required, ["session"]);
-  assert.equal(tools.summarize_session_consumption.annotations.readOnlyHint, true);
+  // Finished runs are sealed and recorded into project files, so the read is not read-only; repeating it changes nothing more.
+  assert.equal(tools.summarize_session_consumption.annotations.readOnlyHint, false);
+  assert.equal(tools.summarize_session_consumption.annotations.destructiveHint, false);
+  assert.equal(tools.summarize_session_consumption.annotations.idempotentHint, true);
   assert.deepEqual(tools.summarize_session_consumption.inputSchema.required, ["projectRoot", "correlationKey", "dataDirectory"]);
   assert.equal(tools.summarize_session_consumption.inputSchema.properties.correlationKey.pattern, "^[a-f0-9]{64}$");
   assert.equal(tools.summarize_session_consumption.inputSchema.properties.dataDirectory.type, "string");

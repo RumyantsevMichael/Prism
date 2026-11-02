@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
 import { readInitiative, sliceFolder } from "../workflow/initiative.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
@@ -205,6 +206,11 @@ export function loadInitiativeView(projectRoot, id) {
   return remember(`initiative:${id}:${projectRoot}`, () => computeInitiativeView(projectRoot, id));
 }
 
+// Only initiative and slice pages read run records; loadInitiativeView stays free of them for navigation polls.
+function loadInitiativeRunTotals(projectRoot, initiative) {
+  return remember(`run-totals:${initiative.id}:${projectRoot}`, () => readInitiativeRecordRunTotals(projectRoot, initiative.id, initiative));
+}
+
 async function computeInitiativeView(projectRoot, id) {
   if (!SLUG_PATTERN.test(id ?? "")) throw new Error("The initiative identifier is invalid.");
   const config = await readWorkflowConfig(projectRoot);
@@ -270,6 +276,10 @@ export async function loadSliceView(projectRoot, id, slug, { intelligenceDirecto
   const derived = initiative.derived;
   const verification = await latestVerification(projectRoot, id, slug).catch(() => null);
   const { document: changeMapDocument, ...changeMap } = await derivedChangeMapState(projectRoot, id, slug, slice.design, verification) ?? {};
+  const totals = await loadInitiativeRunTotals(projectRoot, initiative);
+  // A failed read has no slice entries, and its initiative total is every measure unavailable.
+  const runTotals = totals === null ? null
+    : totals.slices[slug] ?? { slice: totals.initiative, waves: [], designRuns: [], withDescendants: totals.initiative };
   return {
     id,
     initiativeTitle: initiative.roadmapItem?.title ?? initiative.record.slices[derived?.root]?.title ?? id,
@@ -285,7 +295,8 @@ export async function loadSliceView(projectRoot, id, slug, { intelligenceDirecto
     verification,
     changeMap: Object.keys(changeMap).length ? changeMap : null,
     designView: await loadDesignView(projectRoot, id, slug, { changeMap: changeMapDocument ?? null, units: await readPublishedUnits(projectRoot, ...(intelligenceDirectories ? [intelligenceDirectories] : [])).catch(() => null) }).catch(() => null),
-    titles: Object.fromEntries(Object.entries(initiative.record.slices).map(([key, value]) => [key, value.title]))
+    titles: Object.fromEntries(Object.entries(initiative.record.slices).map(([key, value]) => [key, value.title])),
+    runTotals
   };
 }
 
@@ -628,6 +639,9 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
-  if (parsed.kind === "initiative") return { ref, kind: "initiative", data: await loadInitiativeView(projectRoot, parsed.id) };
+  if (parsed.kind === "initiative") {
+    const view = await loadInitiativeView(projectRoot, parsed.id);
+    return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view) } };
+  }
   return { ref, kind: "slice", data: await loadSliceView(projectRoot, parsed.id, parsed.slug, options) };
 }

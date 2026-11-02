@@ -99,10 +99,17 @@ An unplanned or untouched file is not an error, but it is the first place to loo
 For a slice with an accepted design, Prism derives the change map itself after a passing verification run, by comparing the source when the design was accepted with the source the run tested.
 It lists the functions, sections, and files that were added, changed, or removed, and the slice page says when it is still being built.
 An agent-planned change map, from slices designed before verification runs, starts with a readiness line that jumps to the first blocked change.
+
 Each change has one card with its reason, its before and after references, its own problems, and its reuse evidence.
 A reference opens the file, at the heading when the reference names one.
 Group changes by action or by file, and blocked changes come first.
 The graph mode shows the same changes as before, change, and after nodes, and a node jumps to its card.
+
+Each review wave card, slice page, and initiative page shows run totals from the recorded runs: runs, wall time, elapsed and summed active time, token categories, and tool calls.
+Every measure carries a visible coverage mark, such as `exact`, `approximate`, `partial`, or `unavailable`.
+An unavailable measure shows `—`, never `0`, and a scope without recorded runs says "No run recorded yet."
+A split parent's slice page shows its own totals and its totals with descendants.
+Active time excludes idle gaps over the stated threshold, and new runs appear without reloading the page.
 
 JSON records such as the coordination state have a Structured and a Raw view.
 

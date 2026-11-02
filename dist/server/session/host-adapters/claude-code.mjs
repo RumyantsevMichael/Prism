@@ -2,6 +2,7 @@ import { constants as fileConstants } from "node:fs";
 import * as defaultFileSystem from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import {
   HOST_FACT_MAX_AGE_MS,
   HOST_FACT_REASON,
@@ -114,6 +115,114 @@ export async function inspectClaudeCodeTranscript({ transcriptPath, sessionId, f
     if (!model && entryModel && HOST_VALUE_PATTERN.test(entryModel)) model = entryModel;
   }
   return harnessVersion ? { harnessVersion, model } : null;
+}
+
+const MAX_USAGE_TRANSCRIPT_BYTES = 64 * 1024 * 1024;
+const USAGE_READ_CHUNK_BYTES = 256 * 1024;
+const USAGE_FIELDS = [
+  ["inputTokens", "input_tokens"],
+  ["cacheWriteTokens", "cache_creation_input_tokens"],
+  ["cacheReadTokens", "cache_read_input_tokens"],
+  ["outputTokens", "output_tokens"]
+];
+
+function messageUsage(entry, { sessionId, agentId }) {
+  if (!isObject(entry) || entry.type !== "assistant" || entry.sessionId !== sessionId) return null;
+  if (agentId === null ? entry.isSidechain === true : (entry.agentId !== undefined && entry.agentId !== agentId)) return null;
+  const id = nonemptyString(entry.message?.id);
+  const usage = entry.message?.usage;
+  if (!id || !isObject(usage)) return null;
+  const counts = {};
+  for (const [key, field] of USAGE_FIELDS) {
+    const value = usage[field] ?? 0;
+    if (!Number.isSafeInteger(value) || value < 0) return null;
+    counts[key] = value;
+  }
+  const time = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : Number.NaN;
+  return { id, counts, time: Number.isFinite(time) ? time : null };
+}
+
+/**
+ * Sums Claude Code per-message usage once per message id from one execution transcript.
+ * Reads only usage, timestamps, and message ids, in memory, and stops at 64 MiB or at the deadline.
+ * Returns absent, empty, unrecognized, unreadable, cut-short, or counted totals; never zero for an unknown format.
+ */
+export async function readClaudeCodeMessageUsage({
+  transcriptPath,
+  sessionId,
+  agentId = null,
+  deadline = Number.POSITIVE_INFINITY,
+  clock = () => performance.now(),
+  fileSystem = defaultFileSystem
+} = {}) {
+  const normalizedPath = nonemptyString(transcriptPath);
+  if (!normalizedPath || !path.isAbsolute(normalizedPath)) return { status: "unreadable" };
+  if (clock() >= deadline) return { status: "cut-short" };
+  let handle;
+  try {
+    handle = await fileSystem.open(normalizedPath, fileConstants.O_RDONLY | (fileConstants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    return { status: error?.code === "ENOENT" ? "absent" : "unreadable" };
+  }
+  const messages = new Map();
+  let sawContent = false;
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) return { status: "unreadable" };
+    const buffer = Buffer.alloc(USAGE_READ_CHUNK_BYTES);
+    let position = 0;
+    let pending = "";
+    const decoder = new StringDecoder("utf8");
+    const consume = (line) => {
+      if (!line.trim()) return true;
+      sawContent = true;
+      if (clock() >= deadline) return false;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        return true;
+      }
+      const usage = messageUsage(entry, { sessionId, agentId });
+      if (usage) messages.set(usage.id, usage);
+      return true;
+    };
+    if (metadata.size > MAX_USAGE_TRANSCRIPT_BYTES) return { status: "cut-short" };
+    while (position < metadata.size) {
+      if (clock() >= deadline) return { status: "cut-short" };
+      const length = Math.min(USAGE_READ_CHUNK_BYTES, metadata.size - position);
+      const { bytesRead } = await handle.read(buffer, 0, length, position);
+      if (bytesRead === 0) break;
+      position += bytesRead;
+      const lines = (pending + decoder.write(buffer.subarray(0, bytesRead))).split("\n");
+      pending = lines.pop();
+      for (const line of lines) {
+        if (!consume(line)) return { status: "cut-short" };
+      }
+    }
+    if (!consume(pending + decoder.end())) return { status: "cut-short" };
+  } catch {
+    return { status: "unreadable" };
+  } finally {
+    await handle.close().catch(() => {});
+  }
+  if (messages.size === 0) return { status: sawContent ? "unrecognized" : "empty" };
+  const totals = { inputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 0 };
+  let latest = null;
+  for (const message of messages.values()) {
+    for (const key of Object.keys(totals)) totals[key] += message.counts[key];
+    if (message.time !== null && (latest === null || message.time >= latest.time)) latest = message;
+  }
+  for (const value of Object.values(totals)) {
+    if (!Number.isSafeInteger(value)) return { status: "unrecognized" };
+  }
+  return {
+    status: "counted",
+    totals,
+    messageCount: messages.size,
+    latestAt: latest === null ? null : new Date(latest.time).toISOString(),
+    latestMessageId: latest?.id ?? [...messages.keys()].at(-1)
+  };
 }
 
 function settingsWindows(settings) {

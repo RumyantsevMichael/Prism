@@ -1,5 +1,6 @@
 import { chipState, currentIndexStatus } from "./indexing.js";
 import { artifactChip, bindLinks, card, cardSource, emptyNote, escapeHtml, formatTime, keyValues, plural, requirementLinks } from "./util.js";
+import { sliceRunTotalsHtml } from "./run-totals.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
@@ -294,6 +295,7 @@ export async function render(container, entity, ctx) {
     ${diagramsCard(diagrams, artifacts.folder, ctx)}
     ${artifacts.narrative ? `<section class="view-card design-document"><header class="view-card-header"><div class="view-card-title"><h2>Design</h2>${cardSource(artifacts.narrative.split("/").pop())}</div></header>${designNotices(view)}${servedClauses(view, ctx)}<div class="document-content" data-narrative><p class="rendering">Loading the design</p></div></section>` : ""}
     ${unplannedCard(view, ctx)}
+    ${sliceRunTotalsHtml(data.runTotals, data.children.length > 0)}
     <div class="artifact-cards">
       ${verificationCard(slice.design, data.verification, slice.design ? changeMapLine(artifacts.changeMap, data.changeMap, ctx) : "")}
       ${reviewCard(artifacts.review, ctx)}

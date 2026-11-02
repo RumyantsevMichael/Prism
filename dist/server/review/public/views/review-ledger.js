@@ -1,5 +1,6 @@
 import { jsonTreeHtml } from "./json-tree.js";
 import { artifactChip, bindLinks, card, emptyNote, escapeHtml, evidenceChip, formatReference, formatTime, keyValues, plural, shortId } from "./util.js";
+import { runTotalsHtml, waveRunTotals } from "./run-totals.js";
 
 const STATUSES = ["OPEN", "IN PROGRESS", "REOPENED", "FIXED", "VERIFIED"];
 const SEVERITIES = ["blocker", "high", "medium", "low"];
@@ -51,6 +52,7 @@ function waveCard(wave, index, findings, current, startedAt) {
       ${startedAt ? `<p class="wave-started">Started ${escapeHtml(formatTime(startedAt))}</p>` : ""}
       <p class="wave-accepted">${wave.accepted ? `Accepted by <strong>${escapeHtml(wave.accepted.actor)}</strong> · ${escapeHtml(formatTime(wave.accepted.at))}` : "Not accepted"}</p>
       <ul class="lane-list">${lanes}</ul>
+      ${runTotalsHtml(wave.runTotals, "wave")}
       <div class="wave-evidence">
         ${wave.comparisonId ? `${evidenceChip(wave.snapshotId, "Snapshot")}
         ${evidenceChip(wave.comparisonId, "Comparison")}
@@ -114,7 +116,7 @@ export function render(container, data, ctx) {
   const record = data.data;
   const state = ctx.state;
   const findings = record.findings ?? [];
-  const waves = record.waves ?? [];
+  const waves = (record.waves ?? []).map((wave) => ({ ...wave, runTotals: waveRunTotals(data.runTotals, wave.id) }));
   const currentWave = waves.at(-1);
   state.lane ??= "";
   state.severity ??= "";

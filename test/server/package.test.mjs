@@ -60,10 +60,9 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
   }
   const answerHook = hookManifest.hooks.UserPromptSubmit.flatMap((group) => group.hooks).find((hook) => hook.command === "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/deliver-gate-answers.mjs\"");
   assert.deepEqual([answerHook.timeout, answerHook.additionalContextLimit], [5, 4000]);
-  for (const event of ["SessionStart", "PreToolUse", "PostToolUse", "PreCompact", "SessionEnd"]) {
+  for (const event of ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PreCompact", "SubagentStart", "SubagentStop", "SessionEnd"]) {
     assert.ok(commands(event).includes(traceCommand));
   }
-  assert.equal(Object.hasOwn(hookManifest.hooks, "PostToolUseFailure"), false);
   assert.equal(Object.hasOwn(hookManifest.hooks, "PostModelSwitch"), false);
   assert.equal(Object.hasOwn(hookManifest.hooks, "PostCompact"), false);
   assert.deepEqual(traceBehaviorRegistry.profiles.map((profile) => profile.match.harnessVersion), [

@@ -9,6 +9,7 @@ import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { RECORD_DIRECTORY, keyOfPath, recordPath, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
+import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
@@ -242,6 +243,10 @@ async function loadJsonArtifact(projectRoot, artifactPath, content) {
     } catch (error) {
       result.summaryError = error.message;
     }
+  }
+  if (kind === "review-ledger") {
+    const key = await keyOfPath(projectRoot, artifactPath).catch(() => null);
+    result.runTotals = key?.kind === "review" ? await readReviewRunTotals(projectRoot, key) : null;
   }
   return result;
 }

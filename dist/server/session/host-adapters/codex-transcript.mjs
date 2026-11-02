@@ -134,8 +134,22 @@ async function readTranscriptTail(transcriptPath, fileSystem, expectedIdentity) 
   }
 }
 
+function tokenUsage(value) {
+  if (!value || typeof value !== "object") return null;
+  const usage = {
+    inputTokens: value.input_tokens,
+    cachedInputTokens: value.cached_input_tokens ?? 0,
+    outputTokens: value.output_tokens
+  };
+  return Object.values(usage).every((count) => Number.isSafeInteger(count) && count >= 0)
+    && usage.cachedInputTokens <= usage.inputTokens
+    ? usage
+    : null;
+}
+
 function latestTokenCount(text) {
   let latest = null;
+  let totalTokenUsage = null;
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     let record;
@@ -148,16 +162,21 @@ function latestTokenCount(text) {
       continue;
     }
     latest = record.payload?.info?.model_context_window;
+    totalTokenUsage = tokenUsage(record.payload?.info?.total_token_usage);
   }
-  if (latest === null) return null;
-  return Number.isSafeInteger(latest) && latest > 0 ? latest : undefined;
+  if (latest === null) return { contextWindowTokens: null, totalTokenUsage: null };
+  return {
+    contextWindowTokens: Number.isSafeInteger(latest) && latest > 0 ? latest : undefined,
+    totalTokenUsage
+  };
 }
 
 export async function inspectCodexTranscriptMetadata({
   transcriptPath,
   sessionId,
   projectRoot,
-  fileSystem = defaultFileSystem
+  fileSystem = defaultFileSystem,
+  includeUsage = false
 } = {}) {
   const normalizedPath = nonemptyString(transcriptPath);
   if (!normalizedPath || !path.isAbsolute(normalizedPath)) {
@@ -205,6 +224,9 @@ export async function inspectCodexTranscriptMetadata({
     };
   }
   const execution = executionKind(payload);
+  // With includeUsage, run statistics also receive this rollout's thread id and its latest cumulative token usage.
+  const threadId = nonemptyString(payload.id);
+  const usageFields = (totalTokenUsage = null) => includeUsage ? { threadId, totalTokenUsage } : {};
   if (execution === null) {
     return {
       ...unsupported(CODEX_TRANSCRIPT_REASON.INVALID_TRANSCRIPT),
@@ -214,29 +236,33 @@ export async function inspectCodexTranscriptMetadata({
     };
   }
   let contextWindowTokens = null;
+  let totalTokenUsage = null;
   try {
     const tokenCount = latestTokenCount(await readTranscriptTail(
       normalizedPath,
       fileSystem,
       transcriptIdentity
     ));
-    if (tokenCount === undefined) {
+    if (tokenCount.contextWindowTokens === undefined) {
       return {
         ...unsupported(CODEX_TRANSCRIPT_REASON.TOKEN_COUNT_UNAVAILABLE),
         projectRoot: transcriptProject,
         harnessVersion,
         provider,
-        execution
+        execution,
+        ...usageFields(tokenCount.totalTokenUsage)
       };
     }
-    contextWindowTokens = tokenCount;
+    contextWindowTokens = tokenCount.contextWindowTokens;
+    totalTokenUsage = tokenCount.totalTokenUsage;
   } catch {
     return {
       ...unsupported(CODEX_TRANSCRIPT_REASON.TOKEN_COUNT_UNAVAILABLE),
       projectRoot: transcriptProject,
       harnessVersion,
       provider,
-      execution
+      execution,
+      ...usageFields()
     };
   }
   return {
@@ -245,6 +271,7 @@ export async function inspectCodexTranscriptMetadata({
     harnessVersion,
     provider,
     projectRoot: transcriptProject,
+    ...usageFields(totalTokenUsage),
     ...(contextWindowTokens === null
       ? {}
       : {
