@@ -14,7 +14,7 @@ store.directory=path.join(home,'evidence');
 test.after(()=>rm(home,{recursive:true,force:true}));
 const degraded={prepare:async()=>({status:'degraded',diagnostics:[{code:'unsupported_runtime',message:'Test without inference'}]})};
 const ref=(file,value)=>({path:file,...(value?{selector:{type:'text',value}}:{})});
-const deltaPath='docs/plans/task/change-map.json';
+const key={initiative:'task',slice:'task'};
 const lockOwner=`function readLockOwner(lockPath) {
   const text = readFileSync(lockPath, "utf8");
   const owner = JSON.parse(text);
@@ -44,9 +44,9 @@ test('an upstream copy of a function in a changed in-scope file keeps the in-sco
  const root=await mkdtemp(path.join(home,'project-'));
  const put=async(file,body)=>{await mkdir(path.dirname(path.join(root,file)),{recursive:true});await writeFile(path.join(root,file),body);};
  for(const [file,body] of Object.entries({'rules.md':'old\n','requirements.md':'Requirement\n','src/trace.mjs':lockOwner})) await put(file,body);
- const b=await store.capture(root,deltaPath);await functionAnalysis(root,b);
+ const b=await store.capture(root,key);await functionAnalysis(root,b);
  const scope=['rules.md','src/trace.mjs'];
- const delta=await updateChangeMap({projectRoot:root,deltaPath,expectedRevision:null,scope,baselineId:b.snapshotId,requirements:[ref('requirements.md')],
+ const delta=await updateChangeMap({projectRoot:root,...key,expectedRevision:null,scope,baselineId:b.snapshotId,requirements:[ref('requirements.md')],
   operations:[{op:'insert',entry:{id:'r',kind:'rule',label:'r',action:'REPLACE',before:[ref('rules.md','old')],after:[ref('rules.md','new')],reason:'Satisfy the bound requirement.'}}]});
  // A merge from main adds a copy of readLockOwner outside the scope.
  await put('src/data.mjs',lockOwner);
@@ -54,7 +54,7 @@ test('an upstream copy of a function in a changed in-scope file keeps the in-sco
  // The task edits only in-scope files.
  await put('rules.md','new\n');await appendFile(path.join(root,'src/trace.mjs'),'// note\n');
  const f=await store.capture(root);await functionAnalysis(root,f);
- const run=async startSnapshotId=>store.get(root,(await compareChangeMap({projectRoot:root,deltaPath,expectedRevision:delta.revision,baselineId:b.snapshotId,resultSnapshotId:f.snapshotId,...(startSnapshotId?{startSnapshotId}:{})},{runtime:degraded})).comparisonId,'comparison');
+ const run=async startSnapshotId=>store.get(root,(await compareChangeMap({projectRoot:root,...key,expectedRevision:delta.revision,baselineId:b.snapshotId,resultSnapshotId:f.snapshotId,...(startSnapshotId?{startSnapshotId}:{})},{runtime:degraded})).comparisonId,'comparison');
  const without=await run(),withT=await run(t.snapshotId);
  const inScope=comparison=>comparison.observations.filter(item=>item.file&&scope.includes(item.file)).map(item=>`${item.code}:${item.file}:${item.severity}`).sort();
  assert.deepEqual(inScope(withT),inScope(without));

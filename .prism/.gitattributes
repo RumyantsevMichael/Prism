@@ -1,0 +1,3 @@
+# Prism writes these records through its MCP tools; hosts collapse them in pull request diffs.
+/roadmap.json linguist-generated=true gitlab-generated
+/initiatives/** linguist-generated=true gitlab-generated

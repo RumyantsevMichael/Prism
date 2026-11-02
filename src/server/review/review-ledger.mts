@@ -1,9 +1,12 @@
 import path from "node:path";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { assertInput } from "../workflow/artifact-schema.mjs";
-import { resolveArtifactPath, readChangeMapDocument, sameChangeMap } from "../conservation/change-map.mjs";
+import { resolveArtifactPath, readChangeMapDocument } from "../conservation/change-map.mjs";
+import { locateRecord, moveLegacyRecords, sameRecord, sliceDocumentFolder, writeRecord } from "../workflow/record-store.mjs";
 import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { acceptedDesign, latestVerification } from "../workflow/slice-design.mjs";
+import { readCoordinationState } from "../workflow/state.mjs";
 import { conservationStore, canonical, digest, conservationError, withinScope } from "../conservation/conservation-store.mjs";
 import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "../conservation/conservation-analysis.mjs";
 import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "../conservation/conservation-schema.mjs";
@@ -12,14 +15,17 @@ import type { ComparisonEvidence, DeltaDocument, Evidence, GrowthJustification, 
 type Mode = "design-audit" | "implementation-review";
 type Status = "OPEN" | "IN PROGRESS" | "FIXED" | "VERIFIED" | "REOPENED";
 interface Actor { id: string; role: "coordinator" | "delivery" | "reviewer" }
-interface Finding { id: string; localId: string; lane: string; mode: Mode; title: string; severity: string; affectedPath: string; evidence: string; conditionToClose: string; aliases: string[]; escalationTarget: string; probe?: string; status: Status; implementerEvidence: string; history: { actor: string; status: Status; wave: string; at: string; evidence: string }[] }
+interface Finding { id: string; localId: string; lane: string; mode: Mode; title: string; severity: string; affectedPath: string; evidence: string; conditionToClose: string; aliases: string[]; escalationTarget: string; probe?: string; clause?: string; status: Status; implementerEvidence: string; history: { actor: string; status: Status; wave: string; at: string; evidence: string }[] }
 interface Lane { id: string; reviewer: string; coverage: string[]; result?: { status: "CLEAN" | "FINDINGS"; digest: string; reviewer: string } }
-interface Wave { id: string; mode: Mode; deltaRevision: string; baselineId: string; snapshotId: string; comparisonId: string; lanes: Lane[]; accepted?: { evidenceDigest: string; actor: string; at: string } }
+// A wave of a slice with an accepted design reviews the verified tree and its diff from a base, without change map evidence.
+interface Wave { id: string; mode: Mode; deltaRevision: string; baselineId: string; snapshotId: string; comparisonId: string; tree?: string; base?: string; startedAt?: string; afterGate?: string; lanes: Lane[]; accepted?: { evidenceDigest: string; actor: string; at: string } }
+const verifiedTreeWave = (wave: Wave) => Boolean(wave.tree) && !wave.comparisonId;
 interface Assessment { id: string; wave: string; lane: string; kind: "manual" | "implementation-detail" | "growth" | "convergence"; reason: string; evidence: Reference[]; author: string; acceptedBy?: string; observationIds?: string[]; conceptId?: string; growthIds?: string[]; justification?: GrowthJustification; section?: Reference; decision?: string; conceptIds?: string[]; coverage?: { requirement: Reference; targets: Reference[] }[] }
 interface Conflict { id: string; wave: string; lanes: string[]; reason: string; resolved?: { actor: string; reason: string } }
 export interface ReviewRecord { schemaVersion: 1; deltaPath: string; coordinator: string; delivery: string; deliveryWorkers: string[]; baselineId?: string; waves: Wave[]; findings: Finding[]; assessments: Assessment[]; conflicts: Conflict[]; exchangeWorkers: string[]; legacy: { path: string; hash: string; content: string }[]; history: { actor: string; operation: string; at: string }[] }
 const revisionField = { oneOf: [hashField, { type: "null" }] };
-const common = { projectRoot: str, reviewPath: str, expectedRevision: revisionField };
+const sliceIdentity = { projectRoot: str, initiative: str, slice: str };
+const common = { ...sliceIdentity, expectedRevision: revisionField };
 const laneSchema = obj({ id: str, reviewer: str, coverage: arr(str) });
 const assessmentCommon = { id: str, lane: str, reason: str, evidence: arr(referenceSchema) };
 const assessmentSchema = { oneOf: [
@@ -28,11 +34,11 @@ const assessmentSchema = { oneOf: [
   obj({ ...assessmentCommon, kind: { const: "growth" }, growthIds: arr(str), justification: justificationSchema }),
   obj({ ...assessmentCommon, kind: { const: "convergence" }, section: referenceSchema, decision: { enum: ["retain", "replace", "consolidate", "delete"] }, conceptIds: arr(str), coverage: arr(obj({ requirement: referenceSchema, targets: arr(referenceSchema) })) })
 ] };
-export const GET_REVIEW_SCHEMA = obj({ ...common, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, section: { enum: ["findings", "waves", "assessments", "conflicts", "legacy", "history"] } }, ["projectRoot", "reviewPath"]);
-export const UPDATE_REVIEW_SCHEMA = obj({ ...common, deltaPath: str, delivery: str, actor: obj({ id: str, role: { enum: ["coordinator", "delivery", "reviewer"] } }), operations: arr({ oneOf: [
-  obj({ op: { const: "start_wave" }, id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, snapshotId: hashField, comparisonId: hashField, lanes: arr(laneSchema) }),
+export const GET_REVIEW_SCHEMA = obj({ ...common, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, section: { enum: ["findings", "waves", "assessments", "conflicts", "legacy", "history"] }, wave: str }, ["projectRoot", "initiative", "slice"]);
+export const UPDATE_REVIEW_SCHEMA = obj({ ...common, delivery: str, actor: obj({ id: str, role: { enum: ["coordinator", "delivery", "reviewer"] } }), operations: arr({ oneOf: [
+  obj({ op: { const: "start_wave" }, id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, snapshotId: hashField, comparisonId: hashField, base: str, lanes: arr(laneSchema), afterGate: str }, ["op", "id", "mode", "lanes"]),
   obj({ op: { const: "assign_delivery" }, worker: str }),
-  obj({ op: { const: "open_finding" }, lane: str, localId: str, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str }, ["op", "lane", "localId", "title", "severity", "affectedPath", "evidence", "conditionToClose"]),
+  obj({ op: { const: "open_finding" }, lane: str, localId: str, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, clause: str }, ["op", "lane", "localId", "title", "severity", "affectedPath", "evidence", "conditionToClose"]),
   obj({ op: { const: "set_finding_status" }, id: str, status: { enum: ["IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, evidence: str }),
   obj({ op: { const: "record_assessment" }, assessment: assessmentSchema }),
   obj({ op: { const: "accept_assessment" }, id: str }),
@@ -45,12 +51,36 @@ export const UPDATE_REVIEW_SCHEMA = obj({ ...common, deltaPath: str, delivery: s
   obj({ op: { const: "accept_wave" } }),
   obj({ op: { const: "import_legacy" }, path: str }),
   obj({ op: { const: "regenerate_markdown" } })
-] }) }, ["projectRoot", "reviewPath", "expectedRevision", "actor", "operations"]);
-export const CHECK_REVIEW_GATE_SCHEMA = obj({ projectRoot: str, reviewPath: str, expectedRevision: hashField, gate: { enum: ["implementation", "completion"] } }, ["projectRoot", "reviewPath", "gate"]);
+] }) }, ["projectRoot", "initiative", "slice", "expectedRevision", "actor", "operations"]);
+export const CHECK_REVIEW_GATE_SCHEMA = obj({ ...sliceIdentity, expectedRevision: hashField, gate: { enum: ["implementation", "completion"] } }, ["projectRoot", "initiative", "slice", "gate"]);
 
 interface Operation { op: string; [key: string]: unknown }
-interface UpdateInput { projectRoot: string; reviewPath: string; expectedRevision: string | null; actor: Actor; deltaPath?: string; delivery?: string; operations: Operation[] }
+interface SliceInput { projectRoot: string; initiative: string; slice: string }
+interface UpdateInput extends SliceInput { expectedRevision: string | null; actor: Actor; delivery?: string; operations: Operation[] }
 const lastWave = (review: ReviewRecord) => review.waves.at(-1);
+
+// Implementation review waves that run without the user's say before the review loop stops for a decision.
+const FREE_REVIEW_WAVES = 2;
+interface GateRecord { id: string; kind: string; slice?: string; askedAt?: string; answer?: unknown; closedAt?: string }
+
+// A finding that a contract clause itself causes is fixed in design, not in another implementation round, and a review that keeps
+// finding problems stops for the user's decision, because both point at a contract or a slice that fixing forward will not repair.
+async function assertReviewMayContinue(input: SliceInput, review: ReviewRecord, next: { afterGate?: string }, acceptedAt: string) {
+  const fromContract = review.findings.filter(item => item.mode === "implementation-review" && item.clause && item.status !== "VERIFIED" && (item.history[0]?.at ?? "") >= acceptedAt);
+  if (fromContract.length) {
+    const clauses = [...new Set(fromContract.map(item => item.clause))].join(", ");
+    throw conservationError("gate_blocked", `Findings ${fromContract.map(item => item.id).join(", ")} name contract clauses (${clauses}), so the contract needs revision: call verify_slice with contractDefects for those clauses and return the slice to design instead of starting another wave.`, { problems: fromContract.map(item => ({ code: "contract_defect_found", finding: item.id, clause: item.clause })) });
+  }
+  const waves = review.waves.filter(item => item.mode === "implementation-review" && (item.startedAt ?? acceptedAt) >= acceptedAt);
+  if (waves.length < FREE_REVIEW_WAVES) return;
+  if (!next.afterGate) throw conservationError("gate_blocked", `The slice had ${waves.length} review waves since its design was accepted. Ask the user a decision gate for this slice whether to continue the review, return the slice to design, or narrow it, and pass the answered gate's id as afterGate.`, { problems: [{ code: "review_loop_limit", waves: waves.length }] });
+  if (review.waves.some(item => item.afterGate === next.afterGate)) throw conservationError("gate_blocked", "Each further review wave needs its own answered decision gate.");
+  const state = (await readCoordinationState({ projectRoot: input.projectRoot, initiative: input.initiative })).state as { pending?: GateRecord[]; closed?: GateRecord[] } | null;
+  const gate = [...(state?.pending ?? []), ...(state?.closed ?? [])].find(item => item.id === next.afterGate);
+  const asked = gate?.askedAt ?? "", lastStart = waves.at(-1)?.startedAt ?? acceptedAt;
+  if (!gate || gate.kind !== "decision" || gate.slice !== input.slice || !(gate.answer || gate.closedAt) || asked < lastStart) throw conservationError("gate_blocked", `afterGate must name a decision gate for slice ${input.slice} that was asked after the last review wave started and that the user answered.`);
+}
+const raisedIn = (finding: Finding) => finding.history[0]?.wave;
 const laneOf = (wave: Wave, lane: string) => { const value = wave.lanes.find(item => item.id === lane); if (!value) throw conservationError("validation_failed", "The review lane is not assigned."); return value; };
 const requireRole = (review: ReviewRecord, actor: Actor, role: Actor["role"]) => {
   if (actor.role !== role || (role === "coordinator" && actor.id !== review.coordinator) || (role === "delivery" && actor.id !== review.delivery)) throw conservationError("gate_blocked", "This worker does not own the requested review change.");
@@ -60,7 +90,7 @@ function reviewer(review: ReviewRecord, wave: Wave, actor: Actor, lane: string, 
   if (laneOf(wave, lane).reviewer !== actor.id || actor.id === review.coordinator || review.deliveryWorkers.includes(actor.id) || (fresh && review.exchangeWorkers.includes(actor.id))) throw conservationError("gate_blocked", "A fresh assigned reviewer must make this decision.");
 }
 function laneDigest(review: ReviewRecord, wave: Wave, lane: Lane) {
-  return digest(canonical({ inputs: [wave.deltaRevision, wave.baselineId, wave.snapshotId, wave.comparisonId], lane: { id: lane.id, reviewer: lane.reviewer, coverage: lane.coverage },
+  return digest(canonical({ inputs: verifiedTreeWave(wave) ? [wave.tree, wave.base ?? null] : [wave.deltaRevision, wave.baselineId, wave.snapshotId, wave.comparisonId], lane: { id: lane.id, reviewer: lane.reviewer, coverage: lane.coverage },
     independent: lane.reviewer !== review.coordinator && !review.deliveryWorkers.includes(lane.reviewer) && !review.exchangeWorkers.includes(lane.reviewer),
     findings: review.findings.filter(item => item.mode === wave.mode && item.lane === lane.id),
     assessments: review.assessments.filter(item => item.wave === wave.id && item.lane === lane.id),
@@ -68,23 +98,25 @@ function laneDigest(review: ReviewRecord, wave: Wave, lane: Lane) {
 }
 function waveDigest(review: ReviewRecord, wave: Wave) { return digest(canonical(wave.lanes.map(lane => ({ lane: lane.id, digest: laneDigest(review, wave, lane), result: lane.result })))); }
 // Implementation review needs the latest design audit accepted for the same delta revision and baseline, with unchanged accepted inputs.
-function designAudited(review: ReviewRecord, wave: Pick<Wave, "deltaRevision" | "baselineId">) {
+// A slice whose design was accepted on its initiative record has no design-audit wave, so its accepted design stands in for one.
+function designAudited(review: ReviewRecord, wave: Pick<Wave, "deltaRevision" | "baselineId">, designAccepted = false) {
+  if (designAccepted) return true;
   const audit = [...review.waves].reverse().find(item => item.mode === "design-audit");
   return Boolean(audit?.accepted && audit.deltaRevision === wave.deltaRevision && audit.baselineId === wave.baselineId && audit.accepted.evidenceDigest === waveDigest(review, audit));
 }
 const recordSchema = obj({
   schemaVersion: { const: 1 }, deltaPath: str, coordinator: str, delivery: str, deliveryWorkers: arr(str, 10000), baselineId: hashField,
-  waves: arr(obj({ id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, baselineId: hashField, snapshotId: hashField, comparisonId: hashField,
+  waves: arr(obj({ id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, baselineId: hashField, snapshotId: hashField, comparisonId: hashField, tree: str, base: str, startedAt: str, afterGate: str,
     lanes: arr(obj({ ...laneSchema.properties, result: obj({ status: { enum: ["CLEAN", "FINDINGS"] }, digest: hashField, reviewer: str }) }, ["id", "reviewer", "coverage"])),
-    accepted: obj({ evidenceDigest: hashField, actor: str, at: str }) }, ["id", "mode", "deltaRevision", "baselineId", "snapshotId", "comparisonId", "lanes"]), 1000),
-  findings: arr(obj({ id: str, localId: str, lane: str, mode: { enum: ["design-audit", "implementation-review"] }, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, implementerEvidence: { type: "string" }, history: arr(obj({ actor: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, wave: str, at: str, evidence: str }), 10000) }, ["id", "localId", "lane", "mode", "title", "severity", "affectedPath", "evidence", "conditionToClose", "aliases", "escalationTarget", "status", "implementerEvidence", "history"]), 10000),
+    accepted: obj({ evidenceDigest: hashField, actor: str, at: str }) }, ["id", "mode", "lanes"]), 1000),
+  findings: arr(obj({ id: str, localId: str, lane: str, mode: { enum: ["design-audit", "implementation-review"] }, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, clause: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, implementerEvidence: { type: "string" }, history: arr(obj({ actor: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, wave: str, at: str, evidence: str }), 10000) }, ["id", "localId", "lane", "mode", "title", "severity", "affectedPath", "evidence", "conditionToClose", "aliases", "escalationTarget", "status", "implementerEvidence", "history"]), 10000),
   assessments: arr({ oneOf: assessmentSchema.oneOf.map(schema => obj({ ...schema.properties, wave: str, author: str, acceptedBy: str }, [...schema.required, "wave", "author"])) }, 10000),
   conflicts: arr(obj({ id: str, wave: str, lanes: arr(str), reason: str, resolved: obj({ actor: str, reason: str }) }, ["id", "wave", "lanes", "reason"]), 10000),
   exchangeWorkers: arr(str, 10000), legacy: arr(obj({ path: str, hash: hashField, content: { type: "string", maxLength: 1024 * 1024 } })),
   history: arr(obj({ actor: str, operation: str, at: str }), 10000)
 }, ["schemaVersion", "deltaPath", "coordinator", "delivery", "deliveryWorkers", "waves", "findings", "assessments", "conflicts", "exchangeWorkers", "legacy", "history"]);
-export async function loadReview(projectRoot: string, reviewPath: string) {
-  const resolved = await resolveArtifactPath(projectRoot, reviewPath, false, "review.json");
+export async function loadReview(projectRoot: string, initiative: string, slice: string) {
+  const resolved = await locateRecord(projectRoot, { kind: "review", initiative, slice });
   try {
     const bytes = await regularBytes(resolved.target, 4 * 1024 * 1024), document = JSON.parse(bytes.toString()) as ReviewRecord;
     assertInput(recordSchema, document);
@@ -94,8 +126,10 @@ export async function loadReview(projectRoot: string, reviewPath: string) {
 async function comparisonFor(projectRoot: string, review: ReviewRecord, wave: Wave) {
   const comparison = await conservationStore.get<ComparisonEvidence>(projectRoot, wave.comparisonId, "comparison");
   if (comparison.versions.comparison !== COMPARISON_VERSION) throw conservationError("evidence_missing", "Regenerate comparison evidence with the current identity and growth checks.");
-  const mismatched = ([["deltaPath", comparison.deltaPath, review.deltaPath], ["deltaRevision", comparison.deltaRevision, wave.deltaRevision], ["baselineId", comparison.baselineId, wave.baselineId], ["snapshotId", comparison.resultSnapshotId, wave.snapshotId]] as const)
-    .filter(([field, compared, given]) => field === "deltaPath" ? !sameChangeMap(compared, given) : compared !== given).map(([field, compared, given]) => ({ code: "comparison_input_mismatch", field, message: `the comparison has ${compared}, and the review has ${given}` }));
+  const fields = [["deltaPath", comparison.deltaPath, review.deltaPath], ["deltaRevision", comparison.deltaRevision, wave.deltaRevision], ["baselineId", comparison.baselineId, wave.baselineId], ["snapshotId", comparison.resultSnapshotId, wave.snapshotId]] as const;
+  const mismatched = [];
+  // Stored change map paths can predate the move to .prism, so they compare by the record they name.
+  for (const [field, compared, given] of fields) if (field === "deltaPath" ? !(await sameRecord(projectRoot, compared, given)) : compared !== given) mismatched.push({ code: "comparison_input_mismatch", field, message: `the comparison has ${compared}, and the review has ${given}` });
   if (mismatched.length) throw conservationError("evidence_missing", "The review inputs do not match the immutable comparison. Compare the change map again with the review inputs, or start the wave with the inputs of the comparison.", { problems: mismatched });
   for (const id of [wave.baselineId, wave.snapshotId]) {
     const snapshot = await conservationStore.get<SnapshotEvidence>(projectRoot, id, "snapshot");
@@ -265,9 +299,10 @@ async function assessmentSkeleton(projectRoot: string, review: ReviewRecord, wav
   return operations;
 }
 
-async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wave, requireLaneResults: boolean) {
+async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wave, requireLaneResults: boolean, designAccepted = false) {
   const problems: { code: string; message: string; id?: string }[] = [];
   const add = (code: string, message: string, id?: string) => problems.push({ code, message, ...(id ? { id } : {}) });
+  if (verifiedTreeWave(wave)) return reviewerProblems(review, wave, requireLaneResults, problems);
   const loaded = await readChangeMapDocument(projectRoot, review.deltaPath, wave.deltaRevision), document = loaded.document as DeltaDocument;
   if (document.baselineId !== review.baselineId || wave.baselineId !== review.baselineId) add("baseline_changed", "The original baseline must remain unchanged.");
   for (const item of await assessDeltaReadiness(projectRoot, document)) if (item.blocking !== false) add(item.code, item.message, item.id);
@@ -282,13 +317,20 @@ async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wav
   for (const growth of comparison.growth) if (!accepted.some(item => item.kind === "growth" && item.growthIds?.includes(growth.id))) add("growth_justification_missing", `Justify the increase in ${growth.dimension}.`, growth.id);
   const before = await conservationStore.get<SnapshotEvidence>(projectRoot, wave.baselineId, "snapshot"), after = await conservationStore.get<SnapshotEvidence>(projectRoot, wave.snapshotId, "snapshot");
   for (const target of await uncoveredText(projectRoot, comparison, accepted, document, before, after)) add("convergence_missing", "Each changed text section needs a reviewed convergence assessment that covers its exact source. A section that names only the file path covers the whole file.", `${target.file}:${target.side}:${target.start}:${target.end}`);
+  for (const file of targetFiles(comparison)) if (!wave.lanes.some(lane => withinScope(file, lane.coverage))) add("review_coverage_missing", "Assign each original and resulting target file to a review lane.", file);
+  reviewerProblems(review, wave, requireLaneResults, problems);
+  if (wave.mode === "implementation-review" && !designAudited(review, wave, designAccepted)) add("design_audit_missing", "Implementation review requires the latest accepted design revision.");
+  await conservationStore.assertCurrent(projectRoot, wave.snapshotId);
+  return problems;
+}
+
+// The checks every wave needs: resolved findings and conflicts, current CLEAN lane results, and independent reviewers.
+function reviewerProblems(review: ReviewRecord, wave: Wave, requireLaneResults: boolean, problems: { code: string; message: string; id?: string }[]) {
+  const add = (code: string, message: string, id?: string) => problems.push({ code, message, ...(id ? { id } : {}) });
   for (const finding of review.findings.filter(item => item.mode === wave.mode && item.status !== "VERIFIED")) add("finding_unresolved", finding.title, finding.id);
   for (const conflict of review.conflicts.filter(item => !item.resolved)) add("review_conflict", conflict.reason, conflict.id);
-  for (const file of targetFiles(comparison)) if (!wave.lanes.some(lane => withinScope(file, lane.coverage))) add("review_coverage_missing", "Assign each original and resulting target file to a review lane.", file);
   if (requireLaneResults) for (const lane of wave.lanes) if (lane.result?.status !== "CLEAN" || lane.result.digest !== laneDigest(review, wave, lane)) add("lane_result_stale", "Every assigned lane needs a current CLEAN result.", lane.id);
   for (const lane of wave.lanes) if (lane.reviewer === review.coordinator || review.deliveryWorkers.includes(lane.reviewer) || review.exchangeWorkers.includes(lane.reviewer)) add("reviewer_not_independent", "A correction participant cannot verify the correction.", lane.id);
-  if (wave.mode === "implementation-review" && !designAudited(review, wave)) add("design_audit_missing", "Implementation review requires the latest accepted design revision.");
-  await conservationStore.assertCurrent(projectRoot, wave.snapshotId);
   return problems;
 }
 
@@ -296,6 +338,7 @@ async function waveProblems(projectRoot: string, review: ReviewRecord, wave: Wav
 // Each lane carries from the latest earlier wave of the same mode and baseline that holds accepted assessments in that lane,
 // because a correction can follow a wave of the other mode or a wave that only fixed findings.
 async function nextSteps(projectRoot: string, review: ReviewRecord, wave: Wave) {
+  if (verifiedTreeWave(wave)) return {};
   const earlier = review.waves.slice(0, review.waves.indexOf(wave)).reverse(), carryable: { lane: string; fromWave: string; ids: string[] }[] = [];
   for (const lane of wave.lanes) {
     const from = earlier.find(item => item.mode === wave.mode && item.baselineId === wave.baselineId && acceptedIn(review, item).some(assessment => assessment.lane === lane.id));
@@ -317,43 +360,53 @@ async function correctionScope(projectRoot: string, review: ReviewRecord, wave: 
   return { fromWave: previous.id, deltaChanged: previous.deltaRevision !== wave.deltaRevision, lanes: wave.lanes.map(lane => ({ lane: lane.id, changedFiles: changed.filter(file => withinScope(file, lane.coverage)) })) };
 }
 
-export async function checkReviewGate(input: { projectRoot: string; reviewPath: string; expectedRevision?: string; gate: "implementation" | "completion" }) {
+export async function checkReviewGate(input: SliceInput & { expectedRevision?: string; gate: "implementation" | "completion" }) {
   assertInput(CHECK_REVIEW_GATE_SCHEMA, input);
-  const loaded = await loadReview(input.projectRoot, input.reviewPath);
+  const loaded = await loadReview(input.projectRoot, input.initiative, input.slice);
   if (input.expectedRevision && input.expectedRevision !== loaded.revision) throw conservationError("revision_conflict", "The review record changed.", { currentRevision: loaded.revision });
   const review = loaded.document;
   if (!review) return { ready: false, problems: [{ code: "evidence_missing", message: "The review record is missing." }] };
+  const designAccepted = Boolean(await acceptedDesign(input.projectRoot, input.initiative, input.slice));
   const mode = input.gate === "implementation" ? "design-audit" : "implementation-review", wave = [...review.waves].reverse().find(item => item.mode === mode);
   if (!wave?.accepted) {
-    const blockers = wave ? await waveProblems(input.projectRoot, review, wave, true).catch(() => []) : [];
+    const blockers = wave ? await waveProblems(input.projectRoot, review, wave, true, designAccepted).catch(() => []) : [];
     const message = blockers.length ? `The required review wave ${wave!.id} has no accepted result, and accepting it now would fail on: ${summarizeProblems(blockers)}.` : "The required review wave has no accepted result.";
     return { ready: false, revision: loaded.revision, problems: [{ code: "review_not_accepted", message }], ...(wave ? await nextSteps(input.projectRoot, review, wave) : {}) };
   }
-  const problems = await waveProblems(input.projectRoot, review, wave, true);
+  const problems = await waveProblems(input.projectRoot, review, wave, true, designAccepted);
   if (wave.accepted.evidenceDigest !== waveDigest(review, wave)) problems.push({ code: "review_result_stale", message: "The accepted review inputs changed." });
-  if (input.gate === "completion") {
+  if (input.gate === "completion" && !designAccepted) {
     const audit = [...review.waves].reverse().find(item => item.mode === "design-audit");
     if (!audit?.accepted || audit.baselineId !== wave.baselineId || audit.deltaRevision !== wave.deltaRevision) problems.push({ code: "design_audit_missing", message: "Completion requires the latest accepted design revision." });
   }
-  return { ready: problems.length === 0, revision: loaded.revision, wave: wave.id, deltaRevision: wave.deltaRevision, baselineId: wave.baselineId,
+  return { ready: problems.length === 0, revision: loaded.revision, wave: wave.id, ...(wave.tree ? { tree: wave.tree } : {}), deltaRevision: wave.deltaRevision, baselineId: wave.baselineId,
     snapshotId: wave.snapshotId, comparisonId: wave.comparisonId, evidenceDigest: wave.accepted.evidenceDigest, problems };
 }
 
 function markdown(review: ReviewRecord) {
   const lines = ["# Slice review", "", "This file is a generated view of review.json.", ""];
-  for (const wave of review.waves) { lines.push(`## ${wave.mode}: ${wave.id}`, "", `Change map revision: ${wave.deltaRevision}`, `Source snapshot: ${wave.snapshotId}`, `Comparison: ${wave.comparisonId}`, "");
+  for (const wave of review.waves) { lines.push(`## ${wave.mode}: ${wave.id}`, "", ...(verifiedTreeWave(wave) ? [`Verified tree: ${wave.tree}`, ...(wave.base ? [`Base: ${wave.base}`] : [])] : [`Change map revision: ${wave.deltaRevision}`, `Source snapshot: ${wave.snapshotId}`, `Comparison: ${wave.comparisonId}`]), "");
     for (const lane of wave.lanes) lines.push(`- ${lane.id}: ${lane.result?.status || "PENDING"} (${lane.reviewer})`); lines.push(""); }
   for (const finding of review.findings) lines.push(`## ${finding.id}: ${finding.title}`, "", `- Status: ${finding.status}`, `- Severity: ${finding.severity}`, `- Evidence: ${finding.evidence}`, `- Condition to close: ${finding.conditionToClose}`, `- Implementer evidence: ${finding.implementerEvidence || "none"}`, "");
   return lines.join("\n") + "\n";
 }
-export async function getReview(input: { projectRoot: string; reviewPath: string; expectedRevision?: string | null; offset?: number; limit?: number; section?: keyof Pick<ReviewRecord, "findings" | "waves" | "assessments" | "conflicts" | "legacy" | "history"> }) {
+// The generated review.md stays beside slice.md, where people read it in pull requests.
+async function reviewProjection(input: SliceInput) {
+  const folder = await sliceDocumentFolder(input.projectRoot, input.initiative, input.slice);
+  if (folder === null) throw conservationError("invalid_path", "The workflow config disables the plans path.");
+  return resolveArtifactPath(input.projectRoot, `${folder}/review.md`, false, "review.md");
+}
+export async function getReview(input: SliceInput & { expectedRevision?: string | null; offset?: number; limit?: number; section?: keyof Pick<ReviewRecord, "findings" | "waves" | "assessments" | "conflicts" | "legacy" | "history">; wave?: string }) {
   assertInput(GET_REVIEW_SCHEMA, input);
-  const loaded = await loadReview(input.projectRoot, input.reviewPath);
+  const loaded = await loadReview(input.projectRoot, input.initiative, input.slice);
   if (input.expectedRevision !== undefined && loaded.revision !== input.expectedRevision) throw conservationError("revision_conflict", "The review record changed.", { currentRevision: loaded.revision });
   if (!loaded.document) return { exists: false, revision: null };
-  const section = input.section || "findings", list = loaded.document[section], offset = input.offset || 0, limit = input.limit || 50;
+  const section = input.section || "findings", offset = input.offset || 0, limit = input.limit || 50;
+  if (input.wave !== undefined && (section === "legacy" || section === "history")) throw conservationError("validation_failed", "The wave filter applies to findings, waves, assessments, and conflicts.");
+  const list: unknown[] = input.wave === undefined ? loaded.document[section] : section === "findings" ? loaded.document.findings.filter(item => raisedIn(item) === input.wave)
+    : section === "waves" ? loaded.document.waves.filter(item => item.id === input.wave) : (loaded.document[section] as { wave: string }[]).filter(item => item.wave === input.wave);
   let projectionStale = true;
-  try { const projection = await resolveArtifactPath(input.projectRoot, input.reviewPath.replace(/\.json$/, ".md"), false, "review.md"); projectionStale = (await regularBytes(projection.target, 4 * 1024 * 1024)).toString() !== markdown(loaded.document); } catch { /* The authoritative record remains readable. */ }
+  try { const projection = await reviewProjection(input); projectionStale = (await regularBytes(projection.target, 4 * 1024 * 1024)).toString() !== markdown(loaded.document); } catch { /* The authoritative record remains readable. */ }
   return { exists: true, revision: loaded.revision, schemaVersion: 1, deltaPath: loaded.document.deltaPath, baselineId: loaded.document.baselineId,
     coordinator: loaded.document.coordinator, delivery: loaded.document.delivery, currentWave: lastWave(loaded.document), section, entries: list.slice(offset, offset + limit), totalCount: list.length,
     nextOffset: offset + limit < list.length ? offset + limit : null, projectionStale };
@@ -361,35 +414,50 @@ export async function getReview(input: { projectRoot: string; reviewPath: string
 
 export async function updateReview(input: UpdateInput) {
   assertInput(UPDATE_REVIEW_SCHEMA, input);
-  const resolved = await resolveArtifactPath(input.projectRoot, input.reviewPath, true, "review.json");
+  await moveLegacyRecords(input.projectRoot);
+  const resolved = await locateRecord(input.projectRoot, { kind: "review", initiative: input.initiative, slice: input.slice });
+  const deltaTarget = await locateRecord(input.projectRoot, { kind: "change-map", initiative: input.initiative, slice: input.slice });
+  await mkdir(path.dirname(resolved.target), { recursive: true });
   return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
-    const loaded = await loadReview(input.projectRoot, input.reviewPath);
+    const loaded = await loadReview(input.projectRoot, input.initiative, input.slice);
     if (loaded.revision !== input.expectedRevision) throw conservationError("revision_conflict", "The review record changed.", { currentRevision: loaded.revision });
-    if (!loaded.document && (!input.deltaPath || !input.delivery || input.actor.role !== "coordinator")) throw conservationError("validation_failed", "Review creation requires the coordinator, delivery worker, and delta path.");
-    const deltaTarget = await resolveArtifactPath(input.projectRoot, loaded.document?.deltaPath || input.deltaPath!, false);
+    if (!loaded.document && (!input.delivery || input.actor.role !== "coordinator")) throw conservationError("validation_failed", "The first update of a slice's review creates it, so it needs the coordinator as actor and the implementer's worker id as delivery.");
     return withArtifactLock(deltaTarget.target, () => withFileLock(deltaTarget.target, async () => {
-    const review: ReviewRecord = structuredClone(loaded.document || { schemaVersion: 1, deltaPath: deltaTarget.deltaPath, coordinator: input.actor.id, delivery: input.delivery!, deliveryWorkers: [input.delivery!], waves: [], findings: [], assessments: [], conflicts: [], exchangeWorkers: [], legacy: [], history: [] });
-    if (path.posix.dirname(review.deltaPath) !== path.posix.dirname(input.reviewPath) || (input.deltaPath && !sameChangeMap(input.deltaPath, review.deltaPath))) throw conservationError("invalid_path", "A review and its change map must share the slice directory.");
+    const review: ReviewRecord = structuredClone(loaded.document || { schemaVersion: 1, deltaPath: deltaTarget.path, coordinator: input.actor.id, delivery: input.delivery!, deliveryWorkers: [input.delivery!], waves: [], findings: [], assessments: [], conflicts: [], exchangeWorkers: [], legacy: [], history: [] });
+    if (!(await sameRecord(input.projectRoot, review.deltaPath, deltaTarget.path))) throw conservationError("invalid_path", "A review and its change map must belong to the same slice.");
+    const designAccepted = Boolean(await acceptedDesign(input.projectRoot, input.initiative, input.slice));
     const now = () => new Date().toISOString(), carry = { carried: [] as string[], notCarried: [] as { id: string; reason: string }[] };
     for (const operation of input.operations) {
       const wave = lastWave(review), op = operation.op;
       if (op === "start_wave") {
         requireRole(review, input.actor, "coordinator");
-        const next = operation as unknown as { id: string; mode: Mode; deltaRevision: string; snapshotId: string; comparisonId: string; lanes: Lane[] };
+        const next = operation as unknown as { id: string; mode: Mode; deltaRevision?: string; snapshotId?: string; comparisonId?: string; base?: string; lanes: Lane[] };
         if (review.waves.some(item => item.id === next.id) || !next.lanes.length || new Set(next.lanes.map(lane => lane.id)).size !== next.lanes.length || next.lanes.some(lane => !lane.coverage.length || lane.reviewer === review.coordinator || review.deliveryWorkers.includes(lane.reviewer))) throw conservationError("validation_failed", "Assign distinct review lanes and independent reviewers.");
         const requiredLanes = review.waves.filter(item => item.mode === next.mode).flatMap(item => item.lanes.map(lane => lane.id));
         if (requiredLanes.some(id => !next.lanes.some(lane => lane.id === id))) throw conservationError("gate_blocked", "A correction wave must retain every required lane from earlier waves in this review mode.");
+        const design = await acceptedDesign(input.projectRoot, input.initiative, input.slice) as { acceptedAt?: string } | null;
+        if (next.mode === "implementation-review" && design?.acceptedAt) await assertReviewMayContinue(input, review, next as { afterGate?: string }, design.acceptedAt);
+        const started = { startedAt: now(), ...((next as { afterGate?: string }).afterGate ? { afterGate: (next as { afterGate?: string }).afterGate } : {}) };
+        const evidenceFields = [next.deltaRevision, next.snapshotId, next.comparisonId].filter(Boolean).length;
+        if (evidenceFields === 0) {
+          if (!designAccepted || next.mode !== "implementation-review") throw conservationError("validation_failed", "A wave without change map evidence reviews the implementation of a slice with an accepted design; other waves need deltaRevision, snapshotId, and comparisonId.");
+          const verified = await latestVerification(input.projectRoot, input.initiative, input.slice);
+          if (!verified?.passed) throw conservationError("gate_blocked", "Run verify_slice until it passes before starting the review, so the review reads a verified result.");
+          review.waves.push({ id: next.id, mode: next.mode, tree: verified.tree, ...(next.base ? { base: next.base } : {}), ...started, lanes: next.lanes } as Wave);
+        } else {
+        if (evidenceFields !== 3) throw conservationError("validation_failed", "Pass deltaRevision, snapshotId, and comparisonId together.");
         const delta = await readChangeMapDocument(input.projectRoot, review.deltaPath, next.deltaRevision);
         const baselineId = (delta.document as DeltaDocument | null)?.baselineId;
         if (!baselineId || (review.baselineId && review.baselineId !== baselineId)) throw conservationError("gate_blocked", "A review must preserve its original retained baseline.");
-        const created: Wave = { id: next.id, mode: next.mode, deltaRevision: next.deltaRevision, snapshotId: next.snapshotId, comparisonId: next.comparisonId, baselineId, lanes: next.lanes };
+        const created: Wave = { id: next.id, mode: next.mode, deltaRevision: next.deltaRevision!, snapshotId: next.snapshotId!, comparisonId: next.comparisonId!, baselineId, ...started, lanes: next.lanes };
         // Such a wave could never be accepted, so its review work would be lost.
-        if (created.mode === "implementation-review" && !designAudited(review, created)) throw conservationError("gate_blocked", `Implementation review requires the latest accepted design revision. Start and accept a design-audit wave for delta revision ${created.deltaRevision} before ${created.id}.`, { problems: [{ code: "design_audit_missing", message: "Implementation review requires the latest accepted design revision." }] });
+        if (created.mode === "implementation-review" && !designAudited(review, created, designAccepted)) throw conservationError("gate_blocked", `Implementation review requires the latest accepted design revision. Start and accept a design-audit wave for delta revision ${created.deltaRevision} before ${created.id}.`, { problems: [{ code: "design_audit_missing", message: "Implementation review requires the latest accepted design revision." }] });
         const comparison = await comparisonFor(input.projectRoot, review, created);
         const uncovered = targetFiles(comparison).filter(file => !created.lanes.some(lane => withinScope(file, lane.coverage)));
         if (uncovered.length) throw conservationError("validation_failed", "Lane coverage holds project-relative path prefixes, such as src/server/session, and each target file of the comparison needs a lane.", { problems: uncovered.map(file => ({ code: "review_coverage_missing", file, message: "no lane covers this target file" })) });
-        await conservationStore.assertCurrent(input.projectRoot, next.snapshotId);
+        await conservationStore.assertCurrent(input.projectRoot, next.snapshotId!);
         review.baselineId = baselineId; review.waves.push(created);
+        }
       } else if (op === "assign_delivery") { requireRole(review, input.actor, "coordinator"); if (review.waves.some(item => item.lanes.some(lane => lane.reviewer === operation.worker))) throw conservationError("gate_blocked", "A reviewer cannot become delivery for its own review."); review.delivery = operation.worker as string; review.deliveryWorkers = [...new Set([...review.deliveryWorkers, review.delivery])];
       } else if (op === "import_legacy") {
         requireRole(review, input.actor, "coordinator");
@@ -399,13 +467,14 @@ export async function updateReview(input: UpdateInput) {
       } else if (op === "regenerate_markdown") { requireRole(review, input.actor, "coordinator");
       } else {
         if (!wave) throw conservationError("validation_failed", "Start a review wave before recording review evidence.");
+        if (verifiedTreeWave(wave) && ["record_assessment", "accept_assessment", "carry_assessments"].includes(op)) throw conservationError("validation_failed", "Assessments belong to change map reviews; a review of a verified result records findings and lane results only.");
         if (op === "open_finding") {
           const fields = operation as unknown as Omit<Finding, "id" | "mode" | "status" | "implementerEvidence" | "history">;
           reviewer(review, wave, input.actor, fields.lane);
           const id = `${wave.mode}/${fields.lane}/${fields.localId}`;
           if (review.findings.some(item => item.id === id)) throw conservationError("validation_failed", "The finding ID already exists.");
           review.findings.push({ id, localId: fields.localId, lane: fields.lane, mode: wave.mode, title: fields.title, severity: fields.severity, affectedPath: fields.affectedPath,
-            evidence: fields.evidence, conditionToClose: fields.conditionToClose, aliases: fields.aliases || [], escalationTarget: fields.escalationTarget || "NONE", ...(fields.probe ? { probe: fields.probe } : {}),
+            evidence: fields.evidence, conditionToClose: fields.conditionToClose, aliases: fields.aliases || [], escalationTarget: fields.escalationTarget || "NONE", ...(fields.probe ? { probe: fields.probe } : {}), ...(fields.clause ? { clause: fields.clause } : {}),
             status: "OPEN", implementerEvidence: "", history: [{ actor: input.actor.id, status: "OPEN", wave: wave.id, at: now(), evidence: fields.evidence }] });
         } else if (op === "set_finding_status") {
           const finding = review.findings.find(item => item.id === operation.id), status = operation.status as Status;
@@ -439,14 +508,14 @@ export async function updateReview(input: UpdateInput) {
         } else if (op === "submit_lane") {
           const lane = laneOf(wave, operation.lane as string); reviewer(review, wave, input.actor, lane.id, operation.status === "CLEAN");
           if (operation.status === "CLEAN" && review.findings.some(item => item.mode === wave.mode && item.lane === lane.id && item.status !== "VERIFIED")) throw conservationError("gate_blocked", "Unresolved findings prevent a CLEAN lane result.");
-          await conservationStore.assertCurrent(input.projectRoot, wave.snapshotId);
+          if (!verifiedTreeWave(wave)) await conservationStore.assertCurrent(input.projectRoot, wave.snapshotId);
           lane.result = { status: operation.status as "CLEAN" | "FINDINGS", reviewer: input.actor.id, digest: laneDigest(review, wave, lane) };
         } else if (op === "carry_lane") {
           requireRole(review, input.actor, "coordinator");
           const previous = review.waves.find(item => item.id === operation.fromWave && item.id !== wave.id), lane = laneOf(wave, operation.lane as string);
           const old = previous?.lanes.find(item => item.id === lane.id);
           if (!previous || !old || old.result?.status !== "CLEAN" || old.result.digest !== laneDigest(review, previous, old)
-            || canonical([previous.mode, previous.deltaRevision, previous.baselineId, previous.snapshotId, previous.comparisonId]) !== canonical([wave.mode, wave.deltaRevision, wave.baselineId, wave.snapshotId, wave.comparisonId])
+            || canonical([previous.mode, previous.deltaRevision, previous.baselineId, previous.snapshotId, previous.comparisonId, previous.tree ?? null, previous.base ?? null]) !== canonical([wave.mode, wave.deltaRevision, wave.baselineId, wave.snapshotId, wave.comparisonId, wave.tree ?? null, wave.base ?? null])
             || canonical([old.reviewer, old.coverage]) !== canonical([lane.reviewer, lane.coverage]) || review.exchangeWorkers.includes(lane.reviewer)) throw conservationError("gate_blocked", "A lane can carry forward only with unchanged inputs, coverage, findings and an independent reviewer.");
           if (review.assessments.some(item => item.wave === wave.id && item.lane === lane.id)) throw conservationError("gate_blocked", "A current lane assessment prevents carry-forward.");
           for (const assessment of review.assessments.filter(item => item.wave === previous.id && item.lane === lane.id)) review.assessments.push({ ...assessment, id: `${wave.id}/${assessment.id}`, wave: wave.id });
@@ -466,21 +535,21 @@ export async function updateReview(input: UpdateInput) {
           carry.carried.push(...chosen.map(item => item.id)); if (!requested) carry.notCarried.push(...notCarried);
         } else if (op === "accept_wave") {
           requireRole(review, input.actor, "coordinator");
-          const problems = await waveProblems(input.projectRoot, review, wave, true);
+          const problems = await waveProblems(input.projectRoot, review, wave, true, designAccepted);
           if (problems.length) throw conservationError("gate_blocked", `The review wave does not satisfy its acceptance gate: ${summarizeProblems(problems)}. check_review_gate lists the assessments that can carry forward from the previous wave and a ready-to-fill skeleton for the rest.`, { problems });
           wave.accepted = { evidenceDigest: waveDigest(review, wave), actor: input.actor.id, at: now() };
         }
       }
       if (op !== "regenerate_markdown") review.history.push({ actor: input.actor.id, operation: op, at: now() });
     }
-    await conservationStore.registerSlice(input.projectRoot, review.deltaPath);
+    await conservationStore.registerSlice(input.projectRoot, input.initiative, input.slice);
     assertInput(recordSchema, review);
     const contents = canonical(review) + "\n";
     if (Buffer.byteLength(contents) > 4 * 1024 * 1024) throw conservationError("resource_limit", "The review record exceeds 4 MiB.");
     const changed = canonical(review) !== canonical(loaded.document);
-    if (changed) await conservationStore.writeManaged(resolved.root, resolved.target, contents);
+    if (changed) await writeRecord(input.projectRoot, { kind: "review", initiative: input.initiative, slice: input.slice }, contents);
     let projectionStale = false;
-    try { const projection = await resolveArtifactPath(input.projectRoot, input.reviewPath.replace(/\.json$/, ".md"), false, "review.md"); await conservationStore.writeManaged(resolved.root, projection.target, markdown(review)); } catch { projectionStale = true; }
+    try { const projection = await reviewProjection(input); await mkdir(path.dirname(projection.target), { recursive: true }); await conservationStore.writeManaged(resolved.root, projection.target, markdown(review)); } catch { projectionStale = true; }
     const wave = lastWave(review);
     return { exists: true, revision: changed ? digest(contents) : loaded.revision, previousRevision: loaded.revision, projectionStale, currentWave: wave?.id, accepted: Boolean(wave?.accepted && wave.accepted.evidenceDigest === waveDigest(review, wave)),
       ...(input.operations.some(item => item.op === "carry_assessments") ? { carry } : {}) };

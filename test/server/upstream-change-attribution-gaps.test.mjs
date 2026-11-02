@@ -13,21 +13,21 @@ store.directory=path.join(home,'evidence');
 test.after(()=>rm(home,{recursive:true,force:true}));
 const degraded={prepare:async()=>({status:'degraded',diagnostics:[{code:'unsupported_runtime',message:'Test without inference'}]})};
 const ref=(file,value)=>({path:file,...(value?{selector:{type:'text',value}}:{})});
-const deltaPath='docs/plans/task/change-map.json';
+const key={initiative:'task',slice:'task'};
 
 // B holds src/legacy.ts, upstream work removes it and adds src/upstream.ts before T, and the task edits only rules.md.
 async function scenario() {
  const root=await mkdtemp(path.join(home,'project-'));
  const put=async(file,body)=>{await mkdir(path.dirname(path.join(root,file)),{recursive:true});await writeFile(path.join(root,file),body);};
  for(const [file,body] of Object.entries({'rules.md':'old\n','requirements.md':'Requirement\n','src/legacy.ts':'export const legacy = 1;\n'})) await put(file,body);
- const b=await store.capture(root,deltaPath);
- const delta=await updateChangeMap({projectRoot:root,deltaPath,expectedRevision:null,scope:['rules.md'],baselineId:b.snapshotId,requirements:[ref('requirements.md')],
+ const b=await store.capture(root,key);
+ const delta=await updateChangeMap({projectRoot:root,...key,expectedRevision:null,scope:['rules.md'],baselineId:b.snapshotId,requirements:[ref('requirements.md')],
   operations:[{op:'insert',entry:{id:'r',kind:'rule',label:'r',action:'REPLACE',before:[ref('rules.md','old')],after:[ref('rules.md','new')],reason:'Satisfy the bound requirement.'}}]});
  await rm(path.join(root,'src/legacy.ts'));await put('src/upstream.ts','export const fromMain = 1;\n');
  const t=await store.capture(root);
  await put('rules.md','new\n');
  const f=await store.capture(root);
- const compare=async startSnapshotId=>store.get(root,(await compareChangeMap({projectRoot:root,deltaPath,expectedRevision:delta.revision,baselineId:b.snapshotId,resultSnapshotId:f.snapshotId,startSnapshotId},{runtime:degraded})).comparisonId,'comparison');
+ const compare=async startSnapshotId=>store.get(root,(await compareChangeMap({projectRoot:root,...key,expectedRevision:delta.revision,baselineId:b.snapshotId,resultSnapshotId:f.snapshotId,startSnapshotId},{runtime:degraded})).comparisonId,'comparison');
  return {root,t,compare};
 }
 const byCode=(comparison,code)=>comparison.observations.filter(item=>item.code===code).map(item=>item.file).sort();

@@ -3,9 +3,12 @@ import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, parseEntityRef, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
-import { anchorTarget, decorateDocuments, markCurrentSection, renderText } from "./views/markdown.js";
+import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
 import { createIndexingStatus } from "./views/indexing.js";
+import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connection.js";
+import { badgedIcon, notificationText, shouldNotify, signalTitle } from "./views/attention-signal.js";
+import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-tab.js";
 
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
@@ -15,6 +18,8 @@ const workspace = document.getElementById("workspace");
 const appShell = document.getElementById("app-shell");
 const sidebarToggle = document.getElementById("sidebar-toggle");
 const connectionBanner = document.getElementById("connection");
+const appGoneBanner = document.getElementById("app-gone");
+const privateServerBanner = document.getElementById("private-server");
 const artifact = document.getElementById("artifact");
 const tabs = document.getElementById("tabs");
 const toast = document.getElementById("toast");
@@ -44,13 +49,17 @@ let lastSnapshot = "";
 let renderedPath = null;
 let rebuilding = false;
 const scrollPositions = new Map();
-let failedRefreshes = 0;
+let probes = { failures: 0, failingSince: null };
+// Live, retrying, or stopped: a stopped tab keeps checking, and it returns to live when the same app or a handed-off successor answers.
+let connection = "live";
 // A link to a heading in another document scrolls there once that document has rendered.
 let pendingAnchor = null;
 // A text match chosen in the palette is highlighted once its document has rendered.
 let pendingFind = null;
 let toastTimer;
 let availableArtifacts = new Set();
+// Open tabs whose file was moved or deleted, or whose entity no longer resolves, as the server's snapshot reports them.
+let missingTabs = new Set();
 let navigation = { attention: {}, glossary: {}, diagnostics: [], index: [] };
 let currentContext = null;
 let contextSnapshot = "";
@@ -105,15 +114,16 @@ function renderTabs() {
   for (const path of openTabs) {
     const isPreview = path === previewTab;
     const isAgent = agentTabs.includes(path);
+    const isMissing = missingTabs.has(path);
     const tab = document.createElement("div");
-    tab.className = `artifact-tab${isPreview ? " is-preview" : ""}${isAgent ? " is-agent" : ""}`;
+    tab.className = `artifact-tab${isPreview ? " is-preview" : ""}${isAgent ? " is-agent" : ""}${isMissing ? " is-missing" : ""}`;
     tab.setAttribute("role", "presentation");
     const select = document.createElement("button");
     select.className = "artifact-tab-select";
     select.type = "button";
     select.setAttribute("role", "tab");
     select.setAttribute("aria-selected", String(path === selectedPath));
-    select.title = [path, isPreview ? "Preview tab: the next link replaces it. Double-click to keep it open." : "", isAgent ? "Presented by the agent." : ""].filter(Boolean).join("\n");
+    select.title = [isMissing ? missingNotice(path, { entity: Boolean(parseEntityRef(path)), label: tabLabel(path) }).tooltip : path, isPreview ? "Preview tab: the next link replaces it. Double-click to keep it open." : "", isAgent ? "Presented by the agent." : ""].filter(Boolean).join("\n");
     if (isAgent) {
       const mark = document.createElement("span");
       mark.className = "agent-mark";
@@ -124,6 +134,7 @@ function renderTabs() {
     label.className = "tab-label";
     label.textContent = tabLabel(path);
     select.appendChild(label);
+    if (isMissing) select.appendChild(element("span", "sr-only", ", no longer exists"));
     select.addEventListener("click", () => openRef(path));
     select.addEventListener("dblclick", () => keepTab(path));
     tab.appendChild(select);
@@ -179,7 +190,7 @@ function saveSession() {
 }
 
 function openRef(path, { keep = false, fromHistory = false } = {}) {
-  if (!path) {
+  if (!path || !requireApp()) {
     return;
   }
   if (openTabs.includes(path)) {
@@ -206,7 +217,7 @@ function openRef(path, { keep = false, fromHistory = false } = {}) {
 }
 
 function keepTab(path) {
-  if (previewTab !== path) {
+  if (previewTab !== path || !requireApp()) {
     return;
   }
   previewTab = null;
@@ -215,6 +226,7 @@ function keepTab(path) {
 }
 
 function closeTab(path) {
+  if (!requireApp()) return;
   scrollPositions.delete(path);
   openTabs = openTabs.filter((tab) => tab !== path);
   agentTabs = agentTabs.filter((tab) => tab !== path);
@@ -373,6 +385,42 @@ async function refreshProjects() {
 function setProjectLabel(identity, projectRoot) {
   project.replaceChildren(projectLabel(identity));
   projectButton.title = projectTitle(identity, projectRoot);
+  signals.project = [identity.repository ?? folderName(projectRoot), workspaceName(identity)].filter(Boolean).join("/");
+  document.title = signalTitle(baseTitle(), signals.count ?? 0);
+}
+
+const baseTitle = () => signals.project ? `${signals.project} · Prism` : "Prism review";
+
+// The tab title, the tab icon, and an installed app's badge count the recorded questions, so a waiting question shows in a background tab.
+const signals = { project: null, count: null, icon: document.querySelector('link[rel="icon"]'), plainIcon: null, badged: null };
+signals.plainIcon = signals.icon?.getAttribute("href") ?? null;
+
+async function updateAttentionSignals(count) {
+  const previous = signals.count;
+  signals.count = count;
+  document.title = signalTitle(baseTitle(), count);
+  if (signals.icon && signals.plainIcon) {
+    if (count > 0) {
+      signals.badged ??= await fetch(signals.plainIcon).then((response) => response.ok ? response.text() : null).then((svg) => svg && `data:image/svg+xml,${encodeURIComponent(badgedIcon(svg))}`).catch(() => null);
+      if (signals.badged && signals.count > 0) signals.icon.setAttribute("href", signals.badged);
+    } else {
+      signals.icon.setAttribute("href", signals.plainIcon);
+    }
+  }
+  if (navigator.setAppBadge) void (count > 0 ? navigator.setAppBadge(count) : navigator.clearAppBadge()).catch(() => {});
+  const permission = typeof Notification === "undefined" ? null : Notification.permission;
+  if (!shouldNotify({ previous, count, permission, visible: document.visibilityState === "visible" && document.hasFocus() })) return;
+  const text = notificationText(count, signals.project ?? "this project");
+  try {
+    const notification = new Notification(text.title, { body: text.body, tag: `prism-attention-${signals.project}` });
+    notification.addEventListener("click", () => {
+      window.focus();
+      openRef("attention");
+      notification.close();
+    });
+  } catch {
+    // A browser that allows the permission but not page notifications, such as some mobile browsers, keeps the title and icon only.
+  }
 }
 
 const SIDEBAR_KEY = "prism.review.sidebar";
@@ -432,6 +480,7 @@ function connectSessionEvents() {
   sessionStream = new EventSource("./api/events");
   sessionStream.onopen = () => {
     sessionConnected = true;
+    reportRefresh(true);
   };
   sessionStream.onerror = () => {
     sessionConnected = false;
@@ -463,10 +512,35 @@ function markdownOptions(basePath) {
   return { basePath, isKnown: (path) => availableArtifacts.has(path) };
 }
 
-// One failed poll can be a restart in progress, so the banner waits for a second one and clears on the next success.
+// A short outage shows the retrying banner; one that outlasts the grace period shows the stopped banner, and any answer clears both.
 function reportRefresh(ok) {
-  failedRefreshes = ok ? 0 : failedRefreshes + 1;
-  connectionBanner.hidden = failedRefreshes < 2;
+  probes = recordProbe(probes, ok, Date.now());
+  const next = connectionState({ ...probes, now: Date.now(), streamOpen: sessionStream?.readyState === EventSource.OPEN });
+  if (next === connection) return;
+  const recovered = connection === "stopped" && next === "live";
+  connection = next;
+  connectionBanner.hidden = next !== "retrying";
+  appGoneBanner.hidden = next !== "stopped";
+  if (!recovered) return;
+  // A stream that met another listener on the port gave up, so a returning app needs a new one; the next poll redraws the open view.
+  if (sessionStream?.readyState === EventSource.CLOSED) connectSessionEvents();
+  lastSnapshot = "";
+  void refreshProjects();
+}
+
+// A session that could not reach the shared app serves this page itself, so the page says why another link may show the same project.
+function showPrivateServer(privateServer) {
+  if (!privateServer) return;
+  document.getElementById("private-server-reason").textContent = privateServer.reason ? `Reason: ${privateServer.reason}` : "";
+  document.getElementById("private-server-dismiss").addEventListener("click", () => { privateServerBanner.hidden = true; }, { once: true });
+  privateServerBanner.hidden = false;
+}
+
+// Actions that need the server explain why they cannot run while the app is stopped instead of failing silently.
+function requireApp() {
+  if (connection !== "stopped") return true;
+  showToast(STOPPED_MESSAGE);
+  return false;
 }
 
 function showToast(message) {
@@ -707,6 +781,7 @@ function libraryBranch(scope) {
 function renderNavigation() {
   const scope = currentContext?.ref === selectedPath ? currentContext.value.scope : { kind: "global" };
   const attention = navigation.attention ?? {};
+  void updateAttentionSignals(attention.gates ?? 0);
   const badge = attention.needsYou ? `<span class="count-badge${attention.gates ? " is-alert" : ""}" title="${attention.gates} recorded ${attention.gates === 1 ? "question" : "questions"} and ${attention.needsYou - attention.gates} other ${attention.needsYou - attention.gates === 1 ? "item" : "items"} need you">${attention.needsYou}</span>` : "";
   navPlaces.replaceChildren(
     navLink("attention", "Attention", { meta: badge, className: "nav-place place-attention", current: selectedPath === "attention", iconName: "attention" }),
@@ -806,6 +881,12 @@ function beginRebuild(path) {
 function scrollToAnchor(anchor) {
   const target = anchorTarget(artifact, anchor);
   if (!target) return false;
+  // A line range stays marked in the source view, so the reader sees which lines a link meant.
+  const range = anchor.match(LINE_RANGE);
+  artifact.querySelectorAll(".source-lines li.in-range").forEach((line) => line.classList.remove("in-range"));
+  if (range?.[2]) {
+    for (let line = target; line && Number(line.id.slice(HEADING_PREFIX.length + 1)) <= Number(range[2]); line = line.nextElementSibling) line.classList.add("in-range");
+  }
   workspace.scrollTop += target.getBoundingClientRect().top - workspace.getBoundingClientRect().top - 16;
   target.classList.remove("is-target");
   void target.offsetWidth;
@@ -904,8 +985,31 @@ function endRebuild(memory) {
   });
 }
 
+// A tab whose file or entity is gone shows a short page with a button that closes it; the next refresh restores a target that comes back.
+function showMissing(path) {
+  if (!missingTabs.has(path)) {
+    missingTabs.add(path);
+    renderTabs();
+  }
+  if (lastSnapshot === `missing:${path}` || path !== selectedPath) return;
+  lastSnapshot = `missing:${path}`;
+  renderedPath = null;
+  document.body.classList.remove("has-maximized");
+  renderMissing(artifact, path, { entity: Boolean(parseEntityRef(path)), label: tabLabel(path), onClose: () => closeTab(path) });
+}
+
+function updateMissingTabs(reported) {
+  const { next, changed } = nextMissingTabs(missingTabs, reported);
+  missingTabs = next;
+  if (changed) renderTabs();
+}
+
 async function showEntity(path) {
   const response = await fetch(`./api/entity?ref=${encodeURIComponent(path)}`, { cache: "no-store" });
+  if (response.status === 404) {
+    showMissing(path);
+    return;
+  }
   if (!response.ok) {
     artifact.innerHTML = `<div class="document-card"><p class="error">${escapeHtml(await response.text())}</p></div>`;
     return;
@@ -956,6 +1060,10 @@ async function showArtifact(path) {
     return;
   }
   const response = await fetch(`./api/artifact?path=${encodeURIComponent(path)}`, { cache: "no-store" });
+  if (response.status === 404) {
+    showMissing(path);
+    return;
+  }
   if (!response.ok) {
     artifact.innerHTML = `<div class="document-card"><p class="error">${escapeHtml(await response.text())}</p></div>`;
     return;
@@ -970,7 +1078,7 @@ async function showArtifact(path) {
   const source = data.kind === "source";
   const structured = Boolean(data.kind) && !source;
   const documentCard = source
-    ? `<section class="document-card source-card"><ol class="source-lines">${data.content.replace(/\n$/, "").split(/\r?\n/).map((line) => `<li><code>${escapeHtml(line) || " "}</code></li>`).join("")}</ol></section>`
+    ? `<section class="document-card source-card"><ol class="source-lines">${data.content.replace(/\n$/, "").split(/\r?\n/).map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${escapeHtml(line) || " "}</code></li>`).join("")}</ol></section>`
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
       : `<section class="document-card"><div class="document-content">${renderText(data.path, data.content, markdownOptions(data.path))}</div></section>`;
@@ -1032,6 +1140,7 @@ function viewState(path) {
 }
 
 async function fetchJson(url) {
+  if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -1058,8 +1167,20 @@ function viewContext(path, state) {
       openRef(artifactPath, rest);
     },
     openEvidence: (id, label) => openEvidence(id, label, viewContext(path, state)),
+    // A view embeds a PlantUML file as the same diagram card that opening the file shows.
+    async mountDiagram(target, diagramPath) {
+      const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(diagramPath)}`);
+      for (const diagram of data.diagrams ?? []) {
+        const section = diagramCard(diagram);
+        target.appendChild(section);
+        await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section);
+      }
+    },
     async answerGate(payload) {
-      const response = await fetch("./api/gates/answer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
+      const response = await fetch("./api/gates/answer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(() => {
+        throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
+      });
       const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
       if (!response.ok) {
         throw Object.assign(new Error(result.message ?? "The answer was not recorded."), { code: result.code });
@@ -1098,6 +1219,7 @@ async function initialize() {
   const requestedPath = selectedPath;
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
   setProjectLabel(workspaceIdentity(data), data.projectRoot);
+  showPrivateServer(data.privateServer);
   setSidebarCollapsed(readSidebarPreference(), { remember: false });
   sidebarToggle.addEventListener("click", () => setSidebarCollapsed(!appShell.classList.contains("sidebar-collapsed")));
   tabs.addEventListener("scroll", updateTabFades, { passive: true });
@@ -1130,6 +1252,7 @@ async function initialize() {
     fetchJson
   });
   availableArtifacts = new Set([...data.artifacts, ...(data.sources ?? [])]);
+  missingTabs = new Set(data.missingTabs ?? []);
   navigation = data.navigation;
   palette = createPalette({
     dialog: document.getElementById("palette"),
@@ -1222,6 +1345,7 @@ async function initialize() {
       if (refreshed?.ok) {
         const snapshot = await refreshed.json();
         availableArtifacts = new Set([...snapshot.artifacts, ...(snapshot.sources ?? [])]);
+        updateMissingTabs(snapshot.missingTabs);
         if (JSON.stringify(snapshot.navigation) !== JSON.stringify(navigation)) {
           navigation = snapshot.navigation;
           renderNavigation();
@@ -1230,9 +1354,10 @@ async function initialize() {
         if (!sessionConnected) {
           synchronizeSession(snapshot);
         }
-      }
-      if (selectedPath) {
-        await showArtifact(selectedPath);
+        // A failed probe leaves the open view as it is rather than replacing it with an error.
+        if (selectedPath) {
+          await showArtifact(selectedPath);
+        }
       }
     } catch {
     }

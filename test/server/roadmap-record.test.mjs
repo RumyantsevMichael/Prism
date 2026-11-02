@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-roadmap-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -32,7 +33,7 @@ test("records initiative decisions and orders them within bands", async (context
     { op: "set_open_questions", questions: ["Is gamma needed this cycle?"] }
   ] });
   assert.equal(created.created, true);
-  assert.equal(created.recordPath, "product/roadmap.json");
+  assert.equal(created.recordPath, ".prism/roadmap.json");
   assert.deepEqual(created.record.initiatives.map((item) => item.id), ["beta", "alpha", "gamma", "delta"]);
   assert.deepEqual(created.derived.map((item) => item.state), ["envisioned", "envisioned", "envisioned", "envisioned"]);
   const projection = await readFile(path.join(projectRoot, "product/roadmap.md"), "utf8");
@@ -50,12 +51,12 @@ test("derives planned and in-progress from records and refuses to ship unfinishe
   let roadmap = await updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("reports", "Now")] });
   const initiative = await updateInitiative({ projectRoot, initiative: "reports", expectedRevision: null, operations: [
     { op: "create", slug: "reports", title: "Export reports", requirements: ["r.md#1", "r.md#2"] },
-    { op: "split", parent: "reports", children: [{ slug: "a", title: "A", requirements: ["r.md#1"] }, { slug: "b", title: "B", requirements: ["r.md#2"] }] }
+    { op: "split", parent: "reports", children: [{ slug: "a", title: "A", requirements: ["r.md#1"] }, { slug: "b", title: "B", requirements: ["r.md#2"] }], evidence: await splitEvidence(projectRoot, "docs/plans/reports", "a") }
   ] });
   roadmap = await getRoadmap({ projectRoot });
   assert.equal(roadmap.derived[0].state, "planned");
   assert.deepEqual(roadmap.derived[0].progress, { leaves: 2, "not-started": 2, "in-progress": 0, blocked: 0, deferred: 0, done: 0 });
-  await updateCoordinationState({ projectRoot, statePath: "docs/plans/reports/state.json", expectedRevision: null, changes: { settings: { autonomy: "broad" } } });
+  await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: null, changes: { settings: { autonomy: "broad" } } });
   assert.equal((await getRoadmap({ projectRoot })).derived[0].state, "planned");
   await updateInitiative({ projectRoot, initiative: "reports", expectedRevision: initiative.revision, operations: [{ op: "set_status", slug: "a", status: "in-progress" }] });
   roadmap = await getRoadmap({ projectRoot });
@@ -68,15 +69,15 @@ test("a recorded ship decision survives coordination cleanup", async (context) =
   const projectRoot = await project(context);
   const roadmap = await updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("done-work", "Now"), add("next-work", "Next")] });
   // A complete record is written directly because the completion gate needs review evidence this test does not build.
-  await mkdir(path.join(projectRoot, "docs/plans/done-work"), { recursive: true });
-  await writeFile(path.join(projectRoot, "docs/plans/done-work/initiative.json"), JSON.stringify({ schemaVersion: 1, id: "done-work", slices: { root: { title: "Root", status: "done", parent: null, requirements: ["r.md#1"], dependencies: [] } }, history: [] }));
+  await mkdir(path.join(projectRoot, ".prism/initiatives/done-work"), { recursive: true });
+  await writeFile(path.join(projectRoot, ".prism/initiatives/done-work/initiative.json"), JSON.stringify({ schemaVersion: 1, id: "done-work", slices: { root: { title: "Root", status: "done", parent: null, requirements: ["r.md#1"], dependencies: [] } }, history: [] }));
   const ready = await getRoadmap({ projectRoot });
   assert.equal(ready.derived[0].readyToShip, true);
   const shipped = await updateRoadmap({ projectRoot, expectedRevision: ready.revision, actor: "orchestrator", operations: [{ op: "ship", id: "done-work" }, { op: "supersede", id: "next-work", by: "done-work", reason: "Shipped work covers it." }] });
   assert.equal(shipped.derived[0].state, "shipped");
   assert.equal(shipped.derived[0].band, "Shipped");
   assert.equal(shipped.derived[1].state, "superseded");
-  await rm(path.join(projectRoot, "docs/plans/done-work"), { recursive: true });
+  await rm(path.join(projectRoot, ".prism/initiatives/done-work"), { recursive: true });
   const after = await getRoadmap({ projectRoot });
   assert.equal(after.derived[0].state, "shipped");
   await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: after.revision, operations: [{ op: "place", id: "done-work", band: "Now" }] }), /keeps its place in history/);
@@ -117,4 +118,25 @@ test("explains why a revision does not match", async (context) => {
   const more = [{ op: "set_open_questions", questions: [] }];
   await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: null, operations: more }), new RegExp(`already exists, so expectedRevision cannot be null\\. Read it and pass its current revision ${created.revision}`));
   await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: "null", operations: more }), new RegExp(`or the current revision ${created.revision}`));
+});
+
+test("a roadmap item cites requirement sections in the same form an initiative accepts", async (context) => {
+  const projectRoot = await project(context, "- Roadmap: docs/roadmap.md\n- Requirements: docs/requirements/\n- Plans: docs/plans/\n");
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("alpha", "Now", { requirements: ["docs/requirements/reports.md"] })] }), { code: "validation_failed", message: /Invalid requirement reference "docs\/requirements\/reports\.md"/ });
+  const created = await updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("alpha", "Now", { requirements: ["reports.md§1", "docs/requirements/reports.md#2"] })] });
+  assert.deepEqual(created.record.initiatives[0].requirements, ["docs/requirements/reports.md#1", "docs/requirements/reports.md#2"]);
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: created.revision, operations: [{ op: "update_initiative", id: "alpha", requirements: ["reports.md"] }] }), { code: "validation_failed" });
+});
+
+test("a roadmap written before references were checked still updates", async (context) => {
+  const projectRoot = await project(context, "- Roadmap: docs/roadmap.md\n- Requirements: docs/requirements/\n");
+  const created = await updateRoadmap({ projectRoot, expectedRevision: null, operations: [add("alpha", "Now")] });
+  const file = path.join(projectRoot, ".prism", "roadmap.json");
+  const record = JSON.parse(await readFile(file, "utf8"));
+  record.initiatives[0].requirements = ["docs/requirements/reports.md"];
+  await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
+  const current = await getRoadmap({ projectRoot });
+  const updated = await updateRoadmap({ projectRoot, expectedRevision: current.revision, operations: [{ op: "update_initiative", id: "alpha", title: "Renamed" }] });
+  assert.deepEqual(updated.record.initiatives[0].requirements, ["docs/requirements/reports.md"], "an untouched reference is kept as it was");
+  void created;
 });

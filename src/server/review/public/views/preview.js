@@ -1,5 +1,5 @@
 import { entityLabel, parseEntityRef, progressBar, stateBadge } from "./entities.js";
-import { anchorTarget } from "./markdown.js";
+import { anchorTarget, LINE_RANGE } from "./markdown.js";
 import { escapeHtml } from "./util.js";
 
 const SHOW_DELAY_MS = 400;
@@ -7,6 +7,7 @@ const HIDE_DELAY_MS = 200;
 const CACHE_MS = 10000;
 const BLOCK_LIMIT = 8;
 const SOURCE_LINES = 14;
+const RANGE_LINES = 40;
 
 function sectionOf(container, anchor) {
   const target = anchorTarget(container, anchor);
@@ -44,9 +45,20 @@ function entitySummary(entity) {
   return `<p class="eyebrow">${escapeHtml(label.eyebrow ?? entity.kind)}</p><h3>${escapeHtml(label.title)}</h3>${body}`;
 }
 
+// A line range previews those lines with their numbers, up to a cap, so a planned change shows the code it touches.
+function sourceRange(data, start, end) {
+  const all = data.content.split(/\r?\n/);
+  const last = Math.min(end, all.length, start + RANGE_LINES - 1);
+  const lines = all.slice(start - 1, last).map((line, index) => `<li data-line="${start + index}"><code>${escapeHtml(line) || " "}</code></li>`).join("");
+  const more = end > last ? `<p class="muted">${end - last} more lines; open the file to see them all.</p>` : "";
+  return `<p class="card-source">${escapeHtml(data.path)} · lines ${start}–${end}</p><ol class="source-lines preview-lines">${lines}</ol>${more}`;
+}
+
 function fileSummary(data, anchor, { renderMarkdown, kindLabel }) {
   const head = `<p class="card-source">${escapeHtml(data.path)}</p>`;
   if (data.kind === "source") {
+    const range = anchor?.match(LINE_RANGE);
+    if (range) return sourceRange(data, Number(range[1]), Number(range[2] ?? range[1]));
     const lines = data.content.split(/\r?\n/).slice(0, SOURCE_LINES).join("\n");
     return `${head}<pre><code>${escapeHtml(lines)}</code></pre>`;
   }

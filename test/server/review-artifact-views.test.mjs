@@ -21,7 +21,7 @@ async function fixture(context) {
   await mkdir(slice, { recursive: true });
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans (scratch): docs/plans/\n");
-  // A slice designed before the rename keeps its legacy file name; a newer slice uses change-map.json.
+  // Records written before .prism sit beside the Markdown, one under the change map's earlier name; the review moves them.
   await writeFile(path.join(slice, "concept-delta.json"), examples);
   await mkdir(path.join(root, "docs", "plans", "demo", "deadline"), { recursive: true });
   await writeFile(path.join(root, "docs", "plans", "demo", "deadline", "change-map.json"), examples);

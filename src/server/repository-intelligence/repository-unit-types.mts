@@ -13,6 +13,8 @@ export interface SearchFilters { domains?: Domain[]; paths?: string[]; kinds?: s
 export interface Counts { files: number; units: number; fragments: number; searchExcludedFiles?: number; reusedEmbeddings: number; newEmbeddings: number }
 export interface IndexMetadata { schemaVersion: 1; chunkerVersion: string; modelIdentity: string; snapshot: string; units: SourceUnit[]; edges: Relationship[]; unresolvedReferences?: UnresolvedReference[]; fileCoverage: Record<string, boolean>; syntaxCoverage?: Record<string, boolean>; diagnostics: Diagnostic[]; counts: Counts; structureComplete: boolean; assetIdentity?: string; tokenCounts?: Record<string, number>; structureCounts?: Record<string, Record<string, number>>; resources: { rssBytes: number; peakRssBytes: number; indexMilliseconds?: number } }
 export interface UnitIndex extends IndexMetadata { chunks: Fragment[] }
+export interface PublishedUnit { id: string; file: string; kind: string; name: string; qualifiedName?: string; range: SourceRange; sourceHash?: string }
+export interface PublishedUnits { schemaVersion: 1; snapshot: string; revision: string; units: PublishedUnit[]; edges: [string, string][] }
 export interface RuntimeAssets { runtime: string; modelDirectory: string; modelIdentity: string; assetIdentity: string }
 export interface PreparedIndex extends RuntimeAssets { index: IndexMetadata; indexPath: string; revision: string }
 export interface Preparation { status: "preparing" | "ready" | "degraded"; preparationId: string; snapshot: string; diagnostics: Diagnostic[]; prepared?: PreparedIndex }

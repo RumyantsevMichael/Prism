@@ -346,7 +346,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         await review.setOpenTabs(body.tabs);
         await touch(project);
       }
-      return { url: review.reviewUrl([]), open: false, session: review.getSession() };
+      return { url: review.reviewUrl([]), open: false, session: await review.currentSession() };
     }
     if (route === "/control/shutdown" && request.method === "POST") {
       const handoff = parseBody(text).handoff === true;

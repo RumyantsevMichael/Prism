@@ -60,3 +60,4 @@ The roadmap skill applies accepted prioritization and supersede decisions and mi
 
 2026-10-14: Accepted after three real orchestrated runs created, completed, and shipped initiatives only through the record tools, and the user approved the change for review.
 2026-10-14: Clarified that the initiative directory is the root slice folder, after a run showed the completion gate looking for the root slice's review in a subfolder.
+2026-10-22: [Keep machine records under .prism](machine-records-under-prism.md) proposes moving the roadmap and initiative records out of the configured roadmap and plans paths, while their generated views stay there.

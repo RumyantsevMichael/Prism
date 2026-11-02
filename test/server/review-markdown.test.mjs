@@ -32,3 +32,10 @@ test("an explicit anchor line names the section below it instead of rendering as
   assert.doesNotMatch(html, /&lt;a id=&quot;2&quot;/);
   assert.match(html, /Inline &lt;a id=&quot;x&quot;&gt;&lt;\/a&gt; stays text\./);
 });
+
+test("a source anchor names one line or a line range", async () => {
+  const { LINE_RANGE } = await import("../../dist/server/review/public/views/markdown.js");
+  assert.deepEqual([..."L12".match(LINE_RANGE)].slice(1), ["12", undefined]);
+  assert.deepEqual([..."L12-39".match(LINE_RANGE)].slice(1), ["12", "39"]);
+  assert.equal("context".match(LINE_RANGE), null);
+});

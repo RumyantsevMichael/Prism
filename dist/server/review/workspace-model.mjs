@@ -1,11 +1,15 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { CHANGE_MAP_FILES } from "../conservation/change-map.mjs";
 import { readInitiative, sliceFolder } from "../workflow/initiative.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
+import { keyOfPath, listInitiatives, listSliceRecords, locateRecord, recordPath } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { latestVerification } from "../workflow/slice-design.mjs";
+import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
+import { loadDesignView } from "../workflow/design-view.mjs";
+import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 
 const LIBRARY_LIMIT = 500;
 const SLICE_FILE_LIMIT = 200;
@@ -30,6 +34,12 @@ export function forgetWorkspace() {
 
 export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary"]);
 const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary" });
+
+// A record is read where it lives: under .prism, or beside its Markdown until the first write moves it there.
+async function recordFile(root, key) {
+  const located = await locateRecord(root, key);
+  return path.relative(located.root, located.target).split(path.sep).join("/");
+}
 
 async function readText(root, relative) {
   try {
@@ -76,58 +86,44 @@ function reviewSummary(review) {
   };
 }
 
-const COORDINATION_FILES = new Set(["state.json", "initiative.json", "initiative.md"]);
+const COORDINATION_FILES = new Set(["initiative.md"]);
 
-async function sliceArtifacts(root, directory, slices, slug) {
+// A slice's human documents sit in its plans folder; its review and change map are records under .prism.
+async function sliceArtifacts(root, directory, slices, slug, id) {
   const folder = sliceFolder(directory, slices, slug);
   const files = [];
   // The root slice shares the initiative directory, so it lists only its own top-level files.
   if (folder === directory) await walk(root, folder, 0, (name) => !COORDINATION_FILES.has(name), files, SLICE_FILE_LIMIT);
   else await walk(root, folder, 3, () => true, files, SLICE_FILE_LIMIT);
-  const reviewSource = files.includes(`${folder}/review.json`) ? await readText(root, `${folder}/review.json`) : null;
+  const reviewPath = await recordFile(root, { kind: "review", initiative: id, slice: slug });
+  const reviewSource = await readText(root, reviewPath);
   let review = null;
   if (reviewSource !== null) {
     try {
-      review = { path: `${folder}/review.json`, ...reviewSummary(JSON.parse(reviewSource)) };
+      review = { path: reviewPath, ...reviewSummary(JSON.parse(reviewSource)) };
     } catch {
-      review = { path: `${folder}/review.json`, invalid: true };
+      review = { path: reviewPath, invalid: true };
     }
   }
+  const changeMap = await recordFile(root, { kind: "change-map", initiative: id, slice: slug });
   return {
     folder,
     files,
     narrative: files.includes(`${folder}/slice.md`) ? `${folder}/slice.md` : null,
-    changeMap: CHANGE_MAP_FILES.map((name) => `${folder}/${name}`).find((file) => files.includes(file)) ?? null,
+    changeMap: (await isFile(root, changeMap)) ? changeMap : null,
     review
   };
 }
 
-async function initiativeFolders(root, config) {
-  if (!config.paths.plans) return [];
-  try {
-    const entries = await readdir(path.join(root, config.paths.plans), { withFileTypes: true });
-    const ids = [];
-    for (const entry of entries) {
-      if (entry.isDirectory() && SLUG_PATTERN.test(entry.name) && (await readText(root, `${config.paths.plans}/${entry.name}/initiative.json`)) !== null) ids.push(entry.name);
-    }
-    return ids.sort();
-  } catch (error) {
-    if (error.code === "ENOENT") return [];
-    throw error;
-  }
+async function initiativeFolders(root) {
+  const ids = [];
+  for (const id of await listInitiatives(root)) if ((await readText(root, await recordFile(root, { kind: "initiative", initiative: id }))) !== null) ids.push(id);
+  return ids;
 }
 
 async function initiativeFindings(root, config, id) {
-  const directory = initiativeDirectory(config, id);
   const totals = { unresolved: 0, blocking: 0 };
-  if (!directory) return totals;
-  let entries = [];
-  try {
-    entries = await readdir(path.join(root, directory), { withFileTypes: true });
-  } catch {
-    return totals;
-  }
-  const ledgers = [`${directory}/review.json`, ...entries.filter((entry) => entry.isDirectory()).map((entry) => `${directory}/${entry.name}/review.json`)];
+  const ledgers = await Promise.all((await listSliceRecords(root, id)).map((slice) => recordFile(root, { kind: "review", initiative: id, slice })));
   for (const ledger of ledgers) {
     const source = await readText(root, ledger);
     if (source === null) continue;
@@ -152,7 +148,7 @@ async function computeRoadmapView(projectRoot) {
   try {
     roadmap = await readRoadmap(projectRoot);
   } catch (error) {
-    return { config: { paths: config.paths, diagnostics: config.diagnostics }, error: error.message, bands: DISPLAY_BANDS, items: [], unlisted: await initiativeFolders(projectRoot, config) };
+    return { config: { paths: config.paths, diagnostics: config.diagnostics }, error: error.message, bands: DISPLAY_BANDS, items: [], unlisted: await initiativeFolders(projectRoot) };
   }
   const { resolved, loaded, derived } = roadmap;
   const record = loaded.record;
@@ -184,7 +180,7 @@ async function computeRoadmapView(projectRoot) {
   const listed = new Set(items.map((item) => item.id));
   return {
     config: { paths: config.paths, diagnostics: config.diagnostics },
-    recordPath: resolved.recordPath,
+    recordPath: await recordFile(projectRoot, { kind: "roadmap" }),
     projectionPath: resolved.projectionPath,
     exists: loaded.exists,
     valid: loaded.valid,
@@ -194,7 +190,7 @@ async function computeRoadmapView(projectRoot) {
     openQuestions: record?.openQuestions ?? [],
     bands: DISPLAY_BANDS,
     items,
-    unlisted: (await initiativeFolders(projectRoot, config)).filter((id) => !listed.has(id))
+    unlisted: (await initiativeFolders(projectRoot)).filter((id) => !listed.has(id))
   };
 }
 
@@ -209,38 +205,64 @@ async function computeInitiativeView(projectRoot, id) {
   const { resolved, loaded } = await readInitiative(projectRoot, id);
   let state = null;
   try {
-    state = (await readCoordinationState({ projectRoot, statePath: `${resolved.directory}/state.json` })).state;
+    state = (await readCoordinationState({ projectRoot, initiative: id })).state;
   } catch {
     state = null;
   }
   const slices = {};
   if (loaded.record?.slices) {
-    for (const slug of Object.keys(loaded.record.slices)) slices[slug] = await sliceArtifacts(projectRoot, resolved.directory, loaded.record.slices, slug);
+    for (const slug of Object.keys(loaded.record.slices)) slices[slug] = await sliceArtifacts(projectRoot, resolved.directory, loaded.record.slices, slug, id);
   }
   const analysis = loaded.analysis;
+  // A design waits at its gate until the orchestrator accepts it, while the record still says not-started, so the browser shows that wait instead.
+  const designReview = {};
+  for (const gate of state?.pending ?? []) {
+    if (gate && typeof gate === "object" && gate.kind === "visual-review" && gate.slice && loaded.record?.slices?.[gate.slice]?.status === "not-started") designReview[gate.slice] = gate.answer ? "answered" : "waiting";
+  }
   return {
     id,
     directory: resolved.directory,
-    recordPath: resolved.recordPath,
-    statePath: `${resolved.directory}/state.json`,
+    recordPath: await recordFile(projectRoot, { kind: "initiative", initiative: id }),
+    statePath: await recordFile(projectRoot, { kind: "state", initiative: id }),
     roadmapItem: roadmap.items.find((item) => item.id === id) ?? null,
     exists: loaded.exists,
     valid: loaded.valid,
     errors: loaded.errors,
     revision: loaded.revision,
     record: loaded.record,
-    derived: analysis ? { root: analysis.root, children: analysis.children, leaves: analysis.leaves, counts: analysis.counts, effectiveDependencies: analysis.effectiveDependencies, complete: analysis.complete, designCandidates: analysis.designCandidates, dependenciesComplete: analysis.dependenciesComplete } : null,
+    derived: analysis ? { root: analysis.root, children: analysis.children, leaves: analysis.leaves, counts: analysis.counts, effectiveDependencies: analysis.effectiveDependencies, complete: analysis.complete, designCandidates: analysis.designCandidates.filter((slug) => !designReview[slug]), dependenciesComplete: analysis.dependenciesComplete } : null,
     active: state?.active ?? [],
+    designReview,
     slices,
     config: { paths: config.paths }
   };
 }
 
-export async function loadSliceView(projectRoot, id, slug) {
+// A designed slice's change map is derived from its verified result; opening the slice starts a derivation the server has not finished yet.
+async function derivedChangeMapState(projectRoot, id, slug, design, verification) {
+  if (!design?.baselineId || !verification?.passed || !verification.snapshotId || verification.designAcceptedAt !== design.acceptedAt) return null;
+  const source = await readText(projectRoot, await recordFile(projectRoot, { kind: "change-map", initiative: id, slice: slug }));
+  let document = null;
+  try { document = source === null ? null : JSON.parse(source); }
+  catch { return { derived: false }; }
+  if (document && !document.derived) return { derived: false };
+  if (document?.derived?.runId === verification.id) return { derived: true, runId: verification.id, document };
+  const key = { projectRoot, initiative: id, slice: slug };
+  const last = lastChangeMapDerivation(key);
+  if (last?.runId === verification.id && last.status === "empty") return { derived: true, empty: true, runId: verification.id };
+  if (last && ["failed", "unavailable"].includes(last.status)) return { derived: true, failed: last.reason ?? last.status };
+  startChangeMapDerivation(key);
+  return { derived: true, pending: true, runId: verification.id };
+}
+
+// The published code index, when there is one, places each planned change in the code; the view never starts a build.
+export async function loadSliceView(projectRoot, id, slug, { intelligenceDirectories } = {}) {
   const initiative = await loadInitiativeView(projectRoot, id);
   if (!initiative.record || !Object.hasOwn(initiative.record.slices, slug)) throw new Error(`The initiative ${id} has no slice ${slug}.`);
   const slice = initiative.record.slices[slug];
   const derived = initiative.derived;
+  const verification = await latestVerification(projectRoot, id, slug).catch(() => null);
+  const { document: changeMapDocument, ...changeMap } = await derivedChangeMapState(projectRoot, id, slug, slice.design, verification) ?? {};
   return {
     id,
     initiativeTitle: initiative.roadmapItem?.title ?? initiative.record.slices[derived?.root]?.title ?? id,
@@ -251,14 +273,18 @@ export async function loadSliceView(projectRoot, id, slug) {
     dependents: Object.entries(initiative.record.slices).filter(([, other]) => other.dependencies.includes(slug)).map(([other]) => other),
     complete: derived?.complete[slug] ?? false,
     active: initiative.active.filter((entry) => entry.slice === slug),
+    designReview: initiative.designReview[slug] ?? null,
     artifacts: initiative.slices[slug],
+    verification,
+    changeMap: Object.keys(changeMap).length ? changeMap : null,
+    designView: await loadDesignView(projectRoot, id, slug, { changeMap: changeMapDocument ?? null, units: await readPublishedUnits(projectRoot, ...(intelligenceDirectories ? [intelligenceDirectories] : [])).catch(() => null) }).catch(() => null),
     titles: Object.fromEntries(Object.entries(initiative.record.slices).map(([key, value]) => [key, value.title]))
   };
 }
 
 async function initiativeReferences(projectRoot, config) {
   const references = new Map();
-  for (const id of await initiativeFolders(projectRoot, config)) {
+  for (const id of await initiativeFolders(projectRoot)) {
     const { loaded } = await readInitiative(projectRoot, id).catch(() => ({ loaded: {} }));
     // Split parents repeat their children's references, so only leaves count as assignments.
     const leaves = new Set(loaded.analysis?.leaves ?? []);
@@ -310,22 +336,6 @@ export async function loadGlossary(projectRoot) {
   return { path: glossaryPath, exists: content !== null, content };
 }
 
-async function planFolders(root, config) {
-  if (!config.paths.plans) return [];
-  try {
-    const entries = await readdir(path.join(root, config.paths.plans), { withFileTypes: true });
-    const ids = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !SLUG_PATTERN.test(entry.name)) continue;
-      const base = `${config.paths.plans}/${entry.name}`;
-      if ((await readText(root, `${base}/initiative.json`)) !== null || (await readText(root, `${base}/state.json`)) !== null) ids.push(entry.name);
-    }
-    return ids.sort();
-  } catch (error) {
-    if (error.code === "ENOENT") return [];
-    throw error;
-  }
-}
 
 async function isFile(root, relative) {
   try {
@@ -340,7 +350,7 @@ async function initiativeSnapshot(projectRoot, config, id, roadmapItem) {
   const { loaded } = await readInitiative(projectRoot, id).catch(() => ({ loaded: { exists: false, valid: false, errors: [] } }));
   let state = null;
   try {
-    state = await readCoordinationState({ projectRoot, statePath: `${directory}/state.json` });
+    state = await readCoordinationState({ projectRoot, initiative: id });
   } catch {
     state = null;
   }
@@ -367,36 +377,47 @@ async function computeAttention(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
   const items = new Map(roadmap.items.map((item) => [item.id, item]));
-  const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await planFolders(projectRoot, config))])];
+  const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await listInitiatives(projectRoot))])];
   const needsYou = [];
   const answered = [];
+  const earlier = [];
   const watch = [];
   for (const id of ids) {
     const snapshot = await initiativeSnapshot(projectRoot, config, id, items.get(id));
     const initiative = { id, title: snapshot.title };
     const state = snapshot.state;
     if (state?.exists && !state.valid) {
-      watch.push({ type: "record-problem", initiative, path: state.statePath, message: state.errors.join(" ") });
+      watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "state", initiative: id }), message: state.errors.join(" ") });
     }
     for (const entry of state?.state?.pending ?? []) {
       if (entry && typeof entry === "object") {
         const artifacts = [];
-        for (const artifact of entry.artifacts ?? []) artifacts.push({ path: artifact, available: await isFile(projectRoot, artifact) });
-        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, options: entry.options ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts, statePath: state.statePath };
+        for (const artifact of entry.artifacts ?? []) {
+          // A gate asked before the records moved to .prism names a record by its old path.
+          const key = await keyOfPath(projectRoot, artifact).catch(() => null);
+          const current = key ? await recordFile(projectRoot, key).catch(() => artifact) : artifact;
+          artifacts.push({ path: current, available: await isFile(projectRoot, current) });
+        }
+        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, options: entry.options ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts };
+        // A question whose every attached file is gone was likely overtaken by later work, so the page says it may no longer apply.
+        if (!gate.answer && artifacts.length && artifacts.every((artifact) => !artifact.available)) gate.stale = true;
         (gate.answer ? answered : needsYou).push(gate);
       } else if (typeof entry === "string") {
-        needsYou.push({ type: "pending-note", text: entry, initiative, statePath: state.statePath });
+        needsYou.push({ type: "pending-note", text: entry, initiative });
       }
     }
+    for (const entry of state?.valid ? state.state?.closed ?? [] : []) {
+      earlier.push({ type: "closed-gate", id: entry.id, kind: entry.kind, question: entry.question, options: entry.options ?? null, askedAt: entry.askedAt, closedAt: entry.closedAt, answer: entry.answer ?? null, reason: entry.reason ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null });
+    }
     if (snapshot.record.exists && !snapshot.record.valid) {
-      watch.push({ type: "record-problem", initiative, path: `${snapshot.directory}/initiative.json`, message: snapshot.record.errors.join(" ") });
+      watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "initiative", initiative: id }), message: snapshot.record.errors.join(" ") });
     }
     const slices = snapshot.record.record?.slices ?? {};
     for (const [slug, slice] of Object.entries(slices)) {
       if (slice.status === "blocked") watch.push({ type: "blocked", initiative, slice: { slug, title: slice.title } });
     }
     for (const slug of Object.keys(slices)) {
-      const ledger = `${sliceFolder(snapshot.directory, slices, slug)}/review.json`;
+      const ledger = await recordFile(projectRoot, { kind: "review", initiative: id, slice: slug });
       const source = await readText(projectRoot, ledger);
       if (source === null) continue;
       try {
@@ -422,22 +443,19 @@ async function computeAttention(projectRoot) {
   const blockingOrder = (entry) => ({ "record-problem": 0, blocked: 1, findings: entry.blocking ? 2 : 3, "ready-to-ship": 4, active: 5 })[entry.type] ?? 6;
   watch.sort((left, right) => blockingOrder(left) - blockingOrder(right));
   answered.sort((left, right) => String(left.answer.answeredAt).localeCompare(String(right.answer.answeredAt)));
-  return { needsYou, answered, watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
+  // The newest closed questions come first, across initiatives, so the list stays short.
+  earlier.sort((left, right) => String(right.closedAt).localeCompare(String(left.closedAt)));
+  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
 }
 
-// The browser names the initiative and gate; the state path always comes from the workflow config, never from the client.
-export async function answerGate(projectRoot, body, { store } = {}) {
+// The browser names the initiative and gate; the state record is always the initiative's own, never a client path.
+export async function answerGate(projectRoot, body) {
   if (!body || typeof body !== "object" || !SLUG_PATTERN.test(body.initiative ?? "") || typeof body.id !== "string") {
     throw Object.assign(new Error("An initiative and a gate id are required."), { code: "invalid_answer" });
   }
-  const config = await readWorkflowConfig(projectRoot);
-  const directory = initiativeDirectory(config, body.initiative);
-  if (!directory) {
-    throw Object.assign(new Error("The workflow config disables plans, so no gate can be answered."), { code: "invalid_answer" });
-  }
   const choice = typeof body.choice === "string" && body.choice ? body.choice : null;
   const note = typeof body.note === "string" ? body.note : null;
-  const result = await answerUserGate({ projectRoot, statePath: `${directory}/state.json`, id: body.id, choice, note, ...(store ? { store } : {}) });
+  const result = await answerUserGate({ projectRoot, initiative: body.initiative, id: body.id, choice, note });
   return { gate: result.gate, revision: result.revision };
 }
 
@@ -456,7 +474,7 @@ async function searchIndex(projectRoot, config, roadmap, glossary) {
   const entries = [];
   const titles = new Map(roadmap.items.map((item) => [item.id, item.title]));
   for (const item of roadmap.items) entries.push({ ref: `initiative:${item.id}`, label: item.title, kind: "initiative", detail: `${item.band} · ${item.state}` });
-  for (const id of await initiativeFolders(projectRoot, config)) {
+  for (const id of await initiativeFolders(projectRoot)) {
     if (!titles.has(id)) entries.push({ ref: `initiative:${id}`, label: id, kind: "initiative", detail: "not on the roadmap" });
     const { loaded } = await readInitiative(projectRoot, id).catch(() => ({ loaded: {} }));
     for (const [slug, slice] of Object.entries(loaded.record?.slices ?? {})) entries.push({ ref: `slice:${id}/${slug}`, label: slice.title, kind: "slice", detail: `${titles.get(id) ?? id} · ${slice.status}` });
@@ -541,9 +559,17 @@ export async function entityContext(projectRoot, ref) {
   const config = await readWorkflowConfig(projectRoot);
   const fileCrumb = { ref, label: path.posix.basename(ref) };
   const plans = config.paths.plans;
+  const record = await keyOfPath(projectRoot, ref).catch(() => null);
+  if (record?.initiative && ref.startsWith(".prism/")) {
+    const { scope, view } = await initiativeTree(projectRoot, record.initiative);
+    const trail = [roadmapCrumb, { ref: `initiative:${record.initiative}`, label: scope.title }];
+    const slug = record.slice && view.record && Object.hasOwn(view.record.slices, record.slice) ? record.slice : null;
+    if (slug) trail.push(...sliceTrail(view, slug, record.initiative));
+    return { trail: [...trail, fileCrumb], scope: { ...scope, current: slug } };
+  }
   if (under(plans, ref)) {
     const [id, segment] = ref.slice(plans.length + 1).split("/");
-    if (SLUG_PATTERN.test(id ?? "") && (await readText(projectRoot, `${plans}/${id}/initiative.json`)) !== null) {
+    if (SLUG_PATTERN.test(id ?? "") && (await readText(projectRoot, await recordFile(projectRoot, { kind: "initiative", initiative: id }))) !== null) {
       const { scope, view } = await initiativeTree(projectRoot, id);
       const trail = [roadmapCrumb, { ref: `initiative:${id}`, label: scope.title }];
       const slug = view.record && segment && Object.hasOwn(view.record.slices, segment) && ref !== `${plans}/${id}/${segment}` ? segment : null;
@@ -588,7 +614,7 @@ export async function entityExists(projectRoot, ref) {
   return Boolean(loaded.record?.slices && Object.hasOwn(loaded.record.slices, parsed.slug));
 }
 
-export async function loadEntity(projectRoot, ref) {
+export async function loadEntity(projectRoot, ref, options = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
   if (parsed.kind === "attention") return { ref, kind: "attention", data: await loadAttention(projectRoot) };
@@ -596,5 +622,5 @@ export async function loadEntity(projectRoot, ref) {
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
   if (parsed.kind === "initiative") return { ref, kind: "initiative", data: await loadInitiativeView(projectRoot, parsed.id) };
-  return { ref, kind: "slice", data: await loadSliceView(projectRoot, parsed.id, parsed.slug) };
+  return { ref, kind: "slice", data: await loadSliceView(projectRoot, parsed.id, parsed.slug, options) };
 }

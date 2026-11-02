@@ -1,16 +1,17 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { readInitiative } from "./initiative.mjs";
+import { normalizeRequirementReference, readInitiative } from "./initiative.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { readCoordinationState } from "./state.mjs";
-import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
+import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
+import { locateRecord, moveLegacyRecords, writeRecord } from "./record-store.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
@@ -66,9 +67,9 @@ async function resolveRoadmap(projectRoot, createParent = false) {
   const config = await readWorkflowConfig(projectRoot);
   const paths = roadmapPaths(config);
   if (!paths) throw fail("invalid_config", "The workflow config disables the roadmap path.");
-  const record = await resolveArtifactPath(projectRoot, paths.record, createParent, path.posix.basename(paths.record));
-  const projection = await resolveArtifactPath(projectRoot, paths.projection, false, path.posix.basename(paths.projection));
-  return { root: record.root, config, recordPath: record.deltaPath, target: record.target, projectionPath: projection.deltaPath, projectionTarget: projection.target, recordName: path.posix.basename(paths.record) };
+  const record = await locateRecord(projectRoot, { kind: "roadmap" });
+  const projection = await resolveArtifactPath(projectRoot, paths.projection, createParent, path.posix.basename(paths.projection));
+  return { root: record.root, config, recordPath: record.path, target: record.target, projectionPath: projection.deltaPath, projectionTarget: projection.target, recordName: path.posix.basename(paths.record) };
 }
 
 function emptyRoadmap() {
@@ -157,9 +158,8 @@ export async function deriveInitiative(projectRoot, config, item) {
   const analysis = loaded.analysis;
   const progress = { leaves: analysis.leaves.length, ...analysis.counts };
   let active = [];
-  const directory = initiativeDirectory(config, item.id);
   try {
-    const state = await readCoordinationState({ projectRoot, statePath: `${directory}/state.json` });
+    const state = await readCoordinationState({ projectRoot, initiative: item.id });
     active = state.state?.active ?? [];
   } catch (error) {
     base.diagnostics.push({ code: error.code ?? "state_unreadable", message: error.message });
@@ -242,7 +242,17 @@ function insertInBand(record, item, targetBand, positionValue) {
   record.initiatives.splice(index, 0, item);
 }
 
+// Only references an operation adds or changes are checked, so a roadmap written before this check still loads and updates.
+function roadmapRequirements(resolved, references) {
+  return references.map((reference) => {
+    const normalized = normalizeRequirementReference(resolved.config.paths.requirements, reference);
+    if (normalized.problem) throw fail("validation_failed", normalized.problem);
+    return normalized.reference;
+  });
+}
+
 async function applyOperation(resolved, record, operation, actor, at) {
+  if (operation.requirements !== undefined && (operation.op === "add_initiative" || operation.op === "update_initiative")) operation = { ...operation, requirements: roadmapRequirements(resolved, operation.requirements) };
   switch (operation.op) {
     case "set_serves":
       record.serves = operation.serves;
@@ -297,9 +307,11 @@ async function applyOperation(resolved, record, operation, actor, at) {
 
 export async function updateRoadmap(input) {
   validateInput(UPDATE_ROADMAP_SCHEMA, input);
+  await moveLegacyRecords(input.projectRoot);
   const resolved = await resolveRoadmap(input.projectRoot, true);
-  const managed = [resolved.recordPath, resolved.projectionPath].filter((file) => ["roadmap.json", "roadmap.md"].includes(path.posix.basename(file)));
+  const managed = [resolved.projectionPath].filter((file) => path.posix.basename(file) === "roadmap.md");
   if (managed.length) await conservationStore.registerCoordinationOutputs(resolved.root, managed);
+  await mkdir(path.dirname(resolved.target), { recursive: true });
   return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
     const current = await loadRoadmap(resolved);
     if (current.revision !== input.expectedRevision) {
@@ -317,7 +329,7 @@ export async function updateRoadmap(input) {
     record.history = record.history.slice(-HISTORY_LIMIT);
     const contents = `${JSON.stringify(record, null, 2)}\n`;
     if (mutating.length && contents !== (await readFile(resolved.target, "utf8").catch(() => null))) {
-      await conservationStore.writeManaged(resolved.root, resolved.target, contents);
+      await writeRecord(resolved.root, { kind: "roadmap" }, contents);
     }
     const projection = markdown(record, resolved.recordName);
     let projectionStale = false;

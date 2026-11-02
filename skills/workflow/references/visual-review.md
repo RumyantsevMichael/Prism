@@ -1,17 +1,9 @@
 # Visual review
 
-Use the Prism review server for human artifact review when its tools are available.
-Missing `Review browser` defaults to `auto`.
-For `auto`, use the internal browser in desktop sessions and the system browser in CLI sessions.
-For `internal`, use the internal browser.
-For `external`, use the system browser.
-Explicit `internal` and `external` values override `auto`.
+Use the Prism review browser for human review of designs and artifacts when its tools are available.
+The `Review browser` setting selects `internal`, `external`, or `auto`, and `auto` uses the internal browser on desktop and the system browser in CLI sessions.
 
-Open one Prism artifact viewer session for all recorded ADRs and diagrams after a clean design audit and before implementation.
-Open one Prism artifact viewer session for all changed artifacts and diagrams before the final correctness gate.
-Before opening a session for a user gate, record the gate with the artifacts to inspect when coordination state exists.
-Use a browser-opening capability with no artifact argument so each session opens on Attention, which lists recorded user gates, and reaches the roadmap and its initiatives, slices, requirements, decisions, and glossary.
-The user can answer a recorded gate on Attention or in the conversation.
-Treat a URL-only result or an unavailable opener as a fallback, and present the URL and source artifacts.
-Inspect the rendered artifact before the related user gate.
-If no review server exists, present the source artifacts.
+- Record the user gate with its artifacts before opening the browser, so the Attention page lists it.
+- Open the browser without an artifact argument so it starts on Attention.
+- When only a URL is available, present the URL and the source artifact paths.
+- When no review browser exists, present the source artifacts.

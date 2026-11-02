@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
@@ -479,8 +480,9 @@ test("a project whose records cannot be read is listed with an unknown gate coun
   const current = await project(context, "intact");
   const currentUrl = await (await pool(context, { app: { directory } }).get(current, "task")).reviewUrl([]);
   const broken = await project(context, "broken");
-  // A file where the plans folder belongs makes the project's records unreadable.
-  await writeFile(path.join(broken, "docs", "plans"), "not a folder\n");
+  // A file where the initiative records belong makes the project's records unreadable.
+  await mkdir(path.join(broken, ".prism"), { recursive: true });
+  await writeFile(path.join(broken, ".prism", "initiatives"), "not a folder\n");
   await registerRecent(directory, broken);
   const entry = JSON.parse((await request(new URL("api/projects", currentUrl))).body).projects.find((item) => item.projectRoot === broken);
   assert.equal(entry.gates, null);
@@ -560,7 +562,7 @@ test("reading the review URL without tabs leaves the session unchanged", async (
 test("an MCP server lists its project in the app from start until it exits", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "registered");
-  const env = { ...process.env, CLAUDE_PROJECT_DIR: root, PRISM_REVIEW_APP_DIR: directory, PRISM_REVIEW_BROWSER_ON_START: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
+  const env = isolatedEnv({ CLAUDE_PROJECT_DIR: root, PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) });
   delete env.PRISM_REVIEW_APP;
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
   context.after(() => child.kill());
@@ -584,7 +586,7 @@ test("an MCP server lists its project in the app from start until it exits", asy
 test("an MCP server in a host that names no project starts the app at once and lists the project from its first Prism tool call", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "codex");
-  const env = { ...process.env, PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
+  const env = isolatedEnv({ PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) });
   delete env.PRISM_REVIEW_APP;
   delete env.CLAUDE_PROJECT_DIR;
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -818,6 +820,34 @@ test("a session serves its own review server when the shared app cannot start", 
   assert.equal(index.projectRoot, root);
   assert.ok(!url.pathname.includes("/p/"), "the fallback is a single-project session server");
   assert.equal((await request(new URL("api/projects", url))).status, 404, "a session server has no project list, so its page keeps a plain label");
+  assert.match(index.privateServer.reason, /not private to this user/, "the page learns that this session alone serves the project, and why");
+  assert.match(review.privateServer().reason, /not private to this user/, "the agent's review links say so too");
+});
+
+test("a fallback records why the shared app could not be reached", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "fallback-log");
+  const launch = () => spawn(process.execPath, ["-e", "process.exit(7)"], { stdio: "ignore" });
+  const review = await pool(context, { app: { directory, launch, startTimeoutMs: 1500 } }).get(root, "task");
+  const reason = review.privateServer().reason;
+  assert.match(reason, /did not start within 1\.5 seconds, and its process exited with code 7/);
+  await eventually(async () => Boolean(await readFile(path.join(directory, "fallbacks.log"), "utf8").catch(() => "")));
+  const [entry] = (await readFile(path.join(directory, "fallbacks.log"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(entry.projectRoot, root);
+  assert.equal(entry.reason, reason);
+  assert.equal(entry.pid, process.pid);
+  const index = JSON.parse((await request(new URL("api/index", await review.reviewUrl([])))).body);
+  assert.equal(index.privateServer.reason, reason);
+});
+
+test("a session on the shared app is not marked private", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "shared-not-private");
+  const review = await pool(context, { app: { directory } }).get(root, "task");
+  assert.ok(new URL(await review.reviewUrl([])).pathname.includes("/p/"));
+  assert.equal(review.privateServer(), null);
+  const index = JSON.parse((await request(new URL("api/index", await review.reviewUrl([])))).body);
+  assert.equal(index.privateServer, undefined);
 });
 
 // A standalone review whose held server, if any, closes with the test.
@@ -897,7 +927,7 @@ test("the prism review command exits after presenting through a running app", as
   const events = await viewerEvents(context, await review.reviewUrl([]));
   await eventually(() => events.some((event) => event.name === "session"));
   const before = await readDiscovery(directory);
-  const child = spawn(process.execPath, [CLI_PATH, "review"], { cwd: root, env: { ...process.env, PRISM_REVIEW_APP_DIR: directory }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [CLI_PATH, "review"], { cwd: root, env: isolatedEnv({ PRISM_REVIEW_APP_DIR: directory }), stdio: ["ignore", "pipe", "pipe"] });
   context.after(() => child.kill());
   let stdout = "";
   child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -977,7 +1007,7 @@ test("the app reads a project's evidence from every store that sessions of diffe
   assert.equal((await request(new URL(`api/evidence?id=${"0".repeat(64)}`, url))).status, 400, "evidence that no store holds is still refused");
 });
 
-test("the app records a gate answer in the most recently reported store", async (context) => {
+test("a gate answer from the app writes the state record without touching any evidence store", async (context) => {
   const directory = await appDirectory(context);
   const root = await gateProject(context, "answers", 1);
   const stores = [];
@@ -992,7 +1022,10 @@ test("the app records a gate answer in the most recently reported store", async 
   const answered = await request(new URL("api/gates/answer", url), { method: "POST", headers: { "Content-Type": "application/json" }, body });
   assert.equal(answered.status, 200, answered.body);
   const contents = await Promise.all(stores.map((store) => readdir(store)));
-  assert.deepEqual(contents.map((entries) => entries.length > 0), [false, true], "only the newest reported store holds the answer's project records");
+  // State records sit outside conservation snapshots, so an answer has nothing to register in a store.
+  assert.deepEqual(contents.map((entries) => entries.length > 0), [false, false]);
+  const state = JSON.parse(await readFile(path.join(root, ".prism/initiatives/work/state.json"), "utf8"));
+  assert.equal(state.pending.find((gate) => gate.id === "gate-00000000").answer.note, "Answered from the page.");
 });
 
 test("a session falls back within the start deadline when a started app never answers", async (context) => {

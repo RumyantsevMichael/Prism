@@ -1,4 +1,5 @@
 import { artifactChip, bindLinks, card, emptyNote, escapeHtml, plural } from "./util.js";
+import { notifyControl } from "./attention-signal.js";
 
 const GATE_LABELS = {
   "visual-review": "Visual review",
@@ -25,14 +26,39 @@ function location(item, ctx) {
   return parts.join('<span class="crumb-separator" aria-hidden="true">›</span>');
 }
 
+const REVIEW_KINDS = new Set(["visual-review", "correctness"]);
+
+// An assistance gate has one answer, so its Send button gives it instead of a separate choice.
 function choices(item) {
-  if (item.kind === "visual-review" || item.kind === "correctness") return [["approve", "Approve"], ["request-changes", "Request changes"]];
-  if (item.kind === "assistance") return [["done", "Done"]];
+  if (REVIEW_KINDS.has(item.kind)) return [["approve", "Approve"], ["request-changes", "Request changes"]];
+  if (item.kind === "assistance") return [];
   return (item.options ?? []).map((option) => [option.id, option.label]);
 }
 
 function choiceLabel(item, choice) {
+  if (item.kind === "assistance" && choice === "done") return "Done";
   return choices(item).find(([id]) => id === choice)?.[1] ?? (choice ? choice : "Free answer");
+}
+
+// The form follows the server's answer rules, so Send is enabled only for an answer the server accepts, and the hint names what is missing.
+// Nothing is guessed from the note: a review gate needs an explicit choice, and the note is kept whatever the person picks.
+export function answerState(item, draft = {}) {
+  const options = choices(item);
+  const choice = item.kind === "assistance" ? "done" : options.some(([id]) => id === draft.choice) ? draft.choice : null;
+  const hasNote = typeof draft.note === "string" && draft.note.trim() !== "";
+  const optional = { noteRequired: false, noteLabel: "Note", notePlaceholder: "Anything the agent should know" };
+  if (REVIEW_KINDS.has(item.kind)) {
+    if (choice === "request-changes") {
+      return { choice, ready: hasNote, noteRequired: true, noteLabel: "What should change", notePlaceholder: "Describe what to change; the agent revises from this note", submitLabel: "Request changes", hint: hasNote ? "" : "Write what should change to send this." };
+    }
+    if (choice === "approve") return { choice, ready: true, ...optional, submitLabel: "Approve", hint: "" };
+    return { choice, ready: false, ...optional, notePlaceholder: "Anything the agent should know; required if you request changes", submitLabel: "Send answer", hint: hasNote ? "Pick Approve or Request changes to send your note." : "Pick Approve or Request changes." };
+  }
+  if (item.kind === "assistance") return { choice, ready: true, ...optional, submitLabel: "Mark as done", hint: "" };
+  if (options.length) {
+    return { choice, ready: Boolean(choice) || hasNote, ...optional, notePlaceholder: "Add a note, or answer in your own words without picking an option", submitLabel: "Send answer", hint: choice || hasNote ? "" : "Pick an option or write your answer." };
+  }
+  return { choice, ready: hasNote, noteRequired: true, noteLabel: "Your answer", notePlaceholder: "Answer in your own words", submitLabel: "Send answer", hint: hasNote ? "" : "Write your answer to send it." };
 }
 
 function gateHead(item, ctx, time) {
@@ -42,11 +68,13 @@ function gateHead(item, ctx, time) {
 
 function answerForm(item, draft) {
   const options = choices(item);
-  const notePrompt = item.kind === "decision" ? (options.length ? "Optional note, or answer in your own words without picking an option" : "Your answer") : item.kind === "assistance" ? "Optional note" : "Note, required when you request changes";
-  return `<div class="gate-answer" data-gate="${escapeHtml(item.id)}" data-initiative="${escapeHtml(item.initiative.id)}">
-    ${options.length ? `<div class="gate-choices" role="group" aria-label="Answer">${options.map(([id, label]) => `<button type="button" class="choice-button${id === "request-changes" ? " is-negative" : ""}" data-choice="${escapeHtml(id)}" aria-pressed="${draft.choice === id}">${escapeHtml(label)}</button>`).join("")}</div>` : ""}
-    <label class="gate-note"><span class="sr-only">${escapeHtml(notePrompt)}</span><textarea data-note rows="2" maxlength="4000" placeholder="${escapeHtml(notePrompt)}">${escapeHtml(draft.note ?? "")}</textarea></label>
-    <div class="gate-actions"><button type="button" class="tool-button primary" data-submit>Send answer</button><p class="gate-error" role="alert" hidden></p></div>
+  const state = answerState(item, draft);
+  const key = escapeHtml(item.id);
+  return `<div class="gate-answer" data-gate="${key}" data-initiative="${escapeHtml(item.initiative.id)}">
+    ${options.length ? `<div class="gate-choices" role="group" aria-label="Your answer">${options.map(([id, label]) => `<button type="button" class="choice-button${id === "request-changes" ? " is-negative" : id === "approve" ? " is-positive" : ""}" data-choice="${escapeHtml(id)}" aria-pressed="${state.choice === id}">${escapeHtml(label)}</button>`).join("")}</div>` : ""}
+    <label class="gate-note"><span class="gate-note-label"><span data-note-label>${escapeHtml(state.noteLabel)}</span> <span class="gate-note-need${state.noteRequired ? " is-required" : ""}" data-note-need>${state.noteRequired ? "required" : "optional"}</span></span><textarea data-note rows="2" maxlength="4000" placeholder="${escapeHtml(state.notePlaceholder)}" aria-required="${state.noteRequired}">${escapeHtml(draft.note ?? "")}</textarea></label>
+    <div class="gate-actions"><button type="button" class="tool-button primary${state.choice === "request-changes" ? " is-negative" : ""}" data-submit aria-describedby="gate-hint-${key} gate-error-${key}"${state.ready ? "" : " disabled"}>${escapeHtml(state.submitLabel)}</button><p class="gate-hint" id="gate-hint-${key}" aria-live="polite">${escapeHtml(state.hint)}</p></div>
+    <p class="gate-error" id="gate-error-${key}" role="alert"${draft.error ? "" : " hidden"}>${escapeHtml(draft.error ?? "")}</p>
   </div>`;
 }
 
@@ -57,6 +85,7 @@ function gateCard(item, ctx, draft) {
     ${gateHead(item, ctx, item.askedAt)}
     ${available.length ? `<div class="attention-artifacts"><span class="muted">Inspect</span> ${available.map((artifact) => artifactChip(artifact.path, ctx, artifact.path.split("/").pop())).join(" ")}</div>` : ""}
     ${missing.length ? `<p class="muted">Not found: ${missing.map((artifact) => `<code>${escapeHtml(artifact.path)}</code>`).join(" ")}</p>` : ""}
+    ${item.stale ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : ""}
     ${answerForm(item, draft)}
   </li>`;
 }
@@ -68,22 +97,60 @@ function answeredCard(item, ctx) {
   </li>`;
 }
 
-function bindAnswers(container, ctx) {
+// A closed question shows the browser answer, or the reason the agent gave when it resolved the question without one.
+function closedCard(item, ctx) {
+  const outcome = item.answer
+    ? `<span class="choice-given${item.answer.choice === "request-changes" ? " is-negative" : ""}">${escapeHtml(choiceLabel(item, item.answer.choice))}</span>${item.answer.note ? ` ${escapeHtml(item.answer.note)}` : ""}`
+    : `<span class="choice-given">Closed by the agent</span>`;
+  return `<li class="attention-card is-closed gate-${escapeHtml(item.kind)}">
+    ${gateHead(item, ctx, item.closedAt)}
+    <p class="gate-given">${outcome}</p>
+    ${item.reason ? `<p class="muted">${escapeHtml(item.reason)}</p>` : ""}
+  </li>`;
+}
+
+function bindAnswers(container, ctx, gates) {
   const drafts = (ctx.state.drafts ??= {});
   for (const form of container.querySelectorAll(".gate-answer")) {
     const id = form.dataset.gate;
+    const item = gates.find((gate) => gate.id === id);
     const draft = (drafts[id] ??= { choice: null, note: "" });
     const note = form.querySelector("[data-note]");
     const failure = form.querySelector(".gate-error");
+    const submit = form.querySelector("[data-submit]");
+    const hint = form.querySelector(".gate-hint");
+    const need = form.querySelector("[data-note-need]");
+    let sending = false;
+    // A change updates the form in place, so focus and the typed note stay where they are.
+    const refresh = () => {
+      const state = answerState(item, draft);
+      for (const button of form.querySelectorAll("[data-choice]")) button.setAttribute("aria-pressed", String(button.dataset.choice === state.choice));
+      form.querySelector("[data-note-label]").textContent = state.noteLabel;
+      need.textContent = state.noteRequired ? "required" : "optional";
+      need.classList.toggle("is-required", state.noteRequired);
+      note.placeholder = state.notePlaceholder;
+      note.setAttribute("aria-required", String(state.noteRequired));
+      submit.textContent = state.submitLabel;
+      submit.classList.toggle("is-negative", state.choice === "request-changes");
+      submit.disabled = sending || !state.ready;
+      if (hint.textContent !== state.hint) hint.textContent = state.hint;
+    };
+    const clearFailure = () => {
+      draft.error = null;
+      failure.hidden = true;
+    };
     for (const button of form.querySelectorAll("[data-choice]")) {
       button.addEventListener("click", () => {
         draft.choice = draft.choice === button.dataset.choice ? null : button.dataset.choice;
-        for (const other of form.querySelectorAll("[data-choice]")) other.setAttribute("aria-pressed", String(other.dataset.choice === draft.choice));
+        clearFailure();
+        refresh();
       });
     }
     note.addEventListener("input", () => {
       draft.note = note.value;
       draft.selection = [note.selectionStart, note.selectionEnd];
+      clearFailure();
+      refresh();
     });
     note.addEventListener("focus", () => {
       ctx.state.focus = id;
@@ -91,20 +158,25 @@ function bindAnswers(container, ctx) {
     note.addEventListener("blur", () => {
       if (ctx.state.focus === id) ctx.state.focus = null;
     });
-    const submit = form.querySelector("[data-submit]");
     submit.addEventListener("click", async () => {
-      submit.disabled = true;
-      failure.hidden = true;
+      const state = answerState(item, draft);
+      if (!state.ready || sending) return;
+      sending = true;
+      clearFailure();
+      refresh();
       try {
-        await ctx.answerGate({ initiative: form.dataset.initiative, id, choice: draft.choice, note: draft.note });
+        await ctx.answerGate({ initiative: form.dataset.initiative, id, choice: state.choice, note: draft.note });
         delete drafts[id];
         ctx.state.focus = null;
         ctx.showToast("Answer recorded. An agent waiting in Claude Code resumes on its own; otherwise the agent sees it with your next message.");
         ctx.rerender();
       } catch (error) {
-        failure.textContent = error.code === "gate_answered" ? "This question already has an answer." : error.code === "unknown_gate" ? "The agent already resolved or withdrew this question." : error.message;
+        // The server stays the backstop: its refusal shows beside the form, and the draft keeps the note through a re-render.
+        draft.error = error.code === "gate_answered" ? "This question already has an answer." : error.code === "unknown_gate" ? "The agent already resolved or withdrew this question." : error.message;
+        failure.textContent = draft.error;
         failure.hidden = false;
-        submit.disabled = false;
+        sending = false;
+        refresh();
         if (error.code === "gate_answered" || error.code === "unknown_gate") ctx.rerender();
       }
     });
@@ -151,6 +223,7 @@ export function render(container, entity, ctx) {
   const data = entity.data;
   const drafts = (ctx.state.drafts ??= {});
   const answered = data.answered ?? [];
+  const earlier = data.earlier ?? [];
   const gates = data.needsYou.filter((item) => item.type === "gate");
   const notes = data.needsYou.filter((item) => item.type !== "gate");
   container.innerHTML = `
@@ -160,6 +233,7 @@ export function render(container, entity, ctx) {
         <div class="stat"><span class="stat-value">${notes.length}</span><span class="stat-label">other ${notes.length === 1 ? "item needs" : "items need"} you</span></div>
         <div class="stat"><span class="stat-value">${data.watch.length}</span><span class="stat-label">agent-side ${data.watch.length === 1 ? "signal" : "signals"}</span></div>
       </div>
+      ${notifyControl(typeof Notification === "undefined" ? null : Notification.permission)}
     </section>
     ${card("Needs you", data.needsYou.length
       ? `<ul class="attention-list">${gates.map((item) => gateCard(item, ctx, drafts[item.id] ?? { choice: null, note: "" })).join("")}${notes.map((item) => noteCard(item, ctx)).join("")}</ul>`
@@ -168,7 +242,11 @@ export function render(container, entity, ctx) {
     ${answered.length ? card("Answered, waiting for the agent", `<ul class="attention-list">${answered.map((item) => answeredCard(item, ctx)).join("")}</ul><p class="attention-footnote muted">An agent waiting in Claude Code resumes on its own shortly after your last answer. Otherwise the agent receives these answers with your next message in the conversation, even a short one such as “go”.</p>`, { eyebrow: plural(answered.length, "answer") }) : ""}
     ${card("Watch", data.watch.length
       ? `<div class="table-wrap"><table class="data-table attention-watch"><tbody>${data.watch.map((item) => watchRow(item, ctx)).join("")}</tbody></table></div>`
-      : emptyNote("No blocked slices, open findings, or active work."), { eyebrow: "Agent-side state" })}`;
+      : emptyNote("No blocked slices, open findings, or active work."), { eyebrow: "Agent-side state" })}
+    ${earlier.length ? card("Earlier questions", `<ul class="attention-list">${earlier.map((item) => closedCard(item, ctx)).join("")}</ul>`, { eyebrow: "Most recent first" }) : ""}`;
   bindLinks(container, ctx);
-  bindAnswers(container, ctx);
+  bindAnswers(container, ctx, gates);
+  container.querySelector("[data-notify]")?.addEventListener("click", () => {
+    void Notification.requestPermission().finally(() => ctx.rerender());
+  });
 }

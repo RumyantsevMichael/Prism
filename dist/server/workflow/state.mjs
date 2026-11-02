@@ -4,25 +4,32 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { mkdir, readFile, realpath, rm, lstat } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { SLUG_PATTERN } from "./initiative-graph.mjs";
+import { locateRecord, moveLegacyRecords, sliceDocumentFolder, writeRecord } from "./record-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
+import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 
 const SCHEMA_VERSION = 1;
 
-const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence"]);
-const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "models"]);
+const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed"]);
+const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "review", "models"]);
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
 const GATE_KEYS = new Set(["id", "kind", "slice", "question", "artifacts", "options", "askedAt", "answer"]);
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
 const OPTION_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ANSWER_KEYS = new Set(["choice", "note", "via", "answeredAt"]);
+// Closed gates stay readable so the user can see what they answered and why a question went away.
+const CLOSED_LIMIT = 20;
+const REASON_LIMIT = 1000;
 const REVIEW_CHOICES = new Set(["approve", "request-changes"]);
 const SETTING_VALUES = {
   autonomy: new Set(["conservative", "broad", "full"]),
   agentFlow: new Set(["mono", "multi"]),
   commit: new Set(["on", "off"]),
   push: new Set(["on", "off"]),
-  continuation: new Set(["auto", "stepwise"])
+  continuation: new Set(["auto", "stepwise"]),
+  review: new Set(["marked", "recommended", "all"])
 };
 
 export class CoordinationStateError extends Error {
@@ -47,24 +54,13 @@ function isInside(root, target) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function normalizedStatePath(statePath) {
-  if (typeof statePath !== "string" || !statePath || path.isAbsolute(statePath)) {
-    throw error("invalid_path", "The statePath argument must be a non-empty path relative to the project root.");
-  }
-  const normalized = path.normalize(statePath);
-  if (path.basename(normalized) !== "state.json") {
-    throw error("invalid_path", "The statePath argument must name a state.json file.");
-  }
-  return normalized;
-}
-
 async function assertNearestExistingPathInside(root, target) {
   let current = target;
   while (true) {
     try {
       const resolved = await realpath(current);
       if (!isInside(root, resolved)) {
-        throw error("invalid_path", "The state path resolves outside the project root.");
+        throw error("invalid_path", "The recovery path resolves outside the project root.");
       }
       return;
     } catch (caught) {
@@ -73,64 +69,24 @@ async function assertNearestExistingPathInside(root, target) {
       }
       const parent = path.dirname(current);
       if (parent === current) {
-        throw error("invalid_path", "The state path cannot be resolved inside the project root.");
+        throw error("invalid_path", "The recovery path cannot be resolved inside the project root.");
       }
       current = parent;
     }
   }
 }
 
-async function resolveStatePath(projectRoot, statePath, createParent = false) {
+// Coordination state is an initiative's record; evidence paths in it stay relative to the initiative's plans folder.
+async function resolveState(projectRoot, initiative) {
   if (typeof projectRoot !== "string" || !path.isAbsolute(projectRoot)) {
     throw error("invalid_project_root", "The project root must be an absolute path.");
   }
-  const root = await realpath(projectRoot);
-  const relativePath = normalizedStatePath(statePath);
-  const candidate = path.resolve(root, relativePath);
-  if (!isInside(root, candidate)) {
-    throw error("invalid_path", "The state path leaves the project root.");
+  if (typeof initiative !== "string" || !SLUG_PATTERN.test(initiative)) {
+    throw error("invalid_path", "The initiative identifier must use letters, digits, hyphens, or underscores.");
   }
-  const parent = path.dirname(candidate);
-  await assertNearestExistingPathInside(root, parent);
-  if (createParent) {
-    await mkdir(parent, { recursive: true });
-  }
-  let resolvedParent;
-  try {
-    resolvedParent = await realpath(parent);
-  } catch (caught) {
-    if (caught.code === "ENOENT" && !createParent) {
-      return {
-        root,
-        path: candidate,
-        displayPath: path.relative(root, candidate).split(path.sep).join("/")
-      };
-    }
-    throw caught;
-  }
-  if (!isInside(root, resolvedParent)) {
-    throw error("invalid_path", "The state path resolves outside the project root.");
-  }
-  let target = candidate;
-  try {
-    const fileInfo = await lstat(candidate);
-    if (fileInfo.isSymbolicLink()) {
-      throw error("invalid_path", "The state file must not be a symbolic link.");
-    }
-    target = await realpath(candidate);
-    if (!isInside(root, target)) {
-      throw error("invalid_path", "The state path resolves outside the project root.");
-    }
-  } catch (caught) {
-    if (caught.code !== "ENOENT") {
-      throw caught;
-    }
-  }
-  return {
-    root,
-    path: target,
-    displayPath: path.relative(root, target).split(path.sep).join("/")
-  };
+  const located = await locateRecord(projectRoot, { kind: "state", initiative });
+  const config = await readWorkflowConfig(located.root);
+  return { root: located.root, initiative, path: located.target, displayPath: located.path, directory: initiativeDirectory(config, initiative) };
 }
 
 function revisionOf(contents) {
@@ -158,7 +114,8 @@ function normalizeState(raw) {
     active: raw.active ?? [],
     pending: raw.pending ?? [],
     next: raw.next ?? [],
-    evidence: raw.evidence ?? []
+    evidence: raw.evidence ?? [],
+    ...(raw.closed === undefined ? {} : { closed: raw.closed })
   };
   for (const [key, value] of Object.entries(raw)) {
     if (!TOP_LEVEL_KEYS.has(key)) {
@@ -211,8 +168,11 @@ function validateModels(value, errors) {
       addError(errors, `settings.models.${role}`, "must be a non-empty model name");
     }
   }
+  if (value.examples !== undefined && (typeof value.examples !== "string" || !value.examples.trim())) {
+    addError(errors, "settings.models.examples", "must be a non-empty model name when present");
+  }
   for (const key of Object.keys(value)) {
-    if (!requiredRoles.includes(key)) {
+    if (!requiredRoles.includes(key) && key !== "examples") {
       addError(errors, `settings.models.${key}`, "is not a supported model role");
     }
   }
@@ -408,9 +368,44 @@ function validatePending(value, errors) {
   });
 }
 
+function validateClosed(value, errors) {
+  if (!Array.isArray(value) || value.length > CLOSED_LIMIT) {
+    addError(errors, "closed", `must be an array of at most ${CLOSED_LIMIT} closed user gates`);
+    return;
+  }
+  value.forEach((entry, index) => {
+    const entryPath = `closed[${index}]`;
+    if (!isRecord(entry)) {
+      addError(errors, entryPath, "must be a closed user gate");
+      return;
+    }
+    const { closedAt, reason, ...gate } = entry;
+    validateGate(gate, entryPath, errors);
+    if (typeof closedAt !== "string" || Number.isNaN(Date.parse(closedAt))) addError(errors, `${entryPath}.closedAt`, "must be an ISO timestamp");
+    if (reason !== undefined && (typeof reason !== "string" || !reason.trim() || reason.length > REASON_LIMIT)) addError(errors, `${entryPath}.reason`, `must be a non-empty reason of at most ${REASON_LIMIT} characters`);
+  });
+}
+
+function closedGate(gate, reason) {
+  return { ...gate, closedAt: new Date().toISOString(), ...(reason ? { reason } : {}) };
+}
+
+// Replacing the pending list may drop answered gates, but an unanswered question is withdrawn only through resolve with a reason.
+function droppedGates(before, replacement) {
+  if (replacement === undefined) return [];
+  const kept = new Set(replacement.filter(isRecord).map((gate) => gate.id));
+  const dropped = before.filter((gate) => isRecord(gate) && !kept.has(gate.id));
+  const unanswered = dropped.find((gate) => !gate.answer);
+  if (unanswered) {
+    throw error("invalid_changes", `The pending list drops the unanswered gate ${unanswered.id}; withdraw it with a resolve operation and a reason.`);
+  }
+  return dropped.map((gate) => closedGate(gate, null));
+}
+
 function applyGateOperations(pending, operations) {
   const next = [...pending];
   const opened = [];
+  const closed = [];
   operations.forEach((operation, index) => {
     if (!isRecord(operation)) {
       throw error("invalid_changes", `gateOperations[${index}] must be an object.`);
@@ -437,16 +432,28 @@ function applyGateOperations(pending, operations) {
       next.push(gate);
       opened.push({ id: gate.id, kind: gate.kind, slice: gate.slice ?? null });
     } else if (operation.op === "resolve") {
+      const unknown = Object.keys(operation).filter((key) => !["op", "id", "reason"].includes(key));
+      if (unknown.length) {
+        throw error("invalid_changes", `gateOperations[${index}] has unsupported fields: ${unknown.join(", ")}.`);
+      }
       const position = next.findIndex((item) => isRecord(item) && item.id === operation.id);
       if (position === -1) {
         throw error("unknown_gate", `No pending user gate has the id ${operation.id}.`);
       }
+      const reason = typeof operation.reason === "string" ? operation.reason.trim() : "";
+      if (operation.reason !== undefined && (!reason || reason.length > REASON_LIMIT)) {
+        throw error("invalid_changes", `gateOperations[${index}].reason must be a non-empty reason of at most ${REASON_LIMIT} characters.`);
+      }
+      if (!next[position].answer && !reason) {
+        throw error("invalid_changes", `gateOperations[${index}] resolves the unanswered gate ${operation.id}; give a reason, such as the user's answer in the conversation or why the question no longer applies.`);
+      }
+      closed.push(closedGate(next[position], reason));
       next.splice(position, 1);
     } else {
       throw error("invalid_changes", `gateOperations[${index}].op must be ask or resolve.`);
     }
   });
-  return { pending: next, opened };
+  return { pending: next, opened, closed };
 }
 
 // Only the review browser records answers, so agent updates may keep an answer but never add or change one.
@@ -479,6 +486,9 @@ function validateStateValue(raw) {
   if (raw.pending !== undefined) {
     validatePending(raw.pending, errors);
   }
+  if (raw.closed !== undefined) {
+    validateClosed(raw.closed, errors);
+  }
   for (const key of ["next", "evidence"]) {
     if (raw[key] !== undefined) {
       validateStringArray(raw[key], key, errors);
@@ -497,7 +507,7 @@ function validateChanges(changes) {
     throw error("invalid_changes", "The changes argument must contain at least one managed state field.");
   }
   for (const key of Object.keys(changes)) {
-    if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations" && key !== "gateOperations") || key === "schemaVersion") {
+    if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations" && key !== "gateOperations") || key === "schemaVersion" || key === "closed") {
       throw error("invalid_changes", `The state field ${key} cannot be changed through this capability.`);
     }
   }
@@ -559,7 +569,7 @@ async function loadState(statePath) {
 
 function publicStateResult(resolved, loaded) {
   return {
-    statePath: resolved.displayPath,
+    initiative: resolved.initiative,
     exists: loaded.exists,
     revision: loaded.revision,
     state: loaded.state,
@@ -570,31 +580,38 @@ function publicStateResult(resolved, loaded) {
 }
 
 function changedFields(before, after) {
-  return ["settings", "active", "pending", "next", "evidence"].filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after[key]));
+  return ["settings", "active", "pending", "next", "evidence", "closed"].filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after[key]));
 }
 
-export async function readCoordinationState({ projectRoot, statePath }) {
-  const resolved = await resolveStatePath(projectRoot, statePath);
+export async function readCoordinationState({ projectRoot, initiative }) {
+  const resolved = await resolveState(projectRoot, initiative);
   return publicStateResult(resolved, await loadState(resolved.path));
 }
 
-export async function validateCoordinationState({ projectRoot, statePath }) {
-  return readCoordinationState({ projectRoot, statePath });
+export async function validateCoordinationState({ projectRoot, initiative }) {
+  return readCoordinationState({ projectRoot, initiative });
 }
 
-export async function updateCoordinationState({ projectRoot, statePath, expectedRevision, changes }) {
+export async function updateCoordinationState({ projectRoot, initiative, expectedRevision, changes }) {
   validateChanges(changes);
   if (expectedRevision !== null && typeof expectedRevision !== "string") {
     throw error("invalid_revision", "The expectedRevision argument must be a state revision string or null.");
   }
-  const resolved = await resolveStatePath(projectRoot, statePath, true);
-  await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.displayPath]);
+  await moveLegacyRecords(projectRoot);
+  const resolved = await resolveState(projectRoot, initiative);
+  await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => applyStateChange(resolved, expectedRevision, changes), error, { renew: Boolean(changes.activeOperations?.length) }));
+}
+
+// Resolving a gate by its id removes only that gate, so it holds after any other change, such as the browser answer that prompted it.
+function resolvesGatesOnly(changes) {
+  const keys = Object.keys(changes ?? {});
+  return keys.length === 1 && keys[0] === "gateOperations" && changes.gateOperations.length > 0 && changes.gateOperations.every((operation) => operation?.op === "resolve");
 }
 
 async function applyStateChange(resolved, expectedRevision, changes) {
     const current = await loadState(resolved.path);
-    if (current.revision !== expectedRevision) {
+    if (current.revision !== expectedRevision && !(current.exists && resolvesGatesOnly(changes))) {
       throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });
     }
     if (current.exists && !current.valid) {
@@ -602,26 +619,28 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     }
     const before = current.state ?? defaultState();
     if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(before.active)) throw error("gate_blocked", "Use typed activeOperations to change active work; array replacement cannot bypass review gates.");
-    return withReviewGatesLocked(resolved.root, before.active, changes.activeOperations ?? [], async () => {
-    const activeResult = await applyActiveOperations(resolved.root, before.active, changes.activeOperations ?? []);
+    return withReviewGatesLocked(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? [], async () => {
+    const activeResult = await applyActiveOperations(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? []);
+    const dropped = droppedGates(before.pending, changes.pending);
     const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
     assertAnswersUnchanged(before.pending, gateResult.pending);
+    const closed = [...(before.closed ?? []), ...dropped, ...gateResult.closed].slice(-CLOSED_LIMIT);
     const candidate = normalizeState({
       ...before,
       active: activeResult.active,
       ...(changes.settings === undefined ? {} : { settings: { ...before.settings, ...changes.settings } }),
       pending: gateResult.pending,
       ...(changes.next === undefined ? {} : { next: changes.next }),
-      ...(changes.evidence === undefined ? {} : { evidence: changes.evidence })
+      ...(changes.evidence === undefined ? {} : { evidence: changes.evidence }),
+      ...(closed.length ? { closed } : {})
     });
     const validation = validateStateValue(candidate);
     if (validation.errors.length > 0) {
       throw error("invalid_state", "The proposed state is invalid and was not written.", { errors: validation.errors, warnings: validation.warnings });
     }
     const contents = `${JSON.stringify(candidate, null, 2)}\n`;
-    await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.displayPath]);
     if (!current.exists || contents !== current.contents) {
-      await conservationStore.writeManaged(resolved.root, resolved.path, contents);
+      await writeRecord(resolved.root, { kind: "state", initiative: resolved.initiative }, contents);
     }
     const updated = await loadState(resolved.path);
     return {
@@ -635,8 +654,10 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     });
 }
 
-export async function answerUserGate({ projectRoot, statePath, id, choice = null, note = null, store = conservationStore }) {
-  const resolved = await resolveStatePath(projectRoot, statePath);
+export async function answerUserGate({ projectRoot, initiative, id, choice = null, note = null, write = writeRecord }) {
+  await moveLegacyRecords(projectRoot);
+  const resolved = await resolveState(projectRoot, initiative);
+  await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     const current = await loadState(resolved.path);
     if (!current.exists || !current.valid) {
@@ -662,27 +683,30 @@ export async function answerUserGate({ projectRoot, statePath, id, choice = null
     if (validation.errors.length > 0) {
       throw error("invalid_state", "The answered state is invalid and was not written.", { errors: validation.errors });
     }
-    await store.registerCoordinationOutputs(resolved.root, [resolved.displayPath]);
-    await store.writeManaged(resolved.root, resolved.path, `${JSON.stringify(candidate, null, 2)}\n`);
+    await write(resolved.root, { kind: "state", initiative: resolved.initiative }, `${JSON.stringify(candidate, null, 2)}\n`);
     const updated = await loadState(resolved.path);
     return { ...publicStateResult(resolved, updated), gate: pending[position] };
   }, error));
 }
 
-export async function checkpointPause({ projectRoot, statePath, expectedRevision, activeSlice, recoveryPath, recoveryContent, changes }) {
+// The recovery note is a human document, so it sits in the slice's plans folder beside slice.md.
+export async function checkpointPause({ projectRoot, initiative, expectedRevision, activeSlice, recoveryContent, changes }) {
   validateChanges(changes);
-  if (typeof activeSlice !== "string" || !activeSlice || typeof recoveryContent !== "string" || !recoveryContent.trim() || Buffer.byteLength(recoveryContent) > 65536) {
+  if (typeof activeSlice !== "string" || !SLUG_PATTERN.test(activeSlice) || typeof recoveryContent !== "string" || !recoveryContent.trim() || Buffer.byteLength(recoveryContent) > 65536) {
     throw error("invalid_pause", "An active slice and a recovery note of at most 64 KiB are required.");
   }
-  if (typeof recoveryPath !== "string" || path.isAbsolute(recoveryPath) || path.basename(recoveryPath) !== "recovery.md") {
-    throw error("invalid_path", "The recoveryPath must name a project-relative recovery.md file.");
+  await moveLegacyRecords(projectRoot);
+  const resolved = await resolveState(projectRoot, initiative);
+  const folder = await sliceDocumentFolder(resolved.root, resolved.initiative, activeSlice);
+  if (folder === null || resolved.directory === null) {
+    throw error("invalid_config", "The workflow config disables the plans path, so the recovery note has no location.");
   }
-  const resolved = await resolveStatePath(projectRoot, statePath, true);
-  const recovery = path.resolve(resolved.root, recoveryPath);
-  if (!isInside(resolved.root, recovery) || path.dirname(recovery) === resolved.root || !recoveryPath.split(/[\\/]/).includes(activeSlice)) {
-    throw error("invalid_path", "The recovery note must be inside a slice directory.");
+  const recovery = path.resolve(resolved.root, folder, "recovery.md");
+  if (!isInside(resolved.root, recovery)) {
+    throw error("invalid_path", "The recovery note must be inside the project root.");
   }
   await assertNearestExistingPathInside(resolved.root, path.dirname(recovery));
+  await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision) {
@@ -692,7 +716,7 @@ export async function checkpointPause({ projectRoot, statePath, expectedRevision
       throw error("invalid_pause", "The slice is not active in the current coordination state.");
     }
     const recoveryRelative = path.relative(resolved.root, recovery).split(path.sep).join("/");
-    const stateRelativeRecovery = path.relative(path.dirname(resolved.path), recovery).split(path.sep).join("/");
+    const stateRelativeRecovery = path.relative(path.resolve(resolved.root, resolved.directory), recovery).split(path.sep).join("/");
     const remainingActive = current.state.active.filter((item) => item.slice !== activeSlice);
     if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(remainingActive)) {
       throw error("invalid_pause", "The pause must preserve every other active slice.");

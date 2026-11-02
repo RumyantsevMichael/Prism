@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { execFile, spawn } from "node:child_process";
-import { access, chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -27,9 +29,7 @@ async function projectFixture(context, name, artifact) {
 }
 
 function mcpProcess(context, cwd, projectRoot, environment = {}) {
-  // A host plugin data directory, such as the one verify_slice inherits from the MCP server, overrides the test's dataDirectory.
-  const { CLAUDE_PLUGIN_DATA: _hostData, PLUGIN_DATA: _pluginData, ...inherited } = process.env;
-  const env = { ...inherited, PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), ...environment };
+  const env = isolatedEnv({ PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), ...environment });
   if (projectRoot) {
     env.CLAUDE_PROJECT_DIR = projectRoot;
   } else {
@@ -311,7 +311,7 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.match(tools.get_review_url.description, /does not open a browser/);
   assert.match(tools.get_review_url.description, /the human's open tabs stay open/);
   assert.match(tools.present_review.description, /system browser/);
-  assert.deepEqual(tools.wait_for_user_gate.inputSchema.required, ["projectRoot", "statePath"]);
+  assert.deepEqual(tools.wait_for_user_gate.inputSchema.required, ["projectRoot", "initiative"]);
   assert.equal(tools.wait_for_user_gate.inputSchema.properties.gateIds.maxItems, 10);
   assert.equal(tools.wait_for_user_gate.annotations.readOnlyHint, true);
   assert.match(tools.wait_for_user_gate.description, /its result wakes the session when the user answers/);
@@ -360,16 +360,16 @@ test("checkpoints a pause and records its recovery evidence through MCP", async 
   context.after(() => rm(dataDirectory, { recursive: true, force: true }));
   const mcp = mcpProcess(context, root, root);
   await initialize(mcp);
-  const statePath = "docs/plans/example/state.json";
+  const initiative = "example";
   const recoveryPath = "docs/plans/example/child/recovery.md";
-  const current = await callTool(mcp, 2, "update_coordination_state", { projectRoot: root, statePath, expectedRevision: null,
+  const current = await callTool(mcp, 2, "update_coordination_state", { projectRoot: root, initiative, expectedRevision: null,
     changes: { activeOperations: [{ slice: "child", activity: "design", workers: ["worker"], workspace: "/work" }].map(entry => ({ op: "start", entry })) } });
   await callTool(mcp, 3, "set_workflow_recording", { projectRoot: root, dataDirectory, enabled: true });
-  const paused = await callTool(mcp, 4, "checkpoint_pause", { projectRoot: root, statePath, expectedRevision: current.result.structuredContent.revision,
-    activeSlice: "child", recoveryPath, recoveryContent: "Current recovery.\n", changes: { next: ["Continue child"] }, dataDirectory });
+  const paused = await callTool(mcp, 4, "checkpoint_pause", { projectRoot: root, initiative, expectedRevision: current.result.structuredContent.revision,
+    activeSlice: "child", recoveryContent: "Current recovery.\n", changes: { next: ["Continue child"] }, dataDirectory });
   assert.equal(paused.result.structuredContent.pausedSlice, "child");
   assert.equal(paused.result.structuredContent.decisionRecording.status, "recorded");
-  const history = await callTool(mcp, 5, "read_workflow_decisions", { projectRoot: root, dataDirectory, statePath, recoveryPaths: [recoveryPath] });
+  const history = await callTool(mcp, 5, "read_workflow_decisions", { projectRoot: root, dataDirectory, initiative, recoveryPaths: [recoveryPath] });
   assert.equal(history.result.structuredContent.records.at(-1).kind, "pause");
   assert.equal(history.result.structuredContent.recovery[0].status, "historical");
 });
@@ -396,29 +396,28 @@ test("requires structured diagram and review checkpoints through MCP", async (co
 
 test("updates coordination state without starting the review server", async (context) => {
   const root = await projectFixture(context, "state-mcp", "artifact.md");
-  const statePath = "docs/plans/demo/state.json";
-  await mkdir(path.join(root, path.dirname(statePath)), { recursive: true });
+  const initiative = "demo";
   const mcp = mcpProcess(context, root, root);
 
   await initialize(mcp);
-  const missing = await callTool(mcp, 2, "get_coordination_state", { statePath });
+  const missing = await callTool(mcp, 2, "get_coordination_state", { initiative });
   assert.equal(missing.result.structuredContent.exists, false);
   assert.equal(missing.result.structuredContent.revision, null);
 
   const created = await callTool(mcp, 3, "update_coordination_state", {
-    statePath,
+    initiative,
     expectedRevision: null,
     changes: { pending: ["User decision: retention"] }
   });
   assert.equal(created.result.structuredContent.created, true);
   assert.equal(created.result.structuredContent.valid, true);
 
-  const current = await callTool(mcp, 4, "get_coordination_state", { statePath });
+  const current = await callTool(mcp, 4, "get_coordination_state", { initiative });
   assert.deepEqual(current.result.structuredContent.state.pending, ["User decision: retention"]);
   assert.equal(current.result.structuredContent.revision, created.result.structuredContent.revision);
 
   const stale = await callTool(mcp, 5, "update_coordination_state", {
-    statePath,
+    initiative,
     expectedRevision: null,
     changes: { next: ["Retry from the current revision"] }
   });
@@ -955,4 +954,93 @@ test("native semantic MCP discovery is passive and search exposes bounded struct
   assert.equal((await mcp.next()).error.data.code, "validation_failed");
   mcp.send({ id: 8, method: "tools/call", params: { name: "search_repository_concepts", arguments: { projectRoot: "relative/path", query: "retry" } } });
   assert.equal((await mcp.next()).error.data.code, "invalid_path");
+});
+
+test("verify_slice reports a missing design and asks for command approval through a review-browser gate", async (context) => {
+  const root = await realpath(await projectFixture(context, "verify-slice", "notes.md"));
+  const data = await mkdtemp(path.join(os.tmpdir(), "verify-slice-data-"));
+  context.after(() => rm(data, { recursive: true, force: true }));
+  await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans: docs/plans\n\n## Stack\n- Test command: npm test\n");
+  await writeFile(path.join(root, "docs", "acceptance.test.mjs"), "// frozen\n");
+  const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: data });
+  await initialize(mcp);
+  mcp.send({ id: 2, method: "tools/list" });
+  const listed = (await mcp.next()).result.tools;
+  const verify = listed.find((tool) => tool.name === "verify_slice");
+  assert.deepEqual(verify.inputSchema.required, ["projectRoot", "initiative", "slice"]);
+  assert.ok(listed.some((tool) => tool.name === "update_design_view"));
+  await callTool(mcp, 3, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: null, operations: [{ op: "create", slug: "reports", title: "Signed reports", requirements: ["req.md#R1"] }] });
+  const missing = await callTool(mcp, 4, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
+  assert.equal(missing.error.data.code, "design_missing");
+  const current = await callTool(mcp, 5, "get_initiative", { projectRoot: root, initiative: "reports" });
+  await callTool(mcp, 6, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: current.result.structuredContent.revision, operations: [{ op: "set_status", slug: "reports", status: "in-progress" }, { op: "accept_design", slug: "reports", frozenTests: ["docs/acceptance.test.mjs"], review: "none" }] });
+  const asked = await callTool(mcp, 7, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
+  assert.equal(asked.result.structuredContent.status, "approval_needed");
+  assert.match(asked.result.content[0].text, /wait_for_user_gate/);
+  const view = await callTool(mcp, 8, "update_design_view", { projectRoot: root, initiative: "reports", slice: "reports", examples: [{ clause: 1, file: "docs/acceptance.test.mjs", test: "frozen", example: "x" }] });
+  assert.equal(view.error.data.code, "validation_failed");
+  assert.match(view.error.message, /slice\.md does not exist/);
+});
+
+test("a read leaves legacy records in place, and the first write reports the files it moved", async (context) => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "legacy-move-")));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, ".prism"), { recursive: true });
+  await mkdir(path.join(root, "docs", "plans", "reports"), { recursive: true });
+  await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans (scratch): docs/plans/\n");
+  await writeFile(path.join(root, "docs", "plans", "reports", "state.json"), JSON.stringify({ schemaVersion: 1, settings: {}, active: [], pending: [], next: [], evidence: [] }));
+  const mcp = mcpProcess(context, root, root);
+  await initialize(mcp);
+  const read = await callTool(mcp, 2, "get_coordination_state", { projectRoot: root, initiative: "reports" });
+  assert.equal(read.result.structuredContent.exists, true);
+  assert.deepEqual(await readdir(path.join(root, ".prism")), ["workflow.md"]);
+  const written = await callTool(mcp, 3, "update_coordination_state", { projectRoot: root, initiative: "reports", expectedRevision: read.result.structuredContent.revision, changes: { next: ["Design the export."] } });
+  assert.equal(written.error, undefined, JSON.stringify(written.error));
+  assert.match(written.result.content.at(-1).text, /moved 1 record files[\s\S]*docs\/plans\/reports\/state\.json -> \.prism\/initiatives\/reports\/state\.json/);
+  const again = await callTool(mcp, 4, "get_coordination_state", { projectRoot: root, initiative: "reports" });
+  assert.doesNotMatch(again.result.content.map((item) => item.text).join("\n"), /moved/);
+});
+
+test("a server that knows its project starts the native index in the background without delaying a tool call", async (context) => {
+  const root = await realpath(await projectFixture(context, "background-index", "artifact.md"));
+  const data = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-background-index-")));
+  // The runtime download goes to a socket that never answers, so the build stays in its first step for the whole test.
+  const sockets = new Set();
+  const silent = net.createServer((socket) => { sockets.add(socket); socket.on("error", () => {}); });
+  await new Promise((resolve) => silent.listen(0, "127.0.0.1", resolve));
+  const stopSilent = () => { for (const socket of sockets) socket.destroy(); silent.close(); };
+  context.after(stopSilent);
+  const platform = `${process.platform}-${process.arch}`;
+  const manifest = path.join(data, "manifest.json");
+  await writeFile(manifest, JSON.stringify({ schemaVersion: 1, assetVersion: "test-hanging", model: { id: "test/model", revision: "test-revision", files: [] },
+    bundles: { [platform]: { url: `https://127.0.0.1:${silent.address().port}/runtime.tar.gz`, bytes: 1024, sha256: "0".repeat(64) } } }));
+  const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: data, PRISM_NATIVE_ASSET_MANIFEST: manifest, NO_PROXY: "127.0.0.1", no_proxy: "127.0.0.1" });
+  // After hooks run in order, so the data directory is removed only after the server has exited and stopped writing progress there.
+  context.after(() => rm(data, { recursive: true, force: true, maxRetries: 3 }));
+  const storage = path.join(data, "native-intelligence", "projects");
+  const record = async () => {
+    for (const project of await readdir(storage).catch(() => [])) {
+      for (const name of await readdir(path.join(storage, project)).catch(() => [])) {
+        if (/^progress-\d+\.json$/.test(name)) return JSON.parse(await readFile(path.join(storage, project, name), "utf8"));
+      }
+    }
+    return null;
+  };
+  // No tool call yet: the build starts from the project the host named at start.
+  let progress = null;
+  for (let attempt = 0; attempt < 100 && progress?.progress?.phase !== "runtime-download"; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    progress = await record();
+  }
+  assert.equal(progress?.state, "preparing", JSON.stringify(progress));
+  assert.equal(progress.progress.phase, "runtime-download");
+  const begin = performance.now();
+  await initialize(mcp);
+  const roadmap = await callTool(mcp, 2, "get_roadmap", { projectRoot: root });
+  assert.equal(roadmap.error, undefined, JSON.stringify(roadmap.error));
+  const status = await callTool(mcp, 3, "get_repository_intelligence_status", { projectRoot: root });
+  assert.ok(performance.now() - begin < 2000, "Initialize and tool calls must not wait for background preparation.");
+  assert.equal(status.result.structuredContent.status, "preparing");
+  assert.equal(status.result.structuredContent.preparationId, progress.preparationId, "a tool call reports the background build, not a second one");
+  stopSilent();
 });

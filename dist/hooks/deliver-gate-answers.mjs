@@ -1,12 +1,12 @@
 import path from "node:path";
-import { readdir, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { listInitiatives } from "../server/workflow/record-store.mjs";
 import { readCoordinationState } from "../server/workflow/state.mjs";
 import { readWorkflowConfig } from "../server/workflow/workflow-config.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 const MAX_CONTEXT_CHARACTERS = 3500;
-const SLUG = /^[A-Za-z0-9_-]+$/;
 
 async function readHookInput(input) {
   const chunks = [];
@@ -30,24 +30,23 @@ function choiceText(gate) {
 
 export async function answeredGates(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
-  if (!config.exists || !config.paths.plans) return [];
-  let entries;
+  if (!config.exists) return [];
+  let initiatives;
   try {
-    entries = await readdir(path.join(projectRoot, config.paths.plans), { withFileTypes: true });
+    initiatives = await listInitiatives(projectRoot);
   } catch {
     return [];
   }
   const gates = [];
-  for (const entry of entries.filter((item) => item.isDirectory() && SLUG.test(item.name)).sort((left, right) => left.name.localeCompare(right.name))) {
-    const statePath = `${config.paths.plans}/${entry.name}/state.json`;
+  for (const initiative of initiatives) {
     let state;
     try {
-      state = await readCoordinationState({ projectRoot, statePath });
+      state = await readCoordinationState({ projectRoot, initiative });
     } catch {
       continue;
     }
     for (const gate of state.state?.pending ?? []) {
-      if (gate && typeof gate === "object" && gate.answer) gates.push({ initiative: entry.name, statePath, gate });
+      if (gate && typeof gate === "object" && gate.answer) gates.push({ initiative, gate });
     }
   }
   return gates;
@@ -66,8 +65,8 @@ export async function deliverGateAnswers({ input = process.stdin, environment = 
     "The user answered these Prism user gates in the review browser.",
     "Treat each answer as the user's reply to that question, act on it, then remove the gate with an update_coordination_state resolve operation for its id."
   ];
-  for (const { initiative, statePath, gate } of gates) {
-    lines.push(`- Gate ${gate.id} (${gate.kind}, initiative ${initiative}${gate.slice ? `, slice ${gate.slice}` : ""}, ${statePath}): "${gate.question}" Answer: ${choiceText(gate)}${gate.answer.note ? `. Note: ${gate.answer.note}` : ""}.`);
+  for (const { initiative, gate } of gates) {
+    lines.push(`- Gate ${gate.id} (${gate.kind}, initiative ${initiative}${gate.slice ? `, slice ${gate.slice}` : ""}): "${gate.question}" Answer: ${choiceText(gate)}${gate.answer.note ? `. Note: ${gate.answer.note}` : ""}.`);
   }
   let additionalContext = lines.join("\n");
   if (additionalContext.length > MAX_CONTEXT_CHARACTERS) {

@@ -7,8 +7,9 @@ import path from "node:path";
 import { normalizeRepositorySourcePath } from "../repository-intelligence/repository-source-path.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { withinScope } from "./conservation-store.mjs";
+import { isManagedRecordFile, keyOfPath, locateRecord, moveLegacyRecords, writeRecord } from "../workflow/record-store.mjs";
 
-// New slices write change-map.json; slices designed before the rename keep their concept-delta.json, and either name finds the slice's one file.
+// Slice change maps are change-map.json records under .prism; a concept-delta.json from before the rename moves there under the new name.
 export const CHANGE_MAP_FILE = "change-map.json";
 export const LEGACY_CHANGE_MAP_FILE = "concept-delta.json";
 export const CHANGE_MAP_FILES = [CHANGE_MAP_FILE, LEGACY_CHANGE_MAP_FILE];
@@ -30,11 +31,11 @@ const entryProperties = {
 const entrySchema = object(entryProperties, Object.keys(entryProperties).filter((key) => !["reuseEvidence", "requirements"].includes(key)));
 const scopeSchema = array(string, { minItems: 1 });
 const revisionSchema = { oneOf: [{ type: "string", pattern: "^[a-f0-9]{64}$" }, { type: "null" }] };
-const commonProperties = { projectRoot: string, deltaPath: string, expectedRevision: revisionSchema };
+const commonProperties = { projectRoot: string, initiative: string, slice: string, expectedRevision: revisionSchema };
 export const GET_CHANGE_MAP_SCHEMA = object({
   ...commonProperties, ids: array(string), offset: { type: "integer", minimum: 0 },
   limit: { type: "integer", minimum: 1, maximum: CHANGE_MAP_LIMITS.page }
-}, ["projectRoot", "deltaPath"]);
+}, ["projectRoot", "initiative", "slice"]);
 export const UPDATE_CHANGE_MAP_SCHEMA = object({
   ...commonProperties, scope: scopeSchema, ...deltaMetadata, migrate: { type: "boolean" },
   operations: array({ oneOf: [
@@ -42,8 +43,10 @@ export const UPDATE_CHANGE_MAP_SCHEMA = object({
     object({ op: { const: "update" }, id: string, set: { ...object(Object.fromEntries(Object.entries(entryProperties).filter(([key]) => key !== "id")), []), minProperties: 1 } }),
     object({ op: { const: "remove" }, id: string })
   ] }, { maxItems: CHANGE_MAP_LIMITS.operations })
-}, ["projectRoot", "deltaPath", "expectedRevision", "operations"]);
-const documentSchema = object({ schemaVersion: { enum: [1, 2] }, scope: scopeSchema, concepts: array(entrySchema), ...deltaMetadata }, ["schemaVersion", "scope", "concepts"]);
+}, ["projectRoot", "initiative", "slice", "expectedRevision", "operations"]);
+// A derived change map is written by the server from a slice's design baseline and its verified result, never by an agent.
+const derivedSchema = object({ runId: string, baselineId: { type: "string", pattern: "^[a-f0-9]{64}$" }, resultId: { type: "string", pattern: "^[a-f0-9]{64}$" }, derivedAt: string });
+const documentSchema = object({ schemaVersion: { enum: [1, 2] }, scope: scopeSchema, concepts: array(entrySchema), derived: derivedSchema, ...deltaMetadata }, ["schemaVersion", "scope", "concepts"]);
 
 export class ChangeMapError extends Error {
   constructor(code, message, details = {}) {
@@ -69,6 +72,7 @@ function canonicalReference(ref) {
 function canonicalDocument(doc) {
   return {
     schemaVersion: doc.schemaVersion,
+    ...(doc.derived === undefined ? {} : { derived: { ...doc.derived } }),
     ...Object.fromEntries(Object.keys(deltaMetadata).filter(key => doc[key] !== undefined).map(key => [key, doc[key]])),
     ...(doc.requirements === undefined ? {} : { requirements: doc.requirements.map(canonicalReference) }),
     ...(doc.growthJustifications === undefined ? {} : { growthJustifications: doc.growthJustifications.map(item => ({ ...item, requirements: item.requirements.map(canonicalReference) })) }),
@@ -127,7 +131,7 @@ function validateDocument(raw) {
     if (["KEEP", "MODIFY"].includes(entry.action) && (!before || !sameIdentity)) {
       errors.push(`${field}: ${entry.action} requires the same nonempty before and after references`);
     }
-    if (entry.action === "ADD" && entry.reuseEvidence === undefined) {
+    if (entry.action === "ADD" && entry.reuseEvidence === undefined && !document.derived) {
       diagnostics.push({ code: "addition_evidence_missing", id: entry.id, field: `${field}.reuseEvidence`, message: "Record a reuse search and an addition justification before FIT." });
     }
   }
@@ -210,6 +214,7 @@ async function loadDelta(resolved) {
 }
 async function assess(resolved, loaded) {
   if (!loaded.document || !loaded.valid) return loaded;
+  if (loaded.document.derived) return loaded;
   if (loaded.document.schemaVersion === 1) return { ...loaded, ready: false, diagnostics: [...loaded.diagnostics, { code: "legacy_evidence", message: "Migrate the change map with a retained baseline before a new audit." }] };
   const { assessDeltaReadiness } = await import("./conservation-analysis.mjs");
   const diagnostics = await assessDeltaReadiness(resolved.root, loaded.document);
@@ -219,6 +224,7 @@ function summary(resolved, loaded) {
   const counts = Object.fromEntries(CHANGE_ACTIONS.map((action) => [action, 0]));
   for (const entry of loaded.document?.concepts ?? []) counts[entry.action]++;
   return { deltaPath: resolved.deltaPath, exists: loaded.exists, revision: loaded.revision, schemaVersion: loaded.document?.schemaVersion ?? null,
+    ...(loaded.document?.derived ? { derived: loaded.document.derived } : {}),
     ...Object.fromEntries(Object.keys(deltaMetadata).filter(key => loaded.document?.[key] !== undefined).map(key => [key, loaded.document[key]])),
     scope: loaded.document?.scope ?? [], totalCount: loaded.document?.concepts.length ?? 0, counts,
     valid: loaded.valid, ready: loaded.ready, errors: loaded.errors.slice(0, 50), diagnostics: loaded.diagnostics.slice(0, 50), totalDiagnostics: loaded.diagnostics.length };
@@ -226,9 +232,14 @@ function summary(resolved, loaded) {
 function checkRevision(expected, loaded) {
   if (expected !== loaded.revision) throw failure("revision_conflict", "The change map changed. Read it again before retrying.", { currentRevision: loaded.revision });
 }
+// A slice's change map is its record under .prism; a stored path from before the move resolves to the same record.
+async function resolveChangeMap(projectRoot, key) {
+  const located = await locateRecord(projectRoot, { kind: "change-map", initiative: key.initiative, slice: key.slice });
+  return { root: located.root, target: located.target, deltaPath: located.path, initiative: key.initiative, slice: key.slice };
+}
 export async function getChangeMap(input) {
   assertInput(GET_CHANGE_MAP_SCHEMA, input);
-  const resolved = await resolveArtifactPath(input.projectRoot, input.deltaPath);
+  const resolved = await resolveChangeMap(input.projectRoot, input);
   const loaded = await assess(resolved, await loadDelta(resolved));
   if (Object.hasOwn(input, "expectedRevision")) checkRevision(input.expectedRevision, loaded);
   const selected = (loaded.document?.concepts ?? []).filter((entry) => input.ids === undefined || input.ids.includes(entry.id));
@@ -239,14 +250,16 @@ export async function getChangeMap(input) {
 }
 export async function updateChangeMap(input) {
   assertInput(UPDATE_CHANGE_MAP_SCHEMA, input);
-  const resolved = await resolveArtifactPath(input.projectRoot, input.deltaPath, true);
+  await moveLegacyRecords(input.projectRoot);
+  const resolved = await resolveChangeMap(input.projectRoot, input);
+  await mkdir(path.dirname(resolved.target), { recursive: true });
   const { conservationStore } = await import("./conservation-store.mjs");
-  if (input.expectedRevision === null || input.migrate) await conservationStore.registerSlice(resolved.root, resolved.deltaPath, input.migrate ? input.expectedRevision : undefined);
+  if (input.expectedRevision === null || input.migrate) await conservationStore.registerSlice(resolved.root, input.initiative, input.slice);
   return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
-    await resolveArtifactPath(input.projectRoot, input.deltaPath);
     const current = await loadDelta(resolved);
     checkRevision(input.expectedRevision, current);
     if (!current.valid) throw failure("invalid_delta", "The existing change map is invalid and was not changed.", { errors: current.errors });
+    if (current.document?.derived) throw failure("validation_failed", "This change map is derived from the slice's verified result and updates itself after the next passing verify_slice run.");
     if (current.document?.schemaVersion === 1 && input.migrate !== true) throw failure("validation_failed", "Use migrate with a retained baseline before changing a legacy change map.");
     if (current.document?.baselineId && input.baselineId && current.document.baselineId !== input.baselineId) throw failure("validation_failed", "Corrections must preserve the original baseline.");
     const entries = new Map((current.document?.concepts ?? []).map((entry) => [entry.id, entry]));
@@ -264,8 +277,8 @@ export async function updateChangeMap(input) {
     const candidate = validateDocument({ schemaVersion: 2, scope: input.scope ?? current.document?.scope, concepts: [...entries.values()], ...Object.fromEntries(Object.keys(deltaMetadata).filter(key => input[key] !== undefined || current.document?.[key] !== undefined).map(key => [key, input[key] ?? current.document[key]])) });
     if (!candidate.valid) throw failure("validation_failed", "The proposed change map is invalid and was not written.", { errors: candidate.errors });
     const { conservationStore } = await import("./conservation-store.mjs");
-    const outputs = [...await conservationStore.outputs(resolved.root), resolved.deltaPath, `${path.posix.dirname(resolved.deltaPath)}/review.json`, `${path.posix.dirname(resolved.deltaPath)}/review.md`];
-    if (candidate.document.concepts.some(entry => [...entry.before, ...entry.after].some(ref => outputs.includes(ref.path)))) throw failure("invalid_path", "Managed evidence outputs cannot be change targets.");
+    const outputs = [...await conservationStore.outputs(resolved.root), ...await conservationStore.sliceOutputs(resolved.root, input.initiative, input.slice)];
+    if (candidate.document.concepts.some(entry => [...entry.before, ...entry.after].some(ref => outputs.includes(ref.path) || isManagedRecordFile(ref.path)))) throw failure("invalid_path", "Managed evidence outputs cannot be change targets.");
     const assessed = await assess(resolved, candidate);
     const contents = `${JSON.stringify(candidate.document, null, 2)}\n`;
     if (Buffer.byteLength(contents) > CHANGE_MAP_LIMITS.bytes) throw failure("artifact_too_large", "The change map exceeds 1 MiB.");
@@ -275,21 +288,41 @@ export async function updateChangeMap(input) {
       const bytes = await regularBytes(resolved.target, CHANGE_MAP_LIMITS.bytes);
       migrationEvidenceId = await conservationStore.put(resolved.root, { kind: "migration", schemaVersion: 1, project: resolved.root, artifactPath: resolved.deltaPath, revision: current.revision, lines: bytes.toString().split("\n") });
     }
-    await conservationStore.registerSlice(resolved.root, resolved.deltaPath, input.migrate ? current.revision : undefined);
+    await conservationStore.registerSlice(resolved.root, input.initiative, input.slice);
     const changedIds = [...new Set([...entries.keys(), ...(current.document?.concepts ?? []).map((entry) => entry.id)])]
       .filter((id) => JSON.stringify(current.document?.concepts.find((entry) => entry.id === id)) !== JSON.stringify(candidate.document.concepts.find((entry) => entry.id === id))).sort(compare);
     const changed = !current.exists || JSON.stringify(current.document) !== JSON.stringify(candidate.document);
-    if (changed) {
-      await resolveArtifactPath(input.projectRoot, input.deltaPath);
-      await conservationStore.writeManaged(resolved.root, resolved.target, contents);
-    }
+    if (changed) await writeRecord(resolved.root, { kind: "change-map", initiative: input.initiative, slice: input.slice }, contents);
     const updated = { ...assessed, exists: true, revision: changed ? createHash("sha256").update(contents).digest("hex") : current.revision };
     return { ...summary(resolved, updated), created: !current.exists, previousRevision: current.revision, changedIds, ...(migrationEvidenceId ? { migrationEvidenceId } : {}) };
   }, failure));
 }
 
-export async function readChangeMapDocument(projectRoot, deltaPath, expectedRevision) {
-  const resolved = await resolveArtifactPath(projectRoot, deltaPath);
+/**
+ * Write a slice's derived change map. A change map that an agent wrote stays, so the derived one only creates or replaces a derived document.
+ * Returns whether it wrote, and the reason when it did not.
+ */
+export async function writeDerivedChangeMap(projectRoot, key, document) {
+  const resolved = await resolveChangeMap(projectRoot, key);
+  await mkdir(path.dirname(resolved.target), { recursive: true });
+  return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
+    const current = await loadDelta(resolved);
+    if (current.exists && !current.document?.derived) return { written: false, reason: "authored_change_map" };
+    const candidate = validateDocument(document);
+    if (!candidate.valid) throw failure("validation_failed", "The derived change map is invalid and was not written.", { errors: candidate.errors });
+    const contents = `${JSON.stringify(candidate.document, null, 2)}\n`;
+    if (Buffer.byteLength(contents) > CHANGE_MAP_LIMITS.bytes) return { written: false, reason: "too_large" };
+    if (current.exists && JSON.stringify(current.document) === JSON.stringify(candidate.document)) return { written: false, reason: "unchanged" };
+    await writeRecord(resolved.root, { kind: "change-map", initiative: key.initiative, slice: key.slice }, contents);
+    return { written: true };
+  }, failure));
+}
+
+/** Read a change map named by a slice key or by a stored path, current or from before the move to .prism. */
+export async function readChangeMapDocument(projectRoot, reference, expectedRevision) {
+  const key = typeof reference === "string" ? await keyOfPath(projectRoot, reference) : { kind: "change-map", ...reference };
+  if (key?.kind !== "change-map") throw failure("invalid_path", `${typeof reference === "string" ? reference : "The reference"} does not name a slice change map.`);
+  const resolved = await resolveChangeMap(projectRoot, key);
   const loaded = await loadDelta(resolved);
   if (expectedRevision !== undefined) checkRevision(expectedRevision, loaded);
   if (!loaded.exists || !loaded.valid) throw failure("validation_failed", "The change map is missing or invalid.", { errors: loaded.errors });

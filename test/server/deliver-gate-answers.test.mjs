@@ -16,12 +16,12 @@ async function project(context) {
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await writeFile(path.join(root, ".prism/workflow.md"), "## Paths\n- Plans (scratch): docs/plans/\n");
   await mkdir(path.join(root, "docs/plans/reports"), { recursive: true });
-  const statePath = "docs/plans/reports/state.json";
-  const created = await updateCoordinationState({ projectRoot: root, statePath, expectedRevision: null, changes: { gateOperations: [
+  const initiative = "reports";
+  const created = await updateCoordinationState({ projectRoot: root, initiative, expectedRevision: null, changes: { gateOperations: [
     { op: "ask", kind: "decision", slice: "authorize", question: "Fresh login or active session?", artifacts: [], options: [{ id: "fresh-login", label: "Require a fresh login" }, { id: "session", label: "Accept the active session" }] },
     { op: "ask", kind: "visual-review", question: "Review the design.", artifacts: [] }
   ] } });
-  return { root, statePath, gates: created.openedGates.map((gate) => gate.id) };
+  return { root, initiative, gates: created.openedGates.map((gate) => gate.id) };
 }
 
 function runHook(payload) {
@@ -34,18 +34,18 @@ function runHook(payload) {
 const prompt = (cwd) => Readable.from([JSON.stringify({ hook_event_name: "UserPromptSubmit", cwd, prompt: "go" })]);
 
 test("delivers browser answers with the next prompt until the agent resolves them", async (context) => {
-  const { root, statePath, gates } = await project(context);
+  const { root, initiative, gates } = await project(context);
   assert.equal(await deliverGateAnswers({ input: prompt(root), environment: {} }), null);
-  await answerUserGate({ projectRoot: root, statePath, id: gates[0], choice: "fresh-login", note: "Downloads are sensitive." });
+  await answerUserGate({ projectRoot: root, initiative, id: gates[0], choice: "fresh-login", note: "Downloads are sensitive." });
   const output = await deliverGateAnswers({ input: prompt(root), environment: {} });
   assert.equal(output.hookSpecificOutput.hookEventName, "UserPromptSubmit");
   const text = output.hookSpecificOutput.additionalContext;
   assert.match(text, /answered these Prism user gates in the review browser/);
-  assert.match(text, new RegExp(`Gate ${gates[0]} \\(decision, initiative reports, slice authorize, docs/plans/reports/state\\.json\\): "Fresh login or active session\\?" Answer: Require a fresh login\\. Note: Downloads are sensitive\\.`));
+  assert.match(text, new RegExp(`Gate ${gates[0]} \\(decision, initiative reports, slice authorize\\): "Fresh login or active session\\?" Answer: Require a fresh login\\. Note: Downloads are sensitive\\.`));
   assert.doesNotMatch(text, new RegExp(gates[1]));
   assert.match(await runHook({ hook_event_name: "UserPromptSubmit", cwd: root }), /"additionalContext":"The user answered/);
-  const { revision } = await readCoordinationState({ projectRoot: root, statePath });
-  const current = await updateCoordinationState({ projectRoot: root, statePath, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gates[0] }] } });
+  const { revision } = await readCoordinationState({ projectRoot: root, initiative });
+  const current = await updateCoordinationState({ projectRoot: root, initiative, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gates[0] }] } });
   assert.equal(current.state.pending.length, 1);
   assert.equal(await deliverGateAnswers({ input: prompt(root), environment: {} }), null);
   assert.equal(await runHook({ hook_event_name: "UserPromptSubmit", cwd: root }), "");

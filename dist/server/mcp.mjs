@@ -7,6 +7,7 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import { takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -28,10 +29,14 @@ import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { opensAtStart } from "./review/open-at-start.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
-import { INITIATIVE_TOOLS, InitiativeError, getInitiative, updateInitiative } from "./workflow/initiative.mjs";
+import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
+import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
+import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
+import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
+import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
 // PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
@@ -116,6 +121,8 @@ async function requestedProjectRoot(argumentsValue) {
   }
   // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call.
   reviewServers.register(resolvedRoot);
+  // The native index starts building once the project is known, so a later search finds it ready; this never waits for the build.
+  void startBackgroundPreparation(resolvedRoot);
   return resolvedRoot;
 }
 
@@ -141,8 +148,12 @@ function requestedTabs(argumentsValue) {
   return hasArtifact ? argumentsValue.artifact : undefined;
 }
 
-function reviewContent(url) {
-  return `Human review URL: ${url}`;
+// A session that fell back to its own review server tells the agent, so two review pages for one project reach the user as a known cause.
+function reviewContent(url, review) {
+  const fallback = review.privateServer?.();
+  return fallback
+    ? `Human review URL: ${url}\nThis session serves the project from its own review server, because the shared review app could not be reached: ${fallback.reason} Another session may show the same project at a different URL, so tell the user that this link belongs to this session.`
+    : `Human review URL: ${url}`;
 }
 
 function stateContent(result) {
@@ -151,7 +162,7 @@ function stateContent(result) {
   const opened = result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : "";
   const answered = (result.state?.pending ?? []).filter((gate) => gate?.answer);
   const gates = `${opened}${answered.length ? `\nUser gates answered in the review browser: ${answered.map((gate) => gate.id).join(", ")}` : ""}`;
-  return `Coordination state ${validity}: ${result.statePath}\nRevision: ${revision}${gates}`;
+  return `Coordination state ${validity}: ${result.initiative}\nRevision: ${revision}${gates}`;
 }
 
 function contextPlanContent(plan) {
@@ -207,6 +218,11 @@ function sessionConsumptionContent(summary) {
   ].join("\n");
 }
 
+function privateServerContent(review) {
+  const fallback = review.privateServer?.();
+  return fallback ? { privateServer: fallback } : {};
+}
+
 function reviewSessionContent(review) {
   return review.getSession();
 }
@@ -249,7 +265,7 @@ function stateErrorData(error) {
   if (error instanceof ChangeMapError) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
-  if (error instanceof InitiativeError || error instanceof RoadmapError || error?.name === "InitiativeGraphError") {
+  if (error instanceof InitiativeError || error instanceof RoadmapError || ["InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError"].includes(error?.name)) {
     return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
@@ -329,11 +345,23 @@ const sessionInputSchema = { oneOf: [explicitSessionInputSchema, activeSessionIn
 const tools = [
   ...ROADMAP_TOOLS,
   ...INITIATIVE_TOOLS,
+  {
+    name: "verify_slice",
+    description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. A passing run completes a slice whose design marks no review and returns the initiative revision that write produced. The result is brief: the verdict, failing test names, the run record, and the path of the full output log. The first run of a command text asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run. An implementer that finds the contract wrong calls it with contractDefects instead: nothing runs, the defects are kept as a run entry and on the slice, and the slice is blocked until design revises the contract.",
+    inputSchema: VERIFY_SLICE_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
+  },
+  {
+    name: "update_design_view",
+    description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes. It also parses the PlantUML files beside slice.md and reports any that accept_design would refuse.",
+    inputSchema: UPDATE_DESIGN_VIEW_SCHEMA,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
   ...CONSERVATION_TOOLS,
   ...NATIVE_INTELLIGENCE_TOOLS,
   {
     name: "get_change_map",
-    description: "Read a bounded page of a slice change map (change-map.json, or a legacy concept-delta.json) through MCP. Pin expectedRevision across pages and to the audited design. Reads never create files.",
+    description: "Read a bounded page of a slice change map, addressed by initiative and slice, through MCP. Pin expectedRevision across pages and to the audited design. Reads never create files.",
     inputSchema: GET_CHANGE_MAP_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
@@ -515,7 +543,7 @@ const tools = [
         projectRoot: { type: "string" },
         dataDirectory: { type: "string" },
         correlationKey: sessionCorrelationKeyInputSchema,
-        statePath: { type: "string" },
+        initiative: { type: "string", description: "The initiative whose coordination state and recovery notes to assess." },
         recoveryPaths: { type: "array", items: { type: "string" } }
       },
       required: ["projectRoot", "dataDirectory"],
@@ -563,10 +591,9 @@ const tools = [
       type: "object",
       properties: {
         projectRoot: { type: "string" },
-        statePath: { type: "string" },
+        initiative: { type: "string" },
         expectedRevision: { oneOf: [{ type: "string" }, { type: "null" }] },
         activeSlice: { type: "string" },
-        recoveryPath: { type: "string" },
         recoveryContent: { type: "string", maxLength: 65536 },
         changes: {
           type: "object", additionalProperties: false,
@@ -580,35 +607,35 @@ const tools = [
         dataDirectory: { type: "string" },
         correlationKey: sessionCorrelationKeyInputSchema
       },
-      required: ["projectRoot", "statePath", "expectedRevision", "activeSlice", "recoveryPath", "recoveryContent", "changes"],
+      required: ["projectRoot", "initiative", "expectedRevision", "activeSlice", "recoveryContent", "changes"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   },
   {
     name: "get_coordination_state",
-    description: "Read the initiative coordination state from state.json. Use this tool instead of reading and parsing the file manually. The statePath must be relative to the project root.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        statePath: { type: "string", description: "The project-relative path to the initiative state.json file." }
+        initiative: { type: "string", description: "The initiative identifier, which names its plans folder." }
       },
-      required: ["projectRoot", "statePath"],
+      required: ["projectRoot", "initiative"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "validate_coordination_state",
-    description: "Validate an initiative state.json file without changing it. Use this tool before recovery or when a state update reports invalid data.",
+    description: "Validate an initiative's coordination state without changing it. Use this tool before recovery or when a state update reports invalid data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        statePath: { type: "string", description: "The project-relative path to the initiative state.json file." }
+        initiative: { type: "string", description: "The initiative identifier, which names its plans folder." }
       },
-      required: ["projectRoot", "statePath"],
+      required: ["projectRoot", "initiative"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
@@ -620,24 +647,24 @@ const tools = [
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        statePath: { type: "string", description: "The project-relative path to the initiative state.json file that holds the gate." },
+        initiative: { type: "string", description: "The initiative whose coordination state holds the gates." },
         gateIds: { type: "array", minItems: 1, maxItems: MAX_WAIT_GATES, items: { type: "string", minLength: 1 }, description: "The gate ids that the ask operations returned." },
         gateId: { type: "string", minLength: 1, description: "One gate id; use gateIds for several." },
         maxWaitMinutes: { type: "number", exclusiveMinimum: 0, maximum: MAX_WAIT_MINUTES, description: `How long to wait before returning timeout. Defaults to ${DEFAULT_WAIT_MINUTES}.` }
       },
-      required: ["projectRoot", "statePath"],
+      required: ["projectRoot", "initiative"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   },
   {
     name: "update_coordination_state",
-    description: "Apply a validated atomic update to an initiative state.json file, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision. Do not edit state.json directly when this tool is available.",
+    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision; an update that only resolves gates by id goes through after other changes, such as the browser answer that prompted it.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        statePath: { type: "string", description: "The project-relative path to the initiative state.json file." },
+        initiative: { type: "string", description: "The initiative identifier, which names its plans folder." },
         expectedRevision: { oneOf: [{ type: "string" }, { type: "null" }], description: "The revision returned by get_coordination_state, or null when creating a missing state file." },
         changes: {
           type: "object",
@@ -654,6 +681,7 @@ const tools = [
                 commit: { type: "string", enum: ["on", "off"] },
                 push: { type: "string", enum: ["on", "off"] },
                 continuation: { type: "string", enum: ["auto", "stepwise"] },
+                review: { type: "string", enum: ["marked", "recommended", "all"] },
                 models: {
                   oneOf: [
                     { type: "string", enum: ["defaults", "host defaults"] },
@@ -664,7 +692,8 @@ const tools = [
                       properties: {
                         delivery: { type: "string", minLength: 1 },
                         review: { type: "string", minLength: 1 },
-                        securityReview: { type: "string", minLength: 1 }
+                        securityReview: { type: "string", minLength: 1 },
+                        examples: { type: "string", minLength: 1 }
                       }
                     }
                   ]
@@ -690,7 +719,7 @@ const tools = [
             },
             gateOperations: {
               type: "array",
-              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
+              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
               items: {
                 oneOf: [
                   {
@@ -716,7 +745,7 @@ const tools = [
                     type: "object",
                     required: ["op", "id"],
                     additionalProperties: false,
-                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 } }
+                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 }, reason: { type: "string", minLength: 1, maxLength: 1000, description: "Required for an unanswered gate: the user's answer in the conversation, or why the question no longer applies. The review browser shows it with the closed question." } }
                   }
                 ]
               }
@@ -727,7 +756,7 @@ const tools = [
           }
         }
       },
-      required: ["projectRoot", "statePath", "expectedRevision", "changes"],
+      required: ["projectRoot", "initiative", "expectedRevision", "changes"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
@@ -784,7 +813,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
     try {
       value = await waitForUserGates({
         projectRoot,
-        statePath: argumentsValue.statePath,
+        initiative: argumentsValue.initiative,
         gateIds,
         maxWaitMinutes: argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES,
         signal: controller.signal,
@@ -824,12 +853,17 @@ async function callStateTool(name, argumentsValue) {
     const dataDirectory = decisionDataDirectory(argumentsValue);
     if (dataDirectory) {
       const recording = await recordAutomaticDecision({ projectRoot, dataDirectory, correlationKey: argumentsValue.correlationKey,
-        decision: { kind: "pause", outcome: "PAUSED", evidencePaths: [resultValue.recoveryPath, resultValue.statePath], stateRevision: resultValue.revision,
+        decision: { kind: "pause", outcome: "PAUSED", evidencePaths: [resultValue.recoveryPath], stateRevision: resultValue.revision,
           recoveryDigest: resultValue.recoveryDigest, activeSlices: [argumentsValue.activeSlice] } });
       resultValue = { ...resultValue, decisionRecording: recording };
     }
   } else {
     throw new Error(`Unknown state tool: ${name}`);
+  }
+  // Closed gates are history for the review browser; agents never need them.
+  if (resultValue?.state?.closed) {
+    const { closed, ...state } = resultValue.state;
+    resultValue = { ...resultValue, state };
   }
   return { content: [{ type: "text", text: stateContent(resultValue) }], structuredContent: resultValue };
 }
@@ -864,9 +898,9 @@ async function callRepositoryTool(name, argumentsValue) {
     return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
   }
   if (name === "read_workflow_decisions") {
-    assertExactToolArguments(argumentsValue, ["projectRoot", "dataDirectory", "correlationKey", "statePath", "recoveryPaths"], ["projectRoot", "dataDirectory"], "read_workflow_decisions arguments");
+    assertExactToolArguments(argumentsValue, ["projectRoot", "dataDirectory", "correlationKey", "initiative", "recoveryPaths"], ["projectRoot", "dataDirectory"], "read_workflow_decisions arguments");
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const result = await readDecisionHistory({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, statePath: argumentsValue.statePath, recoveryPaths: argumentsValue.recoveryPaths });
+    const result = await readDecisionHistory({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, initiative: argumentsValue.initiative, recoveryPaths: argumentsValue.recoveryPaths });
     return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
   }
   if (name === "record_workflow_decision") {
@@ -976,13 +1010,57 @@ async function callRepositoryTool(name, argumentsValue) {
   throw new Error(`Unknown repository-intelligence tool: ${name}`);
 }
 
+// Hosts that cannot keep a long call open get an early running answer before their own tool timeout, and call again to keep waiting.
+const VERIFY_EARLY_RETURN_MS = 45000;
+
+async function callVerifySlice(argumentsValue, metadata, requestId) {
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  const controller = new AbortController();
+  if (requestId !== undefined) pendingWaits.set(requestId, controller);
+  const progressToken = metadata?.progressToken;
+  try {
+    const value = await verifySlice({
+      ...argumentsValue,
+      projectRoot,
+      signal: controller.signal,
+      maxWaitMs: waitUnsupportedReason() ? Number(process.env.PRISM_VERIFY_EARLY_RETURN_MS) || VERIFY_EARLY_RETURN_MS : Infinity,
+      onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, `Running the test command (${seconds} s)`)
+    });
+    // A passing run with a source snapshot gets its change map derived in the background, so the review browser can show it.
+    if (value.status === "passed" && value.snapshotId) startChangeMapDerivation({ projectRoot, initiative: argumentsValue.initiative, slice: argumentsValue.slice });
+    const brief = verificationBrief(value);
+    const { outputTail, ...summary } = brief;
+    const text = [brief.message ?? `Verification ${brief.status}.`, JSON.stringify(summary), outputTail ? `Output tail:\n${outputTail}` : ""].filter(Boolean).join("\n");
+    return { content: [{ type: "text", text }], structuredContent: brief };
+  } finally {
+    pendingWaits.delete(requestId);
+  }
+}
+
+// The first write after an upgrade moves files in the user's work tree, so its result says which, to commit on their own.
+function withMigrationNote(value) {
+  const reports = takeMigrationReports();
+  if (!reports.length || !Array.isArray(value?.content)) return value;
+  const moved = reports.flatMap((report) => report.moved), conflicts = reports.flatMap((report) => report.conflicts);
+  const lines = [`Prism moved ${moved.length} record files from their old locations into .prism; commit these moves on their own, apart from the task's changes.`, ...moved.map((move) => `- ${move.from} -> ${move.to}`)];
+  if (conflicts.length) lines.push(`${conflicts.length} old files were kept because .prism already holds a different record: ${conflicts.map((move) => move.from).join(", ")}.`);
+  return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
+}
+
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
   }
+  if (name === "verify_slice") {
+    return callVerifySlice(argumentsValue, metadata, requestId);
+  }
   if (CONSERVATION_TOOLS.some(tool => tool.name === name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const value = await callConservationTool(name, { ...argumentsValue, projectRoot });
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+  }
+  if (name === "update_design_view") {
+    const value = await updateDesignView({ ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) });
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (["get_change_map", "update_change_map"].includes(name)) {
@@ -1000,7 +1078,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     const value = name === "get_roadmap" ? await getRoadmap(input)
       : name === "update_roadmap" ? await updateRoadmap(input)
       : name === "get_initiative" ? await getInitiative(input)
-      : await updateInitiative(input);
+      : initiativeAcknowledgement(await updateInitiative(input), input.operations);
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (repositoryTools.has(name)) {
@@ -1013,11 +1091,11 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
       await review.setOpenTabs(tabs);
     }
     const url = await review.reviewUrl(tabs);
-    return { content: [{ type: "text", text: reviewContent(url) }], structuredContent: { url, ...await reviewSessionContent(review) } };
+    return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "present_review") {
     const opened = await review.open(requestedTabs(argumentsValue));
-    return { content: [{ type: "text", text: reviewContent(opened.url) }], structuredContent: { ...opened, ...await reviewSessionContent(review) } };
+    return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {
     const artifacts = await listArtifacts(review.projectRoot);
@@ -1026,10 +1104,13 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   throw new Error(`Unknown tool: ${name}`);
 }
 
-// A host that names the project at start gets it listed in the review app before any tool call, without delaying initialize,
-// and opens the review browser when nobody watches one; a host that names no project still gets a running app.
+// A host that names the project at start gets it listed in the review app and its native index preparing before any tool call, without
+// delaying initialize, and opens the review browser when nobody watches one; a host that names no project still gets a running app.
 if (process.env.CLAUDE_PROJECT_DIR) {
-  void realpath(process.env.CLAUDE_PROJECT_DIR).then(async (root) => reviewServers.register(root, { open: await opensAtStart(root) }), () => {});
+  void realpath(process.env.CLAUDE_PROJECT_DIR).then(async (root) => {
+    void startBackgroundPreparation(root);
+    reviewServers.register(root, { open: await opensAtStart(root) });
+  }, () => {});
 } else {
   reviewServers.startApp();
 }
@@ -1053,7 +1134,7 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
-      const value = await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id);
+      const value = withMigrationNote(await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id));
       // A cancelled request gets no response, as the MCP cancellation rules require.
       if (value.structuredContent?.status !== "cancelled") {
         result(request.id, value);
@@ -1073,6 +1154,7 @@ input.on("line", async (line) => {
 
 input.on("close", async () => {
   for (const controller of pendingWaits.values()) controller.abort();
+  cancelVerifications();
   nativeSemanticRuntime.close();
   await reviewServers.close();
 });

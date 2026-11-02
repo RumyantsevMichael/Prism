@@ -5,12 +5,12 @@ import path from "node:path";
 import test from "node:test";
 import { answerUserGate, readCoordinationState, updateCoordinationState } from "../../dist/server/workflow/state.mjs";
 
+const stateFile = (fixture) => path.join(fixture.projectRoot, ".prism/initiatives", fixture.initiative, "state.json");
+
 async function stateFixture(context) {
   const root = await mkdtemp(path.join(os.tmpdir(), "prism-state-"));
-  const statePath = "docs/plans/demo/state.json";
-  await mkdir(path.join(root, path.dirname(statePath)), { recursive: true });
   context.after(() => rm(root, { recursive: true, force: true }));
-  return { projectRoot: root, statePath };
+  return { projectRoot: root, initiative: "demo" };
 }
 
 function active(slice, worker = `${slice}-worker`) {
@@ -47,7 +47,7 @@ test("creates and updates a validated coordination state atomically", async (con
   assert.equal(updated.created, false);
   assert.deepEqual(updated.changedFields, ["active", "next"]);
   assert.deepEqual(updated.state.active, active("download", "review-worker"));
-  assert.deepEqual(JSON.parse(await readFile(path.join(fixture.projectRoot, fixture.statePath), "utf8")), updated.state);
+  assert.deepEqual(JSON.parse(await readFile(stateFile(fixture), "utf8")), updated.state);
 });
 
 test("rejects unsupported autonomy and agent flow values", async (context) => {
@@ -94,20 +94,20 @@ test("keeps legacy state valid without the additive settings", async (context) =
 test("rejects a stale update without changing the state", async (context) => {
   const fixture = await stateFixture(context);
   const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { activeOperations: active("first").map(entry => ({ op: "start", entry })) } });
-  const before = await readFile(path.join(fixture.projectRoot, fixture.statePath), "utf8");
+  const before = await readFile(stateFile(fixture), "utf8");
 
   await assert.rejects(
     updateCoordinationState({ ...fixture, expectedRevision: "stale", changes: { activeOperations: active("second").map(entry => ({ op: "start", entry })) } }),
     (caught) => caught.code === "revision_conflict"
   );
-  assert.equal(await readFile(path.join(fixture.projectRoot, fixture.statePath), "utf8"), before);
+  assert.equal(await readFile(stateFile(fixture), "utf8"), before);
   assert.notEqual(created.revision, "stale");
 });
 
 test("rejects invalid state changes without changing the state", async (context) => {
   const fixture = await stateFixture(context);
   const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { activeOperations: active("first").map(entry => ({ op: "start", entry })) } });
-  const before = await readFile(path.join(fixture.projectRoot, fixture.statePath), "utf8");
+  const before = await readFile(stateFile(fixture), "utf8");
 
   await assert.rejects(
     updateCoordinationState({
@@ -117,7 +117,7 @@ test("rejects invalid state changes without changing the state", async (context)
     }),
     (caught) => caught.code === "invalid_state" && caught.errors.some((item) => item.includes("workers[1]"))
   );
-  assert.equal(await readFile(path.join(fixture.projectRoot, fixture.statePath), "utf8"), before);
+  assert.equal(await readFile(stateFile(fixture), "utf8"), before);
 });
 
 test("allows only one concurrent writer with the same revision", async (context) => {
@@ -135,19 +135,19 @@ test("allows only one concurrent writer with the same revision", async (context)
 
 test("reports malformed state and rejects paths outside the project", async (context) => {
   const fixture = await stateFixture(context);
-  const stateFile = path.join(fixture.projectRoot, fixture.statePath);
-  await writeFile(stateFile, "not json\n");
+  await mkdir(path.dirname(stateFile(fixture)), { recursive: true });
+  await writeFile(stateFile(fixture), "not json\n");
   const invalid = await readCoordinationState(fixture);
   assert.equal(invalid.valid, false);
   assert.match(invalid.errors[0], /valid JSON/);
-  const missingDirectory = await readCoordinationState({ projectRoot: fixture.projectRoot, statePath: "docs/not-yet/state.json" });
+  const missingDirectory = await readCoordinationState({ projectRoot: fixture.projectRoot, initiative: "not-yet" });
   assert.equal(missingDirectory.exists, false);
   await assert.rejects(
-    readCoordinationState({ projectRoot: fixture.projectRoot, statePath: "../outside/state.json" }),
+    readCoordinationState({ projectRoot: fixture.projectRoot, initiative: "../outside" }),
     (caught) => caught.code === "invalid_path"
   );
   await assert.rejects(
-    access(path.join(fixture.projectRoot, "docs", "plans", "demo", "state.json.lock")),
+    access(`${stateFile(fixture)}.lock`),
     (caught) => caught.code === "ENOENT"
   );
 });
@@ -182,12 +182,21 @@ test("records and resolves user gates beside legacy pending items", async (conte
     const rejected = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [operation] } }).catch(error => error);
     assert.equal(rejected.code, "invalid_changes", JSON.stringify(operation));
   }
-  const forged = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { pending: [{ id: "not-a-gate", kind: "decision", question: "Q", artifacts: [], askedAt: "2026-10-13T00:00:00Z" }] } }).catch(error => error);
+  const forged = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { pending: [...created.state.pending, { id: "not-a-gate", kind: "decision", question: "Q", artifacts: [], askedAt: "2026-10-13T00:00:00Z" }] } }).catch(error => error);
   assert.equal(forged.code, "invalid_state");
 
-  const resolved = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "resolve", id: gate.id }] } });
+  // An unanswered question leaves only with a reason, so the user can later see why it went away.
+  const silent = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "resolve", id: gate.id }] } }).catch(error => error);
+  assert.equal(silent.code, "invalid_changes");
+  const dropped = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { pending: ["User decision: retention"] } }).catch(error => error);
+  assert.equal(dropped.code, "invalid_changes", "replacing the pending list cannot drop an unanswered gate");
+  const resolved = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "resolve", id: gate.id, reason: "  The user chose 30 days in the conversation.  " }] } });
   assert.deepEqual(resolved.state.pending, ["User decision: retention"]);
   assert.deepEqual(resolved.openedGates, []);
+  assert.deepEqual(resolved.state.closed.map(({ id, reason }) => ({ id, reason })), [{ id: gate.id, reason: "The user chose 30 days in the conversation." }]);
+  assert.ok(!Number.isNaN(Date.parse(resolved.state.closed[0].closedAt)));
+  const forgedHistory = await updateCoordinationState({ ...fixture, expectedRevision: resolved.revision, changes: { closed: [] } }).catch(error => error);
+  assert.equal(forgedHistory.code, "invalid_changes", "only the server writes closed gates");
 });
 
 test("records one browser answer per gate and keeps agents from forging answers", async (context) => {
@@ -227,4 +236,16 @@ test("records one browser answer per gate and keeps agents from forging answers"
   const resolved = await updateCoordinationState({ ...fixture, expectedRevision: kept.revision, changes: { gateOperations: [{ op: "resolve", id: decision }] } });
   assert.equal(resolved.state.pending.some((gate) => gate.id === decision), false);
   assert.equal((await answerUserGate({ ...fixture, id: decision, choice: "sqlite" }).catch(error => error)).code, "unknown_gate");
+  // A browser answer changes the revision, and resolving a gate by its id still goes through.
+  const asked = await updateCoordinationState({ ...fixture, expectedRevision: resolved.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question: "Which cache?", artifacts: [], options: [{ id: "none", label: "None" }, { id: "lru", label: "LRU" }] }] } });
+  const cache = asked.openedGates[0].id;
+  await answerUserGate({ ...fixture, id: cache, choice: "lru" });
+  const late = await updateCoordinationState({ ...fixture, expectedRevision: asked.revision, changes: { gateOperations: [{ op: "resolve", id: cache }] } });
+  assert.equal(late.state.pending.some((gate) => gate.id === cache), false);
+  // Answered gates need no reason, and they keep their answer in the closed list, newest last.
+  assert.deepEqual(late.state.closed.map((gate) => [gate.id, gate.answer.choice, gate.reason]), [[decision, "sqlite", undefined], [cache, "lru", undefined]]);
+  const replaced = await updateCoordinationState({ ...fixture, expectedRevision: late.revision, changes: { pending: late.state.pending.filter((gate) => gate.id !== review) } });
+  assert.deepEqual(replaced.state.closed.map((gate) => gate.id), [decision, cache, review], "an answered gate dropped from the pending list is kept too");
+  const stale = await updateCoordinationState({ ...fixture, expectedRevision: asked.revision, changes: { next: ["Anything else"] } }).catch(error => error);
+  assert.equal(stale.code, "revision_conflict", "any other change still needs the current revision");
 });

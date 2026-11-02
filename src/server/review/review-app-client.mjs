@@ -136,13 +136,16 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
       await controlRequest(found, "POST", "/control/shutdown", { handoff: true }, remaining(deadline)).catch(() => {});
       await lockCleared(directory, deadline);
     }
-    launch({ directory });
+    const child = launch({ directory });
+    // An app that loses the start race to another session's app exits on purpose, so an exit only explains a start that never answers.
+    let exited = null;
+    child?.once?.("exit", (code, signal) => { exited = signal ? `on ${signal}` : `with code ${code}`; });
     while (Date.now() < deadline) {
       await sleep(POLL_MS);
       const started = await proven(await readDiscovery(directory), deadline);
       if (started && started.controlToken !== found?.controlToken && started.protocol >= REVIEW_APP_PROTOCOL) return started;
     }
-    throw failure("The review app did not start.", false);
+    throw failure(`The review app did not start within ${startTimeoutMs / 1000} seconds${child ? exited ? `, and its process exited ${exited}` : "" : ", because its process could not be launched"}.`, false);
   }
 
   async function app() {
@@ -220,5 +223,5 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     await Promise.allSettled(released.map((lease) => controlRequest(current, "DELETE", `/control/projects/${lease.id}`)));
   }
 
-  return { register, release, present, openAtStart, start, close };
+  return { directory, register, release, present, openAtStart, start, close };
 }

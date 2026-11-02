@@ -516,6 +516,97 @@ a {
   display: none;
 }
 
+/* The stopped banner sits in the page flow under the top bar and stays until the app answers again, because nothing on the page works without it. */
+.app-gone-banner {
+  align-items: flex-start;
+  background: color-mix(in srgb, var(--danger) 9%, var(--surface-raised));
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 30%, var(--line));
+  color: var(--ink);
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 0.82rem;
+  gap: 0.7rem;
+  padding: 0.7rem 1.1rem;
+}
+
+.app-gone-banner[hidden] {
+  display: none;
+}
+
+/* A private session server is a warning, not an outage: the page works, but other sessions may show the same project elsewhere. */
+.app-gone-banner.is-private {
+  background: color-mix(in srgb, var(--warn, #b26f00) 9%, var(--surface-raised));
+  border-bottom-color: color-mix(in srgb, var(--warn, #b26f00) 30%, var(--line));
+}
+
+.app-gone-banner.is-private .app-gone-mark {
+  background: var(--warn, #b26f00);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn, #b26f00) 22%, transparent);
+}
+
+.app-gone-text .private-server-reason {
+  color: var(--ink-muted);
+  margin-top: 0.2rem;
+}
+
+.banner-dismiss {
+  background: none;
+  border: 0;
+  border-radius: 0.3rem;
+  color: var(--ink-muted);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 1.1rem;
+  line-height: 1;
+  margin-left: auto;
+  padding: 0.15rem 0.4rem;
+}
+
+.banner-dismiss:hover,
+.banner-dismiss:focus-visible {
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
+.app-gone-mark {
+  background: var(--danger);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent);
+  flex: 0 0 auto;
+  height: 0.55rem;
+  margin-top: 0.42rem;
+  width: 0.55rem;
+}
+
+.app-gone-text {
+  min-width: 0;
+}
+
+.app-gone-text p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.app-gone-text .app-gone-title {
+  font-weight: 700;
+}
+
+.app-gone-text code {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 0.3rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+  padding: 0.05rem 0.3rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 800px) {
+  .app-gone-banner {
+    padding: 0.6rem 0.8rem;
+  }
+}
+
 .notice-item {
   align-items: center;
   background: var(--surface-raised);
@@ -1355,6 +1446,16 @@ th {
   margin: 0 auto;
   max-width: none;
   transition: height 120ms ease, width 120ms ease;
+}
+
+/* PlantUML draws black lines and text on a transparent canvas, so in dark mode the diagram sits on a light sheet that keeps its own colors readable. */
+@media (prefers-color-scheme: dark) {
+  .diagram-output svg {
+    background: #f8f7fb;
+    border-radius: 8px;
+    box-sizing: content-box;
+    padding: 12px;
+  }
 }
 
 .rendering {
@@ -2439,10 +2540,26 @@ th {
   font-size: 0.74rem;
 }
 
+.wave-started,
 .wave-accepted,
 .wave-findings {
   color: var(--ink-muted);
   font-size: 0.76rem !important;
+}
+
+.wave-findings {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.75rem;
+}
+
+.wave-count strong {
+  color: var(--ink);
+}
+
+.wave-filter {
+  font-size: inherit;
 }
 
 .lane-list {
@@ -2672,6 +2789,7 @@ th {
 
 .slice-board-card.status-not-started { --status-color: var(--status-not-started); }
 .slice-board-card.status-in-progress { --status-color: var(--status-in-progress); }
+.slice-board-card.status-design-review { --status-color: var(--warn); }
 .slice-board-card.status-blocked { --status-color: var(--status-blocked); }
 .slice-board-card.status-deferred { --status-color: var(--status-deferred); }
 .slice-board-card.status-done { --status-color: var(--status-done); }
@@ -3579,6 +3697,7 @@ th {
 
 .slice-status.status-not-started { background: var(--line-strong); color: var(--ink); }
 .slice-status.status-in-progress { background: var(--status-in-progress); }
+.slice-status.status-design-review { background: var(--warn); }
 .slice-status.status-blocked { background: var(--status-blocked); }
 .slice-status.status-deferred { background: var(--status-deferred); }
 .slice-status.status-done { background: var(--status-done); }
@@ -3617,6 +3736,7 @@ th {
 .slice-node { --action-color: var(--status-not-started); }
 .slice-node.status-in-progress { --action-color: var(--status-in-progress); }
 .slice-node.status-blocked { --action-color: var(--status-blocked); }
+.slice-node.status-design-review { --action-color: var(--warn); }
 .slice-node.status-deferred { --action-color: var(--status-deferred); }
 .slice-node.status-done { --action-color: var(--status-done); }
 
@@ -3929,6 +4049,69 @@ th {
   outline: 0;
 }
 
+/* Missing tabs: the file was moved or deleted, or the entity no longer resolves, so the tab is dimmed until its target returns. */
+
+.artifact-tab.is-missing .artifact-tab-select {
+  color: #77729a;
+}
+
+.artifact-tab.is-missing .artifact-tab-select[aria-selected="true"] {
+  color: #aaa5c8;
+}
+
+.artifact-tab.is-missing .tab-label {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, currentColor 60%, transparent);
+}
+
+.missing-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  box-shadow: var(--shadow-soft);
+  margin: 12vh auto 0;
+  max-width: 34rem;
+  padding: 3rem clamp(1.25rem, 5vw, 3.5rem);
+  text-align: center;
+}
+
+.missing-card .eyebrow {
+  color: var(--ink-muted);
+  margin-top: 1rem;
+}
+
+.missing-card h1 {
+  font-size: 1.6rem;
+  margin: 0.2rem 0 0.8rem;
+}
+
+.missing-mark {
+  border: 2px dashed var(--line-strong);
+  border-radius: 0.7rem;
+  display: inline-block;
+  height: 2.6rem;
+  margin: 0.5rem;
+  transform: rotate(45deg);
+  width: 2.6rem;
+}
+
+.missing-path {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  margin: 0 auto 0.9rem;
+  overflow-wrap: anywhere;
+  padding: 0.45rem 0.7rem;
+}
+
+.missing-detail {
+  color: var(--ink-muted);
+  font-size: 0.86rem;
+  margin: 0 0 1.4rem;
+}
+
 /* Breadcrumbs */
 
 .breadcrumbs {
@@ -4179,41 +4362,100 @@ th {
   padding-top: 0.65rem;
 }
 
+.gate-answer {
+  --choice-tone: var(--accent);
+  --choice-bad: var(--danger);
+}
+
 .gate-choices {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.45rem;
 }
 
+/* A choice reads as a radio option: the ring fills when it is picked, and Request changes keeps its negative tone before and after. */
 .choice-button {
+  align-items: center;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: 0.55rem;
+  color: var(--ink);
   cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 600;
-  padding: 0.3rem 0.8rem;
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 650;
+  gap: 0.45rem;
+  min-height: 2.2rem;
+  padding: 0.35rem 0.85rem 0.35rem 0.65rem;
+  transition: background 120ms ease, border-color 120ms ease;
 }
 
-.choice-button:hover,
+.choice-button.is-positive {
+  --choice-tone: var(--good);
+}
+
+.choice-button.is-negative {
+  --choice-tone: var(--choice-bad);
+  color: var(--choice-bad);
+}
+
+.choice-button::before {
+  border: 2px solid color-mix(in srgb, var(--choice-tone) 70%, var(--line-strong));
+  border-radius: 50%;
+  box-sizing: border-box;
+  content: "";
+  flex: none;
+  height: 0.9rem;
+  width: 0.9rem;
+}
+
+.choice-button:hover {
+  border-color: var(--choice-tone);
+}
+
 .choice-button:focus-visible {
-  border-color: var(--accent);
-  outline: 0;
+  outline: 3px solid color-mix(in srgb, var(--choice-tone) 30%, transparent);
+  outline-offset: 2px;
 }
 
 .choice-button[aria-pressed="true"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #ffffff;
+  background: color-mix(in srgb, var(--choice-tone) 13%, var(--surface));
+  border-color: var(--choice-tone);
+  color: color-mix(in srgb, var(--choice-tone) 70%, var(--ink));
 }
 
-.choice-button.is-negative[aria-pressed="true"] {
-  background: var(--danger);
-  border-color: var(--danger);
+.choice-button[aria-pressed="true"]::before {
+  background: var(--choice-tone);
+  border-color: var(--choice-tone);
+  box-shadow: inset 0 0 0 2px var(--surface);
 }
 
 .gate-note {
-  position: relative;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.gate-note-label {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.gate-note-need {
+  font-weight: 500;
+}
+
+.gate-note-need::before {
+  content: "· ";
+}
+
+.gate-note-need.is-required {
+  color: var(--choice-bad);
+  font-weight: 700;
+}
+
+.gate-note textarea[aria-required="true"]:placeholder-shown {
+  border-color: color-mix(in srgb, var(--choice-bad) 55%, var(--line));
 }
 
 .gate-note textarea {
@@ -4246,18 +4488,64 @@ th {
   color: #ffffff;
 }
 
-.tool-button.primary:hover {
+.tool-button.primary:hover:not(:disabled) {
   background: var(--accent-strong);
 }
 
-.gate-error {
-  color: var(--danger);
+/* The dark accent is a light violet, so white text on it is hard to read; dark text keeps primary buttons legible. */
+@media (prefers-color-scheme: dark) {
+  .tool-button.primary:not(:disabled) {
+    color: #16141f;
+  }
+}
+
+.tool-button.primary.is-negative {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.tool-button.primary.is-negative:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 85%, #000000);
+}
+
+/* A disabled Send looks inert rather than faded, and the hint beside it says what is missing. */
+.tool-button.primary:disabled {
+  background: var(--surface-soft);
+  border-color: var(--line-strong);
+  color: var(--ink-muted);
+  opacity: 1;
+}
+
+.gate-actions .tool-button {
+  height: 2.2rem;
+  padding: 0 0.95rem;
+}
+
+.gate-hint {
+  color: var(--ink-muted);
   font-size: 0.76rem;
   margin: 0;
 }
 
+.gate-error {
+  color: var(--choice-bad);
+  font-size: 0.76rem;
+  margin: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .gate-answer {
+    --choice-bad: #e8687c;
+  }
+}
+
 .attention-card.is-answered {
   border-left-color: var(--good);
+}
+
+.attention-card.is-closed {
+  border-left-color: var(--line-strong);
+  opacity: 0.85;
 }
 
 .gate-given {
@@ -4589,4 +4877,290 @@ mark.find-hit {
   border-radius: 0.2rem;
   color: inherit;
   padding: 0 0.1rem;
+}
+
+/* Design document on the slice page: Prism's checks sit inside slice.md's Contract and Changes items */
+.design-document .notice,
+.design-document > .plain-list,
+.design-document > p {
+  margin: 0.4rem 0;
+}
+
+.design-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  vertical-align: baseline;
+}
+
+.design-badge summary {
+  cursor: pointer;
+  display: inline;
+  list-style: none;
+}
+
+.design-badge summary::-webkit-details-marker {
+  display: none;
+}
+
+.design-badge[open] {
+  display: block;
+  margin: 0.3rem 0 0.4rem;
+}
+
+.design-examples {
+  background: var(--surface-soft);
+  border-radius: 6px;
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0.35rem 0.6rem;
+}
+
+.design-examples li {
+  padding: 0.15rem 0;
+}
+
+.design-examples .link-chip {
+  margin-left: 0.3rem;
+}
+
+.served-clauses {
+  background: var(--surface-soft);
+  border-radius: 8px;
+  margin: 0.5rem 0 0.8rem;
+  padding: 0.6rem 0.9rem;
+}
+
+.served-clauses ol {
+  margin: 0.3rem 0 0;
+}
+
+.index-notice {
+  margin: 0.5rem 0;
+}
+
+/* Each Changes line is a card: a colored action rail, the file and where it lands, why, and what checks it. */
+.change-list {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.change-card {
+  --rail: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--rail);
+  border-radius: 8px;
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.65rem 0.85rem 0.55rem;
+}
+
+.change-card.action-add { --action: var(--good); --rail: var(--good); }
+.change-card.action-change { --action: var(--info); --rail: var(--info); }
+.change-card.action-remove { --action: var(--danger); --rail: var(--danger); }
+.change-card.is-unread { --rail: var(--line-strong); }
+.change-card.reading-partly,
+.change-card.reading-untouched { --rail: var(--warn); }
+
+.change-card p {
+  margin: 0;
+}
+
+/* The badge keeps the action's color even when a verified reading recolors the rail. */
+.change-action {
+  background: color-mix(in srgb, var(--action, var(--accent)) 14%, transparent);
+  border-radius: 999px;
+  color: var(--action, var(--accent));
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.05rem 0.5rem;
+  text-transform: uppercase;
+}
+
+.change-paths {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.change-path-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+}
+
+.change-path-row > .link-chip.artifact-chip,
+.change-path-row > .link-chip.disabled {
+  background: none;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 600;
+  padding-left: 0;
+}
+
+.change-where {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+
+.change-where-new {
+  color: var(--good);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.code-span-chip {
+  background: var(--surface-soft);
+  border-color: var(--line);
+  color: var(--ink);
+  font-family: var(--mono);
+}
+
+.code-span-lines {
+  color: var(--ink-muted);
+  font-size: 0.7rem;
+}
+
+.change-why {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.change-actual {
+  font-size: 0.8rem;
+}
+
+.change-card-footer {
+  align-items: center;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  gap: 0.35rem 1.2rem;
+  padding-top: 0.4rem;
+}
+
+.change-serves,
+.change-tests {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.change-label {
+  color: var(--ink-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-right: 0.15rem;
+  text-transform: uppercase;
+}
+
+.clause-tag {
+  background: var(--accent-soft);
+  border-radius: 999px;
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.05rem 0.45rem;
+  text-decoration: none;
+}
+
+.test-chip .link-chip {
+  background: var(--surface-soft);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+/* A slice folder holds any number of diagrams; tabs switch between them when there is more than one. */
+.slice-diagrams {
+  margin-bottom: 1rem;
+}
+
+.diagram-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: -1px;
+  position: relative;
+}
+
+.diagram-tab {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.35rem 0.9rem;
+}
+
+.diagram-tab[aria-selected="true"] {
+  background: var(--surface-raised);
+  box-shadow: inset 0 2px 0 var(--accent);
+  color: var(--accent-strong);
+}
+
+.diagram-tab:not([aria-selected="true"]):hover {
+  color: var(--ink);
+}
+
+
+/* The selected tab joins the diagram card below it. */
+.diagram-tabs + .diagram-slot .diagram-card {
+  border-top-left-radius: 0;
+  margin-top: 0;
+}
+
+/* A preview of a line range: numbered lines from the file, as in the source view. */
+.link-preview:has(.preview-lines) {
+  max-width: min(44rem, calc(100vw - 1rem));
+}
+
+.link-preview .preview-lines {
+  background: var(--surface-soft);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  margin-top: 0.3rem;
+  max-height: 17rem;
+  overflow: hidden;
+  padding: 0.3rem 0.5rem 0.3rem 0;
+}
+
+/* The page's content policy refuses inline styles, so a preview names each line number itself. */
+.link-preview .preview-lines li::before {
+  content: attr(data-line);
+  flex-basis: 2.8rem;
+  padding-right: 0.8rem;
+}
+
+.source-lines li.in-range {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+/* A unit waiting for the code index is dimmed, and its tooltip says why its lines are missing. */
+.code-span-chip[data-index-wait] {
+  cursor: help;
+  opacity: 0.6;
+}
+
+/* The Attention summary offers desktop notifications under its counts. */
+.notify-control {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
 }

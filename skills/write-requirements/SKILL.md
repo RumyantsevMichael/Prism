@@ -93,8 +93,7 @@ Reverse traceability uses repository link searches instead of a central backlink
 4. For accepted amendments, apply the approved additions, disposition changes, and reciprocal links together.
 5. For unaccepted proposals, leave Draft files Draft and preserve existing Approved content.
 6. After approval:
-   - For one self-contained outcome, recommend `design`.
-   - For a multi-slice initiative, recommend `roadmap`, then `orchestrate`.
+   - Recommend `orchestrate` for the initiative.
 7. Return the file paths, statuses, and unresolved questions.
 
 Design consumes only Approved requirements.

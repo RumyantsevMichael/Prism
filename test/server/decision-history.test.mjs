@@ -86,24 +86,24 @@ test("drops expired decision records from history", async (context) => {
 
 test("labels inactive parent recovery as historical and detects active recovery gaps", async (context) => {
   const options = await fixture(context);
-  const statePath = "docs/plans/example/state.json";
+  const initiative = "example";
   const parentPath = "docs/plans/example/parent/recovery.md";
   const childPath = "docs/plans/example/child/recovery.md";
-  await updateCoordinationState({ projectRoot: options.projectRoot, statePath, expectedRevision: null, changes: {
+  await updateCoordinationState({ projectRoot: options.projectRoot, initiative, expectedRevision: null, changes: {
     activeOperations: [{ slice: "child", activity: "design", workers: ["worker"], workspace: "/work" }].map(entry => ({ op: "start", entry })),
     evidence: ["parent/recovery.md", "child/recovery.md"]
   } });
   await setDecisionRecording({ ...options, enabled: true });
-  let history = await readDecisionHistory({ ...options, statePath });
+  let history = await readDecisionHistory({ ...options, initiative });
   assert.deepEqual(history.recovery.map((item) => item.status), ["historical", "missing"]);
   await mkdir(path.join(options.projectRoot, path.dirname(childPath)), { recursive: true });
   await writeFile(path.join(options.projectRoot, childPath), "Current note.\n");
   const recoveryDigest = createHash("sha256").update("Current note.\n").digest("hex");
   await appendDecision({ ...options, decision: { kind: "pause", outcome: "PAUSED", evidencePaths: [childPath], recoveryDigest } });
-  history = await readDecisionHistory({ ...options, statePath });
+  history = await readDecisionHistory({ ...options, initiative });
   assert.equal(history.recovery[1].status, "current");
   await writeFile(path.join(options.projectRoot, childPath), "Changed note.\n");
-  history = await readDecisionHistory({ ...options, statePath });
+  history = await readDecisionHistory({ ...options, initiative });
   assert.equal(history.recovery[1].status, "stale");
 });
 

@@ -7,7 +7,7 @@ sdm: "0.3"
 # Write an ADR
 
 An ADR records a lasting architectural decision or invariant, not product intent, implementation tasks, or local code choices.
-Design can record shared decisions before [atomic fit](../workflow/SKILL.md#common-terms).
+Design can record decisions that child slices share before it splits a slice.
 
 ## 1. Prepare
 
@@ -69,16 +69,15 @@ Created: <YYYY-MM-DD>
 
 Invariants use `MUST`/`MUST NOT` for absolute rules and `SHOULD` for justified exceptions.
 Architecture rules do not use code names, paths, or task identifiers.
-Orchestration alone accepts implemented ADRs after user correctness confirmation and marks replaced ADRs Superseded.
+Orchestration alone accepts implemented ADRs after the slice passes verification and marks replaced ADRs Superseded.
 Accepted and Superseded ADRs remain preserved.
 
 ## 3. Explain and check
 
 1. When lifecycle or call order is material, write a PlantUML state or sequence diagram beside the ADR.
 2. Link decision diagram source from Mechanism.
-3. Keep C4 views in the current slice folder through `design`.
-4. After implementation verification, correct decision diagrams against that evidence.
-5. Check requirement links, conflicts, invariant wording, alternatives, and negative consequences.
-6. Return the ADR path, status, and any diagram paths.
+3. After implementation verification, correct decision diagrams against that evidence.
+4. Check requirement links, conflicts, invariant wording, alternatives, and negative consequences.
+5. Return the ADR path, status, and any diagram paths.
 
 Rendered images are not committed.

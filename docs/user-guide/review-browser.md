@@ -5,7 +5,7 @@ Agents open it for design and correctness reviews, and you can answer recorded q
 
 ## Open the browser
 
-Prism opens one viewer session after design audit and before final correctness confirmation.
+Prism opens the browser when a design waits for your approval or a question waits for your answer.
 Repeated viewer requests update that session instead of opening another browser tab.
 Ask the agent to open the viewer at any time during an active session.
 
@@ -32,16 +32,30 @@ Press `[` or the sidebar toggle to collapse the sidebar to an icon rail that kee
 A link opens in the preview tab, which the next link replaces.
 Ctrl-click or Cmd-click a link, double-click its tab, or choose Keep on the tab to keep it open.
 Tabs that an agent presents stay open until you close them.
+A tab whose file was moved or deleted, or whose initiative or slice no longer exists, is dimmed and struck through, and opening it offers to close it.
+The tab returns to normal on its own when the file comes back, for example after a checkout.
+When Prism moves a record from its legacy location into `.prism/`, a tab on that record follows it to the new path.
 
 A banner appears when the review server stops responding, and it clears when the connection returns.
+When the server stays silent for about 15 seconds, the banner says that the review app stopped and the page is no longer live, and actions that need the server say so instead of failing silently.
+A restarted app uses a new link, so ask the agent to open the review browser to get one, or run `./bin/prism review` from a Prism checkout.
+The page keeps checking and recovers on its own when the same app or its upgraded successor answers.
 
 ## Attention
 
 Attention lists the questions that an agent recorded for you, with the artifacts to inspect, including read-only source files.
 Answer a question on Attention or in the conversation.
+A design or correctness review needs Approve or Request changes, and Request changes also needs a note that says what should change.
+A decision takes one of its options, a note in your own words, or both.
+An action request needs only Mark as done, with an optional note.
+The button that sends your answer stays disabled until the answer is complete, and the text beside it says what is missing.
+While a question waits, the tab title starts with the number of waiting questions and the tab icon shows a dot, so a background tab shows it too.
+Choose "Notify me about new questions" on Attention to also get a desktop notification when a question arrives while the page is in the background.
+The browser keeps that permission per review app address, and a restarted review app uses a new address, so it can ask again.
 In Claude Code a waiting agent resumes on its own shortly after your answer.
 Elsewhere the agent receives the answer with your next message, even a short one such as "go".
 Attention also lists blocked slices, open findings, and active work.
+Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
 
 Anyone who can open the review page's URL can answer for you, so do not share that URL.
 See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-the-browser) for the tool timeout that the Claude Code wait needs.
@@ -55,17 +69,42 @@ Shipped and superseded initiatives appear only with "Show shipped and superseded
 
 An initiative page shows its slices as a board, a list, or a graph.
 The board has one column per slice status, and the card of an active slice also shows its activity, workers, and review lanes.
+A slice whose design waits for your answer at its design gate shows as in design review until the agent accepts the design, even though its record still says not started.
 The list shows the slice tree, and the graph orders leaf slices by execution order.
-Below them, the page lists the unstarted leaves that can be designed next.
-A slice page shows the slice's change map, its review ledger, its other files, and the design narrative from `slice.md`.
+Below them, the page lists the unstarted leaves that can be designed next, leaving out those in design review.
+A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, and every file in the slice folder.
+It is the page to read at a design gate.
 
-The change map page starts with a readiness line that jumps to the first blocked change.
+Every PlantUML file directly in the slice folder gets a tab above the design, with `code.puml` first when it exists.
+In dark mode a diagram sits on a light sheet, because PlantUML draws black lines and text.
+
+The design is `slice.md` itself, with Prism's checks placed in it.
+Each contract clause shows how many frozen tests check it, and opening that count shows one plain-language example per test, each linked to its test file.
+A clause that no test checks is flagged, and the count of such clauses sits at the top.
+A slice of a split scope has no Contract of its own, so its page lists the scope's clauses that its Changes serve, with the same test counts.
+A small model writes the examples from the contract and the tests alone, so read the linked test when an example decides your answer.
+Prism checks that each example cites a real clause and a test name that occurs in its file, and marks the examples as stale when the contract or a test file changed after they were written.
+
+Each line of the design's Changes section becomes a card.
+A colored badge after the file name says whether the file is added, changed, or removed.
+For a changed or removed file, the card names each function or type involved with the lines it spans in the project's code index.
+Hover one to see those lines, or click it to open the file with them marked.
+Line numbers come from the latest published index, so they can drift if the file changed after that build, and they are missing until the first build finishes.
+Below the file, the card gives the reason for the change, then the contract clauses it serves and the tests cited for those clauses.
+A change that names no clause supports the slice as a whole.
+After a passing verification run, each card also says what the verified result actually changed, and marks each file "as planned", "partly as planned", or "planned but untouched".
+Files the result changed that the Changes section does not name are listed under "Changed without a plan".
+An unplanned or untouched file is not an error, but it is the first place to look.
+
+For a slice with an accepted design, Prism derives the change map itself after a passing verification run, by comparing the source when the design was accepted with the source the run tested.
+It lists the functions, sections, and files that were added, changed, or removed, and the slice page says when it is still being built.
+An agent-planned change map, from slices designed before verification runs, starts with a readiness line that jumps to the first blocked change.
 Each change has one card with its reason, its before and after references, its own problems, and its reuse evidence.
 A reference opens the file, at the heading when the reference names one.
 Group changes by action or by file, and blocked changes come first.
 The graph mode shows the same changes as before, change, and after nodes, and a node jumps to its card.
 
-JSON records such as `state.json` have a Structured and a Raw view.
+JSON records such as the coordination state have a Structured and a Raw view.
 
 ## Documents and diagrams
 
@@ -111,6 +150,8 @@ Add `- Review browser on start: off` under `## Interaction` in `.prism/workflow.
 `Review browser: internal` also turns it off, because only the agent can open the internal browser.
 It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.
 A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
+When a session falls back on its own, its page shows a banner with the reason, and the agent's review links say that the link belongs to that session, because another session may show the same project at a different link.
+Each fallback also adds a line with the time, project, and reason to `fallbacks.log` in that state directory and to the session's error output.
 
 `prism review` opens the project in the shared review app and returns.
 It opens the system browser only when no review tab is open, and an open tab shows the project or a notice with a link to it instead.

@@ -14,7 +14,7 @@ store.directory=path.join(home,'evidence');
 test.after(()=>rm(home,{recursive:true,force:true}));
 const degraded={prepare:async()=>({status:'degraded',diagnostics:[{code:'unsupported_runtime',message:'Test without inference'}]})};
 const ref=(file,value)=>({path:file,...(value?{selector:{type:'text',value}}:{})});
-const deltaPath='docs/plans/task/change-map.json';
+const key={initiative:'task',slice:'task'};
 const lockOwner=`function readLockOwner(lockPath) {
   const text = readFileSync(lockPath, "utf8");
   const owner = JSON.parse(text);
@@ -44,9 +44,9 @@ test('a task copy of an upstream function into an in-scope file stays a detector
  const root=await mkdtemp(path.join(home,'project-'));
  const put=async(file,body)=>{await mkdir(path.dirname(path.join(root,file)),{recursive:true});await writeFile(path.join(root,file),body);};
  for(const [file,body] of Object.entries({'rules.md':'old\n','requirements.md':'Requirement\n','src/trace.mjs':'export const x = 1;\n'})) await put(file,body);
- const b=await store.capture(root,deltaPath);await functionAnalysis(root,b);
+ const b=await store.capture(root,key);await functionAnalysis(root,b);
  const scope=['rules.md','src/trace.mjs'];
- const delta=await updateChangeMap({projectRoot:root,deltaPath,expectedRevision:null,scope,baselineId:b.snapshotId,requirements:[ref('requirements.md')],
+ const delta=await updateChangeMap({projectRoot:root,...key,expectedRevision:null,scope,baselineId:b.snapshotId,requirements:[ref('requirements.md')],
   operations:[{op:'insert',entry:{id:'r',kind:'rule',label:'r',action:'REPLACE',before:[ref('rules.md','old')],after:[ref('rules.md','new')],reason:'Satisfy the bound requirement.'}}]});
  // A merge from main adds readLockOwner outside the scope.
  await put('src/a.mjs',lockOwner);
@@ -54,6 +54,6 @@ test('a task copy of an upstream function into an in-scope file stays a detector
  // The task copies readLockOwner into an in-scope file.
  await put('rules.md','new\n');await put('src/trace.mjs','export const x = 1;\n'+lockOwner);
  const f=await store.capture(root);await functionAnalysis(root,f);
- const withT=await store.get(root,(await compareChangeMap({projectRoot:root,deltaPath,expectedRevision:delta.revision,baselineId:b.snapshotId,resultSnapshotId:f.snapshotId,startSnapshotId:t.snapshotId},{runtime:degraded})).comparisonId,'comparison');
+ const withT=await store.get(root,(await compareChangeMap({projectRoot:root,...key,expectedRevision:delta.revision,baselineId:b.snapshotId,resultSnapshotId:f.snapshotId,startSnapshotId:t.snapshotId},{runtime:degraded})).comparisonId,'comparison');
  assert.equal(withT.observations.some(item=>item.code==='duplication_introduced'),true,`The task's new copy is reported: ${JSON.stringify(withT.observations.map(item=>[item.code,item.file,item.severity]))}`);
 });

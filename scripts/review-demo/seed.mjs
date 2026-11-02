@@ -8,9 +8,10 @@ const examples = JSON.parse(await readFile(path.join(ROOT, "test/server/fixtures
 const { realRoot, dataDir, write } = await prepareProject(process.argv[2], "prism-review-demo-");
 
 const slice = "docs/plans/retry-hardening/timeout-retries";
-const deltaPath = `${slice}/change-map.json`;
-const reviewPath = `${slice}/review.json`;
-const statePath = "docs/plans/retry-hardening/state.json";
+const key = { initiative: "retry-hardening", slice: "timeout-retries" };
+const records = ".prism/initiatives/retry-hardening/slices/timeout-retries";
+const deltaPath = `${records}/change-map.json`;
+const reviewPath = `${records}/review.json`;
 
 await write(".prism/workflow.md", "# Workflow config\n\n## Paths\n- Requirements: docs/requirements/\n- ADRs: docs/ADRs/\n- Plans (scratch): docs/plans/\n- Roadmap: docs/roadmap.md\n- Glossary: docs/Glossary.md\n");
 await write("src/retry/strategy.ts", "export class RequestRetryStrategy {\n  constructor(private attempts = 3) {}\n  shouldRetry(error: Error, attempt: number) {\n    return attempt < this.attempts && error.name === \"TimeoutError\";\n  }\n}\n");
@@ -26,6 +27,11 @@ await write("docs/ADRs/retries/total-retry-deadline.md", "# Bound retries by a t
 await write("docs/ADRs/reporting/signed-exports.md", "# Sign exported reports\n\nStatus: Accepted\nCreated: 2026-09-11\n\n## Decision\n\nExported reports MUST carry a detached signature.\n");
 await write("docs/ADRs/reporting/csv-only-exports.md", "# Export reports as CSV only\n\nStatus: Superseded\nCreated: 2026-07-01\n\n## Decision\n\nReports were CSV only.\n");
 await write("docs/Glossary.md", "# Glossary\n\nTerms used by the payments API team.\n\n| Term | Definition |\n| --- | --- |\n| Retry deadline | The total time a request may spend across all retry attempts. |\n| Attempt timeout | The time one attempt may take before it counts as failed. |\n| Signed report | An exported activity report with a detached signature. |\n");
+// A split into parts cites an Unprobed assumption that one part settles, because the server refuses a split without evidence.
+const unprobed = { kind: "unfrozen", settledBy: "timeout-retries", assumption: "the HTTP client reports a dropped connection apart from a timeout" };
+await write("docs/plans/retry-hardening/slice.md", `# Harden request retries\n\n## Assumptions\n- Unprobed: ${unprobed.assumption}; until timeout retries land, an unknown error is final.\n`);
+await write("docs/plans/retry-hardening/retry-observability/slice.md", "# Observe retry behavior\n\n## Assumptions\n- Unprobed: the metrics backend accepts one series per retry outcome; the dashboard waits for the metrics slice.\n");
+await write("docs/plans/activity-reports/slice.md", "# Export activity reports\n\n## Assumptions\n- Unprobed: the identity service returns report permissions in one call; downloads wait for authorization.\n");
 await write(`${slice}/slice.md`, "# Retry timed-out requests until a total deadline\n\n## Context\n\nThe existing strategy owns timeout retries, and a total deadline bounds every retry sequence.\nConnection retries stay out of scope until their own slice.\n");
 await write(`${slice}/timeout-retries.puml`, "@startuml\nclass RequestRetryStrategy\n@enduml\n");
 
@@ -33,20 +39,20 @@ const { call, close } = startTools(realRoot, dataDir);
 
 let reviewRevision = null;
 async function review(actor, operations) {
-  const result = await call("update_review", { projectRoot: realRoot, reviewPath, deltaPath, delivery: "delivery", expectedRevision: reviewRevision, actor, operations });
+  const result = await call("update_review", { projectRoot: realRoot, ...key, delivery: "delivery", expectedRevision: reviewRevision, actor, operations });
   reviewRevision = result.revision;
   return result;
 }
 
 try {
-  const baseline = await call("capture_repository_snapshot", { projectRoot: realRoot, deltaPath });
+  const baseline = await call("capture_repository_snapshot", { projectRoot: realRoot, ...key });
   const search = await call("search_repository_concepts", { projectRoot: realRoot, snapshotId: baseline.snapshotId, query: "retry deadline timeout", limit: 5 });
   const concepts = examples.concepts.map((entry) => entry.id === "retry-deadline"
     ? { ...entry, requirements: [{ path: "docs/requirements/retries.md", selector: { type: "heading", value: "Retry requirements" } }], reuseEvidence: { ...entry.reuseEvidence, receiptIds: [search.receiptId] } }
     : entry);
-  let delta = await call("update_change_map", { projectRoot: realRoot, deltaPath, expectedRevision: null, baselineId: baseline.snapshotId, scope: examples.scope, operations: concepts.map((entry) => ({ op: "insert", entry })) });
-  delta = await call("update_change_map", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, expectedGrowth: [{ dimension: "configurationOptions", increase: 1, reason: "The total retry deadline is a new option." }], operations: [] });
-  const audit = await call("compare_change_map", { projectRoot: realRoot, deltaPath, expectedRevision: delta.revision, baselineId: baseline.snapshotId, resultSnapshotId: baseline.snapshotId });
+  let delta = await call("update_change_map", { projectRoot: realRoot, ...key, expectedRevision: null, baselineId: baseline.snapshotId, scope: examples.scope, operations: concepts.map((entry) => ({ op: "insert", entry })) });
+  delta = await call("update_change_map", { projectRoot: realRoot, ...key, expectedRevision: delta.revision, expectedGrowth: [{ dimension: "configurationOptions", increase: 1, reason: "The total retry deadline is a new option." }], operations: [] });
+  const audit = await call("compare_change_map", { projectRoot: realRoot, ...key, expectedRevision: delta.revision, baselineId: baseline.snapshotId, resultSnapshotId: baseline.snapshotId });
 
   const coordinator = { id: "coordinator", role: "coordinator" };
   const reviewer = { id: "independent", role: "reviewer" };
@@ -78,11 +84,11 @@ try {
       { slug: "timeout-retries", title: "Retry timed-out requests until a total deadline", outcome: "Timed-out requests retry until the total deadline elapses.", requirements: [retries[0]] },
       { slug: "connection-retries", title: "Retry dropped connections", outcome: "Dropped connections retry at most three times.", requirements: [retries[1]] },
       { slug: "retry-observability", title: "Observe retry behavior", outcome: "Operators see retry attempts and outcomes.", requirements: [retries[2]] }
-    ] },
+    ], evidence: unprobed },
     { op: "split", parent: "retry-observability", children: [
       { slug: "retry-metrics", title: "Emit retry metrics", outcome: "Each attempt and outcome emits a metric.", requirements: [retries[2]] },
       { slug: "retry-dashboard", title: "Chart retries on the service dashboard", outcome: "The dashboard charts retry rates.", requirements: [retries[2]] }
-    ] },
+    ], evidence: { kind: "unfrozen", settledBy: "retry-metrics", assumption: "the metrics backend accepts one series per retry outcome" } },
     { op: "set_dependencies", slug: "connection-retries", dependencies: ["timeout-retries"] },
     { op: "set_dependencies", slug: "retry-dashboard", dependencies: ["retry-metrics"] },
     { op: "set_status", slug: "timeout-retries", status: "in-progress" },
@@ -94,16 +100,16 @@ try {
     { op: "split", parent: "activity-reports", children: [
       { slug: "download", title: "Download signed reports", outcome: "A signed report downloads.", requirements: ["docs/requirements/reports.md#1"] },
       { slug: "authorize", title: "Authorize report access", outcome: "Only authorized users download reports.", requirements: ["docs/requirements/reports.md#2"] }
-    ] },
+    ], evidence: { kind: "unfrozen", settledBy: "authorize", assumption: "the identity service returns report permissions in one call" } },
     { op: "set_dependencies", slug: "download", dependencies: ["authorize"] }
   ] });
   // The shipped initiative's record is written directly because its completion gates need accepted reviews this demo cannot produce offline.
-  await write("docs/plans/audit-log/initiative.json", `${JSON.stringify({ schemaVersion: 1, id: "audit-log", slices: { "audit-log": { title: "Record administrative actions", outcome: "Every administrative action is recorded.", status: "done", parent: null, requirements: ["docs/requirements/audit-log.md#1"], dependencies: [] } }, history: [] }, null, 2)}\n`);
+  await write(".prism/initiatives/audit-log/initiative.json", `${JSON.stringify({ schemaVersion: 1, id: "audit-log", slices: { "audit-log": { title: "Record administrative actions", outcome: "Every administrative action is recorded.", status: "done", parent: null, requirements: ["docs/requirements/audit-log.md#1"], dependencies: [] } }, history: [] }, null, 2)}\n`);
   let roadmap = await call("update_roadmap", { projectRoot: realRoot, expectedRevision: null, actor: "roadmap", operations: [
     { op: "set_serves", serves: "Reliable retries and auditable reporting for the payments API" },
-    { op: "add_initiative", id: "audit-log", title: "Audit administrative actions", intent: "Record every administrative action for compliance review.", pillar: "Compliance", band: "Now", requirements: ["docs/requirements/audit-log.md"] },
-    { op: "add_initiative", id: "retry-hardening", title: "Harden request retries", intent: "Make retries predictable so callers never wait past a total deadline.", pillar: "Reliability", band: "Now", requirements: ["docs/requirements/retries.md"], rationale: "Retry storms caused the last two incidents, and reporting depends on stable calls." },
-    { op: "add_initiative", id: "activity-reports", title: "Export activity reports", intent: "Let users export signed activity reports.", pillar: "Compliance", band: "Next", requirements: ["docs/requirements/reports.md"], requires: ["retry-hardening"], rationale: "Exports call the payments API in bursts and need bounded retries first." },
+    { op: "add_initiative", id: "audit-log", title: "Audit administrative actions", intent: "Record every administrative action for compliance review.", pillar: "Compliance", band: "Now", requirements: ["docs/requirements/audit-log.md#1"] },
+    { op: "add_initiative", id: "retry-hardening", title: "Harden request retries", intent: "Make retries predictable so callers never wait past a total deadline.", pillar: "Reliability", band: "Now", requirements: retries, rationale: "Retry storms caused the last two incidents, and reporting depends on stable calls." },
+    { op: "add_initiative", id: "activity-reports", title: "Export activity reports", intent: "Let users export signed activity reports.", pillar: "Compliance", band: "Next", requirements: ["docs/requirements/reports.md#1", "docs/requirements/reports.md#2"], requires: ["retry-hardening"], rationale: "Exports call the payments API in bursts and need bounded retries first." },
     { op: "add_initiative", id: "csv-exports", title: "CSV-only exports", intent: "Export raw activity as CSV files.", band: "Next" },
     { op: "add_initiative", id: "search-indexing", title: "Index activity for search", intent: "Find past activity by full-text search.", pillar: "Insight", band: "Later", requires: ["activity-reports"] },
     { op: "add_initiative", id: "legacy-exporter", title: "Retire the legacy exporter", intent: "Remove the nightly batch exporter.", band: "Parked", rationale: "Won't, this cycle: two customers still depend on it." },
@@ -114,12 +120,12 @@ try {
     { op: "supersede", id: "csv-exports", by: "activity-reports", reason: "Signed reports cover the CSV use case." }
   ] });
 
-  const state = await call("update_coordination_state", { projectRoot: realRoot, statePath, expectedRevision: null, changes: {
+  const state = await call("update_coordination_state", { projectRoot: realRoot, initiative: "retry-hardening", expectedRevision: null, changes: {
     settings: { autonomy: "broad", agentFlow: "multi", commit: "on", push: "off", continuation: "stepwise", models: "host defaults" },
-    activeOperations: [{ op: "start", entry: { slice: "timeout-retries", activity: "review", label: "Design audit", workers: ["independent", "security"], workspace: realRoot, reviewPath, reviewLanes: [{ id: "main", reviewer: "independent" }, { id: "security", reviewer: "security" }] } }]
+    activeOperations: [{ op: "start", entry: { slice: "timeout-retries", activity: "review", label: "Design audit", workers: ["independent", "security"], workspace: realRoot, reviewLanes: [{ id: "main", reviewer: "independent" }, { id: "security", reviewer: "security" }] } }]
   } });
   // User gates are recorded exactly as the orchestrator records a question before asking it.
-  await call("update_coordination_state", { projectRoot: realRoot, statePath, expectedRevision: state.revision, changes: {
+  await call("update_coordination_state", { projectRoot: realRoot, initiative: "retry-hardening", expectedRevision: state.revision, changes: {
     next: ["docs/plans/retry-hardening/connection-retries"],
     evidence: [`${slice}/slice.md`],
     gateOperations: [
@@ -127,7 +133,7 @@ try {
       { op: "ask", kind: "decision", slice: "connection-retries", question: "The design deletes the only handler that retries dropped connections (finding F2). Approve requirement 2 for this slice now, or drop connection retries until their slice starts?", artifacts: [reviewPath, "docs/requirements/retries.md"] }
     ]
   } });
-  await call("update_coordination_state", { projectRoot: realRoot, statePath: "docs/plans/activity-reports/state.json", expectedRevision: null, changes: {
+  await call("update_coordination_state", { projectRoot: realRoot, initiative: "activity-reports", expectedRevision: null, changes: {
     settings: { autonomy: "conservative", agentFlow: "multi" },
     gateOperations: [{ op: "ask", kind: "decision", slice: "authorize", question: "Should a report download require a fresh login, or is an active session enough?", artifacts: ["docs/requirements/reports.md"], options: [{ id: "fresh-login", label: "Require a fresh login" }, { id: "active-session", label: "Accept the active session" }] }]
   } });

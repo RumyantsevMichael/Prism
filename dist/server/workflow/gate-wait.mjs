@@ -39,9 +39,9 @@ function outcome(gateIds, pending, first) {
   return answered.length ? { status: "answered", answered, waiting: present.filter((gate) => !gate.answer).map((gate) => gate.id) } : null;
 }
 
-// The wait reads state.json rather than server memory, so an answer recorded by any review server process ends it.
+// The wait reads the coordination state record rather than server memory, so an answer recorded by any review server process ends it.
 // After the first answer it keeps polling briefly, because a user often answers several gates in one visit.
-export async function waitForUserGates({ projectRoot, statePath, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS }) {
+export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS }) {
   if (!Array.isArray(gateIds) || !gateIds.length || gateIds.length > MAX_WAIT_GATES || gateIds.some((id) => typeof id !== "string" || !id)) {
     throw new Error(`Pass one to ${MAX_WAIT_GATES} gate ids.`);
   }
@@ -59,7 +59,7 @@ export async function waitForUserGates({ projectRoot, statePath, gateIds, maxWai
     while (true) {
       let pending = null;
       try {
-        pending = (await readCoordinationState({ projectRoot, statePath })).state?.pending ?? [];
+        pending = (await readCoordinationState({ projectRoot, initiative })).state?.pending ?? [];
       } catch (error) {
         if (first) throw error;
       }

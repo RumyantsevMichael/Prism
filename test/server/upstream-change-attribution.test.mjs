@@ -18,7 +18,7 @@ store.directory=path.join(home,'evidence');
 test.after(()=>rm(home,{recursive:true,force:true}));
 const degraded={prepare:async()=>({status:'degraded',diagnostics:[{code:'unsupported_runtime',message:'Test without inference'}]})};
 const ref=(file,value)=>({path:file,...(value?{selector:{type:'text',value}}:{})});
-const deltaPath='docs/plans/task/change-map.json',reviewPath='docs/plans/task/review.json';
+const key={initiative:'task',slice:'task'};
 
 // B is the original baseline, T the task-start snapshot after upstream work, and F the result after the task's own edits.
 async function scenario(extra={}) {
@@ -26,9 +26,9 @@ async function scenario(extra={}) {
  const put=async(file,body)=>{await mkdir(path.dirname(path.join(root,file)),{recursive:true});await writeFile(path.join(root,file),body);};
  const remove=file=>rm(path.join(root,file));
  for(const [file,body] of Object.entries({'rules.md':'old\n','requirements.md':'Requirement\n','src/legacy.ts':'export const legacy = 1;\n',...extra.base})) await put(file,body);
- const b=await store.capture(root,deltaPath);
+ const b=await store.capture(root,key);
  if(extra.analysis) await extra.analysis(root,b);
- const delta=await updateChangeMap({projectRoot:root,deltaPath,expectedRevision:null,scope:['rules.md'],baselineId:b.snapshotId,requirements:[ref('requirements.md')],
+ const delta=await updateChangeMap({projectRoot:root,...key,expectedRevision:null,scope:['rules.md'],baselineId:b.snapshotId,requirements:[ref('requirements.md')],
   operations:[{op:'insert',entry:{id:'r',kind:'rule',label:'r',action:'REPLACE',before:[ref('rules.md','old')],after:[ref('rules.md','new')],reason:'Satisfy the bound requirement.'}}]});
  // Upstream work after B: a merge from main changes and removes files, and another slice adds its plan.
  await put('src/upstream.ts','export const fromMain = 1;\n');
@@ -43,7 +43,7 @@ async function finish(s,edit=async()=>{}) {
  return store.capture(s.root);
 }
 async function compare(s,f,startSnapshotId,options={runtime:degraded}) {
- const response=await compareChangeMap({projectRoot:s.root,deltaPath,expectedRevision:s.delta.revision,baselineId:s.b.snapshotId,resultSnapshotId:f.snapshotId,...(startSnapshotId?{startSnapshotId}:{})},options);
+ const response=await compareChangeMap({projectRoot:s.root,...key,expectedRevision:s.delta.revision,baselineId:s.b.snapshotId,resultSnapshotId:f.snapshotId,...(startSnapshotId?{startSnapshotId}:{})},options);
  return {response,comparison:await store.get(s.root,response.comparisonId,'comparison')};
 }
 const byCode=(comparison,code)=>comparison.observations.filter(item=>item.code===code);
@@ -148,7 +148,7 @@ test('clause 1: the compare_change_map tool takes an optional startSnapshotId an
  assert.equal(schema.required.includes('startSnapshotId'),false);
  assert.match(CONSERVATION_TOOLS.find(tool=>tool.name==='compare_change_map').description,/startSnapshotId/);
  const s=await scenario();const f=await finish(s);
- const input={projectRoot:s.root,deltaPath,expectedRevision:s.delta.revision,baselineId:s.b.snapshotId,resultSnapshotId:f.snapshotId};
+ const input={projectRoot:s.root,...key,expectedRevision:s.delta.revision,baselineId:s.b.snapshotId,resultSnapshotId:f.snapshotId};
  // The published schema accepts the field; the comparison itself runs in-process without native inference.
  assert.doesNotThrow(()=>assertInput(schema,{...input,startSnapshotId:s.t.snapshotId}));
  await assert.rejects(callConservationTool('compare_change_map',{...input,baselineId:s.t.snapshotId,startSnapshotId:s.t.snapshotId}),error=>error.code==='validation_failed'&&/original baseline/.test(error.message));
@@ -156,7 +156,7 @@ test('clause 1: the compare_change_map tool takes an optional startSnapshotId an
 
 test('clause 8: a startSnapshotId that is malformed or not a retained snapshot of this project is refused',async()=>{
  const s=await scenario();const f=await finish(s);
- const input={projectRoot:s.root,deltaPath,expectedRevision:s.delta.revision,baselineId:s.b.snapshotId,resultSnapshotId:f.snapshotId};
+ const input={projectRoot:s.root,...key,expectedRevision:s.delta.revision,baselineId:s.b.snapshotId,resultSnapshotId:f.snapshotId};
  await assert.rejects(callConservationTool('compare_change_map',{...input,startSnapshotId:'not-a-hash'}),{code:'validation_failed'});
  await assert.rejects(compareChangeMap({...input,startSnapshotId:'a'.repeat(64)},{runtime:degraded}),{code:'evidence_missing'});
  const comparisonId=(await compareChangeMap(input,{runtime:degraded})).comparisonId;
@@ -167,7 +167,7 @@ test('clause 8: a startSnapshotId that is malformed or not a retained snapshot o
 
 async function auditWave(s,f,comparisonId) {
  let revision=null;const coordinator={id:'coordinator',role:'coordinator'},reviewer={id:'reviewer',role:'reviewer'};
- const act=async(actor,operations)=>{const r=await updateReview({projectRoot:s.root,reviewPath,deltaPath,delivery:'delivery',expectedRevision:revision,actor,operations});revision=r.revision;return r;};
+ const act=async(actor,operations)=>{const r=await updateReview({projectRoot:s.root,...key,delivery:'delivery',expectedRevision:revision,actor,operations});revision=r.revision;return r;};
  await act(coordinator,[{op:'start_wave',id:'audit',mode:'design-audit',deltaRevision:s.delta.revision,snapshotId:f.snapshotId,comparisonId,lanes:[{id:'main',reviewer:'reviewer',coverage:['rules.md']}]}]);
  const requirement=ref('requirements.md');
  await act(reviewer,[{op:'record_assessment',assessment:{id:'converge',lane:'main',kind:'convergence',reason:'Fixture assessment of the replaced rule.',evidence:[requirement],section:ref('rules.md'),decision:'replace',conceptIds:['r'],coverage:[{requirement,targets:[ref('rules.md','new')]}]}},{op:'submit_lane',lane:'main',status:'CLEAN'}]);
