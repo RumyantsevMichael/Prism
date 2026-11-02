@@ -999,7 +999,7 @@ test("a read leaves legacy records in place, and the first write reports the fil
   assert.deepEqual(await readdir(path.join(root, ".prism")), ["workflow.md"]);
   const written = await callTool(mcp, 3, "update_coordination_state", { projectRoot: root, initiative: "reports", expectedRevision: read.result.structuredContent.revision, changes: { next: ["Design the export."] } });
   assert.equal(written.error, undefined, JSON.stringify(written.error));
-  assert.match(written.result.content.at(-1).text, /moved 1 record files[\s\S]*docs\/plans\/reports\/state\.json -> \.prism\/initiatives\/reports\/state\.json/);
+  assert.match(written.result.content.at(-1).text, /moved 1 record file into[\s\S]*docs\/plans\/reports\/state\.json -> \.prism\/initiatives\/reports\/state\.json/);
   const again = await callTool(mcp, 4, "get_coordination_state", { projectRoot: root, initiative: "reports" });
   assert.doesNotMatch(again.result.content.map((item) => item.text).join("\n"), /moved/);
 });

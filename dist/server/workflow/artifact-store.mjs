@@ -17,7 +17,8 @@ async function wait(milliseconds) {
 async function acquireFileLock(artifactPath, makeError, options) {
   const lockPath = `${artifactPath}.lock`;
   const deadline = Date.now() + (options.timeoutMs ?? LOCK_TIMEOUT_MS);
-  while (Date.now() < deadline) {
+  // The first attempt always runs, so a short timeout such as the sync lock's one millisecond never times out untried.
+  for (let first = true; first || Date.now() < deadline; first = false) {
     try {
       const handle = await open(lockPath, "wx", 0o600);
       const token = randomBytes(16).toString("hex");

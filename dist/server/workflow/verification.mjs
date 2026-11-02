@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, realpath } from "node:fs/promises";
 import os from "node:os";
@@ -7,7 +7,7 @@ import path from "node:path";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
-import { appendRecord, RECORD_DIRECTORY } from "./record-store.mjs";
+import { appendRecord, RECORD_DIRECTORY, repositoryId } from "./record-store.mjs";
 import { contentTree } from "./slice-gate.mjs";
 import { acceptedDesign, checkFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState, updateCoordinationState } from "./state.mjs";
@@ -237,9 +237,54 @@ async function verificationRun({ root, initiative, slice, command, key, config, 
     const snapshotId = reason === null && design.baselineId ? await conservationStore.capture(root, { initiative, slice }).then((captured) => captured.snapshotId, () => null) : null;
     entry = { ...base, finishedAt: new Date().toISOString(), durationMs: outcome.durationMs, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, passed: reason === null, ...(reason ? { reason } : {}), tree: before, ...(after !== before ? { treeAfter: after } : {}), ...(snapshotId ? { snapshotId } : {}), ...(reason === "command_failed" && outcome.failing.length ? { failing: outcome.failing.slice(0, MAX_FAILING_NAMES), failingCount: outcome.failing.length } : {}), outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), output: outcome.output };
   }
+  entry.checkout = await checkoutOf(root, config, entry.tree).catch(() => null);
   const { output = entry.outputTail, ...recorded } = entry;
   const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, recorded);
   return { id, path: stored.path, ...recorded, ...(log ? { log } : {}), output };
+}
+
+// Git answers about the checkout are optional, so any error is an unknown value rather than a failed run.
+function gitValue(root, args) {
+  return new Promise((resolve) => {
+    execFile("git", ["-C", root, ...args], { timeout: 10000 }, (error, stdout) => resolve(error ? null : stdout.trim() || null));
+  });
+}
+
+/** A remote URL without its user, password, or token, so no credential ever reaches a record. */
+// Only network remotes name a place others can find; local paths and helper transports such as ext:: are left out.
+const REMOTE_SCHEMES = new Set(["https:", "http:", "ssh:", "git:"]);
+export function publicRemote(url) {
+  if (typeof url !== "string" || !url) return null;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
+    try {
+      const parsed = new URL(url);
+      // Scheme, host, and path only: user information, query, and fragment can all carry a token.
+      return REMOTE_SCHEMES.has(parsed.protocol) && parsed.hostname ? `${parsed.protocol}//${parsed.host}${parsed.pathname}` : null;
+    } catch { return null; }
+  }
+  // A scp-like address such as git@host:owner/repo names its user, and sometimes a password, before the host.
+  const scp = /^(?:[^@/\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]+):([^:?#\s][^?#\s]*)$/.exec(url.split(/[?#]/)[0]);
+  return scp ? `${scp[1]}:${scp[2]}` : null;
+}
+
+// Hashing the committed content reads the head commit's tree into a scratch index, which a huge repository must not let stall a run.
+const DIRTY_TIMEOUT_MS = 30000;
+
+/** Where a run's code lives: { repository, remote, branch, head, dirty }; dirty is known only when the run hashed its work tree. */
+export async function checkoutOf(root, config, tree = null) {
+  const [repository, remote, branch, head] = await Promise.all([
+    repositoryId(root),
+    gitValue(root, ["config", "--get", "remote.origin.url"]).then(publicRemote),
+    gitValue(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+    gitValue(root, ["rev-parse", "--verify", "--quiet", "HEAD"])
+  ]);
+  let dirty = null;
+  if (head && typeof tree === "string") {
+    // Uncommitted changes count as verification's own content tree does, so records, plans, and the roadmap never make a checkout dirty.
+    const committed = await contentTree(root, config, { commit: head, timeoutMs: DIRTY_TIMEOUT_MS }).catch(() => null);
+    if (committed) dirty = tree !== committed;
+  }
+  return { repository, remote, branch, head, dirty };
 }
 
 // One run per slice at a time: a repeated call joins the running one, so a host that returns early can call again to keep waiting.
@@ -308,11 +353,14 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
 // Reported defects are kept as a run entry, which outlives the initiative record, and block the slice until design revises the contract.
 async function reportContractDefects(root, initiative, slice, design, defects) {
   const id = `contract-defect-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
-  const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, { kind: "contract-defect", reportedAt: new Date().toISOString(), designAcceptedAt: design.acceptedAt, defects });
-  const { getInitiative, updateInitiative } = await import("./initiative.mjs");
+  // A defect report hashes no work tree, so its checkout leaves dirty unknown.
+  const checkout = await checkoutOf(root, await readWorkflowConfig(root)).catch(() => null);
+  const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, { kind: "contract-defect", reportedAt: new Date().toISOString(), designAcceptedAt: design.acceptedAt, defects, checkout });
+  const { readInitiative, updateInitiative } = await import("./initiative.mjs");
   for (let attempt = 0; ; attempt += 1) {
     try {
-      const current = await getInitiative({ projectRoot: root, initiative });
+      // Only the revision is needed, so the retry never reads the slices' run entries that get_initiative summarizes.
+      const current = (await readInitiative(root, initiative)).loaded;
       const updated = await updateInitiative({ projectRoot: root, initiative, expectedRevision: current.revision, actor: "verify_slice", operations: [{ op: "report_contract_defects", slug: slice, defects }] });
       return { status: "defects_recorded", sliceStatus: "blocked", initiativeRevision: updated.revision, run: stored.path, message: `The contract defects of ${slice} are recorded and the slice is blocked until design revises its contract. Stop implementing it.` };
     } catch (error) {
@@ -325,11 +373,12 @@ async function reportContractDefects(root, initiative, slice, design, defects) {
 // A passing run completes a slice whose design marks no review, so the coordinator never records that step itself.
 async function completeSlice(root, initiative, slice, design, run) {
   if (!run.passed || design.review === "required") return run;
-  const { getInitiative, updateInitiative } = await import("./initiative.mjs");
+  const { readInitiative, updateInitiative } = await import("./initiative.mjs");
   // Another writer can update the record between the read and the write, so a revision conflict reads it again.
   for (let attempt = 0; ; attempt += 1) {
     try {
-      const current = await getInitiative({ projectRoot: root, initiative });
+      // Only the revision is needed, so the retry never reads the slices' run entries that get_initiative summarizes.
+      const current = (await readInitiative(root, initiative)).loaded;
       if (current.record?.slices?.[slice]?.status === "done") return { ...run, sliceStatus: "done", initiativeRevision: current.revision };
       const updated = await updateInitiative({ projectRoot: root, initiative, expectedRevision: current.revision, actor: "verify_slice", operations: [{ op: "set_status", slug: slice, status: "done" }] });
       return { ...run, sliceStatus: "done", initiativeRevision: updated.revision };
@@ -391,6 +440,7 @@ export function verificationBrief(value) {
     durationMs: value.durationMs,
     run: value.path,
     ...(value.log ? { log: value.log } : {}),
+    ...(value.status === "passed" && value.checkout ? { code: value.checkout } : {}),
     ...(value.status === "failed" && value.outputTail ? { outputTail: tail(value.outputTail, BRIEF_TAIL_CHARS) } : {})
   };
 }

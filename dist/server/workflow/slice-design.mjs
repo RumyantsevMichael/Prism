@@ -110,6 +110,12 @@ export async function latestVerification(projectRoot, initiative, slice) {
   return latest ? { id: latest.id, ...latest.entry } : null;
 }
 
+/** Where the latest passing verification run of a slice ran: its checkout, or null when no passing run recorded one. */
+export async function verifiedCode(projectRoot, initiative, slice) {
+  const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative, slice });
+  return entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1)?.entry.checkout ?? null;
+}
+
 /** The accepted design of a slice, read from its initiative record, or null for a slice designed before verification runs existed. */
 export async function acceptedDesign(projectRoot, initiative, slice) {
   const located = await locateRecord(projectRoot, { kind: "initiative", initiative });

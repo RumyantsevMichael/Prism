@@ -1,6 +1,6 @@
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, rmdir, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
@@ -271,30 +271,70 @@ async function moveRecord(root, store, move, report) {
   report.moved.push(move);
 }
 
-// Every checkout and clone of one repository shares its root commit; a project outside Git falls back to its own folder.
-function repositoryIdentity(root) {
-  return new Promise((resolve) => {
-    execFile("git", ["-C", root, "rev-list", "--max-parents=0", "HEAD"], { timeout: 10000 }, (error, stdout) => {
-      resolve((error ? "" : stdout.split(/\s+/).filter(Boolean).sort()[0]) || root);
-    });
-  });
+/** The identity every full clone of one repository shares, its first root commit in sorted order, or null outside Git, before the first commit, or in a shallow clone, whose oldest fetched commits only look like roots. */
+// A root commit never changes once it exists, so each project asks Git only until it has one.
+const repositoryIds = new Map();
+const git = (root, args) => new Promise((resolve) => {
+  execFile("git", ["-C", root, ...args], { timeout: 10000 }, (error, stdout) => resolve(error ? null : stdout.trim()));
+});
+export async function repositoryId(root) {
+  if (repositoryIds.has(root)) return repositoryIds.get(root);
+  const shallow = await git(root, ["rev-parse", "--is-shallow-repository"]);
+  if (shallow === "true") { repositoryIds.set(root, null); return null; }
+  const id = shallow === null ? null : ((await git(root, ["rev-list", "--max-parents=0", "HEAD"])) ?? "").split(/\s+/).filter(Boolean).sort()[0] || null;
+  if (id) repositoryIds.set(root, id);
+  return id;
 }
 
-// Committed records exist in every checkout, so a store takes them from a repository only once; later copies would bring back removed records.
+// Every record path a store ever took from a checkout, from the migration files under its migrations folder.
+// Each migration writes a file of its own, so two machines never change the same file and the store's Git merge never conflicts on them.
+const LEGACY_MARKER = /^[0-9a-f]{40,64}\.json$/;
+const ledgers = new Map();
+async function readLedger(store) {
+  const directory = path.join(store.base, "migrations");
+  let names = [];
+  try { names = (await readdir(directory)).filter((name) => name.endsWith(".json")).sort(); }
+  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
+  const cached = ledgers.get(store.base);
+  if (cached && cached.names === names.join("\n")) return cached.ledger;
+  const ledger = { records: new Set(), repositories: new Set() };
+  for (const name of names) {
+    let entry;
+    try { entry = JSON.parse(await readFile(path.join(directory, name), "utf8")); }
+    catch { continue; }
+    // A file from before the ledger names the repository it migrated, without the paths.
+    if (LEGACY_MARKER.test(name)) ledger.repositories.add(name.slice(0, -".json".length));
+    for (const record of entry?.records ?? []) if (typeof record === "string") ledger.records.add(record);
+    for (const conflict of entry?.conflicts ?? []) if (typeof conflict?.to === "string") ledger.records.add(conflict.to);
+  }
+  ledgers.set(store.base, { names: names.join("\n"), ledger });
+  return ledger;
+}
+
+// Committed records exist in every checkout, so a store takes each record path only once; a later copy would bring back a record removed since.
 async function migrateIntoStore(root, store, config, report) {
-  const repository = await repositoryIdentity(root);
-  const name = /^[0-9a-f]{40,64}$/.test(repository) ? repository : createHash("sha256").update(repository).digest("hex");
-  const marker = path.join(store.base, "migrations", `${name}.json`);
-  if (await regularFile(marker)) return report;
+  const repository = await repositoryId(root);
+  if (repository && (await readLedger(store)).repositories.has(repository)) return report;
+  const candidates = async () => [...await inRepoRecords(root), ...await legacyRecords(root, store, config)];
+  const fresh = async () => {
+    const { records } = await readLedger(store);
+    const moves = [];
+    for (const move of await candidates()) if (!records.has(move.to) && await regularFile(path.join(root, move.from))) moves.push(move);
+    return moves;
+  };
+  if (!(await fresh()).length) return report;
   await ensureHousekeeping(store);
   const lock = path.join(store.base, "migration");
   await withArtifactLock(lock, () => withFileLock(lock, async () => {
-    if (await regularFile(marker)) return;
     // Records already under the project's .prism come first, so they win over a legacy copy as they do without a store.
-    for (const move of [...await inRepoRecords(root), ...await legacyRecords(root, store, config)]) await moveRecord(root, store, move, report);
+    for (const move of await fresh()) await moveRecord(root, store, move, report);
+    if (!report.moved.length && !report.conflicts.length) return;
+    const at = new Date().toISOString();
+    const marker = path.join(store.base, "migrations", `${at.replace(/[:.]/g, "-")}-${randomBytes(4).toString("hex")}.json`);
     await mkdir(path.dirname(marker), { recursive: true });
     await assertContained(store.contain, marker, "the record store");
-    await writeAtomically(marker, `${JSON.stringify({ schemaVersion: 1, repository, migratedAt: new Date().toISOString(), moved: report.moved.length, conflicts: report.conflicts }, null, 2)}\n`);
+    const records = [...new Set(report.moved.map((move) => move.to))];
+    await writeAtomically(marker, `${JSON.stringify({ schemaVersion: 2, repository, migratedAt: at, moved: records.length, records, conflicts: report.conflicts }, null, 2)}\n`);
   }, fail, { timeoutMs: 30000 }));
   await pruneEmptyFolders(path.join(root, INITIATIVES));
   return report;
@@ -306,7 +346,7 @@ async function migrate(root) {
   const config = await readWorkflowConfig(root);
   if (store.external) {
     await migrateIntoStore(root, store, config, report);
-    if (report.moved.length || report.conflicts.length) unreportedMoves.push({ root, ...report });
+    if (report.moved.length || report.conflicts.length) unreportedMoves.push({ root, store: store.base, ...report });
     return report;
   }
   const moves = await legacyRecords(root, store, config);

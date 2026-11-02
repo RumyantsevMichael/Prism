@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm, rmdir } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
 
 // A record store that is a Git checkout exchanges its records with its upstream.
 // One process at a time syncs a store, and record reads and writes wait while a merge replaces record files.
@@ -14,6 +15,10 @@ const running = new Map();
 // Stores whose debounced sync came due while a sync was running; that sync may have committed before the write.
 const rerun = new Set();
 const lastFetch = new Map();
+// Stores this process synced or pulled, and the saved conflicts it already reported, so each agent hears once about a change the upstream won.
+const PROCESS_START = Date.now();
+const watched = new Set();
+const reported = new Set();
 // Variables that could point Git at another repository, index, or object store than the store's own.
 const REDIRECTING = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE)$/;
 
@@ -73,6 +78,7 @@ export async function waitForStableStore(base) {
 
 /** Debounce a sync after a record write; a sync problem never reaches the write. */
 export function scheduleRecordSync(base) {
+  watched.add(base);
   clearTimeout(scheduled.get(base));
   const timer = setTimeout(() => {
     scheduled.delete(base);
@@ -85,9 +91,39 @@ export function scheduleRecordSync(base) {
 
 /** Start a background sync after a record read when the last fetch is older than the pull interval; the read never waits for it. */
 export function pullRecordStoreIfStale(base) {
+  watched.add(base);
   if (running.has(base) || Date.now() - (lastFetch.get(base) ?? 0) < SETTINGS.pullIntervalMs) return;
   lastFetch.set(base, Date.now());
   syncRecordStore(base).catch(() => {});
+}
+
+/** Local record versions that a sync saved because the upstream changed the same record, in stores this process uses, since this process started and not reported before. */
+export async function takeSavedConflicts() {
+  const found = [];
+  for (const base of watched) {
+    const directory = syncPath(base, "conflicts");
+    let stamps = [];
+    try { stamps = (await readdir(directory)).sort(); } catch { continue; }
+    for (const stamp of stamps) {
+      const at = Date.parse(stamp.replace(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, "$1:$2:$3.$4Z"));
+      const key = `${base}\0${stamp}`;
+      if (!(at >= PROCESS_START) || reported.has(key)) continue;
+      reported.add(key);
+      const files = [];
+      const visit = async (relative) => {
+        let entries = [];
+        try { entries = await readdir(path.join(directory, stamp, relative), { withFileTypes: true }); } catch { return; }
+        for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+          const child = relative ? `${relative}/${entry.name}` : entry.name;
+          if (entry.isDirectory()) await visit(child);
+          else if (entry.isFile() && isRecordFile(child)) files.push(child);
+        }
+      };
+      await visit("");
+      for (const file of files) found.push({ record: `.prism/${file}`, savedAs: path.join(directory, stamp, file), at: new Date(at).toISOString() });
+    }
+  }
+  return found;
 }
 
 /** The latest sync outcome of a store, or null before its first sync. */
@@ -208,12 +244,15 @@ async function merge(base, author, options) {
   const result = await git(base, ["merge-tree", "--write-tree", "--name-only", "-z", "--no-messages", head.text, theirs]);
   if (result.code !== 0 && result.code !== 1) return { failed: result.stderr || "Git could not merge the upstream; Git 2.38 or later is required.", conflicts: [] };
   const [mergedTree, ...listed] = result.stdout.toString("utf8").split("\0").filter(Boolean);
-  const conflicted = [...new Set(listed)];
-  const other = conflicted.filter((file) => !isRecordFile(file));
+  const lineConflicts = [...new Set(listed)];
+  const other = lineConflicts.filter((file) => !isRecordFile(file));
   if (other.length) return { failed: `The upstream conflicts with local changes to ${other.slice(0, 5).join(", ")}, so the store was left as it was.`, conflicts: [] };
+  const merges = await structuralMerges(base, head.text, theirs);
+  const conflicted = [...new Set([...lineConflicts, ...merges.fallback])].filter((file) => !merges.merged.has(file));
   let tree = mergedTree;
-  if (conflicted.length) {
+  if (conflicted.length || merges.merged.size) {
     // The upstream version wins, as the first push does for a stale revision, and the local version is kept beside the store once the merge applies.
+    // A record merged by structure takes its merged blob instead of Git's line merge.
     const index = syncPath(base, "merge-index");
     const env = { GIT_INDEX_FILE: index };
     await rm(index, { force: true });
@@ -221,6 +260,10 @@ async function merge(base, author, options) {
     for (const file of conflicted) {
       const entry = (await required(base, ["ls-tree", "-z", theirs, "--", file])).stdout;
       await required(base, ["update-index", "-z", "--index-info"], { env, input: entry.length ? entry : `0 ${"0".repeat(40)}\t${file}\0` });
+    }
+    for (const [file, contents] of merges.merged) {
+      const object = (await required(base, ["hash-object", "-w", "--stdin"], { input: contents })).text;
+      await required(base, ["update-index", "-z", "--index-info"], { env, input: `100644 ${object}\t${file}\0` });
     }
     tree = (await required(base, ["write-tree"], { env })).text;
     await rm(index, { force: true });
@@ -239,6 +282,35 @@ async function merge(base, author, options) {
     conflicts.push({ path: file, savedAs: local.ok ? savedAs : null });
   }
   return { applied: true, conflicts };
+}
+
+/**
+ * Merge by structure every record that changed on both sides since the merge base and whose kind registers a merge, whether or not Git's line merge conflicts,
+ * because a clean line merge of JSON can still be wrong or non-canonical.
+ * A record removed on either side keeps Git's whole-file handling.
+ * Returns the merged contents by path, and the paths whose merge found a conflict or an invalid result, which fall back to the upstream version.
+ */
+async function structuralMerges(base, head, theirs) {
+  const merged = new Map();
+  const fallback = [];
+  const mergeBase = await git(base, ["merge-base", head, theirs]);
+  if (!mergeBase.ok || !mergeBase.text) return { merged, fallback };
+  const ours = new Set(await changedPaths(base, mergeBase.text, head));
+  const both = (await changedPaths(base, mergeBase.text, theirs)).filter((file) => ours.has(file) && hasRecordMerge(file));
+  for (const file of both) {
+    const [original, local, upstream] = await Promise.all([mergeBase.text, head, theirs].map((commit) => blob(base, commit, file)));
+    if (local === null || upstream === null || local.equals(upstream)) continue;
+    const mergeRecord = await recordMergeFor(file);
+    let outcome;
+    try {
+      outcome = await mergeRecord({ path: file, base: original?.toString("utf8") ?? null, local: local.toString("utf8"), upstream: upstream.toString("utf8") });
+    } catch (error) {
+      outcome = { conflict: error.message };
+    }
+    if (typeof outcome?.contents === "string") merged.set(file, Buffer.from(outcome.contents, "utf8"));
+    else fallback.push(file);
+  }
+  return { merged, fallback };
 }
 
 const blob = async (base, commit, file) => {

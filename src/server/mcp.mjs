@@ -8,6 +8,7 @@ import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getCha
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { takeMigrationReports } from "./workflow/record-store.mjs";
+import { takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -1076,12 +1077,26 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
 }
 
 // The first write after an upgrade moves files in the user's work tree, so its result says which, to commit on their own.
-function withMigrationNote(value) {
+const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+// A sync that found the same record changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
+async function withRecordNotes(value) {
   const reports = takeMigrationReports();
-  if (!reports.length || !Array.isArray(value?.content)) return value;
-  const moved = reports.flatMap((report) => report.moved), conflicts = reports.flatMap((report) => report.conflicts);
-  const lines = [`Prism moved ${moved.length} record files from their old locations into .prism; commit these moves on their own, apart from the task's changes.`, ...moved.map((move) => `- ${move.from} -> ${move.to}`)];
-  if (conflicts.length) lines.push(`${conflicts.length} old files were kept because .prism already holds a different record: ${conflicts.map((move) => move.from).join(", ")}.`);
+  const saved = await takeSavedConflicts().catch(() => []);
+  if ((!reports.length && !saved.length) || !Array.isArray(value?.content)) return value;
+  const lines = [];
+  for (const report of reports) {
+    const into = report.store ? `the record store at ${report.store}` : ".prism";
+    const kept = report.store ? "the record store" : ".prism";
+    if (report.moved.length) {
+      const removal = report.store ? "commit their removal from the project" : "commit these moves";
+      lines.push(`Prism moved ${plural(report.moved.length, "record file")} into ${into}; ${removal} on its own, apart from the task's changes.`, ...report.moved.map((move) => move.from === move.to ? `- ${move.from}` : `- ${move.from} -> ${move.to}`));
+    }
+    if (report.conflicts.length) lines.push(`${report.conflicts.length} old files were kept because ${kept} already holds a different record: ${report.conflicts.map((move) => move.from).join(", ")}.`);
+  }
+  if (saved.length) {
+    lines.push(`Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, ...saved.map((item) => `- ${item.record} (this machine's version: ${item.savedAs})`));
+  }
   return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
 }
 
@@ -1174,7 +1189,7 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
-      const value = withMigrationNote(await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id));
+      const value = await withRecordNotes(await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id));
       // A cancelled request gets no response, as the MCP cancellation rules require.
       if (value.structuredContent?.status !== "cancelled") {
         result(request.id, value);

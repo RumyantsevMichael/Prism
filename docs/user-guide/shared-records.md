@@ -9,6 +9,7 @@ A record store moves those records into one folder that every checkout shares, a
 Only machine records move into the store.
 `.prism/workflow.md`, requirements, ADRs, slice plans, diagrams, generated Markdown views, feature files, and tests stay in the project and travel with its branches as before.
 Tools, tool results, review browser links, and stored references keep naming records by their `.prism/...` address, so nothing that agents or people see changes.
+Each verified slice records where its code lives, the repository, branch, and commit of its latest passing run, and the slice page in the review browser shows it.
 
 ## Share records between checkouts on one machine
 
@@ -32,9 +33,9 @@ It must not resolve inside the project or contain it, and Prism never creates it
 A missing or misplaced store makes every record operation fail with `store_unavailable`, because silently falling back to `.prism` would split state between checkouts.
 The review browser still lists the project's human documents while the store is unavailable.
 
-The first record access from any checkout of a repository moves that checkout's existing records into the store, once per repository.
-Prism records the move in the store's `migrations` folder, together with any record whose bytes differed from a copy already in the store, and it leaves both copies of such a record in place.
-Record files that other checkouts still hold under `.prism` are ignored from then on, and you can delete them.
+The first record access from a checkout moves its existing records into the store, and each record moves only once, from whichever checkout brings it first.
+Prism lists every moved record in the store's `migrations` folder, together with any record whose bytes differed from a copy already in the store, and it leaves both copies of such a record in place.
+Copies of those records that other checkouts still hold under `.prism` are ignored from then on, so a record you removed from the store stays removed, and you can delete the copies.
 
 ## Share records between machines
 
@@ -63,8 +64,13 @@ SSH runs in batch mode unless you configured an SSH command, so a remote that ne
 
 ## When two people change the same record
 
-Until records become append-only, the first push wins.
+Changes to different initiatives in the roadmap, or to different slices or proposals of one initiative, merge, and both history entries are kept.
+A roadmap reordered on one machine keeps that order, and an initiative added on the other machine lands after the initiative it followed there.
+Two changes collide when they change the same initiative or slice differently, reorder the roadmap differently, or merge into a record that fails validation, such as a dependency cycle between two slices.
+Other records, such as coordination state, collide whenever Git cannot merge their lines.
+In a collision the first push wins.
 The machine whose push lost keeps the upstream version and saves its own version under `.prism-sync/conflicts/<time>/` in the store, so no bytes are lost.
+The next Prism tool result on that machine names the record and the saved file, so the agent that made the change learns of it.
 Compare the saved file with the current record, and redo the change through Prism's tools if it still matters.
 Prism never replaces a record that changed while a merge was running: it leaves the branch where it was and resolves the change on the next sync.
 
@@ -75,7 +81,7 @@ The review browser shows a small chip when the last sync did not succeed, and `.
 | State | Meaning | What to do |
 | --- | --- | --- |
 | `ok` | The last sync committed, merged, and pushed. | Nothing. |
-| `conflicts` | A record changed on both sides; the local version is saved under `.prism-sync/conflicts/`. | Review the saved file. |
+| `conflicts` | A record changed on both sides in a way that does not merge; the local version is saved under `.prism-sync/conflicts/`. | Review the saved file. |
 | `no_upstream` | The store's branch has no upstream, so Prism only commits locally. | Set an upstream with `git branch --set-upstream-to`. |
 | `not_a_repository` | Sync is on, but the store is not the top of a Git checkout. | Clone the store, or turn sync off. |
 | `fetch_failed` or `push_rejected` | The remote could not be reached, refused the push, or kept moving for three attempts. | Check access to the remote; Prism retries on the next write or read. |
