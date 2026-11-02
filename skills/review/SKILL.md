@@ -25,8 +25,8 @@ It reviews the result that the slice's last passing verification run tested.
 - Check for behavior outside the Approved intent, unrelated edits, and stale user or operator guidance.
 - When a finding needs executable proof, add one minimal failing test through a public surface in the project's test location and name it in the finding.
 
-- Don't
-  - Change production code, frozen tests, or existing tests.
+- Don't change production code, frozen tests, or existing tests.
+- Don't open a finding whose condition to close contradicts another open finding or needs a change that follows completion, such as accepting a Proposed ADR.
 
 ## 3. Record
 

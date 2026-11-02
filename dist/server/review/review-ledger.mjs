@@ -23,7 +23,7 @@ const assessmentSchema = { oneOf: [
   obj({ ...assessmentCommon, kind: { const: "growth" }, growthIds: arr(str), justification: justificationSchema }),
   obj({ ...assessmentCommon, kind: { const: "convergence" }, section: referenceSchema, decision: { enum: ["retain", "replace", "consolidate", "delete"] }, conceptIds: arr(str), coverage: arr(obj({ requirement: referenceSchema, targets: arr(referenceSchema) })) })
 ] };
-const GET_REVIEW_SCHEMA = obj({ ...common, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, section: { enum: ["findings", "waves", "assessments", "conflicts", "legacy", "history"] } }, ["projectRoot", "initiative", "slice"]);
+const GET_REVIEW_SCHEMA = obj({ ...common, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, section: { enum: ["findings", "waves", "assessments", "conflicts", "legacy", "history"] }, wave: str }, ["projectRoot", "initiative", "slice"]);
 const UPDATE_REVIEW_SCHEMA = obj({ ...common, delivery: str, actor: obj({ id: str, role: { enum: ["coordinator", "delivery", "reviewer"] } }), operations: arr({ oneOf: [
   obj({ op: { const: "start_wave" }, id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, snapshotId: hashField, comparisonId: hashField, base: str, lanes: arr(laneSchema), afterGate: str }, ["op", "id", "mode", "lanes"]),
   obj({ op: { const: "assign_delivery" }, worker: str }),
@@ -59,6 +59,7 @@ async function assertReviewMayContinue(input, review, next, acceptedAt) {
   const asked = gate?.askedAt ?? "", lastStart = waves.at(-1)?.startedAt ?? acceptedAt;
   if (!gate || gate.kind !== "decision" || gate.slice !== input.slice || !(gate.answer || gate.closedAt) || asked < lastStart) throw conservationError("gate_blocked", `afterGate must name a decision gate for slice ${input.slice} that was asked after the last review wave started and that the user answered.`);
 }
+const raisedIn = (finding) => finding.history[0]?.wave;
 const laneOf = (wave, lane) => {
   const value = wave.lanes.find((item) => item.id === lane);
   if (!value) throw conservationError("validation_failed", "The review lane is not assigned.");
@@ -437,7 +438,9 @@ async function getReview(input) {
   const loaded = await loadReview(input.projectRoot, input.initiative, input.slice);
   if (input.expectedRevision !== void 0 && loaded.revision !== input.expectedRevision) throw conservationError("revision_conflict", "The review record changed.", { currentRevision: loaded.revision });
   if (!loaded.document) return { exists: false, revision: null };
-  const section = input.section || "findings", list = loaded.document[section], offset = input.offset || 0, limit = input.limit || 50;
+  const section = input.section || "findings", offset = input.offset || 0, limit = input.limit || 50;
+  if (input.wave !== void 0 && (section === "legacy" || section === "history")) throw conservationError("validation_failed", "The wave filter applies to findings, waves, assessments, and conflicts.");
+  const list = input.wave === void 0 ? loaded.document[section] : section === "findings" ? loaded.document.findings.filter((item) => raisedIn(item) === input.wave) : section === "waves" ? loaded.document.waves.filter((item) => item.id === input.wave) : loaded.document[section].filter((item) => item.wave === input.wave);
   let projectionStale = true;
   try {
     const projection = await reviewProjection(input);

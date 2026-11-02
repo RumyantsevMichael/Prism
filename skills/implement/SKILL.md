@@ -40,7 +40,7 @@ It works from files and the project's own tools, and its only Prism calls are `v
 2. When it returns `approval_needed`, call `wait_for_user_gate` with its gate id, then call `verify_slice` again with `approvalGate` set to that id; when the gate has no answer, return `BLOCKED` with the gate id.
 3. When it returns `running`, call it again with the same arguments.
 4. When it fails, fix the failing tests from its log and verify again; after three failed runs, or when it returns `declined`, return `BLOCKED` with its message, the failing test names, and the log path.
-5. When a contract clause is wrong, report it instead of working around it: call `verify_slice` with `contractDefects`, one entry per clause with why, and return `BLOCKED`.
+5. When a contract clause is wrong, report it instead of working around it: call `verify_slice` with `contractDefects`, one entry per clause with why, and return `BLOCKED`; when a review finding is wrong, cannot be satisfied, or conflicts with another finding, return `BLOCKED` with why.
 
 A passing run of a slice whose review mark is `none` marks it done.
 

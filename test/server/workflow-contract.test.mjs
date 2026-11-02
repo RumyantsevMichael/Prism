@@ -107,7 +107,7 @@ test("review is one independent mode that records findings through MCP", async (
   assert.match(review, /fresh session without the implementers' conversation/);
   assert.match(review, /`open_finding` operation/);
   assert.match(review, /`submit_lane`: `CLEAN` when no finding remains open/);
-  assert.match(review, /Change production code, frozen tests, or existing tests/);
+  assert.match(review, /[Cc]hange production code, frozen tests, or existing tests/);
 });
 
 test("ideation adds the roadmap entry that the removed roadmap skill used to add", async () => {
