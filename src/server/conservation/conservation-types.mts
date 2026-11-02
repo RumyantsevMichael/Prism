@@ -40,9 +40,11 @@ export interface DeltaDocument {
 export interface ResolvedUnit { key: string; file: string; kind: string; selector: string; start: number; end: number; hash: string; public: boolean | null }
 export interface Resolution { status: "resolved" | "missing" | "ambiguous" | "unsupported"; reference: Reference; units: ResolvedUnit[]; reason?: string }
 export interface Measurement { dimension: string; before: number | null; after: number | null; increase: number | null; provenance: "computed" | "declared"; reason?: string }
-export interface Observation { id: string; code: string; severity: "failure" | "review_required"; file?: string; conceptId?: string; side?: "before" | "after"; unit?: ResolvedUnit; message: string }
+export interface Observation { id: string; code: string; severity: "failure" | "review_required"; file?: string; conceptId?: string; side?: "before" | "after"; unit?: ResolvedUnit; startSnapshotId?: string; message: string }
 export interface ComparisonEvidence {
   kind: "comparison"; schemaVersion: 1; project: string; deltaPath: string; deltaRevision: string; baselineId: string; resultSnapshotId: string;
+  // The task-start snapshot T, or null when the comparison has none; older retained comparisons omit the field.
+  startSnapshotId?: string | null;
   scope: string[]; requirements: { reference: Reference; hash: string | null }[]; versions: Record<string, string>;
   analysisIds: { before: string | null; after: string | null };
   observations: Observation[]; measurements: Measurement[]; growth: { id: string; dimension: string; increase: number; threshold: number }[];

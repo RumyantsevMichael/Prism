@@ -11,6 +11,7 @@ A slice with an accepted design completes on a [verification run](workflow.md#ve
 4. Capture A, compare B→A with `compare_change_map`, and record the independent design audit in the slice's review record through `update_review`.
 5. Enter implementation with typed coordination `activeOperations` for the slice.
 6. After authoring finishes, capture F and compare B→F.
+   When out-of-scope work from others landed after B, pass the task-start snapshot T as `startSnapshotId`.
 7. Record findings, growth justification, text convergence, and scoped unsupported checks through review operations.
 8. Accept current lane results and the review wave, then use `finish` to claim completion.
 
@@ -28,6 +29,16 @@ Preparation starts automatically when a search or comparison needs native analys
 Change map readiness fails when planned additions or modifications copy a change into functions that several files already repeat, until the change map or a change map named in `consolidations` consolidates them.
 Comparisons report only the analysis findings that the change adds: a new copy of a function is a failure, and new shared values, repeated key sets, complex units, cohesion splits, and unused exports need a review check.
 Known failures such as a retained deletion, scope escape, or stale source cannot be waived with a manual assessment.
+A merge from `main` or another slice's plans can change files outside the scope after B.
+To keep these files from blocking the review, capture T with `capture_repository_snapshot` before the task's next edit.
+Then pass T as `startSnapshotId` to each later `compare_change_map` call.
+An out-of-scope file that T already holds as it is in F gets an `outside_scope_before_start` observation with severity `review_required`.
+Each of these observations names the `startSnapshotId` that attributed it, so a different T gives different observation IDs.
+The assigned reviewer compares T with earlier waves and checks each file against its upstream source, and one `manual` assessment can name all of them.
+A file that T omits or excludes is not attributed, and an incomplete T is reported in the same way as an incomplete B or F.
+An out-of-scope file that changed after T stays an `outside_scope` failure.
+Files inside the scope keep their judgment against B, whatever T holds.
+The comparison response and its retained evidence name `startSnapshotId`, or `null` without T.
 `release` and `checkpoint_pause` remove active coordination without claiming completion.
 Legacy version 1 change maps and Markdown findings remain readable; explicit migration preserves their content but never imports historical `CLEAN` as current acceptance.
 A change map from an earlier version, including one named `concept-delta.json`, moves into the project's records with its bytes unchanged, so its revision, evidence ownership, and review bindings stay valid and an accepted review stays accepted.
