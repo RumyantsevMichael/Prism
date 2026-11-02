@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/RumyantsevMichael/Prism/compare/v0.15.0...v0.16.0) (2026-11-02)
+
+
+### Added
+
+* share machine records through an external record store synced by git ([#57](https://github.com/RumyantsevMichael/Prism/issues/57)) ([76d1771](https://github.com/RumyantsevMichael/Prism/commit/76d1771b37aa12f5e92d5fc2c91d01f093047c8c))
+
 ## [0.15.0](https://github.com/RumyantsevMichael/Prism/compare/v0.14.1...v0.15.0) (2026-11-02)
 
 
