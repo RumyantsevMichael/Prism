@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.16.0](https://github.com/RumyantsevMichael/Prism/compare/v0.15.0...v0.16.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* statePath, reviewPath, deltaPath, and recoveryPath inputs are replaced by initiative and slice identifiers.
+
+### Added
+
+* collect run statistics per wave, slice and initiative ([973f888](https://github.com/RumyantsevMichael/Prism/commit/973f8883e75b82a8322b070cc3a6f127b90abb85))
+* new Prism mark in the review app ([e2ae41d](https://github.com/RumyantsevMichael/Prism/commit/e2ae41d2dcfa4247a081ec7d2b44e2440a5a5a2e))
+* new Prism mark in the review app ([0f34458](https://github.com/RumyantsevMichael/Prism/commit/0f344589a98f301ddcb4328bf56fe54342d4618a))
+* share machine records through an external record store synced by git ([#57](https://github.com/RumyantsevMichael/Prism/issues/57)) ([76d1771](https://github.com/RumyantsevMichael/Prism/commit/76d1771b37aa12f5e92d5fc2c91d01f093047c8c))
+
+
+### Documentation
+
+* explain the shared record store and its Git sync ([#71](https://github.com/RumyantsevMichael/Prism/issues/71)) ([c87c170](https://github.com/RumyantsevMichael/Prism/commit/c87c170487e39c2d3887aa004cdf7da673a04937))
+
 ## [0.15.0](https://github.com/RumyantsevMichael/Prism/compare/v0.14.1...v0.15.0) (2026-11-02)
 
 
