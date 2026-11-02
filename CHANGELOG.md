@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.1](https://github.com/RumyantsevMichael/Prism/compare/v0.14.0...v0.14.1) (2026-11-01)
+
+
+### Fixed
+
+* stop upstream changes from blocking reviews with outside_scope ([ef09069](https://github.com/RumyantsevMichael/Prism/commit/ef09069bbd25f6d1271ec0c842e1a1232a675bad))
+* stop upstream changes from blocking reviews with outside_scope ([#55](https://github.com/RumyantsevMichael/Prism/issues/55)) ([3af4764](https://github.com/RumyantsevMichael/Prism/commit/3af476454e27a9bc4bbca4a40a37a8f28f23fdbe))
+
+
+### Documentation
+
+* convert artifact-conservation requirements to the normative EARS format ([2fc1d81](https://github.com/RumyantsevMichael/Prism/commit/2fc1d816bd644789c17e343d949879dbacbe95c0))
+
 ## [0.14.0](https://github.com/RumyantsevMichael/Prism/compare/v0.13.0...v0.14.0) (2026-10-22)
 
 
