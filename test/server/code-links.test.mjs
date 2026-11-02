@@ -86,8 +86,19 @@ test("a run records its checkout, and the remote never keeps credentials", async
   const stored = (await listRecordEntries(root, RUNS)).map((item) => item.entry.checkout);
   assert.deepEqual(stored.map((item) => item.dirty), [false, true]);
   assert.equal(JSON.stringify(stored).includes("token"), false);
-  assert.equal(publicRemote("git@github.com:owner/repo.git"), "github.com:owner/repo.git");
+});
+
+test("a recorded remote keeps only scheme, host, and path of a network remote", () => {
+  assert.equal(publicRemote("https://user:token@example.com/o/r.git"), "https://example.com/o/r.git");
+  assert.equal(publicRemote("https://example.com/o/r.git?access_token=secret"), "https://example.com/o/r.git");
+  assert.equal(publicRemote("https://example.com/o/r.git#tok"), "https://example.com/o/r.git");
+  assert.equal(publicRemote("http://example.com/o/r"), "http://example.com/o/r");
   assert.equal(publicRemote("ssh://deploy:secret@host:2222/owner/repo.git"), "ssh://host:2222/owner/repo.git");
+  assert.equal(publicRemote("git://example.com/o/r.git"), "git://example.com/o/r.git");
+  assert.equal(publicRemote("git@github.com:owner/repo.git"), "github.com:owner/repo.git");
+  assert.equal(publicRemote("user:pass@github.com:owner/repo.git"), "github.com:owner/repo.git");
+  assert.equal(publicRemote("github.com:owner/repo.git?token=x"), "github.com:owner/repo.git");
+  for (const local of ["ext::ssh -i key host %S", "file:///srv/repo.git", "/srv/repo.git", "../repo", "C:/repo", "C:\\repo", "ftp://example.com/r", "", null]) assert.equal(publicRemote(local), null, String(local));
 });
 
 test("a detached head has no branch, and a project without commits records nulls and still passes", async (context) => {
@@ -110,8 +121,10 @@ test("get_initiative shows the latest passing run's code, and an older run witho
   assert.deepEqual((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).code, { download: run.checkout });
   await appendRecord(root, RUNS, "verification-999999999999999-legacy", { kind: "verification", passed: true, tree: run.tree, designAcceptedAt: run.designAcceptedAt });
   assert.equal((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).code, undefined);
-  assert.match(codeLine(run.checkout), /Verified on main at <code>[0-9a-f]{7}<\/code>/);
+  assert.match(codeLine(run.checkout), /Last passing run on main at <code>[0-9a-f]{7}<\/code>/);
   assert.equal(codeLine(null), "");
+  assert.equal(codeLine({ head: 42 }), "");
+  assert.equal(codeLine({ head: "1a2b3c4d", branch: { name: "x" }, remote: ["x"] }), '<p class="muted">Last passing run at <code>1a2b3c4</code></p>');
 });
 
 test("two worktrees that share a store record their own branches, and the summary follows the latest passing run", async (context) => {
@@ -129,7 +142,17 @@ test("two worktrees that share a store record their own branches, and the summar
   const fromB = await verify(b);
   assert.equal(fromB.checkout.branch, "feature/x");
   assert.equal((await getInitiative({ projectRoot: a, initiative: INITIATIVE })).code.download.branch, "feature/x");
-  assert.match(codeLine(fromB.checkout), /Verified on feature\/x at <code>[0-9a-f]{7}<\/code> · github\.com\/owner\/repo/);
+  assert.match(codeLine(fromB.checkout), /Last passing run on feature\/x at <code>[0-9a-f]{7}<\/code> · github\.com\/owner\/repo/);
   await verify(a);
   assert.equal((await getInitiative({ projectRoot: b, initiative: INITIATIVE })).code.download.branch, "main");
+});
+
+test("a contract-defect report records its checkout without judging uncommitted changes", async (context) => {
+  const root = await project(context);
+  const result = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", contractDefects: [{ clause: "1", reason: "The clause contradicts the requirement." }] });
+  assert.equal(result.status, "defects_recorded");
+  const [entry] = (await listRecordEntries(root, RUNS)).map((item) => item.entry);
+  assert.equal(entry.kind, "contract-defect");
+  assert.equal(entry.checkout.head, git(root, "rev-parse", "HEAD"));
+  assert.equal(entry.checkout.dirty, null);
 });

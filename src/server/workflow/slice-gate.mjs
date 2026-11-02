@@ -10,8 +10,8 @@ import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
 const run = promisify(execFile);
 
-async function git(root, args, env) {
-  const { stdout } = await run("git", args, { cwd: root, env, maxBuffer: 16 * 1024 * 1024 });
+async function git(root, args, env, timeout = 0) {
+  const { stdout } = await run("git", args, { cwd: root, env, maxBuffer: 16 * 1024 * 1024, timeout });
   return stdout.trim();
 }
 
@@ -20,21 +20,21 @@ async function git(root, args, env) {
  * so writes of workflow records never make a verification stale while any source, test, or config change does.
  * With a commit, the same content of that commit is hashed instead, so the two trees differ exactly when the work tree has uncommitted changes.
  */
-export async function contentTree(projectRoot, config, { commit = null } = {}) {
+export async function contentTree(projectRoot, config, { commit = null, timeoutMs = 0 } = {}) {
   const root = await realpath(projectRoot);
   const temporary = await mkdtemp(path.join(os.tmpdir(), "prism-tree-"));
   try {
     const index = path.join(temporary, "index");
     const env = { ...process.env, GIT_INDEX_FILE: index, GIT_OPTIONAL_LOCKS: "0" };
-    if (commit) await git(root, ["read-tree", commit], env);
+    if (commit) await git(root, ["read-tree", commit], env, timeoutMs);
     else {
       await copyFile(path.resolve(root, await git(root, ["rev-parse", "--git-path", "index"])), index).catch(() => {});
       await git(root, ["add", "-A", "--", "."], env);
     }
     const roadmap = roadmapPaths(config);
     const excluded = [RECORD_DIRECTORY, config.paths.plans, roadmap?.record, roadmap?.projection].filter(Boolean);
-    await git(root, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ...excluded], env);
-    return await git(root, ["write-tree"], env);
+    await git(root, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ...excluded], env, timeoutMs);
+    return await git(root, ["write-tree"], env, timeoutMs);
   } catch (error) {
     throw new SliceDesignError("verification_unavailable", `Verification needs a git work tree to identify what it tested: ${error.stderr?.trim() || error.message}`);
   } finally {

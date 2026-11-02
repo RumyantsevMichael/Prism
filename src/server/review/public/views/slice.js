@@ -224,11 +224,12 @@ function displayRemote(remote) {
   return plain.replace(/\/$/, "").replace(/\.git$/, "");
 }
 
+// The line names the last passing run, which need not be the latest run shown above it; a malformed shared record shows nothing.
 export function codeLine(code) {
-  if (!code?.head) return "";
-  const where = [code.branch ? `on ${escapeHtml(code.branch)} ` : "", `at <code>${escapeHtml(code.head.slice(0, 7))}</code>`].join("");
-  const remote = code.remote ? ` · ${escapeHtml(displayRemote(code.remote))}` : "";
-  return `<p class="muted">Verified ${where}${remote}${code.dirty ? " with uncommitted changes" : ""}</p>`;
+  if (typeof code?.head !== "string" || !code.head) return "";
+  const branch = typeof code.branch === "string" && code.branch ? `on ${escapeHtml(code.branch)} ` : "";
+  const remote = typeof code.remote === "string" && code.remote ? ` · ${escapeHtml(displayRemote(code.remote))}` : "";
+  return `<p class="muted">Last passing run ${branch}at <code>${escapeHtml(code.head.slice(0, 7))}</code>${remote}${code.dirty === true ? " with uncommitted changes" : ""}</p>`;
 }
 
 // Verification shows the accepted design's frozen tests, the latest run of the project's test command, and the derived change map.

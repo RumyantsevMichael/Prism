@@ -272,12 +272,17 @@ async function moveRecord(root, store, move, report) {
 }
 
 /** The identity every checkout and clone of one repository shares, its first root commit in sorted order, or null outside Git or before the first commit. */
-export function repositoryId(root) {
-  return new Promise((resolve) => {
+// A root commit never changes once it exists, so each project asks Git only until it has one.
+const repositoryIds = new Map();
+export async function repositoryId(root) {
+  if (repositoryIds.has(root)) return repositoryIds.get(root);
+  const id = await new Promise((resolve) => {
     execFile("git", ["-C", root, "rev-list", "--max-parents=0", "HEAD"], { timeout: 10000 }, (error, stdout) => {
       resolve((error ? "" : stdout.split(/\s+/).filter(Boolean).sort()[0]) || null);
     });
   });
+  if (id) repositoryIds.set(root, id);
+  return id;
 }
 
 // A project outside Git falls back to its own folder as its identity.
