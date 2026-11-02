@@ -10,7 +10,7 @@ const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-s
 process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
 const {
-  appendRecord, ensureRecords, forgetMigrations, keyOfPath, listInitiatives, listRecordEntries, locateRecord, readRecord, removeInitiativeRecords, sameRecord, writeRecord
+  appendRecord, ensureRecords, forgetMigrations, keyOfPath, listInitiatives, listRecordEntries, locateRecord, readRecord, removeInitiativeRecords, repositoryId, sameRecord, writeRecord
 } = await import("../../dist/server/workflow/record-store.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
@@ -202,6 +202,51 @@ test("migrates a repository's committed records once, so a record removed later 
   const marker = JSON.parse(await readFile(path.join(store, "migrations", markers[0]), "utf8"));
   assert.match(marker.repository, /^[0-9a-f]{40,64}$/);
   assert.equal(marker.moved, 2);
+  assert.deepEqual(marker.records, [".prism/initiatives/x/state.json", ".prism/initiatives/y/state.json"]);
+});
+
+test("keeps a removed record removed when a shallow clone, whose root commit differs, first opens the store", async (context) => {
+  const { a, store } = await worktrees(context, { ".prism/initiatives/x/state.json": "{}\n", ".prism/initiatives/y/state.json": "{}\n" });
+  const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=Prism", "-c", "user.email=prism@example.invalid", ...args], { cwd, stdio: "pipe" }).toString().trim();
+  await put(a, "later.txt", "later\n");
+  git(a, "add", "later.txt");
+  git(a, "commit", "-q", "-m", "later");
+  const shallow = path.join(path.dirname(a), "shallow");
+  git(path.dirname(a), "clone", "-q", "--depth", "1", `file://${a}`, shallow);
+  assert.equal(git(shallow, "rev-parse", "--is-shallow-repository"), "true");
+  assert.equal(await repositoryId(shallow), null);
+  assert.match(await repositoryId(a), /^[0-9a-f]{40}$/);
+  assert.deepEqual(await listInitiatives(a), ["x", "y"]);
+  await removeInitiativeRecords(a, "x");
+  forgetMigrations();
+  assert.deepEqual(await listInitiatives(shallow), ["y"]);
+  assert.equal(await exists(path.join(store, "initiatives/x")), false);
+  assert.equal(await exists(path.join(shallow, ".prism/initiatives/x/state.json")), true);
+  assert.equal((await readdir(path.join(store, "migrations"))).length, 1);
+});
+
+test("moves a record no checkout brought before, in a migration file of its own", async (context) => {
+  const { a, b, store } = await worktrees(context, { ".prism/initiatives/x/state.json": "{}\n" });
+  assert.deepEqual(await listInitiatives(a), ["x"]);
+  await put(b, ".prism/initiatives/z/state.json", "{\"from\":\"b\"}\n");
+  forgetMigrations();
+  assert.deepEqual(await listInitiatives(b), ["x", "z"]);
+  assert.equal(await exists(path.join(b, ".prism/initiatives/z/state.json")), false);
+  const files = (await readdir(path.join(store, "migrations"))).sort();
+  assert.equal(files.length, 2);
+  const records = await Promise.all(files.map(async (name) => JSON.parse(await readFile(path.join(store, "migrations", name), "utf8")).records));
+  assert.deepEqual(records.flat().sort(), [".prism/initiatives/x/state.json", ".prism/initiatives/z/state.json"]);
+  forgetMigrations();
+  await ensureRecords(a);
+  assert.equal((await readdir(path.join(store, "migrations"))).length, 2);
+});
+
+test("honors a migration marker named by the repository from before the ledger", async (context) => {
+  const { a, store } = await worktrees(context, { ".prism/initiatives/x/state.json": "{}\n" });
+  const id = await repositoryId(a);
+  await put(store, `migrations/${id}.json`, `${JSON.stringify({ schemaVersion: 1, repository: id, migratedAt: "2026-11-01T00:00:00.000Z", moved: 1, conflicts: [] })}\n`);
+  assert.deepEqual(await listInitiatives(a), []);
+  assert.equal(await exists(path.join(a, ".prism/initiatives/x/state.json")), true);
 });
 
 test("records a migration conflict in the store's migration record and keeps both files", async (context) => {
@@ -211,7 +256,7 @@ test("records a migration conflict in the store's migration record and keeps bot
   await ensureRecords(root);
   const [name] = await readdir(path.join(store, "migrations"));
   const marker = JSON.parse(await readFile(path.join(store, "migrations", name), "utf8"));
-  assert.equal(marker.repository, root);
+  assert.equal(marker.repository, null);
   assert.deepEqual(marker.conflicts, [{ from: ".prism/initiatives/other/state.json", to: ".prism/initiatives/other/state.json" }]);
   assert.equal(await readFile(path.join(root, ".prism/initiatives/other/state.json"), "utf8"), "project state");
   assert.equal(await readFile(path.join(store, "initiatives/other/state.json"), "utf8"), "store state");

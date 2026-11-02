@@ -126,7 +126,7 @@ To share them between linked worktrees or clones, name a record store folder out
 
 `Store` is relative to the project root or absolute, and it must neither resolve inside the project nor contain it.
 Create or clone the store folder yourself, because Prism never creates it, and a missing folder makes every record operation fail with `store_unavailable`.
-On the first record access from any checkout of a repository, Prism moves that checkout's existing records into the store once, and it keeps both copies of a record whose bytes differ and lists the conflict in the store's `migrations` folder.
+On the first record access from a checkout, Prism moves each existing record into the store unless an earlier checkout already brought it, and it keeps both copies of a record whose bytes differ and lists the conflict in the store's `migrations` folder.
 Record files that other checkouts still hold under `.prism` are then ignored, and you can delete them.
 Every checkout whose configuration names the same store reads and writes the same records.
 

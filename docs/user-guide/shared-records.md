@@ -33,9 +33,9 @@ It must not resolve inside the project or contain it, and Prism never creates it
 A missing or misplaced store makes every record operation fail with `store_unavailable`, because silently falling back to `.prism` would split state between checkouts.
 The review browser still lists the project's human documents while the store is unavailable.
 
-The first record access from any checkout of a repository moves that checkout's existing records into the store, once per repository.
-Prism records the move in the store's `migrations` folder, together with any record whose bytes differed from a copy already in the store, and it leaves both copies of such a record in place.
-Record files that other checkouts still hold under `.prism` are ignored from then on, and you can delete them.
+The first record access from a checkout moves its existing records into the store, and each record moves only once, from whichever checkout brings it first.
+Prism lists every moved record in the store's `migrations` folder, together with any record whose bytes differed from a copy already in the store, and it leaves both copies of such a record in place.
+Copies of those records that other checkouts still hold under `.prism` are ignored from then on, so a record you removed from the store stays removed, and you can delete the copies.
 
 ## Share records between machines
 

@@ -1079,9 +1079,16 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
 function withMigrationNote(value) {
   const reports = takeMigrationReports();
   if (!reports.length || !Array.isArray(value?.content)) return value;
-  const moved = reports.flatMap((report) => report.moved), conflicts = reports.flatMap((report) => report.conflicts);
-  const lines = [`Prism moved ${moved.length} record files from their old locations into .prism; commit these moves on their own, apart from the task's changes.`, ...moved.map((move) => `- ${move.from} -> ${move.to}`)];
-  if (conflicts.length) lines.push(`${conflicts.length} old files were kept because .prism already holds a different record: ${conflicts.map((move) => move.from).join(", ")}.`);
+  const lines = [];
+  for (const report of reports) {
+    const into = report.store ? `the record store at ${report.store}` : ".prism";
+    const kept = report.store ? "the record store" : ".prism";
+    if (report.moved.length) {
+      const removal = report.store ? "commit their removal from the project" : "commit these moves";
+      lines.push(`Prism moved ${report.moved.length} record files into ${into}; ${removal} on its own, apart from the task's changes.`, ...report.moved.map((move) => move.from === move.to ? `- ${move.from}` : `- ${move.from} -> ${move.to}`));
+    }
+    if (report.conflicts.length) lines.push(`${report.conflicts.length} old files were kept because ${kept} already holds a different record: ${report.conflicts.map((move) => move.from).join(", ")}.`);
+  }
   return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
 }
 

@@ -10,7 +10,7 @@ node "Machine A" {
     component "Prism server" as S2
   }
   folder "prism-store (Git checkout)" as ST {
-    file "initiatives/, roadmap.json\nmigrations/<repo id>.json" as REC
+    file "initiatives/, roadmap.json\nmigrations/ (ledger of moved records)" as REC
     folder ".prism-sync/ (ignored)\nsync.lock, status.json,\nconflicts/" as SYNC
   }
 }
