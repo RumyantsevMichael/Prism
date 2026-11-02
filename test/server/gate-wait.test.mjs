@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -26,7 +27,7 @@ async function project(context) {
 }
 
 function server(context, root, clientName, { version = "2.1.296", environment = {} } = {}) {
-  const env = { ...process.env, PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_GATE_WAIT_HEARTBEAT_MS: "200", PRISM_GATE_WAIT_SETTLE_MS: "600", CLAUDE_PROJECT_DIR: root };
+  const env = isolatedEnv({ PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_GATE_WAIT_HEARTBEAT_MS: "200", PRISM_GATE_WAIT_SETTLE_MS: "600", CLAUDE_PROJECT_DIR: root });
   for (const name of ["MCP_TOOL_TIMEOUT", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"]) delete env[name];
   Object.assign(env, environment);
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -99,7 +100,7 @@ test("ends when the gate is resolved, missing, timed out, or cancelled", async (
   wait(mcp, 5, root, gateId);
   await delay(300);
   const { revision } = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
-  await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateId }] } });
+  await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateId, reason: "Answered in the conversation." }] } });
   assert.equal((await mcp.response(5)).result.structuredContent.status, "resolved");
   await delay(1200);
   assert.equal(mcp.messages.some((message) => message.id === 4), false);

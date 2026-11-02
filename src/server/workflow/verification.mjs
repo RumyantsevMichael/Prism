@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, readFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { conservationStore } from "../conservation/conservation-store.mjs";
@@ -18,6 +19,7 @@ const RECORDED_TAIL_CHARS = 4000;
 const RETURNED_TAIL_CHARS = 20000;
 const BRIEF_TAIL_CHARS = 1500;
 const MAX_FAILING_NAMES = 20;
+const MAX_TRACKED_FAILURES = 1000;
 const DEFAULT_TIMEOUT_MINUTES = 30;
 const PROGRESS_MS = 30000;
 const KILL_GRACE_MS = 5000;
@@ -147,21 +149,38 @@ function killGroup(child, signal) {
   catch { try { child.kill(signal); } catch { /* The process already ended. */ } }
 }
 
-// The plugin's MCP definitions set NODE_USE_ENV_PROXY for the server's own downloads; a test command must not inherit it,
-// because Node then warns on stderr and tests that assert stderr fail only under verification.
+// The plugin's MCP definitions set NODE_USE_ENV_PROXY for the server's own downloads, and the host sets the plugin's root and data
+// directories for the server. A test command inherits none of them, so it runs as it would in the user's shell: Node would warn on
+// stderr under the proxy setting, and a project that reads plugin data, such as Prism itself, would read the host's.
+const SERVER_ONLY = /^(?:NODE_USE_ENV_PROXY|CLAUDE_PLUGIN_\w+|PLUGIN_DATA|PLUGIN_ROOT)$/;
 function commandEnvironment() {
-  const { NODE_USE_ENV_PROXY: _serverOnly, ...environment } = process.env;
-  return environment;
+  return Object.fromEntries(Object.entries(process.env).filter(([name]) => !SERVER_ONLY.test(name)));
 }
 
-function execute(command, root, { signal, timeoutMs, onProgress }) {
+function execute(command, root, { signal, timeoutMs, onProgress, logPath = null }) {
   return new Promise((resolve) => {
+    // The log receives every byte as it arrives, so it holds the whole output while memory keeps only the end.
+    let log = logPath ? createWriteStream(logPath) : null;
+    log?.on("error", () => { log = null; });
     const started = Date.now();
     let output = "", timedOut = false, cancelled = false, forced = null;
     const child = spawn(command, { cwd: root, env: commandEnvironment(), shell: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
-    const collect = (chunk) => { output = tail(output + chunk.toString("utf8"), OUTPUT_TAIL_BYTES); };
-    child.stdout.on("data", collect);
-    child.stderr.on("data", collect);
+    // Only the end of the output is kept, so failing test names are read line by line as the output arrives, before it is cut.
+    const failing = new Set();
+    const scanners = new Map();
+    const scan = (stream, text, end = false) => {
+      const lines = `${scanners.get(stream) ?? ""}${text}`.split(/\r?\n/);
+      scanners.set(stream, end ? "" : tail(lines.pop(), OUTPUT_TAIL_BYTES));
+      for (const line of lines) if (failing.size < MAX_TRACKED_FAILURES) { const name = failingName(line); if (name) failing.add(name); }
+    };
+    const collect = (stream) => (chunk) => {
+      const text = chunk.toString("utf8");
+      log?.write(chunk);
+      output = tail(output + text, OUTPUT_TAIL_BYTES);
+      scan(stream, text);
+    };
+    child.stdout.on("data", collect("stdout"));
+    child.stderr.on("data", collect("stderr"));
     const stop = () => {
       killGroup(child, "SIGTERM");
       forced = setTimeout(() => killGroup(child, "SIGKILL"), KILL_GRACE_MS);
@@ -176,7 +195,12 @@ function execute(command, root, { signal, timeoutMs, onProgress }) {
       clearTimeout(forced);
       if (ticker) clearInterval(ticker);
       signal?.removeEventListener("abort", abort);
-      resolve({ exitCode, signal: exitSignal, timedOut, cancelled, output: spawnError ? `${output}${spawnError.message}\n` : output, durationMs: Date.now() - started });
+      for (const stream of scanners.keys()) scan(stream, "", true);
+      if (spawnError) log?.write(`${spawnError.message}\n`);
+      const done = { exitCode, signal: exitSignal, timedOut, cancelled, output: spawnError ? `${output}${spawnError.message}\n` : output, failing: [...failing], durationMs: Date.now() - started };
+      if (!log) { resolve({ ...done, logged: false }); return; }
+      const written = log;
+      written.end(() => resolve({ ...done, logged: log === written }));
     };
     child.on("error", (error) => finish(null, null, error));
     child.on("close", (code, exitSignal) => finish(code, exitSignal));
@@ -184,19 +208,19 @@ function execute(command, root, { signal, timeoutMs, onProgress }) {
 }
 
 // The full output stays in local plugin data, outside the project, so a caller reads it only when the brief result is not enough.
-async function writeLog(dataDirectory, root, initiative, slice, id, output) {
+async function logPathFor(dataDirectory, root, initiative, slice, id) {
   try {
     const directory = path.join(dataDirectoryOf(dataDirectory), "verification-logs", digest(root).slice(0, 16), initiative, slice);
     await mkdir(directory, { recursive: true });
-    const target = path.join(directory, `${id}.log`);
-    await writeFile(target, output);
-    return target;
+    return path.join(directory, `${id}.log`);
   } catch { return null; }
 }
 
 async function verificationRun({ root, initiative, slice, command, key, config, design, signal, onProgress, dataDirectory }) {
   const startedAt = new Date().toISOString();
+  const id = `verification-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
   const frozen = await checkFrozenTests(root, design.frozenTests);
+  let log = null;
   const base = { kind: "verification", startedAt, command, commandDigest: key, designAcceptedAt: design.acceptedAt, frozen };
   let entry;
   if (frozen.changed.length || frozen.missing.length) {
@@ -204,17 +228,17 @@ async function verificationRun({ root, initiative, slice, command, key, config, 
   } else {
     const before = await contentTree(root, config);
     const timeoutMs = Number(process.env.PRISM_VERIFY_TIMEOUT_MINUTES || DEFAULT_TIMEOUT_MINUTES) * 60000;
-    const outcome = await execute(command, root, { signal, timeoutMs, onProgress });
+    const logPath = await logPathFor(dataDirectory, root, initiative, slice, id);
+    const outcome = await execute(command, root, { signal, timeoutMs, onProgress, logPath });
+    if (outcome.logged) log = logPath;
     const after = await contentTree(root, config).catch(() => null);
     const reason = outcome.cancelled ? "cancelled" : outcome.timedOut ? "timed_out" : outcome.exitCode !== 0 ? "command_failed" : after !== before ? "tracked_files_changed" : null;
     // A passing run keeps a snapshot of the verified source, which the derived change map compares with the design baseline.
     const snapshotId = reason === null && design.baselineId ? await conservationStore.capture(root, { initiative, slice }).then((captured) => captured.snapshotId, () => null) : null;
-    entry = { ...base, finishedAt: new Date().toISOString(), durationMs: outcome.durationMs, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, passed: reason === null, ...(reason ? { reason } : {}), tree: before, ...(after !== before ? { treeAfter: after } : {}), ...(snapshotId ? { snapshotId } : {}), outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), output: outcome.output };
+    entry = { ...base, finishedAt: new Date().toISOString(), durationMs: outcome.durationMs, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, passed: reason === null, ...(reason ? { reason } : {}), tree: before, ...(after !== before ? { treeAfter: after } : {}), ...(snapshotId ? { snapshotId } : {}), ...(reason === "command_failed" && outcome.failing.length ? { failing: outcome.failing.slice(0, MAX_FAILING_NAMES), failingCount: outcome.failing.length } : {}), outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), output: outcome.output };
   }
   const { output = entry.outputTail, ...recorded } = entry;
-  const id = `verification-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
   const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, recorded);
-  const log = output ? await writeLog(dataDirectory, root, initiative, slice, id, output) : null;
   return { id, path: stored.path, ...recorded, ...(log ? { log } : {}), output };
 }
 
@@ -320,19 +344,30 @@ async function completeSlice(root, initiative, slice, design, run) {
 const FAILING_PATTERNS = [
   /^test (\S+) \.\.\. FAILED$/,
   /^---- (\S+) stdout ----$/,
-  /^not ok \d+ - (.+?)(?:\s+#.*)?$/,
+  /^\s*not ok \d+ - (.+?)(?:\s+#.*)?$/,
   /^FAILED (\S+)/,
   /^--- FAIL: (\S+)/,
   /^\s*[✖✕×] (.+?)(?: \(\d+(?:\.\d+)?\s*m?s\))?$/
 ];
 
+// A TAP line marked TODO or SKIP is an expected failure, not a broken test.
+const EXPECTED_FAILURE = /^\s*not ok \d+\b.*\s#\s*(?:TODO|SKIP)\b/i;
+
+function failingName(line) {
+  const trimmed = line.trimEnd();
+  if (EXPECTED_FAILURE.test(trimmed)) return null;
+  for (const pattern of FAILING_PATTERNS) {
+    const match = pattern.exec(trimmed);
+    if (match) return match[1].trim();
+  }
+  return null;
+}
+
 export function failingTests(output) {
   const names = new Set();
   for (const line of String(output ?? "").split(/\r?\n/)) {
-    for (const pattern of FAILING_PATTERNS) {
-      const match = pattern.exec(line.trimEnd());
-      if (match) { names.add(match[1].trim()); break; }
-    }
+    const name = failingName(line);
+    if (name) names.add(name);
   }
   return [...names];
 }
@@ -340,12 +375,14 @@ export function failingTests(output) {
 /** What a coordinator needs from a run: the verdict, the failing tests, and where the full log is; the record keeps the rest. */
 export function verificationBrief(value) {
   if (!["passed", "failed"].includes(value.status)) return value;
-  const failing = value.status === "failed" ? failingTests(value.outputTail) : [];
+  // A run reads failing names from its whole output; the tail is only a fallback for a result without them.
+  const failing = value.status !== "failed" ? [] : value.failing ?? failingTests(value.outputTail);
+  const failingCount = value.failingCount ?? failing.length;
   const frozen = value.frozen && (value.frozen.changed.length || value.frozen.missing.length) ? { frozenChanged: value.frozen.changed, frozenMissing: value.frozen.missing } : {};
   return {
     status: value.status,
     ...(value.reason ? { reason: value.reason, message: value.message } : {}),
-    ...(failing.length ? { failing: failing.slice(0, MAX_FAILING_NAMES), failingCount: failing.length } : {}),
+    ...(failing.length ? { failing: failing.slice(0, MAX_FAILING_NAMES), failingCount } : {}),
     ...frozen,
     ...(value.sliceStatus ? { sliceStatus: value.sliceStatus } : {}),
     // Marking the slice done writes the initiative record, so the caller's next update needs this revision.

@@ -8,6 +8,7 @@ Each slice is designed when it is next, implemented in fresh agent sessions agai
 | Stage | Skill | Result |
 |---|---|---|
 | Shape | `prism:ideate` | Approved EARS requirement files and a roadmap entry, or a decision to stop |
+| Triage a bug | `prism:triage` | A reproduction and the Approved requirements it breaks, with a roadmap entry, or a hand-off to ideate |
 | Run an initiative | `prism:orchestrate` | One root slice, then each slice in turn |
 | Design | `prism:design` | A frozen contract, probed assumptions, and failing acceptance tests, or a split into child slices |
 | Implement | `prism:implement` | Working code for one step of a designed slice, committed |
@@ -56,11 +57,13 @@ Configure the command in `.prism/workflow.md`:
 
 The first run of a command asks you in the review browser to allow that exact command, and a changed command asks again.
 Approvals stay in Prism's local plugin data, never in your repository.
-The command runs with your shell in the project root and the environment of the Prism server, except `NODE_USE_ENV_PROXY`, which Prism sets only for its own downloads.
+The command runs with your shell in the project root and the environment of the Prism server, except `NODE_USE_ENV_PROXY`, which Prism sets only for its own downloads, and the plugin directories that the agent host sets for Prism, such as `CLAUDE_PLUGIN_DATA`.
 Prism refuses to run when a frozen acceptance test changed after the design was accepted.
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
 When the design requires review, an independent reviewer also reviews the verified result, and a later change needs a new run and a new review.
-The slice page in the review browser shows the latest run with its command, exit code, and output tail.
+A finding that a contract clause itself causes sends the slice back to design instead of into another fix.
+After two review waves for one accepted design, Prism asks you whether to continue the review, return the slice to design, or narrow it before each further wave.
+The slice page in the review browser shows the latest run with its command, exit code, and output tail, and a failed run also names the failing tests that Prism found anywhere in the output.
 Verification runs need a git work tree, and `PRISM_VERIFY_TIMEOUT_MINUTES` changes the 30-minute default timeout.
 
 ## Questions and answers

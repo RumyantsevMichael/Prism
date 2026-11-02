@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { spawn } from "node:child_process";
 import * as fileSystem from "node:fs/promises";
 import { access, chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
@@ -943,10 +944,7 @@ test("the hook emits the digest and plugin data directory after storing facts", 
     }
   })}\n`);
   const child = spawn(process.execPath, [hookPath], {
-    env: {
-      ...process.env,
-      PLUGIN_DATA: dataDirectory
-    },
+    env: isolatedEnv({ PLUGIN_DATA: dataDirectory }),
     stdio: ["pipe", "pipe", "pipe"]
   });
   child.stdin.end(JSON.stringify({
@@ -983,10 +981,7 @@ test("the hook command fails open for malformed input", async (context) => {
   const hookPath = fileURLToPath(new URL("../../dist/hooks/record-session-facts.mjs", import.meta.url));
   const dataDirectory = await temporaryDirectory(context, "prism-host-hook-");
   const child = spawn(process.execPath, [hookPath], {
-    env: {
-      ...process.env,
-      CLAUDE_PLUGIN_DATA: dataDirectory
-    },
+    env: isolatedEnv({ CLAUDE_PLUGIN_DATA: dataDirectory }),
     stdio: ["pipe", "pipe", "pipe"]
   });
   child.stdin.end("not-json");

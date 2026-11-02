@@ -269,6 +269,10 @@ test('review finding ownership, independent verification, and projection failure
  const md=path.join(f.root,'docs/plans/plan/slice/review.md');await rm(md);await mkdir(md);
  const updated=await act(reviewer,[{op:'submit_lane',lane:'main',status:'CLEAN'}]);assert.equal(updated.projectionStale,true);assert.equal((await getReview({projectRoot:f.root,...f.key})).entries[0].status,'VERIFIED');
  await rm(md,{recursive:true});const regenerated=await act(coordinator,[{op:'regenerate_markdown'}]);assert.equal(regenerated.revision,updated.revision);assert.equal(regenerated.projectionStale,false);
+ const raised=await getReview({projectRoot:f.root,...f.key,wave:'first'});assert.deepEqual(raised.entries.map(item=>item.id),[id]);assert.equal(raised.totalCount,1);
+ assert.equal((await getReview({projectRoot:f.root,...f.key,wave:'later'})).totalCount,0);
+ assert.deepEqual((await getReview({projectRoot:f.root,...f.key,section:'waves',wave:'first'})).entries.map(item=>item.id),['first']);
+ await assert.rejects(getReview({projectRoot:f.root,...f.key,section:'history',wave:'first'}),{code:'validation_failed'});
 });
 
 test('one reviewed justification covers several growth dimensions and convergence requires coverage of every requirement',async()=>{
@@ -616,14 +620,16 @@ test('a legacy concept-delta.json moves into .prism with its bytes and revision 
  await fs.rename(path.join(root,'.prism/initiatives/plan/slices/slice/change-map.json'),path.join(root,legacyPath));
  await fs.rename(path.join(root,'.prism/initiatives/plan/slices/slice/review.json'),path.join(root,legacyReview));
  forgetMigrations();
- const moved=await getChangeMap({projectRoot:root,...key});
- assert.equal(moved.deltaPath,'.prism/initiatives/plan/slices/slice/change-map.json');assert.equal(moved.revision,d.revision);
- await assert.rejects(readFile(path.join(root,legacyPath)),{code:'ENOENT'});
+ const read=await getChangeMap({projectRoot:root,...key});
+ assert.equal(read.deltaPath,'.prism/initiatives/plan/slices/slice/change-map.json');assert.equal(read.revision,d.revision);
  assert.equal((await checkReviewGate({projectRoot:root,...key,gate:'implementation'})).ready,true);
+ assert.equal(await readFile(path.join(root,legacyPath),'utf8').then(()=>true),true,'reads leave the old records where they are');
  const after=await store.capture(root);
  assert.equal(after.snapshot.files.some(file=>file.file.startsWith('.prism/initiatives/')),false);
  revision=(await getReview({projectRoot:root,...key})).revision;
  await act('coord',[{op:'start_wave',id:'audit-2',mode:'design-audit',deltaRevision:d.revision,snapshotId:b.snapshotId,comparisonId:await comparison(),lanes:[{id:'main',reviewer:'reviewer',coverage:['script.js']}]}]);
+ await assert.rejects(readFile(path.join(root,legacyPath)),{code:'ENOENT'},'the first write moves them');
+ assert.equal((await getChangeMap({projectRoot:root,...key})).revision,d.revision);
  await act('reviewer',[{op:'submit_lane',lane:'main',status:'CLEAN'}]);await act('coord',[{op:'accept_wave'}]);
  assert.equal((await checkReviewGate({projectRoot:root,...key,gate:'implementation'})).ready,true);
 });

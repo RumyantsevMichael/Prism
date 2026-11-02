@@ -15,7 +15,7 @@ It reviews the result that the slice's last passing verification run tested.
 2. Read the inputs that orchestration supplies: the initiative and slice identifiers, the wave and lane, your reviewer identifier, and the base commit.
 3. Read the contract's `slice.md`, the slice's own `slice.md`, its assigned Approved requirements, and the ADRs they link.
 4. Read the current findings through `get_review`.
-5. Read the complete diff from the base commit to the working tree.
+5. Read the complete diff from the base commit, or from `HEAD` when orchestration supplies none, to the working tree.
 
 ## 2. Review
 
@@ -25,12 +25,12 @@ It reviews the result that the slice's last passing verification run tested.
 - Check for behavior outside the Approved intent, unrelated edits, and stale user or operator guidance.
 - When a finding needs executable proof, add one minimal failing test through a public surface in the project's test location and name it in the finding.
 
-- Don't
-  - Change production code, frozen tests, or existing tests.
+- Don't change production code, frozen tests, or existing tests.
+- Don't open a finding whose condition to close contradicts another open finding or needs a change that follows completion, such as accepting a Proposed ADR.
 
 ## 3. Record
 
-1. For each defect, call `update_review` with an `open_finding` operation that names the lane, a local identifier, the title, severity, affected path, evidence, and a condition to close that you can check.
+1. For each defect, call `update_review` with an `open_finding` operation that names the lane, a local identifier, the title, severity, affected path, evidence, and a condition to close that you can check, and, when code that meets a contract clause would still have the defect, that clause as `clause`, such as `Contract 6`.
 2. For each `FIXED` finding, check its implementer evidence and the code:
    - When the condition to close holds, set it `VERIFIED`.
    - Otherwise set it `REOPENED` with the remaining failure.

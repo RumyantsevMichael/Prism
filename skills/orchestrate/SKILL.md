@@ -1,7 +1,6 @@
 ---
 name: orchestrate
-description: "Run or resume an initiative: design one contract per scope, gate it, start each planned slice, implement and verify it in a fresh session, review it only when marked, and keep the user's gates."
-disable-model-invocation: true
+description: "Run or resume an initiative: design one contract per scope, gate it, start each planned slice, implement and verify it in a fresh session, review it only when marked, and keep the user's gates. Use only when the user or a coordinating agent asks to run or resume a named initiative, issue, or idea through Prism."
 argument-hint: '[initiative]'
 sdm: "0.3"
 ---
@@ -39,7 +38,7 @@ A stored value stays authoritative on resume, and `agentFlow` is fixed once work
 ## 2. Start
 
 1. Read `.prism/workflow.md`, the settings, and the pending user gates, and act on every recorded answer.
-2. When the initiative has no Approved requirements or no roadmap entry, run `ideate`.
+2. When the initiative has no Approved requirements or no roadmap entry, run `triage` in a fresh child agent for a reported defect, and `ideate` for new intent or when triage returns `NOT_A_DEFECT`.
 3. Read the initiative record with `get_initiative`.
 4. When the record does not exist, call `update_initiative` with `expectedRevision: null` and a `create` operation for the root slice with its slug, title, outcome, and every Approved requirement of the initiative.
 
@@ -47,7 +46,7 @@ A stored value stays authoritative on resume, and `agentFlow` is fixed once work
 
 A scope is the root slice, or a part that a split design created; design it when its dependencies are done.
 
-1. Run `design` for the scope in a fresh child agent, passing its slug and folder.
+1. Run `design` for the scope in a fresh child agent, passing its slug, its folder, and any reproduction that triage returned.
 2. When design returns `PROPOSED`, read the proposal with `get_initiative`.
 3. When autonomy requires the design gate, or the proposal splits the scope with `user_gate` evidence, ask the gate with the scope's `slice.md`, its diagrams, and the frozen tests as artifacts, offering to mark slices for review; for a fit design, first write the design view through the [example writer](references/example-writer.md) in a fresh child agent with the `examples` model.
 4. When the user asks for changes, return the note to design and repeat from step 2.
@@ -72,23 +71,25 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
   2. Return the defects to design with the scope.
   3. Accept design's revised proposal, then start the slice again with a fresh implementation session.
 - When the implementer returns `BLOCKED` on an approval gate, wait for it as in [user gates](#6-user-gates), then run a fresh implementation session.
-- When design or implementation returns `BLOCKED` or a question, ask the user the exact question and continue with another eligible slice meanwhile.
+- When triage, design, or implementation returns `BLOCKED` or a question, ask the user the exact question and continue with another eligible slice meanwhile.
 
 On resume, continue an `in-progress` slice with a fresh implementation session before starting another slice.
 
 ## 5. Review
 
-1. Call `update_review` as the coordinator with a `start_wave` operation in `implementation-review` mode, one lane per review focus, a fresh reviewer identifier per lane, and, as `base`, the last commit that a child reported before the slice started, when one did.
+1. Call `update_review` as the coordinator with a `start_wave` operation in `implementation-review` mode, one lane per review focus, a fresh reviewer identifier per lane, as `base`, the last commit that a child reported before the slice started, when one did, and, on the first wave, the implementer's worker id as `delivery`.
 2. Run `review` for each lane in a fresh child agent, and use a security-focused lane with the `securityReview` model for trust-boundary changes.
-3. When a lane returns `FINDINGS`, run a fresh `implement` session with the findings, and start a new wave with fresh reviewers once it returns `DONE`.
-4. When every lane is `CLEAN`, call `update_review` with `accept_wave`.
+3. When a finding names a contract clause, call `verify_slice` with `contractDefects` for those clauses, and handle the slice as blocked with contract defects.
+4. Otherwise, when a lane returns `FINDINGS`, run a fresh `implement` session with the findings of every wave so far, asking whether they share a cause in the contract, and once it returns `DONE`, set each finding it fixed `FIXED` with its summary through `update_review` as the review's `delivery` worker, then start a new wave with fresh reviewers.
+5. When `start_wave` refuses a further wave, ask a `decision` gate whether to continue the review, return the slice to design, or narrow it, and pass the answered gate's id as `afterGate`.
+6. When every lane is `CLEAN`, call `update_review` with `accept_wave`.
 
 ## 6. User gates
 
 - Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, slice, question, artifacts, and options for a decision.
 - Use `visual-review` for design gates, `decision` for choices, and `assistance` for actions the user must take.
 - After asking, call `wait_for_user_gate` once with the ids just recorded, and when it returns without an answer, end the turn.
-- Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it.
+- Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it or as soon as it no longer applies, such as when its artifacts are gone, with a reason unless the browser recorded the answer.
 
 ## 7. Finish or pause
 

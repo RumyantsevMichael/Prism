@@ -4,11 +4,12 @@ import { readInitiative, sliceFolder } from "../workflow/initiative.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
-import { keyOfPath, listInitiatives, listSliceRecords, recordPath, resolveRecordFile } from "../workflow/record-store.mjs";
+import { keyOfPath, listInitiatives, listSliceRecords, locateRecord, recordPath, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { loadDesignView } from "../workflow/design-view.mjs";
+import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 
 const LIBRARY_LIMIT = 500;
 const SLICE_FILE_LIMIT = 200;
@@ -33,6 +34,13 @@ export function forgetWorkspace() {
 
 export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary"]);
 const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary" });
+
+// A record is read where it lives: under .prism, or beside its Markdown until the first write moves it there.
+async function recordFile(root, key) {
+  const located = await locateRecord(root, key);
+  // A record not yet moved is shown where it lies; any other keeps its .prism address, also when a record store holds its file.
+  return located.legacy ?? located.path;
+}
 
 async function readText(root, relative) {
   try {
@@ -89,7 +97,7 @@ async function sliceArtifacts(root, directory, slices, slug, id) {
   // The root slice shares the initiative directory, so it lists only its own top-level files.
   if (folder === directory) await walk(root, folder, 0, (name) => !COORDINATION_FILES.has(name), files, SLICE_FILE_LIMIT);
   else await walk(root, folder, 3, () => true, files, SLICE_FILE_LIMIT);
-  const reviewPath = recordPath({ kind: "review", initiative: id, slice: slug });
+  const reviewPath = await recordFile(root, { kind: "review", initiative: id, slice: slug });
   const reviewSource = await readText(root, reviewPath);
   let review = null;
   if (reviewSource !== null) {
@@ -99,7 +107,7 @@ async function sliceArtifacts(root, directory, slices, slug, id) {
       review = { path: reviewPath, invalid: true };
     }
   }
-  const changeMap = recordPath({ kind: "change-map", initiative: id, slice: slug });
+  const changeMap = await recordFile(root, { kind: "change-map", initiative: id, slice: slug });
   return {
     folder,
     files,
@@ -116,13 +124,13 @@ function storedInitiatives(root) {
 
 async function initiativeFolders(root) {
   const ids = [];
-  for (const id of await storedInitiatives(root)) if ((await readText(root, recordPath({ kind: "initiative", initiative: id }))) !== null) ids.push(id);
+  for (const id of await storedInitiatives(root)) if ((await readText(root, await recordFile(root, { kind: "initiative", initiative: id }))) !== null) ids.push(id);
   return ids;
 }
 
 async function initiativeFindings(root, config, id) {
   const totals = { unresolved: 0, blocking: 0 };
-  const ledgers = (await listSliceRecords(root, id)).map((slice) => recordPath({ kind: "review", initiative: id, slice }));
+  const ledgers = await Promise.all((await listSliceRecords(root, id)).map((slice) => recordFile(root, { kind: "review", initiative: id, slice })));
   for (const ledger of ledgers) {
     const source = await readText(root, ledger);
     if (source === null) continue;
@@ -179,7 +187,7 @@ async function computeRoadmapView(projectRoot) {
   const listed = new Set(items.map((item) => item.id));
   return {
     config: { paths: config.paths, diagnostics: config.diagnostics },
-    recordPath: resolved.recordPath,
+    recordPath: await recordFile(projectRoot, { kind: "roadmap" }),
     projectionPath: resolved.projectionPath,
     exists: loaded.exists,
     valid: loaded.valid,
@@ -213,19 +221,25 @@ async function computeInitiativeView(projectRoot, id) {
     for (const slug of Object.keys(loaded.record.slices)) slices[slug] = await sliceArtifacts(projectRoot, resolved.directory, loaded.record.slices, slug, id);
   }
   const analysis = loaded.analysis;
+  // A design waits at its gate until the orchestrator accepts it, while the record still says not-started, so the browser shows that wait instead.
+  const designReview = {};
+  for (const gate of state?.pending ?? []) {
+    if (gate && typeof gate === "object" && gate.kind === "visual-review" && gate.slice && loaded.record?.slices?.[gate.slice]?.status === "not-started") designReview[gate.slice] = gate.answer ? "answered" : "waiting";
+  }
   return {
     id,
     directory: resolved.directory,
-    recordPath: resolved.recordPath,
-    statePath: recordPath({ kind: "state", initiative: id }),
+    recordPath: await recordFile(projectRoot, { kind: "initiative", initiative: id }),
+    statePath: await recordFile(projectRoot, { kind: "state", initiative: id }),
     roadmapItem: roadmap.items.find((item) => item.id === id) ?? null,
     exists: loaded.exists,
     valid: loaded.valid,
     errors: loaded.errors,
     revision: loaded.revision,
     record: loaded.record,
-    derived: analysis ? { root: analysis.root, children: analysis.children, leaves: analysis.leaves, counts: analysis.counts, effectiveDependencies: analysis.effectiveDependencies, complete: analysis.complete, designCandidates: analysis.designCandidates, dependenciesComplete: analysis.dependenciesComplete } : null,
+    derived: analysis ? { root: analysis.root, children: analysis.children, leaves: analysis.leaves, counts: analysis.counts, effectiveDependencies: analysis.effectiveDependencies, complete: analysis.complete, designCandidates: analysis.designCandidates.filter((slug) => !designReview[slug]), dependenciesComplete: analysis.dependenciesComplete } : null,
     active: state?.active ?? [],
+    designReview,
     slices,
     config: { paths: config.paths }
   };
@@ -234,7 +248,7 @@ async function computeInitiativeView(projectRoot, id) {
 // A designed slice's change map is derived from its verified result; opening the slice starts a derivation the server has not finished yet.
 async function derivedChangeMapState(projectRoot, id, slug, design, verification) {
   if (!design?.baselineId || !verification?.passed || !verification.snapshotId || verification.designAcceptedAt !== design.acceptedAt) return null;
-  const source = await readText(projectRoot, recordPath({ kind: "change-map", initiative: id, slice: slug }));
+  const source = await readText(projectRoot, await recordFile(projectRoot, { kind: "change-map", initiative: id, slice: slug }));
   let document = null;
   try { document = source === null ? null : JSON.parse(source); }
   catch { return { derived: false }; }
@@ -248,7 +262,8 @@ async function derivedChangeMapState(projectRoot, id, slug, design, verification
   return { derived: true, pending: true, runId: verification.id };
 }
 
-export async function loadSliceView(projectRoot, id, slug) {
+// The published code index, when there is one, places each planned change in the code; the view never starts a build.
+export async function loadSliceView(projectRoot, id, slug, { intelligenceDirectories } = {}) {
   const initiative = await loadInitiativeView(projectRoot, id);
   if (!initiative.record || !Object.hasOwn(initiative.record.slices, slug)) throw new Error(`The initiative ${id} has no slice ${slug}.`);
   const slice = initiative.record.slices[slug];
@@ -265,10 +280,11 @@ export async function loadSliceView(projectRoot, id, slug) {
     dependents: Object.entries(initiative.record.slices).filter(([, other]) => other.dependencies.includes(slug)).map(([other]) => other),
     complete: derived?.complete[slug] ?? false,
     active: initiative.active.filter((entry) => entry.slice === slug),
+    designReview: initiative.designReview[slug] ?? null,
     artifacts: initiative.slices[slug],
     verification,
     changeMap: Object.keys(changeMap).length ? changeMap : null,
-    designView: await loadDesignView(projectRoot, id, slug, { changeMap: changeMapDocument ?? null }).catch(() => null),
+    designView: await loadDesignView(projectRoot, id, slug, { changeMap: changeMapDocument ?? null, units: await readPublishedUnits(projectRoot, ...(intelligenceDirectories ? [intelligenceDirectories] : [])).catch(() => null) }).catch(() => null),
     titles: Object.fromEntries(Object.entries(initiative.record.slices).map(([key, value]) => [key, value.title]))
   };
 }
@@ -371,13 +387,14 @@ async function computeAttention(projectRoot) {
   const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await storedInitiatives(projectRoot))])];
   const needsYou = [];
   const answered = [];
+  const earlier = [];
   const watch = [];
   for (const id of ids) {
     const snapshot = await initiativeSnapshot(projectRoot, config, id, items.get(id));
     const initiative = { id, title: snapshot.title };
     const state = snapshot.state;
     if (state?.exists && !state.valid) {
-      watch.push({ type: "record-problem", initiative, path: recordPath({ kind: "state", initiative: id }), message: state.errors.join(" ") });
+      watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "state", initiative: id }), message: state.errors.join(" ") });
     }
     for (const entry of state?.state?.pending ?? []) {
       if (entry && typeof entry === "object") {
@@ -385,24 +402,29 @@ async function computeAttention(projectRoot) {
         for (const artifact of entry.artifacts ?? []) {
           // A gate asked before the records moved to .prism names a record by its old path.
           const key = await keyOfPath(projectRoot, artifact).catch(() => null);
-          const current = key ? recordPath(key) : artifact;
+          const current = key ? await recordFile(projectRoot, key).catch(() => artifact) : artifact;
           artifacts.push({ path: current, available: await isFile(projectRoot, current) });
         }
         const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, options: entry.options ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts };
+        // A question whose every attached file is gone was likely overtaken by later work, so the page says it may no longer apply.
+        if (!gate.answer && artifacts.length && artifacts.every((artifact) => !artifact.available)) gate.stale = true;
         (gate.answer ? answered : needsYou).push(gate);
       } else if (typeof entry === "string") {
         needsYou.push({ type: "pending-note", text: entry, initiative });
       }
     }
+    for (const entry of state?.valid ? state.state?.closed ?? [] : []) {
+      earlier.push({ type: "closed-gate", id: entry.id, kind: entry.kind, question: entry.question, options: entry.options ?? null, askedAt: entry.askedAt, closedAt: entry.closedAt, answer: entry.answer ?? null, reason: entry.reason ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null });
+    }
     if (snapshot.record.exists && !snapshot.record.valid) {
-      watch.push({ type: "record-problem", initiative, path: recordPath({ kind: "initiative", initiative: id }), message: snapshot.record.errors.join(" ") });
+      watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "initiative", initiative: id }), message: snapshot.record.errors.join(" ") });
     }
     const slices = snapshot.record.record?.slices ?? {};
     for (const [slug, slice] of Object.entries(slices)) {
       if (slice.status === "blocked") watch.push({ type: "blocked", initiative, slice: { slug, title: slice.title } });
     }
     for (const slug of Object.keys(slices)) {
-      const ledger = recordPath({ kind: "review", initiative: id, slice: slug });
+      const ledger = await recordFile(projectRoot, { kind: "review", initiative: id, slice: slug });
       const source = await readText(projectRoot, ledger);
       if (source === null) continue;
       try {
@@ -428,7 +450,9 @@ async function computeAttention(projectRoot) {
   const blockingOrder = (entry) => ({ "record-problem": 0, blocked: 1, findings: entry.blocking ? 2 : 3, "ready-to-ship": 4, active: 5 })[entry.type] ?? 6;
   watch.sort((left, right) => blockingOrder(left) - blockingOrder(right));
   answered.sort((left, right) => String(left.answer.answeredAt).localeCompare(String(right.answer.answeredAt)));
-  return { needsYou, answered, watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
+  // The newest closed questions come first, across initiatives, so the list stays short.
+  earlier.sort((left, right) => String(right.closedAt).localeCompare(String(left.closedAt)));
+  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
 }
 
 // The browser names the initiative and gate; the state record is always the initiative's own, never a client path.
@@ -552,7 +576,7 @@ export async function entityContext(projectRoot, ref) {
   }
   if (under(plans, ref)) {
     const [id, segment] = ref.slice(plans.length + 1).split("/");
-    if (SLUG_PATTERN.test(id ?? "") && (await readText(projectRoot, recordPath({ kind: "initiative", initiative: id }))) !== null) {
+    if (SLUG_PATTERN.test(id ?? "") && (await readText(projectRoot, await recordFile(projectRoot, { kind: "initiative", initiative: id }))) !== null) {
       const { scope, view } = await initiativeTree(projectRoot, id);
       const trail = [roadmapCrumb, { ref: `initiative:${id}`, label: scope.title }];
       const slug = view.record && segment && Object.hasOwn(view.record.slices, segment) && ref !== `${plans}/${id}/${segment}` ? segment : null;
@@ -597,7 +621,7 @@ export async function entityExists(projectRoot, ref) {
   return Boolean(loaded.record?.slices && Object.hasOwn(loaded.record.slices, parsed.slug));
 }
 
-export async function loadEntity(projectRoot, ref) {
+export async function loadEntity(projectRoot, ref, options = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
   if (parsed.kind === "attention") return { ref, kind: "attention", data: await loadAttention(projectRoot) };
@@ -605,5 +629,5 @@ export async function loadEntity(projectRoot, ref) {
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
   if (parsed.kind === "initiative") return { ref, kind: "initiative", data: await loadInitiativeView(projectRoot, parsed.id) };
-  return { ref, kind: "slice", data: await loadSliceView(projectRoot, parsed.id, parsed.slug) };
+  return { ref, kind: "slice", data: await loadSliceView(projectRoot, parsed.id, parsed.slug, options) };
 }

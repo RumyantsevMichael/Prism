@@ -7,7 +7,7 @@ import path from "node:path";
 import { normalizeRepositorySourcePath } from "../repository-intelligence/repository-source-path.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { withinScope } from "./conservation-store.mjs";
-import { isManagedRecordFile, keyOfPath, locateRecord, writeRecord } from "../workflow/record-store.mjs";
+import { isManagedRecordFile, keyOfPath, locateRecord, moveLegacyRecords, writeRecord } from "../workflow/record-store.mjs";
 
 // Slice change maps are change-map.json records under .prism; a concept-delta.json from before the rename moves there under the new name.
 export const CHANGE_MAP_FILE = "change-map.json";
@@ -250,6 +250,7 @@ export async function getChangeMap(input) {
 }
 export async function updateChangeMap(input) {
   assertInput(UPDATE_CHANGE_MAP_SCHEMA, input);
+  await moveLegacyRecords(input.projectRoot);
   const resolved = await resolveChangeMap(input.projectRoot, input);
   await mkdir(path.dirname(resolved.target), { recursive: true });
   const { conservationStore } = await import("./conservation-store.mjs");

@@ -11,7 +11,7 @@ import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/art
 import { ProgressRecorder, gitFingerprint, projectStorageKey, sameFingerprint, writeFreshness } from "./index-progress.mjs";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { GitFingerprint } from "./index-progress.mjs";
-import type { NativeSource, SourceSnapshot, UnitIndex, PreparedIndex, Preparation, Progress, Diagnostic, WorkerMethods, SearchFilters, SemanticRuntime, Counts } from "./repository-unit-types.mjs";
+import type { NativeSource, SourceSnapshot, UnitIndex, IndexMetadata, PreparedIndex, Preparation, Progress, Diagnostic, WorkerMethods, SearchFilters, SemanticRuntime, Counts, PublishedUnits } from "./repository-unit-types.mjs";
 
 interface Asset { url: string; bytes: number; sha256: string; unpackedBytes?: number }
 interface AssetManifest { schemaVersion: 1; identity: string; assetVersion: string; bundles: Record<string, Asset>; modelMirror?: string; model: { id: string; revision: string; files: (Omit<Asset, "url"> & { path: string; url?: string })[] } }
@@ -125,6 +125,18 @@ export const modelAssetName = (file: string) => `model-${file.split("/").join("-
 
 const STALE_ASSET_MS = 14 * 24 * 60 * 60 * 1000;
 const KEPT_INDEX_REVISIONS = 4;
+const UNITS_FILE = /^units-([a-f\d]{64})\.json$/;
+export const unitsFile = (revision: string) => `units-${revision}.json`;
+
+// The units sidecar holds only what a viewer needs to locate code, so the review browser can read it without the full index and its embeddings.
+export function publishedUnits(index: IndexMetadata, revision: string): PublishedUnits {
+  const edges = new Map<string, [string, string]>();
+  for (const edge of index.edges) if (edge.kind === "calls" || edge.kind === "references") edges.set(`${edge.source}\0${edge.target}`, [edge.source, edge.target]);
+  return { schemaVersion: 1, snapshot: index.snapshot, revision,
+    units: index.units.map(({ id, file, kind, name, qualifiedName, range, sourceHash }) => ({ id, file, kind, name, ...(qualifiedName === undefined ? {} : { qualifiedName }),
+      range: { startLine: range.startLine, endLine: range.endLine }, ...(sourceHash === undefined ? {} : { sourceHash }) })),
+    edges: [...edges.values()] };
+}
 
 // Keep the current index and the most recently used earlier revisions, so a retained before-change snapshot still reuses its index.
 // Each source change writes a complete index, so older revisions, their generation pointers, and abandoned snapshot mirrors are removed.
@@ -136,6 +148,8 @@ export async function pruneIndexes(directory: string, current: string, keep = KE
   for (const { name } of revisions) if (!kept.has(name)) await rm(path.join(directory, name), { force: true });
   for (const name of entries) {
     if (name.startsWith("snapshot-")) { await rm(path.join(directory, name), { recursive: true, force: true }); continue; }
+    const sidecar = UNITS_FILE.exec(name);
+    if (sidecar) { if (!kept.has(`${sidecar[1]}.json`)) await rm(path.join(directory, name), { force: true }); continue; }
     if (!/^generation-.+\.json$/.test(name)) continue;
     const pointer = await readJson<IndexPointer>(path.join(directory, name)).catch(() => ({} as IndexPointer));
     if (!pointer.revision || !kept.has(`${pointer.revision}.json`)) await rm(path.join(directory, name), { force: true });
@@ -362,6 +376,9 @@ export class NativeSemanticRuntime implements SemanticRuntime {
           if (previous.snapshot === snapshot.sourceFingerprint && previous.assetIdentity === assets.assetIdentity) {
             await source.verifySnapshot(); job.revision = pointer.revision; job.coverage = pointer.coverage; job.diagnostics = previous.diagnostics;
             const used = new Date(); await utimes(indexPath, used, used).catch(() => {});
+            // An index built before units sidecars existed gets its sidecar when it is reused.
+            const sidecar = path.join(directory, unitsFile(pointer.revision));
+            await lstat(sidecar).catch(() => writeAtomically(sidecar, JSON.stringify(publishedUnits(previous!, pointer.revision!)), { mode: 0o600 })).catch(() => {});
             return { ...assets, index: indexMetadata(previous), indexPath, revision: pointer.revision };
           }
         } catch (error) { if (error.code !== "ENOENT") throw error; }
@@ -393,6 +410,7 @@ export class NativeSemanticRuntime implements SemanticRuntime {
           const contents = JSON.stringify(index), revision = sha(contents), indexPath = path.join(directory, `${revision}.json`);
           if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The semantic index exceeds 512 MiB.");
           await writeAtomically(indexPath, contents, { mode: 0o600 });
+          await writeAtomically(path.join(directory, unitsFile(revision)), JSON.stringify(publishedUnits(index, revision)), { mode: 0o600 });
           const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
           const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics, builtAt: new Date().toISOString() });
           await writeAtomically(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`), pointerContents, { mode: 0o600 });

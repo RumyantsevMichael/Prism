@@ -7,7 +7,10 @@ export function checkSchema(schema, value, field, errors) {
     if (!branches.some((problems) => problems.length === 0)) {
       // Select the operation branch to keep diagnostics specific to its fields.
       const branch = schema.oneOf.findIndex((item) => item.properties?.op?.const === value?.op);
+      // A value that is not null is checked against the one alternative that is not, such as a revision that may also be null.
+      const nonNull = value === null ? [] : schema.oneOf.map((item, index) => index).filter((index) => schema.oneOf[index].type !== "null");
       if (branch >= 0) errors.push(...branches[branch]);
+      else if (nonNull.length === 1) errors.push(...branches[nonNull[0]]);
       else fail("must match one supported input form");
     }
     return;
@@ -30,7 +33,7 @@ export function checkSchema(schema, value, field, errors) {
   } else if (schema.type === "string") {
     if (typeof value !== "string" || (schema.minLength && !value.trim())) return fail("must be a non-empty string");
     if (schema.maxLength && value.length > schema.maxLength) fail("exceeds the field length limit");
-    if (schema.pattern && !new RegExp(schema.pattern).test(value)) fail("must be a SHA-256 revision");
+    if (schema.pattern && !new RegExp(schema.pattern).test(value)) fail("must be the full 64-character SHA-256 revision that the last read returned");
   } else if (schema.type === "integer") {
     if (!Number.isSafeInteger(value) || value < schema.minimum || (schema.maximum && value > schema.maximum)) fail("must be an integer within the supported limits");
   } else if (schema.type === "boolean" && typeof value !== "boolean") fail("must be a boolean");

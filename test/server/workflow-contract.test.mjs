@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const productiveSkills = [
-  "design", "ideate", "implement", "orchestrate", "refactor", "review",
+  "design", "ideate", "implement", "orchestrate", "refactor", "review", "triage",
   "workflow-init", "workflow", "write-adr", "write-contracts", "write-feature",
   "write-requirements", "write-step-definitions", "write-user-docs"
 ];
@@ -107,12 +107,12 @@ test("review is one independent mode that records findings through MCP", async (
   assert.match(review, /fresh session without the implementers' conversation/);
   assert.match(review, /`open_finding` operation/);
   assert.match(review, /`submit_lane`: `CLEAN` when no finding remains open/);
-  assert.match(review, /Change production code, frozen tests, or existing tests/);
+  assert.match(review, /[Cc]hange production code, frozen tests, or existing tests/);
 });
 
 test("ideation adds the roadmap entry that the removed roadmap skill used to add", async () => {
   const ideate = await skill("ideate");
-  assert.match(ideate, /Call `update_roadmap` with an `add_initiative` operation that links the Approved requirements/);
+  assert.match(ideate, /Call `update_roadmap` with an `add_initiative` operation that cites each Approved requirement section as `<file>.md§<number>`/);
   assert.match(await skill("workflow-init"), /Call `update_roadmap` with `expectedRevision: null`, the accepted operations, and `replace_hand_written_projection`/);
   assert.doesNotMatch(await skill("write-requirements"), /`roadmap`/);
 });

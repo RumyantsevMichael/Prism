@@ -168,16 +168,18 @@ test("a changed command asks again", async (context) => {
   assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" })).status, "approval_needed");
 });
 
-test("the test command does not inherit the server's own proxy setting", async (context) => {
+test("the test command inherits neither the server's proxy setting nor the host's plugin directories", async (context) => {
   const root = await project(context, `${node} env.mjs`);
-  await writeFile(path.join(root, "env.mjs"), "process.exit(process.env.NODE_USE_ENV_PROXY === undefined ? 0 : 3);\n");
+  const serverOnly = ["NODE_USE_ENV_PROXY", "CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "PLUGIN_DATA", "PLUGIN_ROOT"];
+  await writeFile(path.join(root, "env.mjs"), `const leaked = ${JSON.stringify(serverOnly)}.filter((name) => process.env[name] !== undefined);\nif (leaked.length) console.log(leaked.join(" "));\nprocess.exit(leaked.length ? 3 : process.env.PRISM_KEPT === "1" ? 0 : 4);\n`);
   await accept(root);
   const gateId = await approve(root);
-  const previous = process.env.NODE_USE_ENV_PROXY;
-  process.env.NODE_USE_ENV_PROXY = "1";
-  context.after(() => { if (previous === undefined) delete process.env.NODE_USE_ENV_PROXY; else process.env.NODE_USE_ENV_PROXY = previous; });
-  const result = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId });
-  assert.equal(result.status, "passed");
+  const previous = Object.fromEntries([...serverOnly, "PRISM_KEPT"].map((name) => [name, process.env[name]]));
+  for (const name of serverOnly) process.env[name] = name.includes("PROXY") ? "1" : path.join(root, "host");
+  process.env.PRISM_KEPT = "1";
+  context.after(() => { for (const [name, value] of Object.entries(previous)) if (value === undefined) delete process.env[name]; else process.env[name] = value; });
+  const result = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId, dataDirectory: privateData });
+  assert.equal(result.status, "passed", result.outputTail);
 });
 
 test("a run past its timeout fails, and an early return keeps the same run going", async (context) => {
@@ -236,6 +238,50 @@ test("a slice whose design requires review completes on a review of its verified
   await writeFile(path.join(root, "test", "audit.test.mjs"), "// frozen audit test\n");
   await initiativeUpdate(root, [{ op: "set_status", slug: "audit", status: "in-progress" }, { op: "accept_design", slug: "audit", frozenTests: ["test/audit.test.mjs"], review: "none" }]);
   assert.equal((await checkSliceGate({ projectRoot: root, initiative: INITIATIVE, slice: "audit", gate: "completion" })).problems[0].code, "verification_missing");
+});
+
+test("a review stops for the user after two waves with findings, and a finding the contract causes goes back to design", async (context) => {
+  const root = await project(context);
+  await accept(root, "download", "required");
+  const slice = { projectRoot: root, initiative: INITIATIVE, slice: "download" };
+  const review = async (actor, operations, extra = {}) => updateReview({ ...slice, expectedRevision: (await getReview(slice)).revision, actor, operations, ...extra });
+  const coordinator = { id: "orchestrator", role: "coordinator" }, delivery = { id: "Develop download", role: "delivery" };
+  const lanes = (wave) => [{ id: "correctness", reviewer: `Review ${wave}`, coverage: ["."] }];
+  const reviewer = (wave) => ({ id: `Review ${wave}`, role: "reviewer" });
+  assert.equal((await verifySlice({ ...slice, approvalGate: await approve(root) })).status, "passed");
+  const round = async (wave, extra = {}) => {
+    await review(coordinator, [{ op: "start_wave", id: wave, mode: "implementation-review", lanes: lanes(wave), ...extra }], wave === "w1" ? { delivery: "Develop download" } : {});
+    await review(reviewer(wave), [{ op: "open_finding", lane: "correctness", localId: "F", title: `Edge case ${wave}`, severity: "high", affectedPath: "source.mjs", evidence: "Wrong.", conditionToClose: "Right." }, { op: "submit_lane", lane: "correctness", status: "FINDINGS" }]);
+    await review(delivery, [{ op: "set_finding_status", id: "implementation-review/correctness/F", status: "FIXED", evidence: "Fixed." }].filter(() => wave === "w1"));
+  };
+  await round("w1");
+  await review(coordinator, [{ op: "start_wave", id: "w2", mode: "implementation-review", lanes: lanes("w2") }]);
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w3", mode: "implementation-review", lanes: lanes("w3") }]), (error) => error.code === "gate_blocked" && /2 review waves since its design was accepted/.test(error.message));
+  const ask = async () => {
+    const current = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
+    const before = new Set((current.state?.pending ?? []).map((gate) => gate.id));
+    await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", slice: "download", question: "Keep reviewing?", options: [{ id: "continue", label: "Continue" }, { id: "redesign", label: "Back to design" }] }] } });
+    return (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state.pending.find((gate) => !before.has(gate.id)).id;
+  };
+  const first = await ask();
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w3", mode: "implementation-review", lanes: lanes("w3"), afterGate: first }]), /that the user answered/, "an unanswered gate does not let the loop go on");
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: first, choice: "continue" });
+  await review(coordinator, [{ op: "start_wave", id: "w3", mode: "implementation-review", lanes: lanes("w3"), afterGate: first }]);
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w4", mode: "implementation-review", lanes: lanes("w4"), afterGate: first }]), /its own answered decision gate/);
+  await review(reviewer("w3"), [{ op: "open_finding", lane: "correctness", localId: "C6", title: "Clause 6 drops attributed files", severity: "high", affectedPath: "source.mjs", evidence: "Any code meeting clause 6 misses this case.", conditionToClose: "The contract handles attributed files.", clause: "Contract 6" }]);
+  const second = await ask();
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: second, choice: "continue" });
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w4", mode: "implementation-review", lanes: lanes("w4"), afterGate: second }]), (error) => error.code === "gate_blocked" && /name contract clauses \(Contract 6\)/.test(error.message) && /contractDefects/.test(error.message));
+  assert.equal((await getReview(slice)).entries.find((item) => item.localId === "C6").clause, "Contract 6");
+});
+
+test("review errors say which worker and which revision form an update needs", async (context) => {
+  const root = await project(context);
+  await accept(root, "download", "required");
+  const slice = { projectRoot: root, initiative: INITIATIVE, slice: "download" };
+  const lanes = [{ id: "correctness", reviewer: "Review download", coverage: ["."] }];
+  await assert.rejects(updateReview({ ...slice, expectedRevision: null, actor: { id: "orchestrator", role: "coordinator" }, operations: [{ op: "start_wave", id: "w1", mode: "implementation-review", lanes }] }), /the implementer's worker id as delivery/);
+  await assert.rejects(updateReview({ ...slice, expectedRevision: "abc1234", actor: { id: "orchestrator", role: "coordinator" }, operations: [{ op: "accept_wave" }] }), /expectedRevision: must be the full 64-character SHA-256 revision/);
 });
 
 const exists = (file) => readFile(file).then(() => true, () => false);
@@ -330,6 +376,34 @@ test("a brief verification names the failing tests and the full log", async (con
   assert.deepEqual(verificationBrief(failed).failing, ["signs the report"]);
   assert.match(await readFile(failed.log, "utf8"), /not ok 1 - signs the report/);
   assert.equal(failed.log.startsWith(privateData), true, "the full log stays in plugin data, outside the project");
+});
+
+test("a failing run names failures that scrolled out of the kept output, including nested subtests", async (context) => {
+  assert.deepEqual(failingTests(["    not ok 2 - keeps the cursor", "not ok 3 - waits for the network # TODO", "not ok 4 - skipped on Windows # SKIP"].join("\n")), ["keeps the cursor"]);
+  const root = await project(context);
+  const script = [
+    "console.log(\"TAP version 13\");",
+    "console.log(\"# Subtest: download\");",
+    "console.log(\"    not ok 1 - signs the report\");",
+    "console.error(\"not ok 2 - checks the archive\");",
+    "for (let index = 0; index < 4000; index += 1) console.log(`ok ${index + 3} - passes case ${index}\\n  ---\\n  duration_ms: 1.25\\n  ...`);",
+    "process.exitCode = 1;"
+  ].join("\n");
+  await writeFile(path.join(root, "check.mjs"), `${script}\n`);
+  await accept(root);
+  const failed = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: await approve(root) });
+  assert.equal(failed.status, "failed");
+  assert.doesNotMatch(failed.outputTail, /signs the report/, "the failures are no longer in the kept output");
+  const names = ["checks the archive", "signs the report"];
+  assert.deepEqual([...failed.failing].sort(), names, "stdout and stderr are both read");
+  assert.equal(failed.failingCount, 2);
+  assert.deepEqual([...verificationBrief(failed).failing].sort(), names);
+  const recorded = JSON.parse(await readFile(path.join(root, failed.path), "utf8"));
+  assert.deepEqual([...recorded.failing].sort(), names, "the run record keeps the names for the slice page");
+  const log = await readFile(failed.log, "utf8");
+  assert.ok(log.length > 64 * 1024, `the log keeps more than the output kept in memory (${log.length})`);
+  assert.match(log, /signs the report/);
+  assert.match(log, /passes case 3999\n/, "the log holds the whole output, start to end");
 });
 
 test("an implementer's contract defects block the slice without running anything until design revises the contract", async (context) => {

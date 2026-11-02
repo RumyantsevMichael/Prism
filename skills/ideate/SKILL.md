@@ -1,9 +1,8 @@
 ---
 name: ideate
-description: "Shape a raw idea into Approved EARS requirements and a roadmap entry before design."
+description: "Shape a raw idea into Approved EARS requirements and a roadmap entry before design. Use when the user brings a new capability idea, or orchestration or triage finds behavior that no Approved requirement covers; not for a defect against an existing requirement."
 argument-hint: '[idea]'
 sdm: "0.3"
-disable-model-invocation: true
 ---
 
 # Shape product intent
@@ -41,7 +40,7 @@ External constraints can be requirements, but internal technology choices are de
 
 1. When the approved requirements start a new initiative, read the roadmap with `get_roadmap` and keep its revision.
 2. Agree with the user on a stable initiative identifier, a title, a one-sentence intent, and a band of `Now`, `Next`, `Later`, or `Parked`.
-3. Call `update_roadmap` with an `add_initiative` operation that links the Approved requirements.
+3. Call `update_roadmap` with an `add_initiative` operation that cites each Approved requirement section as `<file>.md§<number>`, the same form initiatives use.
 4. When the requirements amend an existing initiative, link them through the `update_roadmap` operation `update_initiative` instead.
 
 The identifier uses letters, digits, hyphens, or underscores, never changes, and names the initiative's plans folder.

@@ -62,7 +62,7 @@ The staged tests of a slice are a slice record with each file's content.
 The initiative update writes the initiative record, then the staged tests of each slice still staged at its end, and only then takes those files out of the work tree.
 Verification refuses a staged slice and, after a passing run of a slice marked `none`, records `done` through the same completion gate as before.
 Reported contract defects are a run entry, which outlives the initiative record, and stay on the slice in the initiative record until its next accepted design; nothing runs when they are reported.
-Run output is written to a log under the plugin data directory, and the brief result reads failing test names from cargo, Node, TAP, pytest, Go, Jest, and Vitest output.
+Run output is written to a log under the plugin data directory, and the server reads failing test names from cargo, Node, TAP, pytest, Go, Jest, and Vitest output line by line as the command runs, so a failure that scrolls out of the kept output is still named in the brief result and the run record.
 The diagram check parses every `.puml` file in the slice's folder and its ancestors' folders before the update takes the record lock, treats every error diagram PlantUML draws as a refusal, and counts entities, packages, participants, or activity boxes, and links, in the drawn SVG.
 
 ## Decision Log

@@ -62,6 +62,7 @@ In Codex, pick the same skills from the skill picker or mention them in your req
 |---|---|
 | `prism:orchestrate` | Run or resume an initiative from idea to verified code |
 | `prism:ideate` | Shape an idea into Approved requirements and a roadmap entry |
+| `prism:triage` | Reproduce a reported bug and link the Approved requirement it breaks |
 | `prism:design` | Design one slice: a frozen contract and failing acceptance tests, or a split |
 | `prism:refactor` | Analyze or simplify existing code, skills, documents, or configuration |
 | `prism:workflow` | Explain the workflow |

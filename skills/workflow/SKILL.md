@@ -16,6 +16,7 @@ sdm: "0.3"
 | --- | --- |
 | Configure a project | `workflow-init` |
 | Approve product intent and add it to the roadmap | `ideate`, using `write-requirements` |
+| Trace a reported defect to the requirement it breaks | `triage` |
 | Run an initiative | `orchestrate` |
 | Design a contract | `design` |
 | Implement a planned slice | `implement` |
@@ -60,6 +61,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Split evidence | What Prism requires before a scope splits into parts that get their own contracts: `contract_size`, contract files estimated above the token budget that one implementer reads; `unfrozen`, an Unprobed assumption that one part settles; or `user_gate`, a gate where the person asked for the split. A split into a contract's slice plan needs none. |
 | `slice.md` | A design document in a slice folder: for a contract scope, the contract, assumptions, and slice plan, or the interfaces between parts after a split; for a planned slice, its changes. |
 | Approved requirement | An accepted product or system obligation. |
+| Defect | Reported behavior that contradicts an Approved requirement; `triage` reproduces it and links that requirement, so the fix needs no new requirement. |
 | Requirement assignment | Approved requirement references whose coverage is preserved through each split. |
 | Effective dependencies | A leaf's own dependencies plus the dependencies inherited from its ancestors. |
 | Starting surface | The command, route, public function, event, job, or user action where a slice enters the system. |
@@ -68,7 +70,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | BLOCKED | An unresolved requirement, decision, or external fact stops progress. |
 | Contract | The frozen observable interface of a contract scope that fixes what the requirements leave open, shared by its planned slices. |
 | Assumption probe | A small experiment against the real system that confirms a contract assumption, or a fail-safe clause where no probe is possible. |
-| Contract defect | A contract clause that an implementer finds wrong and reports through `verify_slice`, which blocks the slice until design revises the contract. |
+| Contract defect | A contract clause that an implementer finds wrong, or that a review finding names as its cause, reported through `verify_slice`, which blocks the slice until design revises the contract. |
 | Frozen tests | Acceptance test files of one slice, fixed when its design is accepted; implementation must not change them, and verification refuses to run when one changed. |
 | Staged tests | Frozen tests of a slice that has not started, which Prism keeps out of the work tree until `set_status` `in-progress` starts the slice, or until `restore_tests` puts them back for a design revision. |
 | Design diagrams | PlantUML source written by design: an overview of each contract's slices, shared interfaces, and order, and a code view per slice; Prism parses them and refuses a view that does not parse or shows more than 30 elements. |
@@ -82,7 +84,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Verification run | An implementer's `verify_slice` run of the user-approved test command from `.prism/workflow.md`, recorded on the slice; a slice with an accepted design completes only on a fresh passing run, which completes a slice marked `none` by itself. |
 | Implementation review | An independent review of the verified result of a slice marked `required`. |
 | Review record | The Prism record of one slice's review waves, lanes, and findings, read through `get_review` and changed through `update_review`. |
-| Review wave | One pass of fresh reviewers over one verified result of a slice. |
+| Review wave | One pass of fresh reviewers over one verified result of a slice; after two waves for one accepted design, each further wave needs the user's answered decision gate. |
 | Review lane | One independently scoped review in a review wave. |
 | CLEAN | A review lane result with no unresolved finding. |
 | Review probe | A minimal failing test that a reviewer adds through a public surface to prove a finding. |

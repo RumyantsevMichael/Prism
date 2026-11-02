@@ -25,6 +25,8 @@ const ENTRY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 // A checkout can bring legacy records back, so a migration result is trusted only briefly.
 const MIGRATION_TTL_MS = 5000;
 const migrations = new Map();
+const pendingMoves = new Map();
+const unreportedMoves = [];
 
 export class RecordStoreError extends Error {
   constructor(code, message, details = {}) {
@@ -302,21 +304,57 @@ async function migrate(root) {
   const report = { moved: [], conflicts: [] };
   const store = await recordStoreOf(root);
   const config = await readWorkflowConfig(root);
-  if (store.external) return migrateIntoStore(root, store, config, report);
+  if (store.external) {
+    await migrateIntoStore(root, store, config, report);
+    if (report.moved.length || report.conflicts.length) unreportedMoves.push({ root, ...report });
+    return report;
+  }
   const moves = await legacyRecords(root, store, config);
   const pending = [];
   for (const move of moves) if (await regularFile(path.join(root, move.from))) pending.push(move);
-  // Reads never create files, so a project without legacy records stays untouched until its first record write.
   if (!pending.length) return report;
   await ensureHousekeeping(store);
   const lock = path.join(store.base, "migration");
   await withArtifactLock(lock, () => withFileLock(lock, async () => {
     for (const move of pending) await moveRecord(root, store, move, report);
   }, fail, { timeoutMs: 30000 }));
+  pendingMoves.delete(root);
+  if (report.moved.length || report.conflicts.length) unreportedMoves.push({ root, ...report });
   return report;
 }
 
-/** Move every legacy record of a project into .prism, or into its record store, once per process, so all initiatives read from one place. */
+// Legacy records still beside their Markdown, by the .prism path each moves to: reads resolve a record there until a write moves them all.
+// A record store takes a checkout's records on its first access, so only records in the project are read in place.
+function legacyLocations(root, store) {
+  if (store.external) return Promise.resolve(new Map());
+  const cached = pendingMoves.get(root);
+  if (cached && Date.now() - cached.at < MIGRATION_TTL_MS) return cached.value;
+  const value = (async () => {
+    const found = new Map();
+    for (const move of await legacyRecords(root, store, await readWorkflowConfig(root))) {
+      if (found.has(move.to) || !(await regularFile(path.join(root, move.from)).catch(() => false))) continue;
+      if (!(await regularFile(path.join(root, move.to)).catch(() => true))) found.set(move.to, move.from);
+    }
+    return found;
+  })();
+  value.catch(() => pendingMoves.delete(root));
+  pendingMoves.set(root, { at: Date.now(), value });
+  return value;
+}
+
+/** The record moves that writes made since the last call, for the tool result that reports them. */
+export function takeMigrationReports() {
+  return unreportedMoves.splice(0);
+}
+
+/** Move legacy records before a record update, so the update reads and locks each record where it now lives; an unusable root is left for the update to report. */
+export async function moveLegacyRecords(projectRootPath) {
+  let root;
+  try { root = await projectRoot(projectRootPath); } catch { return; }
+  await ensureRecords(root);
+}
+
+/** Move every legacy record of a project into .prism, or into its record store, once per process, so all initiatives read from one place; only writes move records into .prism. */
 export function ensureRecords(root) {
   const existing = migrations.get(root);
   if (existing && Date.now() - existing.at < MIGRATION_TTL_MS) return existing.pending;
@@ -331,6 +369,7 @@ export function ensureRecords(root) {
 /** Forget recent migration checks, so the next record access looks for legacy records again. */
 export function forgetMigrations() {
   migrations.clear();
+  pendingMoves.clear();
 }
 
 const storeLabel = (store) => store.external ? "the record store" : "the project root";
@@ -342,18 +381,30 @@ async function synced(store) {
   await waitForStableStore(store.base);
 }
 
-async function locate(projectRootPath, key) {
+// Records move into .prism only on a write, while a record store takes a checkout's records on its first access.
+async function openStore(projectRootPath, { write = false } = {}) {
   const store = await recordStoreOf(projectRootPath);
-  await ensureRecords(store.root);
+  if (write || store.external) await ensureRecords(store.root);
   await synced(store);
+  return store;
+}
+
+async function locate(projectRootPath, key, options) {
+  const store = await openStore(projectRootPath, options);
   const relative = recordPath(key);
   const target = physical(store, relative);
   await assertContained(store.contain, target, storeLabel(store));
-  if (key.kind !== "runs") await regularFile(target);
-  return { store, located: { root: store.root, path: relative, target } };
+  const located = { root: store.root, path: relative, target };
+  if (key.kind === "runs" || await regularFile(target)) return { store, located };
+  // Before the first write moves them, a record is read where an older Prism kept it.
+  const legacy = (await legacyLocations(store.root, store)).get(relative);
+  if (!legacy) return { store, located };
+  const source = path.join(store.root, legacy);
+  await assertContained(store.root, source);
+  return { store, located: { ...located, target: source, legacy } };
 }
 
-/** Resolve a record key to its file: { root, path, target }, where path stays the .prism address and target is the file in the project or the record store. */
+/** Resolve a record key to its file: { root, path, target, legacy? }, where path stays the .prism address and target is the file in the project, the record store, or a legacy location. */
 export async function locateRecord(projectRootPath, key) {
   return (await locate(projectRootPath, key)).located;
 }
@@ -366,7 +417,7 @@ export async function readRecord(projectRootPath, key, { maxBytes = RECORD_MAX_B
 
 /** Replace a record atomically. */
 export async function writeRecord(projectRootPath, key, contents) {
-  const { store, located } = await locate(projectRootPath, key);
+  const { store, located } = await locate(projectRootPath, key, { write: true });
   await mkdir(path.dirname(located.target), { recursive: true });
   await assertContained(store.contain, located.target, storeLabel(store));
   await ensureHousekeeping(store);
@@ -377,7 +428,7 @@ export async function writeRecord(projectRootPath, key, contents) {
 
 /** Run an action while holding a record's in-process and cross-process locks. */
 export async function withRecordLock(projectRootPath, key, action, makeError = fail, options = {}) {
-  const { store, located } = await locate(projectRootPath, key);
+  const { store, located } = await locate(projectRootPath, key, { write: true });
   await mkdir(path.dirname(located.target), { recursive: true });
   await assertContained(store.contain, located.target, storeLabel(store));
   return withArtifactLock(located.target, () => withFileLock(located.target, () => action(located), makeError, options));
@@ -386,7 +437,7 @@ export async function withRecordLock(projectRootPath, key, action, makeError = f
 /** Add one immutable entry under a list key such as runs; an existing entry is never replaced. */
 export async function appendRecord(projectRootPath, key, id, entry) {
   if (typeof id !== "string" || !ENTRY_ID.test(id)) throw fail("validation_failed", "An entry id must use letters, digits, dots, hyphens, or underscores.");
-  const { store, located } = await locate(projectRootPath, key);
+  const { store, located } = await locate(projectRootPath, key, { write: true });
   const target = path.join(located.target, `${id}.json`);
   await ensureHousekeeping(store);
   await mkdir(located.target, { recursive: true });
@@ -421,22 +472,27 @@ async function directoryNames(target) {
 
 /** The initiatives that hold an initiative record or coordination state. */
 export async function listInitiatives(projectRootPath) {
-  const store = await recordStoreOf(projectRootPath);
-  await ensureRecords(store.root);
-  await synced(store);
-  const ids = [];
+  const store = await openStore(projectRootPath);
+  const ids = new Set();
   for (const initiative of await directoryNames(physical(store, INITIATIVES))) {
-    for (const kind of ["initiative", "state"]) if (await regularFile(physical(store, recordPath({ kind, initiative })))) { ids.push(initiative); break; }
+    for (const kind of ["initiative", "state"]) if (await regularFile(physical(store, recordPath({ kind, initiative })))) { ids.add(initiative); break; }
   }
-  return ids;
+  for (const relative of (await legacyLocations(store.root, store)).keys()) {
+    const key = parseRecordPath(relative);
+    if (key?.kind === "initiative" || key?.kind === "state") ids.add(key.initiative);
+  }
+  return [...ids].sort();
 }
 
 /** The slices of an initiative that hold any record. */
 export async function listSliceRecords(projectRootPath, initiative) {
-  const store = await recordStoreOf(projectRootPath);
-  await ensureRecords(store.root);
-  await synced(store);
-  return directoryNames(path.join(physical(store, INITIATIVES), requireSlug(initiative, "initiative"), "slices"));
+  const store = await openStore(projectRootPath);
+  const slices = new Set(await directoryNames(path.join(physical(store, INITIATIVES), requireSlug(initiative, "initiative"), "slices")));
+  for (const relative of (await legacyLocations(store.root, store)).keys()) {
+    const key = parseRecordPath(relative);
+    if (key?.slice && key.initiative === initiative) slices.add(key.slice);
+  }
+  return [...slices].sort();
 }
 
 /** Remove an initiative's coordination records after its coordination ends; run entries outlive the cleanup. */

@@ -128,7 +128,7 @@ test("serves navigation and entity views built from Prism records", async (conte
     assert.deepEqual(decisions.data.entries.map((entry) => [entry.topic, entry.status]), [["reporting", "Accepted"]]);
     const glossary = await entity("glossary");
     assert.deepEqual([glossary.data.path, glossary.data.exists], ["docs/Glossary.md", false]);
-    assert.equal((await get(`${review.baseUrl}/api/entity?ref=slice%3Areports%2Fmissing`)).status, 400);
+    assert.equal((await get(`${review.baseUrl}/api/entity?ref=slice%3Areports%2Fmissing`)).status, 404);
     assert.equal((await get(`${review.baseUrl}/api/entity?ref=docs%2Froadmap.md`)).status, 400);
   } finally {
     await review.close();
@@ -233,7 +233,10 @@ test("records a browser answer and lists it apart from open questions", async (c
     assert.equal((await post(endpoint, { initiative: "../reports", id: gate.id, choice: "approve" })).status, 400);
     const invalid = await post(endpoint, { initiative: "reports", id: gate.id, choice: "request-changes" });
     assert.deepEqual([invalid.status, JSON.parse(invalid.text).code], [400, "invalid_answer"]);
-    const answered = await post(endpoint, { initiative: "reports", id: gate.id, choice: "approve", note: "Looks right." });
+    const noteOnly = await post(endpoint, { initiative: "reports", id: gate.id, choice: null, note: "The arrows point the wrong way." });
+    assert.deepEqual([noteOnly.status, JSON.parse(noteOnly.text).code], [400, "invalid_answer"], "a review answer is never guessed from its note");
+    assert.match(JSON.parse(noteOnly.text).message, /choice must be approve or request-changes/);
+    const answered =await post(endpoint, { initiative: "reports", id: gate.id, choice: "approve", note: "Looks right." });
     assert.equal(answered.status, 200, answered.text);
     assert.equal(JSON.parse(answered.text).gate.answer.choice, "approve");
     const again = await post(endpoint, { initiative: "reports", id: gate.id, choice: "approve" });
@@ -245,6 +248,35 @@ test("records a browser answer and lists it apart from open questions", async (c
     assert.deepEqual(after.answered.map((item) => [item.id, item.answer.note]), [[gate.id, "Looks right."]]);
     const index = (await get(`${review.baseUrl}/api/index`)).json();
     assert.deepEqual(index.navigation.attention, { needsYou: 3, gates: 0, answered: 1, watch: 2 });
+  } finally {
+    await review.close();
+  }
+});
+
+test("accepts a decision answered by a note alone and an assistance gate marked done", async (context) => {
+  const projectRoot = await fixture(context);
+  const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  const current = await readCoordinationState({ projectRoot, initiative: "reports" });
+  await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: {
+    gateOperations: [
+      { op: "ask", kind: "decision", question: "Keep the old export format?", artifacts: [], options: [{ id: "keep", label: "Keep" }, { id: "drop", label: "Drop" }] },
+      { op: "ask", kind: "assistance", question: "Install the signing key.", artifacts: [] }
+    ]
+  } });
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const gates = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data.needsYou.filter((item) => item.type === "gate");
+    const decision = gates.find((item) => item.kind === "decision");
+    const assistance = gates.find((item) => item.kind === "assistance");
+    const endpoint = `${review.baseUrl}/api/gates/answer`;
+    const empty = await post(endpoint, { initiative: "reports", id: decision.id, choice: null, note: "  " });
+    assert.deepEqual([empty.status, JSON.parse(empty.text).code], [400, "invalid_answer"]);
+    const free = await post(endpoint, { initiative: "reports", id: decision.id, choice: null, note: "Keep it for one release." });
+    assert.equal(free.status, 200, free.text);
+    assert.deepEqual(JSON.parse(free.text).gate.answer.choice, null);
+    const done = await post(endpoint, { initiative: "reports", id: assistance.id, choice: "done", note: "" });
+    assert.equal(done.status, 200, done.text);
+    assert.deepEqual([JSON.parse(done.text).gate.answer.choice, JSON.parse(done.text).gate.answer.note], ["done", null]);
   } finally {
     await review.close();
   }
@@ -266,4 +298,84 @@ test("treats the initiative directory as the root slice folder", async (context)
   } finally {
     await review.close();
   }
+});
+
+test("flags an open question whose every attached file is gone", async (context) => {
+  const projectRoot = await fixture(context);
+  const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  const current = await readCoordinationState({ projectRoot, initiative: "reports" });
+  await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: {
+    gateOperations: [{ op: "ask", kind: "decision", question: "Keep the dropped attribution file?", artifacts: ["docs/requirements/dropped.md"], options: [{ id: "keep", label: "Keep" }, { id: "drop", label: "Drop" }] }]
+  } });
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const gates = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data.needsYou.filter((item) => item.type === "gate");
+    assert.deepEqual(gates.map((gate) => [gate.kind, gate.stale ?? false]), [["visual-review", false], ["decision", true]], "a question with some files left is not flagged");
+  } finally {
+    await review.close();
+  }
+});
+
+test("lists closed questions with their answer or the reason they were withdrawn", async (context) => {
+  const projectRoot = await fixture(context);
+  const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  const current = await readCoordinationState({ projectRoot, initiative: "reports" });
+  const gate = current.state.pending.find((entry) => entry && typeof entry === "object");
+  await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: {
+    gateOperations: [{ op: "resolve", id: gate.id, reason: "The design was replaced, so this review no longer applies." }]
+  } });
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const data = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
+    assert.equal(data.needsYou.some((item) => item.id === gate.id), false);
+    assert.deepEqual(data.earlier.map((item) => [item.id, item.kind, item.reason, item.answer, item.initiative.id]), [[gate.id, gate.kind, "The design was replaced, so this review no longer applies.", null, "reports"]]);
+  } finally {
+    await review.close();
+  }
+});
+
+test("shows a not-started slice whose design waits at its gate as in design review", async (context) => {
+  const projectRoot = await fixture(context);
+  const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  const current = await readCoordinationState({ projectRoot, initiative: "reports" });
+  await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: {
+    gateOperations: [{ op: "ask", kind: "visual-review", slice: "authorize", question: "Review the authorize design.", artifacts: [] }]
+  } });
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const initiative = (await get(`${review.baseUrl}/api/entity?ref=initiative%3Areports`)).json().data;
+    assert.equal(initiative.record.slices.authorize.status, "not-started", "the record itself is unchanged");
+    assert.deepEqual(initiative.designReview, { authorize: "waiting" }, "an in-progress slice's gate does not count");
+    assert.equal(initiative.derived.designCandidates.includes("authorize"), false);
+    const slice = (await get(`${review.baseUrl}/api/entity?ref=slice%3Areports%2Fauthorize`)).json().data;
+    assert.equal(slice.designReview, "waiting");
+  } finally {
+    await review.close();
+  }
+});
+
+test("a slice page places planned changes through the published code index without building one", async (context) => {
+  const projectRoot = await fixture(context);
+  const { loadEntity } = await import("../../dist/server/review/workspace-model.mjs");
+  const { projectStorageKey } = await import("../../dist/server/repository-intelligence/index-progress.mjs");
+  await writeFile(path.join(projectRoot, "docs/plans/reports/download/slice.md"), "# Download\n\n## Contract\n1. `report download <id>` writes the bytes.\n\n## Changes\n- change `src/client.rs`: `get` streams (§1).\n");
+  await mkdir(path.join(projectRoot, "src"), { recursive: true });
+  await writeFile(path.join(projectRoot, "src/client.rs"), "fn get() {}\n");
+  const cache = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-review-units-")));
+  context.after(() => rm(cache, { recursive: true, force: true }));
+  const ref = "slice:reports/download";
+
+  const before = (await loadEntity(projectRoot, ref, { intelligenceDirectories: [cache] })).data.designView;
+  assert.equal(before.indexed, null, "no published index means no places");
+  assert.equal(before.changes[0].places, null);
+
+  const storage = path.join(cache, "projects", projectStorageKey(projectRoot));
+  const revision = "a".repeat(64);
+  await mkdir(storage, { recursive: true });
+  await writeFile(path.join(storage, "current.json"), JSON.stringify({ snapshot: "s1", revision, builtAt: new Date().toISOString() }));
+  await writeFile(path.join(storage, `units-${revision}.json`), JSON.stringify({ schemaVersion: 1, snapshot: "s1", revision, units: [{ id: "u", file: "src/client.rs", kind: "function", name: "get", range: { startLine: 1, endLine: 1 } }], edges: [] }));
+  const after = (await loadEntity(projectRoot, ref, { intelligenceDirectories: [cache] })).data.designView;
+  assert.deepEqual(after.indexed, { snapshot: "s1" });
+  assert.deepEqual(after.changes[0].places, [{ unit: "get", kind: "function", startLine: 1, endLine: 1 }]);
+  assert.deepEqual(after.changes[0].clauses, [1]);
 });

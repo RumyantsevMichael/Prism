@@ -93,3 +93,13 @@ test("a proposed split the person asked for is accepted only with the gate where
   assert.deepEqual(accepted.record.slices[INITIATIVE].splitEvidence, { kind: "user_gate", gate });
   assert.match(await readFile(path.join(root, PLANS, "initiative.md"), "utf8"), /download/);
 });
+
+test("a proposal whose slice.md has a Changes line Prism cannot read is refused with that line", async (context) => {
+  const root = await project(context);
+  const single = [{ op: "accept_design", slug: INITIATIVE, frozenTests: ["test/download.test.mjs"], review: "none" }];
+  await writeFile(path.join(root, PLANS, "slice.md"), "# Signed reports\n\n## Contract\n1. Downloads write the report.\n\n## Changes\n- change `src/a.mjs` and `src/b.mjs`: both read the report.\n");
+  await assert.rejects(update(root, [{ op: "propose_design", slug: INITIATIVE, operations: single }]), /src\/a\.mjs` and `src\/b\.mjs[\s\S]*comma-separated paths/);
+  await writeFile(path.join(root, PLANS, "slice.md"), "# Signed reports\n\n## Contract\n1. Downloads write the report.\n\n## Changes\n- change `src/a.mjs`, `src/b.mjs`: both read the report.\n");
+  const proposed = await update(root, [{ op: "propose_design", slug: INITIATIVE, operations: single }]);
+  assert.equal(proposed.record.proposals[INITIATIVE].operations.length, 1);
+});

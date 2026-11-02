@@ -42,6 +42,22 @@
     </div>
     <div id="tabs" class="artifact-tabs" role="tablist" aria-label="Open artifacts"></div>
   </header>
+  <div id="app-gone" class="app-gone-banner" role="alert" hidden>
+    <span class="app-gone-mark" aria-hidden="true"></span>
+    <div class="app-gone-text">
+      <p class="app-gone-title">The review app stopped, so this page is no longer live.</p>
+      <p>To get a new link, ask the agent to open the review browser. This page reconnects on its own if the same app comes back.</p>
+    </div>
+  </div>
+  <div id="private-server" class="app-gone-banner is-private" role="status" hidden>
+    <span class="app-gone-mark" aria-hidden="true"></span>
+    <div class="app-gone-text">
+      <p class="app-gone-title">This page belongs to one agent session, not the shared review app.</p>
+      <p>The shared review app could not be reached, so another session may show this project at a different link, and this page stops when its session ends.</p>
+      <p class="private-server-reason" id="private-server-reason"></p>
+    </div>
+    <button type="button" class="banner-dismiss" id="private-server-dismiss" aria-label="Dismiss">×</button>
+  </div>
   <div id="notice" class="notice-banner" role="status" aria-live="polite" hidden></div>
   <div id="connection" class="connection-banner" role="alert" hidden>The review server is not responding. Retrying…</div>
   <main class="app-shell" id="app-shell">

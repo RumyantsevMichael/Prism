@@ -122,6 +122,13 @@ export function panelHtml(status) {
     <p class="indexing-panel-note">Agents build and update the index when they search. This page only shows its state.</p>`;
 }
 
+let latest = null;
+
+// The latest index status any view can read, and an event on each poll so a view can react when a build finishes.
+export function currentIndexStatus() {
+  return latest;
+}
+
 export function createIndexingStatus({ root, button, label, detail, meter, panel, fetchJson }) {
   let status = null;
   let timer = null;
@@ -161,7 +168,9 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
       status = await fetchJson("./api/indexing");
     } catch {
     }
+    latest = status;
     render();
+    document.dispatchEvent(new CustomEvent("prism:indexing", { detail: status }));
     timer = setTimeout(refresh, status?.state === "preparing" ? ACTIVE_POLL_MS : IDLE_POLL_MS);
   }
 

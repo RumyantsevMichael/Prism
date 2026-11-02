@@ -25,7 +25,8 @@ Every slice MUST have its own record folder keyed by its slug, including the roo
 All record access MUST go through one record store in the server, so a later backend can replace the working-tree layout without changing tools or skills.
 Run entries MUST be immutable once written, and a second entry with the same identifier MUST be refused.
 Coordination cleanup MUST NOT remove run entries.
-Records written by an earlier layout MUST move to the new layout for every initiative at once, keeping their bytes so revisions stay valid.
+Records written by an earlier layout MUST move to the new layout for every initiative at once, on the first record write, keeping their bytes so revisions stay valid.
+Until then, reading a record MUST find it in the earlier layout, and the write that moves records MUST report the moved files in its tool result.
 A legacy record whose new location already holds different bytes MUST stay in place rather than be overwritten.
 Records MUST be marked as generated for the major git hosts, so pull request diffs collapse them.
 Reading a record MUST NOT create files.
@@ -37,6 +38,7 @@ One directory separates what humans review from what tools own, and makes the bo
 Identifier addressing lets tools validate every reference and keeps skills independent of storage.
 Committed records travel with the branch, so cloud sessions, local checkouts, and pull requests see the same state.
 Moving all initiatives at once keeps the review browser consistent, because no initiative reads from an old location while another reads from the new one.
+Moving on the first write rather than the first read keeps a read-only session, such as opening the review browser, from changing the work tree, and reporting the move lets the person commit it apart from the task that triggered it.
 Byte-preserving moves keep content-hash revisions, so open reviews and change maps keep their gates.
 
 ## Alternatives
@@ -50,16 +52,21 @@ Keeping records beside their Markdown would keep storage paths in skills and kee
 
 Pull requests show records as generated files, while slice narratives and diagrams stay reviewable.
 Tool inputs change from record paths to initiative and slice identifiers, which is a breaking change for callers that passed paths.
-Projects upgrade automatically on the first record access, and a conflicting legacy record stays visible until a person resolves it.
-A branch created before the move brings legacy records back when merged, and the next record access moves them again.
+Projects upgrade automatically on the first record write, and a conflicting legacy record stays visible until a person resolves it.
+A branch created before the move brings legacy records back when merged, and the next record write moves them again.
 Coordination cleanup removes an initiative's coordination records through the initiative tool, while its run entries remain as history.
 
 ## Mechanism
 
 The record store maps each record key to its location under `.prism`, checks that the location resolves inside the project, and writes atomically under a lock.
-Before any record access, the store moves legacy records found in the configured plans and roadmap paths, at most once per short interval per project.
+A read resolves a record that has no file under `.prism` to its legacy location in the configured plans and roadmap paths.
+Each record update, and every record write, first moves all legacy records, at most once per short interval per project, so the update reads and locks each record where it now lives.
+The MCP server appends the moved files to the result of the tool call that moved them, once.
+The staleness check of a snapshot ignores legacy record files, which no write has moved yet.
 The first record write adds the generated-file attributes and an ignore rule for transient lock files beside the records.
 Stored references from earlier records, such as a review's change map path, resolve to the record key they now name.
 The roadmap and initiative tools keep writing their generated Markdown views in the configured paths.
 
 ## Decision Log
+
+2026-11-01: Moved legacy records on the first record write instead of the first access, after a local test showed a read moving files into an unrelated branch.

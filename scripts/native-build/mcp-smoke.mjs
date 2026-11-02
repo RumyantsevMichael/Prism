@@ -113,7 +113,8 @@ async function managedTrial() {
 }
 try {
   start();
-  assert.equal((await call("discover_repository_intelligence")).status, "unprepared");
+  // The server starts preparation in the background as soon as it knows the project, so discovery can already see it running.
+  assert.ok(["unprepared", "preparing"].includes((await call("discover_repository_intelligence")).status));
   const key = { initiative: "plans", slice: "demo" };
   const baseline = await call("capture_repository_snapshot", key);
   const cold = ready("search_repository_concepts", { snapshotId: baseline.snapshotId, query: "retryRequest", filters: { domains: ["code"] } });

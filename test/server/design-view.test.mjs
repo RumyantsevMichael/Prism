@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-view-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -58,7 +59,14 @@ test("a design's contract clauses and planned changes are read from slice.md", (
     ["change", "src/storage/client.rs", ["get"]],
     ["change", "src/cli/report.rs", ["download"]]
   ]);
-  assert.match(plannedChanges("## Changes\n- tweak `a.rs`\n- change `../b.rs`: x\n").problems.join(" "), /does not start with add[\s\S]*not a normalized/);
+  assert.match(plannedChanges("## Changes\n- tweak `a.rs`\n- change `../b.rs`: x\n").problems.join(" "), /must be add, change, or remove[\s\S]*not a normalized/);
+  // One line may name several paths; each becomes its own change with the shared note, and a line that runs on after its paths is refused.
+  const listed = plannedChanges("## Changes\n- change `dist/a.mjs`, `dist/b.mjs`: regenerated output of `build`.\n");
+  assert.deepEqual(listed.problems, []);
+  assert.deepEqual(listed.changes.map((change) => [change.path, change.units, change.note]), [["dist/a.mjs", [], "regenerated output of `build`."], ["dist/b.mjs", [], "regenerated output of `build`."]], "code in the reason is not a unit");
+  // The units are the names the note starts with, joined by commas or "and".
+  assert.deepEqual(plannedChanges("## Changes\n- change `a.ts`: `get`, `put` and `List` take `id?: string | null`.\n").changes[0].units, ["get", "put", "List"]);
+  assert.equal(plannedChanges("## Changes\n- change `a.mjs` and `b.mjs`: x\n").problems.length, 1);
 });
 
 test("the design view keeps only examples that cite a real clause and test, and lists clauses without one as gaps", async (context) => {
@@ -98,6 +106,56 @@ test("a planned change to a missing file is flagged before implementation", asyn
   const view = await loadDesignView(root, INITIATIVE, INITIATIVE);
   assert.deepEqual(view.changeProblems, ["src/cli/missing.rs is planned to change but does not exist."]);
   assert.equal(view.examplesWritten, null);
+});
+
+test("a Changes line names the Contract clauses it serves, and a clause the Contract lacks is a problem", () => {
+  const tagged = plannedChanges(`${DESIGN.split("## Changes")[0]}## Changes\n- change \`src/cli/report.rs\`: \`download\` and its errors (§1, §3).\n- change \`src/storage/client.rs\`: \`get\` streams.\n`);
+  assert.deepEqual(tagged.problems, []);
+  assert.deepEqual(tagged.changes.map((change) => [change.note, change.clauses, change.item]), [["`download` and its errors", [1, 3], 0], ["`get` streams.", [], 1]]);
+  assert.match(plannedChanges(`${DESIGN.split("## Changes")[0]}## Changes\n- change \`src/cli/report.rs\`: x (§4).\n`).problems.join(" "), /§4/);
+});
+
+test("the design view places changed units through the code index and lists the tests behind each change", async (context) => {
+  const root = await project(context);
+  await writeFile(path.join(root, "docs", "plans", INITIATIVE, "slice.md"), DESIGN.replace("`get` streams large reports.", "`get` streams large reports (§1).").replace("`download` subcommand.", "`download` and `print_error` (§2, §3)."));
+  await updateDesignView({ projectRoot: root, initiative: INITIATIVE, slice: INITIATIVE, examples });
+  const units = { snapshot: "s1", units: [
+    { file: "src/storage/client.rs", kind: "function", name: "get", range: { startLine: 1, endLine: 1 } },
+    { file: "src/cli/report.rs", kind: "function", name: "download", qualifiedName: "cli::download", range: { startLine: 4, endLine: 9 } }
+  ] };
+  const view = await loadDesignView(root, INITIATIVE, INITIATIVE, { units });
+  assert.deepEqual(view.indexed, { snapshot: "s1" });
+  const [added, client, cli] = view.changes;
+  assert.deepEqual(added.places, [], "an added file has no place yet");
+  assert.deepEqual(client.places, [{ unit: "get", kind: "function", startLine: 1, endLine: 1 }]);
+  assert.deepEqual(client.tests.map((item) => item.test), ["download_writes_bytes"]);
+  assert.deepEqual(cli.places.map((place) => [place.unit, place.startLine, place.endLine]), [["download", 4, 9], ["print_error", null, null]]);
+  assert.deepEqual(cli.tests.map((item) => item.test), ["download_unknown_id"], "clause 3 has no example, so only clause 2's test is listed");
+  assert.deepEqual(cli.places[1], { unit: "print_error", kind: null, startLine: null, endLine: null }, "a name the index lacks is a unit the change adds");
+  assert.deepEqual(view.changeProblems, []);
+  const unindexed = await loadDesignView(root, INITIATIVE, INITIATIVE);
+  assert.equal(unindexed.indexed, null);
+  assert.equal(unindexed.changes[1].places, null);
+});
+
+test("a slice of a split scope cites the scope's Contract and shows only the clauses it serves", async (context) => {
+  const root = await project(context);
+  await updateDesignView({ projectRoot: root, initiative: INITIATIVE, slice: INITIATIVE, examples });
+  const current = await getInitiative({ projectRoot: root, initiative: INITIATIVE });
+  await updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, operations: [{ op: "split", parent: INITIATIVE, children: [
+    { slug: "stream", title: "Stream reports", requirements: ["req.md#R1"] },
+    { slug: "errors", title: "Report errors", requirements: ["req.md#R1"] }
+  ], evidence: await splitEvidence(root, `docs/plans/${INITIATIVE}`, "errors") }] });
+  await mkdir(path.join(root, "docs", "plans", INITIATIVE, "errors"), { recursive: true });
+  await writeFile(path.join(root, "docs", "plans", INITIATIVE, "errors", "slice.md"), "# Report errors\n\n## Changes\n- change `src/cli/report.rs`: `download` error messages (§2, §3).\n");
+  const view = await loadDesignView(root, INITIATIVE, "errors");
+  assert.deepEqual(view.contract, { path: `docs/plans/${INITIATIVE}/slice.md`, slice: INITIATIVE });
+  assert.deepEqual(view.clauses.map((clause) => clause.number), [2, 3]);
+  assert.deepEqual(view.gaps, [3], "the scope's examples cover clause 2 only");
+  assert.deepEqual(view.changes[0].tests.map((item) => item.test), ["download_unknown_id"]);
+  assert.deepEqual(view.changeProblems, []);
+  const next = await getInitiative({ projectRoot: root, initiative: INITIATIVE });
+  await assert.doesNotReject(updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: next.revision, operations: [{ op: "set_status", slug: "errors", status: "in-progress" }, { op: "accept_design", slug: "errors", frozenTests: ["tests/report_download.rs"], review: "none" }] }), "a clause of the scope's Contract is a valid citation");
 });
 
 test("planned changes line up against the verified result's change map", () => {

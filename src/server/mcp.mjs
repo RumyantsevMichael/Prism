@@ -7,6 +7,7 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import { takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -36,6 +37,7 @@ import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs"
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
+import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
 // PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
@@ -120,6 +122,8 @@ async function requestedProjectRoot(argumentsValue) {
   }
   // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call.
   reviewServers.register(resolvedRoot);
+  // The native index starts building once the project is known, so a later search finds it ready; this never waits for the build.
+  void startBackgroundPreparation(resolvedRoot);
   return resolvedRoot;
 }
 
@@ -145,8 +149,12 @@ function requestedTabs(argumentsValue) {
   return hasArtifact ? argumentsValue.artifact : undefined;
 }
 
-function reviewContent(url) {
-  return `Human review URL: ${url}`;
+// A session that fell back to its own review server tells the agent, so two review pages for one project reach the user as a known cause.
+function reviewContent(url, review) {
+  const fallback = review.privateServer?.();
+  return fallback
+    ? `Human review URL: ${url}\nThis session serves the project from its own review server, because the shared review app could not be reached: ${fallback.reason} Another session may show the same project at a different URL, so tell the user that this link belongs to this session.`
+    : `Human review URL: ${url}`;
 }
 
 function stateContent(result) {
@@ -209,6 +217,11 @@ function sessionConsumptionContent(summary) {
     `Source reads: ${summary.preEdit.sourceReadCount}.`,
     `Compactions before first edit: ${summary.compaction.countBeforeFirstEdit}.`
   ].join("\n");
+}
+
+function privateServerContent(review) {
+  const fallback = review.privateServer?.();
+  return fallback ? { privateServer: fallback } : {};
 }
 
 function reviewSessionContent(review) {
@@ -647,7 +660,7 @@ const tools = [
   },
   {
     name: "update_coordination_state",
-    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision.",
+    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision; an update that only resolves gates by id goes through after other changes, such as the browser answer that prompted it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -707,7 +720,7 @@ const tools = [
             },
             gateOperations: {
               type: "array",
-              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
+              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
               items: {
                 oneOf: [
                   {
@@ -733,7 +746,7 @@ const tools = [
                     type: "object",
                     required: ["op", "id"],
                     additionalProperties: false,
-                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 } }
+                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 }, reason: { type: "string", minLength: 1, maxLength: 1000, description: "Required for an unanswered gate: the user's answer in the conversation, or why the question no longer applies. The review browser shows it with the closed question." } }
                   }
                 ]
               }
@@ -847,6 +860,11 @@ async function callStateTool(name, argumentsValue) {
     }
   } else {
     throw new Error(`Unknown state tool: ${name}`);
+  }
+  // Closed gates are history for the review browser; agents never need them.
+  if (resultValue?.state?.closed) {
+    const { closed, ...state } = resultValue.state;
+    resultValue = { ...resultValue, state };
   }
   return { content: [{ type: "text", text: stateContent(resultValue) }], structuredContent: resultValue };
 }
@@ -1020,6 +1038,16 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
   }
 }
 
+// The first write after an upgrade moves files in the user's work tree, so its result says which, to commit on their own.
+function withMigrationNote(value) {
+  const reports = takeMigrationReports();
+  if (!reports.length || !Array.isArray(value?.content)) return value;
+  const moved = reports.flatMap((report) => report.moved), conflicts = reports.flatMap((report) => report.conflicts);
+  const lines = [`Prism moved ${moved.length} record files from their old locations into .prism; commit these moves on their own, apart from the task's changes.`, ...moved.map((move) => `- ${move.from} -> ${move.to}`)];
+  if (conflicts.length) lines.push(`${conflicts.length} old files were kept because .prism already holds a different record: ${conflicts.map((move) => move.from).join(", ")}.`);
+  return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
+}
+
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
@@ -1064,11 +1092,11 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
       await review.setOpenTabs(tabs);
     }
     const url = await review.reviewUrl(tabs);
-    return { content: [{ type: "text", text: reviewContent(url) }], structuredContent: { url, ...await reviewSessionContent(review) } };
+    return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "present_review") {
     const opened = await review.open(requestedTabs(argumentsValue));
-    return { content: [{ type: "text", text: reviewContent(opened.url) }], structuredContent: { ...opened, ...await reviewSessionContent(review) } };
+    return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {
     const artifacts = await listArtifacts(review.projectRoot);
@@ -1077,10 +1105,13 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   throw new Error(`Unknown tool: ${name}`);
 }
 
-// A host that names the project at start gets it listed in the review app before any tool call, without delaying initialize,
-// and opens the review browser when nobody watches one; a host that names no project still gets a running app.
+// A host that names the project at start gets it listed in the review app and its native index preparing before any tool call, without
+// delaying initialize, and opens the review browser when nobody watches one; a host that names no project still gets a running app.
 if (process.env.CLAUDE_PROJECT_DIR) {
-  void realpath(process.env.CLAUDE_PROJECT_DIR).then(async (root) => reviewServers.register(root, { open: await opensAtStart(root) }), () => {});
+  void realpath(process.env.CLAUDE_PROJECT_DIR).then(async (root) => {
+    void startBackgroundPreparation(root);
+    reviewServers.register(root, { open: await opensAtStart(root) });
+  }, () => {});
 } else {
   reviewServers.startApp();
 }
@@ -1104,7 +1135,7 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
-      const value = await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id);
+      const value = withMigrationNote(await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id));
       // A cancelled request gets no response, as the MCP cancellation rules require.
       if (value.structuredContent?.status !== "cancelled") {
         result(request.id, value);

@@ -5,13 +5,13 @@ import { mkdir, readFile, realpath, rm, lstat } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { locateRecord, sliceDocumentFolder, writeRecord } from "./record-store.mjs";
+import { locateRecord, moveLegacyRecords, sliceDocumentFolder, writeRecord } from "./record-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 
 const SCHEMA_VERSION = 1;
 
-const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence"]);
+const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed"]);
 const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "review", "models"]);
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
@@ -19,6 +19,9 @@ const GATE_KEYS = new Set(["id", "kind", "slice", "question", "artifacts", "opti
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
 const OPTION_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ANSWER_KEYS = new Set(["choice", "note", "via", "answeredAt"]);
+// Closed gates stay readable so the user can see what they answered and why a question went away.
+const CLOSED_LIMIT = 20;
+const REASON_LIMIT = 1000;
 const REVIEW_CHOICES = new Set(["approve", "request-changes"]);
 const SETTING_VALUES = {
   autonomy: new Set(["conservative", "broad", "full"]),
@@ -111,7 +114,8 @@ function normalizeState(raw) {
     active: raw.active ?? [],
     pending: raw.pending ?? [],
     next: raw.next ?? [],
-    evidence: raw.evidence ?? []
+    evidence: raw.evidence ?? [],
+    ...(raw.closed === undefined ? {} : { closed: raw.closed })
   };
   for (const [key, value] of Object.entries(raw)) {
     if (!TOP_LEVEL_KEYS.has(key)) {
@@ -364,9 +368,44 @@ function validatePending(value, errors) {
   });
 }
 
+function validateClosed(value, errors) {
+  if (!Array.isArray(value) || value.length > CLOSED_LIMIT) {
+    addError(errors, "closed", `must be an array of at most ${CLOSED_LIMIT} closed user gates`);
+    return;
+  }
+  value.forEach((entry, index) => {
+    const entryPath = `closed[${index}]`;
+    if (!isRecord(entry)) {
+      addError(errors, entryPath, "must be a closed user gate");
+      return;
+    }
+    const { closedAt, reason, ...gate } = entry;
+    validateGate(gate, entryPath, errors);
+    if (typeof closedAt !== "string" || Number.isNaN(Date.parse(closedAt))) addError(errors, `${entryPath}.closedAt`, "must be an ISO timestamp");
+    if (reason !== undefined && (typeof reason !== "string" || !reason.trim() || reason.length > REASON_LIMIT)) addError(errors, `${entryPath}.reason`, `must be a non-empty reason of at most ${REASON_LIMIT} characters`);
+  });
+}
+
+function closedGate(gate, reason) {
+  return { ...gate, closedAt: new Date().toISOString(), ...(reason ? { reason } : {}) };
+}
+
+// Replacing the pending list may drop answered gates, but an unanswered question is withdrawn only through resolve with a reason.
+function droppedGates(before, replacement) {
+  if (replacement === undefined) return [];
+  const kept = new Set(replacement.filter(isRecord).map((gate) => gate.id));
+  const dropped = before.filter((gate) => isRecord(gate) && !kept.has(gate.id));
+  const unanswered = dropped.find((gate) => !gate.answer);
+  if (unanswered) {
+    throw error("invalid_changes", `The pending list drops the unanswered gate ${unanswered.id}; withdraw it with a resolve operation and a reason.`);
+  }
+  return dropped.map((gate) => closedGate(gate, null));
+}
+
 function applyGateOperations(pending, operations) {
   const next = [...pending];
   const opened = [];
+  const closed = [];
   operations.forEach((operation, index) => {
     if (!isRecord(operation)) {
       throw error("invalid_changes", `gateOperations[${index}] must be an object.`);
@@ -393,16 +432,28 @@ function applyGateOperations(pending, operations) {
       next.push(gate);
       opened.push({ id: gate.id, kind: gate.kind, slice: gate.slice ?? null });
     } else if (operation.op === "resolve") {
+      const unknown = Object.keys(operation).filter((key) => !["op", "id", "reason"].includes(key));
+      if (unknown.length) {
+        throw error("invalid_changes", `gateOperations[${index}] has unsupported fields: ${unknown.join(", ")}.`);
+      }
       const position = next.findIndex((item) => isRecord(item) && item.id === operation.id);
       if (position === -1) {
         throw error("unknown_gate", `No pending user gate has the id ${operation.id}.`);
       }
+      const reason = typeof operation.reason === "string" ? operation.reason.trim() : "";
+      if (operation.reason !== undefined && (!reason || reason.length > REASON_LIMIT)) {
+        throw error("invalid_changes", `gateOperations[${index}].reason must be a non-empty reason of at most ${REASON_LIMIT} characters.`);
+      }
+      if (!next[position].answer && !reason) {
+        throw error("invalid_changes", `gateOperations[${index}] resolves the unanswered gate ${operation.id}; give a reason, such as the user's answer in the conversation or why the question no longer applies.`);
+      }
+      closed.push(closedGate(next[position], reason));
       next.splice(position, 1);
     } else {
       throw error("invalid_changes", `gateOperations[${index}].op must be ask or resolve.`);
     }
   });
-  return { pending: next, opened };
+  return { pending: next, opened, closed };
 }
 
 // Only the review browser records answers, so agent updates may keep an answer but never add or change one.
@@ -435,6 +486,9 @@ function validateStateValue(raw) {
   if (raw.pending !== undefined) {
     validatePending(raw.pending, errors);
   }
+  if (raw.closed !== undefined) {
+    validateClosed(raw.closed, errors);
+  }
   for (const key of ["next", "evidence"]) {
     if (raw[key] !== undefined) {
       validateStringArray(raw[key], key, errors);
@@ -453,7 +507,7 @@ function validateChanges(changes) {
     throw error("invalid_changes", "The changes argument must contain at least one managed state field.");
   }
   for (const key of Object.keys(changes)) {
-    if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations" && key !== "gateOperations") || key === "schemaVersion") {
+    if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations" && key !== "gateOperations") || key === "schemaVersion" || key === "closed") {
       throw error("invalid_changes", `The state field ${key} cannot be changed through this capability.`);
     }
   }
@@ -526,7 +580,7 @@ function publicStateResult(resolved, loaded) {
 }
 
 function changedFields(before, after) {
-  return ["settings", "active", "pending", "next", "evidence"].filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after[key]));
+  return ["settings", "active", "pending", "next", "evidence", "closed"].filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after[key]));
 }
 
 export async function readCoordinationState({ projectRoot, initiative }) {
@@ -543,14 +597,21 @@ export async function updateCoordinationState({ projectRoot, initiative, expecte
   if (expectedRevision !== null && typeof expectedRevision !== "string") {
     throw error("invalid_revision", "The expectedRevision argument must be a state revision string or null.");
   }
+  await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => applyStateChange(resolved, expectedRevision, changes), error, { renew: Boolean(changes.activeOperations?.length) }));
 }
 
+// Resolving a gate by its id removes only that gate, so it holds after any other change, such as the browser answer that prompted it.
+function resolvesGatesOnly(changes) {
+  const keys = Object.keys(changes ?? {});
+  return keys.length === 1 && keys[0] === "gateOperations" && changes.gateOperations.length > 0 && changes.gateOperations.every((operation) => operation?.op === "resolve");
+}
+
 async function applyStateChange(resolved, expectedRevision, changes) {
     const current = await loadState(resolved.path);
-    if (current.revision !== expectedRevision) {
+    if (current.revision !== expectedRevision && !(current.exists && resolvesGatesOnly(changes))) {
       throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });
     }
     if (current.exists && !current.valid) {
@@ -560,15 +621,18 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(before.active)) throw error("gate_blocked", "Use typed activeOperations to change active work; array replacement cannot bypass review gates.");
     return withReviewGatesLocked(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? [], async () => {
     const activeResult = await applyActiveOperations(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? []);
+    const dropped = droppedGates(before.pending, changes.pending);
     const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
     assertAnswersUnchanged(before.pending, gateResult.pending);
+    const closed = [...(before.closed ?? []), ...dropped, ...gateResult.closed].slice(-CLOSED_LIMIT);
     const candidate = normalizeState({
       ...before,
       active: activeResult.active,
       ...(changes.settings === undefined ? {} : { settings: { ...before.settings, ...changes.settings } }),
       pending: gateResult.pending,
       ...(changes.next === undefined ? {} : { next: changes.next }),
-      ...(changes.evidence === undefined ? {} : { evidence: changes.evidence })
+      ...(changes.evidence === undefined ? {} : { evidence: changes.evidence }),
+      ...(closed.length ? { closed } : {})
     });
     const validation = validateStateValue(candidate);
     if (validation.errors.length > 0) {
@@ -591,6 +655,7 @@ async function applyStateChange(resolved, expectedRevision, changes) {
 }
 
 export async function answerUserGate({ projectRoot, initiative, id, choice = null, note = null, write = writeRecord }) {
+  await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
@@ -630,6 +695,7 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
   if (typeof activeSlice !== "string" || !SLUG_PATTERN.test(activeSlice) || typeof recoveryContent !== "string" || !recoveryContent.trim() || Buffer.byteLength(recoveryContent) > 65536) {
     throw error("invalid_pause", "An active slice and a recovery note of at most 64 KiB are required.");
   }
+  await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   const folder = await sliceDocumentFolder(resolved.root, resolved.initiative, activeSlice);
   if (folder === null || resolved.directory === null) {

@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { lstat, mkdir, readFile, rm } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
@@ -10,6 +10,8 @@ export const REVIEW_APP_PROTOCOL = 1;
 const DISCOVERY_FILE = "review-app.json";
 const PROJECTS_FILE = "review-app-projects.json";
 const LOCK_BASE = "review-app";
+const FALLBACK_LOG = "fallbacks.log";
+const FALLBACK_LOG_BYTES = 256 * 1024;
 
 export function reviewAppDirectory(env = process.env) {
   if (env.PRISM_REVIEW_APP_DIR) {
@@ -165,4 +167,18 @@ export function proveResponse(controlToken, nonce, body) {
 
 export function verifyResponse(controlToken, nonce, body, proof) {
   return typeof proof === "string" && sameText(proof, proveResponse(controlToken, nonce, body));
+}
+
+// A session that serves its project from its own review server says why on stderr and in a log beside the app's state, because two
+// review pages for one project are otherwise unexplained. The log keeps one older file once it grows past its limit.
+export async function recordFallback(directory, { projectRoot, reason, pluginVersion = null }) {
+  process.stderr.write(`Prism serves ${projectRoot} from this session's own review server, because the shared review app could not be reached: ${reason}\n`);
+  try {
+    await prepareDirectory(directory);
+    const file = path.join(directory, FALLBACK_LOG);
+    if (((await stat(file).catch(() => null))?.size ?? 0) > FALLBACK_LOG_BYTES) await rename(file, `${file}.1`);
+    await appendFile(file, `${JSON.stringify({ at: new Date().toISOString(), pid: process.pid, projectRoot, reason, ...(pluginVersion ? { pluginVersion } : {}) })}\n`, { mode: 0o600 });
+  } catch {
+    // A directory the app cannot use either leaves the stderr line as the only record.
+  }
 }

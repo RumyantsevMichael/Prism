@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -901,10 +902,7 @@ test("the hook command fails open for malformed input", async (context) => {
   const hookPath = fileURLToPath(new URL("../../dist/hooks/record-session-trace.mjs", import.meta.url));
   const dataDirectory = await temporaryDirectory(context, "prism-trace-hook-malformed-");
   const child = spawn(process.execPath, [hookPath], {
-    env: {
-      ...process.env,
-      CLAUDE_PLUGIN_DATA: dataDirectory
-    },
+    env: isolatedEnv({ CLAUDE_PLUGIN_DATA: dataDirectory }),
     stdio: ["pipe", "pipe", "pipe"]
   });
   child.stdin.end("not-json");

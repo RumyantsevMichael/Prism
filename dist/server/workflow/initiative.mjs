@@ -9,10 +9,11 @@ import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { locateRecord, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
+import { locateRecord, moveLegacyRecords, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
 import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, measureContract, REVIEW_MARKS, stageFrozenTests, withdrawFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
+import { contractClauses, plannedChanges } from "./design-view.mjs";
 
 const RECORD_NAME = "initiative.json";
 const PROJECTION_NAME = "initiative.md";
@@ -216,14 +217,21 @@ function markdown(record) {
 }
 
 // Requirement files cite obligations as <file>.md§<n>, so that form is accepted and stored as <requirements dir>/<file>.md#<n>.
+// The roadmap validates its references the same way, so an initiative created from a roadmap item never refuses them.
+export function normalizeRequirementReference(requirementsDirectory, reference) {
+  const cited = /^([^\s/#§]+\.md)§([^\s#§]+)$/.exec(reference);
+  if (cited && requirementsDirectory) return { reference: `${requirementsDirectory}/${cited[1]}#${cited[2]}` };
+  if (!/^[^\s#]+#[^\s#]+$/.test(reference)) {
+    return { problem: `Invalid requirement reference ${JSON.stringify(reference)}: use <requirements path>.md#<number>, such as ${requirementsDirectory ?? "docs/requirements"}/capability.md#1, or <file>.md§<number>.` };
+  }
+  return { reference };
+}
+
 function normalizeRequirements(resolved, references) {
   return references.map((reference) => {
-    const cited = /^([^\s/#§]+\.md)§([^\s#§]+)$/.exec(reference);
-    if (cited && resolved.requirementsDirectory) return `${resolved.requirementsDirectory}/${cited[1]}#${cited[2]}`;
-    if (!/^[^\s#]+#[^\s#]+$/.test(reference)) {
-      throw fail("validation_failed", `Invalid requirement reference ${JSON.stringify(reference)}: use <requirements path>.md#<number>, such as ${resolved.requirementsDirectory ?? "docs/requirements"}/capability.md#1, or <file>.md§<number>.`);
-    }
-    return reference;
+    const normalized = normalizeRequirementReference(resolved.requirementsDirectory, reference);
+    if (normalized.problem) throw fail("validation_failed", normalized.problem);
+    return normalized.reference;
   });
 }
 
@@ -421,6 +429,17 @@ async function applyOperation(resolved, record, operation, effects) {
       }
       const problems = diagramProblems(diagrams);
       if (problems.length) throw fail("diagram_problems", `The design of ${operation.slug} was not accepted: ${problems.join(" ")}`, { problems });
+      // The person reads Changes as the plan, so a line Prism cannot read is refused here, while design can still fix it.
+      const designOf = (slug) => readFile(path.join(resolved.root, sliceFolder(resolved.directory, slices, slug), "slice.md"), "utf8").catch(() => null);
+      const designText = await designOf(operation.slug);
+      // A slice of a split scope cites the Contract of the nearest ancestor design that has one.
+      let contractText = designText;
+      for (let parent = slices[operation.slug]?.parent, seen = new Set([operation.slug]); designText !== null && !contractClauses(contractText ?? "").length && parent && !seen.has(parent); parent = slices[parent]?.parent) {
+        seen.add(parent);
+        contractText = await designOf(parent);
+      }
+      const changeProblems = designText === null ? [] : plannedChanges(designText, contractText ?? designText).problems;
+      if (changeProblems.length) throw fail("validation_failed", `The design of ${operation.slug} was not accepted: ${changeProblems.join(" ")}`, { problems: changeProblems });
       effects.diagrams.push(...diagrams);
       const acceptedAt = new Date().toISOString();
       // A new design answers the contract defects reported against the old one.
@@ -547,6 +566,7 @@ export async function updateInitiative(input) {
   validateInput(UPDATE_INITIATIVE_SCHEMA, input);
   const standalone = input.operations.find((operation) => STANDALONE.has(operation.op));
   if (standalone && input.operations.length > 1) throw fail("validation_failed", `${standalone.op} must be the only operation of its update.`);
+  await moveLegacyRecords(input.projectRoot);
   if (standalone?.op === "remove_records") return removeRecords(input);
   const resolved = await resolveInitiative(input.projectRoot, input.initiative, true);
   const diagramCache = await precheckDiagrams(resolved, input.operations);
@@ -645,7 +665,7 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements, and refuses a slice.md Changes line that is not add, change, or remove followed by comma-separated paths in backticks and a colon with the note. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

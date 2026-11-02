@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
@@ -12,7 +13,7 @@ const examples = JSON.parse(await readFile(new URL("./fixtures/change-map.json",
 async function fixture(t) {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "prism-concept-mcp-"));
   const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-concept-mcp-data-")));
-  const env = { ...process.env, PRISM_REVIEW_APP: "off", PLUGIN_DATA: privateData, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) };
+  const env = isolatedEnv({ PRISM_REVIEW_APP: "off", PLUGIN_DATA: privateData, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) });
   delete env.CLAUDE_PROJECT_DIR;
   const child = spawn(process.execPath, [SERVER], { cwd: projectRoot, env, stdio: ["pipe", "pipe", "pipe"] });
   const pending = new Map();

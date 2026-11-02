@@ -3,13 +3,18 @@ import { escapeHtml } from "./util.js";
 // Heading ids carry a prefix so a heading such as "Tabs" never collides with an id the page itself uses.
 export const HEADING_PREFIX = "md-";
 
+// A source anchor names one line, `L12`, or a range, `L12-39`.
+export const LINE_RANGE = /^L(\d+)(?:-(\d+))?$/;
+
 // GitHub-style slugs, so an anchor written for the repository host also lands here.
 // A Markdown file can name a section with an explicit anchor line, such as `<a id="1"></a>` above a requirement heading.
 const EXPLICIT_ANCHOR = /^\s*&lt;a\s+(?:id|name)=&quot;([^&]+)&quot;\s*&gt;\s*&lt;\/a&gt;\s*$/;
 
 // Resolves an anchor to its heading, also when an explicit anchor stands just above the heading it names.
+// A source line range such as `L12-39` resolves to its first line.
 export function anchorTarget(root, anchor) {
-  const target = anchor && root.querySelector(`#${CSS.escape(HEADING_PREFIX + anchor)}`);
+  const line = anchor?.match(LINE_RANGE);
+  const target = anchor && root.querySelector(`#${CSS.escape(HEADING_PREFIX + (line ? `L${line[1]}` : anchor))}`);
   const next = target?.nextElementSibling;
   return target?.classList.contains("md-anchor") && next && /^H[1-6]$/.test(next.tagName) ? next : target;
 }

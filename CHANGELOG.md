@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.15.0](https://github.com/RumyantsevMichael/Prism/compare/v0.14.1...v0.15.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* Prism machine JSON moves from the plans and roadmap paths into .prism/ on the first record write, and MCP tools take initiative and slice identifiers instead of statePath, reviewPath, deltaPath, and recoveryPath.
+* the roadmap skill is removed, designed slices no longer use change maps or design audits, and MCP tools take initiative and slice identifiers instead of record paths.
+
+### Added
+
+* keep machine records under .prism and address them by initiative and slice ([#47](https://github.com/RumyantsevMichael/Prism/issues/47)) ([0466d9b](https://github.com/RumyantsevMichael/Prism/commit/0466d9bcb7f8495e57f77a024dccc02eb99a98b6))
+* show which review wave raised each finding ([#46](https://github.com/RumyantsevMichael/Prism/issues/46)) ([0466d9b](https://github.com/RumyantsevMichael/Prism/commit/0466d9bcb7f8495e57f77a024dccc02eb99a98b6))
+* thin Prism: one contract per scope, server-verified slices, lean coordinator ([#50](https://github.com/RumyantsevMichael/Prism/issues/50)) ([0466d9b](https://github.com/RumyantsevMichael/Prism/commit/0466d9bcb7f8495e57f77a024dccc02eb99a98b6))
+
+
+### Fixed
+
+* keep review findings from requiring contradictory or post-completion changes ([#54](https://github.com/RumyantsevMichael/Prism/issues/54)) ([0466d9b](https://github.com/RumyantsevMichael/Prism/commit/0466d9bcb7f8495e57f77a024dccc02eb99a98b6))
+
+## [0.14.1](https://github.com/RumyantsevMichael/Prism/compare/v0.14.0...v0.14.1) (2026-11-01)
+
+
+### Fixed
+
+* stop upstream changes from blocking reviews with outside_scope ([ef09069](https://github.com/RumyantsevMichael/Prism/commit/ef09069bbd25f6d1271ec0c842e1a1232a675bad))
+* stop upstream changes from blocking reviews with outside_scope ([#55](https://github.com/RumyantsevMichael/Prism/issues/55)) ([3af4764](https://github.com/RumyantsevMichael/Prism/commit/3af476454e27a9bc4bbca4a40a37a8f28f23fdbe))
+
+
+### Documentation
+
+* convert artifact-conservation requirements to the normative EARS format ([2fc1d81](https://github.com/RumyantsevMichael/Prism/commit/2fc1d816bd644789c17e343d949879dbacbe95c0))
+
 ## [0.14.0](https://github.com/RumyantsevMichael/Prism/compare/v0.13.0...v0.14.0) (2026-10-22)
 
 

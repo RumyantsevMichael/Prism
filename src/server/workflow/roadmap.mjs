@@ -4,14 +4,14 @@ import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { readInitiative } from "./initiative.mjs";
+import { normalizeRequirementReference, readInitiative } from "./initiative.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { locateRecord, writeRecord } from "./record-store.mjs";
+import { locateRecord, moveLegacyRecords, writeRecord } from "./record-store.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
@@ -242,7 +242,17 @@ function insertInBand(record, item, targetBand, positionValue) {
   record.initiatives.splice(index, 0, item);
 }
 
+// Only references an operation adds or changes are checked, so a roadmap written before this check still loads and updates.
+function roadmapRequirements(resolved, references) {
+  return references.map((reference) => {
+    const normalized = normalizeRequirementReference(resolved.config.paths.requirements, reference);
+    if (normalized.problem) throw fail("validation_failed", normalized.problem);
+    return normalized.reference;
+  });
+}
+
 async function applyOperation(resolved, record, operation, actor, at) {
+  if (operation.requirements !== undefined && (operation.op === "add_initiative" || operation.op === "update_initiative")) operation = { ...operation, requirements: roadmapRequirements(resolved, operation.requirements) };
   switch (operation.op) {
     case "set_serves":
       record.serves = operation.serves;
@@ -297,6 +307,7 @@ async function applyOperation(resolved, record, operation, actor, at) {
 
 export async function updateRoadmap(input) {
   validateInput(UPDATE_ROADMAP_SCHEMA, input);
+  await moveLegacyRecords(input.projectRoot);
   const resolved = await resolveRoadmap(input.projectRoot, true);
   const managed = [resolved.projectionPath].filter((file) => path.posix.basename(file) === "roadmap.md");
   if (managed.length) await conservationStore.registerCoordinationOutputs(resolved.root, managed);

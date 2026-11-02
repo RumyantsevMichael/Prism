@@ -1,14 +1,15 @@
 import path from "node:path";
-import { readFile, stat } from "node:fs/promises";
-import { nativeSemanticRuntime } from "./native-semantic-runtime.mjs";
+import { readFile, realpath, stat } from "node:fs/promises";
+import { nativeSemanticRuntime, unitsFile } from "./native-semantic-runtime.mjs";
 import { HEARTBEAT_MS, freshnessFile, processAlive, projectStorageKey, readProgressRecords, sameFingerprint } from "./index-progress.mjs";
 import type { FreshnessRecord, GitFingerprint, ProgressRecord } from "./index-progress.mjs";
-import type { Diagnostic, Progress } from "./repository-unit-types.mjs";
+import type { Diagnostic, Progress, PublishedUnit } from "./repository-unit-types.mjs";
 
 export type IndexingState = "none" | "unavailable" | "preparing" | "failed" | "interrupted" | "ready";
 interface IndexSummary { builtAt: string; coverage: Record<string, unknown> | null; diagnostics: number }
 export interface IndexingStatus { state: IndexingState; progress: Progress | null; startedAt: string | null; endedAt: string | null; diagnostics: Diagnostic[]; index: IndexSummary | null; stale: boolean | null }
-interface Pointer { snapshot?: string; coverage?: Record<string, unknown>; diagnostics?: Diagnostic[]; builtAt?: string }
+interface Pointer { snapshot?: string; revision?: string; coverage?: Record<string, unknown>; diagnostics?: Diagnostic[]; builtAt?: string }
+export interface PublishedUnitsView { snapshot: string; revision: string; builtAt: string; units: PublishedUnit[]; edges: [string, string][] }
 interface Options { fingerprint?: () => Promise<GitFingerprint | null>; now?: number; availability?: () => Promise<{ supported: boolean; published: boolean }> }
 
 // A preparing record that missed this many heartbeats belongs to a process that stopped or hung.
@@ -59,4 +60,19 @@ export async function readIndexingStatus(projectRoot: string, directories: strin
   if (pointer) return status("ready");
   const availability = await (options.availability ?? (() => nativeSemanticRuntime.availability()))().catch(() => null);
   return status(availability && availability.supported && availability.published ? "none" : "unavailable");
+}
+
+// Reads the units of the most recently published index from its small sidecar, never the full index, and never starts or changes a build.
+// An index published before sidecars existed gets one when a later preparation reuses it, so until then this answers null.
+export async function readPublishedUnits(projectRoot: string, directories: string[] = [nativeSemanticRuntime.directory]): Promise<PublishedUnitsView | null> {
+  const key = projectStorageKey(await realpath(projectRoot).catch(() => projectRoot));
+  const storages = [...new Set(directories)].map(directory => path.join(directory, "projects", key));
+  const pointers = (await Promise.all(storages.map(async storage => ({ storage, pointer: await readPointer(storage) }))))
+    .filter((entry): entry is { storage: string; pointer: NonNullable<Awaited<ReturnType<typeof readPointer>>> } => entry.pointer !== null);
+  const newest = pointers.sort((left, right) => time(right.pointer.builtAt) - time(left.pointer.builtAt))[0];
+  const revision = newest?.pointer.revision;
+  if (!newest || !revision || !/^[a-f\d]{64}$/.test(revision)) return null;
+  const sidecar = await readJson<{ schemaVersion?: number; snapshot?: string; revision?: string; units?: PublishedUnit[]; edges?: [string, string][] }>(path.join(newest.storage, unitsFile(revision)));
+  if (sidecar?.schemaVersion !== 1 || sidecar.revision !== revision || sidecar.snapshot !== newest.pointer.snapshot || !Array.isArray(sidecar.units) || !Array.isArray(sidecar.edges)) return null;
+  return { snapshot: newest.pointer.snapshot!, revision, builtAt: newest.pointer.builtAt, units: sidecar.units, edges: sidecar.edges };
 }
