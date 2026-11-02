@@ -56,6 +56,8 @@ In-repo record files left in other checkouts after the migration are ignored, an
 
 ## Mechanism
 
+[record-store-architecture.puml](record-store-architecture.puml) shows how checkouts share the store.
+
 The workflow configuration's `Workspace` section names the store, relative to the project root or absolute.
 The record store resolves that folder once per access, refuses it when it is missing, inside the project, or containing it, and maps each `.prism` record address into it.
 Every server component that reads, lists, or serves records asks the record store for the physical file, and all other project paths still resolve from the project root.
