@@ -3,6 +3,33 @@
   "serves": "Reliable planning and resumable work in Prism's spec-driven engineering workflow.",
   "initiatives": [
     {
+      "id": "shared-record-store",
+      "title": "Shared record store",
+      "intent": "Let every checkout and machine of a project share one set of Prism records through an ordinary Git repository, without losing bytes or colliding on unrelated changes.",
+      "band": "Now",
+      "requirements": [
+        "docs/requirements/shared-record-store.md#1",
+        "docs/requirements/shared-record-store.md#2",
+        "docs/requirements/shared-record-store.md#3",
+        "docs/requirements/shared-record-store.md#4",
+        "docs/requirements/shared-record-store.md#5",
+        "docs/requirements/shared-record-store.md#6",
+        "docs/requirements/shared-record-store.md#7",
+        "docs/requirements/shared-record-store.md#8",
+        "docs/requirements/shared-record-store.md#9",
+        "docs/requirements/shared-record-store.md#10",
+        "docs/requirements/shared-record-store.md#11",
+        "docs/requirements/shared-record-store.md#12",
+        "docs/requirements/shared-record-store.md#13",
+        "docs/requirements/shared-record-store.md#14",
+        "docs/requirements/shared-record-store.md#15",
+        "docs/requirements/shared-record-store.md#16"
+      ],
+      "requires": [],
+      "rationale": "Now, because Michael made shared state outside working repositories milestone M1 on 2026-10-31: his colleagues use Prism across many repositories and give the best feedback. Increments 1 and 2 shipped in PR #57; code links, the migration ledger, the saved-conflict notice, and the structural merge are in PR #72; slice claims come next. Requirements and ADRs stay Proposed while they are adjusted.",
+      "decision": null
+    },
+    {
       "id": "single-review-app",
       "title": "Single review app",
       "intent": "Run one review app per user that every agent session and project shares, with a project switcher that shows which project waits on the user.",
@@ -79,6 +106,12 @@
       "operation": "add_initiative",
       "id": "single-review-app",
       "at": "2026-10-17T13:32:03.217Z"
+    },
+    {
+      "actor": "orchestrator",
+      "operation": "add_initiative",
+      "id": "shared-record-store",
+      "at": "2026-11-02T23:04:44.039Z"
     }
   ]
 }

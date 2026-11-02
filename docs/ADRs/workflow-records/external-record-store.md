@@ -6,6 +6,7 @@ Created: 2026-10-31
 ## Requirements
 
 No Approved requirement governs this decision yet.
+The Draft [shared record store requirements](../../requirements/shared-record-store.md) §1-§6 describe the behavior it implements.
 It records the first increment of the multi-repository roadmap milestone, which the user approved.
 
 ## Problem
