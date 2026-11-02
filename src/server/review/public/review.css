@@ -81,26 +81,15 @@ a {
   padding: 0 0.2rem;
 }
 
+/* The mark comes from scripts/brand/prism-mark.mjs, which also writes the tab icon. */
 .brand-mark,
 .welcome-mark {
-  background: linear-gradient(145deg, #9c8cff, #6752d8 52%, #4bc9a3);
-  display: inline-block;
-  position: relative;
-  transform: rotate(45deg);
+  display: block;
 }
 
 .brand-mark {
-  border-radius: 0.3rem;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 4px 12px rgba(103, 82, 216, 0.45);
-  height: 1.45rem;
-  width: 1.45rem;
-}
-
-.brand-mark i {
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  border-radius: 0.15rem;
-  inset: 0.3rem;
-  position: absolute;
+  height: 1.6rem;
+  width: 1.6rem;
 }
 
 .project-chip {
@@ -1185,11 +1174,10 @@ kbd {
 }
 
 .welcome-mark {
-  border-radius: 0.7rem;
-  box-shadow: 0 12px 35px rgba(103, 82, 216, 0.26);
-  height: 3rem;
-  margin: 0.5rem;
-  width: 3rem;
+  filter: drop-shadow(0 8px 18px rgba(103, 82, 216, 0.28));
+  height: 3.6rem;
+  margin: 0.2rem;
+  width: 3.6rem;
 }
 
 .artifact-header {

@@ -185,6 +185,10 @@ test("serves the browser runtime without an image endpoint", async (context) => 
     const favicon = await fetchReview(`${review.baseUrl}/favicon.svg`);
     assert.equal(favicon.status, 200);
     assert.match(favicon.headers["content-type"], /^image\/svg\+xml/);
+    assert.match(pageSource, /class="brand-mark" src="\.\/prism-mark\.svg"/);
+    const mark = await fetchReview(`${review.baseUrl}/prism-mark.svg`);
+    assert.equal(mark.status, 200);
+    assert.match(mark.headers["content-type"], /^image\/svg\+xml/);
     const c4 = await fetchReview(`${review.baseUrl}/vendor/c4.min.js`);
     assert.equal(c4.status, 200);
     const image = await fetchReview(`${review.baseUrl}/render/svg?source=docs%2Froadmap.puml`);
