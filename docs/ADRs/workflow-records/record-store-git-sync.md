@@ -42,7 +42,8 @@ Blocking record work on the network would make an offline machine unusable.
 
 Colleagues share initiatives, reviews, and runs once their stores clone one remote and turn sync on.
 A pending debounced sync can be lost when a process exits, and the next sync from any process commits the change because it stages everything uncommitted.
-Cloud sessions cannot sync until the later increment adds their branch and the merge Action.
+A cloud session that attached the store repository with push access pushed to its `main` branch in a test on 2 November 2026, so cloud sessions sync without a merge Action.
+A session limited to its own `claude/...` branch would report `push_rejected` and keep its records in its own clone, which a merge Action could later fold in.
 Mutable records resolve concurrent edits by first push until records become append-only event files, so the later edit is saved aside rather than merged.
 A record written or locked while a merge would replace it keeps the branch where it was, so the next attempt commits the local bytes and resolves them against the upstream as a saved conflict.
 A record that stays locked through every attempt delays the merge to a later sync, which the status reports as `merge_failed`.
@@ -50,6 +51,8 @@ A leftover Git lock in the store stops syncing with `git_failed` until a person 
 Merging without the working tree requires Git 2.38 or later, and an older Git reports `merge_failed`.
 
 ## Mechanism
+
+[record-store-architecture.puml](record-store-architecture.puml) shows the checkouts, the store, the syncer, and the remote.
 
 The `Workspace` section's `Store sync` key turns sync on.
 A write or append schedules a debounced sync, and a read starts a background sync when the last fetch is older than the pull interval.

@@ -70,6 +70,7 @@ In Codex, pick the same skills from the skill picker or mention them in your req
 ## Learn more
 
 - [Workflow](docs/user-guide/workflow.md): stages, slices, records, autonomy, and project files.
+- [Shared records](docs/user-guide/shared-records.md): one record store for every worktree, clone, and machine, synced through Git.
 - [Review browser](docs/user-guide/review-browser.md): navigation, search, answering questions, and several projects.
 - [Repository intelligence](docs/user-guide/repository-intelligence.md): search, analysis tools, providers, and fit checks.
 - [Artifact conservation](docs/user-guide/artifact-conservation.md): how review checks planned changes against the source.

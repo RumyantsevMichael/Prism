@@ -135,6 +135,7 @@ Prism then commits record changes a few seconds after each write, merges the ups
 When two machines change the same record, the first push wins, and the store saves the other version under `.prism-sync/conflicts/`.
 Records keep working locally when Git, the network, or the upstream is unavailable, and the review browser shows a small chip when the last sync did not succeed.
 Without `Store sync: on`, Prism never runs Git in the store.
+See [Share Prism state across worktrees and machines](shared-records.md) for setup, conflicts, sync status, and cloud sessions.
 
 ## Migrate an older setup
 

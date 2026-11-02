@@ -1,0 +1,33 @@
+@startuml
+title Shared record store: checkouts, store, and sync
+
+node "Machine A" {
+  package "Checkout: main worktree" as A1 {
+    component "Prism server" as S1
+    file ".prism/workflow.md\nStore: ../prism-store\nStore sync: on" as C1
+  }
+  package "Checkout: feature worktree" as A2 {
+    component "Prism server" as S2
+  }
+  folder "prism-store (Git checkout)" as ST {
+    file "initiatives/, roadmap.json\nmigrations/<repo id>.json" as REC
+    folder ".prism-sync/ (ignored)\nsync.lock, status.json,\nconflicts/" as SYNC
+  }
+}
+
+node "Machine B or cloud session" {
+  component "Prism server" as S3
+  folder "prism-store clone" as ST2
+}
+
+cloud "Store remote\n(upstream branch)" as R
+
+S1 ..> C1 : reads Store
+S1 --> REC : record store maps\n.prism/... to store files\n(per-record file locks)
+S2 --> REC : same records
+S1 --> SYNC : one syncer at a time
+S2 --> SYNC
+SYNC --> R : commit, fetch,\nmerge-tree, push
+S3 --> ST2
+ST2 <--> R : same sync
+@enduml
