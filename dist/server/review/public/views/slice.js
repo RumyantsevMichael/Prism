@@ -217,12 +217,27 @@ function failingList(run) {
   return `${run.failing.map((name) => `<code>${escapeHtml(name)}</code>`).join(" ")}${more > 0 ? ` and ${more} more` : ""}`;
 }
 
+// The checkout of the latest passing run, as a host path such as github.com/owner/repo without scheme, user, or .git.
+function displayRemote(remote) {
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//i;
+  const plain = scheme.test(remote) ? remote.replace(scheme, "").replace(/^[^@/]+@/, "") : remote.replace(/^[^@/:]+@/, "").replace(":", "/");
+  return plain.replace(/\/$/, "").replace(/\.git$/, "");
+}
+
+export function codeLine(code) {
+  if (!code?.head) return "";
+  const where = [code.branch ? `on ${escapeHtml(code.branch)} ` : "", `at <code>${escapeHtml(code.head.slice(0, 7))}</code>`].join("");
+  const remote = code.remote ? ` · ${escapeHtml(displayRemote(code.remote))}` : "";
+  return `<p class="muted">Verified ${where}${remote}${code.dirty ? " with uncommitted changes" : ""}</p>`;
+}
+
 // Verification shows the accepted design's frozen tests, the latest run of the project's test command, and the derived change map.
-function verificationCard(design, run, changeMap = "") {
+function verificationCard(design, run, changeMap = "", code = null) {
   if (!design && !run) return "";
   const result = run ? `<p><span class="status-pill ${run.passed ? "is-good" : "is-bad"}">${run.passed ? "passed" : "failed"}</span> ${escapeHtml(formatTime(run.finishedAt))}${run.reason ? `: ${escapeHtml(REASONS[run.reason] ?? run.reason)}` : ""}</p>` : emptyNote("No verification run yet.");
   return card("Verification", `
     ${result}
+    ${codeLine(code)}
     ${keyValues([
       ["Design accepted", design ? escapeHtml(formatTime(design.acceptedAt)) : null],
       ["Review", design ? (design.review === "required" ? "required" : "not required") : null],
@@ -297,7 +312,7 @@ export async function render(container, entity, ctx) {
     ${unplannedCard(view, ctx)}
     ${sliceRunTotalsHtml(data.runTotals, data.children.length > 0)}
     <div class="artifact-cards">
-      ${verificationCard(slice.design, data.verification, slice.design ? changeMapLine(artifacts.changeMap, data.changeMap, ctx) : "")}
+      ${verificationCard(slice.design, data.verification, slice.design ? changeMapLine(artifacts.changeMap, data.changeMap, ctx) : "", data.code)}
       ${reviewCard(artifacts.review, ctx)}
       ${slice.design ? "" : legacyChangeMapCard(artifacts.changeMap, ctx)}
     </div>

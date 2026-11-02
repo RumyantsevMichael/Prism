@@ -7,7 +7,7 @@ import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
 import { keyOfPath, listInitiatives, listSliceRecords, locateRecord, recordPath, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { latestVerification } from "../workflow/slice-design.mjs";
+import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { loadDesignView } from "../workflow/design-view.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
@@ -293,6 +293,7 @@ export async function loadSliceView(projectRoot, id, slug, { intelligenceDirecto
     designReview: initiative.designReview[slug] ?? null,
     artifacts: initiative.slices[slug],
     verification,
+    code: await verifiedCode(projectRoot, id, slug).catch(() => null),
     changeMap: Object.keys(changeMap).length ? changeMap : null,
     designView: await loadDesignView(projectRoot, id, slug, { changeMap: changeMapDocument ?? null, units: await readPublishedUnits(projectRoot, ...(intelligenceDirectories ? [intelligenceDirectories] : [])).catch(() => null) }).catch(() => null),
     titles: Object.fromEntries(Object.entries(initiative.record.slices).map(([key, value]) => [key, value.title])),

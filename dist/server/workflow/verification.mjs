@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, realpath } from "node:fs/promises";
 import os from "node:os";
@@ -7,7 +7,7 @@ import path from "node:path";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
-import { appendRecord, RECORD_DIRECTORY } from "./record-store.mjs";
+import { appendRecord, RECORD_DIRECTORY, repositoryId } from "./record-store.mjs";
 import { contentTree } from "./slice-gate.mjs";
 import { acceptedDesign, checkFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState, updateCoordinationState } from "./state.mjs";
@@ -237,9 +237,49 @@ async function verificationRun({ root, initiative, slice, command, key, config, 
     const snapshotId = reason === null && design.baselineId ? await conservationStore.capture(root, { initiative, slice }).then((captured) => captured.snapshotId, () => null) : null;
     entry = { ...base, finishedAt: new Date().toISOString(), durationMs: outcome.durationMs, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, passed: reason === null, ...(reason ? { reason } : {}), tree: before, ...(after !== before ? { treeAfter: after } : {}), ...(snapshotId ? { snapshotId } : {}), ...(reason === "command_failed" && outcome.failing.length ? { failing: outcome.failing.slice(0, MAX_FAILING_NAMES), failingCount: outcome.failing.length } : {}), outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), output: outcome.output };
   }
+  entry.checkout = await checkoutOf(root, config, entry.tree).catch(() => null);
   const { output = entry.outputTail, ...recorded } = entry;
   const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, recorded);
   return { id, path: stored.path, ...recorded, ...(log ? { log } : {}), output };
+}
+
+// Git answers about the checkout are optional, so any error is an unknown value rather than a failed run.
+function gitValue(root, args) {
+  return new Promise((resolve) => {
+    execFile("git", ["-C", root, ...args], { timeout: 10000 }, (error, stdout) => resolve(error ? null : stdout.trim() || null));
+  });
+}
+
+/** A remote URL without its user, password, or token, so no credential ever reaches a record. */
+export function publicRemote(url) {
+  if (!url) return null;
+  try {
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
+      const parsed = new URL(url);
+      parsed.username = "";
+      parsed.password = "";
+      return parsed.toString();
+    }
+  } catch { return null; }
+  // A scp-like address such as git@host:owner/repo names its user before the host.
+  return url.replace(/^[^@/:]+@/, "");
+}
+
+/** Where a run's code lives: { repository, remote, branch, head, dirty }, with null for anything Git cannot tell. */
+export async function checkoutOf(root, config, tree = null) {
+  const [repository, remote, branch, head] = await Promise.all([
+    repositoryId(root),
+    gitValue(root, ["config", "--get", "remote.origin.url"]).then(publicRemote),
+    gitValue(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+    gitValue(root, ["rev-parse", "--verify", "--quiet", "HEAD"])
+  ]);
+  let dirty = null;
+  if (head) {
+    // Uncommitted changes count as verification's own content tree does, so records, plans, and the roadmap never make a checkout dirty.
+    const [current, committed] = await Promise.all([tree ?? contentTree(root, config).catch(() => null), contentTree(root, config, { commit: head }).catch(() => null)]);
+    if (current && committed) dirty = current !== committed;
+  }
+  return { repository, remote, branch, head, dirty };
 }
 
 // One run per slice at a time: a repeated call joins the running one, so a host that returns early can call again to keep waiting.
@@ -308,7 +348,8 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
 // Reported defects are kept as a run entry, which outlives the initiative record, and block the slice until design revises the contract.
 async function reportContractDefects(root, initiative, slice, design, defects) {
   const id = `contract-defect-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
-  const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, { kind: "contract-defect", reportedAt: new Date().toISOString(), designAcceptedAt: design.acceptedAt, defects });
+  const checkout = await checkoutOf(root, await readWorkflowConfig(root)).catch(() => null);
+  const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, { kind: "contract-defect", reportedAt: new Date().toISOString(), designAcceptedAt: design.acceptedAt, defects, checkout });
   const { getInitiative, updateInitiative } = await import("./initiative.mjs");
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -391,6 +432,7 @@ export function verificationBrief(value) {
     durationMs: value.durationMs,
     run: value.path,
     ...(value.log ? { log: value.log } : {}),
+    ...(value.status === "passed" && value.checkout ? { code: value.checkout } : {}),
     ...(value.status === "failed" && value.outputTail ? { outputTail: tail(value.outputTail, BRIEF_TAIL_CHARS) } : {})
   };
 }

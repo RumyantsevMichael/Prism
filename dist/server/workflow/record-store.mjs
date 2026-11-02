@@ -271,14 +271,17 @@ async function moveRecord(root, store, move, report) {
   report.moved.push(move);
 }
 
-// Every checkout and clone of one repository shares its root commit; a project outside Git falls back to its own folder.
-function repositoryIdentity(root) {
+/** The identity every checkout and clone of one repository shares, its first root commit in sorted order, or null outside Git or before the first commit. */
+export function repositoryId(root) {
   return new Promise((resolve) => {
     execFile("git", ["-C", root, "rev-list", "--max-parents=0", "HEAD"], { timeout: 10000 }, (error, stdout) => {
-      resolve((error ? "" : stdout.split(/\s+/).filter(Boolean).sort()[0]) || root);
+      resolve((error ? "" : stdout.split(/\s+/).filter(Boolean).sort()[0]) || null);
     });
   });
 }
+
+// A project outside Git falls back to its own folder as its identity.
+const repositoryIdentity = async (root) => (await repositoryId(root)) ?? root;
 
 // Committed records exist in every checkout, so a store takes them from a repository only once; later copies would bring back removed records.
 async function migrateIntoStore(root, store, config, report) {

@@ -10,7 +10,7 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { locateRecord, moveLegacyRecords, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
-import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, measureContract, REVIEW_MARKS, stageFrozenTests, withdrawFrozenTests } from "./slice-design.mjs";
+import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, measureContract, REVIEW_MARKS, stageFrozenTests, verifiedCode, withdrawFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { contractClauses, plannedChanges } from "./design-view.mjs";
@@ -195,7 +195,13 @@ export async function readInitiative(projectRoot, initiative) {
 export async function getInitiative(input) {
   validateInput(GET_INITIATIVE_SCHEMA, input);
   const { resolved, loaded } = await readInitiative(input.projectRoot, input.initiative);
-  return publicResult(resolved, loaded);
+  // Each slice with a passing run names the checkout it was verified in, since records in a shared store do not travel with a branch.
+  const code = {};
+  for (const slug of Object.keys(loaded.record?.slices ?? {})) {
+    const checkout = await verifiedCode(resolved.root, resolved.initiative, slug).catch(() => null);
+    if (checkout) code[slug] = checkout;
+  }
+  return { ...publicResult(resolved, loaded), ...(Object.keys(code).length ? { code } : {}) };
 }
 
 function markdown(record) {

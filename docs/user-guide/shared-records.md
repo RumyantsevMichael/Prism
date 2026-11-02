@@ -9,6 +9,7 @@ A record store moves those records into one folder that every checkout shares, a
 Only machine records move into the store.
 `.prism/workflow.md`, requirements, ADRs, slice plans, diagrams, generated Markdown views, feature files, and tests stay in the project and travel with its branches as before.
 Tools, tool results, review browser links, and stored references keep naming records by their `.prism/...` address, so nothing that agents or people see changes.
+Each verified slice records where its code lives, the repository, branch, and commit of its latest passing run, and the slice page in the review browser shows it.
 
 ## Share records between checkouts on one machine
 
