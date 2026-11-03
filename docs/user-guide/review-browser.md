@@ -24,7 +24,8 @@ When the selected browser is unavailable, Prism presents the URL and source arti
 
 ## Layout
 
-The top bar holds the project switcher, the index status chip, and the open tabs.
+The top bar holds the project switcher and the open tabs.
+The status bar at the bottom shows where the project's records live, their sync state, and the repository index.
 The sidebar keeps Attention and Roadmap at the top and the Library, with Requirements, Decisions, and the Glossary, at the bottom.
 Between them it expands only the path to what is open: the open initiative's slices or the open library section's documents.
 Press `[` or the sidebar toggle to collapse the sidebar to an icon rail that keeps the Attention badge.
@@ -136,7 +137,7 @@ In the palette, Enter opens the result in the preview tab, Ctrl+Enter keeps it o
 
 ## Index status
 
-The chip next to the project name shows the open project's native index, and its panel lists every build step.
+The index item at the right of the status bar shows the open project's native index, and its panel lists every build step.
 See [Watch an index build in the review browser](repository-intelligence.md#watch-an-index-build-in-the-review-browser) for what each state means.
 
 ## Several projects
@@ -144,6 +145,8 @@ See [Watch an index build in the review browser](repository-intelligence.md#watc
 All Prism sessions of one user share one review app on one local port, and each project has its own page there.
 The project switcher names the project as `repository/branch`, falls back to the worktree folder without a branch, and shows a detached checkout by its commit.
 It lists recent projects under their repository, even a repository with one checkout, with their open questions, and marks the ones an agent session is using now.
+Checkouts whose records live in one shared store appear as one entry, Shared records, with one count of open questions and each checkout listed under it, because their roadmap, initiatives, and questions are the same.
+A checkout without a record store keeps records of its own and stays a separate entry.
 When an agent presents a review for another project while a tab is open, that tab shows a notice with a link instead of a second tab opening.
 
 The app starts with the MCP server of the first Prism session, outlives that session, and exits after 30 minutes with no session and no open viewer.

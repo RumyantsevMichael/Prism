@@ -116,7 +116,7 @@ Use `discover_repository_intelligence` for native runtime, model, index, and cov
 
 #### Watch an index build in the review browser
 
-The review browser's top bar shows the open project's native index next to the project name.
+The review browser's status bar shows the open project's native index at its right end.
 While a build runs, the chip names the current step out of five and its percentage, and clicking it lists every step.
 The steps are checking or downloading the runtime and model, copying source files, parsing code, embedding new fragments, and saving the index.
 A step shows a percentage only when the build reports counts for it, so unpacking the runtime, planning fragments, and saving show motion without a number.

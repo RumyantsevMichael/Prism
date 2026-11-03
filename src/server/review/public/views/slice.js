@@ -1,6 +1,7 @@
 import { chipState, currentIndexStatus } from "./indexing.js";
 import { artifactChip, bindLinks, card, cardSource, emptyNote, escapeHtml, formatTime, keyValues, plural, requirementLinks } from "./util.js";
 import { sliceRunTotalsHtml } from "./run-totals.js";
+import { codeParts } from "./code-location.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
@@ -217,19 +218,12 @@ function failingList(run) {
   return `${run.failing.map((name) => `<code>${escapeHtml(name)}</code>`).join(" ")}${more > 0 ? ` and ${more} more` : ""}`;
 }
 
-// The checkout of the latest passing run, as a host path such as github.com/owner/repo without scheme, user, or .git.
-function displayRemote(remote) {
-  const scheme = /^[a-z][a-z0-9+.-]*:\/\//i;
-  const plain = scheme.test(remote) ? remote.replace(scheme, "").replace(/^[^@/]+@/, "") : remote.replace(/^[^@/:]+@/, "").replace(":", "/");
-  return plain.replace(/\/$/, "").replace(/\.git$/, "");
-}
-
 // The line names the last passing run, which need not be the latest run shown above it; a malformed shared record shows nothing.
+// On a known host the branch, commit, and repository link to the remote's web pages.
 export function codeLine(code) {
-  if (typeof code?.head !== "string" || !code.head) return "";
-  const branch = typeof code.branch === "string" && code.branch ? `on ${escapeHtml(code.branch)} ` : "";
-  const remote = typeof code.remote === "string" && code.remote ? ` · ${escapeHtml(displayRemote(code.remote))}` : "";
-  return `<p class="muted">Last passing run ${branch}at <code>${escapeHtml(code.head.slice(0, 7))}</code>${remote}${code.dirty === true ? " with uncommitted changes" : ""}</p>`;
+  const parts = codeParts(code);
+  if (!parts) return "";
+  return `<p class="muted">Last passing run ${parts.branch ? `on ${parts.branch} ` : ""}at ${parts.commit}${parts.remote ? ` · ${parts.remote}` : ""}${code.dirty === true ? " with uncommitted changes" : ""}</p>`;
 }
 
 // Verification shows the accepted design's frozen tests, the latest run of the project's test command, and the derived change map.
