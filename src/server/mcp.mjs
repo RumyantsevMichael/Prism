@@ -1224,11 +1224,19 @@ input.on("line", async (line) => {
   }
 });
 
+// The host ends the session by closing input, so the server exits once its cleanup ends, or after a short grace period,
+// even when index preparation, a store sync, or a child process started meanwhile would keep it alive.
+const CLOSE_GRACE_MS = 5000;
 input.on("close", async () => {
-  for (const controller of pendingWaits.values()) controller.abort();
-  cancelVerifications();
-  cancelRecordSyncs();
-  stopClaimRenewals();
-  nativeSemanticRuntime.close();
-  await reviewServers.close();
+  const deadline = setTimeout(() => process.exit(0), CLOSE_GRACE_MS);
+  deadline.unref();
+  try {
+    for (const controller of pendingWaits.values()) controller.abort();
+    cancelVerifications();
+    cancelRecordSyncs();
+    stopClaimRenewals();
+    await Promise.all([nativeSemanticRuntime.close(), reviewServers.close()]);
+  } finally {
+    process.exit(0);
+  }
 });

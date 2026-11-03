@@ -23,6 +23,9 @@ Accepting a design MUST refuse a contract whose `slice.md` and frozen tests are 
 Design MUST record its result as a proposal through `update_initiative`, which the server checks at once with the same rules as a direct update and keeps pending without changing any slice, and the orchestrator MUST accept the proposal after the design gate rather than restate it.
 Each frozen test file MUST belong to one unfinished slice, and a staged slice's file MUST NOT belong to any other slice.
 Accepting the design of a slice that has not started MUST stage its frozen tests: the server keeps them in the slice's records and takes them out of the work tree, and starting the slice MUST put them back.
+Returning a started slice to not-started MUST stage its frozen tests again.
+Starting a slice MUST be refused while any slice it depends on is not done.
+The frozen tests of other unfinished slices MUST NOT make a slice's passing verification stale, because the server moves those files itself.
 A passing verification run MUST complete a slice whose review mark is `none`.
 The implementer MUST run verification itself and fix failures in its own session, and MUST report a contract defect through `verify_slice`, which records it and blocks the slice until design revises the contract.
 A slice MUST be reviewed only when the user marks it or the run's `review` setting selects it.
@@ -66,3 +69,5 @@ Run output is written to a log under the plugin data directory, and the server r
 The diagram check parses every `.puml` file in the slice's folder and its ancestors' folders before the update takes the record lock, treats every error diagram PlantUML draws as a refusal, and counts entities, packages, participants, or activity boxes, and links, in the drawn SVG.
 
 ## Decision Log
+
+2026-11-03: Added re-staging when a started slice returns to not-started, the dependency check on start, and ignoring other unfinished slices' frozen tests in verification staleness, because a dogfood run left reverted tests in the work tree, started a dependent slice early, and had to verify an unchanged commit again after Prism staged another slice's tests.

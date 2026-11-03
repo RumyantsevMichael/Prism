@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { checkReviewGate } from "../review/review-ledger.mjs";
 import { RECORD_DIRECTORY } from "./record-store.mjs";
-import { acceptedDesign, checkFrozenTests, latestVerification, SliceDesignError } from "./slice-design.mjs";
+import { acceptedDesign, checkFrozenTests, latestVerification, SliceDesignError, unfinishedFrozenTestsOfOthers } from "./slice-design.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
 const run = promisify(execFile);
@@ -42,6 +42,31 @@ export async function contentTree(projectRoot, config, { commit = null, timeoutM
   }
 }
 
+/**
+ * Whether the project still holds the content a verification run tested, apart from the frozen tests of other unfinished slices,
+ * which Prism itself stages out of and back into the work tree as their designs are accepted and their slices start.
+ * The run's tree is a git object written when the run hashed the work tree; when Git no longer has it, the trees must match whole.
+ */
+async function sameVerifiedContent(projectRoot, config, verifiedTree, ignored) {
+  const current = await contentTree(projectRoot, config);
+  if (current === verifiedTree || !ignored.length) return current === verifiedTree;
+  const root = await realpath(projectRoot);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "prism-tree-"));
+  try {
+    const env = { ...process.env, GIT_INDEX_FILE: path.join(temporary, "index"), GIT_OPTIONAL_LOCKS: "0", GIT_LITERAL_PATHSPECS: "1" };
+    const without = async (tree) => {
+      await git(root, ["read-tree", tree], env);
+      await git(root, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ...ignored], env);
+      return git(root, ["write-tree"], env);
+    };
+    return await without(verifiedTree) === await without(current);
+  } catch {
+    return false;
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+
 // A slice with an accepted design starts implementation at once and completes on a fresh passing verification run,
 // plus an accepted implementation review when its design marks review as required.
 // A slice designed before verification runs existed keeps the review-ledger gates.
@@ -60,7 +85,7 @@ export async function checkSliceGate({ projectRoot, initiative, slice, gate }) {
   } else {
     const frozen = await checkFrozenTests(projectRoot, design.frozenTests);
     if (frozen.changed.length || frozen.missing.length) problems.push({ code: "frozen_tests_changed", message: `The frozen acceptance tests changed: ${[...frozen.changed, ...frozen.missing].join(", ")}.` });
-    else if (await contentTree(projectRoot, await readWorkflowConfig(projectRoot)) !== latest.tree) problems.push({ code: "verification_stale", message: `The project changed after the verification run ${latest.id}. Run verify_slice again.` });
+    else if (!await sameVerifiedContent(projectRoot, await readWorkflowConfig(projectRoot), latest.tree, await unfinishedFrozenTestsOfOthers(projectRoot, initiative, slice))) problems.push({ code: "verification_stale", message: `The project changed after the verification run ${latest.id}. Run verify_slice again.` });
   }
   let review = null;
   if (design.review === "required") {

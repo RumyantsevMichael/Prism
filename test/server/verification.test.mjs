@@ -317,6 +317,57 @@ test("frozen tests of slices that have not started are staged and go in place wh
   await assert.rejects(initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/audit.test.mjs"], review: "none" }]), /already belongs to another slice;/, "a staged slice never shares a file, even with a done slice");
 });
 
+test("a started slice that returns to not-started stages its tests again, even after they were removed by hand", async (context) => {
+  const root = await project(context);
+  await initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" }]);
+  await initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "in-progress" }]);
+  await writeFile(path.join(root, "test", "acceptance.test.mjs"), "// edited by an implementer\n");
+  await assert.rejects(initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "not-started" }]), (error) => error.code === "frozen_tests_changed", "a changed frozen test is never taken out of the work tree");
+  await rm(path.join(root, "test", "acceptance.test.mjs"));
+  const returned = await initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "not-started" }]);
+  assert.deepEqual(returned.withdrawn, ["test/acceptance.test.mjs"]);
+  assert.equal(returned.record.slices.download.design.staged, true);
+  assert.equal(returned.record.slices.download.design.baselineId, undefined);
+  assert.equal(await exists(path.join(root, "test", "acceptance.test.mjs")), false);
+  const restarted = await initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "in-progress" }]);
+  assert.deepEqual(restarted.installed, ["test/acceptance.test.mjs"]);
+  assert.equal(await readFile(path.join(root, "test", "acceptance.test.mjs"), "utf8"), "// frozen acceptance test\n");
+});
+
+test("a design accepted after its slice started is staged when the slice returns to not-started", async (context) => {
+  const root = await project(context);
+  await accept(root);
+  const returned = await initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "not-started" }]);
+  assert.deepEqual(returned.withdrawn, ["test/acceptance.test.mjs"]);
+  assert.equal(await exists(path.join(root, "test", "acceptance.test.mjs")), false);
+});
+
+test("a slice starts only after the slices it depends on are done", async (context) => {
+  const root = await project(context);
+  await initiativeUpdate(root, [{ op: "set_dependencies", slug: "audit", dependencies: ["download"] }]);
+  await assert.rejects(initiativeUpdate(root, [{ op: "set_status", slug: "audit", status: "in-progress" }]), (error) => error.code === "dependencies_incomplete" && error.waiting.join() === "download");
+  await accept(root);
+  const gateId = await approve(root);
+  assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId })).sliceStatus, "done");
+  const started = await initiativeUpdate(root, [{ op: "set_status", slug: "audit", status: "in-progress" }]);
+  assert.equal(started.record.slices.audit.status, "in-progress");
+});
+
+test("staging another slice's tests does not make a passing verification stale", async (context) => {
+  const root = await project(context);
+  await accept(root, "download", "required");
+  const gateId = await approve(root);
+  await writeFile(path.join(root, "test", "audit.test.mjs"), "// frozen audit test\n");
+  assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId })).status, "passed");
+  const staged = await initiativeUpdate(root, [{ op: "accept_design", slug: "audit", frozenTests: ["test/audit.test.mjs"], review: "none" }]);
+  assert.deepEqual(staged.withdrawn, ["test/audit.test.mjs"]);
+  const gate = await checkSliceGate({ projectRoot: root, initiative: INITIATIVE, slice: "download", gate: "completion" });
+  assert.equal(gate.problems.some((problem) => problem.code === "verification_stale"), false);
+  await writeFile(path.join(root, "source.mjs"), "export const value = 2;\n");
+  const stale = await checkSliceGate({ projectRoot: root, initiative: INITIATIVE, slice: "download", gate: "completion" });
+  assert.equal(stale.problems.some((problem) => problem.code === "verification_stale"), true, "any other change still makes the run stale");
+});
+
 test("accepting and starting a slice in one update keeps its tests in place", async (context) => {
   const root = await project(context);
   const result = await initiativeUpdate(root, [{ op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" }, { op: "set_status", slug: "download", status: "in-progress" }]);

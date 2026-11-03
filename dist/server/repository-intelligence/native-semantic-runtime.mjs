@@ -550,8 +550,12 @@ class NativeSemanticRuntime {
     await source.verifySnapshot();
     return results;
   }
+  // Resolves once the helper process has exited, so a caller that exits next leaves no helper holding the runtime's files open.
   close() {
+    const child = this.process?.child;
     this.process?.stop();
+    if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+    return new Promise((resolve) => child.once("exit", () => resolve()));
   }
 }
 const nativeSemanticRuntime = new NativeSemanticRuntime();
