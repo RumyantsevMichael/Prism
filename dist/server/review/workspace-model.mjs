@@ -2,10 +2,11 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
+import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
-import { keyOfPath, listInitiatives, listSliceRecords, locateRecord, recordPath, resolveRecordFile } from "../workflow/record-store.mjs";
+import { keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, locateRecord, recordPath, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
@@ -211,12 +212,28 @@ function loadInitiativeRunTotals(projectRoot, initiative) {
   return remember(`run-totals:${initiative.id}:${projectRoot}`, () => readInitiativeRecordRunTotals(projectRoot, initiative.id, initiative));
 }
 
+// Initiative reads keep only live claims; the browser also shows a claim that lapsed without a release, as expiredClaim, until someone claims or releases the slice.
+async function withExpiredClaims(projectRoot, id, read) {
+  const slices = read.loaded.record?.slices;
+  if (!slices || typeof slices !== "object") return read;
+  const records = await listClaimRecords(projectRoot, id).catch(() => []);
+  const now = Date.now();
+  let copy = null;
+  for (const { slice, bytes } of records) {
+    const { claim } = parseClaim(slice, bytes);
+    if (!claim || isLive(claim, now) || !Object.hasOwn(slices, slice) || slices[slice].claim) continue;
+    copy ??= { ...slices };
+    copy[slice] = { ...slices[slice], expiredClaim: { label: claim.label, activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
+  }
+  return copy ? { ...read, loaded: { ...read.loaded, record: { ...read.loaded.record, slices: copy } } } : read;
+}
+
 async function computeInitiativeView(projectRoot, id) {
   if (!SLUG_PATTERN.test(id ?? "")) throw new Error("The initiative identifier is invalid.");
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
   // Each claimed slice carries its live claim, so initiative and slice pages can show who works on it.
-  const { resolved, loaded } = await readInitiativeWithClaims(projectRoot, id);
+  const { resolved, loaded } = await withExpiredClaims(projectRoot, id, await readInitiativeWithClaims(projectRoot, id));
   let state = null;
   try {
     state = (await readCoordinationState({ projectRoot, initiative: id })).state;
@@ -269,6 +286,14 @@ async function derivedChangeMapState(projectRoot, id, slug, design, verification
   return { derived: true, pending: true, runId: verification.id };
 }
 
+// A design claim on a scope covers every slice below it, while only the scope carries the claim.
+function coveringClaim(slices, slug) {
+  for (let owner = slices[slug]?.parent ?? null; owner !== null && Object.hasOwn(slices, owner); owner = slices[owner].parent ?? null) {
+    if (slices[owner].claim?.activity === "design") return { slug: owner, title: slices[owner].title, claim: slices[owner].claim };
+  }
+  return null;
+}
+
 // The published code index, when there is one, places each planned change in the code; the view never starts a build.
 export async function loadSliceView(projectRoot, id, slug, { intelligenceDirectories } = {}) {
   const initiative = await loadInitiativeView(projectRoot, id);
@@ -292,6 +317,7 @@ export async function loadSliceView(projectRoot, id, slug, { intelligenceDirecto
     complete: derived?.complete[slug] ?? false,
     active: initiative.active.filter((entry) => entry.slice === slug),
     designReview: initiative.designReview[slug] ?? null,
+    coveringClaim: coveringClaim(initiative.record.slices, slug),
     artifacts: initiative.slices[slug],
     verification,
     code: await verifiedCode(projectRoot, id, slug).catch(() => null),

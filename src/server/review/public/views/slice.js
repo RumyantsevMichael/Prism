@@ -2,6 +2,7 @@ import { chipState, currentIndexStatus } from "./indexing.js";
 import { artifactChip, bindLinks, card, cardSource, emptyNote, escapeHtml, formatTime, keyValues, plural, requirementLinks } from "./util.js";
 import { sliceRunTotalsHtml } from "./run-totals.js";
 import { codeParts } from "./code-location.js";
+import { claimChip } from "./claims.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
@@ -299,6 +300,7 @@ export async function render(container, entity, ctx) {
         ["Children", data.children.length ? data.children.map((slug) => sliceChip(data, slug, ctx)).join(" ") : null],
         ["Depends on", data.effectiveDependencies?.length ? data.effectiveDependencies.map((slug) => sliceChip(data, slug, ctx)).join(" ") : null],
         ["Needed by", data.dependents.length ? data.dependents.map((slug) => sliceChip(data, slug, ctx)).join(" ") : null],
+        ["Claim", claimChip(slice.claim || slice.expiredClaim ? { claim: slice.claim ?? slice.expiredClaim, scope: null } : data.coveringClaim ? { claim: data.coveringClaim.claim, scope: { slug: data.coveringClaim.slug, title: data.coveringClaim.title } } : null) || null],
         ["Active work", data.active.length ? data.active.map((entry) => `<span class="meta-pill">${escapeHtml(entry.activity)} · ${escapeHtml((entry.workers ?? []).join(", "))}${entry.label ? ` · ${escapeHtml(entry.label)}` : ""}</span>`).join(" ") : null]
       ])}
     </section>

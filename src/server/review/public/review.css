@@ -627,6 +627,56 @@ a {
   text-align: center;
 }
 
+/* A claim names who holds a slice and for what; the activity sets the mark's color, and an expired claim fades.
+   The holder and the activity wrap onto two lines in a narrow board column instead of widening it. */
+.claim-chip {
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.6rem;
+  color: var(--ink);
+  column-gap: 0.4rem;
+  display: inline-flex;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  max-width: 100%;
+  padding: 0.15rem 0.55rem;
+}
+
+.claim-mark {
+  background: var(--info);
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 0.45rem;
+  width: 0.45rem;
+}
+
+.claim-chip.activity-design .claim-mark {
+  background: var(--warn);
+}
+
+.claim-text {
+  font-weight: 600;
+  overflow-wrap: break-word;
+}
+
+.claim-meta {
+  color: var(--ink-muted);
+  overflow-wrap: break-word;
+}
+
+.claim-chip.is-expired {
+  border-style: dashed;
+  color: var(--ink-muted);
+}
+
+.claim-chip.is-expired .claim-mark {
+  background: var(--ink-muted);
+}
+
+.slice-claim {
+  margin: 0.35rem 0 0;
+}
+
 .code-chip {
   color: var(--ink-muted);
   display: inline-block;
