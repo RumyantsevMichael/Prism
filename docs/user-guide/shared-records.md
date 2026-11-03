@@ -134,6 +134,7 @@ The proposed name is the registered name that would accept the checkout, or else
 The review browser hides the records of a refused checkout as it does for an unavailable store, and still lists its documents.
 
 With store sync on, the operation that registers a new name waits for one sync before it continues, so two machines that register one name at the same time end with one registration.
+Until that sync settles, any other check of a repository name in that store on this machine waits for it, so no operation records anything under a registration that may still be withdrawn.
 The registration pushed first stays, and the other machine's checkout is then accepted or refused against it, as if it had been in the store all along.
 The registration that lost is saved under `.prism-sync/conflicts/` like a record, but neither the sync status nor a tool result lists it, because the acceptance or refusal already tells the agent.
 A remote or root commit added to an existing registration does not wait: the next sync pushes it, and the next check that needs it adds it again if a sync lost it.
