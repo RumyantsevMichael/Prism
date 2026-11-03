@@ -6,8 +6,7 @@ Created: 2026-11-03
 ## Requirements
 
 No Approved requirement governs this decision yet.
-The Draft [repository name requirements](../../requirements/repository-names.md) §1 and §3-§10 describe the behavior it implements.
-Its handling of a checkout without a name follows Michael's answer of 3 November 2026, "warn now, require later", which the Draft §2 does not reflect yet.
+The Draft [repository name requirements](../../requirements/repository-names.md) §1-§10 describe the behavior it implements.
 It records the first increment of the multi-repository workspace design, which Michael asked to start on 3 November 2026.
 
 ## Problem

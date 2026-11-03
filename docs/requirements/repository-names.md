@@ -52,15 +52,15 @@ Rationale: A committed name is the same in every checkout, including shallow clo
 Related: [shared-record-store.md§1](shared-record-store.md#1)
 
 <a id="2"></a>
-## 2. Refuse a checkout without a repository name
+## 2. Warn a checkout without a repository name
 
 Pattern: Unwanted behavior
 
 Disposition: Active
 
-Requirement: If a project's workflow configuration names a record store but no repository name, then Prism shall refuse every record operation, without changing the store, with an error that shows the `- Repository: <name>` line to add under `## Workspace` and proposes a name taken from the last path segment of the checkout's origin remote that the store has not registered for another remote.
+Requirement: If a project's workflow configuration names a record store but no repository name, then Prism shall keep serving record operations on the checkout's identity from before repository names, register nothing, and add to each record tool result a warning that shows the `- Repository: <name>` line to add under `## Workspace` and proposes a name that the store would accept for this checkout.
 
-Rationale: Michael decided on 3 November 2026 that a name is required whenever a store is configured, even for one repository, and an existing user who upgrades must learn the one line to add, with a name that works, before anything changes in the shared records.
+Rationale: Michael decided on 3 November 2026 that a name is required whenever a store is configured, even for one repository, and that existing checkouts are warned now and refused only in a later release, so an upgrade breaks no one while each user learns the one line to add, with a name that works.
 
 Related: [§3](#3), [§7](#7)
 
@@ -71,33 +71,33 @@ Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When a checkout uses a repository name that its record store has not registered, Prism shall register the name in the store with the scheme, host, and path of the checkout's origin remote.
+Requirement: When a checkout uses a repository name that its record store has not registered, Prism shall register the name in the store with the scheme, host, and path of the checkout's origin remote and, when the checkout can prove it, the repository's root commit.
 
 Rationale: The first checkout that uses a name is the only evidence of which repository the team meant by it, and the store is where every other checkout can check it.
 
 Related: [§4](#4), [shared-record-store.md§15](shared-record-store.md#15)
 
 <a id="4"></a>
-## 4. Refuse a name registered for another remote
+## 4. Refuse a name registered for another repository
 
 Pattern: Unwanted behavior
 
 Disposition: Active
 
-Requirement: If a checkout's repository name is registered in its record store with a remote that differs from the checkout's origin remote, then Prism shall refuse every record operation with an error that names the registered remote and the checkout's remote, each without user information.
+Requirement: If a checkout's repository name is registered in its record store with remotes that differ from the checkout's origin remote, and the checkout's root commit does not prove that it is the registered repository, then Prism shall refuse every record operation with an error that names the registered remote and the checkout's remote, each without user information, and says how to prove the history or pick another name; when the root commit matches, Prism shall instead add the checkout's remote to the registration.
 
-Rationale: Two repositories that share a name by accident would mix their results, and naming both remotes tells the person which repository already holds the name.
+Rationale: Two repositories that share a name by accident would mix their results, and naming both remotes tells the person which repository already holds the name, while a repository that moved on its Git host, or a fork of it, shares its history and keeps working under its name (Michael, 3 November 2026).
 
 Related: [§3](#3), [shared-record-store.md§15](shared-record-store.md#15)
 
 <a id="5"></a>
-## 5. Keep one remote for each name
+## 5. Keep one registration for each name
 
 Pattern: Ubiquitous
 
 Disposition: Active
 
-Requirement: Prism shall keep at most one registered remote for each repository name in a record store, including when checkouts on different machines register one name at the same time.
+Requirement: Prism shall keep at most one registration for each repository name in a record store, including when checkouts on different machines register one name at the same time.
 
 Rationale: A registration that one machine believes it made and another machine replaced would let two repositories share a name after all.
 
@@ -149,7 +149,7 @@ Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When a Prism server starts in a checkout whose workflow configuration names a record store and a repository name, Prism shall record the checkout's path for that repository on the machine.
+Requirement: When a Prism server starts in, or first learns from a tool call, a checkout whose workflow configuration names a record store and a repository name that the store accepts, Prism shall record the checkout's path for that repository on the machine.
 
 Rationale: Work for one repository can later run from a session in another only if the machine knows where that repository's checkouts are.
 
