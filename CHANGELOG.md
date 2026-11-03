@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.0](https://github.com/RumyantsevMichael/Prism/compare/v0.16.0...v0.17.0) (2026-11-03)
+
+
+### Added
+
+* claim a slice before working on it ([#79](https://github.com/RumyantsevMichael/Prism/issues/79)) ([1a45c35](https://github.com/RumyantsevMichael/Prism/commit/1a45c35427f9848f276ac95129315fa755dbf76d))
+* show slice claims in the review app ([3be7688](https://github.com/RumyantsevMichael/Prism/commit/3be7688d2983556d379da9fb667f4cda03b1fd7f))
+* show slice claims in the review app ([6b4112b](https://github.com/RumyantsevMichael/Prism/commit/6b4112b18fb922c28c4016ead91cb5a0c5071bdc))
+* show the record store, its sync, and code locations in the review app ([41509ac](https://github.com/RumyantsevMichael/Prism/commit/41509ac4a745ff7bf39319241a2d61c5656e4bcb))
+* show the record store, its sync, and code locations in the review app ([01ed645](https://github.com/RumyantsevMichael/Prism/commit/01ed645138cadd18365fb3395f2b40063f9cf667))
+
 ## [0.16.0](https://github.com/RumyantsevMichael/Prism/compare/v0.15.0...v0.16.0) (2026-11-03)
 
 
