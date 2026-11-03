@@ -529,3 +529,27 @@ test("waits for a claim record's own lock before it removes an ended claim", asy
   await ending;
   assert.equal(await exists(file), false);
 });
+
+test("the review model shows live claims, a scope's design claim on its slices, and a lapsed claim as expired", async (context) => {
+  const { serializeClaim } = await import("../../dist/server/workflow/slice-claims.mjs");
+  const { loadEntity, forgetWorkspace } = await import("../../dist/server/review/workspace-model.mjs");
+  const { claimChip, claimOf } = await import("../../dist/server/review/public/views/claims.js");
+  const root = await project(await folder(context), "local", "## Paths\n- Plans (scratch): docs/plans/\n");
+  await create(root);
+  const now = Date.now();
+  const claim = (slug, activity, minutes) => writeFile(path.join(root, ".prism", CLAIM_FILE(slug)), serializeClaim({ slug, holder: A.holder, label: `${slug} owner`, activity, claimedAt: new Date(now - 600000).toISOString(), renewedAt: new Date(now - 60000).toISOString(), expiresAt: new Date(now + minutes * 60000).toISOString(), nonce: `nonce-${slug}` }));
+  await mkdir(path.join(root, ".prism/initiatives/reports/claims"), { recursive: true });
+  await claim("reports", "design", 20);
+  await claim("s1", "implementation", -5);
+  forgetWorkspace();
+  const slices = (await loadEntity(root, "initiative:reports")).data.record.slices;
+  assert.equal(slices.reports.claim.label, "reports owner");
+  assert.equal(slices.s1.claim, undefined);
+  assert.equal(slices.s1.expiredClaim.label, "s1 owner");
+  assert.match(claimChip(claimOf(slices, "s1")), /is-expired[\s\S]*implementation · expired<\/span>/);
+  assert.match(claimChip(claimOf(slices, "s2")), /reports owner<\/span><span class="claim-meta">design via Reports · 20 min left/);
+  assert.equal(claimOf(slices, "s2", now + 21 * 60000), null, "a lapsed scope claim covers nothing");
+  const s2 = (await loadEntity(root, "slice:reports/s2")).data;
+  assert.deepEqual([s2.coveringClaim.slug, s2.coveringClaim.claim.activity], ["reports", "design"]);
+  assert.equal(claimChip(null), "");
+});

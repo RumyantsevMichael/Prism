@@ -115,6 +115,8 @@ Two agents can still work on two independent slices of one initiative at once.
 Another agent's start of a claimed slice is refused with `slice_claimed`, which names who holds it, for design or implementation, and until when, and that agent moves on to another slice.
 A claim names its holder by the store's Git `user.name` and the host name, such as `Michael Rumyantsev on MacBookPro`, or by the host name alone when the store has no `user.name`.
 `get_initiative` lists each live claim under `claims`.
+The review browser shows each claim's holder, activity, and time left on the slice board, the slice list, and the slice page, and marks the slices inside a scope that a design claim covers.
+A claim that lapsed without a release shows as expired until someone claims or releases the slice.
 
 With store sync on, a start or a release waits for one sync before anything else in the update is written, so two machines never both believe they started the same slice.
 The machine whose sync loses is refused with `slice_claimed`, none of that update applies, and its store shows the other machine's claim.
