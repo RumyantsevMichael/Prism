@@ -49,6 +49,7 @@ export const VERIFY_SLICE_SCHEMA = {
     initiative: slug,
     slice: slug,
     approvalGate: { type: "string", pattern: "^gate-[0-9a-f]{8,32}$" },
+    chatApproval: { type: "object", additionalProperties: false, properties: { quote: { type: "string", minLength: 1, maxLength: 800 } }, required: ["quote"] },
     contractDefects: { type: "array", minItems: 1, maxItems: 50, items: { type: "object", additionalProperties: false, properties: { clause: text, reason: text }, required: ["clause", "reason"] } }
   },
   required: ["projectRoot", "initiative", "slice"]
@@ -111,12 +112,20 @@ function approvalQuestion(command, key) {
   ].join("\n");
 }
 
+/** Whether the person cannot open this session's review browser: Claude Code sets CLAUDE_CODE_REMOTE in a cloud session. */
+export function reviewBrowserUnreachable(env = process.env) {
+  return env.CLAUDE_CODE_REMOTE === "true";
+}
+
 // Only the review browser records gate answers, so an Allow choice on the server's own gate is the user's approval.
-async function approval({ root, initiative, slice, command, approvalGate, dataDirectory }) {
+// Where the person cannot open the browser, the agent records the person's chat answer instead, quoted in the approval and the gate's history.
+async function approval({ root, initiative, slice, command, approvalGate, chatApproval, dataDirectory }) {
   const key = digest(`${root}\n${command}`);
+  if (chatApproval && !reviewBrowserUnreachable()) throw fail("chat_approval_unavailable", "This session can open the review browser, so the user allows the test command there, not in chat. Call verify_slice without chatApproval.");
   return withApprovals(dataDirectory, async (store) => {
     if (store.approved[key]) return { approved: true, key };
     if (approvalGate && store.requests[approvalGate] && store.requests[approvalGate].key !== key) throw fail("approval_mismatch", `The gate ${approvalGate} asked about another test command. Call verify_slice without approvalGate to ask about the configured one.`);
+    if (chatApproval && !(approvalGate && store.requests[approvalGate])) throw fail("validation_failed", "chatApproval answers the approval gate that verify_slice opened, so pass that gate's id as approvalGate.");
     const requested = approvalGate && store.requests[approvalGate] ? approvalGate : Object.entries(store.requests).find(([, item]) => item.key === key && item.initiative === initiative)?.[0];
     if (requested) {
       const request = store.requests[requested];
@@ -131,7 +140,15 @@ async function approval({ root, initiative, slice, command, approvalGate, dataDi
       } else if (gate.answer) {
         delete store.requests[requested];
         await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested }] }).catch(() => {});
-        return { approved: false, key, status: "declined", gateId: requested, note: gate.answer.note ?? null };
+        // An answer with a note and no choice neither allows nor declines the command.
+        return { approved: false, key, status: gate.answer.choice === DECLINE ? "declined" : "approval_unclear", gateId: requested, note: gate.answer.note ?? null };
+      } else if (chatApproval) {
+        const quote = chatApproval.quote.trim();
+        const approvedAt = new Date().toISOString();
+        store.approved[key] = { root, command, approvedAt, gate: requested, via: "chat", quote };
+        delete store.requests[requested];
+        await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested, reason: `The user allowed this command in chat, as recorded by the agent: "${quote}"` }] }).catch(() => {});
+        return { approved: true, key };
       } else {
         return { approved: false, key, status: "approval_needed", gateId: requested };
       }
@@ -290,8 +307,8 @@ function resultOf(run) {
 }
 
 /** Run the project's approved test command for a slice with an accepted design, check its frozen tests, and record the run. */
-export async function verifySlice({ projectRoot, initiative, slice, approvalGate, contractDefects, dataDirectory, signal, onProgress, maxWaitMs = Infinity }) {
-  try { assertInput(VERIFY_SLICE_SCHEMA, { projectRoot, initiative, slice, ...(approvalGate ? { approvalGate } : {}), ...(contractDefects ? { contractDefects } : {}) }); }
+export async function verifySlice({ projectRoot, initiative, slice, approvalGate, chatApproval, contractDefects, dataDirectory, signal, onProgress, maxWaitMs = Infinity }) {
+  try { assertInput(VERIFY_SLICE_SCHEMA, { projectRoot, initiative, slice, ...(approvalGate ? { approvalGate } : {}), ...(chatApproval ? { chatApproval } : {}), ...(contractDefects ? { contractDefects } : {}) }); }
   catch (error) { throw fail("validation_failed", `The verification arguments are invalid: ${describeErrors(error.errors)}`, { errors: error.errors }); }
   const root = await realpath(projectRoot);
   const design = await acceptedDesign(root, initiative, slice);
@@ -300,9 +317,11 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
   if (contractDefects) return reportContractDefects(root, initiative, slice, design, contractDefects);
   const { config, command } = await configuredTestCommand(root);
   if (!command) throw fail("test_command_missing", "The project configures no test command. Add one under ## Stack in .prism/workflow.md as - Test command: <command>.");
-  const allowed = await approval({ root, initiative, slice, command, approvalGate, dataDirectory });
+  const allowed = await approval({ root, initiative, slice, command, approvalGate, chatApproval, dataDirectory });
   if (!allowed.approved) {
     if (allowed.status === "declined") return { status: "declined", gateId: allowed.gateId, command, note: allowed.note, message: "The user declined this test command, so it did not run." };
+    if (allowed.status === "approval_unclear") return { status: "approval_unclear", gateId: allowed.gateId, command, note: allowed.note, message: "The user answered the approval question with a note and neither allowed nor declined the command, so it did not run. Read the note, then call verify_slice without approvalGate to ask again." };
+    if (reviewBrowserUnreachable()) return { status: "approval_needed", gateId: allowed.gateId, command, chatApproval: true, message: `The user cannot open the review browser from this cloud session. Ask them in chat whether Prism may run this exact test command: ${command}. When they allow it, call verify_slice again with approvalGate ${allowed.gateId} and chatApproval quoting their answer word for word.` };
     return { status: "approval_needed", gateId: allowed.gateId, command, message: `The user must allow the test command in the review browser first. Wait with wait_for_user_gate on ${allowed.gateId}, then call verify_slice again with approvalGate ${allowed.gateId}.` };
   }
   const jobKey = `${root}\0${initiative}\0${slice}`;

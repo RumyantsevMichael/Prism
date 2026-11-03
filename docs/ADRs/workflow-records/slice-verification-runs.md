@@ -23,6 +23,7 @@ A slice with an accepted design MUST complete only on its latest verification ru
 A slice whose accepted design requires review MUST also have an accepted implementation review of the tree that its latest passing run verified, which MUST NOT require a design-audit wave or change map evidence.
 A slice without an accepted design MUST keep the review-ledger gates unchanged.
 A verification run MUST run only the test command that the project configures, and only after the user allowed that exact command text in the review browser.
+In a session whose review browser the user cannot open, the agent MAY instead record the user's chat answer allowing that exact command, and the approval and the gate's history MUST keep the user's words.
 Approvals MUST live in local plugin data, so that no repository change can approve a command.
 A verification run MUST NOT run the command when a frozen acceptance test differs from its accepted digest.
 A run that changes project content while it runs MUST NOT pass.
@@ -49,6 +50,7 @@ Completion now proves that the configured tests passed on the content being mark
 Projects need a git work tree and a configured test command to use the leaner flow.
 A long test suite holds a tool call open, so hosts that cannot keep it open receive an early running answer and call again to keep waiting.
 Anyone who can open the review session URL can allow a command for the user, as with any other gate answer.
+In a cloud session the agent records the user's approval, so the approval rests on the agent quoting the user truthfully; that session's agent can already run commands through the host's own shell tool.
 
 ## Mechanism
 
@@ -59,3 +61,5 @@ A review of such a slice starts its wave on the tree of the latest passing run a
 The done transition and active-work gates read the latest run, recheck the frozen digests and the content hash, and add the review gate when the design requires review.
 
 ## Decision Log
+
+2026-11-03: Added chat approval for sessions whose review browser the user cannot open, detected from Claude Code's CLAUDE_CODE_REMOTE, because a person following a cloud session from the mobile or web app could not allow a command at all.
