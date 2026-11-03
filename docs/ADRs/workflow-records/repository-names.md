@@ -69,6 +69,7 @@ A list of checkouts is per machine, and a path that no longer holds its reposito
 The name check runs in the record store before migration and is cached for each project root for at most 5 seconds, like the migration check.
 It reads the checkout's origin with Git and its root commit as run records do, compares them with the registration, and writes or extends the registration file atomically under a store lock.
 In a synced store, a new registration waits for a sync of its own, and the check runs again against the registration the store then holds; a sync that cannot reach the remote withdraws the registration.
+While that sync runs, a pending marker that sync never commits tells every other check on the machine, whatever its own sync setting, that the registration is unconfirmed, so such a check answers `repository_unconfirmed` at once instead of accepting or refusing on it, and no lock is held across the network.
 The MCP server passes the check's refusal codes in error data and appends the unnamed warning to the tool result, as it appends migration notes.
 After a checkout's first accepted check in a process, the server rewrites `checkouts.json` atomically under a lock, replacing the entry for its path and dropping entries of its store and repository whose folders no longer name them.
 A server whose host names the project at start runs that check in the background, and any other server runs it on its first record tool call.
@@ -77,3 +78,4 @@ A server whose host names the project at start runs that check in the background
 
 2026-11-03: A registration keeps every remote its root commit proves, because Michael asked that a repository moved on its Git host not block anyone.
 2026-11-03: A matching root commit never adds a remote that another name registered, because implementation review found that a fork's checkout naming the original would register one remote under two names.
+2026-11-03: A pending marker replaced holding the registration lock across the confirming sync, because implementation review found that the held lock let unsynced checkouts accept unconfirmed registrations, could commit the lock file, and made record writers wait on another check's network sync.
