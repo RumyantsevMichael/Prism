@@ -76,7 +76,11 @@
       ],
       "requires": [],
       "rationale": "Now, because it is increment 1 of the M3 multi-repository workspace design, which Michael reviewed and asked to start on 3 November 2026; names replace the root-commit repository identity that shallow clones and forks cannot supply, and later increments build components and cross-repository runs on them. Requirements stay Draft while M1 and M3 settle.",
-      "decision": null
+      "decision": {
+        "kind": "shipped",
+        "at": "2026-11-03T23:35:20.345Z",
+        "actor": "orchestrator"
+      }
     },
     {
       "id": "agent-execution-evidence",
@@ -139,6 +143,12 @@
       "operation": "add_initiative",
       "id": "repository-names",
       "at": "2026-11-03T20:07:47.733Z"
+    },
+    {
+      "actor": "orchestrator",
+      "operation": "ship",
+      "id": "repository-names",
+      "at": "2026-11-03T23:35:20.345Z"
     }
   ]
 }
