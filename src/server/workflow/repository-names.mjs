@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { scheduleRecordSync, syncRecordStoreNow } from "./record-store-sync.mjs";
 import { publicRemote } from "./remote-url.mjs";
 
 // A checkout names its repository to its record store, which registers each name with the remotes and root commit that prove which repository it is.
@@ -13,7 +14,9 @@ export const REPOSITORY_NAME = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
 const NAME_MAX = 64;
 const REGISTRATION_MAX_BYTES = 64 * 1024;
 // The refusals of a named checkout, which every record operation reports while the checkout stays refused.
-export const REPOSITORY_REFUSALS = Object.freeze(["repository_name_invalid", "repository_remote_registered", "repository_name_taken"]);
+export const REPOSITORY_REFUSALS = Object.freeze(["repository_name_invalid", "repository_remote_registered", "repository_name_taken", "repository_unconfirmed"]);
+// The sync outcomes after which the store holds the registration that won, or holds it only locally because nothing else shares the store's remote.
+const CONFIRMING = new Set(["ok", "conflicts", "no_upstream", "not_a_repository"]);
 
 const git = (root, args) => new Promise((resolve) => {
   execFile("git", ["-C", root, ...args], { timeout: 10000 }, (error, stdout) => resolve(error ? null : stdout.trim()));
@@ -204,13 +207,51 @@ function decide(name, registrations, facts, fail) {
 
 const serialize = (registration) => `${JSON.stringify(registration, null, 2)}\n`;
 
+// Run an action under the store's registration lock, so two checkouts never both register one name.
+async function withRegistrationLock(base, fail, action) {
+  const lock = path.join(base, REPOSITORIES);
+  if (!(await registrationsFolder(base, fail))) await mkdir(lock).catch((error) => { if (error.code !== "EEXIST") throw error; });
+  return withArtifactLock(lock, () => withFileLock(lock, action, fail, { timeoutMs: 30000 }));
+}
+
+// Decide again against the registrations as they stand under the lock and write what the decision needs: { created, contents }, contents null when nothing was written.
+function settle(base, name, facts, fail) {
+  return withRegistrationLock(base, fail, async () => {
+    const decision = decide(name, await readRegistrations(base, fail), facts, fail);
+    const contents = decision.register ?? decision.write ?? null;
+    if (contents) await writeAtomically(registrationFile(base, name), serialize(contents));
+    return { created: Boolean(decision.register), contents };
+  });
+}
+
+/**
+ * Confirm a new registration with the store's remote: a sync of its own, then the check again against the registration the store then holds,
+ * so another machine's registration that won accepts or refuses this checkout; a sync that cannot confirm withdraws the registration and refuses.
+ */
+async function confirmRegistration(base, name, facts, fail, contents) {
+  const status = await syncRecordStoreNow(base);
+  if (!CONFIRMING.has(status.state)) {
+    const written = Buffer.from(serialize(contents));
+    await withRegistrationLock(base, fail, async () => {
+      const target = registrationFile(base, name);
+      const bytes = await registrationBytes(target).catch(() => null);
+      if (bytes?.equals(written)) await rm(target, { force: true });
+    });
+    const reason = String(status.message ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+    throw refusal(fail, "repository_unconfirmed", `The registration of the repository name ${name} could not be confirmed with the record store's remote (${status.state}${reason ? `: ${reason}` : ""}), so it was withdrawn and this operation was not applied. Try again once the remote is reachable.`, name);
+  }
+  // An addition, or a registration written again because the store lost it, is written without confirmation and synced later.
+  if ((await settle(base, name, facts, fail)).contents) scheduleRecordSync(base);
+}
+
 /**
  * Check a checkout's repository name against its record store before any record operation touches the store.
  * Resolves to { repository, created } for an accepted name, where created says this check wrote a new registration,
  * or to { repository: null, proposed } for a checkout that names no repository; refuses with fail(code, message, { proposed }).
  * beforeWrite runs before the first file this check writes, which only an accepted check does.
+ * In a synced store, a new registration is confirmed by a sync before the check accepts, and a remote or root added to a registration is synced later.
  */
-export async function checkRepositoryName({ root, base, name, fail, beforeWrite = async () => {} }) {
+export async function checkRepositoryName({ root, base, name, fail, beforeWrite = async () => {}, sync = false }) {
   const facts = await checkoutFacts(root);
   // A proposal is advice, so registrations Prism cannot read leave it derived from the remote or folder alone rather than failing the operation.
   const proposal = async () => proposedName(await readRegistrations(base, fail).catch(() => []), facts);
@@ -221,14 +262,9 @@ export async function checkRepositoryName({ root, base, name, fail, beforeWrite 
   }
   const first = decide(name, await readRegistrations(base, fail), facts, fail);
   if (first.accept && !first.write) return { repository: name, created: false };
-  // A write happens under the store's registration lock against the registrations as they then stand, so two checkouts never both register one name.
   await beforeWrite();
-  const lock = path.join(base, REPOSITORIES);
-  if (!(await registrationsFolder(base, fail))) await mkdir(lock).catch((error) => { if (error.code !== "EEXIST") throw error; });
-  return withArtifactLock(lock, () => withFileLock(lock, async () => {
-    const decision = decide(name, await readRegistrations(base, fail), facts, fail);
-    const contents = decision.register ?? decision.write;
-    if (contents) await writeAtomically(registrationFile(base, name), serialize(contents));
-    return { repository: name, created: Boolean(decision.register) };
-  }, fail, { timeoutMs: 30000 }));
+  const { created, contents } = await settle(base, name, facts, fail);
+  if (sync && created) await confirmRegistration(base, name, facts, fail, contents);
+  else if (sync && contents) scheduleRecordSync(base);
+  return { repository: name, created };
 }

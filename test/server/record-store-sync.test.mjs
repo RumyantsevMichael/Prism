@@ -440,3 +440,40 @@ test("keeps the upstream roadmap when both machines add the same initiative diff
   const [upstream, local] = [await storeBytes(value.storeA, ROADMAP_FILE), await storeBytes(value.storeB, ROADMAP_FILE)];
   await assertFellBack(value, await syncBoth(value), ROADMAP_FILE, upstream, local);
 });
+
+test("keeps the upstream registration whole when both machines change it, even where the lines merge, and reports it nowhere", async (context) => {
+  const value = await machines(context);
+  const file = "repositories/api.json";
+  const registration = (remotes, root) => `${JSON.stringify({ schemaVersion: 1, name: "api", remotes, root, registeredAt: "2026-11-03T00:00:00.000Z" }, null, 2)}\n`;
+  const write = (store, bytes) => mkdir(path.join(store, "repositories"), { recursive: true }).then(() => writeFile(path.join(store, file), bytes));
+  await write(value.storeA, registration(["https://github.com/acme/api.git"], null));
+  await syncRecordStore(value.storeA);
+  await syncRecordStore(value.storeB);
+  // One machine fills the root, the other adds a remote: separate lines that Git alone would merge into a registration neither machine wrote.
+  const upstream = registration(["https://github.com/acme/api.git"], "abc123");
+  const local = registration(["https://github.com/acme/api.git", "https://github.com/acme/platform-api.git"], null);
+  await write(value.storeA, upstream);
+  await write(value.storeB, local);
+  const status = await syncBoth(value);
+  assert.equal(status.state, "ok");
+  assert.deepEqual(status.conflicts, []);
+  assert.deepEqual((await readSyncStatus(value.storeB)).conflicts, []);
+  assert.equal(await storeBytes(value.storeB, file), upstream);
+  const [stamp] = await readdir(path.join(value.storeB, ".prism-sync", "conflicts"));
+  assert.equal(await readFile(path.join(value.storeB, ".prism-sync", "conflicts", stamp, file), "utf8"), local);
+  assert.deepEqual(await listSavedConflicts(value.storeB), []);
+  assert.deepEqual((await takeSavedConflicts()).filter((item) => item.savedAs.startsWith(value.storeB)), []);
+});
+
+test("merges a registration added on both machines into the upstream one instead of failing the merge", async (context) => {
+  const value = await machines(context);
+  const file = "repositories/api.json";
+  const registration = (remote) => `${JSON.stringify({ schemaVersion: 1, name: "api", remotes: [remote], root: null, registeredAt: new Date().toISOString() }, null, 2)}\n`;
+  for (const [store, remote] of [[value.storeA, "https://github.com/acme/api.git"], [value.storeB, "https://github.com/beta/api.git"]]) {
+    await mkdir(path.join(store, "repositories"), { recursive: true });
+    await writeFile(path.join(store, file), registration(remote));
+  }
+  const status = await syncBoth(value);
+  assert.equal(status.state, "ok");
+  assert.deepEqual(JSON.parse(await storeBytes(value.storeB, file)).remotes, ["https://github.com/acme/api.git"]);
+});
