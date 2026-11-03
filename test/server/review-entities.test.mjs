@@ -38,8 +38,9 @@ async function fixture(context) {
       { slug: "download", title: "Download signed reports", outcome: "A signed report downloads.", requirements: ["docs/requirements/reports.md#1"] },
       { slug: "authorize", title: "Authorize access", requirements: ["docs/requirements/reports.md#2"] }
     ], evidence: await splitEvidence(root, "docs/plans/reports", "authorize") },
-    { op: "set_dependencies", slug: "download", dependencies: ["authorize"] },
-    { op: "set_status", slug: "download", status: "in-progress" }
+    // A dependency added after a slice started is a state the views still show.
+    { op: "set_status", slug: "download", status: "in-progress" },
+    { op: "set_dependencies", slug: "download", dependencies: ["authorize"] }
   ] });
   await updateInitiative({ projectRoot: root, initiative: "orphan", expectedRevision: null, operations: [{ op: "create", slug: "orphan", title: "Orphan", requirements: ["docs/requirements/reports.md#3"] }] });
   await updateRoadmap({ projectRoot: root, expectedRevision: null, operations: [

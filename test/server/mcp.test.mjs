@@ -1047,3 +1047,28 @@ test("a server that knows its project starts the native index in the background 
   assert.equal(status.result.structuredContent.preparationId, progress.preparationId, "a tool call reports the background build, not a second one");
   stopSilent();
 });
+
+test("the server exits soon after its input closes, even while its index assets download", async (context) => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-mcp-close-")));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await execFileAsync("git", ["init", "-q"], { cwd: root });
+  // A host that accepts connections and never answers keeps the runtime download pending.
+  const sockets = new Set();
+  const silent = net.createServer((socket) => { sockets.add(socket); socket.on("error", () => {}); });
+  await new Promise((resolve) => silent.listen(0, "127.0.0.1", resolve));
+  context.after(() => { for (const socket of sockets) socket.destroy(); silent.close(); });
+  const platform = `${process.platform}-${process.arch}`;
+  const manifest = path.join(root, "..", `${path.basename(root)}-manifest.json`);
+  context.after(() => rm(manifest, { force: true }));
+  await writeFile(manifest, JSON.stringify({ schemaVersion: 1, assetVersion: "test-silent", bundles: { [platform]: { url: `https://127.0.0.1:${silent.address().port}/runtime.tar.gz`, sha256: "0".repeat(64), bytes: 1, unpackedBytes: 1 } }, model: { id: "test/model", revision: "test-revision", files: [] } }));
+  const env = isolatedEnv({ CLAUDE_PROJECT_DIR: root, PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: manifest });
+  const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "ignore", "ignore"] });
+  context.after(() => { if (child.exitCode === null) child.kill("SIGKILL"); });
+  await new Promise((resolve) => silent.once("connection", resolve));
+  child.stdin.end();
+  const code = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve("still running"), 7000);
+    child.once("exit", (exitCode) => { clearTimeout(timer); resolve(exitCode); });
+  });
+  assert.equal(code, 0);
+});
