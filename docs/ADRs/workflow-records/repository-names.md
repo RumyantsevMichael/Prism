@@ -23,7 +23,7 @@ A store MUST register each name in its own file `repositories/<name>.json`, hold
 A remote MUST be stored as scheme, host, and path only, and two remotes MUST be the same remote when their lowercase host without a port and their path without surrounding slashes and a trailing `.git` are equal.
 A local path or `file://` origin MUST count as no network remote.
 Before a record operation of a named checkout touches the store, Prism MUST check the name: an unregistered name registers, a listed remote or a matching root commit accepts, and anything else refuses every record operation without changing the store.
-A matching root commit MUST add the checkout's remote to the registration, so a repository moved on its host and its forks keep the name.
+A matching root commit MUST add the checkout's remote to the registration, so a repository moved on its host and its forks keep the name, unless another registration lists that remote.
 A registration without a root commit MUST take the first full checkout's root commit that its remote accepts.
 A refusal MUST name both remotes without user information, say how to prove a move or pick another name, and propose a name that the store would accept.
 One remote MUST NOT be registered under a second name.
@@ -76,3 +76,4 @@ A server whose host names the project at start runs that check in the background
 ## Decision Log
 
 2026-11-03: A registration keeps every remote its root commit proves, because Michael asked that a repository moved on its Git host not block anyone.
+2026-11-03: A matching root commit never adds a remote that another name registered, because implementation review found that a fork's checkout naming the original would register one remote under two names.

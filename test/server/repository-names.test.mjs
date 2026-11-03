@@ -155,6 +155,25 @@ test("one remote cannot take a second name", async (context) => {
   assert.equal(await registration(place.store, "backend"), null);
 });
 
+test("a root commit does not move a remote that another name registered", async (context) => {
+  const place = await folder(context);
+  const api = await repository(place.parent, "api", { remote: "https://github.com/acme/api.git", repository: "api" });
+  ok(await (await server(context, place, api)).call("get_roadmap"));
+  // A fork shares the original's root commit but registers under a name of its own.
+  const fork = await cloneOf(api, place.parent, "fork", { remote: "https://github.com/someone/api-fork.git", repository: "api-fork" });
+  ok(await (await server(context, place, fork)).call("get_roadmap"));
+  assert.deepEqual((await registration(place.store, "api-fork")).remotes, ["https://github.com/someone/api-fork.git"]);
+  // A checkout of the fork that names the original would put the fork's remote under two names.
+  const confused = await cloneOf(fork, place.parent, "confused", { remote: "git@github.com:someone/api-fork.git", repository: "api" });
+  const before = await snapshot(place.store);
+  const error = refused(await (await server(context, place, confused)).call("get_roadmap"), "repository_remote_registered");
+  assert.match(error.message, /registered in the record store as repository api-fork/);
+  assert.match(error.message, /- Repository: api-fork/);
+  assert.equal(error.data.proposed, "api-fork");
+  assert.deepEqual(await snapshot(place.store), before, "neither registration changed");
+  assert.deepEqual((await registration(place.store, "api")).remotes, ["https://github.com/acme/api.git"]);
+});
+
 test("an invalid repository name is refused with a valid proposal", async (context) => {
   const place = await folder(context);
   for (const [name, value] of [["spaces", "Web App"], ["slash", "acme/web"], ["dash", "-web"], ["long", "w".repeat(65)]]) {
