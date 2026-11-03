@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.17.0](https://github.com/RumyantsevMichael/Prism/compare/v0.16.0...v0.17.0) (2026-11-03)
+
+
+### Added
+
+* claim a slice before working on it ([#79](https://github.com/RumyantsevMichael/Prism/issues/79)) ([1a45c35](https://github.com/RumyantsevMichael/Prism/commit/1a45c35427f9848f276ac95129315fa755dbf76d))
+* show slice claims in the review app ([3be7688](https://github.com/RumyantsevMichael/Prism/commit/3be7688d2983556d379da9fb667f4cda03b1fd7f))
+* show slice claims in the review app ([6b4112b](https://github.com/RumyantsevMichael/Prism/commit/6b4112b18fb922c28c4016ead91cb5a0c5071bdc))
+* show the record store, its sync, and code locations in the review app ([41509ac](https://github.com/RumyantsevMichael/Prism/commit/41509ac4a745ff7bf39319241a2d61c5656e4bcb))
+* show the record store, its sync, and code locations in the review app ([01ed645](https://github.com/RumyantsevMichael/Prism/commit/01ed645138cadd18365fb3395f2b40063f9cf667))
+
+
+### Fixed
+
+* check dependencies on start, stage tests again on revert, and ignore other slices' staged tests in staleness ([5151f19](https://github.com/RumyantsevMichael/Prism/commit/5151f1908ed40663d11e9670fb7808ea2c365afa))
+* exit the MCP server once its input closes ([42ebd8c](https://github.com/RumyantsevMichael/Prism/commit/42ebd8c9513c7b050a6844634d9046ca47b3b9ae))
+* keep remote store clones in Prism's app folder so Codex can use them ([62c9d06](https://github.com/RumyantsevMichael/Prism/commit/62c9d064079dd5601b54e44dde8914106a7c3f05))
+* keep remote store clones in Prism's app folder so Codex can use them ([93dabe8](https://github.com/RumyantsevMichael/Prism/commit/93dabe894a40aa2cc1c03e5a3124e78e1ffd50f4)), closes [#81](https://github.com/RumyantsevMichael/Prism/issues/81)
+* smooth four orchestration rough edges found while dogfooding ([cb6036e](https://github.com/RumyantsevMichael/Prism/commit/cb6036e19f1081a80cf0cb7b4266fbfcbab0816c))
+* wait for the native helper to exit before the MCP server exits ([326dafb](https://github.com/RumyantsevMichael/Prism/commit/326dafb85fb2a617b0d963015fb4b37561b5b418))
+
+
+### Documentation
+
+* close resolved issues from pull request descriptions ([#83](https://github.com/RumyantsevMichael/Prism/issues/83)) ([56cefe2](https://github.com/RumyantsevMichael/Prism/commit/56cefe2cab210e53cd3df94dc49353eae2b60848))
+
 ## [0.16.0](https://github.com/RumyantsevMichael/Prism/compare/v0.15.0...v0.16.0) (2026-11-03)
 
 
