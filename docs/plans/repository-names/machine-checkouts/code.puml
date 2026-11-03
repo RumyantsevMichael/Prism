@@ -1,0 +1,18 @@
+@startuml
+title List this machine's checkouts - code
+package "src/server/workflow" {
+  class "repository-names.mjs" as Names <<module>>
+  class "machine-checkouts.mjs" as Checkouts <<new module>> {
+    + recordCheckout()
+  }
+}
+package "src/server/review" {
+  class "review-app-discovery.mjs" as App <<module>>
+}
+package "src/server" {
+  class "mcp.mjs" as Mcp <<module>>
+}
+Mcp --> Names : checks the host's project at start
+Names --> Checkouts : records an accepted checkout
+Checkouts --> App : finds Prism's application folder
+@enduml

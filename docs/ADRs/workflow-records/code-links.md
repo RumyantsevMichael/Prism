@@ -17,7 +17,8 @@ A person or agent reading a slice cannot tell which repository, branch, and comm
 ## Decision
 
 Every verification run and every contract-defect report MUST record the checkout it ran in: the repository identity, the origin remote, the branch, the head commit, and whether the work tree had uncommitted changes.
-The repository identity MUST be the repository's first root commit in sorted order, and it MUST be null outside Git, before the first commit, or in a shallow clone, whose oldest fetched commits only look like roots.
+The repository identity MUST be the checkout's [repository name](repository-names.md) when its store accepted that name.
+Otherwise it MUST be the repository's first root commit in sorted order, and it MUST be null outside Git, before the first commit, or in a shallow clone, whose oldest fetched commits only look like roots.
 The repository identity is a hint for readers, and no rule may depend on it.
 A recorded remote MUST keep only the scheme, host, and path of a network remote, so no user, password, token, query, or fragment is stored, and any other remote MUST be recorded as null.
 Uncommitted changes MUST be judged on the same content that verification hashes, so Prism records, plans, and the roadmap never make a checkout dirty.
@@ -59,3 +60,4 @@ It compares the content tree the run already hashed with the same content tree o
 ## Decision Log
 
 2026-11-02: Shallow clones record a null repository identity, because a two-machine test showed that their root commits differ from a full clone's.
+2026-11-03: A checkout whose store accepted its repository name records that name as the repository identity, because a name is the same in shallow clones and forks; runs recorded before keep their root commits.
