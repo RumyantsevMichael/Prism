@@ -71,7 +71,7 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
   1. Call `update_initiative` with `restore_tests` for the scope.
   2. Return the defects to design with the scope.
   3. Accept design's revised proposal, then start the slice again with a fresh implementation session.
-- When the implementer returns `BLOCKED` on an approval gate, wait for it as in [user gates](#6-user-gates), then run a fresh implementation session.
+- When the implementer returns `BLOCKED` on an approval gate that needs the user's chat approval, ask the user in chat whether Prism may run the exact command, then run a fresh implementation session with the gate id and their answer quoted word for word; on any other approval gate, wait for it as in [user gates](#6-user-gates), then run a fresh implementation session.
 - When triage, design, or implementation returns `BLOCKED` or a question, ask the user the exact question and continue with another eligible slice meanwhile.
 
 On resume, continue an `in-progress` slice with a fresh implementation session before starting another slice.
