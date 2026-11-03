@@ -30,6 +30,8 @@ This applies to subagents as well: if you are dispatched to work on a file here,
 - **Any commit touching `skills/` is `feat:` or `fix:`, never `docs:`.**
   Releases are computed from commit prefixes, and a skill is a prompt, so editing its wording changes what the plugin does.
   A behavior change committed as `docs:` produces no version bump and silently never reaches users.
+- **A pull request names each issue it fully resolves with `Closes #N` in its description.**
+  Use `Refs #N` for a partial fix, and see "Linking issues" in `CONTRIBUTING.md`.
 
 ## Editing skills
 

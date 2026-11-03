@@ -225,6 +225,13 @@ A skill is a prompt, so editing its wording changes what the plugin does.
 `docs:` is reserved for `README.md` and `CONTRIBUTING.md`, the files that describe the plugin without being part of it.
 Getting this wrong is silent: a behavior change committed as `docs:` produces no version bump, so it never reaches anyone who installed the plugin.
 
+## Linking issues
+
+Write `Closes #N` in the pull request description for each issue the pull request fully resolves, one per line, so GitHub closes the issue when the pull request merges into `main`.
+Write `Refs #N` for an issue the pull request only partly addresses, and say what remains.
+GitHub closes issues only for pull requests that merge into the default branch, so a pull request stacked on another branch closes nothing when it merges into that branch.
+Carry its `Closes` lines into the pull request that reaches `main`.
+
 ## Cutting a release
 
 Releases are automated with [release-please](https://github.com/googleapis/release-please).
