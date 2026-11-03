@@ -147,6 +147,7 @@ async function resolveStore(projectRootPath) {
 
 // The check runs before migration, housekeeping, and record access, so a refused checkout leaves the store and its own records as they were.
 // In a synced store the check confirms a registration it writes with a sync of its own, and pushes an addition to a registration with the next sync.
+// A check that a still-pending registration would decide refuses without waiting, so a check nested inside a held record lock never waits for another check's sync.
 async function checkedRepository(store) {
   const key = `${store.root}\0${store.base}`;
   const cached = nameChecks.get(key);
@@ -156,8 +157,8 @@ async function checkedRepository(store) {
       const name = (await readWorkflowConfig(store.root)).workspace?.repository ?? null;
       return checkRepositoryName({ root: store.root, base: store.base, name, fail, sync: store.sync, beforeWrite: () => ensureHousekeeping(store) });
     })();
-    // A refusal is trusted as long as an acceptance, so a refused checkout does not ask Git again on every operation; any other failure is checked again at once.
-    pending.catch((error) => { if (!REPOSITORY_REFUSALS.includes(error?.code) && nameChecks.get(key)?.pending === pending) nameChecks.delete(key); });
+    // A refusal is trusted as long as an acceptance, so a refused checkout does not ask Git again on every operation; any other failure, and a refusal because a registration is still pending, is checked again at once.
+    pending.catch((error) => { if ((!REPOSITORY_REFUSALS.includes(error?.code) || error?.pending === true) && nameChecks.get(key)?.pending === pending) nameChecks.delete(key); });
     nameChecks.set(key, { at: Date.now(), pending });
   }
   const checked = await pending;

@@ -254,8 +254,8 @@ async function identity(base) {
 
 async function commitLocal(base, author) {
   await required(base, ["add", "-A", "--", "."]);
-  // A store whose ignore file predates the sync folder still never commits it.
-  await required(base, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", SYNC_DIRECTORY]);
+  // A store whose ignore file predates the sync folder, or lists no lock files, still never commits the sync folder or the registration lock.
+  await required(base, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", SYNC_DIRECTORY, "repositories.lock"]);
   const staged = (await required(base, ["diff", "--cached", "--name-only", "-z"])).stdout.toString("utf8").split("\0").filter(Boolean);
   if (!staged.length) return false;
   const listed = staged.slice(0, COMMIT_LIST).join("\n") + (staged.length > COMMIT_LIST ? `\n… and ${staged.length - COMMIT_LIST} more` : "");

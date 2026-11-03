@@ -44,7 +44,7 @@ async function synced(context) {
 }
 
 // A second check that runs while a new registration is being confirmed, as a second server sharing the store folder
-// or the same server after its 5-second name-check window does, waits for the confirmation instead of accepting the registration.
+// or the same server after its 5-second name-check window does, is refused while the registration is pending instead of accepting it.
 test("a check does not accept a registration that another check has written but not yet confirmed", async (context) => {
   const value = await synced(context);
   // The store's remote answers slowly and then fails, as an unreachable host does.
@@ -78,7 +78,7 @@ test("a check in another process does not accept a registration that is still be
   await new Promise((resolve) => setTimeout(resolve, 500));
   const elsewhere = await checkElsewhere(value.checkout, value.store);
   assert.equal(await first, "repository_unconfirmed");
-  assert.deepEqual(elsewhere, { code: "repository_unconfirmed" }, "the other process waited for the confirmation and then failed to confirm its own registration");
+  assert.deepEqual(elsewhere, { code: "repository_unconfirmed" }, "the other process is refused while the registration is pending");
   assert.equal(await exists(value.registration), false);
 });
 
