@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0](https://github.com/RumyantsevMichael/Prism/compare/v0.16.0...v0.17.0) (2026-11-03)
+
+
+### Added
+
+* show the record store, its sync, and code locations in the review app ([41509ac](https://github.com/RumyantsevMichael/Prism/commit/41509ac4a745ff7bf39319241a2d61c5656e4bcb))
+* show the record store, its sync, and code locations in the review app ([01ed645](https://github.com/RumyantsevMichael/Prism/commit/01ed645138cadd18365fb3395f2b40063f9cf667))
+
 ## [0.16.0](https://github.com/RumyantsevMichael/Prism/compare/v0.15.0...v0.16.0) (2026-11-03)
 
 
