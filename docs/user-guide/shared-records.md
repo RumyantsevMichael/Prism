@@ -27,9 +27,11 @@ On GitHub, GitLab, and Bitbucket the branch, commit, and repository link to thei
 3. Commit the configuration, so every checkout of the project names the same store.
 
 `Store` names a remote when it is a URL with the scheme `https`, `http`, `ssh`, `git`, or `file`, or the scp form `user@host:path`.
-On the first record access that finds no clone of it, Prism clones the remote into its plugin data directory, under `stores/<id>`, where `<id>` is derived from the remote.
+On the first record access that finds no clone of it, Prism clones the remote into its application folder, under `stores/<id>`, where `<id>` is derived from the remote.
+The application folder is `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere, and `PRISM_REVIEW_APP_DIR` overrides it.
 The access waits for the clone, and every later access on the machine uses it.
-Every checkout and worktree on the machine whose configuration names the same remote shares that one clone, even when they spell it differently, such as with or without a trailing `.git` or `/`.
+Every checkout, worktree, and host on the machine whose configuration names the same remote shares that one clone, even when they spell it differently, such as with or without a trailing `.git` or `/`, so Claude Code and Codex read and write the same clone.
+A clone that Prism 0.16 made under a host's plugin data directory moves to the application folder on the first record access, with any commit it has not pushed yet.
 Store sync is on by default for a remote store, so Prism keeps the clone in step with the remote without you running Git in it:
 
 - A few seconds after a record write, Prism commits the change, merges the remote's branch, and pushes.
@@ -46,7 +48,6 @@ Use an SSH agent or a Git credential helper for a remote that needs credentials,
 
 These problems make every record operation fail with `store_unavailable`, and the message names the remote without any user name or token:
 
-- The host gave Prism no plugin data directory, so it has nowhere to keep the clone.
 - The clone failed, for example because the remote cannot be reached; Prism leaves no partial clone behind and tries again on the next access.
 - A folder already sits at the clone path with another origin; Prism leaves it untouched, so move it away.
 
@@ -125,7 +126,7 @@ Each saved conflict shows the saved local copy against the current record as a d
 
 ## Cloud sessions
 
-A cloud session clones a remote store into its own plugin data directory on its first record access, like any other machine.
+A cloud session clones a remote store into its own application folder on its first record access, like any other machine.
 The session needs read and push access to the store repository, so add the store repository to the project's repositories, or otherwise let the session reach it with push access.
 A cloud session that attached the store repository with push access could push to the store's `main` branch in a test on 2 November 2026, so sync works there without changes.
 A session that may push only its own `claude/...` branch reports `push_rejected` and keeps its records in its own clone until a person merges them.

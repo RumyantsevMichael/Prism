@@ -125,9 +125,9 @@ To share them between machines, name the store's Git remote in `.prism/workflow.
 ```
 
 `Store` names a remote when it is a URL with the scheme `https`, `http`, `ssh`, `git`, or `file`, or the scp form `user@host:path`, and any other value is a folder path.
-Prism clones a remote store once per machine into its plugin data directory on the first record access, and every checkout on the machine that names the same remote shares that clone.
+Prism clones a remote store once per machine into its application folder on the first record access, and every checkout and host on the machine that names the same remote shares that clone.
 Store sync is on by default for a remote store, and `- Store sync: off` keeps the clone without fetching, committing, or pushing after the first clone.
-Without a plugin data directory, after a failed clone, or when another repository's clone already sits at the clone path, every record operation fails with `store_unavailable`.
+After a failed clone, or when another repository's clone already sits at the clone path, every record operation fails with `store_unavailable`.
 
 To share records only between linked worktrees or clones on one machine, name a record store folder outside the project instead:
 

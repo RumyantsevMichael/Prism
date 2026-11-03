@@ -58,3 +58,6 @@ jobs:
           codex plugin marketplace add .
           codex plugin add prism@prism
           codex plugin list
+
+      - name: Smoke-test Prism tools in real Claude Code and Codex
+        run: node scripts/host-smoke.mjs

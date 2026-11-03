@@ -166,9 +166,9 @@ export async function startStandaloneReview({ projectRoot = process.cwd(), artif
       throw error;
     }
   }
-  // Without host data this command knows no project's store, so it leaves the app with the store a session reported.
+  // Without host data this command knows no project's evidence, so it leaves the app with the evidence a session reported; store clones live in the app folder for every host.
   const hostData = env.PLUGIN_DATA || env.CLAUDE_PLUGIN_DATA;
-  const client = createReviewAppClient({ directory: reviewAppDirectory(env), ...(hostData ? { evidenceDirectory: new ConservationStore(undefined, env).directory, recordStoreDirectory: managedStoresDirectory(env) } : {}), ...app });
+  const client = createReviewAppClient({ directory: reviewAppDirectory(env), recordStoreDirectory: managedStoresDirectory(env), ...(hostData ? { evidenceDirectory: new ConservationStore(undefined, env).directory } : {}), ...app });
   const review = await appBackedReview(client, root, { startSession: start, openBrowser: browserOpener });
   try {
     const result = await review.open(artifactPath);
