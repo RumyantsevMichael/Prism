@@ -158,8 +158,8 @@ async function checkedRepository(store) {
       if (checked.created && store.sync) scheduleRecordSync(store.base);
       return checked;
     })();
-    // A refusal is not cached, so a fixed configuration or registration applies on the next operation.
-    pending.catch(() => { if (nameChecks.get(key)?.pending === pending) nameChecks.delete(key); });
+    // A refusal is trusted as long as an acceptance, so a refused checkout does not ask Git again on every operation; any other failure is checked again at once.
+    pending.catch((error) => { if (!REPOSITORY_REFUSALS.includes(error?.code) && nameChecks.get(key)?.pending === pending) nameChecks.delete(key); });
     nameChecks.set(key, { at: Date.now(), pending });
   }
   const checked = await pending;

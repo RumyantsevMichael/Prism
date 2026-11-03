@@ -118,7 +118,8 @@ A registered name accepts a checkout in three cases:
 - Its remote matches a registered remote.
   Two remotes match when their host, ignoring case and port, and their path, ignoring surrounding `/` and a trailing `.git`, are equal, so `git@github.com:acme/api.git` and `https://github.com/acme/api` are one remote, while `Acme/API` is another path than `acme/api`.
 - It has no network remote, and the name was registered without one.
-- Its root commit equals the registered one, as in a repository moved on its host or a fork of it; its remote then joins the registration.
+- Its root commit equals the registered one, as in a repository moved on its host or a fork of it, and no other name lists its remote; its remote then joins the registration.
+  A checkout whose root commit matches but whose remote another name lists, such as a fork's checkout that names the original, is refused with `repository_remote_registered`.
 
 These refusals make every record operation of the checkout fail, and each error's data holds the proposed name as `proposed`:
 

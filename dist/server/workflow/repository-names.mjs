@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readdir } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { publicRemote } from "./remote-url.mjs";
@@ -19,15 +20,18 @@ const git = (root, args) => new Promise((resolve) => {
 });
 
 /** The identity every full clone of one repository shares, its first root commit in sorted order, or null outside Git, before the first commit, or in a shallow clone, whose oldest fetched commits only look like roots. */
-// A root commit never changes once it exists, so each project asks Git only until it has one.
+// A root commit never changes once it exists, so each project asks Git only until it has one; a shallow clone asks again, because git fetch --unshallow reveals its root.
 const repositoryIds = new Map();
-export async function repositoryId(root) {
+async function rootCommit(root, shallow) {
   if (repositoryIds.has(root)) return repositoryIds.get(root);
-  const shallow = await git(root, ["rev-parse", "--is-shallow-repository"]);
-  if (shallow === "true") { repositoryIds.set(root, null); return null; }
-  const id = shallow === null ? null : ((await git(root, ["rev-list", "--max-parents=0", "HEAD"])) ?? "").split(/\s+/).filter(Boolean).sort()[0] || null;
+  if (shallow !== "false") return null;
+  const id = ((await git(root, ["rev-list", "--max-parents=0", "HEAD"])) ?? "").split(/\s+/).filter(Boolean).sort()[0] || null;
   if (id) repositoryIds.set(root, id);
   return id;
+}
+export async function repositoryId(root) {
+  if (repositoryIds.has(root)) return repositoryIds.get(root);
+  return rootCommit(root, await git(root, ["rev-parse", "--is-shallow-repository"]));
 }
 
 /**
@@ -59,29 +63,60 @@ export function sameRemote(left, right) {
 
 // What the checkout can prove about itself: its shown remote, or null for no network remote, its root commit, and why history may not prove it.
 async function checkoutFacts(root) {
-  const [origin, shallow, head, id] = await Promise.all([
+  const [origin, shallow, head] = await Promise.all([
     git(root, ["config", "--get", "remote.origin.url"]),
     git(root, ["rev-parse", "--is-shallow-repository"]),
-    git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]),
-    repositoryId(root)
+    git(root, ["rev-parse", "--verify", "--quiet", "HEAD"])
   ]);
-  return { remote: publicRemote(origin || null), root: id, shallow: shallow === "true", commits: Boolean(head), folder: path.basename(root) };
+  return { remote: publicRemote(origin || null), root: await rootCommit(root, shallow), shallow: shallow === "true", commits: Boolean(head), folder: path.basename(root) };
 }
 
 const registrationFile = (base, name) => path.join(base, REPOSITORIES, `${name}.json`);
 
+// The registrations folder, which must be a real folder of the store, never a link out of it, or null while it does not exist.
+async function registrationsFolder(base, fail) {
+  const folder = path.join(base, REPOSITORIES);
+  let info;
+  try { info = await lstat(folder); }
+  catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw fail("store_unavailable", `The registrations folder ${REPOSITORIES} of the record store cannot be read (${error.code ?? error.message}).`);
+  }
+  if (info.isSymbolicLink() || !info.isDirectory()) throw fail("invalid_path", `The registration location ${REPOSITORIES} must be a folder inside the record store, not a symbolic link or a file.`);
+  return folder;
+}
+
+// A registration's bytes, read without following a link and never past the size limit, or null when it is no regular file or is too large.
+async function registrationBytes(target) {
+  const handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0));
+  try {
+    if (!(await handle.stat()).isFile()) return null;
+    const buffer = Buffer.alloc(REGISTRATION_MAX_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    return length > REGISTRATION_MAX_BYTES ? null : buffer.subarray(0, length);
+  } finally { await handle.close(); }
+}
+
 // Every registration in the store, in name order; a file Prism cannot read still holds its name and accepts no checkout.
-async function readRegistrations(base) {
+async function readRegistrations(base, fail) {
+  const folder = await registrationsFolder(base, fail);
   let names = [];
-  try { names = (await readdir(path.join(base, REPOSITORIES))).filter((name) => name.endsWith(".json") && REPOSITORY_NAME.test(name.slice(0, -".json".length))).sort(); }
-  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
+  if (folder) {
+    try { names = (await readdir(folder)).filter((name) => name.endsWith(".json") && REPOSITORY_NAME.test(name.slice(0, -".json".length))).sort(); }
+    catch (error) { throw fail("store_unavailable", `The registrations folder ${REPOSITORIES} of the record store cannot be read (${error.code ?? error.message}).`); }
+  }
   const registrations = [];
   for (const file of names) {
     const name = file.slice(0, -".json".length);
     let parsed = null;
     try {
-      const bytes = await readFile(path.join(base, REPOSITORIES, file));
-      if (bytes.length <= REGISTRATION_MAX_BYTES) parsed = JSON.parse(bytes.toString("utf8"));
+      const bytes = await registrationBytes(path.join(folder, file));
+      if (bytes) parsed = JSON.parse(bytes.toString("utf8"));
     } catch { /* An unreadable registration keeps its name taken. */ }
     const valid = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.remotes);
     registrations.push(valid
@@ -91,11 +126,16 @@ async function readRegistrations(base) {
   return registrations;
 }
 
-// How a registration accepts the checkout: by its remote, by having no network remote as the checkout has none, by its root commit, or not at all.
-function acceptance(registration, facts) {
+// The registration other than the named one that lists the checkout's remote, if any.
+const remoteOwner = (registrations, facts, except) => facts.remote
+  ? registrations.find((item) => item.name !== except && !item.unreadable && item.remotes.some((remote) => sameRemote(remote, facts.remote)))
+  : undefined;
+
+// How a registration accepts the checkout: by its remote, by having no network remote as the checkout has none, by its root commit while no other registration lists the checkout's remote, or not at all.
+function acceptance(registration, facts, registrations) {
   if (registration.unreadable) return null;
   if (facts.remote ? registration.remotes.some((remote) => sameRemote(remote, facts.remote)) : registration.remotes.length === 0) return "remote";
-  if (facts.root && registration.root === facts.root) return "root";
+  if (facts.root && registration.root === facts.root && !remoteOwner(registrations, facts, registration.name)) return "root";
   return null;
 }
 
@@ -108,7 +148,7 @@ const trimName = (value) => value.replace(/^[-_]+|[-_]+$/g, "");
 
 /** A name the store would accept for this checkout: a registration that accepts it, or one derived from its remote or folder that no other repository holds. */
 function proposedName(registrations, facts) {
-  const accepting = registrations.find((registration) => acceptance(registration, facts));
+  const accepting = registrations.find((registration) => acceptance(registration, facts, registrations));
   if (accepting) return accepting.name;
   const source = (facts.remote && lastSegment(facts.remote)) || facts.folder;
   const base = trimName(trimName(source.toLowerCase().replace(/[^a-z0-9_-]+/g, "-")).slice(0, NAME_MAX)) || "repository";
@@ -135,17 +175,20 @@ function unproven(registration, facts) {
   return null;
 }
 
+const remoteRegistered = (fail, name, facts, other) => refusal(fail, "repository_remote_registered", `The remote ${facts.remote} of this checkout is registered in the record store as repository ${other.name}, so it cannot also be repository ${name}. Use \`${line(other.name)}\` under \`## Workspace\` in .prism/workflow.md.`, other.name);
+
 /** Decide a named checkout against the registrations: { accept, write? } or { register }, or throw a refusal. */
 function decide(name, registrations, facts, fail) {
   const registration = registrations.find((item) => item.name === name);
   if (!registration) {
-    const other = facts.remote && registrations.find((item) => !item.unreadable && item.remotes.some((remote) => sameRemote(remote, facts.remote)));
-    if (other) {
-      throw refusal(fail, "repository_remote_registered", `The remote ${facts.remote} of this checkout is registered in the record store as repository ${other.name}, so it cannot also be repository ${name}. Use \`${line(other.name)}\` under \`## Workspace\` in .prism/workflow.md.`, other.name);
-    }
+    const other = remoteOwner(registrations, facts, name);
+    if (other) throw remoteRegistered(fail, name, facts, other);
     return { register: { schemaVersion: 1, name, remotes: facts.remote ? [facts.remote] : [], root: facts.root, registeredAt: new Date().toISOString() } };
   }
-  const how = acceptance(registration, facts);
+  const how = acceptance(registration, facts, registrations);
+  // A matching root commit never moves a remote that another name registered, as a fork's checkout naming the original would.
+  const other = !how && !registration.unreadable && facts.root && registration.root === facts.root && remoteOwner(registrations, facts, name);
+  if (other) throw remoteRegistered(fail, name, facts, other);
   if (how === "root" && facts.remote) return { accept: true, write: { ...registration.document, remotes: [...registration.remotes, facts.remote] } };
   if (how === "remote" && registration.root === null && facts.root) return { accept: true, write: { ...registration.document, root: facts.root } };
   if (how) return { accept: true };
@@ -168,19 +211,21 @@ const serialize = (registration) => `${JSON.stringify(registration, null, 2)}\n`
  */
 export async function checkRepositoryName({ root, base, name, fail, beforeWrite = async () => {} }) {
   const facts = await checkoutFacts(root);
-  if (name === null || name === undefined) return { repository: null, proposed: proposedName(await readRegistrations(base), facts) };
+  // A proposal is advice, so registrations Prism cannot read leave it derived from the remote or folder alone rather than failing the operation.
+  const proposal = async () => proposedName(await readRegistrations(base, fail).catch(() => []), facts);
+  if (name === null || name === undefined) return { repository: null, proposed: await proposal() };
   if (!REPOSITORY_NAME.test(name)) {
-    const proposed = proposedName(await readRegistrations(base), facts);
+    const proposed = await proposal();
     throw refusal(fail, "repository_name_invalid", `The repository name ${name} under \`## Workspace\` in .prism/workflow.md is invalid: a repository name must use lowercase letters, digits, hyphens, or underscores, starting and ending with a letter or digit, with at most ${NAME_MAX} characters. Use \`${line(proposed)}\`.`, proposed);
   }
-  const first = decide(name, await readRegistrations(base), facts, fail);
+  const first = decide(name, await readRegistrations(base, fail), facts, fail);
   if (first.accept && !first.write) return { repository: name, created: false };
   // A write happens under the store's registration lock against the registrations as they then stand, so two checkouts never both register one name.
   await beforeWrite();
-  await mkdir(path.join(base, REPOSITORIES), { recursive: true });
   const lock = path.join(base, REPOSITORIES);
+  if (!(await registrationsFolder(base, fail))) await mkdir(lock).catch((error) => { if (error.code !== "EEXIST") throw error; });
   return withArtifactLock(lock, () => withFileLock(lock, async () => {
-    const decision = decide(name, await readRegistrations(base), facts, fail);
+    const decision = decide(name, await readRegistrations(base, fail), facts, fail);
     const contents = decision.register ?? decision.write;
     if (contents) await writeAtomically(registrationFile(base, name), serialize(contents));
     return { repository: name, created: Boolean(decision.register) };
