@@ -7,7 +7,7 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { collectUnnamedCheckouts, takeMigrationReports } from "./workflow/record-store.mjs";
+import { collectUnnamedCheckouts, recordStoreOf, takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
@@ -1175,9 +1175,11 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
 
 // A host that names the project at start gets it listed in the review app and its native index preparing before any tool call, without
 // delaying initialize, and opens the review browser when nobody watches one; a host that names no project still gets a running app.
+// Its repository name is checked in the background too, so an accepted checkout is recorded in this machine's checkout list before any tool call.
 if (process.env.CLAUDE_PROJECT_DIR) {
   void realpath(process.env.CLAUDE_PROJECT_DIR).then(async (root) => {
     void startBackgroundPreparation(root);
+    void recordStoreOf(root).catch(() => {});
     reviewServers.register(root, { open: await opensAtStart(root) });
   }, () => {});
 } else {

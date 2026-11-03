@@ -5,6 +5,7 @@ import { lstat, mkdir, open, readdir, readFile, rm, utimes } from "node:fs/promi
 import { hostname } from "node:os";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { recordCheckout } from "./machine-checkouts.mjs";
 import { scheduleRecordSync, SYNC_DIRECTORY, syncRecordStoreNow } from "./record-store-sync.mjs";
 import { publicRemote } from "./remote-url.mjs";
 
@@ -351,8 +352,28 @@ async function confirmRegistration(base, name, facts, fail, contents, mark) {
  * beforeWrite runs before the first file this check writes, which only an accepted check does.
  * A decision that a pending registration would change refuses with repository_unconfirmed and pending: true, whatever the checkout's own sync setting.
  * In a synced store, a new registration is pending until a sync confirms it before the check accepts, and a remote or root added to a registration is synced later.
+ * The first acceptance of a checkout in this process records the checkout in this machine's checkout list, never in the store.
  */
-export async function checkRepositoryName({ root, base, name, fail, beforeWrite = async () => {}, sync = false }) {
+export async function checkRepositoryName(options) {
+  const checked = await checkName(options);
+  if (checked.repository) await recordAccepted(options.root, options.base, checked.repository);
+  return checked;
+}
+
+// The checkout list never fails the operation and holds it up only briefly, so a recording that takes longer finishes in the background.
+const RECORD_WAIT_MS = 3000;
+const recordedCheckouts = new Set();
+async function recordAccepted(root, base, name) {
+  const key = `${root}\0${base}\0${name}`;
+  if (recordedCheckouts.has(key)) return;
+  recordedCheckouts.add(key);
+  const recording = recordCheckout({ store: base, repository: name, path: root }).catch(() => {});
+  let timer;
+  await Promise.race([recording, new Promise((resolve) => { timer = setTimeout(resolve, RECORD_WAIT_MS); timer.unref(); })]);
+  clearTimeout(timer);
+}
+
+async function checkName({ root, base, name, fail, beforeWrite = async () => {}, sync = false }) {
   const facts = await checkoutFacts(root);
   // A proposal is advice, so registrations Prism cannot read leave it derived from the remote or folder alone rather than failing the operation.
   const proposal = async () => proposedName(await readRegistrations(base, fail).catch(() => []), facts);
