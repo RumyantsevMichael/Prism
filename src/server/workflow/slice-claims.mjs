@@ -116,6 +116,21 @@ export function holdClaim(root, initiative, claim) {
   startTimer();
 }
 
+/**
+ * Accept an attempt's new nonce for a claim this process already holds while the attempt is confirmed, so neither a renewal nor a read takes the attempt for a lost claim.
+ * The held nonce stays until the attempt is confirmed, so an undone attempt leaves the earlier claim renewed as before.
+ */
+export function pendClaim(root, initiative, slug, nonce) {
+  const entry = held.get(heldKey(root, initiative, slug));
+  if (entry) entry.pending = nonce;
+}
+
+/** Forget an attempt's pending nonce after the attempt was undone. */
+export function settleClaim(root, initiative, slug, nonce) {
+  const entry = held.get(heldKey(root, initiative, slug));
+  if (entry?.pending === nonce) delete entry.pending;
+}
+
 /** Stop renewing a claim that ended. */
 export function dropClaim(root, initiative, slug) {
   held.delete(heldKey(root, initiative, slug));
@@ -128,7 +143,7 @@ export const heldClaims = () => [...held.values()].map((entry) => ({ ...entry })
 /** Why a held claim is no longer this process's, or null while it still is. */
 function lossOf(entry, claim, now) {
   if (!claim) return "released";
-  if (claim.holder !== entry.holder || claim.nonce !== entry.nonce) return `replaced by ${claim.label}`;
+  if (claim.holder !== entry.holder || (claim.nonce !== entry.nonce && claim.nonce !== entry.pending)) return `replaced by ${claim.label}`;
   if (!isLive(claim, now)) return "expired";
   return null;
 }

@@ -20,6 +20,7 @@ const CLAIM_FILE = (slug) => `initiatives/reports/claims/${slug}.json`;
 const { getInitiative, initiativeAcknowledgement, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { claimHolder, configureClaims, heldClaims, renewHeldClaims, stopClaimRenewals } = await import("../../dist/server/workflow/slice-claims.mjs");
 const { verifySlice } = await import("../../dist/server/workflow/verification.mjs");
+const { withFileLock } = await import("../../dist/server/workflow/artifact-store.mjs");
 const { answerUserGate } = await import("../../dist/server/workflow/state.mjs");
 // Syncs run only when a test or a claim calls them, so each test controls its own ordering.
 configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 });
@@ -451,4 +452,78 @@ test("labels a claim with the store's Git user name and the short host name", as
   assert.equal(started.record.slices.s1.claim.label, `Ada Lovelace on ${os.hostname().split(".")[0]}`);
   assert.equal(started.record.slices.s1.claim.holder, PROCESS_HOLDER);
   assert.match(PROCESS_HOLDER, /^[0-9a-f]{16}$/);
+});
+
+// Holds a lock until the returned release is called, so a test can act while Prism waits for it.
+async function holdLock(target) {
+  let release;
+  let acquired;
+  const ready = new Promise((resolve) => { acquired = resolve; });
+  const done = withFileLock(target, () => { acquired(); return new Promise((resolve) => { release = resolve; }); });
+  await ready;
+  return async () => { release(); await done; };
+}
+
+const nonceIn = async (file) => JSON.parse(await readFile(file, "utf8")).nonce;
+async function until(check) {
+  for (const deadline = Date.now() + 10000; Date.now() < deadline;) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("The condition never held.");
+}
+
+test("keeps a re-claimed slice held and renewed while the new claim waits for its sync", async (context) => {
+  const value = await machines(context);
+  as(A);
+  await write(value.a, [{ op: "claim", slug: "s1" }]);
+  const file = path.join(value.storeA, CLAIM_FILE("s1"));
+  const designNonce = await nonceIn(file);
+  const release = await holdLock(path.join(value.storeA, ".prism-sync", "sync"));
+  const pending = start(value.a, "s1");
+  await until(async () => (await nonceIn(file)) !== designNonce);
+  await renewHeldClaims();
+  const during = await read(value.a);
+  assert.equal(during.lostClaims, undefined, "the server's own pending claim is not lost");
+  assert.equal(during.claims.s1.heldHere, true);
+  assert.deepEqual(heldClaims().map((item) => [item.slug, item.nonce]), [["s1", designNonce]]);
+  await release();
+  const started = await pending;
+  assert.equal(started.claims.confirmation, "sync");
+  assert.deepEqual(heldClaims().map((item) => [item.slug, item.nonce]), [["s1", await nonceIn(file)]]);
+  assert.equal((await read(value.a)).lostClaims, undefined);
+});
+
+test("keeps renewing the earlier claim when a re-claim is undone", async (context) => {
+  const value = await machines(context);
+  as(A);
+  await write(value.a, [{ op: "claim", slug: "s1" }]);
+  const file = path.join(value.storeA, CLAIM_FILE("s1"));
+  const before = JSON.parse(await readFile(file, "utf8"));
+  await rename(value.remote, `${value.remote}.away`);
+  await assert.rejects(start(value.a, "s1"), refusal("claim_unconfirmed"));
+  assert.equal(await nonceIn(file), before.nonce, "the undo restored the earlier design claim");
+  assert.deepEqual(heldClaims().map((item) => [item.slug, item.nonce, item.pending]), [["s1", before.nonce, undefined]]);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await renewHeldClaims();
+  const renewed = JSON.parse(await readFile(file, "utf8"));
+  assert.ok(Date.parse(renewed.renewedAt) > Date.parse(before.renewedAt), "the restored claim is still renewed");
+  const after = await read(value.a);
+  assert.equal(after.lostClaims, undefined);
+  assert.equal(after.claims.s1.activity, "design");
+});
+
+test("waits for a claim record's own lock before it removes an ended claim", async (context) => {
+  const value = await worktrees(context);
+  as(A);
+  await start(value.a, "s1");
+  const file = path.join(value.parent, "store", CLAIM_FILE("s1"));
+  const release = await holdLock(file);
+  const ending = write(value.a, [{ op: "set_status", slug: "s1", status: "blocked" }]);
+  await until(async () => (await readFile(path.join(value.parent, "store", "initiatives/reports/initiative.json"), "utf8")).includes("\"blocked\""));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await exists(file), true, "the removal waits while the sync's lock on the record is held");
+  await release();
+  await ending;
+  assert.equal(await exists(file), false);
 });

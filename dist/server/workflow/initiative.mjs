@@ -9,9 +9,9 @@ import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { listClaimRecords, locateRecord, moveLegacyRecords, readRecord, recordStoreOf, removeInitiativeRecords, removeRecord, writeRecord } from "./record-store.mjs";
+import { listClaimRecords, locateRecord, moveLegacyRecords, readRecord, recordStoreOf, removeInitiativeRecords, removeRecord, withRecordLock, writeRecord } from "./record-store.mjs";
 import { syncRecordStoreNow } from "./record-store-sync.mjs";
-import { blockingClaim, claimedMessage, claimHolder, claimLabel, claimView, dropClaim, holdClaim, isLive, newClaim, parseClaim, renewal, serializeClaim, takeLostClaims } from "./slice-claims.mjs";
+import { blockingClaim, claimedMessage, claimHolder, claimLabel, claimView, dropClaim, holdClaim, isLive, newClaim, parseClaim, pendClaim, renewal, serializeClaim, settleClaim, takeLostClaims } from "./slice-claims.mjs";
 import { mergeHistory, mergeKeyed, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, measureContract, REVIEW_MARKS, stageFrozenTests, verifiedCode, withdrawFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState } from "./state.mjs";
@@ -722,6 +722,19 @@ async function readClaim(resolved, slug) {
   return bytes === null ? null : parseClaim(slug, bytes).claim ?? null;
 }
 
+// Every change to a claim record holds that record's own lock, the one the store's sync takes before it replaces the file, so a merge never overwrites a claim change it did not see.
+// The claims lock is always taken first and one record lock at a time, so the sync, which takes only record locks, cannot deadlock with it.
+// The action gets the record's current claim and returns the claim to write, null to remove the record, or undefined to leave it.
+async function changeClaim(resolved, slug, decide) {
+  return withRecordLock(resolved.root, claimKey(resolved, slug), async () => {
+    const current = await readClaim(resolved, slug);
+    const next = await decide(current);
+    if (next === null) await removeRecord(resolved.root, claimKey(resolved, slug));
+    else if (next !== undefined) await writeRecord(resolved.root, claimKey(resolved, slug), serializeClaim(next));
+    return next;
+  }, fail);
+}
+
 async function prepare(input) {
   const standalone = input.operations.find((operation) => STANDALONE.has(operation.op));
   if (standalone && input.operations.length > 1) throw fail("validation_failed", `${standalone.op} must be the only operation of its update.`);
@@ -805,7 +818,7 @@ async function finishUpdate(written, plan = null) {
   const ended = written.ended.filter((claim) => !taken.has(claim.slug));
   if (ended.length) {
     await withClaimsLock(resolved, async () => {
-      for (const claim of ended) if ((await readClaim(resolved, claim.slug))?.nonce === claim.nonce) await removeRecord(resolved.root, claimKey(resolved, claim.slug));
+      for (const claim of ended) await changeClaim(resolved, claim.slug, (current) => current?.nonce === claim.nonce ? null : undefined);
     });
   }
   for (const claim of ended) dropClaim(resolved.root, resolved.initiative, claim.slug);
@@ -844,8 +857,10 @@ async function claimingUpdate(input) {
       if (after && after.nonce !== before?.nonce) writes.push({ slug, claim: after, previous: before ?? null });
       else if (!after && before && claims.releasedSlugs.has(slug)) releases.push({ slug, previous: before });
     }
-    for (const item of writes) await writeRecord(resolved.root, claimKey(resolved, item.slug), serializeClaim(item.claim));
-    for (const item of releases) await removeRecord(resolved.root, claimKey(resolved, item.slug));
+    // A claim this process already holds keeps being renewed while the attempt that replaces it waits for confirmation.
+    for (const item of writes) pendClaim(resolved.root, resolved.initiative, item.slug, item.claim.nonce);
+    for (const item of writes) await changeClaim(resolved, item.slug, () => item.claim);
+    for (const item of releases) await changeClaim(resolved, item.slug, () => null);
     const needsWrite = input.operations.some((operation) => operation.op !== "claim") || effects.notes.size > 0;
     return { prepared, slices: record.slices, writes, releases, expired: claims.expired, released: claims.released, notes: effects.notes, needsWrite, holder: claims.holder };
   });
@@ -904,13 +919,10 @@ async function undoClaims(resolved, plan) {
   await withClaimsLock(resolved, async () => {
     const now = Date.now();
     for (const item of plan.writes) {
-      if ((await readClaim(resolved, item.slug))?.nonce !== item.claim.nonce) continue;
-      if (item.previous?.holder === plan.holder && isLive(item.previous, now)) await writeRecord(resolved.root, claimKey(resolved, item.slug), serializeClaim(item.previous));
-      else await removeRecord(resolved.root, claimKey(resolved, item.slug));
+      await changeClaim(resolved, item.slug, (current) => current?.nonce !== item.claim.nonce ? undefined : item.previous?.holder === plan.holder && isLive(item.previous, now) ? item.previous : null);
+      settleClaim(resolved.root, resolved.initiative, item.slug, item.claim.nonce);
     }
-    for (const item of plan.releases) {
-      if ((await readRecord(resolved.root, claimKey(resolved, item.slug))).bytes === null) await writeRecord(resolved.root, claimKey(resolved, item.slug), serializeClaim(item.previous));
-    }
+    for (const item of plan.releases) await changeClaim(resolved, item.slug, async (current) => current === null && (await readRecord(resolved.root, claimKey(resolved, item.slug))).bytes === null ? item.previous : undefined);
   });
 }
 
@@ -918,10 +930,12 @@ async function undoClaims(resolved, plan) {
 export async function renewClaim(entry) {
   const resolved = await resolveInitiative(entry.root, entry.initiative);
   return withClaimsLock(resolved, async () => {
-    const decided = renewal(entry, await readClaim(resolved, entry.slug));
-    if (decided.lost) return decided;
-    await writeRecord(resolved.root, claimKey(resolved, entry.slug), serializeClaim(decided.claim));
-    return { renewed: decided.claim };
+    let decided;
+    await changeClaim(resolved, entry.slug, (current) => {
+      decided = renewal(entry, current);
+      return decided.lost ? undefined : decided.claim;
+    });
+    return decided.lost ? decided : { renewed: decided.claim };
   });
 }
 
