@@ -15,7 +15,7 @@ Object.assign(process.env, {
   GIT_AUTHOR_NAME: "Prism Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Prism Test", GIT_COMMITTER_EMAIL: "test@example.invalid"
 });
 delete process.env.CLAUDE_PLUGIN_DATA;
-const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
+const { cancelRecordSyncs, configureRecordSync, listSavedConflicts, readSavedConflict, readSyncStatus, syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
 const { forgetMigrations, listInitiatives, readRecord, writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { getRoadmap, updateRoadmap } = await import("../../dist/server/workflow/roadmap.mjs");
@@ -167,6 +167,33 @@ test("makes a record read wait while the merge step replaces record files", asyn
     assert.equal(settled, false, "the read waits for the merge step");
   } });
   assert.equal((await read).bytes.toString(), complete);
+});
+
+test("lists saved conflicts and serves each saved copy beside its current record, and nothing else", async (context) => {
+  const { a, b, storeA, storeB } = await machines(context);
+  await writeRecord(a, STATE, "{\"v\":0}\n");
+  await syncRecordStore(storeA);
+  await syncRecordStore(storeB);
+  await writeRecord(a, STATE, "{\"v\":\"a\"}\n");
+  await writeRecord(b, STATE, "{\"v\":\"b\"}\n");
+  await syncRecordStore(storeB);
+  const status = await syncRecordStore(storeA);
+  const listed = await listSavedConflicts(storeA);
+  assert.deepEqual(listed.map((item) => [item.path, item.savedAs]), [["initiatives/reports/state.json", status.conflicts[0].savedAs]]);
+  assert.deepEqual(await readSavedConflict(storeA, listed[0].savedAs), { path: "initiatives/reports/state.json", saved: "{\"v\":\"a\"}\n", current: "{\"v\":\"b\"}\n" });
+  const stamp = listed[0].savedAs.split("/")[2];
+  for (const name of [".prism-sync/status.json", `.prism-sync/conflicts/${stamp}/../../status.json`, `.prism-sync/conflicts/${stamp}/README.md`, "initiatives/reports/state.json", `.prism-sync/conflicts/not-a-stamp/initiatives/reports/state.json`, null]) {
+    assert.equal(await readSavedConflict(storeA, name), null, String(name));
+  }
+  const review = await startReviewServer({ projectRoot: a });
+  try {
+    const index = await fetchJson(`${review.baseUrl}/api/index`);
+    assert.deepEqual(index.recordStore, { kind: "folder", label: "../store-a", location: storeA, sync: true });
+    assert.deepEqual((await fetchJson(`${review.baseUrl}/api/store/conflicts`)).conflicts, listed);
+    assert.equal((await fetchJson(`${review.baseUrl}/api/store/conflict?savedAs=${encodeURIComponent(listed[0].savedAs)}`)).saved, "{\"v\":\"a\"}\n");
+  } finally {
+    await review.close();
+  }
 });
 
 test("includes the store's sync status in the review index", async (context) => {

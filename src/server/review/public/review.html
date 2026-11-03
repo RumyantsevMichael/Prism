@@ -25,21 +25,6 @@
         <ul id="project-list" class="project-list"></ul>
       </div>
     </div>
-    <div class="indexing" id="indexing" hidden>
-      <button class="indexing-chip" id="indexing-button" type="button" aria-expanded="false" aria-controls="indexing-panel">
-        <span class="indexing-dot" aria-hidden="true"></span>
-        <span id="indexing-label" class="indexing-label"></span>
-        <span id="indexing-meter" class="indexing-meter" aria-hidden="true" hidden><span></span></span>
-        <span id="indexing-detail" class="indexing-detail" hidden></span>
-      </button>
-      <div id="indexing-panel" class="indexing-panel" role="dialog" aria-label="Repository index" hidden></div>
-    </div>
-    <div class="indexing store-sync" id="store-sync" data-tone="warn" hidden>
-      <span class="indexing-chip" role="status">
-        <span class="indexing-dot" aria-hidden="true"></span>
-        <span id="store-sync-label" class="indexing-label"></span>
-      </span>
-    </div>
     <div id="tabs" class="artifact-tabs" role="tablist" aria-label="Open artifacts"></div>
   </header>
   <div id="app-gone" class="app-gone-banner" role="alert" hidden>
@@ -93,6 +78,27 @@
       </div>
     </section>
   </main>
+  <footer class="statusbar" id="statusbar" aria-label="Status">
+    <button class="status-item" id="store-status" type="button" aria-haspopup="dialog" hidden>
+      <span class="store-icon" aria-hidden="true"></span>
+      <span id="store-status-label" class="status-label"></span>
+    </button>
+    <button class="status-item" id="store-sync" type="button" aria-haspopup="dialog" hidden>
+      <span class="indexing-dot" aria-hidden="true"></span>
+      <span id="store-sync-label" class="status-label"></span>
+    </button>
+    <span class="statusbar-spacer"></span>
+    <div class="indexing" id="indexing" hidden>
+      <button class="indexing-chip" id="indexing-button" type="button" aria-expanded="false" aria-controls="indexing-panel">
+        <span class="indexing-dot" aria-hidden="true"></span>
+        <span id="indexing-label" class="indexing-label"></span>
+        <span id="indexing-meter" class="indexing-meter" aria-hidden="true" hidden><span></span></span>
+        <span id="indexing-detail" class="indexing-detail" hidden></span>
+      </button>
+      <div id="indexing-panel" class="indexing-panel" role="dialog" aria-label="Repository index" hidden></div>
+    </div>
+  </footer>
+  <dialog id="store-dialog" class="store-dialog" aria-labelledby="store-dialog-title"></dialog>
   <aside id="evidence-drawer" class="evidence-drawer" aria-label="Evidence" hidden>
     <header class="evidence-drawer-header">
       <div class="evidence-trail" id="evidence-trail"></div>

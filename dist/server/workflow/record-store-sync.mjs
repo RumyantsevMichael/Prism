@@ -113,6 +113,47 @@ export function pullRecordStoreIfStale(base) {
   syncRecordStore(base).catch(() => {});
 }
 
+const STAMP = /^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/;
+const stampTime = (stamp) => Date.parse(stamp.replace(STAMP, "$1:$2:$3.$4Z"));
+
+// The record files a sync saved under one conflict stamp, as store-relative paths.
+async function savedFiles(directory) {
+  const files = [];
+  const visit = async (relative) => {
+    let entries = [];
+    try { entries = await readdir(path.join(directory, relative), { withFileTypes: true }); } catch { return; }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const child = relative ? `${relative}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) await visit(child);
+      else if (entry.isFile() && isRecordFile(child)) files.push(child);
+    }
+  };
+  await visit("");
+  return files;
+}
+
+/** Every local record version a sync saved in a store, newest first: { path, savedAs, at }, with savedAs relative to the store like a sync status names it. */
+export async function listSavedConflicts(base) {
+  let stamps = [];
+  try { stamps = (await readdir(syncPath(base, "conflicts"))).filter((stamp) => STAMP.test(stamp)).sort().reverse(); } catch { return []; }
+  const found = [];
+  for (const stamp of stamps) {
+    const at = new Date(stampTime(stamp)).toISOString();
+    for (const file of await savedFiles(syncPath(base, "conflicts", stamp))) found.push({ path: file, savedAs: `${SYNC_DIRECTORY}/conflicts/${stamp}/${file}`, at });
+  }
+  return found;
+}
+
+/** The saved local copy named by a store-relative savedAs path and the record it was saved from, as text: { path, saved, current }; null for any other path. */
+export async function readSavedConflict(base, savedAs) {
+  const parts = typeof savedAs === "string" ? savedAs.split("/") : [];
+  const file = parts.slice(3).join("/");
+  if (parts[0] !== SYNC_DIRECTORY || parts[1] !== "conflicts" || !STAMP.test(parts[2] ?? "") || !isRecordFile(file) || parts.slice(3).some((part) => !part || part === "." || part === "..")) return null;
+  const text = (target) => readFile(target, "utf8").catch((error) => { if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) return null; throw error; });
+  const saved = await text(path.join(base, ...parts));
+  return saved === null ? null : { path: file, saved, current: await text(path.join(base, ...file.split("/"))) };
+}
+
 /** Local record versions that a sync saved because the upstream changed the same record, in stores this process uses, since this process started and not reported before. */
 export async function takeSavedConflicts() {
   const found = [];
@@ -121,22 +162,11 @@ export async function takeSavedConflicts() {
     let stamps = [];
     try { stamps = (await readdir(directory)).sort(); } catch { continue; }
     for (const stamp of stamps) {
-      const at = Date.parse(stamp.replace(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, "$1:$2:$3.$4Z"));
+      const at = stampTime(stamp);
       const key = `${base}\0${stamp}`;
       if (!(at >= PROCESS_START) || reported.has(key)) continue;
       reported.add(key);
-      const files = [];
-      const visit = async (relative) => {
-        let entries = [];
-        try { entries = await readdir(path.join(directory, stamp, relative), { withFileTypes: true }); } catch { return; }
-        for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-          const child = relative ? `${relative}/${entry.name}` : entry.name;
-          if (entry.isDirectory()) await visit(child);
-          else if (entry.isFile() && isRecordFile(child)) files.push(child);
-        }
-      };
-      await visit("");
-      for (const file of files) found.push({ record: `.prism/${file}`, savedAs: path.join(directory, stamp, file), at: new Date(at).toISOString() });
+      for (const file of await savedFiles(path.join(directory, stamp))) found.push({ record: `.prism/${file}`, savedAs: path.join(directory, stamp, file), at: new Date(at).toISOString() });
     }
   }
   return found;

@@ -5,9 +5,9 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { pullRecordStoreIfStale, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
+import { listSavedConflicts, pullRecordStoreIfStale, readSavedConflict, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
 import { managedRecordStore } from "./record-store-remote.mjs";
-import { isRemoteStore } from "./remote-url.mjs";
+import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
 // Machine records live under .prism beside the workflow config, or in the record store the workflow config names; human documents and generated views stay under the configured paths.
@@ -132,6 +132,35 @@ export async function recordStoreOf(projectRootPath) {
 export async function recordSyncStatus(projectRootPath) {
   const store = await recordStoreOf(projectRootPath).catch(() => null);
   return store?.sync ? readSyncStatus(store.base) : null;
+}
+
+/**
+ * Where a project's records live, for people: { kind: "project" | "folder" | "remote", label, location, sync, unavailable? }.
+ * label is the store as configured, a remote without user information; location is the resolved folder or managed clone, or null when the store cannot be reached.
+ */
+export async function describeRecordStore(projectRootPath) {
+  const root = await projectRoot(projectRootPath);
+  const configured = (await readWorkflowConfig(root)).workspace?.store ?? null;
+  if (configured === null) return { kind: "project", label: RECORD_DIRECTORY, location: path.join(root, RECORD_DIRECTORY), sync: false };
+  const kind = isRemoteStore(configured) ? "remote" : "folder";
+  const label = kind === "remote" ? remoteLabel(configured) ?? "remote store" : configured;
+  try {
+    const store = await recordStoreOf(root);
+    return { kind, label, location: store.base, sync: store.sync };
+  } catch (error) {
+    if (error.code !== "store_unavailable") throw error;
+    return { kind, label, location: null, sync: false, unavailable: withoutCredentials(error.message) };
+  }
+}
+
+/** Every local record version that a sync of the project's record store saved, newest first. */
+export async function listRecordStoreConflicts(projectRootPath) {
+  return listSavedConflicts((await recordStoreOf(projectRootPath)).base);
+}
+
+/** One saved local record version of the project's record store and the record it was saved from, or null. */
+export async function readRecordStoreConflict(projectRootPath, savedAs) {
+  return readSavedConflict((await recordStoreOf(projectRootPath)).base, savedAs);
 }
 
 /** The physical file of a project-relative path, { root, target }: a record path maps into the record store, any other path stays under the project root. */
