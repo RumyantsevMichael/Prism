@@ -1220,8 +1220,7 @@ input.on("close", async () => {
     cancelVerifications();
     cancelRecordSyncs();
     stopClaimRenewals();
-    nativeSemanticRuntime.close();
-    await reviewServers.close();
+    await Promise.all([nativeSemanticRuntime.close(), reviewServers.close()]);
   } finally {
     process.exit(0);
   }
