@@ -167,9 +167,9 @@ async function checkedRepository(store) {
   return checked.repository;
 }
 
-/** Whether an error means a project's records cannot be used, as an unavailable store or a refused repository name does, so a view hides only the records. */
+/** Whether an error means a project's records cannot be used, as an unavailable store, a refused repository name, or a registrations entry that is no folder of the store does, so a view hides only the records. */
 export function recordsUnavailable(error) {
-  return error?.code === "store_unavailable" || REPOSITORY_REFUSALS.includes(error?.code);
+  return error?.code === "store_unavailable" || REPOSITORY_REFUSALS.includes(error?.code) || (error?.code === "invalid_path" && error.storeLayout === true);
 }
 
 /**

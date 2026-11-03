@@ -82,7 +82,8 @@ async function registrationsFolder(base, fail) {
     if (error.code === "ENOENT") return null;
     throw fail("store_unavailable", `The registrations folder ${REPOSITORIES} of the record store cannot be read (${error.code ?? error.message}).`);
   }
-  if (info.isSymbolicLink() || !info.isDirectory()) throw fail("invalid_path", `The registration location ${REPOSITORIES} must be a folder inside the record store, not a symbolic link or a file.`);
+  // storeLayout marks the refusal as the store's own layout, so a view hides the records as for an unavailable store while a tool call still answers invalid_path.
+  if (info.isSymbolicLink() || !info.isDirectory()) throw fail("invalid_path", `The registration location ${REPOSITORIES} must be a folder inside the record store, not a symbolic link or a file.`, { storeLayout: true });
   return folder;
 }
 
