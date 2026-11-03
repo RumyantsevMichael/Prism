@@ -128,9 +128,16 @@ These refusals make every record operation of the checkout fail, and each error'
 | `repository_name_invalid` | The name breaks the naming rules. | Use the proposed name. |
 | `repository_name_taken` | The name is registered for other remotes, and the checkout's history cannot prove it is the same repository. The message names both remotes and why, such as a shallow clone. | For the same repository moved on its host, run `git fetch --unshallow` in a shallow clone; otherwise use the proposed name. |
 | `repository_remote_registered` | The checkout's remote is already registered under another name. | Use the name it is registered under. |
+| `repository_unconfirmed` | Store sync is on, and the sync that confirms a new registration failed, for example because the store's remote cannot be reached, so the registration was withdrawn. The message names the sync state, and `proposed` is the name itself. | Try again once the remote is reachable. |
 
 The proposed name is the registered name that would accept the checkout, or else the last part of its remote's path without `.git`, or its folder name without a network remote, made valid and given a suffix such as `-2` when another repository holds it.
 The review browser hides the records of a refused checkout as it does for an unavailable store, and still lists its documents.
+
+With store sync on, the operation that registers a new name waits for one sync before it continues, so two machines that register one name at the same time end with one registration.
+The registration pushed first stays, and the other machine's checkout is then accepted or refused against it, as if it had been in the store all along.
+The registration that lost is saved under `.prism-sync/conflicts/` like a record, but neither the sync status nor a tool result lists it, because the acceptance or refusal already tells the agent.
+A remote or root commit added to an existing registration does not wait: the next sync pushes it, and the next check that needs it adds it again if a sync lost it.
+Each name is a file of its own, so two machines that register one remote under two different names at the same time both keep their registrations, because `repository_remote_registered` refuses a second name for a remote only once the store holds the first.
 
 A checkout whose configuration names a store but no repository keeps working as before and registers nothing.
 Each tool result that opened its store ends with a warning that shows the `- Repository: <name>` line to add under `## Workspace` and commit, with a proposed name, because a later Prism release will refuse record operations without it.
