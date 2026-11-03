@@ -108,7 +108,9 @@ export function parseWorkflowConfig(markdown) {
   // A store named by its remote syncs unless Store sync is off, while a path store syncs only when Store sync is on.
   const store = workspaceValue(parsed, "store");
   const sync = workspaceValue(parsed, "store sync") ?? "";
-  return { paths, configured: [...configured].sort(), sections: values, workspace: { store, sync: isRemoteStore(store) ? !/^off$/i.test(sync) : /^on$/i.test(sync) }, diagnostics };
+  // A repository name only names a checkout to its record store, so without a store the Repository line is ignored.
+  const repository = store === null ? null : workspaceValue(parsed, "repository");
+  return { paths, configured: [...configured].sort(), sections: values, workspace: { store, repository, sync: isRemoteStore(store) ? !/^off$/i.test(sync) : /^on$/i.test(sync) }, diagnostics };
 }
 
 export async function readWorkflowConfig(projectRoot) {

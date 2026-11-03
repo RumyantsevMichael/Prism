@@ -7,7 +7,8 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { takeMigrationReports } from "./workflow/record-store.mjs";
+import { collectUnnamedCheckouts, takeMigrationReports } from "./workflow/record-store.mjs";
+import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
@@ -300,6 +301,10 @@ function failure(id, code, message, data) {
 }
 
 function stateErrorData(error) {
+  // A refused repository name carries the name the store would accept, so a client can offer the line to commit.
+  if (error?.name === "RecordStoreError" && REPOSITORY_REFUSALS.includes(error.code)) {
+    return { code: error.code, proposed: error.proposed ?? null };
+  }
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
   }
@@ -1081,11 +1086,18 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
 // The first write after an upgrade moves files in the user's work tree, so its result says which, to commit on their own.
 const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
+// A checkout that names a store but no repository is told on each result which line to commit, before a later release refuses it.
+function unnamedWarning(unnamed) {
+  return unnamed.map(({ root, proposed }) => `The checkout at ${root} names a record store but no repository name. Add \`- Repository: ${proposed}\` under \`## Workspace\` in its .prism/workflow.md and commit it; a later Prism release will refuse record operations without it.`).join("\n");
+}
+
 // A sync that found the same record changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
-async function withRecordNotes(value) {
+async function withRecordNotes(value, unnamed = []) {
   const reports = takeMigrationReports();
   const saved = await takeSavedConflicts().catch(() => []);
-  if ((!reports.length && !saved.length) || !Array.isArray(value?.content)) return value;
+  if (!Array.isArray(value?.content)) return value;
+  const warning = unnamed.length ? [{ type: "text", text: unnamedWarning(unnamed) }] : [];
+  if (!reports.length && !saved.length) return warning.length ? { ...value, content: [...value.content, ...warning] } : value;
   const lines = [];
   for (const report of reports) {
     const into = report.store ? `the record store at ${report.store}` : ".prism";
@@ -1099,7 +1111,7 @@ async function withRecordNotes(value) {
   if (saved.length) {
     lines.push(`Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, ...saved.map((item) => `- ${item.record} (this machine's version: ${item.savedAs})`));
   }
-  return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
+  return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }, ...warning] };
 }
 
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
@@ -1191,7 +1203,8 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
-      const value = await withRecordNotes(await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id));
+      const { value: called, unnamed } = await collectUnnamedCheckouts(() => callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id));
+      const value = await withRecordNotes(called, unnamed);
       // A cancelled request gets no response, as the MCP cancellation rules require.
       if (value.structuredContent?.status !== "cancelled") {
         result(request.id, value);
