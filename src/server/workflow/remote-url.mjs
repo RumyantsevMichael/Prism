@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 
 /** A remote URL without its user, password, or token, so no credential ever reaches a record. */
 // Only network remotes name a place others can find; local paths and helper transports such as ext:: are left out.
@@ -62,8 +63,13 @@ export function managedStoreId(value) {
   return normalized && createHash("sha256").update(normalized).digest("hex").slice(0, 16);
 }
 
-/** The folder that holds managed store clones under a host's plugin data directory, or null without one. */
+/** The folder that holds managed store clones: one per machine in Prism's application folder, shared by every host, so a host need not give Prism a data directory. */
 export function managedStoresDirectory(env = process.env) {
+  return path.join(reviewAppDirectory(env), "stores");
+}
+
+/** The folder where Prism 0.16 kept managed clones, under the host's plugin data directory, or null when the host gives none. */
+export function legacyStoresDirectory(env = process.env) {
   const data = env.PLUGIN_DATA || env.CLAUDE_PLUGIN_DATA;
   return data ? path.join(path.resolve(data), "stores") : null;
 }

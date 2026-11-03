@@ -77,6 +77,15 @@ The SDM validator checks the supported version and selected structural conventio
 CI also installs the native Codex package from an isolated temporary marketplace.
 Run both checks before opening a pull request.
 
+CI then calls a Prism record tool through real Claude Code and Codex CLIs, with a remote record store, and needs no model or API key:
+
+```bash
+node scripts/host-smoke.mjs            # both hosts; pass claude or codex for one
+```
+
+Codex calls the tool through its app server, and Claude Code runs one print-mode turn against a scripted local Messages API.
+Codex gives a plugin's MCP server only a few basic environment variables and no plugin data directory, so forward any other variable the server reads through `env_vars` in `.codex-mcp.json`.
+
 Run the review-server tests after a server or UI change:
 
 ```bash

@@ -249,7 +249,7 @@ Pattern: Optional feature
 
 Disposition: Active
 
-Requirement: Where a project's workflow configuration names the record store by a Git remote, when a record access finds no clone of that remote on the machine, Prism shall clone it once into the host's plugin data directory, share that clone with every checkout on the machine whose configuration names the same remote, and sync it unless store sync is off.
+Requirement: Where a project's workflow configuration names the record store by a Git remote, when a record access finds no clone of that remote on the machine, Prism shall clone it once into Prism's application folder, share that clone with every checkout and host on the machine whose configuration names the same remote, and sync it unless store sync is off.
 
 Rationale: No checkout then has to agree on a store folder or clone it by hand, and every machine and cloud session finds the same records from the configuration alone.
 
@@ -262,7 +262,7 @@ Pattern: Unwanted behavior
 
 Disposition: Active
 
-Requirement: If a store named by its remote has no plugin data directory to live in, cannot be cloned, or finds another repository's clone at its clone path, then Prism shall refuse every record operation with an error that names the remote without its user information, leave no partial clone, and leave a folder it did not create unchanged.
+Requirement: If a store named by its remote cannot be cloned, or finds another repository's clone at its clone path, then Prism shall refuse every record operation with an error that names the remote without its user information, leave no partial clone, and leave a folder it did not create unchanged.
 
 Rationale: A failed or misdirected clone must neither split state between checkouts nor touch a folder that holds someone else's work.
 

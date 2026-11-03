@@ -8,15 +8,16 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-// Git runs with a private home and configuration, a fixed identity, local repositories only, and no proxy; the plugin data directory is private too.
+// Git runs with a private home and configuration, a fixed identity, local repositories only, and no proxy; the app folder and plugin data directory are private too.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-remote-env-")));
 const data = path.join(environment, "data");
+const appFolder = path.join(environment, "app");
 const gitconfig = path.join(environment, "gitconfig");
 await mkdir(data);
 await writeFile(gitconfig, "");
 for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "CLAUDE_PLUGIN_DATA"]) delete process.env[name];
 Object.assign(process.env, {
-  HOME: environment, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: "1", PLUGIN_DATA: data,
+  HOME: environment, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: "1", PLUGIN_DATA: data, PRISM_REVIEW_APP_DIR: appFolder,
   GIT_AUTHOR_NAME: "Prism Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Prism Test", GIT_COMMITTER_EMAIL: "test@example.invalid"
 });
 const RECORD_STORE = new URL("../../dist/server/workflow/record-store.mjs", import.meta.url).href;
@@ -35,8 +36,9 @@ const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe" }).
 const exists = (target) => access(target).then(() => true, () => false);
 const remoteConfig = (store, sync) => `## Paths\n- Plans (scratch): docs/plans/\n\n## Workspace\n- Store: ${store}\n${sync === undefined ? "" : `- Store sync: ${sync}\n`}`;
 const create = (projectRoot, slug = "reports") => updateInitiative({ projectRoot, initiative: slug, expectedRevision: null, operations: [{ op: "create", slug, title: "Reports", requirements: ["r.md#1"] }] });
-// The clone path the contract defines, computed independently of Prism: SHA-256 of the normalized remote, first 16 hex characters.
-const clonePath = (normalized) => path.join(data, "stores", createHash("sha256").update(normalized).digest("hex").slice(0, 16));
+// The clone path the contract defines, computed independently of Prism: SHA-256 of the normalized remote, first 16 hex characters, under the app folder.
+const cloneId = (normalized) => createHash("sha256").update(normalized).digest("hex").slice(0, 16);
+const clonePath = (normalized) => path.join(appFolder, "stores", cloneId(normalized));
 const leftovers = async (target) => (await readdir(path.dirname(target)).catch(() => [])).filter((name) => name.startsWith(`.${path.basename(target)}.`));
 
 async function folder(context) {
@@ -124,21 +126,58 @@ test("spellings of one remote resolve to the same clone", async (context) => {
   for (const root of roots) assert.equal((await recordStoreOf(root)).base, clone);
 });
 
-test("a remote store without a plugin data directory is unavailable and nothing is cloned", async (context) => {
+test("a remote store needs no plugin data directory, so a host that gives none still clones it", async (context) => {
   const parent = await folder(context);
   const { url, clone } = bareRemote(parent);
   const root = await project(parent, "project", remoteConfig(url));
   const before = await readdir(data);
   delete process.env.PLUGIN_DATA;
   try {
-    await assert.rejects(create(root), (error) => error.code === "store_unavailable" && /plugin data directory/.test(error.message));
-    await assert.rejects(listInitiatives(root), { code: "store_unavailable" });
+    assert.deepEqual(await listInitiatives(root), []);
   } finally {
     process.env.PLUGIN_DATA = data;
   }
-  assert.equal(await exists(clone), false);
+  assert.equal(await exists(path.join(clone, "README.md")), true);
   assert.deepEqual(await readdir(data), before);
-  assert.deepEqual(await readdir(path.join(root, ".prism")), ["workflow.md"]);
+});
+
+test("a clone Prism 0.16 kept under plugin data moves to the app folder with its unpushed commit", async (context) => {
+  const parent = await folder(context);
+  const { url, clone } = bareRemote(parent);
+  const legacy = path.join(data, "stores", path.basename(clone));
+  await mkdir(path.dirname(legacy), { recursive: true });
+  git(parent, "clone", "-q", url, legacy);
+  await writeFile(path.join(legacy, "local.txt"), "not pushed\n");
+  git(legacy, "add", ".");
+  git(legacy, "commit", "-q", "-m", "local");
+  const head = git(legacy, "rev-parse", "HEAD");
+  const root = await project(parent, "project", remoteConfig(url));
+  assert.deepEqual(await listInitiatives(root), []);
+  assert.equal(await exists(legacy), false);
+  assert.equal(git(clone, "rev-parse", "HEAD"), head);
+  assert.equal(await readFile(path.join(clone, "local.txt"), "utf8"), "not pushed\n");
+});
+
+test("a folder under plugin data with another origin is not moved", async (context) => {
+  const parent = await folder(context);
+  const { url, clone } = bareRemote(parent);
+  const legacy = path.join(data, "stores", path.basename(clone));
+  await mkdir(legacy, { recursive: true });
+  git(legacy, "init", "-q");
+  git(legacy, "remote", "add", "origin", pathToFileURL(path.join(parent, "other.git")).href);
+  context.after(() => rm(legacy, { recursive: true, force: true }));
+  const root = await project(parent, "project", remoteConfig(url));
+  assert.deepEqual(await listInitiatives(root), []);
+  assert.equal(await exists(path.join(legacy, ".git")), true);
+  assert.equal(await exists(path.join(clone, "README.md")), true);
+});
+
+test("a managed clone keeps long paths usable on Windows", async (context) => {
+  const parent = await folder(context);
+  const { url, clone } = bareRemote(parent);
+  const root = await project(parent, "project", remoteConfig(url));
+  await listInitiatives(root);
+  assert.equal(git(clone, "config", "--local", "--get", "core.longpaths"), "true");
 });
 
 test("an unreachable remote is unavailable, leaves no folder, and a later access succeeds once the remote exists", async (context) => {
