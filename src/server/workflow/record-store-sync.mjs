@@ -39,6 +39,7 @@ export function cancelRecordSyncs() {
 }
 
 const isRecordFile = (relative) => relative === "roadmap.json" || relative.startsWith("initiatives/");
+const isClaimFile = (relative) => /^initiatives\/[^/]+\/claims\/[^/]+\.json$/.test(relative);
 const syncPath = (base, ...parts) => path.join(base, SYNC_DIRECTORY, ...parts);
 
 function gitEnvironment(extra = {}) {
@@ -132,7 +133,8 @@ export async function takeSavedConflicts() {
         for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
           const child = relative ? `${relative}/${entry.name}` : entry.name;
           if (entry.isDirectory()) await visit(child);
-          else if (entry.isFile() && isRecordFile(child)) files.push(child);
+          // A claim that lost to the upstream is reported by the claim's own refusal or by its holder's notice of a lost claim.
+          else if (entry.isFile() && isRecordFile(child) && !isClaimFile(child)) files.push(child);
         }
       };
       await visit("");
@@ -140,6 +142,26 @@ export async function takeSavedConflicts() {
     }
   }
   return found;
+}
+
+/**
+ * Sync a store now and wait for the outcome, instead of the debounced sync: after a sync that is already running, and while another process holds the store's sync lock, it waits and syncs again.
+ * Options pass through to the sync.
+ */
+export async function syncRecordStoreNow(base, options = {}) {
+  watched.add(base);
+  clearTimeout(scheduled.get(base));
+  scheduled.delete(base);
+  const deadline = Date.now() + SETTINGS.gitTimeoutMs;
+  while (true) {
+    // A running sync may have committed before the caller's write, so the caller's own sync starts after it.
+    while (running.has(base)) await running.get(base).catch(() => {});
+    const status = await syncRecordStore(base, options);
+    if (status.state !== "skipped" || Date.now() > deadline) return status;
+    clearTimeout(scheduled.get(base));
+    scheduled.delete(base);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 /** The latest sync outcome of a store, or null before its first sync. */

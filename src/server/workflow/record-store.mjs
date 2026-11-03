@@ -18,6 +18,7 @@ const ROADMAP_RECORD = `${RECORD_DIRECTORY}/roadmap.json`;
 const RECORD_FILES = Object.freeze({ initiative: "initiative.json", state: "state.json", review: "review.json", "change-map": "change-map.json", "design-view": "design-view.json", "frozen-tests": "frozen-tests.json" });
 const SLICE_KINDS = new Set(["review", "change-map", "design-view", "frozen-tests", "runs"]);
 const LEGACY_CHANGE_MAP = "concept-delta.json";
+const CLAIMS = "claims";
 const HOUSEKEEPING = Object.freeze({
   ".gitattributes": "# Prism writes these records through its MCP tools; hosts collapse them in pull request diffs.\n/roadmap.json linguist-generated=true gitlab-generated\n/initiatives/** linguist-generated=true gitlab-generated\n",
   ".gitignore": "# Transient lock and write files of Prism records, and the store's sync state.\n*.lock\n.*.tmp\n/.prism-sync/\n"
@@ -46,11 +47,13 @@ function requireSlug(value, label) {
   return value;
 }
 
-/** The project-relative location of a record key: { kind: "roadmap" | "initiative" | "state" | "review" | "change-map" | "design-view" | "frozen-tests" | "runs", initiative?, slice? }. */
+/** The project-relative location of a record key: { kind: "roadmap" | "initiative" | "state" | "claim" | "review" | "change-map" | "design-view" | "frozen-tests" | "runs", initiative?, slice? }. */
 export function recordPath(key) {
   if (key?.kind === "roadmap") return ROADMAP_RECORD;
   const initiative = requireSlug(key?.initiative, "initiative");
   if (key.kind === "initiative" || key.kind === "state") return `${INITIATIVES}/${initiative}/${RECORD_FILES[key.kind]}`;
+  // Each slice's claim is a record of its own, so a claim's changes never touch the initiative record.
+  if (key.kind === "claim") return `${INITIATIVES}/${initiative}/${CLAIMS}/${requireSlug(key.slice, "slice")}.json`;
   if (!SLICE_KINDS.has(key.kind)) throw fail("invalid_path", `Unknown record kind ${key.kind}.`);
   const folder = `${INITIATIVES}/${initiative}/slices/${requireSlug(key.slice, "slice")}`;
   return key.kind === "runs" ? `${folder}/runs` : `${folder}/${RECORD_FILES[key.kind]}`;
@@ -63,6 +66,7 @@ export function parseRecordPath(relative) {
   if (parts[0] !== RECORD_DIRECTORY || parts[1] !== "initiatives" || !SLUG_PATTERN.test(parts[2] ?? "")) return null;
   if (parts.length === 4 && parts[3] === RECORD_FILES.initiative) return { kind: "initiative", initiative: parts[2] };
   if (parts.length === 4 && parts[3] === RECORD_FILES.state) return { kind: "state", initiative: parts[2] };
+  if (parts.length === 5 && parts[3] === CLAIMS && parts[4].endsWith(".json") && SLUG_PATTERN.test(parts[4].slice(0, -5))) return { kind: "claim", initiative: parts[2], slice: parts[4].slice(0, -5) };
   if (parts[3] !== "slices" || !SLUG_PATTERN.test(parts[4] ?? "")) return null;
   const base = { initiative: parts[2], slice: parts[4] };
   if (parts.length === 6 && parts[5] === RECORD_FILES.review) return { kind: "review", ...base };
@@ -482,6 +486,33 @@ export async function withRecordLock(projectRootPath, key, action, makeError = f
   return withArtifactLock(located.target, () => withFileLock(located.target, () => action(located), makeError, options));
 }
 
+/** Remove a record's file, and its folder when that leaves it empty; returns whether a file was removed. */
+export async function removeRecord(projectRootPath, key) {
+  const { store, located } = await locate(projectRootPath, key, { write: true });
+  await assertContained(store.contain, located.target, storeLabel(store));
+  if (!(await regularFile(located.target))) return false;
+  await rm(located.target, { force: true });
+  await rmdir(path.dirname(located.target)).catch(() => {});
+  if (store.sync) scheduleRecordSync(store.base);
+  return true;
+}
+
+/** The claim records of an initiative's slices: [{ slice, bytes }], in slice order. */
+export async function listClaimRecords(projectRootPath, initiative) {
+  // Claims have no legacy location, so any slice's claim path names the folder in the project or the store.
+  const { located } = await locate(projectRootPath, { kind: "claim", initiative, slice: "x" });
+  const folder = path.dirname(located.target);
+  let names = [];
+  try { names = (await readdir(folder)).filter((name) => name.endsWith(".json") && SLUG_PATTERN.test(name.slice(0, -5))).sort(); }
+  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
+  const claims = [];
+  for (const name of names) {
+    const bytes = await readBytes(path.join(folder, name), 64 * 1024).catch(() => null);
+    if (bytes !== null) claims.push({ slice: name.slice(0, -5), bytes });
+  }
+  return claims;
+}
+
 /** Add one immutable entry under a list key such as runs; an existing entry is never replaced. */
 export async function appendRecord(projectRootPath, key, id, entry) {
   if (typeof id !== "string" || !ENTRY_ID.test(id)) throw fail("validation_failed", "An entry id must use letters, digits, dots, hyphens, or underscores.");
@@ -551,6 +582,7 @@ export async function removeInitiativeRecords(projectRootPath, initiative) {
   const target = path.join(physical(store, INITIATIVES), requireSlug(initiative, "initiative"));
   await assertContained(store.contain, path.join(target, "x"), storeLabel(store));
   for (const kind of ["initiative", "state"]) await rm(physical(store, recordPath({ kind, initiative })), { force: true });
+  await rm(path.join(target, CLAIMS), { recursive: true, force: true });
   for (const slice of await directoryNames(path.join(target, "slices"))) {
     const folder = path.join(target, "slices", slice);
     for (const entry of await readdir(folder)) if (entry !== "runs") await rm(path.join(folder, entry), { recursive: true, force: true });
