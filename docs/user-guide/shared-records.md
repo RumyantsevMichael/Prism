@@ -133,6 +133,11 @@ These refusals make every record operation of the checkout fail, and each error'
 The proposed name is the registered name that would accept the checkout, or else the last part of its remote's path without `.git`, or its folder name without a network remote, made valid and given a suffix such as `-2` when another repository holds it.
 The review browser hides the records of a refused checkout as it does for an unavailable store, and still lists its documents.
 
+Each machine remembers where its checkouts of each named repository are, in `checkouts.json` in Prism's application folder, beside the store clones.
+A server lists its checkout once its name is first accepted: at start when the host names the project, as Claude Code does, or else at its first tool call, as in Codex.
+A refused or unnamed checkout is not listed, and a listed folder that no longer names the same store and repository leaves the list when another checkout of that repository is listed.
+The list never leaves the machine, and no checkout path is written to the store.
+
 With store sync on, the operation that registers a new name waits for one sync before it continues, so two machines that register one name at the same time end with one registration.
 Until that sync settles, the registration is pending, and any other check that it would decide, by any checkout that shares the store folder, whatever its own store sync setting, is refused with `repository_unconfirmed` without waiting, so no operation records anything under a registration that may still be withdrawn.
 The registration pushed first stays, and the other machine's checkout is then accepted or refused against it, as if it had been in the store all along.
