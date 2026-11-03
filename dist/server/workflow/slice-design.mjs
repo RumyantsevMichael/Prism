@@ -110,6 +110,20 @@ export async function latestVerification(projectRoot, initiative, slice) {
   return latest ? { id: latest.id, ...latest.entry } : null;
 }
 
+/** The frozen test paths of the initiative's other slices that are not done, whose files Prism stages in and out of the work tree. */
+export async function unfinishedFrozenTestsOfOthers(projectRoot, initiative, slice) {
+  const located = await locateRecord(projectRoot, { kind: "initiative", initiative });
+  let raw;
+  try { raw = JSON.parse(await readFile(located.target, "utf8")); }
+  catch { return []; }
+  const paths = new Set();
+  for (const [key, other] of Object.entries(raw?.slices ?? {})) {
+    if (key === slice || other?.status === "done" || !Array.isArray(other?.design?.frozenTests)) continue;
+    for (const item of other.design.frozenTests) if (typeof item?.path === "string") paths.add(item.path);
+  }
+  return [...paths].sort();
+}
+
 /** Where the latest passing verification run of a slice ran: its checkout, or null when no passing run recorded one. */
 export async function verifiedCode(projectRoot, initiative, slice) {
   const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative, slice });
@@ -154,6 +168,30 @@ export async function withdrawFrozenTests(projectRoot, initiative, staged) {
   await writeRecord(root, { kind: "frozen-tests", initiative, slice: staged.slice }, `${JSON.stringify({ schemaVersion: 1, tests: staged.tests }, null, 2)}\n`);
   for (const item of staged.tests) await restore(root, item.path, null);
   return staged.tests.map((item) => item.path);
+}
+
+/**
+ * Read the frozen tests of a started slice that returns to not-started, so the update can stage them again.
+ * The copy kept when the design was staged is preferred, so a test removed from the work tree by hand is still staged whole;
+ * a work-tree file that no longer matches its digest is refused rather than taken out of the work tree.
+ */
+export async function restageFrozenTests(projectRoot, initiative, slice, frozenTests) {
+  const root = await realpath(projectRoot);
+  const { bytes } = await readRecord(root, { kind: "frozen-tests", initiative, slice }).catch(() => ({ bytes: null }));
+  let stored = [];
+  try { stored = bytes === null ? [] : JSON.parse(bytes.toString("utf8")).tests ?? []; }
+  catch { stored = []; }
+  const byPath = new Map(stored.map((item) => [item.path, item]));
+  const tests = [];
+  for (const item of frozenTests) {
+    const current = await frozenBytes(root, item.path);
+    if (current !== null && sha256(current) !== item.sha256) throw fail("frozen_tests_changed", `The frozen test ${item.path} of ${slice} changed, so the slice cannot return to not-started and stage it. Restore the file first.`);
+    const kept = byPath.get(item.path);
+    const content = kept && sha256(Buffer.from(kept.content, "base64")) === item.sha256 ? Buffer.from(kept.content, "base64") : current;
+    if (content === null) throw fail("frozen_tests_missing", `The frozen test ${item.path} of ${slice} is missing from the work tree and its records, so the slice cannot return to not-started. Restore the file first.`);
+    tests.push({ path: item.path, content: content.toString("base64") });
+  }
+  return { slice, tests };
 }
 
 /** Put a staged slice's frozen tests in place when the slice starts. */
