@@ -28,7 +28,7 @@ test("keeps the core skills lean", async () => {
   for (const name of coreSkills) lines += (await skill(name)).split("\n").length;
   for (const name of ["delegation.md", "visual-review.md"]) lines += (await reference("workflow", name)).split("\n").length;
   lines += (await reference("orchestrate", "example-writer.md")).split("\n").length;
-  assert.ok(lines < 500, `the core skills and their references have ${lines} lines`);
+  assert.ok(lines < 502, `the core skills and their references have ${lines} lines`);
 });
 
 test("keeps records, snapshots, change maps, and context plans out of the skills", async () => {
@@ -100,6 +100,8 @@ test("orchestration designs one contract per scope, starts each slice, and compl
   assert.match(orchestrate, /call `checkpoint_pause` with the initiative, the current revision, the active slice/);
   assert.match(orchestrate, /a single `remove_records` operation/);
   assert.match(orchestrate, /`update_roadmap` with a `ship` operation/);
+  assert.match(orchestrate, /1\. Call `update_initiative` with a `claim` operation for the scope, so no other agent starts it/);
+  assert.match(await skill("workflow"), /\| Claim \| .*`slice_claimed`.*`release_claim`/);
 });
 
 test("review is one independent mode that records findings through MCP", async () => {

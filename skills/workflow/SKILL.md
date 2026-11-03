@@ -77,6 +77,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Changes | The files a planned slice is expected to add, change, or remove, with the units each adds or whose interface it changes; after verification the review browser compares them with what the verified result changed. |
 | Design gate | The user's acceptance of a design, which the autonomy setting may resolve automatically. |
 | Design proposal | A design result that design records through `update_initiative` and Prism checks at once, kept pending without changing any slice until the orchestrator accepts it after the design gate. |
+| Claim | A slice's mark naming the one Prism server that works on it, for `design` or `implementation`, taken by `claim` on a scope before design or by `set_status` `in-progress`; it covers the slice's descendants, Prism refuses another holder's start with `slice_claimed`, and it ends when the slice leaves `in-progress`, when the scope's proposal is accepted, through `release_claim`, or 30 minutes after its last renewal. |
 | Design view | The review browser's page for a design gate: one example per frozen test under its contract clause, clauses without a test, and the planned changes, written through `update_design_view` by the example writer. |
 | Example writer | A child agent on a small model that writes the design view from the contract and the frozen tests only. |
 | Accepted design | A planned slice's design recorded through `update_initiative` with its frozen tests and its review mark. |
