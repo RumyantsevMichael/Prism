@@ -19,6 +19,7 @@ const { publicRemote, verificationBrief, verifySlice } = await import("../../dis
 const { appendRecord, forgetMigrations, listRecordEntries } = await import("../../dist/server/workflow/record-store.mjs");
 const { answerUserGate } = await import("../../dist/server/workflow/state.mjs");
 const { codeLine } = await import("../../dist/server/review/public/views/slice.js");
+const { codeChip, remoteWeb } = await import("../../dist/server/review/public/views/code-location.js");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
 const INITIATIVE = "reports";
@@ -142,7 +143,8 @@ test("two worktrees that share a store record their own branches, and the summar
   const fromB = await verify(b);
   assert.equal(fromB.checkout.branch, "feature/x");
   assert.equal((await getInitiative({ projectRoot: a, initiative: INITIATIVE })).code.download.branch, "feature/x");
-  assert.match(codeLine(fromB.checkout), /Last passing run on feature\/x at <code>[0-9a-f]{7}<\/code> · github\.com\/owner\/repo/);
+  const line = codeLine(fromB.checkout);
+  assert.match(line, /Last passing run on <a [^>]*href="https:\/\/github\.com\/owner\/repo\/tree\/feature\/x"[^>]*>feature\/x<\/a> at <a [^>]*href="https:\/\/github\.com\/owner\/repo\/commit\/[0-9a-f]{40}"[^>]*><code>[0-9a-f]{7}<\/code><\/a> · <a [^>]*href="https:\/\/github\.com\/owner\/repo"[^>]*>github\.com\/owner\/repo<\/a>/);
   await verify(a);
   assert.equal((await getInitiative({ projectRoot: b, initiative: INITIATIVE })).code.download.branch, "main");
 });
@@ -155,4 +157,19 @@ test("a contract-defect report records its checkout without judging uncommitted 
   assert.equal(entry.kind, "contract-defect");
   assert.equal(entry.checkout.head, git(root, "rev-parse", "HEAD"));
   assert.equal(entry.checkout.dirty, null);
+});
+
+test("code locations link to the remote's web pages only on a known host", () => {
+  assert.equal(remoteWeb("github.com:owner/repo.git").url, "https://github.com/owner/repo");
+  assert.equal(remoteWeb("https://github.com/owner/repo.git").url, "https://github.com/owner/repo");
+  assert.equal(remoteWeb("ssh://gitlab.com:2222/group/sub/repo.git").url, "https://gitlab.com/group/sub/repo");
+  assert.equal(remoteWeb("bitbucket.org:team/repo.git").url, "https://bitbucket.org/team/repo");
+  for (const other of ["git.example.com:owner/repo.git", "https://github.com/owner", "https://github.com/../x", null, ""]) assert.equal(remoteWeb(other), null, String(other));
+  const head = "0123456789abcdef0123456789abcdef01234567";
+  assert.match(codeLine({ head, branch: "fix/a b", remote: "gitlab.com:g/r.git" }), /href="https:\/\/gitlab\.com\/g\/r\/-\/tree\/fix\/a%20b"/);
+  assert.match(codeLine({ head, branch: "main", remote: "bitbucket.org:t/r.git" }), /href="https:\/\/bitbucket\.org\/t\/r\/commits\/0123456789abcdef/);
+  assert.equal(codeLine({ head, branch: "main", remote: "git.example.com:o/r.git" }), '<p class="muted">Last passing run on main at <code>0123456</code> · git.example.com/o/r</p>');
+  assert.equal(codeLine({ head, branch: "<b>", remote: null }), '<p class="muted">Last passing run on &lt;b&gt; at <code>0123456</code></p>');
+  assert.match(codeChip({ head, branch: "main", remote: "github.com:o/r.git", dirty: true }), /main<\/a> · <a [^>]*><code>0123456<\/code><\/a><span class="code-dirty"/);
+  assert.equal(codeChip(null), "");
 });

@@ -8,7 +8,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, keyOfPath, recordPath, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, describeRecordStore, keyOfPath, listRecordStoreConflicts, readRecordStoreConflict, recordPath, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
@@ -621,7 +621,14 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
-      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, sources, navigation: await loadNavigation(projectRoot), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+    } else if (route === "/api/store/conflicts" && request.method === "GET") {
+      // Saved local record versions are read-only here; a person redoes a lost change through an agent.
+      send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
+    } else if (route === "/api/store/conflict" && request.method === "GET") {
+      const conflict = await readRecordStoreConflict(projectRoot, url.searchParams.get("savedAs")).catch(() => null);
+      if (conflict) send(response, 200, JSON.stringify(conflict), "application/json; charset=utf-8");
+      else send(response, 404, "No saved conflict has that name.");
     } else if (route === "/api/session" && request.method === "GET") {
       send(response, 200, JSON.stringify(await currentSession()), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "PUT") {

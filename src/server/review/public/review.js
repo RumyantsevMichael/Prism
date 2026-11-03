@@ -6,6 +6,7 @@ import { createPalette } from "./views/palette.js";
 import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
 import { createIndexingStatus } from "./views/indexing.js";
+import { createRecordStoreStatus } from "./views/record-store.js";
 import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connection.js";
 import { badgedIcon, notificationText, shouldNotify, signalTitle } from "./views/attention-signal.js";
 import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-tab.js";
@@ -323,6 +324,36 @@ function element(tag, className, text) {
   return node;
 }
 
+// Checkouts that resolve their records to one store folder share them; a checkout with records of its own is its own project.
+function storeKey(entry) {
+  return entry.store && entry.store.kind !== "project" && entry.store.location ? `store:${entry.store.location}` : `project:${entry.id}`;
+}
+
+function projectEntry({ entry, identity }, current, { gates: showGates = true } = {}) {
+  const link = element("a", `project-entry${showGates ? "" : " project-checkout"}`);
+  link.dataset.project = entry.id;
+  link.href = entry.url;
+  link.title = projectTitle(identity, entry.projectRoot);
+  if (entry.id === current) link.setAttribute("aria-current", "page");
+  const liveMark = element("span", `project-entry-live${entry.live ? " live" : ""}`);
+  liveMark.title = entry.live ? "An agent session is using this project" : "Recently used";
+  const name = element("span", "project-entry-name", workspaceName(identity) ?? folderName(entry.projectRoot));
+  // Only a running or failed build is marked, because the status bar covers the open project's other states.
+  if (entry.indexing === "preparing" || entry.indexing === "failed") {
+    const indexing = element("span", `project-entry-indexing ${entry.indexing}`);
+    indexing.title = entry.indexing === "preparing" ? "Indexing the repository" : "The last index build failed";
+    name.append(indexing);
+  }
+  link.append(liveMark, name);
+  if (showGates) {
+    const gates = element("span", `project-entry-gates${entry.gates ? "" : " none"}`, entry.gates === null ? "?" : String(entry.gates));
+    gates.title = entry.gates === null ? "The project's folder or records cannot be read" : `${entry.gates} open ${entry.gates === 1 ? "gate" : "gates"}`;
+    link.append(gates);
+  }
+  link.append(element("span", "project-entry-root", entry.projectRoot));
+  return link;
+}
+
 // The review app lists its projects; a session server has no list, so its page keeps a plain project label.
 async function refreshProjects() {
   let listing;
@@ -334,7 +365,15 @@ async function refreshProjects() {
     return;
   }
   projectButton.disabled = false;
-  const waiting = listing.projects.filter((entry) => entry.id !== listing.current).reduce((sum, entry) => sum + (entry.gates ?? 0), 0);
+  // Checkouts that share a record store share their gates, so each store counts once.
+  const current = listing.projects.find((entry) => entry.id === listing.current);
+  const counted = new Set([current ? storeKey(current) : null]);
+  let waiting = 0;
+  for (const entry of listing.projects) {
+    if (counted.has(storeKey(entry))) continue;
+    counted.add(storeKey(entry));
+    waiting += entry.gates ?? 0;
+  }
   projectGates.hidden = waiting === 0;
   projectGates.textContent = String(waiting);
   projectGates.title = `${waiting} open ${waiting === 1 ? "gate" : "gates"} in other projects`;
@@ -343,38 +382,42 @@ async function refreshProjects() {
   if (text === projectListing) return;
   projectListing = text;
   const focused = document.activeElement?.closest?.(".project-entry")?.dataset.project;
-  const current = listing.projects.find((entry) => entry.id === listing.current);
   if (current) setProjectLabel(workspaceIdentity(current), current.projectRoot);
   // Every project is listed under its repository, even a repository with one checkout, in the order the first of them appears.
+  // Within a repository, checkouts whose records live in one shared store form one project: its records and gates show once, and each checkout stays reachable for its code.
   const groups = new Map();
   for (const entry of listing.projects) {
     const identity = workspaceIdentity(entry);
-    if (!groups.has(identity.repository)) groups.set(identity.repository, []);
-    groups.get(identity.repository).push({ entry, identity });
+    if (!groups.has(identity.repository)) groups.set(identity.repository, new Map());
+    const clusters = groups.get(identity.repository);
+    if (!clusters.has(storeKey(entry))) clusters.set(storeKey(entry), []);
+    clusters.get(storeKey(entry)).push({ entry, identity });
   }
   const items = [];
-  for (const [repository, members] of groups) {
+  for (const [repository, clusters] of groups) {
     items.push(element("li", "project-group", repository));
-    for (const { entry, identity } of members) {
-      const link = element("a", "project-entry");
-      link.dataset.project = entry.id;
-      link.href = entry.url;
-      link.title = projectTitle(identity, entry.projectRoot);
-      if (entry.id === listing.current) link.setAttribute("aria-current", "page");
-      const liveMark = element("span", `project-entry-live${entry.live ? " live" : ""}`);
-      liveMark.title = entry.live ? "An agent session is using this project" : "Recently used";
-      const gates = element("span", `project-entry-gates${entry.gates ? "" : " none"}`, entry.gates === null ? "?" : String(entry.gates));
-      gates.title = entry.gates === null ? "The project's folder or records cannot be read" : `${entry.gates} open ${entry.gates === 1 ? "gate" : "gates"}`;
-      const name = element("span", "project-entry-name", workspaceName(identity) ?? folderName(entry.projectRoot));
-      // Only a running or failed build is marked, because the chip in the top bar covers the open project's other states.
-      if (entry.indexing === "preparing" || entry.indexing === "failed") {
-        const indexing = element("span", `project-entry-indexing ${entry.indexing}`);
-        indexing.title = entry.indexing === "preparing" ? "Indexing the repository" : "The last index build failed";
-        name.append(indexing);
+    for (const members of clusters.values()) {
+      if (members.length === 1) {
+        const item = element("li");
+        item.append(projectEntry(members[0], listing.current));
+        items.push(item);
+        continue;
       }
-      link.append(liveMark, name, gates, element("span", "project-entry-root", entry.projectRoot));
-      const item = element("li");
-      item.append(link);
+      const shared = members[0].entry;
+      const gates = Math.max(...members.map(({ entry }) => entry.gates ?? 0));
+      const item = element("li", "project-cluster");
+      const head = element("div", "project-cluster-head");
+      head.title = `${members.length} checkouts share the records in ${shared.store.label}, so their roadmap, initiatives, and gates are the same.`;
+      const badge = element("span", `project-entry-gates${gates ? "" : " none"}`, String(gates));
+      badge.title = `${gates} open ${gates === 1 ? "gate" : "gates"}`;
+      head.append(element("span", "store-icon"), element("span", "project-cluster-name", "Shared records"), element("span", "project-cluster-store", shared.store.label), badge);
+      const checkouts = element("ul", "project-checkouts");
+      for (const member of members) {
+        const row = element("li");
+        row.append(projectEntry(member, listing.current, { gates: false }));
+        checkouts.append(row);
+      }
+      item.append(head, checkouts);
       items.push(item);
     }
   }
@@ -1208,21 +1251,26 @@ function paletteEntries() {
   return [...places, ...indexed, ...files];
 }
 
-const SYNC_LABELS = { no_upstream: "Records not shared", not_a_repository: "Records not synced", push_rejected: "Records not pushed", merge_failed: "Records not merged", fetch_failed: "Records not fetched", git_failed: "Records not synced", conflicts: "Record conflicts saved" };
+let recordStoreStatus = null;
 
-// The record store's sync stays quiet while it is fine, and a small chip names any other state.
-function renderStoreSync(status) {
-  const root = document.getElementById("store-sync");
-  const label = SYNC_LABELS[status?.state];
-  root.hidden = !label;
-  if (!label) return;
-  document.getElementById("store-sync-label").textContent = label;
-  root.title = [status.message, ...(status.conflicts ?? []).map((item) => `${item.path} saved as ${item.savedAs}`)].filter(Boolean).join("\n");
+// The record store and its sync live in the status bar: where records live, and the sync state, which opens details with every saved conflict.
+function renderStoreSync(data) {
+  recordStoreStatus?.update(data.recordStore, data.storeSync);
 }
 
 async function initialize() {
   const data = await fetchJson("./api/index");
-  renderStoreSync(data.storeSync);
+  recordStoreStatus = createRecordStoreStatus({
+    storeButton: document.getElementById("store-status"),
+    storeLabel: document.getElementById("store-status-label"),
+    syncButton: document.getElementById("store-sync"),
+    syncLabel: document.getElementById("store-sync-label"),
+    dialog: document.getElementById("store-dialog"),
+    fetchJson,
+    openRecord: (path) => openRef(path),
+    hasArtifact: (path) => availableArtifacts.has(path)
+  });
+  renderStoreSync(data);
   openTabs = data.openTabs;
   previewTab = openTabs.includes(data.previewTab) ? data.previewTab : null;
   agentTabs = (data.agentTabs ?? []).filter((tab) => openTabs.includes(tab));
@@ -1357,7 +1405,7 @@ async function initialize() {
       reportRefresh(Boolean(refreshed?.ok));
       if (refreshed?.ok) {
         const snapshot = await refreshed.json();
-        renderStoreSync(snapshot.storeSync);
+        renderStoreSync(snapshot);
         availableArtifacts = new Set([...snapshot.artifacts, ...(snapshot.sources ?? [])]);
         updateMissingTabs(snapshot.missingTabs);
         if (JSON.stringify(snapshot.navigation) !== JSON.stringify(navigation)) {

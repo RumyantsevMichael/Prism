@@ -634,6 +634,16 @@ export async function entityExists(projectRoot, ref) {
   return Boolean(loaded.record?.slices && Object.hasOwn(loaded.record.slices, parsed.slug));
 }
 
+// The code location of each slice's latest passing verification run, by slice; only the initiative page reads run records for it.
+async function initiativeCode(projectRoot, view) {
+  const code = {};
+  for (const slug of Object.keys(view.record?.slices ?? {})) {
+    const checkout = await verifiedCode(projectRoot, view.id, slug).catch(() => null);
+    if (checkout) code[slug] = checkout;
+  }
+  return code;
+}
+
 export async function loadEntity(projectRoot, ref, options = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
@@ -643,7 +653,7 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
   if (parsed.kind === "initiative") {
     const view = await loadInitiativeView(projectRoot, parsed.id);
-    return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view) } };
+    return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view), code: await initiativeCode(projectRoot, view) } };
   }
   return { ref, kind: "slice", data: await loadSliceView(projectRoot, parsed.id, parsed.slug, options) };
 }

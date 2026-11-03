@@ -10,7 +10,8 @@ Name the store by its Git remote to share records between machines, or by a fold
 Only machine records move into the store.
 `.prism/workflow.md`, requirements, ADRs, slice plans, diagrams, generated Markdown views, feature files, and tests stay in the project and travel with its branches as before.
 Tools, tool results, review browser links, and stored references keep naming records by their `.prism/...` address, so nothing that agents or people see changes.
-Each verified slice records where its code lives, the repository, branch, and commit of its latest passing run, and the slice page in the review browser shows it.
+Each verified slice records where its code lives, the repository, branch, and commit of its latest passing run, and the review browser shows it on the slice page and beside each slice on the initiative page.
+On GitHub, GitLab, and Bitbucket the branch, commit, and repository link to their web pages.
 
 ## Share records between machines
 
@@ -131,7 +132,9 @@ Anyone may release any claim, and the initiative's history records who released 
 
 ## Sync status
 
-The review browser shows a small chip when the last sync did not succeed, and `.prism-sync/status.json` in the store holds the details.
+The review browser's status bar names the record store and when it last synced, and `.prism-sync/status.json` in the store holds the details.
+When the last sync did not succeed, clicking the sync state opens its message, its time, and every saved conflict.
+Each saved conflict shows the saved local copy against the current record as a diff, so you can ask an agent to redo the change that lost.
 
 | State | Meaning | What to do |
 | --- | --- | --- |

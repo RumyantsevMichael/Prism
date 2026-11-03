@@ -14,7 +14,7 @@ Object.assign(process.env, {
   GIT_AUTHOR_NAME: "Prism Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Prism Test", GIT_COMMITTER_EMAIL: "test@example.invalid"
 });
 delete process.env.CLAUDE_PLUGIN_DATA;
-const { cancelRecordSyncs, configureRecordSync, syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
+const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
 const { forgetMigrations } = await import("../../dist/server/workflow/record-store.mjs");
 const CLAIM_FILE = (slug) => `initiatives/reports/claims/${slug}.json`;
 const { getInitiative, initiativeAcknowledgement, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
@@ -118,6 +118,8 @@ test("refuses the second machine's start of a slice that the first machine claim
   assert.equal(git(value.remote, "rev-parse", "main"), git(value.storeB, "rev-parse", "HEAD"), "the second store ends in step with the remote");
   assert.equal(git(value.storeB, "status", "--porcelain"), "");
   assert.deepEqual((await takeSavedConflicts()).filter((item) => item.savedAs.startsWith(value.storeB)), [], "the refusal already reported the lost claim");
+  const status = await readSyncStatus(value.storeB);
+  assert.deepEqual([status.state, status.conflicts], ["ok", []], "the review browser shows no saved record for a lost claim");
   assert.deepEqual(heldClaims().map((item) => [item.slug, item.holder]), [["s1", A.holder]]);
 });
 
@@ -323,7 +325,7 @@ test("refuses a release that a renewal pushed first, and tells the holder when a
   as(A);
   await new Promise((resolve) => setTimeout(resolve, 5));
   await renewHeldClaims();
-  assert.equal((await syncRecordStore(value.storeA)).state, "conflicts");
+  assert.equal((await syncRecordStore(value.storeA)).state, "ok", "a lost claim does not show as a saved record");
   assert.equal(await exists(path.join(value.storeA, CLAIM_FILE("s1"))), false, "the release that was pushed first wins");
   assert.deepEqual((await takeSavedConflicts()).filter((item) => item.savedAs.startsWith(value.storeA)), [], "a lost claim is not reported as a saved record");
   assert.deepEqual((await read(value.a)).lostClaims, [{ slug: "s1", reason: "released" }]);
