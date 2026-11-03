@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
-import { readInitiative, sliceFolder } from "../workflow/initiative.mjs";
+import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
@@ -215,7 +215,8 @@ async function computeInitiativeView(projectRoot, id) {
   if (!SLUG_PATTERN.test(id ?? "")) throw new Error("The initiative identifier is invalid.");
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
-  const { resolved, loaded } = await readInitiative(projectRoot, id);
+  // Each claimed slice carries its live claim, so initiative and slice pages can show who works on it.
+  const { resolved, loaded } = await readInitiativeWithClaims(projectRoot, id);
   let state = null;
   try {
     state = (await readCoordinationState({ projectRoot, initiative: id })).state;

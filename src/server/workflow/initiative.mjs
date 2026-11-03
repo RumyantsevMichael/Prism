@@ -9,7 +9,9 @@ import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { locateRecord, moveLegacyRecords, removeInitiativeRecords, writeRecord } from "./record-store.mjs";
+import { listClaimRecords, locateRecord, moveLegacyRecords, readRecord, recordStoreOf, removeInitiativeRecords, removeRecord, withRecordLock, writeRecord } from "./record-store.mjs";
+import { syncRecordStoreNow } from "./record-store-sync.mjs";
+import { blockingClaim, claimedMessage, claimHolder, claimLabel, claimView, dropClaim, holdClaim, isLive, newClaim, parseClaim, pendClaim, renewal, serializeClaim, settleClaim, takeLostClaims } from "./slice-claims.mjs";
 import { mergeHistory, mergeKeyed, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, measureContract, REVIEW_MARKS, stageFrozenTests, verifiedCode, withdrawFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState } from "./state.mjs";
@@ -48,6 +50,8 @@ const dependenciesOperation = object({ op: { const: "set_dependencies" }, slug, 
 const updateSliceOperation = object({ op: { const: "update_slice" }, slug, title: text, outcome: text }, ["op", "slug"]);
 const acceptDesignOperation = object({ op: { const: "accept_design" }, slug, frozenTests: { type: "array", minItems: 1, maxItems: 200, items: text }, review: { enum: REVIEW_MARKS } });
 const STANDALONE = new Set(["remove_records", "propose_design", "accept_proposal"]);
+// Sync outcomes that mean nothing else shares the record, so a claim is confirmed locally.
+const LOCAL_SYNC = new Set(["no_upstream", "not_a_repository"]);
 
 export const GET_INITIATIVE_SCHEMA = object({ projectRoot: text, initiative: slug }, ["projectRoot", "initiative"]);
 export const UPDATE_INITIATIVE_SCHEMA = object({
@@ -66,6 +70,8 @@ export const UPDATE_INITIATIVE_SCHEMA = object({
     object({ op: { const: "accept_proposal" }, slug, reviewRequired: { type: "array", maxItems: 200, items: slug }, gate: text }, ["op", "slug", "reviewRequired"]),
     object({ op: { const: "restore_tests" }, slug }),
     object({ op: { const: "report_contract_defects" }, slug, defects: { type: "array", minItems: 1, maxItems: 50, items: object({ clause: text, reason: text }) } }),
+    object({ op: { const: "claim" }, slug }),
+    object({ op: { const: "release_claim" }, slug }),
     object({ op: { const: "import_map" }, path: text }),
     object({ op: { const: "regenerate_markdown" } }),
     object({ op: { const: "remove_records" } })
@@ -188,14 +194,15 @@ async function loadRecord(resolved) {
   }
   if (contents.length > RECORD_MAX_BYTES) throw fail("artifact_too_large", "The initiative record exceeds 1 MiB.");
   const revision = revisionOf(contents);
+  const text = contents.toString("utf8");
   let raw;
   try {
-    raw = JSON.parse(contents.toString("utf8"));
+    raw = JSON.parse(text);
   } catch {
-    return { exists: true, revision, record: null, valid: false, errors: ["The initiative record must contain valid JSON."], analysis: null };
+    return { exists: true, revision, text, record: null, valid: false, errors: ["The initiative record must contain valid JSON."], analysis: null };
   }
   const { errors, analysis } = validateRecord(raw, resolved.initiative);
-  return { exists: true, revision, record: raw, valid: errors.length === 0, errors, analysis };
+  return { exists: true, revision, text, record: raw, valid: errors.length === 0, errors, analysis };
 }
 
 function derived(analysis) {
@@ -232,7 +239,48 @@ export async function getInitiative(input) {
     const checkout = await verifiedCode(resolved.root, resolved.initiative, slug).catch(() => null);
     if (checkout) code[slug] = checkout;
   }
-  return { ...publicResult(resolved, loaded), ...(Object.keys(code).length ? { code } : {}) };
+  const view = await claimsView(resolved, loaded);
+  return { ...publicResult(resolved, view.loaded), ...(Object.keys(code).length ? { code } : {}), ...view.fields };
+}
+
+/** The claim records of an initiative by slice, with the problems of any that cannot be read. */
+async function readClaims(resolved) {
+  const claims = new Map();
+  const problems = [];
+  for (const { slice, bytes } of await listClaimRecords(resolved.root, resolved.initiative)) {
+    const parsed = parseClaim(slice, bytes);
+    if (parsed.claim) claims.set(slice, parsed.claim);
+    else problems.push(parsed.problem);
+  }
+  return { claims, problems };
+}
+
+/**
+ * Show the live claims with an initiative read: the record view gives each claimed slice its claim, and claims lists each live claim's label, activity, and expiry,
+ * where heldHere marks this server's claims; claims this server lost since its last report for the initiative are listed once under lostClaims.
+ */
+async function claimsView(resolved, loaded, { report = true } = {}) {
+  const { claims, problems } = await readClaims(resolved);
+  const now = Date.now();
+  const holder = claimHolder();
+  const listed = {};
+  let record = loaded.record;
+  if (record?.slices && typeof record.slices === "object") {
+    record = { ...record, slices: { ...record.slices } };
+    for (const [slug, claim] of claims) {
+      if (!isLive(claim, now) || !Object.hasOwn(record.slices, slug)) continue;
+      record.slices[slug] = { ...record.slices[slug], claim: { holder: claim.holder, label: claim.label, activity: claim.activity, claimedAt: claim.claimedAt, renewedAt: claim.renewedAt, expiresAt: claim.expiresAt } };
+      listed[slug] = { label: claim.label, activity: claim.activity, expiresAt: claim.expiresAt, heldHere: claim.holder === holder };
+    }
+  }
+  const lost = report ? takeLostClaims(resolved.root, resolved.initiative, claims, now) : [];
+  return { loaded: { ...loaded, record }, claims, fields: { ...(Object.keys(listed).length ? { claims: listed } : {}), ...(lost.length ? { lostClaims: lost } : {}), ...(problems.length ? { claimProblems: problems } : {}) } };
+}
+
+/** An initiative read with each slice's live claim in the record view, for readers such as the review browser. */
+export async function readInitiativeWithClaims(projectRoot, initiative) {
+  const { resolved, loaded } = await readInitiative(projectRoot, initiative);
+  return { resolved, loaded: (await claimsView(resolved, loaded, { report: false })).loaded };
 }
 
 function markdown(record) {
@@ -380,6 +428,29 @@ function proposalOutside(slices, scope, operations) {
   return [...new Set(operations.flatMap((item) => item.op === "split" ? (item.parent === scope ? [] : [item.parent]) : inside(item.slug) ? [] : [item.slug]))];
 }
 
+// Claim operations read and change the claim records, never the initiative record.
+// While an update is planned, a claim is checked against every live claim of another holder on the slice, its ancestors, and its descendants, and an expired claim of
+// another holder is replaced and named; when the update is applied, its claims are already in place and only the claims it ends are noted.
+function takeClaim(record, slugValue, activity, effects, operation) {
+  const claims = effects.claims;
+  if (claims.mode !== "plan") return;
+  const blocking = blockingClaim(record.slices, claims.files, slugValue, claims.holder, claims.now);
+  if (blocking) throw fail("slice_claimed", claimedMessage(slugValue, blocking), { claim: claimView(blocking) });
+  const previous = claims.files.get(slugValue);
+  if (previous && previous.holder !== claims.holder) {
+    claims.expired.push(claimView(previous));
+    effects.notes.set(operation, { replacedClaim: { holder: previous.holder, label: previous.label, activity: previous.activity, expiresAt: previous.expiresAt } });
+  }
+  claims.files.set(slugValue, newClaim(previous, { slug: slugValue, holder: claims.holder, label: claims.label, activity, now: claims.now }));
+}
+
+function endClaim(slugValue, effects) {
+  const claims = effects.claims;
+  if (!claims?.files.has(slugValue)) return;
+  if (claims.mode === "plan") claims.files.delete(slugValue);
+  else claims.ended.add(slugValue);
+}
+
 async function applyOperation(resolved, record, operation, effects) {
   const slices = record.slices;
   const requireSlice = (slugValue) => {
@@ -421,10 +492,13 @@ async function applyOperation(resolved, record, operation, effects) {
     case "set_status": {
       const slice = requireSlice(operation.slug);
       if (slice.status === "split") throw fail("validation_failed", "A split parent keeps the split status permanently.");
+      // Starting a slice claims it, and a slice that leaves in-progress ends its claim.
+      if (operation.status === "in-progress") takeClaim(record, operation.slug, "implementation", effects, operation);
+      else endClaim(operation.slug, effects);
       if (operation.status === "in-progress" && slice.design?.staged) {
         // Tests staged earlier in the same update are still in the work tree, so only earlier updates' tests need installing.
-        if (!effects.staged.some((item) => item.slice === operation.slug)) effects.installed.push(...await installFrozenTests(resolved.root, resolved.initiative, operation.slug, slice.design.frozenTests));
-        const baselineId = await captureBaseline(resolved.root, resolved.initiative, operation.slug);
+        if (!effects.staged.some((item) => item.slice === operation.slug) && !effects.dryRun) effects.installed.push(...await installFrozenTests(resolved.root, resolved.initiative, operation.slug, slice.design.frozenTests));
+        const baselineId = effects.dryRun ? null : await captureBaseline(resolved.root, resolved.initiative, operation.slug);
         delete slice.design.staged;
         if (baselineId) slice.design.baselineId = baselineId;
         else delete slice.design.baselineId;
@@ -502,7 +576,7 @@ async function applyOperation(resolved, record, operation, effects) {
         for (let current = key; current !== null && current !== undefined; current = slices[current]?.parent) if (current === operation.slug) return true;
         return false;
       }).filter((key) => slices[key].design?.staged);
-      for (const key of leaves) effects.installed.push(...await installFrozenTests(resolved.root, resolved.initiative, key, slices[key].design.frozenTests));
+      if (!effects.dryRun) for (const key of leaves) effects.installed.push(...await installFrozenTests(resolved.root, resolved.initiative, key, slices[key].design.frozenTests));
       break;
     }
     case "report_contract_defects": {
@@ -512,6 +586,27 @@ async function applyOperation(resolved, record, operation, effects) {
       const reportedAt = new Date().toISOString();
       slice.contractDefects = operation.defects.map((item) => ({ clause: item.clause, reason: item.reason, reportedAt }));
       slice.status = "blocked";
+      endClaim(operation.slug, effects);
+      break;
+    }
+    case "claim": {
+      // Design claims its scope before it starts, and the claim ends when its proposal is accepted.
+      const slice = requireSlice(operation.slug);
+      if (slice.status === "done") throw fail("validation_failed", `The slice ${operation.slug} is done, so it takes no design claim.`);
+      takeClaim(record, operation.slug, "design", effects, operation);
+      break;
+    }
+    case "release_claim": {
+      // Anyone may end a claim, such as one whose holder stopped working, and the history keeps who released whose claim.
+      requireSlice(operation.slug);
+      const claims = effects.claims;
+      if (claims.mode !== "plan") break;
+      const claim = claims.files.get(operation.slug);
+      if (!claim) throw fail("validation_failed", `The slice ${operation.slug} holds no claim.`);
+      claims.released.push(claimView(claim));
+      claims.releasedSlugs.add(operation.slug);
+      effects.notes.set(operation, { released: { holder: claim.holder, label: claim.label, activity: claim.activity, expiresAt: claim.expiresAt }, releasedBy: { holder: claims.holder, label: claims.label } });
+      claims.files.delete(operation.slug);
       break;
     }
     case "propose_design": {
@@ -549,6 +644,7 @@ async function applyOperation(resolved, record, operation, effects) {
         effects.applied.push(inner);
       }
       delete record.proposals[operation.slug];
+      if (effects.claims?.files.get(operation.slug)?.activity === "design") endClaim(operation.slug, effects);
       break;
     }
     case "regenerate_markdown":
@@ -601,43 +697,103 @@ async function precheckDiagrams(resolved, input) {
 
 export async function updateInitiative(input) {
   validateInput(UPDATE_INITIATIVE_SCHEMA, input);
+  return input.operations.some(takesClaims) ? claimingUpdate(input) : finishUpdate(await writeInitiative(input));
+}
+
+// An update that takes or releases a claim runs in two phases: its claim records first, confirmed with the store's remote, then the rest of the update.
+const takesClaims = (operation) => operation.op === "claim" || operation.op === "release_claim" || (operation.op === "set_status" && operation.status === "in-progress");
+
+async function claimContext(resolved, mode, label = null) {
+  const { claims } = await readClaims(resolved);
+  return { mode, holder: claimHolder(), label, now: Date.now(), files: claims, initial: new Map(claims), expired: [], released: [], releasedSlugs: new Set(), ended: new Set() };
+}
+
+// Claim records change one process at a time per initiative, so two local starts never both pass the check for overlapping claims.
+async function withClaimsLock(resolved, action) {
+  const folder = path.dirname((await locateRecord(resolved.root, { kind: "claim", initiative: resolved.initiative, slice: "x" })).target);
+  await mkdir(path.dirname(folder), { recursive: true });
+  return withArtifactLock(folder, () => withFileLock(folder, action, fail));
+}
+
+const claimKey = (resolved, slug) => ({ kind: "claim", initiative: resolved.initiative, slice: slug });
+
+async function readClaim(resolved, slug) {
+  const { bytes } = await readRecord(resolved.root, claimKey(resolved, slug), { maxBytes: 64 * 1024 });
+  return bytes === null ? null : parseClaim(slug, bytes).claim ?? null;
+}
+
+// Every change to a claim record holds that record's own lock, the one the store's sync takes before it replaces the file, so a merge never overwrites a claim change it did not see.
+// The claims lock is always taken first and one record lock at a time, so the sync, which takes only record locks, cannot deadlock with it.
+// The action gets the record's current claim and returns the claim to write, null to remove the record, or undefined to leave it.
+async function changeClaim(resolved, slug, decide) {
+  return withRecordLock(resolved.root, claimKey(resolved, slug), async () => {
+    const current = await readClaim(resolved, slug);
+    const next = await decide(current);
+    if (next === null) await removeRecord(resolved.root, claimKey(resolved, slug));
+    else if (next !== undefined) await writeRecord(resolved.root, claimKey(resolved, slug), serializeClaim(next));
+    return next;
+  }, fail);
+}
+
+async function prepare(input) {
   const standalone = input.operations.find((operation) => STANDALONE.has(operation.op));
   if (standalone && input.operations.length > 1) throw fail("validation_failed", `${standalone.op} must be the only operation of its update.`);
   await moveLegacyRecords(input.projectRoot);
-  if (standalone?.op === "remove_records") return removeRecords(input);
+  if (standalone?.op === "remove_records") return { removed: await removeRecords(input) };
   const resolved = await resolveInitiative(input.projectRoot, input.initiative, true);
   const diagramCache = await precheckDiagrams(resolved, input.operations);
   await conservationStore.registerCoordinationOutputs(resolved.root, [resolved.projectionPath]);
   await mkdir(path.dirname(resolved.target), { recursive: true });
-  return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
+  return { resolved, diagramCache };
+}
+
+function checkRevision(current, input) {
+  if (current.revision !== input.expectedRevision) {
+    throw fail(input.expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("initiative record", input.expectedRevision, current.revision), { currentRevision: current.revision });
+  }
+  if (current.exists && !current.valid) {
+    throw fail("invalid_initiative", "The existing initiative record is invalid and was not changed.", { errors: current.errors });
+  }
+}
+
+const workingCopy = (current, resolved) => current.record
+  ? { id: current.record.id, slices: Object.assign(Object.create(null), structuredClone(current.record.slices)), proposals: Object.assign(Object.create(null), structuredClone(current.record.proposals ?? {})), history: [...current.record.history] }
+  : { id: resolved.initiative, slices: Object.create(null), proposals: Object.create(null), history: [] };
+
+// Apply every operation to a working copy and check the result as a whole: graph analysis and the contract budget.
+async function applyAll(resolved, record, input, effects) {
+  for (const operation of input.operations) {
+    await applyOperation(resolved, record, operation, effects);
+    if (!STANDALONE.has(operation.op)) effects.applied.push(operation);
+  }
+  await checkContractBudget(resolved, record.slices, effects.applied);
+  try {
+    analyzeInitiative(record.slices);
+  } catch (error) {
+    throw fail("invalid_initiative", `The proposed initiative record is invalid and was not written: ${error.message}`, { errors: [error.message] });
+  }
+}
+
+const newEffects = (input, diagramCache, claims, notes, dryRun) => ({ staged: [], installed: [], diagrams: [], checkedFolders: new Set(), diagramCache, accepted: new Set(input.operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug)), applied: [], actor: input.actor, claims, notes, dryRun });
+
+// The initiative write: revision check, record lock, validation, history, and projection; the claims it ends are noted for removal after the write.
+async function writeInitiative(input, plan = null) {
+  const prepared = plan?.prepared ?? await prepare(input);
+  if (prepared.removed) return { removed: prepared.removed };
+  const { resolved, diagramCache } = prepared;
+  const written = await withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
     const current = await loadRecord(resolved);
-    if (current.revision !== input.expectedRevision) {
-      throw fail(input.expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("initiative record", input.expectedRevision, current.revision), { currentRevision: current.revision });
-    }
-    if (current.exists && !current.valid) {
-      throw fail("invalid_initiative", "The existing initiative record is invalid and was not changed.", { errors: current.errors });
-    }
-    const record = current.record
-      ? { id: current.record.id, slices: Object.assign(Object.create(null), structuredClone(current.record.slices)), proposals: Object.assign(Object.create(null), structuredClone(current.record.proposals ?? {})), history: [...current.record.history] }
-      : { id: resolved.initiative, slices: Object.create(null), proposals: Object.create(null), history: [] };
-    const accepted = new Set(input.operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug));
-    const effects = { staged: [], installed: [], diagrams: [], checkedFolders: new Set(), diagramCache, accepted, applied: [], actor: input.actor };
-    for (const operation of input.operations) {
-      await applyOperation(resolved, record, operation, effects);
-      if (!STANDALONE.has(operation.op)) effects.applied.push(operation);
-    }
-    await checkContractBudget(resolved, record.slices, effects.applied);
-    try {
-      analyzeInitiative(record.slices);
-    } catch (error) {
-      throw fail("invalid_initiative", `The proposed initiative record is invalid and was not written: ${error.message}`, { errors: [error.message] });
-    }
+    checkRevision(current, input);
+    const record = workingCopy(current, resolved);
+    const effects = newEffects(input, diagramCache, await claimContext(resolved, "apply"), plan?.notes ?? new Map(), false);
+    await applyAll(resolved, record, input, effects);
     const at = new Date().toISOString();
     const actor = input.actor ?? "agent";
-    const mutating = input.operations.filter((operation) => operation.op !== "regenerate_markdown");
-    for (const operation of mutating) record.history.push({ actor, operation: operation.op, ...(operation.slug ? { slug: operation.slug } : operation.parent ? { slug: operation.parent } : {}), at });
+    // Taking a claim writes no history; replacing another holder's expired claim and releasing a claim do.
+    const recorded = input.operations.filter((operation) => operation.op !== "regenerate_markdown" && (operation.op !== "claim" || effects.notes.has(operation)));
+    for (const operation of recorded) record.history.push({ actor, operation: operation.op, ...(operation.slug ? { slug: operation.slug } : operation.parent ? { slug: operation.parent } : {}), at, ...effects.notes.get(operation) });
     const contents = serialize(record);
-    const changed = mutating.length > 0 && (!current.exists || contents !== (await readFile(resolved.target, "utf8").catch(() => null)));
+    const changed = recorded.length > 0 && (!current.exists || contents !== current.text);
     if (changed) await writeRecord(resolved.root, { kind: "initiative", initiative: resolved.initiative }, contents);
     // Staged tests leave the work tree only after the initiative record is written, and only for slices still staged at the end of the update.
     const withdrawn = [];
@@ -649,8 +805,138 @@ export async function updateInitiative(input) {
       projectionStale = true;
     }
     const updated = await loadRecord(resolved);
-    return { ...publicResult(resolved, updated), created: !current.exists, previousRevision: current.revision, projectionStale, withdrawn, installed: effects.installed, diagrams: effects.diagrams };
+    return { result: { ...publicResult(resolved, updated), created: !current.exists, previousRevision: current.revision, projectionStale, withdrawn, installed: effects.installed, diagrams: effects.diagrams }, ended: [...effects.claims.ended].map((slug) => effects.claims.files.get(slug)) };
   }, fail));
+  return { ...written, resolved };
+}
+
+// After the initiative write, the claims the update ended are removed, unless another attempt replaced them meanwhile.
+async function finishUpdate(written, plan = null) {
+  if (written.removed) return written.removed;
+  const { resolved } = written;
+  const taken = new Set((plan?.writes ?? []).map((item) => item.slug));
+  const ended = written.ended.filter((claim) => !taken.has(claim.slug));
+  if (ended.length) {
+    await withClaimsLock(resolved, async () => {
+      for (const claim of ended) await changeClaim(resolved, claim.slug, (current) => current?.nonce === claim.nonce ? null : undefined);
+    });
+  }
+  for (const claim of ended) dropClaim(resolved.root, resolved.initiative, claim.slug);
+  for (const item of plan?.releases ?? []) dropClaim(resolved.root, resolved.initiative, item.slug);
+  for (const item of plan?.writes ?? []) holdClaim(resolved.root, resolved.initiative, item.claim);
+  const view = await claimsView(resolved, await loadRecord(resolved));
+  return {
+    ...written.result,
+    record: view.loaded.record,
+    claims: { taken: (plan?.writes ?? []).map((item) => claimView(item.claim)), expired: plan?.expired ?? [], released: plan?.released ?? [], ended: ended.map(claimView), confirmation: plan?.confirmation ?? null },
+    ...(view.fields.lostClaims ? { lostClaims: view.fields.lostClaims } : {})
+  };
+}
+
+/**
+ * An update that takes or releases claims. It is checked whole without writing anything, its claim records are written with a fresh nonce for each claim taken,
+ * and where the store syncs it waits for a sync of its own and confirms that each record still holds this attempt's nonce, or is still absent for a release.
+ * A refusal undoes only this attempt's claim records; otherwise the rest of the update is written with the caller's revision, and a failure there undoes the claims too.
+ */
+async function claimingUpdate(input) {
+  const prepared = await prepare(input);
+  const { resolved, diagramCache } = prepared;
+  const store = await recordStoreOf(resolved.root);
+  const label = await claimLabel(store.external ? store.base : store.root);
+  const plan = await withClaimsLock(resolved, async () => {
+    const current = await loadRecord(resolved);
+    checkRevision(current, input);
+    const record = workingCopy(current, resolved);
+    const claims = await claimContext(resolved, "plan", label);
+    const effects = newEffects(input, diagramCache, claims, new Map(), true);
+    await applyAll(resolved, record, input, effects);
+    const writes = [];
+    const releases = [];
+    for (const slug of new Set([...claims.initial.keys(), ...claims.files.keys()])) {
+      const before = claims.initial.get(slug), after = claims.files.get(slug);
+      if (after && after.nonce !== before?.nonce) writes.push({ slug, claim: after, previous: before ?? null });
+      else if (!after && before && claims.releasedSlugs.has(slug)) releases.push({ slug, previous: before });
+    }
+    // A claim this process already holds keeps being renewed while the attempt that replaces it waits for confirmation.
+    for (const item of writes) pendClaim(resolved.root, resolved.initiative, item.slug, item.claim.nonce);
+    for (const item of writes) await changeClaim(resolved, item.slug, () => item.claim);
+    for (const item of releases) await changeClaim(resolved, item.slug, () => null);
+    const needsWrite = input.operations.some((operation) => operation.op !== "claim") || effects.notes.size > 0;
+    return { prepared, slices: record.slices, writes, releases, expired: claims.expired, released: claims.released, notes: effects.notes, needsWrite, holder: claims.holder };
+  });
+  plan.confirmation = await confirmClaims(resolved, store, plan);
+  if (!plan.needsWrite) {
+    const current = await loadRecord(resolved);
+    return finishUpdate({ resolved, ended: [], result: { ...publicResult(resolved, current), created: false, previousRevision: current.revision, projectionStale: false, withdrawn: [], installed: [], diagrams: [] } }, plan);
+  }
+  let written;
+  try {
+    written = await writeInitiative(input, plan);
+  } catch (error) {
+    await undoClaims(resolved, plan);
+    throw error;
+  }
+  return finishUpdate(written, plan);
+}
+
+/**
+ * Confirm an update's claim records with the store's remote. Without sync, or where nothing else shares the store, they hold locally.
+ * Otherwise the update waits for a sync of its own: another holder's record or an overlapping live claim that won refuses it with slice_claimed,
+ * and a remote that cannot be reached refuses it with claim_unconfirmed; a refusal undoes only this attempt's claim records.
+ */
+async function confirmClaims(resolved, store, plan) {
+  if (!store.sync) return "local";
+  const status = await syncRecordStoreNow(store.base);
+  if (LOCAL_SYNC.has(status.state)) return "local";
+  if (status.state !== "ok" && status.state !== "conflicts") {
+    await undoClaims(resolved, plan);
+    const reason = String(status.message ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+    const slugs = [...plan.writes, ...plan.releases].map((item) => item.slug).join(", ");
+    throw fail("claim_unconfirmed", `The claims on ${slugs} could not be confirmed with the record store's remote (${status.state}${reason ? `: ${reason}` : ""}), so they were withdrawn and this update was not applied. Try again once the remote is reachable.`, { syncState: status.state });
+  }
+  const { claims } = await readClaims(resolved);
+  const now = Date.now();
+  for (const item of plan.writes) {
+    const found = claims.get(item.slug);
+    const winner = found && found.nonce !== item.claim.nonce ? found : blockingClaim(plan.slices, claims, item.slug, plan.holder, now);
+    if (found?.nonce === item.claim.nonce && !winner) continue;
+    await undoClaims(resolved, plan);
+    if (winner) throw fail("slice_claimed", `${claimedMessage(item.slug, winner)} Another machine claimed it first.`, { claim: claimView(winner) });
+    throw fail("revision_conflict", `Another machine released or changed the claim on ${item.slug} while this update took it, so this update was not applied. Read the initiative again and retry.`, { currentRevision: (await loadRecord(resolved)).revision });
+  }
+  for (const item of plan.releases) {
+    const found = claims.get(item.slug);
+    if (!found) continue;
+    await undoClaims(resolved, plan);
+    throw fail("slice_claimed", `The claim on ${item.slug} was renewed or taken by ${found.label} for ${found.activity} on another machine while this release was synced, so it holds the slice until ${found.expiresAt} and this update was not applied.`, { claim: claimView(found) });
+  }
+  return "sync";
+}
+
+// Undo an attempt's claim records: a claim record that still holds this attempt's nonce goes back to this holder's own earlier live claim or is removed,
+// and a released claim whose record is still absent is put back.
+async function undoClaims(resolved, plan) {
+  await withClaimsLock(resolved, async () => {
+    const now = Date.now();
+    for (const item of plan.writes) {
+      await changeClaim(resolved, item.slug, (current) => current?.nonce !== item.claim.nonce ? undefined : item.previous?.holder === plan.holder && isLive(item.previous, now) ? item.previous : null);
+      settleClaim(resolved.root, resolved.initiative, item.slug, item.claim.nonce);
+    }
+    for (const item of plan.releases) await changeClaim(resolved, item.slug, async (current) => current === null && (await readRecord(resolved.root, claimKey(resolved, item.slug))).bytes === null ? item.previous : undefined);
+  });
+}
+
+/** Renew one claim this process holds by rewriting only its claim record; returns { renewed } or { lost } with the reason. */
+export async function renewClaim(entry) {
+  const resolved = await resolveInitiative(entry.root, entry.initiative);
+  return withClaimsLock(resolved, async () => {
+    let decided;
+    await changeClaim(resolved, entry.slug, (current) => {
+      decided = renewal(entry, current);
+      return decided.lost ? undefined : decided.claim;
+    });
+    return decided.lost ? decided : { renewed: decided.claim };
+  });
 }
 
 // The slugs an update names, so its acknowledgement reports only what the caller touched.
@@ -674,8 +960,10 @@ export function initiativeAcknowledgement(result, operations) {
     ...(slices[key].design ? { design: slices[key].design.staged ? "staged" : "accepted", frozenTests: slices[key].design.frozenTests.length, review: slices[key].design.review } : {}),
     ...(slices[key].splitEvidence ? { splitEvidence: slices[key].splitEvidence.kind } : {}),
     ...(result.record?.proposals?.[key] ? { proposal: "pending" } : {}),
-    ...(slices[key].contractDefects ? { contractDefects: slices[key].contractDefects.length } : {})
+    ...(slices[key].contractDefects ? { contractDefects: slices[key].contractDefects.length } : {}),
+    ...(slices[key].claim ? { claim: { label: slices[key].claim.label, activity: slices[key].claim.activity, expiresAt: slices[key].claim.expiresAt } } : {})
   }]));
+  const claims = result.claims ?? { taken: [], expired: [], released: [] };
   const unchecked = result.diagrams.filter((item) => !item.checked);
   return {
     initiative: result.initiative,
@@ -689,20 +977,24 @@ export function initiativeAcknowledgement(result, operations) {
     ...(result.installed.length ? { installedTests: result.installed } : {}),
     ...(result.diagrams.length ? { diagrams: result.diagrams.filter((item) => item.checked).map(({ path: file, elements, relations }) => ({ path: file, elements, relations })) } : {}),
     ...(unchecked.length ? { diagramsUnchecked: unchecked.map((item) => `${item.path}: ${item.message}`) } : {}),
-    ...(result.projectionStale ? { projectionStale: true } : {})
+    ...(result.projectionStale ? { projectionStale: true } : {}),
+    ...(claims.taken.length ? { claimConfirmation: claims.confirmation } : {}),
+    ...(claims.expired.length ? { replacedClaims: claims.expired } : {}),
+    ...(claims.released.length ? { releasedClaims: claims.released } : {}),
+    ...(result.lostClaims ? { lostClaims: result.lostClaims } : {})
   };
 }
 
 export const INITIATIVE_TOOLS = [
   {
     name: "get_initiative",
-    description: "Read an initiative's MCP-managed slice record with derived leaves, effective dependencies, completion, design candidates, and readiness to ship, plus run totals computed from run records for each slice, each split parent with its descendants, and the initiative. Reads never create files.",
+    description: "Read an initiative's MCP-managed slice record with derived leaves, effective dependencies, completion, design candidates, and readiness to ship, plus run totals computed from run records for each slice, each split parent with its descendants, and the initiative, and each live claim: on its slice in the record view and under claims with its label, activity, and expiry, where heldHere marks this server's claims; lostClaims lists, once, claims this server held that expired or were released or taken over. Reads never create files.",
     inputSchema: GET_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements, and refuses a slice.md Changes line that is not add, change, or remove followed by comma-separated paths in backticks and a colon with the note. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements, and refuses a slice.md Changes line that is not add, change, or remove followed by comma-separated paths in backticks and a colon with the note. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. A slice has at most one holder, the Prism server process that claimed it, across every checkout and machine that shares the records: set_status in-progress takes an implementation claim, claim takes a design claim on a scope before design starts, and a claim covers the slice's descendants. Taking a claim is refused with slice_claimed, naming the holder's label, activity, and expiry, while another holder's live claim covers the slice, an ancestor, or a descendant; an expired claim is replaced and the result names it under replacedClaims. An update that takes or releases claims is checked whole, writes its claims first, and where store sync is on waits for a sync before anything else is written: another machine's claim or renewal that won refuses it with slice_claimed, and an unreachable remote refuses it with claim_unconfirmed; a refused update applies none of its operations. The holding server renews its live claims every 10 minutes, a claim expires 30 minutes after its last renewal, and an expired claim is never renewed. A claim ends when its slice leaves in-progress, when the scope's proposal is accepted, or through release_claim, which anyone may send and which the history records. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

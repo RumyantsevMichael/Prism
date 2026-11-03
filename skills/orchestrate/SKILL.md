@@ -46,12 +46,13 @@ A stored value stays authoritative on resume, and `agentFlow` is fixed once work
 
 A scope is the root slice, or a part that a split design created; design it when its dependencies are done.
 
-1. Run `design` for the scope in a fresh child agent, passing its slug, its folder, and any reproduction that triage returned.
-2. When design returns `PROPOSED`, read the proposal with `get_initiative`.
-3. When autonomy requires the design gate, or the proposal splits the scope with `user_gate` evidence, ask the gate with the scope's `slice.md`, its diagrams, and the frozen tests as artifacts, offering to mark slices for review; for a fit design, first write the design view through the [example writer](references/example-writer.md) in a fresh child agent with the `examples` model.
-4. When the user asks for changes, return the note to design and repeat from step 2.
-5. Call `update_initiative` with one `accept_proposal` operation for the scope, the slugs whose review mark is `required`, and, for `user_gate` evidence, the gate where the person approved the split.
-6. When acceptance is refused, return the refusal to design.
+1. Call `update_initiative` with a `claim` operation for the scope, so no other agent starts it, and when Prism refuses the claim with `slice_claimed`, leave the scope to the holder it names and continue with another eligible scope or slice.
+2. Run `design` for the scope in a fresh child agent, passing its slug, its folder, and any reproduction that triage returned.
+3. When design returns `PROPOSED`, read the proposal with `get_initiative`.
+4. When autonomy requires the design gate, or the proposal splits the scope with `user_gate` evidence, ask the gate with the scope's `slice.md`, its diagrams, and the frozen tests as artifacts, offering to mark slices for review; for a fit design, first write the design view through the [example writer](references/example-writer.md) in a fresh child agent with the `examples` model.
+5. When the user asks for changes, return the note to design and repeat from step 3.
+6. Call `update_initiative` with one `accept_proposal` operation for the scope, the slugs whose review mark is `required`, and, for `user_gate` evidence, the gate where the person approved the split.
+7. When acceptance is refused, return the refusal to design.
 
 A slice's review mark is `required` when the user marked it, when `review` is `recommended` and design recommended it, or when `review` is `all`; otherwise it is `none`.
 

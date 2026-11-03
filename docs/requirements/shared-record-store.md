@@ -16,6 +16,7 @@ Michael and his colleagues use Prism across many repositories and machines, so a
 - Share those records between machines through an ordinary Git repository, without anyone running Git in it by hand.
 - Never lose record bytes to a sync, a migration, or a concurrent change, and tell the agent whose change did not land.
 - Keep unrelated concurrent changes, such as two people working on different initiatives or slices, from colliding.
+- Keep two agents from working on the same slice, while independent slices of one initiative stay open to parallel work.
 - Show, for each verified slice, which repository, branch, and commit its result came from, now that records no longer travel with a branch.
 
 ## Non-goals
@@ -28,7 +29,6 @@ Michael and his colleagues use Prism across many repositories and machines, so a
 
 ## Design questions
 
-- How an agent claims a slice so that two agents never work on the same slice, while independent slices of one initiative stay open to parallel work, including lease expiry, manual release, and behavior without network access.
 - Whether draft human documents, such as Proposed ADRs and Draft requirements, live in the store and move into the project when accepted.
 - Which committed identity names a repository once one store serves several repositories.
 - Whether append-only event records replace whole-record merges if merge units prove too coarse in use.
@@ -267,3 +267,94 @@ Requirement: If a store named by its remote has no plugin data directory to live
 Rationale: A failed or misdirected clone must neither split state between checkouts nor touch a folder that holds someone else's work.
 
 Related: [§2](#2), [§15](#15), [§17](#17)
+
+<a id="19"></a>
+## 19. Claim a slice before work starts
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Requirement: When an agent starts a slice or starts the design of a scope, Prism shall record for that slice, apart from the initiative record, a claim that names the Prism server holding it, a label with the store's Git user name and the host name, the activity, and its expiry.
+
+Rationale: A claim in the records that every checkout shares is what lets every other agent see that the slice is taken, and keeping it apart from the initiative record keeps its renewals from colliding with other changes to the slice.
+
+Related: [slice-claims.md](../ADRs/workflow-records/slice-claims.md), [§20](#20)
+
+<a id="20"></a>
+## 20. Refuse a start that another holder's claim covers
+
+Pattern: Unwanted behavior
+
+Disposition: Active
+
+Requirement: If another holder's live claim is on the slice, one of its ancestors, or one of its descendants, then Prism shall refuse the start before changing anything and name that claim's label, activity, and expiry.
+
+Rationale: Work must stop before it begins, and the person needs to know whom to ask.
+
+Related: [§19](#19)
+
+<a id="21"></a>
+## 21. Confirm a claim with the store's remote
+
+Pattern: Optional feature
+
+Disposition: Active
+
+Requirement: Where store sync is on and the store has an upstream, when an update takes or releases a claim, Prism shall sync the claim before it applies the rest of the update, and refuse the update without applying any of its operations when another machine's claim or renewal won that sync.
+
+Rationale: Two machines that both believe they started a slice are the failure that claims exist to prevent.
+
+Related: [§12](#12), [§22](#22)
+
+<a id="22"></a>
+## 22. Refuse a claim that cannot be confirmed
+
+Pattern: Unwanted behavior
+
+Disposition: Active
+
+Requirement: If the store's remote cannot be reached while a claim is confirmed, then Prism shall refuse the update, withdraw the claim, and apply none of the update's other operations.
+
+Rationale: A claim that no other machine can see would let two machines start the same slice.
+
+Related: [§9](#9), [§21](#21)
+
+<a id="23"></a>
+## 23. Keep a claim while its holder runs
+
+Pattern: State-driven
+
+Disposition: Active
+
+Requirement: While a Prism server holds a live claim, Prism shall renew the claim every 10 minutes, treat it as expired 30 minutes after its last renewal by the local clock, never renew a claim that expired or that another holder replaced or released, and name the expired holder when another holder replaces it.
+
+Rationale: A slice whose agent stopped becomes free without a person's help, a running agent never loses its slice, and a machine that slept through its lease never takes back a slice that someone else took.
+
+Related: [§19](#19)
+
+<a id="24"></a>
+## 24. End a claim
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Requirement: When a claimed slice leaves `in-progress`, its scope's design proposal is accepted, or anyone releases the claim, Prism shall end the claim, and for a release record who released whose claim.
+
+Rationale: Finished or abandoned work frees its slice, and a person can free a slice by hand with a trace of who did.
+
+Related: [§19](#19)
+
+<a id="25"></a>
+## 25. Show live claims
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Requirement: When a person or agent reads an initiative, Prism shall show each live claim's label, activity, and expiry, and tell the server that lost a claim since its last read of the initiative that the claim was lost.
+
+Rationale: People and agents choose other work by seeing who works on what, and an agent whose claim lapsed or was released learns that it no longer holds the slice.
+
+Related: [§19](#19)

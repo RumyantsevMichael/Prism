@@ -107,6 +107,29 @@ The next Prism tool result on that machine names the record and the saved file, 
 Compare the saved file with the current record, and redo the change through Prism's tools if it still matters.
 Prism never replaces a record that changed while a merge was running: it leaves the branch where it was and resolves the change on the next sync.
 
+## Who works on a slice
+
+Starting a slice, or starting the design of a scope, claims it for the Prism server that does the work, so no other agent in any checkout or on any machine that shares the records starts it at the same time.
+A claim covers the parts inside its slice, so a design claim on a scope also blocks a start of any slice inside it, and the reverse.
+Two agents can still work on two independent slices of one initiative at once.
+Another agent's start of a claimed slice is refused with `slice_claimed`, which names who holds it, for design or implementation, and until when, and that agent moves on to another slice.
+A claim names its holder by the store's Git `user.name` and the host name, such as `Michael Rumyantsev on MacBookPro`, or by the host name alone when the store has no `user.name`.
+`get_initiative` lists each live claim under `claims`.
+
+With store sync on, a start or a release waits for one sync before anything else in the update is written, so two machines never both believe they started the same slice.
+The machine whose sync loses is refused with `slice_claimed`, none of that update applies, and its store shows the other machine's claim.
+A release that loses to the holder's renewal pushed first is refused the same way.
+A start while the store's remote cannot be reached is refused with `claim_unconfirmed` and leaves no claim; start the slice again when the remote is back.
+Without store sync, a claim protects the slice between every checkout that shares the store folder.
+
+The server renews its claims every 10 minutes while it runs, and a claim expires 30 minutes after its last renewal, judged by each machine's clock.
+A slice whose session ended without finishing frees itself that way, and the next start names the holder whose claim expired.
+A server never renews a claim that expired, for example while its laptop slept, or that someone released or took over; its next `get_initiative` or `update_initiative` result for the initiative lists the claim under `lostClaims`.
+Claims are kept apart from the initiative record, so renewals never collide with someone else's edit of the slice.
+A claim ends when its slice is done, blocked, or back to not started, or when the design proposal of its scope is accepted.
+To free a slice sooner, for example after restarting a session, which gives its server a new holder, ask your agent to send `update_initiative` with a `release_claim` operation for the slice.
+Anyone may release any claim, and the initiative's history records who released whose claim.
+
 ## Sync status
 
 The review browser's status bar names the record store and when it last synced, and `.prism-sync/status.json` in the store holds the details.
@@ -134,3 +157,4 @@ A path store such as `Store: ../prism-store` still works in a cloud session, bec
 ## How it works
 
 The [external record store](../ADRs/workflow-records/external-record-store.md) and [Git sync](../ADRs/workflow-records/record-store-git-sync.md) decisions define the rules, and [record-store-architecture.puml](../ADRs/workflow-records/record-store-architecture.puml) shows how checkouts, the store, and the remote fit together.
+The [slice claims](../ADRs/workflow-records/slice-claims.md) decision defines who may work on a slice.

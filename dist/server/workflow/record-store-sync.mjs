@@ -39,6 +39,7 @@ export function cancelRecordSyncs() {
 }
 
 const isRecordFile = (relative) => relative === "roadmap.json" || relative.startsWith("initiatives/");
+const isClaimFile = (relative) => /^initiatives\/[^/]+\/claims\/[^/]+\.json$/.test(relative);
 const syncPath = (base, ...parts) => path.join(base, SYNC_DIRECTORY, ...parts);
 
 function gitEnvironment(extra = {}) {
@@ -117,6 +118,12 @@ const STAMP = /^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/;
 const stampTime = (stamp) => Date.parse(stamp.replace(STAMP, "$1:$2:$3.$4Z"));
 
 // The record files a sync saved under one conflict stamp, as store-relative paths.
+// A claim that lost a race is the claim holder's news, reported through its refusal or lost-claim notice, so the store's status shows only other saved records.
+function settled(conflicts) {
+  const shown = conflicts.filter((conflict) => !isClaimFile(conflict.path));
+  return { state: shown.length ? "conflicts" : "ok", conflicts: shown, message: shown.length ? "Concurrent record changes were resolved for the upstream; the local versions are saved." : "" };
+}
+
 async function savedFiles(directory) {
   const files = [];
   const visit = async (relative) => {
@@ -125,7 +132,8 @@ async function savedFiles(directory) {
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       const child = relative ? `${relative}/${entry.name}` : entry.name;
       if (entry.isDirectory()) await visit(child);
-      else if (entry.isFile() && isRecordFile(child)) files.push(child);
+      // A claim that lost to the upstream is reported by the claim's own refusal or by its holder's notice of a lost claim.
+      else if (entry.isFile() && isRecordFile(child) && !isClaimFile(child)) files.push(child);
     }
   };
   await visit("");
@@ -170,6 +178,26 @@ export async function takeSavedConflicts() {
     }
   }
   return found;
+}
+
+/**
+ * Sync a store now and wait for the outcome, instead of the debounced sync: after a sync that is already running, and while another process holds the store's sync lock, it waits and syncs again.
+ * Options pass through to the sync.
+ */
+export async function syncRecordStoreNow(base, options = {}) {
+  watched.add(base);
+  clearTimeout(scheduled.get(base));
+  scheduled.delete(base);
+  const deadline = Date.now() + SETTINGS.gitTimeoutMs;
+  while (true) {
+    // A running sync may have committed before the caller's write, so the caller's own sync starts after it.
+    while (running.has(base)) await running.get(base).catch(() => {});
+    const status = await syncRecordStore(base, options);
+    if (status.state !== "skipped" || Date.now() > deadline) return status;
+    clearTimeout(scheduled.get(base));
+    scheduled.delete(base);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 /** The latest sync outcome of a store, or null before its first sync. */
@@ -276,10 +304,10 @@ async function sync(base, options) {
     if (busy) continue;
     conflicts.push(...merged.conflicts);
     const { ahead } = await counts(base);
-    if (!ahead && !(await unpublished(base))) return writeStatus(base, { state: conflicts.length ? "conflicts" : "ok", conflicts, message: conflicts.length ? "Concurrent record changes were resolved for the upstream; the local versions are saved." : "" });
+    if (!ahead && !(await unpublished(base))) return writeStatus(base, settled(conflicts));
     await options.beforePush?.();
     const pushed = await git(base, ["push", "--quiet", upstream.remote, `HEAD:${upstream.merge}`]);
-    if (pushed.ok) return writeStatus(base, { state: conflicts.length ? "conflicts" : "ok", conflicts, message: conflicts.length ? "Concurrent record changes were resolved for the upstream; the local versions are saved." : "", ...await counts(base) });
+    if (pushed.ok) return writeStatus(base, { ...settled(conflicts), ...await counts(base) });
     if (!/rejected|fetch first|non-fast-forward/i.test(pushed.stderr)) return writeStatus(base, { state: "push_rejected", conflicts, message: pushed.stderr, ...await counts(base) });
   }
   if (busy) {
