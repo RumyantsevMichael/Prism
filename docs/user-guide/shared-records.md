@@ -17,14 +17,15 @@ On GitHub, GitLab, and Bitbucket the branch, commit, and repository link to thei
 
 1. Create an empty repository for the store on your Git host, for example `you/prism-store`, and give everyone who works on the project push access to it.
 
-2. Add a `Workspace` section to `.prism/workflow.md` that names the store's remote:
+2. Add a `Workspace` section to `.prism/workflow.md` that names the store's remote and this repository:
 
    ```markdown
    ## Workspace
    - Store: git@github.com:you/prism-store.git
+   - Repository: api
    ```
 
-3. Commit the configuration, so every checkout of the project names the same store.
+3. Commit the configuration, so every checkout of the project names the same store and the same repository.
 
 `Store` names a remote when it is a URL with the scheme `https`, `http`, `ssh`, `git`, or `file`, or the scp form `user@host:path`.
 On the first record access that finds no clone of it, Prism clones the remote into its application folder, under `stores/<id>`, where `<id>` is derived from the remote.
@@ -66,9 +67,10 @@ The first record access from a checkout moves its existing records into the stor
    ```markdown
    ## Workspace
    - Store: ../prism-store
+   - Repository: api
    ```
 
-3. Commit the configuration, so every checkout of the project names the same store.
+3. Commit the configuration, so every checkout of the project names the same store and the same repository.
 
 A `Store` path is relative to the project root or absolute.
 It must not resolve inside the project or contain it, and Prism never creates it.
@@ -95,6 +97,44 @@ git clone git@github.com:you/prism-store.git ../prism-store
 
 Prism then syncs it as it syncs a remote store.
 Without `Store sync: on`, Prism never runs Git in a path store, and you can commit and push it yourself.
+
+## Name each repository
+
+One store can hold the records of several repositories, so each repository that uses a store names itself with a `Repository` line under `## Workspace`, beside `Store`.
+Every clone, shallow clone, fork, worktree, and machine reads the same committed name.
+Without a `Store` line, a `Repository` line is ignored.
+
+A name has 1 to 64 lowercase letters, digits, hyphens, or underscores, and starts and ends with a letter or digit.
+Any other value makes every record operation fail with `repository_name_invalid`, and the message proposes a valid name.
+
+The first record operation that uses a name registers it in the store's `repositories/<name>.json`, with the checkout's `origin` remote, shown without any user name, token, query, or fragment, and the repository's first root commit.
+A checkout without a network remote, because it has no `origin` or its `origin` is a local path or a `file://` URL, registers the name without a remote.
+A shallow clone, or a repository before its first commit, registers the name without a root commit, and the first full checkout whose remote matches adds it.
+Prism checks the name before every record operation, before it reads, writes, or moves any record, and a refused checkout leaves the store and its own records untouched.
+A change to the `Repository` line or the `origin` remote applies to a running server within 5 seconds.
+
+A registered name accepts a checkout in three cases:
+
+- Its remote matches a registered remote.
+  Two remotes match when their host, ignoring case and port, and their path, ignoring surrounding `/` and a trailing `.git`, are equal, so `git@github.com:acme/api.git` and `https://github.com/acme/api` are one remote, while `Acme/API` is another path than `acme/api`.
+- It has no network remote, and the name was registered without one.
+- Its root commit equals the registered one, as in a repository moved on its host or a fork of it; its remote then joins the registration.
+
+These refusals make every record operation of the checkout fail, and each error's data holds the proposed name as `proposed`:
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| `repository_name_invalid` | The name breaks the naming rules. | Use the proposed name. |
+| `repository_name_taken` | The name is registered for other remotes, and the checkout's history cannot prove it is the same repository. The message names both remotes and why, such as a shallow clone. | For the same repository moved on its host, run `git fetch --unshallow` in a shallow clone; otherwise use the proposed name. |
+| `repository_remote_registered` | The checkout's remote is already registered under another name. | Use the name it is registered under. |
+
+The proposed name is the registered name that would accept the checkout, or else the last part of its remote's path without `.git`, or its folder name without a network remote, made valid and given a suffix such as `-2` when another repository holds it.
+The review browser hides the records of a refused checkout as it does for an unavailable store, and still lists its documents.
+
+A checkout whose configuration names a store but no repository keeps working as before and registers nothing.
+Each tool result that opened its store ends with a warning that shows the `- Repository: <name>` line to add under `## Workspace` and commit, with a proposed name, because a later Prism release will refuse record operations without it.
+A verification run or contract-defect report of a named checkout records the name as its repository, while other checkouts keep recording the root commit.
+Naming a repository changes no record, migration entry, or run that the store already holds, and a store's migration marker from before Prism listed moved records keeps covering the repository after it is named.
 
 ## When two people change the same record
 

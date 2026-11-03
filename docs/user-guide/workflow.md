@@ -117,11 +117,12 @@ While collection is off, or while Prism cannot read `.prism/workflow.md`, the ho
 Its `runMeasures.recorded` totals then report every measure as `unavailable` rather than zero, while existing run records still report `runTotals` through `get_review` and `get_initiative`, as described in [Run records](repository-intelligence.md#run-records).
 
 Machine records live under `.prism` by default.
-To share them between machines, name the store's Git remote in `.prism/workflow.md`:
+To share them between machines, name the store's Git remote and this repository in `.prism/workflow.md`:
 
 ```markdown
 ## Workspace
 - Store: git@github.com:you/prism-store.git
+- Repository: api
 ```
 
 `Store` names a remote when it is a URL with the scheme `https`, `http`, `ssh`, `git`, or `file`, or the scp form `user@host:path`, and any other value is a folder path.
@@ -141,6 +142,13 @@ Create or clone the store folder yourself, because Prism never creates it, and a
 On the first record access from a checkout, Prism moves each existing record into the store unless an earlier checkout already brought it, and it keeps both copies of a record whose bytes differ and lists the conflict in the store's `migrations` folder.
 Record files that other checkouts still hold under `.prism` are then ignored, and you can delete them.
 Every checkout whose configuration names the same store reads and writes the same records.
+
+`Repository` names the repository to its store, so one store can hold the records of several repositories, and it is ignored without `Store`.
+A name has 1 to 64 lowercase letters, digits, hyphens, or underscores, and starts and ends with a letter or digit, or every record operation fails with `repository_name_invalid`.
+The first record operation that uses a name registers it in the store with the checkout's `origin` remote and root commit.
+A name registered for another remote is refused with `repository_name_taken` unless the checkout's root commit proves it is the same repository, and a remote already registered under another name is refused with `repository_remote_registered`.
+Each refusal proposes a name that the store accepts.
+A checkout that names a store but no repository keeps working, and each tool result that opened its store warns with the `- Repository: <name>` line to add, because a later Prism release will refuse record operations without it.
 
 To sync a path store between machines yourself, make it a Git checkout whose branch has an upstream, and add `- Store sync: on` under `Store`.
 Prism then commits record changes a few seconds after each write, merges the upstream without rebasing, and pushes, and a record read fetches in the background when the last fetch is older than 30 seconds.
