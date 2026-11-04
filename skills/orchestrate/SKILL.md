@@ -80,7 +80,7 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 
 1. Call `update_review` as the coordinator with a `start_wave` operation in `implementation-review` mode, one lane per review focus, a fresh reviewer identifier per lane, as `base`, the last commit that a child reported before the slice started, when one did, and, on the first wave, the implementer's worker id as `delivery`.
 2. Run `review` for each lane in a fresh child agent, and use a security-focused lane with the `securityReview` model for trust-boundary changes.
-3. When a finding names a contract clause, call `verify_slice` with `contractDefects` for those clauses, and handle the slice as blocked with contract defects.
+3. When a finding names a contract clause, call `verify_slice` with `contractDefects` for those clauses and handle the slice as blocked with contract defects, unless the code only missed a sound clause, in which case clear the clause with `revise_finding` and that reason.
 4. Otherwise, when a lane returns `FINDINGS`, run a fresh `implement` session with the findings of every wave so far, asking whether they share a cause in the contract, and once it returns `DONE`, set each finding it fixed `FIXED` with its summary through `update_review` as the review's `delivery` worker, then start a new wave with fresh reviewers.
 5. When `start_wave` refuses a further wave, ask a `decision` gate whether to continue the review, return the slice to design, or narrow it, and pass the answered gate's id as `afterGate`.
 6. When every lane is `CLEAN`, call `update_review` with `accept_wave`.

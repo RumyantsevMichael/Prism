@@ -79,6 +79,11 @@ function findingDetail(finding) {
     return `<p class="eyebrow">Details</p><h2>Select a finding</h2><p class="empty-note">Click a finding card to read its evidence, close condition, and status history.</p>`;
   }
   const history = [...(finding.history ?? [])].reverse();
+  // A revision names each changed field with its old and new value, and its entry's evidence is the reason.
+  const revisionHtml = (revised) => [
+    revised.clause ? `<p class="timeline-sub">Contract clause ${revised.clause.from ? `<code>${escapeHtml(revised.clause.from)}</code>` : "none"} → ${revised.clause.to ? `<code>${escapeHtml(revised.clause.to)}</code>` : "removed"}</p>` : "",
+    revised.conditionToClose ? `<p class="timeline-sub">Condition to close was: ${escapeHtml(revised.conditionToClose.from)}</p>` : ""
+  ].join("");
   return `<p class="eyebrow">Finding · ${escapeHtml(finding.mode)}</p>
     <h2>${escapeHtml(finding.title)}</h2>
     <p class="detail-meta">${severityBadge(finding.severity)} ${statusBadge(finding.status)} <code>${escapeHtml(finding.id)}</code></p>
@@ -86,6 +91,7 @@ function findingDetail(finding) {
       ["Raised in", raisedIn(finding) ? `wave <code>${escapeHtml(raisedIn(finding))}</code>` : null],
       ["Affected path", finding.affectedPath ? `<code>${escapeHtml(finding.affectedPath)}</code>` : null],
       ["Escalation", finding.escalationTarget ? escapeHtml(finding.escalationTarget) : null],
+      ["Contract clause", finding.clause ? `<code>${escapeHtml(finding.clause)}</code>` : null],
       ["Probe", finding.probe ? `<code>${escapeHtml(finding.probe)}</code>` : null],
       ["Aliases", finding.aliases?.length ? finding.aliases.map((alias) => `<code>${escapeHtml(alias)}</code>`).join(" ") : null]
     ])}
@@ -95,6 +101,7 @@ function findingDetail(finding) {
     <div class="detail-block"><h3>History</h3><ol class="timeline">${history.map((entry) => `<li>
       <div class="timeline-head">${statusBadge(entry.status)}<span>${escapeHtml(entry.actor)}</span><span class="timeline-time">${escapeHtml(formatTime(entry.at))}</span></div>
       <p class="timeline-sub">wave <code>${escapeHtml(entry.wave)}</code></p>
+      ${entry.revised ? revisionHtml(entry.revised) : ""}
       ${entry.evidence ? `<p>${escapeHtml(entry.evidence)}</p>` : ""}
     </li>`).join("")}</ol></div>`;
 }
