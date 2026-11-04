@@ -43,6 +43,7 @@ Both styles follow the [workflow gate rules](../workflow/SKILL.md#supporting-pro
 
 1. Write `.prism/workflow.md` with all sections below and the resolved values.
 2. For unavailable values, use `n/a`, except the BDD harness value `none`.
+3. When the repository holds packages that the person agrees to declare as [components](../workflow/SKILL.md#common-terms), add the optional `## Components` section after `## Stack`, as in the components example.
 
 ```markdown
 # Workflow config
@@ -90,6 +91,22 @@ Both styles follow the [workflow gate rules](../workflow/SKILL.md#supporting-pro
 ## Constraints
 - <Project prohibitions and sign-off requirements.>
 ```
+
+Components example:
+
+```markdown
+## Components
+- billing: packages/billing
+  - Test command: npm test
+  - Depends on: shared, portal/site
+- shared: packages/shared
+- Shared paths: bun.lock
+```
+
+Each component is a lowercase name and its project-relative folder, optionally with its own test command, which runs in its folder, and its dependencies.
+A dependency names a component of this repository, or another repository's component as `<repository>/<component>`.
+Files outside every declared folder belong to the root component, which tests with the `Test command` under `## Stack`.
+Any slice may change a file under a shared path.
 
 ## 4. Create missing documentation
 

@@ -66,6 +66,50 @@ After two review waves for one accepted design, Prism asks you whether to contin
 The slice page in the review browser shows the latest run with its command, exit code, and output tail, and a failed run also names the failing tests that Prism found anywhere in the output.
 Verification runs need a git work tree, and `PRISM_VERIFY_TIMEOUT_MINUTES` changes the 30-minute default timeout.
 
+## Components
+
+A repository can declare its packages as components in `.prism/workflow.md`, so that each planned slice stays inside one of them:
+
+```markdown
+## Components
+- billing: packages/billing
+  - Test command: npm test
+  - Depends on: shared, portal/site
+- shared: packages/shared/
+- Shared paths: package-lock.json, config/shared/
+```
+
+Each top-level item names a component and its folder, relative to the project root, with forward slashes and without `.` or `..` segments; a trailing `/` is ignored, and the folder need not exist yet.
+A name has 1 to 64 lowercase letters, digits, hyphens, or underscores, and starts and ends with a letter or digit.
+The nested `Test command` and `Depends on` items are optional, labels match without case and without a parenthesized note, and lines that are not list items are ignored.
+Prism reads each component's test command, and running it in the component's folder during verification is Planned.
+
+Every file outside the declared folders belongs to the root component, which is named after the repository and tests with the `Test command` under `## Stack`.
+A repository that declares no components is its root component alone.
+A file belongs to the component whose folder holds it, so `packages/billing-extra/a.mjs` lies outside `packages/billing`.
+Any slice may change a file under a `Shared paths` entry, which is a file or a folder with everything inside it.
+
+Every component is identified across the workspace as `<repository>/<component>`.
+The repository's name is its `Repository` name under `## Workspace`, with or without a `Store` line, and `root` when it gives none, so the components above are `api/billing` and `api/shared` in a repository named `api`, and its root component is `api/api`.
+A `Depends on` entry names a component of this repository, bare or qualified with this repository's name, or another repository's component as `<repository>/<component>`, which Prism checks only for its form.
+
+Design names each planned slice's component when it proposes the slice plan, and Prism records it on the slice as `<repository>/<component>`.
+In a repository without components, a slice that names none records the root component.
+Prism refuses the design with `component_unknown`, listing the repository's components, when a slice names no component in a repository that declares some, or names one that is not this repository's.
+It refuses the design with `component_boundary`, listing each crossing path, when a slice's planned changes or frozen tests belong to another component and lie under no shared path.
+Paths under `.prism`, the plans folder, and the roadmap belong to no component and are never checked.
+
+Accepting a design refuses an invalid declaration, and reports its first problem in this order:
+
+| Refusal | Problem |
+|---|---|
+| `component_invalid` | An invalid name, folder, shared path, or `Depends on` entry, a name declared twice or equal to the root component's name, an unknown nested label, a nested item before any component, or an invalid `Repository` name; `entry` quotes the line |
+| `component_overlap` | Two components with the same folder, or one folder inside another |
+| `component_dependency_unknown` | A `Depends on` entry of this repository that names no declared component and not the root component |
+| `component_cycle` | `Depends on` entries that form a cycle, listed in dependency order |
+
+Reading an initiative never reads the declaration, so an invalid one stops only design acceptance.
+
 ## Questions and answers
 
 Each question that waits on you is recorded, and the review browser's Attention page lists it with the artifacts to inspect.
@@ -143,7 +187,7 @@ On the first record access from a checkout, Prism moves each existing record int
 Record files that other checkouts still hold under `.prism` are then ignored, and you can delete them.
 Every checkout whose configuration names the same store reads and writes the same records.
 
-`Repository` names the repository to its store, so one store can hold the records of several repositories, and it is ignored without `Store`.
+`Repository` names the repository to its store, so one store can hold the records of several repositories, and record operations ignore it without `Store`, where it only names the repository's [components](#components).
 A name has 1 to 64 lowercase letters, digits, hyphens, or underscores, and starts and ends with a letter or digit, or every record operation fails with `repository_name_invalid`.
 The first record operation that uses a name registers it in the store with the checkout's `origin` remote and root commit.
 A name registered for another remote is refused with `repository_name_taken` unless the checkout's root commit proves it is the same repository, and a remote already registered under another name is refused with `repository_remote_registered`.

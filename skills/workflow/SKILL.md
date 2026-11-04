@@ -57,7 +57,11 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Coordination state | The initiative's Prism record of settings, active work, pending user gate records, and next actions, read through `get_coordination_state` and changed through `update_coordination_state`. |
 | Slice | One observable outcome across required layers that one fresh implementation session delivers, planned by a contract. |
 | Contract scope | The root slice, or a part that a split design created, that one design gives one contract. |
-| Slice plan | The **Slices** section of a contract: each planned slice with its outcome, requirements, dependencies, frozen test files, and review recommendation. |
+| Slice plan | The **Slices** section of a contract: each planned slice with its outcome, component, requirements, dependencies, frozen test files, and review recommendation. |
+| Component | A part of a repository with its own folder, optional test command, and dependencies, declared under `## Components` in `.prism/workflow.md` and identified across the workspace as `<repository>/<component>`, where the repository's name is its `Repository` name under `## Workspace`, or `root` when it gives none. |
+| Root component | The component named after the repository that holds every file outside the declared folders and tests with the repository's test command; a repository that declares no components is its root component alone. |
+| Shared path | A file or folder listed under `Shared paths` in `## Components` that any slice may change, whichever component it belongs to. |
+| Component boundary | The rule that a planned slice's **Changes** and frozen tests stay inside its component or under a shared path; Prism refuses a design that crosses it with `component_boundary`. |
 | Split evidence | What Prism requires before a scope splits into parts that get their own contracts: `contract_size`, contract files estimated above the token budget that one implementer reads; `unfrozen`, an Unprobed assumption that one part settles; or `user_gate`, a gate where the person asked for the split. A split into a contract's slice plan needs none. |
 | `slice.md` | A design document in a slice folder: for a contract scope, the contract, assumptions, and slice plan, or the interfaces between parts after a split; for a planned slice, its changes. |
 | Approved requirement | An accepted product or system obligation. |
@@ -80,7 +84,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Claim | A slice's mark naming the one Prism server that works on it, for `design` or `implementation`, taken by `claim` on a scope before design or by `set_status` `in-progress`; it covers the slice's descendants, Prism refuses another holder's start with `slice_claimed`, and it ends when the slice leaves `in-progress`, when the scope's proposal is accepted, through `release_claim`, or 30 minutes after its last renewal. |
 | Design view | The review browser's page for a design gate: one example per frozen test under its contract clause, clauses without a test, and the planned changes, written through `update_design_view` by the example writer. |
 | Example writer | A child agent on a small model that writes the design view from the contract and the frozen tests only. |
-| Accepted design | A planned slice's design recorded through `update_initiative` with its frozen tests and its review mark. |
+| Accepted design | A planned slice's design recorded through `update_initiative` with its frozen tests, its review mark, and its component. |
 | Review mark | `required` or `none` on an accepted design, set by the user at the design gate or by the `review` setting. |
 | Verification run | An implementer's `verify_slice` run of the user-approved test command from `.prism/workflow.md`, recorded on the slice; a slice with an accepted design completes only on a fresh passing run, which completes a slice marked `none` by itself. |
 | Implementation review | An independent review of the verified result of a slice marked `required`. |

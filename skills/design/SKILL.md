@@ -33,14 +33,14 @@ Implementers later work from its output in fresh sessions, and they are judged o
 4. For each assumption, do one of the following and record which:
    - Probe it with a small experiment against the real system and record the command and what you observed.
    - When it cannot be probed, write the contract so that an uncovered case produces a clear error or a documented observable fallback, never a silent wrong result.
-5. Plan the slices that implement the contract, each small enough for one fresh implementation session, in dependency order.
+5. Plan the slices that implement the contract, each small enough for one fresh implementation session and inside one [component](../workflow/SKILL.md#common-terms), in dependency order.
 6. Write acceptance tests in the project's test location, black-box through the starting surface, with one test per contract clause, covering error, edge, and interaction cases as well as the main path.
-   Give each slice its own new test files, so that each file belongs to exactly one slice; Prism keeps a slice's test files out of the work tree until the slice starts.
+   Give each slice its own new test files, so that each file belongs to exactly one slice and lies inside its component or under a shared path; Prism keeps a slice's test files out of the work tree until the slice starts.
 7. Run the tests and confirm they build and fail because the behavior is absent, not because of setup defects.
-8. In **Slices**, list each slice with its slug, title, outcome, requirement references, dependencies, frozen test files, and review recommendation.
+8. In **Slices**, list each slice with its slug, title, outcome, component, requirement references, dependencies, frozen test files, and review recommendation.
 9. For each slice, write `slice.md` in its slice folder, the folder named by its slug in the initiative's plans folder, with the sections in the [slice example](#slice-example).
    In **Changes**, list each file you expect to add, change, or remove, starting with `add`, `change`, or `remove` and one or more comma-separated paths in backticks, then a colon, the functions, types, or modules it adds or whose interface it changes, a few words on why, and, in parentheses, the Contract clauses it serves, such as `(§1, §3)`, unless it supports every clause.
-   Include the files the project's own instructions require the change to update, such as docs, glossaries, or term lists.
+   Include the files the project's own instructions require the change to update, such as docs, glossaries, or term lists, and keep every path inside the slice's component or under a shared path.
 10. Write the [diagrams](#4-diagrams).
 11. Recommend review `required` for a slice when an independent implementation review pays off, such as for authentication, authorization, secrets, untrusted input, or data loss risk, and `none` otherwise.
 12. When the project keeps Gherkin feature files, use `write-feature` for the scenarios and list them as frozen tests.
@@ -70,10 +70,10 @@ When the plan has one slice, the scope itself is that slice: put **Changes** in 
 - Unprobed: report sizes above 2 GiB; the command refuses them with `error: report too large`.
 
 ## Slices
-| Slug | Outcome | Requirements | Depends on | Frozen tests | Review |
-| --- | --- | --- | --- | --- | --- |
-| `download` | Users download a report by id. | `reports.md§1` | | `tests/report_download.rs` | none |
-| `audit` | Operators list downloads. | `reports.md§2` | `download` | `tests/report_audit.rs` | required: exposes user names |
+| Slug | Outcome | Component | Requirements | Depends on | Frozen tests | Review |
+| --- | --- | --- | --- | --- | --- | --- |
+| `download` | Users download a report by id. | `reports` | `reports.md§1` | | `tests/report_download.rs` | none |
+| `audit` | Operators list downloads. | `reports` | `reports.md§2` | `download` | `tests/report_audit.rs` | required: exposes user names |
 ```
 
 ### Slice example
@@ -115,9 +115,9 @@ Write PlantUML source only: Prism parses each `.puml` file when the design is ac
 ## 6. Propose the result
 
 1. Read the initiative's revision with `get_initiative`, and call `update_initiative` with one `propose_design` operation for the scope:
-   - `FIT`: a `split` of the scope into its planned slices, their `set_dependencies` operations, and an `accept_design` operation per slice with its frozen tests and review recommendation; for a one-slice plan, only `accept_design` on the scope.
+   - `FIT`: a `split` of the scope into its planned slices, their `set_dependencies` operations, and an `accept_design` operation per slice with its frozen tests, review recommendation, and `component`, which a repository without declared components leaves out; for a one-slice plan, only `accept_design` on the scope.
    - `SPLIT`: a `split` into the parts with the evidence, and their `set_dependencies` operations.
-2. When Prism refuses the proposal, fix the design and propose again; on `revision_conflict`, read the revision again.
+2. When Prism refuses the proposal, fix the design and propose again; on `revision_conflict`, read the revision again, and on a refusal of the components declaration, such as `component_invalid`, return `BLOCKED` with its message.
 3. Return `PROPOSED` with the scope's `slice.md` path, the failing test result from step 7 of section 3, and open questions, or `BLOCKED` with the exact question or missing fact.
 
 ## 7. Revise a design
