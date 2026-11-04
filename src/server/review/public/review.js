@@ -3,7 +3,7 @@ import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, parseEntityRef, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
-import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText } from "./views/markdown.js";
+import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
 import { createIndexingStatus } from "./views/indexing.js";
 import { createRecordStoreStatus } from "./views/record-store.js";
@@ -924,6 +924,7 @@ function beginRebuild(path) {
 function scrollToAnchor(anchor) {
   const target = anchorTarget(artifact, anchor);
   if (!target) return false;
+  revealInDocument(target);
   // A line range stays marked in the source view, so the reader sees which lines a link meant.
   const range = anchor.match(LINE_RANGE);
   artifact.querySelectorAll(".source-lines li.in-range").forEach((line) => line.classList.remove("in-range"));
@@ -990,6 +991,7 @@ function highlightText(query) {
     range.setEnd(node, index + term.length);
     const mark = document.createElement("mark");
     mark.className = "find-hit";
+    revealInDocument(node.parentElement);
     range.surroundContents(mark);
     workspace.scrollTop += mark.getBoundingClientRect().top - workspace.getBoundingClientRect().top - workspace.clientHeight / 3;
     return true;
@@ -1003,7 +1005,9 @@ function endRebuild(memory) {
     artifact.style.minHeight = "";
     return;
   }
-  decorateDocuments(artifact);
+  const state = viewState(memory.path);
+  state.folds ??= new Map();
+  decorateDocuments(artifact, state.folds);
   decorateMaximize(memory.path);
   if (memory.open) {
     const sections = artifact.querySelectorAll("details");

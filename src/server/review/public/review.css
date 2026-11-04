@@ -5576,3 +5576,67 @@ mark.find-hit {
   font-size: 0.74rem;
   margin: 0.2rem 0 0;
 }
+
+/* A foldable heading carries its toggle in the left gutter, so heading text keeps its alignment. */
+.document-content .md-foldable {
+  position: relative;
+}
+
+.document-content .md-fold {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 0.3rem;
+  color: var(--ink-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 1.3rem;
+  justify-content: center;
+  left: -1.45rem;
+  opacity: 0.35;
+  padding: 0;
+  position: absolute;
+  top: calc(0.625em - 0.65rem);
+  width: 1.3rem;
+}
+
+.document-content .md-fold::before {
+  border-bottom: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  content: "";
+  height: 0.38rem;
+  transform: translateY(-0.1rem) rotate(45deg);
+  transition: transform 120ms ease;
+  width: 0.38rem;
+}
+
+.document-content .md-foldable:hover > .md-fold,
+.document-content .md-fold:focus-visible,
+.document-content .is-folded > .md-fold {
+  opacity: 1;
+}
+
+.document-content .md-fold:hover {
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
+.document-content .is-folded > .md-fold::before {
+  transform: translateX(-0.1rem) rotate(-45deg);
+}
+
+.document-content .is-folded::after {
+  color: var(--ink-muted);
+  content: " …";
+  font-weight: 400;
+}
+
+.document-content .md-folded-away {
+  display: none !important;
+}
+
+@media (hover: none) {
+  .document-content .md-fold {
+    opacity: 0.7;
+  }
+}

@@ -85,16 +85,24 @@ export function renderText(path, content, options = {}) {
   const output = [];
   const slugs = new Map();
   let inCode = false;
-  let listType = null;
-  const closeList = () => {
-    if (listType) {
-      output.push(`</${listType}>`);
-      listType = null;
-    }
+  // Open lists, outermost first: each keeps its type and the indent of its items, and its last item stays open so a deeper list nests inside it.
+  const lists = [];
+  const closeLists = (indent = -1) => {
+    while (lists.length && lists.at(-1).indent > indent) output.push(`</li></${lists.pop().type}>`);
+  };
+  const closeList = () => closeLists();
+  const LIST_ITEM = /^(\s*)([-*+]|(\d{1,9})[.)])\s+(.*)$/;
+  // A blank line ends the open lists unless a list item or an indented continuation follows it.
+  const listContinues = (from) => {
+    let next = from;
+    while (next < lines.length && !lines[next].trim()) next += 1;
+    if (next >= lines.length || !lists.length) return false;
+    return LIST_ITEM.test(lines[next]) || /^\s{2,}\S/.test(lines[next]);
   };
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (line.startsWith("```")) {
+    const item = line.match(LIST_ITEM);
+    if (line.trim().startsWith("```")) {
       closeList();
       output.push(inCode ? "</code></pre>" : "<pre><code>");
       inCode = !inCode;
@@ -122,27 +130,31 @@ export function renderText(path, content, options = {}) {
       const seen = slugs.get(slug) ?? 0;
       slugs.set(slug, seen + 1);
       output.push(`<h${level} id="${HEADING_PREFIX}${escapeHtml(seen ? `${slug}-${seen}` : slug)}">${inlineMarkdown(text, options)}</h${level}>`);
-    } else if (/^\s*[-*]\s+/.test(line)) {
-      if (listType !== "ul") {
-        closeList();
-        output.push("<ul>");
-        listType = "ul";
+    } else if (item) {
+      const indent = item[1].replace(/\t/g, "    ").length;
+      const type = item[3] === undefined ? "ul" : "ol";
+      closeLists(indent);
+      const top = lists.at(-1);
+      if (top && top.indent === indent && top.type !== type) closeLists(indent - 1);
+      if (lists.at(-1)?.indent === indent) {
+        output.push("</li>");
+      } else {
+        // An ordered list starts at its first item's number, as CommonMark does; later items count up from there.
+        const start = type === "ol" && Number(item[3]) !== 1 ? ` start="${Number(item[3])}"` : "";
+        output.push(`<${type}${start}>`);
+        lists.push({ type, indent });
       }
-      output.push(`<li>${inlineMarkdown(line.replace(/^\s*[-*]\s+/, ""), options)}</li>`);
-    } else if (/^\s*\d+\.\s+/.test(line)) {
-      if (listType !== "ol") {
-        closeList();
-        output.push("<ol>");
-        listType = "ol";
-      }
-      output.push(`<li>${inlineMarkdown(line.replace(/^\s*\d+\.\s+/, ""), options)}</li>`);
+      output.push(`<li>${inlineMarkdown(item[4], options)}`);
+    } else if (lists.length && /^\s{2,}\S/.test(line)) {
+      // An indented line under an item continues that item.
+      output.push(`<br>${inlineMarkdown(line.trim(), options)}`);
     } else if (/^&gt;\s?/.test(line)) {
       closeList();
       output.push(`<blockquote>${inlineMarkdown(line.replace(/^&gt;\s?/, ""), options)}</blockquote>`);
     } else if (line.trim()) {
       closeList();
       output.push(`<p>${inlineMarkdown(line, options)}</p>`);
-    } else {
+    } else if (!listContinues(index + 1)) {
       closeList();
     }
   }
@@ -151,9 +163,84 @@ export function renderText(path, content, options = {}) {
 }
 
 const TOC_MINIMUM = 3;
+const HEADING = /^H([1-6])$/;
+
+const headingLevel = (node) => Number(HEADING.exec(node.tagName)?.[1] ?? 0);
+
+// Hides every block under a folded heading, up to the next heading of the same or a higher level; a nested fold stays folded when its parent opens.
+function applyFolds(content) {
+  const open = [];
+  for (const node of content.children) {
+    const level = headingLevel(node);
+    if (level) while (open.length && open.at(-1).level >= level) open.pop();
+    node.classList.toggle("md-folded-away", open.some((heading) => heading.folded));
+    if (level) open.push({ level, folded: node.classList.contains("is-folded") });
+  }
+}
+
+function setFold(content, heading, folded) {
+  heading.classList.toggle("is-folded", folded);
+  const button = heading.querySelector(":scope > .md-fold");
+  button?.setAttribute("aria-expanded", String(!folded));
+  if (button) button.title = folded ? "Expand section" : "Collapse section";
+  const folds = content.prismFolds;
+  if (folds) {
+    if (folded) folds.add(heading.id);
+    else folds.delete(heading.id);
+  }
+  applyFolds(content);
+}
+
+// Each heading with content under it gets a fold toggle; the folds set, kept by the caller per view, survives a re-render.
+function decorateFolds(content, folds) {
+  content.prismFolds = folds;
+  const children = [...content.children];
+  children.forEach((heading, index) => {
+    const level = headingLevel(heading);
+    if (!level || heading.querySelector(":scope > .md-fold")) return;
+    const next = children[index + 1];
+    if (!next || (headingLevel(next) && headingLevel(next) <= level)) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "md-fold";
+    button.setAttribute("aria-expanded", "true");
+    button.setAttribute("aria-label", "Collapse or expand this section");
+    button.title = "Collapse section";
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      setFold(content, heading, !heading.classList.contains("is-folded"));
+    });
+    heading.classList.add("md-foldable");
+    heading.prepend(button);
+    if (folds?.has(heading.id)) heading.classList.add("is-folded");
+    button.setAttribute("aria-expanded", String(!heading.classList.contains("is-folded")));
+  });
+  applyFolds(content);
+}
+
+// Opens a folded target heading and every folded heading above a target, so a link, a contents entry, or a find can land inside a folded section.
+export function revealInDocument(target) {
+  const content = target?.closest?.(".document-content");
+  if (!content) return;
+  let node = target;
+  while (node && node.parentElement !== content) node = node.parentElement;
+  if (node?.classList.contains("is-folded")) setFold(content, node, false);
+  let level = node ? headingLevel(node) || 7 : 7;
+  for (let previous = node?.previousElementSibling; previous && level > 1; previous = previous.previousElementSibling) {
+    const previousLevel = headingLevel(previous);
+    if (!previousLevel || previousLevel >= level) continue;
+    level = previousLevel;
+    if (previous.classList.contains("is-folded")) setFold(content, previous, false);
+  }
+}
 
 // A rendered document with enough headings gets a contents list beside it; the current section is marked while scrolling.
-export function decorateDocuments(root) {
+// folds holds the ids of the folded headings, keyed by the document's position on the page.
+export function decorateDocuments(root, folds = new Map()) {
+  [...root.querySelectorAll(".document-content")].forEach((content, position) => {
+    if (!folds.has(position)) folds.set(position, new Set());
+    decorateFolds(content, folds.get(position));
+  });
   for (const content of root.querySelectorAll(".document-content")) {
     const host = content.closest(".document-card, .view-card") ?? content.parentElement;
     if (host.querySelector(":scope > .doc-toc")) continue;
