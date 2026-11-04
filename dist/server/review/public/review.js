@@ -6,6 +6,7 @@ import { createPalette } from "./views/palette.js";
 import { highlight, highlightLines, languageOf } from "./views/highlight.js";
 import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
+import { createSidePanel } from "./views/side-panel.js";
 import { createIndexingStatus } from "./views/indexing.js";
 import { createRecordStoreStatus } from "./views/record-store.js";
 import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connection.js";
@@ -67,6 +68,8 @@ let currentContext = null;
 let contextSnapshot = "";
 let palette;
 let linkPreview;
+let sidePanel;
+let panelPreview;
 const viewStates = new Map();
 const treeToggles = new Map();
 
@@ -1381,12 +1384,49 @@ async function initialize() {
       openRef(ref, options);
     }
   });
+  sidePanel = createSidePanel({
+    shell: appShell,
+    fetchJson,
+    renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
+    onOpenTab: (ref, anchor) => {
+      pendingAnchor = anchor ? { path: ref, anchor } : null;
+      // The file moves into its tab, so the panel closes rather than showing it twice.
+      sidePanel.close();
+      if (ref === selectedPath && anchor) scrollToAnchor(anchor);
+      else openRef(ref, { keep: true });
+    }
+  });
+  const showInPanel = (ref, anchor) => sidePanel.showFile(ref, anchor);
   linkPreview = createLinkPreview({
     root: workspace,
     fetchJson,
     renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
     kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
-    currentPath: () => selectedPath
+    currentPath: () => selectedPath,
+    onShowInPanel: showInPanel
+  });
+  // Links inside the panel preview too, and a followed link replaces the panel's file, since the panel holds one item.
+  panelPreview = createLinkPreview({
+    root: sidePanel.body,
+    fetchJson,
+    renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
+    kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
+    currentPath: () => sidePanel.current()?.ref ?? null,
+    onShowInPanel: showInPanel
+  });
+  sidePanel.body.addEventListener("click", (event) => {
+    const docLink = event.target.closest("a[data-doc-link], a[data-doc-anchor]");
+    if (!docLink) return;
+    event.preventDefault();
+    const target = docLink.dataset.docLink ?? sidePanel.current()?.ref;
+    const anchor = docLink.dataset.docAnchor ?? null;
+    if (!target) return;
+    if (event.ctrlKey || event.metaKey) {
+      pendingAnchor = anchor ? { path: target, anchor } : null;
+      openRef(target, { keep: true });
+    } else {
+      sidePanel.showFile(target, anchor);
+    }
   });
   document.getElementById("jump").addEventListener("click", () => palette.show());
   document.getElementById("evidence-close").addEventListener("click", closeEvidence);
@@ -1398,6 +1438,12 @@ async function initialize() {
     }
     // Markdown links to repository files open as review tabs, and anchors scroll within the document they name.
     const docLink = event.target.closest("a[data-doc-link], a[data-doc-anchor]");
+    // Alt+click shows a linked file in the side panel and keeps the current tab.
+    if (docLink?.dataset.docLink && event.altKey) {
+      event.preventDefault();
+      sidePanel.showFile(docLink.dataset.docLink, docLink.dataset.docAnchor ?? null);
+      return;
+    }
     if (!docLink || event.shiftKey || event.altKey) return;
     event.preventDefault();
     const target = docLink.dataset.docLink;
@@ -1435,6 +1481,8 @@ async function initialize() {
       closeEvidence();
     } else if (event.key === "Escape" && !palette.isOpen() && selectedPath && viewState(selectedPath).maximized) {
       setMaximized(selectedPath, null);
+    } else if (event.key === "Escape" && !palette.isOpen() && sidePanel.isOpen() && !document.querySelector(".link-preview:not([hidden]), dialog[open]")) {
+      sidePanel.close();
     }
   });
   window.addEventListener("popstate", (event) => {
@@ -1472,6 +1520,7 @@ async function initialize() {
           synchronizeSession(snapshot);
         }
         // A failed probe leaves the open view as it is rather than replacing it with an error.
+        if (sidePanel.isOpen()) void sidePanel.refresh();
         if (selectedPath) {
           await showArtifact(selectedPath);
         }

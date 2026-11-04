@@ -198,7 +198,7 @@ function setFold(content, heading, folded) {
 }
 
 // Each heading with content under it gets a fold toggle; the folds set, kept by the caller per view, survives a re-render.
-function decorateFolds(content, folds) {
+export function decorateFolds(content, folds) {
   content.prismFolds = folds;
   const children = [...content.children];
   children.forEach((heading, index) => {
