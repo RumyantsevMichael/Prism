@@ -51,6 +51,26 @@ test("delivers browser answers with the next prompt until the agent resolves the
   assert.equal(await runHook({ hook_event_name: "UserPromptSubmit", cwd: root }), "");
 });
 
+const start = (cwd, source) => Readable.from([JSON.stringify({ hook_event_name: "SessionStart", source, cwd })]);
+
+test("a resumed session learns its open gates, waits on the unanswered ones, and acts on the answered ones", async (context) => {
+  const { root, initiative, gates } = await project(context);
+  assert.equal(await deliverGateAnswers({ input: start(root, "startup"), environment: {} }), null, "a new session did not open the project's gates");
+  assert.equal(await deliverGateAnswers({ input: start(root, "compact"), environment: {} }), null, "compaction keeps a running wait");
+  await answerUserGate({ projectRoot: root, initiative, id: gates[0], choice: "session" });
+  const output = await deliverGateAnswers({ input: start(root, "resume"), environment: {} });
+  assert.equal(output.hookSpecificOutput.hookEventName, "SessionStart");
+  const text = output.hookSpecificOutput.additionalContext;
+  assert.match(text, /call wait_for_user_gate with its id/);
+  assert.match(text, new RegExp(`Gate ${gates[1]} \\(visual-review, initiative reports\\): "Review the design\\."\n`));
+  assert.match(text, new RegExp(`Gate ${gates[0]} .*Answer: Accept the active session\\.`));
+  assert.ok(text.indexOf(gates[1]) < text.indexOf("already answered"), "waiting gates and answered gates are listed apart");
+  assert.match(await runHook({ hook_event_name: "SessionStart", source: "resume", cwd: root }), /"hookEventName":"SessionStart"/);
+  const { revision } = await readCoordinationState({ projectRoot: root, initiative });
+  await updateCoordinationState({ projectRoot: root, initiative, expectedRevision: revision, changes: { gateOperations: gates.map((id) => ({ op: "resolve", id, reason: "Handled." })) } });
+  assert.equal(await deliverGateAnswers({ input: start(root, "resume"), environment: {} }), null, "no open gate, no context");
+});
+
 test("stays silent outside a Prism project", async (context) => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-gate-hook-empty-")));
   context.after(() => rm(root, { recursive: true, force: true }));
