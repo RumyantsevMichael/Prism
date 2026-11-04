@@ -9,6 +9,8 @@ import { splitEvidence } from "./fixtures/split-evidence.mjs";
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-verify-data-")));
 process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
+// Claude Code sets this in a cloud session; each test sets it only where it checks chat approval.
+delete process.env.CLAUDE_CODE_REMOTE;
 const { getInitiative, initiativeAcknowledgement, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { failingTests, verificationBrief, verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { checkSliceGate } = await import("../../dist/server/workflow/slice-gate.mjs");
@@ -101,6 +103,48 @@ test("the first run of a command waits for the user's browser approval, and a de
   assert.equal(declined.note, "Not this command.");
   assert.equal((await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state.pending.length, 0, "the answered gate is resolved");
   await assert.rejects(readdir(path.join(root, ".prism/initiatives/reports/slices/download/runs")), { code: "ENOENT" });
+});
+
+function inCloud(context) {
+  process.env.CLAUDE_CODE_REMOTE = "true";
+  context.after(() => { delete process.env.CLAUDE_CODE_REMOTE; });
+}
+
+test("in a cloud session the agent records the user's chat approval with their words", async (context) => {
+  const root = await project(context);
+  await accept(root);
+  inCloud(context);
+  const asked = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" });
+  assert.equal(asked.status, "approval_needed");
+  assert.equal(asked.chatApproval, true);
+  assert.match(asked.message, /cannot open the review browser/);
+  await assert.rejects(verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", chatApproval: { quote: "Yes, run it." } }), /pass that gate's id as approvalGate/);
+  const passed = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: asked.gateId, chatApproval: { quote: "Yes, run it." } });
+  assert.equal(passed.status, "passed");
+  const state = (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state;
+  assert.equal(state.pending.length, 0);
+  assert.match(state.closed.find((item) => item.id === asked.gateId).reason, /in chat.*"Yes, run it\."/);
+  const approvals = JSON.parse(await readFile(path.join(privateData, "verification-approvals.json"), "utf8"));
+  assert.ok(Object.values(approvals.approved).some((item) => item.gate === asked.gateId && item.via === "chat" && item.quote === "Yes, run it."));
+});
+
+test("a session that can open the review browser refuses chat approval", async (context) => {
+  const root = await project(context);
+  await accept(root);
+  const asked = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" });
+  assert.equal(asked.chatApproval, undefined);
+  await assert.rejects(verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: asked.gateId, chatApproval: { quote: "Yes." } }), (error) => error.code === "chat_approval_unavailable");
+});
+
+test("an approval answer with a note and no choice neither allows nor declines", async (context) => {
+  const root = await project(context);
+  await accept(root);
+  const asked = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" });
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: asked.gateId, note: "What does it run?" });
+  const unclear = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: asked.gateId });
+  assert.equal(unclear.status, "approval_unclear");
+  assert.equal(unclear.note, "What does it run?");
+  assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" })).status, "approval_needed", "the next call asks again");
 });
 
 test("an agent-opened gate answered Allow does not approve a command", async (context) => {
