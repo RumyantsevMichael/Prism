@@ -19,7 +19,9 @@ The coordination state's active operations refuse a second start, but the orches
 ## Decision
 
 A slice MUST have at most one holder at a time across every checkout and machine that shares its initiative's records.
-A holder MUST be one Prism server process, named by a random identifier and labeled for people with the Git user name of the folder that holds the records, when set, and the host name without its domain.
+A holder MUST be one host session, named by a digest of the session identifier the host gives the Prism server, or, when the host gives none, one Prism server process, named by a random identifier.
+A holder MUST be labeled for people with the Git user name of the folder that holds the records, when set, and the host name without its domain.
+A server MUST renew a live claim of its own holder that it finds on an initiative read or update and does not renew yet.
 Each claim MUST be a record of its own beside the initiative record, one per claimed slice, and MUST record the slice, its holder, label, activity (`design` or `implementation`), when it was claimed, when it was last renewed, when it expires, and a random nonce of the attempt that took it.
 Claim records MUST NOT have a structural merge: two machines that write the same claim record conflict, the upstream version wins, and the first push holds the slice.
 Starting a slice MUST take an implementation claim, and design MUST take a design claim on its scope before it starts.
@@ -46,7 +48,9 @@ The nonce tells this attempt's claim from an earlier claim of the same holder an
 A claim that cannot be confirmed is refused rather than kept as a local claim, because a claim that no other machine sees would let both start the same slice.
 The lease is long enough that a renewal missed by a short suspension or network outage does not lose the slice, and short enough that a slice whose holder died waits at most half an hour; renewing every 10 minutes leaves two missed renewals of margin.
 Never reviving an expired claim keeps a machine that slept through its lease from taking back a slice that someone else took meanwhile.
-The holder is the server process rather than the person or the machine, because two worktrees of one person on one machine are exactly the agents that must not share a slice.
+The holder is the host session or the server process rather than the person or the machine, because two worktrees of one person on one machine are exactly the agents that must not share a slice, and they run in two sessions.
+A host restarts its server within one session, for example between turns of a cloud session or after a plugin reinstall, so a per-process holder would lock the session out of its own slices until the claims expired.
+The record keeps a digest of the session identifier, because records may be pushed to a shared store.
 
 ## Alternatives
 
@@ -63,7 +67,8 @@ Starting or releasing a slice or a design takes as long as one sync of the store
 A refused claim's local claim record is reported in the refusal, and a renewal or release that lost to the upstream is reported as a lost claim or a refusal, never as a saved record.
 An update that took its claims can still fail when the sync brought another change of the initiative record, and the caller then gets `revision_conflict` and reads again.
 A refused attempt's claim record may reach the remote before the attempt removes it, so other machines see it for one debounced sync.
-A server that restarts gets a new holder identifier, so its own earlier claim blocks it until the claim expires or someone releases it.
+A server that the host restarts in the same session keeps its holder, and resumes renewing its claims on its first read or update of their initiative; a server whose host gives no session identifier gets a new holder, so its own earlier claim blocks it until the claim expires or someone releases it.
+Two processes of one session, such as one session resumed in two terminals at once, share a holder, so claims do not keep them apart.
 A claim survives the slice's dependencies and design changes, and only leaving `in-progress`, accepting the proposal, expiry, or release ends it.
 A claim that ends because its slice left `in-progress` is removed after the initiative write without waiting for a sync, so a holder's renewal pushed meanwhile can bring it back until it expires.
 No operation withdraws a pending design proposal, so a design that is abandoned keeps its claim until release or expiry.
@@ -86,3 +91,5 @@ Each confirmed claim joins the server's renewal list with its nonce, whose timer
 Every initiative read and update compares the server's held claims for that initiative with their records and reports each one released, replaced, or expired once.
 
 ## Decision Log
+
+2026-11-04: Made the host session the holder when the host gives the server a session identifier, so a restarted server in the same session keeps its claims.
