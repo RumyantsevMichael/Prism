@@ -39,3 +39,16 @@ test("a source anchor names one line or a line range", async () => {
   assert.deepEqual([..."L12-39".match(LINE_RANGE)].slice(1), ["12", "39"]);
   assert.equal("context".match(LINE_RANGE), null);
 });
+
+test("ordered lists keep counting across blank lines and start at their first number", () => {
+  const html = renderText("doc.md", "1. one\n2. two\n\n3. three\n   continued\n\nBetween.\n\n7. seven\n8. eight\n");
+  assert.equal(html.match(/<ol/g).length, 2);
+  assert.match(html, /<ol>\n<li>one\n<\/li>\n<li>two\n<\/li>\n<li>three\n<br>continued/);
+  assert.match(html, /<ol start="7">\n<li>seven/);
+  assert.doesNotMatch(html, /<ol start="1">/);
+});
+
+test("indented list items nest inside the item above them", () => {
+  const html = renderText("doc.md", "- a\n  - a.1\n    1. deep\n- b\n").replace(/\n/g, "");
+  assert.equal(html, "<ul><li>a<ul><li>a.1<ol><li>deep</li></ol></li></ul></li><li>b</li></ul>");
+});
