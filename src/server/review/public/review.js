@@ -324,12 +324,39 @@ function element(tag, className, text) {
   return node;
 }
 
-// Checkouts that resolve their records to one store folder share them; a checkout with records of its own is its own project.
-function storeKey(entry) {
-  return entry.store && entry.store.kind !== "project" && entry.store.location ? `store:${entry.store.location}` : `project:${entry.id}`;
+// Checkouts that resolve their records to one store share them, across repositories too; a checkout with records of its own is its own project.
+// A remote store that cannot be cloned right now still groups by its address, so an outage does not scatter its workspace.
+function sharedStore(entry) {
+  const store = entry.store;
+  if (!store || store.kind === "project") return null;
+  if (store.location) return `store:${store.location}`;
+  return store.kind === "remote" && store.label ? `remote:${store.label}` : null;
 }
 
-function projectEntry({ entry, identity }, current, { gates: showGates = true } = {}) {
+// A folder store is named by its folder, because each checkout may spell the configured path differently.
+function storeName(store) {
+  return store.kind === "folder" && store.location ? folderName(store.location) : store.label ?? "records";
+}
+
+function storeKey(entry) {
+  return sharedStore(entry) ?? `project:${entry.id}`;
+}
+
+// Entries keep one order, by name, so a sync that changes recency or liveness never moves an entry under the pointer.
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+function compareMembers(left, right) {
+  const key = ({ entry, identity }) => [identity.repository ?? "", workspaceName(identity) ?? folderName(entry.projectRoot), entry.projectRoot];
+  const a = key(left);
+  const b = key(right);
+  for (let index = 0; index < a.length; index += 1) {
+    const order = collator.compare(a[index], b[index]) || (a[index] < b[index] ? -1 : a[index] > b[index] ? 1 : 0);
+    if (order) return order;
+  }
+  return 0;
+}
+
+function projectEntry({ entry, identity }, current, { gates: showGates = true, repository = false } = {}) {
   const link = element("a", `project-entry${showGates ? "" : " project-checkout"}`);
   link.dataset.project = entry.id;
   link.href = entry.url;
@@ -337,7 +364,11 @@ function projectEntry({ entry, identity }, current, { gates: showGates = true } 
   if (entry.id === current) link.setAttribute("aria-current", "page");
   const liveMark = element("span", `project-entry-live${entry.live ? " live" : ""}`);
   liveMark.title = entry.live ? "An agent session is using this project" : "Recently used";
-  const name = element("span", "project-entry-name", workspaceName(identity) ?? folderName(entry.projectRoot));
+  const checkout = workspaceName(identity) ?? folderName(entry.projectRoot);
+  const name = element("span", "project-entry-name");
+  // A workspace can hold several repositories, so its rows name the repository as well as the checkout.
+  if (repository && identity.repository) name.append(element("span", "project-entry-repository", identity.repository), element("span", "project-separator", "/"));
+  name.append(element("span", "project-entry-checkout", checkout));
   // Only a running or failed build is marked, because the status bar covers the open project's other states.
   if (entry.indexing === "preparing" || entry.indexing === "failed") {
     const indexing = element("span", `project-entry-indexing ${entry.indexing}`);
@@ -378,46 +409,53 @@ async function refreshProjects() {
   projectGates.textContent = String(waiting);
   projectGates.title = `${waiting} open ${waiting === 1 ? "gate" : "gates"} in other projects`;
   // An unchanged list is left alone, and a rebuilt one keeps keyboard focus on the same project.
-  const text = JSON.stringify(listing);
+  // The server lists projects by recency, so the comparison ignores order and a sync that only reorders them leaves the menu alone.
+  const text = JSON.stringify({ ...listing, projects: [...listing.projects].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) });
   if (text === projectListing) return;
   projectListing = text;
   const focused = document.activeElement?.closest?.(".project-entry")?.dataset.project;
   if (current) setProjectLabel(workspaceIdentity(current), current.projectRoot);
-  // Every project is listed under its repository, even a repository with one checkout, in the order the first of them appears.
-  // Within a repository, checkouts whose records live in one shared store form one project: its records and gates show once, and each checkout stays reachable for its code.
-  const groups = new Map();
+  // Checkouts that share one record store form one workspace, whichever repositories they belong to: its records and gates show once, and each checkout stays reachable for its code.
+  // Every other checkout is listed under its repository, even a repository with one checkout.
+  // Workspaces come first, then repositories, each in name order.
+  const workspaces = new Map();
+  const repositories = new Map();
   for (const entry of listing.projects) {
-    const identity = workspaceIdentity(entry);
-    if (!groups.has(identity.repository)) groups.set(identity.repository, new Map());
-    const clusters = groups.get(identity.repository);
-    if (!clusters.has(storeKey(entry))) clusters.set(storeKey(entry), []);
-    clusters.get(storeKey(entry)).push({ entry, identity });
+    const member = { entry, identity: workspaceIdentity(entry) };
+    const shared = sharedStore(entry);
+    const groups = shared ? workspaces : repositories;
+    const key = shared ?? member.identity.repository ?? folderName(entry.projectRoot);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(member);
   }
   const items = [];
-  for (const [repository, clusters] of groups) {
+  const workspaceList = [...workspaces.values()].map((members) => members.sort(compareMembers));
+  workspaceList.sort((left, right) => collator.compare(storeName(left[0].entry.store), storeName(right[0].entry.store)) || compareMembers(left[0], right[0]));
+  for (const members of workspaceList) {
+    const shared = members[0].entry;
+    const gates = Math.max(...members.map(({ entry }) => entry.gates ?? 0));
+    const repositoryCount = new Set(members.map(({ identity }) => identity.repository)).size;
+    const item = element("li", "project-cluster");
+    const head = element("div", "project-cluster-head");
+    const holders = `${members.length} ${members.length === 1 ? "checkout" : "checkouts"}${repositoryCount > 1 ? ` of ${repositoryCount} repositories` : ""}`;
+    head.title = `Workspace: ${holders} keep their records in ${shared.store.location ?? shared.store.label}, so their roadmap, initiatives, and gates are the same.`;
+    const badge = element("span", `project-entry-gates${gates ? "" : " none"}`, String(gates));
+    badge.title = `${gates} open ${gates === 1 ? "gate" : "gates"}`;
+    head.append(element("span", "store-icon"), element("span", "project-cluster-name", storeName(shared.store)), badge);
+    const checkouts = element("ul", "project-checkouts");
+    for (const member of members) {
+      const row = element("li");
+      row.append(projectEntry(member, listing.current, { gates: false, repository: true }));
+      checkouts.append(row);
+    }
+    item.append(head, checkouts);
+    items.push(item);
+  }
+  for (const [repository, members] of [...repositories].sort(([left], [right]) => collator.compare(left, right))) {
     items.push(element("li", "project-group", repository));
-    for (const members of clusters.values()) {
-      if (members.length === 1) {
-        const item = element("li");
-        item.append(projectEntry(members[0], listing.current));
-        items.push(item);
-        continue;
-      }
-      const shared = members[0].entry;
-      const gates = Math.max(...members.map(({ entry }) => entry.gates ?? 0));
-      const item = element("li", "project-cluster");
-      const head = element("div", "project-cluster-head");
-      head.title = `${members.length} checkouts share the records in ${shared.store.label}, so their roadmap, initiatives, and gates are the same.`;
-      const badge = element("span", `project-entry-gates${gates ? "" : " none"}`, String(gates));
-      badge.title = `${gates} open ${gates === 1 ? "gate" : "gates"}`;
-      head.append(element("span", "store-icon"), element("span", "project-cluster-name", "Shared records"), element("span", "project-cluster-store", shared.store.label), badge);
-      const checkouts = element("ul", "project-checkouts");
-      for (const member of members) {
-        const row = element("li");
-        row.append(projectEntry(member, listing.current, { gates: false }));
-        checkouts.append(row);
-      }
-      item.append(head, checkouts);
+    for (const member of members.sort(compareMembers)) {
+      const item = element("li");
+      item.append(projectEntry(member, listing.current));
       items.push(item);
     }
   }
