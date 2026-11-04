@@ -1,3 +1,4 @@
+import { highlight, languageOf } from "./highlight.js";
 import { escapeHtml } from "./util.js";
 
 // Heading ids carry a prefix so a heading such as "Tabs" never collides with an id the page itself uses.
@@ -79,12 +80,14 @@ function tableCells(line, options) {
 export function renderText(path, content, options = {}) {
   const escaped = escapeHtml(content);
   if (!path.toLowerCase().endsWith(".md")) {
-    return `<pre><code>${escaped}</code></pre>`;
+    const language = languageOf(path);
+    return `<pre><code${language ? ` class="language-${language}"` : ""}>${highlight(content, language)}</code></pre>`;
   }
   const lines = escaped.split(/\r?\n/);
   const output = [];
   const slugs = new Map();
-  let inCode = false;
+  // An open fence keeps its language and its lines until it closes, so the block is highlighted as a whole.
+  let fence = null;
   // Open lists, outermost first: each keeps its type and the indent of its items, and its last item stays open so a deeper list nests inside it.
   const lists = [];
   const closeLists = (indent = -1) => {
@@ -102,12 +105,14 @@ export function renderText(path, content, options = {}) {
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const item = line.match(LIST_ITEM);
-    if (line.trim().startsWith("```")) {
+    if (fence && line.trim().startsWith("```")) {
+      output.push(`<pre><code${fence.language ? ` class="language-${fence.language}"` : ""}>${highlight(decode(fence.lines.join("\n")), fence.language)}</code></pre>`);
+      fence = null;
+    } else if (fence) {
+      fence.lines.push(line);
+    } else if (line.trim().startsWith("```")) {
       closeList();
-      output.push(inCode ? "</code></pre>" : "<pre><code>");
-      inCode = !inCode;
-    } else if (inCode) {
-      output.push(`${line}\n`);
+      fence = { language: languageOf(decode(line.trim().slice(3))), lines: [] };
     } else if (line.trim().startsWith("|") && /^\s*\|?\s*:?-+/.test(lines[index + 1] ?? "")) {
       closeList();
       const headers = tableCells(line, options);
@@ -158,6 +163,7 @@ export function renderText(path, content, options = {}) {
       closeList();
     }
   }
+  if (fence) output.push(`<pre><code>${highlight(decode(fence.lines.join("\n")), fence.language)}</code></pre>`);
   closeList();
   return output.join("\n");
 }
