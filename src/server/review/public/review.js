@@ -3,6 +3,7 @@ import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, parseEntityRef, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
+import { highlight, highlightLines, languageOf } from "./views/highlight.js";
 import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
 import { createIndexingStatus } from "./views/indexing.js";
@@ -723,7 +724,7 @@ function diagramCard(diagram) {
       </div>
     </header>
     <div class="diagram-output"><p class="rendering">Rendering diagram</p></div>
-    <div class="source-panel" hidden><pre><code>${escapeHtml(diagram.source)}</code></pre></div>`;
+    <div class="source-panel" hidden><pre><code>${highlight(diagram.source, "plantuml")}</code></pre></div>`;
   return section;
 }
 
@@ -1163,7 +1164,7 @@ async function showArtifact(path) {
   const source = data.kind === "source";
   const structured = Boolean(data.kind) && !source;
   const documentCard = source
-    ? `<section class="document-card source-card"><ol class="source-lines">${data.content.replace(/\n$/, "").split(/\r?\n/).map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${escapeHtml(line) || " "}</code></li>`).join("")}</ol></section>`
+    ? `<section class="document-card source-card"><ol class="source-lines">${highlightLines(data.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(data.path)).map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol></section>`
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
       : `<section class="document-card"><div class="document-content">${renderText(data.path, data.content, markdownOptions(data.path))}</div></section>`;
