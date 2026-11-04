@@ -16,7 +16,7 @@ Prism 0.17.0 also only warns a checkout whose configuration names a record store
 
 - Let a repository declare its components, each a folder with an optional test command and the components of the same repository it depends on.
 - Keep each planned leaf slice inside one component, while a contract scope may span several.
-- Verify each slice with its component's test command, and run the tests of the components that depend on the changed ones when a scope that spans components finishes.
+- Verify each slice with its component's test command, and run the tests of the components that depend on the changed ones when a scope finishes.
 - Prepare the native index per component, only for the components a tool needs, so a large monorepo fits within the native limits.
 - Keep every repository that declares no components, and every slice recorded before components existed, working as today.
 - Refuse a checkout whose configuration names a record store but no repository name.
@@ -36,8 +36,6 @@ Prism 0.17.0 also only warns a checkout whose configuration names a record store
 - What a repository's single component is named when its configuration names no record store and so has no repository name.
 - How design plans a slice that creates the folder of a newly declared component, and whether a declared folder that does not exist yet is refused.
 - How Prism determines a slice's actual changes for the component check at verification, for example from the slice's commits or from the work tree against the slice's start.
-- Whether a verified change that leaves the slice's component refuses the run or only flags it for review, since Michael's scope allows either.
-- Whether a change under a shared path, such as a lockfile, counts as changing every component for the dependents' run at scope end.
 - Whether the dependents' run at scope end happens inside the last slice's `verify_slice` call or in a separate step, and how the orchestrator waits for its approval gates.
 - How a native index per component is keyed, reused across source changes, and counted against the number of earlier indexes Prism keeps.
 - How merged results from several component indexes are ranked so that scores stay comparable.
@@ -240,33 +238,33 @@ Rationale: A package's own tests prove its slice faster and more precisely than 
 Related: [§3](#3), [§19](#19)
 
 <a id="16"></a>
-## 16. Report verified changes outside the slice's component
+## 16. Fail a verification that leaves the slice's component
 
 Pattern: Unwanted behavior
 
 Disposition: Active
 
-Requirement: If a slice's verified changes include a file outside its component and outside every shared path, then Prism shall name each such file in the `verify_slice` result and on the slice's verification run.
+Requirement: If a slice's verified changes include a file outside its component and outside every shared path, then Prism shall fail the slice's verification run and name each such file in the `verify_slice` result and on the run.
 
-Rationale: The design-time check covers only planned paths, so an implementation that strays into another component would otherwise go unnoticed by that component's tests.
+Rationale: The design-time check covers only planned paths, so an implementation that strays into another component would otherwise go unnoticed by that component's tests, and failing the run rather than only reporting it is the default that design adopted on 4 November 2026 while the question is open with Michael.
 
 Related: [§12](#12), [§15](#15)
 
 <a id="17"></a>
-## 17. Run dependents' tests when a spanning scope finishes
+## 17. Run dependents' tests when a scope finishes
 
 Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When the last leaf slice of a contract scope whose leaf slices belong to two or more components is done, Prism shall run the test command of each component that depends on a component that the scope's slices changed.
+Requirement: When the last leaf slice of a contract scope is done, Prism shall run once the test command of each component that depends, directly or through other components, on the component of one of the scope's leaf slices.
 
-Rationale: Each slice runs only its own component's tests, so a change that breaks a component depending on it shows only when the dependents run, and running them once per spanning scope keeps each slice's verification short.
+Rationale: Each slice runs only its own component's tests, so a change that breaks a component depending on it shows only when the dependents run, and running them once per scope keeps each slice's verification short; running every transitive dependent, also for a scope inside one component, and not counting a change under a shared path as a change to every component are the defaults that design adopted on 4 November 2026 while the questions are open with Michael.
 
 Related: [§14](#14), [§18](#18), [§19](#19)
 
 <a id="18"></a>
-## 18. Block a spanning scope with a red dependent
+## 18. Block a scope with a red dependent
 
 Pattern: Unwanted behavior
 
