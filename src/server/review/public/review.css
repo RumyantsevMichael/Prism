@@ -637,18 +637,19 @@ a {
 }
 
 /* A claim names who holds a slice and for what; the activity sets the mark's color, and an expired claim fades.
-   The holder and the activity wrap onto two lines in a narrow board column instead of widening it. */
+   The chip stays on one line: in a narrow board column the holder and then the activity end in an ellipsis, and the title carries the whole claim. */
 .claim-chip {
   align-items: center;
   border: 1px solid var(--line-strong);
-  border-radius: 0.6rem;
+  border-radius: 999px;
   color: var(--ink);
   column-gap: 0.4rem;
   display: inline-flex;
-  flex-wrap: wrap;
   font-size: 0.72rem;
   max-width: 100%;
+  min-width: 0;
   padding: 0.15rem 0.55rem;
+  white-space: nowrap;
 }
 
 .claim-mark {
@@ -664,13 +665,19 @@ a {
 }
 
 .claim-text {
+  flex: 0 1 auto;
   font-weight: 600;
-  overflow-wrap: break-word;
+  min-width: 2.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .claim-meta {
   color: var(--ink-muted);
-  overflow-wrap: break-word;
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .claim-chip.is-expired {
@@ -3075,7 +3082,10 @@ th {
 
 .board-filters {
   display: flex;
-  gap: 0.6rem;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .board-filters label {
@@ -3246,6 +3256,7 @@ th {
   border-left: 4px solid var(--status-color, var(--line-strong));
   display: grid;
   gap: 0.35rem;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
 
@@ -5655,6 +5666,40 @@ mark.find-hit {
   margin: 0.2rem 0 0;
 }
 
+/* A chip or pill is one line. A label longer than its room ends in an ellipsis, and the full label shows as a tooltip. */
+.status-pill,
+.meta-pill,
+.relation-chip,
+.readiness-jump,
+.type-badge {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-pill,
+.relation-chip {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.meta-pill,
+.type-badge {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.link-chip,
+.code-span-chip {
+  white-space: nowrap;
+}
+
+.link-chip > :not(code) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 /* A foldable heading carries its toggle in the left gutter, so heading text keeps its alignment. */
 .document-content .md-foldable {
   position: relative;
