@@ -1035,6 +1035,17 @@ function highlightText(query) {
   return false;
 }
 
+// Chips are one line, so a label cut off by its ellipsis gets its full text as a tooltip.
+const CHIPS = ".status-pill, .meta-pill, .relation-chip, .link-chip, .claim-chip, .readiness-jump, .type-badge, .code-span-chip";
+
+function titleClippedChips(root) {
+  for (const chip of root.querySelectorAll(CHIPS)) {
+    if (chip.title) continue;
+    const clipped = [chip, ...chip.querySelectorAll("*")].some((node) => node.scrollWidth > node.clientWidth + 1 && getComputedStyle(node).overflowX !== "visible");
+    if (clipped) chip.title = chip.textContent.trim().replace(/\s+/g, " ");
+  }
+}
+
 function endRebuild(memory) {
   rebuilding = false;
   if (memory.path !== selectedPath) {
@@ -1043,6 +1054,7 @@ function endRebuild(memory) {
   }
   decorateDocuments(artifact);
   decorateMaximize(memory.path);
+  requestAnimationFrame(() => titleClippedChips(artifact));
   if (memory.open) {
     const sections = artifact.querySelectorAll("details");
     memory.open.forEach(([summary, open], index) => {
