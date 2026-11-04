@@ -58,20 +58,28 @@ Configure the command in `.prism/workflow.md`:
 A slice that records a [component](#components) runs that component's own `Test command` in the component's folder, or the `Test command` under `## Stack` in the project root when the component declares none.
 The root component, and a slice accepted before components existed, run the `Test command` under `## Stack` in the project root.
 Each result names the command, the folder it runs in, as a project-relative path that is empty for the project root, and the slice's component.
+The folder is where the command really runs once symbolic links are followed, so a component folder that is a link to `lib/billing` runs, and is named, in `lib/billing`.
 
 The first run of a command in a folder asks you in the review browser to allow that exact command in that folder, and a changed command, or the same command in another folder, asks again.
-The question names the command and the folder.
+The question, in the review browser and in a cloud session's chat alike, names the command and the folder it runs in, project-relative, and never an absolute path of your machine.
 An approval you gave before components existed still allows that command in the project root.
 Approvals stay in Prism's local plugin data, never in your repository.
 The command runs with your shell in its folder and the environment of the Prism server, except `NODE_USE_ENV_PROXY`, which Prism sets only for its own downloads, and the plugin directories that the agent host sets for Prism, such as `CLAUDE_PLUGIN_DATA`.
 Prism refuses to run when a frozen acceptance test changed after the design was accepted.
-Before it asks for approval, Prism refuses a slice whose recorded component the repository no longer declares with `component_unknown`, one whose component and `## Stack` give no test command with `test_command_missing`, and one whose working folder does not exist with `component_folder_missing`.
+Before it asks for approval, Prism refuses a slice whose recorded component the repository no longer declares with `component_unknown`, one whose component and `## Stack` give no test command with `test_command_missing`, one whose working folder does not exist with `component_folder_missing`, and one whose component folder leads outside the project through a symbolic link with `component_folder_outside`.
 
-When a slice that records a component starts, Prism records the project's content, with the slice's frozen tests in place.
-Before each run, Prism compares the project with that content, and every file added, changed, or removed since then, committed or not, counts as a change, a moved file at both of its paths.
-The frozen tests of the initiative's other unfinished slices, which Prism puts in and takes out itself, never count.
-A change to a file of another component that lies under no shared path crosses the component boundary: the command does not run, and the run fails with reason `component_boundary`, listing up to 200 crossing paths in `crossing` and their number in `crossingCount`, so the slice cannot complete until those changes move back or the contract changes.
+When a slice that records a component starts, Prism records the project's content, with the slice's frozen tests in place, as its start content, together with that time and the `## Components` declaration in force.
+A slice keeps its start content when it is restarted after being blocked and when it receives a new design.
+Prism keeps the start content under the local Git ref `refs/prism/<initiative>/<slice>/start`, and the content of the slice's latest passing run under `refs/prism/<initiative>/<slice>/passed`, so `git gc` keeps them; Prism never pushes these refs, and a clone does not carry them.
+Before each run, Prism compares the project with the start content, and every project file added, changed, or removed since then, committed or not, counts as a change, a moved file at both of its paths.
+Two kinds of change made by other slices of the initiative do not count: another slice's frozen test that holds its frozen content, or is absent while that slice has not started, and a file that another slice's latest passing run changed after this slice started and that still holds the content that run tested.
+So another slice's verified work done while this slice was blocked or waiting does not fail it, while this slice's own changes still count.
+A change that lies under no shared path and outside the slice's component, by the declaration recorded with the start content, crosses the component boundary: the command does not run, and the run fails with reason `component_boundary`, listing up to 200 crossing paths in `crossing` and their number in `crossingCount`, so the slice cannot complete until those changes move back or the contract changes.
+For the root component, a change crosses when it lies inside another component's folder.
+A change to `## Components` therefore applies only to slices started after it.
 A result's `boundary` is `checked` when the run made that comparison, and `unchecked` when Prism recorded no content at the slice's start, such as a slice started where Git could not hash the work tree, which runs without the check.
+When Git can no longer read a slice's start content, for example in another checkout that shares the records but not the Git objects, the run fails with reason `start_content_missing` and the command does not run.
+To continue, set the slice back to `not-started` and start it again: Prism drops the old start content and its refs, and records the current content, the slice's earlier changes included, as new start content.
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
 When the design requires review, an independent reviewer also reviews the verified result, and a later change needs a new run and a new review.
 A finding that a contract clause itself causes sends the slice back to design instead of into another fix.
