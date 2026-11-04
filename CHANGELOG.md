@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.18.0](https://github.com/RumyantsevMichael/Prism/compare/v0.17.0...v0.18.0) (2026-11-04)
+
+
+### Added
+
+* continue Codex sessions when a browser gate answer arrives ([#104](https://github.com/RumyantsevMichael/Prism/issues/104)) ([8aa3e40](https://github.com/RumyantsevMichael/Prism/commit/8aa3e402e99dd8848c8ddc4f28a664a6053e3a10)), closes [#95](https://github.com/RumyantsevMichael/Prism/issues/95)
+* keep slice claims across a server restart in the same host session ([#102](https://github.com/RumyantsevMichael/Prism/issues/102)) ([8dc2e0f](https://github.com/RumyantsevMichael/Prism/commit/8dc2e0f54d7bbd8e3b5f3712b5c0482092f9a621)), closes [#91](https://github.com/RumyantsevMichael/Prism/issues/91)
+* let a resumed session wait again on its open user gates ([#101](https://github.com/RumyantsevMichael/Prism/issues/101)) ([a7d0b42](https://github.com/RumyantsevMichael/Prism/commit/a7d0b42466bdc645c356064a70770ab2febacfad)), closes [#61](https://github.com/RumyantsevMichael/Prism/issues/61)
+* let the coordinator correct a finding's contract clause and close condition ([#100](https://github.com/RumyantsevMichael/Prism/issues/100)) ([9b8b3b0](https://github.com/RumyantsevMichael/Prism/commit/9b8b3b07715479ed9b3d44f94acd11d2c878218b)), closes [#89](https://github.com/RumyantsevMichael/Prism/issues/89) [#63](https://github.com/RumyantsevMichael/Prism/issues/63)
+* rebuild an out-of-date code index from the review browser ([#103](https://github.com/RumyantsevMichael/Prism/issues/103)) ([ff9dd44](https://github.com/RumyantsevMichael/Prism/commit/ff9dd44d043a1bfe857d4a8cde7f89ef18a7d7be)), closes [#60](https://github.com/RumyantsevMichael/Prism/issues/60)
+* reuse the review app's last port after a restart ([#99](https://github.com/RumyantsevMichael/Prism/issues/99)) ([04716fa](https://github.com/RumyantsevMichael/Prism/commit/04716fa0b2c95dbf280bc653c6dddbd444d0d3ad))
+
+
+### Fixed
+
+* explain that a missing change map does not block a designed slice ([04716fa](https://github.com/RumyantsevMichael/Prism/commit/04716fa0b2c95dbf280bc653c6dddbd444d0d3ad))
+* group a shared workspace and keep a fixed order in the project menu ([#107](https://github.com/RumyantsevMichael/Prism/issues/107)) ([b7a62e1](https://github.com/RumyantsevMichael/Prism/commit/b7a62e1d21770ab6d014623871bb95168effdcab)), closes [#106](https://github.com/RumyantsevMichael/Prism/issues/106)
+* number ordered lists and fold sections in the Markdown view ([#109](https://github.com/RumyantsevMichael/Prism/issues/109)) ([9401a26](https://github.com/RumyantsevMichael/Prism/commit/9401a26a4b8431189af6bfc4101f23e0de0735dd)), closes [#108](https://github.com/RumyantsevMichael/Prism/issues/108)
+* record a same-size edit made just after a commit as uncommitted ([04716fa](https://github.com/RumyantsevMichael/Prism/commit/04716fa0b2c95dbf280bc653c6dddbd444d0d3ad)), closes [#80](https://github.com/RumyantsevMichael/Prism/issues/80) [#98](https://github.com/RumyantsevMichael/Prism/issues/98) [#97](https://github.com/RumyantsevMichael/Prism/issues/97) [#96](https://github.com/RumyantsevMichael/Prism/issues/96) [#62](https://github.com/RumyantsevMichael/Prism/issues/62)
+* say that a revised design leaves a blocked slice to be restarted ([04716fa](https://github.com/RumyantsevMichael/Prism/commit/04716fa0b2c95dbf280bc653c6dddbd444d0d3ad))
+* suggest add when a planned change names a file that does not exist ([04716fa](https://github.com/RumyantsevMichael/Prism/commit/04716fa0b2c95dbf280bc653c6dddbd444d0d3ad))
+
 ## [0.17.0](https://github.com/RumyantsevMichael/Prism/compare/v0.16.0...v0.17.0) (2026-11-04)
 
 
