@@ -4,6 +4,7 @@ import { escapeHtml } from "./util.js";
 
 const WIDTH_KEY = "prism.sidePanelWidth";
 const MIN_WIDTH = 320;
+const MAX_SHARE = 0.42;
 
 function storedWidth() {
   try {
@@ -56,7 +57,8 @@ export function createSidePanel({ shell, fetchJson, renderMarkdown, onOpenTab, o
   let request = 0;
 
   const applyWidth = (value) => {
-    const limit = Math.max(MIN_WIDTH, shell.getBoundingClientRect().width * 0.7);
+    // The workspace keeps most of the window; the stylesheet applies the same cap when the window shrinks later.
+    const limit = Math.max(MIN_WIDTH, window.innerWidth * MAX_SHARE);
     const width = Math.min(Math.max(value, MIN_WIDTH), limit);
     shell.style.setProperty("--side-panel-width", `${width}px`);
     return width;

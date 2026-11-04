@@ -1063,11 +1063,11 @@ a.code-link:hover {
 
 /* The side panel docks beside the workspace and shows one item at a time; its width is the reader's, within limits. */
 .app-shell.has-side-panel {
-  grid-template-columns: 18.5rem minmax(0, 1fr) var(--side-panel-width, min(36rem, 38vw));
+  grid-template-columns: 18.5rem minmax(0, 1fr) min(var(--side-panel-width, 36rem), 42vw);
 }
 
 .app-shell.sidebar-collapsed.has-side-panel {
-  grid-template-columns: 3.6rem minmax(0, 1fr) var(--side-panel-width, min(36rem, 38vw));
+  grid-template-columns: 3.6rem minmax(0, 1fr) min(var(--side-panel-width, 36rem), 42vw);
 }
 
 .side-panel {
