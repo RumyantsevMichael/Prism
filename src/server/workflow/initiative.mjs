@@ -117,7 +117,7 @@ function canonicalRecord(record) {
       requirements: [...slice.requirements].sort(),
       dependencies: [...slice.dependencies].sort(),
       ...(slice.component ? { component: slice.component } : {}),
-      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}) } } : {}),
+      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}), ...(slice.design.startTree ? { startTree: slice.design.startTree } : {}) } } : {}),
       ...(slice.splitEvidence ? { splitEvidence: slice.splitEvidence } : {}),
       ...(slice.contractDefects ? { contractDefects: slice.contractDefects } : {})
     };
@@ -342,6 +342,13 @@ async function sliceOutcome(resolved, slices, slugValue) {
   }
 }
 
+// The start content is hashed as a verification run hashes the project, so the two trees compare path by path.
+async function startContent(root) {
+  const { contentTree } = await import("./slice-gate.mjs");
+  try { return await contentTree(root, await readWorkflowConfig(root)); }
+  catch { return null; }
+}
+
 async function completionGate(resolved, slugValue) {
   const { checkSliceGate } = await import("./slice-gate.mjs");
   try {
@@ -546,6 +553,13 @@ async function applyOperation(resolved, record, operation, effects) {
         if (baselineId) slice.design.baselineId = baselineId;
         else delete slice.design.baselineId;
       }
+      // A slice that records a component keeps the project's content at its start, with its frozen tests in place, so verification can find the changes that leave the component.
+      // A slice that is already in progress keeps the content it started from, and a work tree that Git cannot hash records none.
+      if (operation.status === "in-progress" && slice.status !== "in-progress" && slice.component && slice.design && !slice.design.startTree && !effects.dryRun) {
+        const startTree = await startContent(resolved.root);
+        if (startTree) slice.design.startTree = startTree;
+      }
+      if (operation.status === "not-started" && slice.design) delete slice.design.startTree;
       // A started slice that returns to not-started stages its frozen tests again, so other slices' verification never runs them,
       // unless another slice shares a test file, which staging would take from that slice too.
       if (operation.status === "not-started" && STARTED.has(slice.status) && slice.design && !slice.design.staged && !claimedTests(slices, operation.slug, slice.design.frozenTests, true).length) {
@@ -616,7 +630,9 @@ async function applyOperation(resolved, record, operation, effects) {
       effects.staged = effects.staged.filter((item) => item.slice !== operation.slug);
       if (!staging) {
         const baselineId = await captureBaseline(resolved.root, resolved.initiative, operation.slug);
-        slice.design = { acceptedAt, frozenTests, review: operation.review, ...(baselineId ? { baselineId } : {}) };
+        // A new design of a started slice keeps the content the slice started from, so the changes made before the revision still count.
+        const startTree = slice.design?.startTree;
+        slice.design = { acceptedAt, frozenTests, review: operation.review, ...(baselineId ? { baselineId } : {}), ...(startTree ? { startTree } : {}) };
       } else {
         effects.staged.push(await stageFrozenTests(resolved.root, operation.slug, frozenTests));
         slice.design = { acceptedAt, frozenTests, review: operation.review, staged: true };

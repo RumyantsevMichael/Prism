@@ -48,6 +48,20 @@ export async function contentTree(projectRoot, config, { commit = null, timeoutM
 }
 
 /**
+ * The project-relative paths that differ between two content trees, in Git's order, or null when Git cannot compare them, such as when it no longer has one of the trees.
+ * A moved file is a removal and an addition, so a rename lists both of its paths.
+ */
+export async function changedPaths(projectRoot, from, to) {
+  if (from === to) return [];
+  try {
+    const { stdout } = await run("git", ["diff-tree", "-r", "-z", "--no-renames", "--name-only", from, to], { cwd: await realpath(projectRoot), env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, maxBuffer: 256 * 1024 * 1024 });
+    return stdout.split("\0").filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Whether the project still holds the content a verification run tested, apart from the frozen tests of other unfinished slices,
  * which Prism itself stages out of and back into the work tree as their designs are accepted and their slices start.
  * The run's tree is a git object written when the run hashed the work tree; when Git no longer has it, the trees must match whole.

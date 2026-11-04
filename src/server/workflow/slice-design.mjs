@@ -94,8 +94,10 @@ export function designProblems(design) {
   if (design === undefined) return [];
   if (design === null || typeof design !== "object" || Array.isArray(design)) return ["design must be an object."];
   const problems = [];
-  if (Object.keys(design).some((key) => !["acceptedAt", "frozenTests", "review", "baselineId", "staged"].includes(key))) problems.push("design holds only acceptedAt, frozenTests, review, baselineId, and staged.");
+  if (Object.keys(design).some((key) => !["acceptedAt", "frozenTests", "review", "baselineId", "staged", "startTree"].includes(key))) problems.push("design holds only acceptedAt, frozenTests, review, baselineId, staged, and startTree.");
   if (design.staged !== undefined && design.staged !== true) problems.push("design.staged must be true when present.");
+  // The start content is the Git tree a started slice's verification compares with, to find the changes that leave its component.
+  if (design.startTree !== undefined && (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(String(design.startTree)) || design.staged)) problems.push("design.startTree must be a Git tree identifier on a started slice's design.");
   if (design.baselineId !== undefined && !/^[0-9a-f]{64}$/.test(String(design.baselineId))) problems.push("design.baselineId must be a snapshot identifier.");
   if (typeof design.acceptedAt !== "string" || Number.isNaN(Date.parse(design.acceptedAt))) problems.push("design.acceptedAt must be an ISO timestamp.");
   if (!REVIEW_MARKS.includes(design.review)) problems.push(`design.review must be one of ${REVIEW_MARKS.join(", ")}.`);
