@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.18.0](https://github.com/RumyantsevMichael/Prism/compare/v0.17.0...v0.18.0) (2026-11-04)
+
+
+### Added
+
+* reuse the review app's last port after a restart ([#99](https://github.com/RumyantsevMichael/Prism/issues/99)) ([04716fa](https://github.com/RumyantsevMichael/Prism/commit/04716fa0b2c95dbf280bc653c6dddbd444d0d3ad))
+
+
+### Fixed
+
+* explain that a missing change map does not block a designed slice ([04716fa](https://github.com/RumyantsevMichael/Prism/commit/04716fa0b2c95dbf280bc653c6dddbd444d0d3ad))
+* record a same-size edit made just after a commit as uncommitted ([04716fa](https://github.com/RumyantsevMichael/Prism/commit/04716fa0b2c95dbf280bc653c6dddbd444d0d3ad)), closes [#80](https://github.com/RumyantsevMichael/Prism/issues/80) [#98](https://github.com/RumyantsevMichael/Prism/issues/98) [#97](https://github.com/RumyantsevMichael/Prism/issues/97) [#96](https://github.com/RumyantsevMichael/Prism/issues/96) [#62](https://github.com/RumyantsevMichael/Prism/issues/62)
+* say that a revised design leaves a blocked slice to be restarted ([04716fa](https://github.com/RumyantsevMichael/Prism/commit/04716fa0b2c95dbf280bc653c6dddbd444d0d3ad))
+* suggest add when a planned change names a file that does not exist ([04716fa](https://github.com/RumyantsevMichael/Prism/commit/04716fa0b2c95dbf280bc653c6dddbd444d0d3ad))
+
 ## [0.17.0](https://github.com/RumyantsevMichael/Prism/compare/v0.16.0...v0.17.0) (2026-11-04)
 
 
