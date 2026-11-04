@@ -241,6 +241,13 @@ Write `Refs #N` for an issue the pull request only partly addresses, and say wha
 GitHub closes issues only for pull requests that merge into the default branch, so a pull request stacked on another branch closes nothing when it merges into that branch.
 Carry its `Closes` lines into the pull request that reaches `main`.
 
+## Merging pull requests
+
+Squash-merge every pull request into `main`, and never merge it with a merge commit.
+GitHub copies the pull request title into the body of a merge commit, so release-please reads both the merge commit and the branch commit with the same subject and lists the change twice in `CHANGELOG.md`.
+The squash commit's subject is the pull request title, so write that title as a Conventional Commit.
+Release-please also reads each Conventional Commit line in the squash commit's body as its own entry, so keep only the lines that name separate changes worth listing.
+
 ## Cutting a release
 
 Releases are automated with [release-please](https://github.com/googleapis/release-please).
