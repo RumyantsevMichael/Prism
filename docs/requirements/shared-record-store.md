@@ -30,7 +30,6 @@ Michael and his colleagues use Prism across many repositories and machines, so a
 ## Design questions
 
 - Whether draft human documents, such as Proposed ADRs and Draft requirements, live in the store and move into the project when accepted.
-- Which committed identity names a repository once one store serves several repositories.
 - Whether append-only event records replace whole-record merges if merge units prove too coarse in use.
 - How a cloud session that may push only its own branch shares its records.
 

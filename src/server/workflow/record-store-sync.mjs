@@ -38,8 +38,12 @@ export function cancelRecordSyncs() {
   rerun.clear();
 }
 
-const isRecordFile = (relative) => relative === "roadmap.json" || relative.startsWith("initiatives/");
+// A repository registration syncs as a record, so a registration made on two machines keeps the upstream one instead of failing the merge.
+const isRegistrationFile = (relative) => /^repositories\/[^/]+\.json$/.test(relative);
+const isRecordFile = (relative) => relative === "roadmap.json" || relative.startsWith("initiatives/") || isRegistrationFile(relative);
 const isClaimFile = (relative) => /^initiatives\/[^/]+\/claims\/[^/]+\.json$/.test(relative);
+// A claim or a registration that lost a race is its holder's news, reported through the refusal or acceptance it causes, so no conflict list shows it.
+const isQuietConflict = (relative) => isClaimFile(relative) || isRegistrationFile(relative);
 const syncPath = (base, ...parts) => path.join(base, SYNC_DIRECTORY, ...parts);
 
 function gitEnvironment(extra = {}) {
@@ -118,9 +122,9 @@ const STAMP = /^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/;
 const stampTime = (stamp) => Date.parse(stamp.replace(STAMP, "$1:$2:$3.$4Z"));
 
 // The record files a sync saved under one conflict stamp, as store-relative paths.
-// A claim that lost a race is the claim holder's news, reported through its refusal or lost-claim notice, so the store's status shows only other saved records.
+// A claim or a registration that lost a race is reported through its refusal, lost-claim notice, or acceptance, so the store's status shows only other saved records.
 function settled(conflicts) {
-  const shown = conflicts.filter((conflict) => !isClaimFile(conflict.path));
+  const shown = conflicts.filter((conflict) => !isQuietConflict(conflict.path));
   return { state: shown.length ? "conflicts" : "ok", conflicts: shown, message: shown.length ? "Concurrent record changes were resolved for the upstream; the local versions are saved." : "" };
 }
 
@@ -132,8 +136,8 @@ async function savedFiles(directory) {
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       const child = relative ? `${relative}/${entry.name}` : entry.name;
       if (entry.isDirectory()) await visit(child);
-      // A claim that lost to the upstream is reported by the claim's own refusal or by its holder's notice of a lost claim.
-      else if (entry.isFile() && isRecordFile(child) && !isClaimFile(child)) files.push(child);
+      // A claim or a registration that lost to the upstream is reported by its own refusal, its holder's notice of a lost claim, or the next name check.
+      else if (entry.isFile() && isRecordFile(child) && !isQuietConflict(child)) files.push(child);
     }
   };
   await visit("");
@@ -208,6 +212,7 @@ export async function readSyncStatus(base) {
 
 async function writeStatus(base, status) {
   const value = { at: new Date().toISOString(), state: "ok", ahead: 0, behind: 0, conflicts: [], message: "", ...status };
+  value.conflicts = value.conflicts.filter((conflict) => !isQuietConflict(conflict.path));
   // Git names a remote as configured, and a configured remote can carry a token.
   value.message = withoutCredentials(value.message);
   await mkdir(syncPath(base), { recursive: true });
@@ -249,8 +254,8 @@ async function identity(base) {
 
 async function commitLocal(base, author) {
   await required(base, ["add", "-A", "--", "."]);
-  // A store whose ignore file predates the sync folder still never commits it.
-  await required(base, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", SYNC_DIRECTORY]);
+  // A store whose ignore file predates the sync folder, or lists no lock files, still never commits the sync folder or the registration lock.
+  await required(base, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", SYNC_DIRECTORY, "repositories.lock"]);
   const staged = (await required(base, ["diff", "--cached", "--name-only", "-z"])).stdout.toString("utf8").split("\0").filter(Boolean);
   if (!staged.length) return false;
   const listed = staged.slice(0, COMMIT_LIST).join("\n") + (staged.length > COMMIT_LIST ? `\n… and ${staged.length - COMMIT_LIST} more` : "");
@@ -399,6 +404,7 @@ async function merge(base, author, options) {
 /**
  * Merge by structure every record that changed on both sides since the merge base and whose kind registers a merge, whether or not Git's line merge conflicts,
  * because a clean line merge of JSON can still be wrong or non-canonical.
+ * A registration changed on both sides keeps the upstream version whole, even when Git's line merge is clean, so no machine keeps a mix of two registrations.
  * A record removed on either side keeps Git's whole-file handling.
  * Returns the merged contents by path, and the paths whose merge found a conflict or an invalid result, which fall back to the upstream version.
  */
@@ -408,10 +414,11 @@ async function structuralMerges(base, head, theirs) {
   const mergeBase = await git(base, ["merge-base", head, theirs]);
   if (!mergeBase.ok || !mergeBase.text) return { merged, fallback };
   const ours = new Set(await changedPaths(base, mergeBase.text, head));
-  const both = (await changedPaths(base, mergeBase.text, theirs)).filter((file) => ours.has(file) && hasRecordMerge(file));
+  const both = (await changedPaths(base, mergeBase.text, theirs)).filter((file) => ours.has(file) && (hasRecordMerge(file) || isRegistrationFile(file)));
   for (const file of both) {
     const [original, local, upstream] = await Promise.all([mergeBase.text, head, theirs].map((commit) => blob(base, commit, file)));
     if (local === null || upstream === null || local.equals(upstream)) continue;
+    if (isRegistrationFile(file)) { fallback.push(file); continue; }
     const mergeRecord = await recordMergeFor(file);
     let outcome;
     try {

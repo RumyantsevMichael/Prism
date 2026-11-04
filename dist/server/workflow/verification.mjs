@@ -7,7 +7,8 @@ import path from "node:path";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
-import { appendRecord, RECORD_DIRECTORY, repositoryId } from "./record-store.mjs";
+import { appendRecord, RECORD_DIRECTORY, recordStoreOf } from "./record-store.mjs";
+import { repositoryId } from "./repository-names.mjs";
 import { contentTree } from "./slice-gate.mjs";
 import { acceptedDesign, checkFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState, updateCoordinationState } from "./state.mjs";
@@ -273,10 +274,16 @@ function gitValue(root, args) {
 // Hashing the committed content reads the head commit's tree into a scratch index, which a huge repository must not let stall a run.
 const DIRTY_TIMEOUT_MS = 30000;
 
+// A checkout's repository is the name its record store accepted, or its root commit when it names none or has no store.
+async function repositoryOf(root) {
+  const store = await recordStoreOf(root).catch(() => null);
+  return store?.repository ?? repositoryId(root);
+}
+
 /** Where a run's code lives: { repository, remote, branch, head, dirty }; dirty is known only when the run hashed its work tree. */
 export async function checkoutOf(root, config, tree = null) {
   const [repository, remote, branch, head] = await Promise.all([
-    repositoryId(root),
+    repositoryOf(root),
     gitValue(root, ["config", "--get", "remote.origin.url"]).then(publicRemote),
     gitValue(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
     gitValue(root, ["rev-parse", "--verify", "--quiet", "HEAD"])

@@ -58,6 +58,31 @@
       "decision": null
     },
     {
+      "id": "repository-names",
+      "title": "Repository names in a shared store",
+      "intent": "Name each repository that shares a record store by a committed name the store registers with its remote, and let each machine know where its checkouts of each repository are.",
+      "band": "Now",
+      "requirements": [
+        "docs/requirements/repository-names.md#1",
+        "docs/requirements/repository-names.md#2",
+        "docs/requirements/repository-names.md#3",
+        "docs/requirements/repository-names.md#4",
+        "docs/requirements/repository-names.md#5",
+        "docs/requirements/repository-names.md#6",
+        "docs/requirements/repository-names.md#7",
+        "docs/requirements/repository-names.md#8",
+        "docs/requirements/repository-names.md#9",
+        "docs/requirements/repository-names.md#10"
+      ],
+      "requires": [],
+      "rationale": "Now, because it is increment 1 of the M3 multi-repository workspace design, which Michael reviewed and asked to start on 3 November 2026; names replace the root-commit repository identity that shallow clones and forks cannot supply, and later increments build components and cross-repository runs on them. Requirements stay Draft while M1 and M3 settle.",
+      "decision": {
+        "kind": "shipped",
+        "at": "2026-11-03T23:35:20.345Z",
+        "actor": "orchestrator"
+      }
+    },
+    {
       "id": "agent-execution-evidence",
       "title": "Agent execution evidence and continuity",
       "intent": "Report observed context ranges, keep pause checkpoints current and recoverable, and assess diagram readability.",
@@ -112,6 +137,18 @@
       "operation": "add_initiative",
       "id": "shared-record-store",
       "at": "2026-11-02T23:04:44.039Z"
+    },
+    {
+      "actor": "ideate",
+      "operation": "add_initiative",
+      "id": "repository-names",
+      "at": "2026-11-03T20:07:47.733Z"
+    },
+    {
+      "actor": "orchestrator",
+      "operation": "ship",
+      "id": "repository-names",
+      "at": "2026-11-03T23:35:20.345Z"
     }
   ]
 }

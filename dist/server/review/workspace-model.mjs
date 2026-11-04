@@ -6,7 +6,7 @@ import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
-import { keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, locateRecord, recordPath, resolveRecordFile } from "../workflow/record-store.mjs";
+import { keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, locateRecord, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
@@ -58,8 +58,8 @@ async function walk(root, relative, depth, accept, results, limit) {
   try {
     entries = await readdir((await resolveRecordFile(root, relative)).target, { withFileTypes: true });
   } catch (error) {
-    // An unavailable record store hides only the records, so human documents still list.
-    if (["ENOENT", "ENOTDIR", "store_unavailable"].includes(error.code)) return;
+    // An unavailable record store or a refused repository name hides only the records, so human documents still list.
+    if (["ENOENT", "ENOTDIR"].includes(error.code) || recordsUnavailable(error)) return;
     throw error;
   }
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
@@ -119,9 +119,9 @@ async function sliceArtifacts(root, directory, slices, slug, id) {
   };
 }
 
-// An unavailable record store lists no initiatives, so the pages still show human documents; the roadmap view reports the store error.
+// An unavailable record store or a refused repository name lists no initiatives, so the pages still show human documents; the roadmap view reports the store error.
 function storedInitiatives(root) {
-  return listInitiatives(root).catch((error) => { if (error.code === "store_unavailable") return []; throw error; });
+  return listInitiatives(root).catch((error) => { if (recordsUnavailable(error)) return []; throw error; });
 }
 
 async function initiativeFolders(root) {

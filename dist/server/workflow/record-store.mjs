@@ -1,5 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, rmdir, stat } from "node:fs/promises";
-import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import path from "node:path";
@@ -8,6 +8,7 @@ import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { listSavedConflicts, pullRecordStoreIfStale, readSavedConflict, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
 import { managedRecordStore } from "./record-store-remote.mjs";
 import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
+import { checkRepositoryName, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
 import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
 // Machine records live under .prism beside the workflow config, or in the record store the workflow config names; human documents and generated views stay under the configured paths.
@@ -30,6 +31,11 @@ const MIGRATION_TTL_MS = 5000;
 const migrations = new Map();
 const pendingMoves = new Map();
 const unreportedMoves = [];
+// A repository name check is trusted as briefly as a migration check, so a changed Repository line or origin applies within that time.
+const nameChecks = new Map();
+const callScope = new AsyncLocalStorage();
+
+export { repositoryId };
 
 export class RecordStoreError extends Error {
   constructor(code, message, details = {}) {
@@ -103,12 +109,19 @@ function storeRelative(relative) {
 const physical = (store, relative) => path.join(store.base, relative.slice(RECORD_DIRECTORY.length + 1));
 
 /**
- * Where a project's records live: { root, base, contain, external, sync }.
+ * Where a project's records live: { root, base, contain, external, sync, repository }.
  * base holds what .prism holds in the project, and contain is the folder no record may resolve outside.
  * A configured store is never created or replaced by a fallback, because either would split the records of checkouts that share it.
  * A store named by its remote resolves to the clone Prism keeps of it, which the first access clones, and is then an external store like any other.
+ * A checkout of an external store passes its repository name check first: repository is its accepted name, or null when it names none, and a refused checkout throws.
  */
 export async function recordStoreOf(projectRootPath) {
+  const store = await resolveStore(projectRootPath);
+  if (!store.external) return { ...store, repository: null };
+  return { ...store, repository: await checkedRepository(store) };
+}
+
+async function resolveStore(projectRootPath) {
   const root = await projectRoot(projectRootPath);
   const { workspace } = await readWorkflowConfig(root);
   const configured = workspace?.store ?? null;
@@ -132,6 +145,42 @@ export async function recordStoreOf(projectRootPath) {
   return { root, base, contain: base, external: true, sync: workspace.sync === true };
 }
 
+// The check runs before migration, housekeeping, and record access, so a refused checkout leaves the store and its own records as they were.
+// In a synced store the check confirms a registration it writes with a sync of its own, and pushes an addition to a registration with the next sync.
+// A check that a still-pending registration would decide refuses without waiting, so a check nested inside a held record lock never waits for another check's sync.
+async function checkedRepository(store) {
+  const key = `${store.root}\0${store.base}`;
+  const cached = nameChecks.get(key);
+  let pending = cached && Date.now() - cached.at < MIGRATION_TTL_MS ? cached.pending : null;
+  if (!pending) {
+    pending = (async () => {
+      const name = (await readWorkflowConfig(store.root)).workspace?.repository ?? null;
+      return checkRepositoryName({ root: store.root, base: store.base, name, fail, sync: store.sync, beforeWrite: () => ensureHousekeeping(store) });
+    })();
+    // A refusal is trusted as long as an acceptance, so a refused checkout does not ask Git again on every operation; any other failure, and a refusal because a registration is still pending, is checked again at once.
+    pending.catch((error) => { if ((!REPOSITORY_REFUSALS.includes(error?.code) || error?.pending === true) && nameChecks.get(key)?.pending === pending) nameChecks.delete(key); });
+    nameChecks.set(key, { at: Date.now(), pending });
+  }
+  const checked = await pending;
+  if (checked.repository === null) callScope.getStore()?.set(store.root, checked.proposed);
+  return checked.repository;
+}
+
+/** Whether an error means a project's records cannot be used, as an unavailable store, a refused repository name, or a registrations entry that is no folder of the store does, so a view hides only the records. */
+export function recordsUnavailable(error) {
+  return error?.code === "store_unavailable" || REPOSITORY_REFUSALS.includes(error?.code) || (error?.code === "invalid_path" && error.storeLayout === true);
+}
+
+/**
+ * Run one tool call and collect the warnings of the checkouts without a repository name whose record stores it opened: { value, unnamed: [{ root, proposed }] }.
+ * Only operations inside the call count, so a view or background work never adds a warning to an unrelated result.
+ */
+export async function collectUnnamedCheckouts(action) {
+  const unnamed = new Map();
+  const value = await callScope.run(unnamed, action);
+  return { value, unnamed: [...unnamed].map(([root, proposed]) => ({ root, proposed })) };
+}
+
 /** The latest sync outcome of a project's record store, or null when the store does not sync or has not synced yet. */
 export async function recordSyncStatus(projectRootPath) {
   const store = await recordStoreOf(projectRootPath).catch(() => null);
@@ -152,7 +201,8 @@ export async function describeRecordStore(projectRootPath) {
     const store = await recordStoreOf(root);
     return { kind, label, location: store.base, sync: store.sync };
   } catch (error) {
-    if (error.code !== "store_unavailable") throw error;
+    // A refused repository name shows as an unavailable store does, with the refusal as the reason.
+    if (!recordsUnavailable(error)) throw error;
     return { kind, label, location: null, sync: false, unavailable: withoutCredentials(error.message) };
   }
 }
@@ -312,21 +362,6 @@ async function moveRecord(root, store, move, report) {
   report.moved.push(move);
 }
 
-/** The identity every full clone of one repository shares, its first root commit in sorted order, or null outside Git, before the first commit, or in a shallow clone, whose oldest fetched commits only look like roots. */
-// A root commit never changes once it exists, so each project asks Git only until it has one.
-const repositoryIds = new Map();
-const git = (root, args) => new Promise((resolve) => {
-  execFile("git", ["-C", root, ...args], { timeout: 10000 }, (error, stdout) => resolve(error ? null : stdout.trim()));
-});
-export async function repositoryId(root) {
-  if (repositoryIds.has(root)) return repositoryIds.get(root);
-  const shallow = await git(root, ["rev-parse", "--is-shallow-repository"]);
-  if (shallow === "true") { repositoryIds.set(root, null); return null; }
-  const id = shallow === null ? null : ((await git(root, ["rev-list", "--max-parents=0", "HEAD"])) ?? "").split(/\s+/).filter(Boolean).sort()[0] || null;
-  if (id) repositoryIds.set(root, id);
-  return id;
-}
-
 // Every record path a store ever took from a checkout, from the migration files under its migrations folder.
 // Each migration writes a file of its own, so two machines never change the same file and the store's Git merge never conflicts on them.
 const LEGACY_MARKER = /^[0-9a-f]{40,64}\.json$/;
@@ -353,6 +388,7 @@ async function readLedger(store) {
 }
 
 // Committed records exist in every checkout, so a store takes each record path only once; a later copy would bring back a record removed since.
+// A marker from before the ledger names its repository by root commit, so it keeps covering that repository whether or not the checkout has a name.
 async function migrateIntoStore(root, store, config, report) {
   const repository = await repositoryId(root);
   if (repository && (await readLedger(store)).repositories.has(repository)) return report;
@@ -447,10 +483,11 @@ export function ensureRecords(root) {
   return pending;
 }
 
-/** Forget recent migration checks, so the next record access looks for legacy records again. */
+/** Forget recent migration and repository name checks, so the next record access looks for legacy records and checks the name again. */
 export function forgetMigrations() {
   migrations.clear();
   pendingMoves.clear();
+  nameChecks.clear();
 }
 
 const storeLabel = (store) => store.external ? "the record store" : "the project root";
