@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,9 @@ delete process.env.CLAUDE_CODE_REMOTE;
 const { verificationBrief, verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { answerUserGate } = await import("../../dist/server/workflow/state.mjs");
 test.after(() => rm(privateData, { recursive: true, force: true }));
+
+// The prefix of a slice's local refs in this checkout, named by the project root's real path.
+const checkoutRefs = async (root, slug) => `refs/prism/${INITIATIVE}/${slug}/${createHash("sha256").update(await realpath(root)).digest("hex").slice(0, 16)}/`;
 
 const designOf = async (root, slug) => {
   const current = await read(root);
@@ -55,15 +59,16 @@ test("a started slice records its start time and declaration, and keeps its star
   const design = await designOf(root, "billing-totals");
   assert.ok(!Number.isNaN(Date.parse(design.startRecordedAt)));
   assert.deepEqual(design.startDeclaration, { root: "root/root", sharedPaths: ["package-lock.json", "config/shared"], components: [{ component: "root/billing", folder: "packages/billing" }, { component: "root/shared", folder: "packages/shared" }, { component: "root/web", folder: "apps/web" }, { component: "root/docs", folder: "handbook" }] });
+  const prefix = await checkoutRefs(root, "billing-totals");
   const refs = () => git(root, "for-each-ref", "--format=%(refname) %(objectname)", `refs/prism/${INITIATIVE}/billing-totals/`).split("\n").filter(Boolean);
-  assert.deepEqual(refs(), [`refs/prism/${INITIATIVE}/billing-totals/start ${design.startTree}`]);
+  assert.deepEqual(refs(), [`${prefix}start ${design.startTree}`]);
 
   const verify = (extra = {}) => verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "billing-totals", ...extra });
   const asked = await verify();
   await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: asked.gateId, choice: "allow", note: null });
   const passed = await verify({ approvalGate: asked.gateId });
   assert.equal(passed.status, "passed", passed.outputTail);
-  assert.deepEqual(refs().sort(), [`refs/prism/${INITIATIVE}/billing-totals/passed ${passed.tree}`, `refs/prism/${INITIATIVE}/billing-totals/start ${design.startTree}`]);
+  assert.deepEqual(refs().sort(), [`${prefix}passed ${passed.tree}`, `${prefix}start ${design.startTree}`]);
 });
 
 test("a component folder named like a parent folder but inside the project is not outside it", async (context) => {

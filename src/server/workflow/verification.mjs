@@ -10,7 +10,7 @@ import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-stor
 import { findComponent, readComponents } from "./components.mjs";
 import { appendRecord, listRecordEntries, locateRecord, RECORD_DIRECTORY, recordStoreOf } from "./record-store.mjs";
 import { repositoryId } from "./repository-names.mjs";
-import { changedPaths, contentTree, crossesComponent, setSliceRef, startDeclaration, treeReadable } from "./slice-gate.mjs";
+import { changedPaths, contentTree, crossesComponent, setSliceRef, treeId, treeReadable } from "./slice-gate.mjs";
 import { acceptedDesign, checkFrozenTests, designProblems } from "./slice-design.mjs";
 import { readCoordinationState, updateCoordinationState } from "./state.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
@@ -309,7 +309,7 @@ async function logPathFor(dataDirectory, root, initiative, slice, id) {
  * The changed paths since a slice started that a change of another slice explains:
  * a frozen test of another slice that holds its frozen content, or is absent while that slice is not started,
  * and a path that another slice's latest passing run changed, when that run finished after this slice's start content was recorded and the path still holds the content it tested.
- * An exception whose contents Git cannot read does not apply.
+ * An exception whose contents Git cannot read does not apply, including one whose recorded tree is not a Git object identifier.
  */
 async function othersChanges(root, initiative, slice, design, changed) {
   const explained = new Set();
@@ -329,9 +329,9 @@ async function othersChanges(root, initiative, slice, design, changed) {
     const theirs = other?.design;
     if (key === slice || !theirs?.startTree || designProblems(theirs).length) continue;
     const runs = await listRecordEntries(root, { kind: "runs", initiative, slice: key }).catch(() => []);
-    const latest = runs.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true && typeof item.entry.tree === "string").at(-1)?.entry;
-    // Only a run of the other slice's current start, finished after this slice's start content, explains a change.
-    if (!latest || !(Date.parse(latest.finishedAt) > since) || (theirs.startRecordedAt && !(Date.parse(latest.finishedAt) > Date.parse(theirs.startRecordedAt)))) continue;
+    const latest = runs.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1)?.entry;
+    // Only a run of the other slice's current start, finished after this slice's start content, explains a change, and only when its tree is a Git object identifier.
+    if (!latest || !treeId(latest.tree) || !treeId(theirs.startTree) || !(Date.parse(latest.finishedAt) > since) || (theirs.startRecordedAt && !(Date.parse(latest.finishedAt) > Date.parse(theirs.startRecordedAt)))) continue;
     const made = await changedPaths(root, theirs.startTree, latest.tree);
     const differs = made === null ? null : await changedPaths(root, latest.tree, design.currentTree);
     if (made === null || differs === null) continue;
@@ -343,7 +343,7 @@ async function othersChanges(root, initiative, slice, design, changed) {
 
 /**
  * The changed paths since a slice started that leave its component, sorted, or null when Git can no longer read or compare the start content.
- * Every path added, changed, or removed counts, except those another slice's change explains, and a path crosses by the declaration recorded with the start content.
+ * Every path added, changed, or removed counts, except those another slice's change explains, and a path crosses by the declaration recorded with the start content, which the caller checked is there.
  */
 async function crossingPaths(root, initiative, slice, { component, declaration }, design, tree) {
   if (!await treeReadable(root, design.startTree)) return null;
@@ -351,10 +351,8 @@ async function crossingPaths(root, initiative, slice, { component, declaration }
   if (changed === null) return null;
   if (!changed.length) return [];
   const explained = await othersChanges(root, initiative, slice, { ...design, currentTree: tree }, changed);
-  // A slice started before Prism recorded the declaration with its start content is classified by the declaration in force now.
-  const recorded = design.startDeclaration ?? startDeclaration(declaration);
   const folder = component === declaration.root ? "" : component.folder;
-  return changed.filter((file) => !explained.has(file) && crossesComponent(recorded, component.identity, folder, file)).sort();
+  return changed.filter((file) => !explained.has(file) && crossesComponent(design.startDeclaration, component.identity, folder, file)).sort();
 }
 
 async function verificationRun({ root, initiative, slice, target, key, design, signal, onProgress, dataDirectory }) {
@@ -372,12 +370,14 @@ async function verificationRun({ root, initiative, slice, target, key, design, s
   } else {
     const before = await contentTree(root, config);
     // A slice with a component and start content checks, before the command runs, that its changes stay inside the component.
-    // Only a slice started where Git could not hash the work tree, which has no start content, runs unchecked; start content Git can no longer read fails the run.
+    // Only a slice started where Git could not hash the work tree, which has no start content, runs unchecked;
+    // start content recorded without a declaration, or that Git can no longer read, fails the run, since no later declaration may decide its boundary.
     const checking = Boolean(target.component && design.startTree);
-    const crossing = checking ? await crossingPaths(root, initiative, slice, target, design, before) : null;
+    const undeclared = checking && !design.startDeclaration;
+    const crossing = checking && !undeclared ? await crossingPaths(root, initiative, slice, target, design, before) : null;
     const boundary = target.component ? { boundary: crossing === null ? "unchecked" : "checked" } : {};
     if (checking && crossing === null) {
-      entry = { ...base, ...boundary, finishedAt: new Date().toISOString(), ...stopped, reason: "start_content_missing", tree: before };
+      entry = { ...base, ...boundary, finishedAt: new Date().toISOString(), ...stopped, reason: "start_content_missing", startContent: undeclared ? "undeclared" : "unreadable", tree: before };
     } else if (crossing?.length) {
       entry = { ...base, ...boundary, finishedAt: new Date().toISOString(), ...stopped, reason: "component_boundary", crossing: crossing.slice(0, MAX_CROSSING_PATHS), crossingCount: crossing.length, tree: before };
     } else {
@@ -446,9 +446,13 @@ const REASONS = {
   start_content_missing: "Git can no longer read the content this slice started from, so its component boundary cannot be checked and the command did not run. Ask the user to set the slice back to not-started with the update_initiative set_status operation and start it again, which records the current content, the slice's earlier changes included, as new start content."
 };
 
+// Start content recorded while the ## Components declaration was invalid or lacked the slice's component has no declaration to check the boundary by.
+const UNDECLARED_START = "This slice started while the ## Components declaration in .prism/workflow.md was invalid or did not hold its component, so its start content has no declaration to check the component boundary by and the command did not run. Ask the user to make the ## Components declaration valid and hold the slice's component, then set the slice back to not-started with the update_initiative set_status operation and start it again, which records the current content, the slice's earlier changes included, as new start content with that declaration.";
+
 function resultOf(run) {
   const { output, ...rest } = run;
-  return { status: run.passed ? "passed" : "failed", ...rest, ...(run.reason ? { message: REASONS[run.reason] } : {}), outputTail: tail(output ?? "", RETURNED_TAIL_CHARS) };
+  const message = run.reason === "start_content_missing" && run.startContent === "undeclared" ? UNDECLARED_START : REASONS[run.reason];
+  return { status: run.passed ? "passed" : "failed", ...rest, ...(run.reason ? { message } : {}), outputTail: tail(output ?? "", RETURNED_TAIL_CHARS) };
 }
 
 /** Run the approved test command of a slice with an accepted design in its working folder, after checking its frozen tests and, for a slice with a component, its component boundary, and record the run. */

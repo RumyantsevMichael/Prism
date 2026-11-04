@@ -571,7 +571,7 @@ async function applyOperation(resolved, record, operation, effects) {
       }
       // A slice that records a component keeps the project's content at its start, with its frozen tests in place, so verification can find the changes that leave the component.
       // A slice restarted after a block, or already in progress, keeps the content it started from, and a work tree that Git cannot hash records none.
-      // The content stays under a local ref once the record is written, so git gc keeps it.
+      // The content stays under this checkout's local ref once the record is written, so git gc keeps it.
       if (operation.status === "in-progress" && slice.status !== "in-progress" && slice.component && slice.design && !slice.design.startTree && !effects.dryRun) {
         const start = await startContent(resolved.root, slice.component);
         if (start) {
