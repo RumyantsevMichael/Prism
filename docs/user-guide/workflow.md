@@ -107,7 +107,10 @@ git for-each-ref --format='delete %(refname)' refs/prism/<initiative>/ | git upd
 ```
 
 `git gc` then removes the snapshots once nothing else holds them.
-Delete only the refs of slices that are done or that you will restart, because a started slice whose start content Git has removed fails its next run with `start_content_missing`.
+A started slice whose start content Git has removed fails its next run with `start_content_missing`.
+A done slice's refs are still needed while another slice of its initiative is started and not done, because Prism leaves the done slice's verified changes out of that slice's boundary check only while Git can read the done slice's start content and its latest passing run.
+Deleting a done slice's start or passed ref before then can therefore make that other slice fail with reason `component_boundary` for the done slice's changes.
+Delete refs only for an initiative with no slice that is started and not done, for a removed checkout, or for a slice that you will restart.
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
 When the design requires review, an independent reviewer also reviews the verified result, and a later change needs a new run and a new review.
 A finding that a contract clause itself causes sends the slice back to design instead of into another fix.
