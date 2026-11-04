@@ -54,7 +54,10 @@ While a question waits, the tab title starts with the number of waiting question
 Choose "Notify me about new questions" on Attention to also get a desktop notification when a question arrives while the page is in the background.
 The browser keeps that permission per review app address, and a restarted review app uses a new address, so it can ask again.
 In Claude Code a waiting agent resumes on its own shortly after your answer.
-Elsewhere the agent receives the answer with your next message, even a short one such as "go".
+When you resume a session with open questions, Prism lists them for the agent with your first message, and the agent waits on them again, so later browser answers still resume it on its own.
+In Codex the agent ends its turn, and Prism's Stop hook keeps the turn open for up to 55 minutes and continues it with your answer.
+Codex runs that hook only after you trust Prism's current hook definition through `/hooks`.
+Elsewhere, or after the 55 minutes, the agent receives the answer with your next message, even a short one such as "go".
 Attention also lists blocked slices, open findings, and active work.
 Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
 
@@ -170,6 +173,7 @@ When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review
 ## Security
 
 The server binds to `127.0.0.1`, selects an available port, and uses an unguessable session URL.
+The shared app reuses the port it last bound when that port is free, so the browser keeps the site's notification permission and stored settings after a restart, while the session URL of every cold restart is new.
 It serves plain HTTP, which browsers treat as a secure context on `127.0.0.1`, so no certificate trust step is needed.
 It refuses requests whose host is not `127.0.0.1` or `localhost`.
 It renders entirely in the browser and does not send project sources to a remote renderer.

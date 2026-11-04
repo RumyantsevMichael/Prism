@@ -60,8 +60,11 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
       .find((hook) => hook.command === factCommand);
     assert.equal(factHook.additionalContextLimit, 512);
   }
-  const answerHook = hookManifest.hooks.UserPromptSubmit.flatMap((group) => group.hooks).find((hook) => hook.command === "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/deliver-gate-answers.mjs\"");
-  assert.deepEqual([answerHook.timeout, answerHook.additionalContextLimit], [5, 4000]);
+  for (const event of ["UserPromptSubmit", "SessionStart"]) {
+    const answerHook = hookManifest.hooks[event].flatMap((group) => group.hooks).find((hook) => hook.command === "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/deliver-gate-answers.mjs\"");
+    assert.deepEqual([answerHook.timeout, answerHook.additionalContextLimit], [5, 4000], event);
+  }
+  assert.deepEqual(hookManifest.hooks.Stop.flatMap((group) => group.hooks), [{ type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/wait-for-gate-answers.mjs\"", timeout: 3600 }]);
   for (const event of ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PreCompact", "SubagentStart", "SubagentStop", "SessionEnd"]) {
     assert.ok(commands(event).includes(traceCommand));
   }

@@ -28,6 +28,7 @@ const UPDATE_REVIEW_SCHEMA = obj({ ...common, delivery: str, actor: obj({ id: st
   obj({ op: { const: "start_wave" }, id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, snapshotId: hashField, comparisonId: hashField, base: str, lanes: arr(laneSchema), afterGate: str }, ["op", "id", "mode", "lanes"]),
   obj({ op: { const: "assign_delivery" }, worker: str }),
   obj({ op: { const: "open_finding" }, lane: str, localId: str, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, clause: str }, ["op", "lane", "localId", "title", "severity", "affectedPath", "evidence", "conditionToClose"]),
+  obj({ op: { const: "revise_finding" }, id: str, clause: str, clearClause: { const: true }, conditionToClose: str, reason: str }, ["op", "id", "reason"]),
   obj({ op: { const: "set_finding_status" }, id: str, status: { enum: ["IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, evidence: str }),
   obj({ op: { const: "record_assessment" }, assessment: assessmentSchema }),
   obj({ op: { const: "accept_assessment" }, id: str }),
@@ -111,7 +112,7 @@ const recordSchema = obj({
     lanes: arr(obj({ ...laneSchema.properties, result: obj({ status: { enum: ["CLEAN", "FINDINGS"] }, digest: hashField, reviewer: str }) }, ["id", "reviewer", "coverage"])),
     accepted: obj({ evidenceDigest: hashField, actor: str, at: str })
   }, ["id", "mode", "lanes"]), 1e3),
-  findings: arr(obj({ id: str, localId: str, lane: str, mode: { enum: ["design-audit", "implementation-review"] }, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, clause: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, implementerEvidence: { type: "string" }, history: arr(obj({ actor: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, wave: str, at: str, evidence: str }), 1e4) }, ["id", "localId", "lane", "mode", "title", "severity", "affectedPath", "evidence", "conditionToClose", "aliases", "escalationTarget", "status", "implementerEvidence", "history"]), 1e4),
+  findings: arr(obj({ id: str, localId: str, lane: str, mode: { enum: ["design-audit", "implementation-review"] }, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, clause: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, implementerEvidence: { type: "string" }, history: arr(obj({ actor: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, wave: str, at: str, evidence: str, revised: obj({ clause: obj({ from: str, to: str }, []), conditionToClose: obj({ from: str, to: str }) }, []) }, ["actor", "status", "wave", "at", "evidence"]), 1e4) }, ["id", "localId", "lane", "mode", "title", "severity", "affectedPath", "evidence", "conditionToClose", "aliases", "escalationTarget", "status", "implementerEvidence", "history"]), 1e4),
   assessments: arr({ oneOf: assessmentSchema.oneOf.map((schema) => obj({ ...schema.properties, wave: str, author: str, acceptedBy: str }, [...schema.required, "wave", "author"])) }, 1e4),
   conflicts: arr(obj({ id: str, wave: str, lanes: arr(str), reason: str, resolved: obj({ actor: str, reason: str }) }, ["id", "wave", "lanes", "reason"]), 1e4),
   exchangeWorkers: arr(str, 1e4),
@@ -433,6 +434,24 @@ async function reviewProjection(input) {
   if (folder === null) throw conservationError("invalid_path", "The workflow config disables the plans path.");
   return resolveArtifactPath(input.projectRoot, `${folder}/review.md`, false, "review.md");
 }
+function compactHistory(finding) {
+  let previous = finding.evidence;
+  const history = finding.history.map(({ evidence, ...entry }) => {
+    const same = evidence === previous;
+    previous = evidence;
+    return same ? entry : { ...entry, evidence };
+  });
+  return { ...finding, history };
+}
+const titleWords = (title) => new Set(title.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2));
+function likelyDuplicates(review, wave, finding) {
+  const words = titleWords(finding.title);
+  return review.findings.filter((item) => item !== finding && item.status !== "VERIFIED" && item.affectedPath === finding.affectedPath && raisedIn(item) === wave.id).filter((item) => {
+    const other = titleWords(item.title);
+    const shared = [...words].filter((word) => other.has(word)).length;
+    return shared / Math.max(1, Math.min(words.size, other.size)) >= 0.6;
+  }).map((item) => item.id);
+}
 async function getReview(input) {
   assertInput(GET_REVIEW_SCHEMA, input);
   const loaded = await loadReview(input.projectRoot, input.initiative, input.slice);
@@ -447,6 +466,8 @@ async function getReview(input) {
     projectionStale = (await regularBytes(projection.target, 4 * 1024 * 1024)).toString() !== markdown(loaded.document);
   } catch {
   }
+  const entries = list.slice(offset, offset + limit), current = lastWave(loaded.document);
+  const currentWave = section === "waves" && current && entries.includes(current) ? { id: current.id } : current;
   return {
     exists: true,
     revision: loaded.revision,
@@ -455,9 +476,9 @@ async function getReview(input) {
     baselineId: loaded.document.baselineId,
     coordinator: loaded.document.coordinator,
     delivery: loaded.document.delivery,
-    currentWave: lastWave(loaded.document),
+    currentWave,
     section,
-    entries: list.slice(offset, offset + limit),
+    entries: section === "findings" ? entries.map(compactHistory) : entries,
     totalCount: list.length,
     nextOffset: offset + limit < list.length ? offset + limit : null,
     projectionStale
@@ -478,6 +499,7 @@ async function updateReview(input) {
       if (!await sameRecord(input.projectRoot, review.deltaPath, deltaTarget.path)) throw conservationError("invalid_path", "A review and its change map must belong to the same slice.");
       const designAccepted = Boolean(await acceptedDesign(input.projectRoot, input.initiative, input.slice));
       const now = () => (/* @__PURE__ */ new Date()).toISOString(), carry = { carried: [], notCarried: [] };
+      const warnings = [];
       for (const operation of input.operations) {
         const wave2 = lastWave(review), op = operation.op;
         if (op === "start_wave") {
@@ -547,6 +569,31 @@ async function updateReview(input) {
               implementerEvidence: "",
               history: [{ actor: input.actor.id, status: "OPEN", wave: wave2.id, at: now(), evidence: fields.evidence }]
             });
+            const duplicates = likelyDuplicates(review, wave2, review.findings.at(-1));
+            if (duplicates.length) warnings.push({ code: "likely_duplicate", finding: id, duplicates, message: `${id} looks like ${duplicates.join(", ")}: same affected path and a similar title in wave ${wave2.id}. Read those findings and keep one.` });
+          } else if (op === "revise_finding") {
+            const finding = review.findings.find((item) => item.id === operation.id);
+            if (!finding) throw conservationError("validation_failed", "The finding does not exist.");
+            if (finding.status === "VERIFIED") throw conservationError("gate_blocked", "A verified finding is closed; reopen it before revising it.");
+            const changesClause = operation.clause !== void 0 || operation.clearClause === true;
+            if (operation.clause !== void 0 && operation.clearClause === true) throw conservationError("validation_failed", "Pass clause to change the clause or clearClause to remove it, not both.");
+            if (!changesClause && operation.conditionToClose === void 0) throw conservationError("validation_failed", "Pass clause, clearClause, or conditionToClose to revise.");
+            if (changesClause || input.actor.role !== "reviewer") requireRole(review, input.actor, "coordinator");
+            else if (finding.mode !== wave2.mode) throw conservationError("validation_failed", "The finding does not belong to the current review mode.");
+            else reviewer(review, wave2, input.actor, finding.lane);
+            const revised = {};
+            if (changesClause) {
+              const to = operation.clearClause === true ? void 0 : operation.clause;
+              if (to !== finding.clause) revised.clause = { ...finding.clause ? { from: finding.clause } : {}, ...to ? { to } : {} };
+              if (to) finding.clause = to;
+              else delete finding.clause;
+            }
+            if (operation.conditionToClose !== void 0 && operation.conditionToClose !== finding.conditionToClose) {
+              revised.conditionToClose = { from: finding.conditionToClose, to: operation.conditionToClose };
+              finding.conditionToClose = operation.conditionToClose;
+            }
+            if (!Object.keys(revised).length) throw conservationError("validation_failed", "The revision changes nothing.");
+            finding.history.push({ actor: input.actor.id, status: finding.status, wave: wave2.id, at: now(), evidence: operation.reason, revised });
           } else if (op === "set_finding_status") {
             const finding = review.findings.find((item) => item.id === operation.id), status = operation.status;
             if (!finding || finding.mode !== wave2.mode) throw conservationError("validation_failed", "The finding does not belong to the current review mode.");
@@ -655,7 +702,8 @@ async function updateReview(input) {
         projectionStale,
         currentWave: wave?.id,
         accepted: Boolean(wave?.accepted && wave.accepted.evidenceDigest === waveDigest(review, wave)),
-        ...input.operations.some((item) => item.op === "carry_assessments") ? { carry } : {}
+        ...input.operations.some((item) => item.op === "carry_assessments") ? { carry } : {},
+        ...warnings.length ? { warnings } : {}
       };
     }, void 0, { renew: true }));
   }, void 0, { renew: true }));

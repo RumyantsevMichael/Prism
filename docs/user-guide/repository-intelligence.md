@@ -123,16 +123,17 @@ A step shows a percentage only when the build reports counts for it, so unpackin
 Embedding counts only fragments that need a new embedding, so a rebuild after a small edit has a small total.
 The project switcher marks other projects whose build runs or failed.
 
-The browser only shows the index.
 The Prism MCP server starts a build in the background once it knows the project, at startup when the host names the project or else at the first Prism tool call, and a later search joins that build instead of starting another.
-An agent's search also starts or retries a build, and the browser has no button for it.
-To keep a project from building at startup, add `- Background indexing: off` under `## Repository intelligence` in `.prism/workflow.md`, and searches still build the index on first use.
+An agent's search also starts or retries a build.
+While a page of the project is open, the review browser rebuilds an index that is out of date once the files stayed unchanged for a minute, at most once every five minutes, so slice pages show current line ranges.
+The index panel's Rebuild index button starts a build at once.
+To keep a project from building at startup or from the open page, add `- Background indexing: off` under `## Repository intelligence` in `.prism/workflow.md`; searches and the button still build the index.
 `Not indexed` means no build has run yet, and `Indexing stopped` means the session that ran the build ended before it finished.
-`Index rebuild pending` means files changed during the build, and the next search builds from the current files.
+`Index rebuild pending` means files changed during the build, and the next build uses the current files.
 
 `Index out of date` is a hint from Git, not a comparison of file contents.
 It compares the commit and the changed files' sizes and modification times with those recorded when the index was built or last reused.
-A commit that leaves indexed files unchanged looks out of date until the next search, and an edit that keeps a file's size and modification time looks current.
+A commit that leaves indexed files unchanged looks out of date until the next build, and an edit that keeps a file's size and modification time looks current.
 A folder outside Git, an index of a retained baseline, and an index built by a Prism version without the chip show no hint.
 
 ### Find shared dependencies

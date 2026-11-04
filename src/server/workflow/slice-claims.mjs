@@ -1,14 +1,22 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import os from "node:os";
 import { runGit } from "./record-store-sync.mjs";
 
-// A claim names the Prism server process that works on a slice, so no two agents in any checkout or machine that shares the records start one slice.
+// A claim names the host session, or without one the Prism server process, that works on a slice, so no two agents in any checkout or machine that shares the records start one slice.
 // Each claim is a record of its own beside the initiative record, covers the slice's descendants, and lapses unless its holder renews it.
 // Lease checks use this machine's clock.
 export const CLAIM_ACTIVITIES = Object.freeze(["design", "implementation"]);
 const CLAIM_FIELDS = ["schemaVersion", "slug", "holder", "label", "activity", "claimedAt", "renewedAt", "expiresAt", "nonce"];
 const SETTINGS = { leaseMs: 30 * 60 * 1000, renewMs: 10 * 60 * 1000 };
-const identity = { holder: randomBytes(8).toString("hex"), label: null };
+/**
+ * The holder for a host session identifier, or null without one.
+ * Claude Code gives its MCP servers the session identifier, so a server it restarts in the same session holds the same claims; the record keeps only a digest of it.
+ */
+export function sessionHolder(env = process.env) {
+  const id = typeof env.CLAUDE_CODE_SESSION_ID === "string" ? env.CLAUDE_CODE_SESSION_ID.trim() : "";
+  return id ? `session-${createHash("sha256").update(id).digest("hex").slice(0, 16)}` : null;
+}
+const identity = { holder: sessionHolder() ?? randomBytes(8).toString("hex"), label: null };
 const labels = new Map();
 // The claims this process took and still renews, by project root, initiative, and slice, and the ones it lost since a tool last reported them.
 const held = new Map();
@@ -24,7 +32,7 @@ export function configureClaims(settings = {}) {
   if (timer) { clearInterval(timer); timer = null; startTimer(); }
 }
 
-/** This server process's claim holder identifier. */
+/** This server's claim holder identifier: its host session's, or its own process's. */
 export const claimHolder = () => identity.holder;
 
 /** Who and where, for people: the Git user name of the folder that holds the records, when set, and the host name without its domain. */
@@ -114,6 +122,16 @@ const heldKey = (root, initiative, slug) => `${root}\0${initiative}\0${slug}`;
 export function holdClaim(root, initiative, claim) {
   held.set(heldKey(root, initiative, claim.slug), { root, initiative, slug: claim.slug, holder: claim.holder, nonce: claim.nonce });
   startTimer();
+}
+
+/**
+ * Renew the live claims of this server's holder that it does not renew yet, which an earlier server of the same host session took before the host restarted it.
+ * Only a server that reports claims to an agent calls this, so a process that merely reads records, such as the review app, never renews a session's claims.
+ */
+export function adoptClaims(root, initiative, claims, now = Date.now()) {
+  for (const claim of claims.values()) {
+    if (claim.holder === identity.holder && isLive(claim, now) && !held.has(heldKey(root, initiative, claim.slug))) holdClaim(root, initiative, claim);
+  }
 }
 
 /**

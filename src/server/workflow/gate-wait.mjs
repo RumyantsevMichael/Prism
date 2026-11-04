@@ -3,6 +3,8 @@ import { readCoordinationState } from "./state.mjs";
 export const DEFAULT_WAIT_MINUTES = 720;
 export const MAX_WAIT_MINUTES = 1440;
 export const MAX_WAIT_GATES = 10;
+// A Stop hook waits at most this long, within the hour its hook timeout allows.
+export const HOOK_WAIT_MINUTES = 55;
 const POLL_MS = 1000;
 const SETTLE_MS = 15000;
 

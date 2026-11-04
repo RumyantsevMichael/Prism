@@ -103,23 +103,32 @@ function indexHtml(status) {
   return `<dl class="indexing-facts">${facts.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}</dl>`;
 }
 
+function rebuildWhen(status) {
+  return status.autoRebuild ? "This page rebuilds it once the files stay unchanged for a minute." : "The next agent search or Rebuild index updates it.";
+}
+
+// Any state but a running build can be rebuilt by hand, including a project that has no index yet.
+function rebuildButton(status) {
+  return status.state === "preparing" ? "" : '<p class="indexing-actions"><button type="button" class="tool-button" data-rebuild-index>Rebuild index</button></p>';
+}
+
 function summaryHtml(status) {
   if (status.state === "preparing") return `<p>Started ${escapeHtml(relativeTime(status.startedAt))}.${status.index ? " Searches use the previous index until this build finishes." : ""}</p>${stepsHtml(status.progress)}`;
-  if (changedDuringBuild(status)) return "<p>Files changed while the index was being built. The next agent search rebuilds it from the current files.</p>";
+  if (changedDuringBuild(status)) return `<p>Files changed while the index was being built. ${rebuildWhen(status)}</p>`;
   if (status.state === "failed") {
     return `<p>The last build failed ${escapeHtml(relativeTime(status.endedAt))}. The next agent search tries again.</p>
       <ul class="indexing-diagnostics">${status.diagnostics.map((item) => `<li><code>${escapeHtml(item.code)}</code> ${escapeHtml(item.message)}${item.recovery ? `<br><span>${escapeHtml(item.recovery)}</span>` : ""}</li>`).join("")}</ul>`;
   }
   if (status.state === "interrupted") return `<p>A build stopped ${escapeHtml(relativeTime(status.endedAt))} before it finished, usually because its agent session ended. The next agent search starts it again.</p>`;
   if (status.state === "none") return "<p>This project has no index yet. Prism builds it the first time an agent searches the repository.</p>";
-  if (status.stale) return "<p>Files or commits changed since the index was built. The next agent search updates it.</p>";
+  if (status.stale) return `<p>Files or commits changed since the index was built. ${rebuildWhen(status)}</p>`;
   if (status.stale === null) return "<p>The index is ready. This page cannot tell whether files changed since the build, because the folder is not a Git working tree or the index predates change tracking.</p>";
   return "<p>The index matches the current files.</p>";
 }
 
 export function panelHtml(status) {
-  return `<p class="indexing-panel-title">Repository index</p>${summaryHtml(status)}${indexHtml(status)}
-    <p class="indexing-panel-note">Agents build and update the index when they search. This page only shows its state.</p>`;
+  return `<p class="indexing-panel-title">Repository index</p>${summaryHtml(status)}${rebuildButton(status)}${indexHtml(status)}
+    <p class="indexing-panel-note">Agents also build and update the index when they search.${status.autoRebuild ? "" : " Background indexing is off for this project, so this page rebuilds it only when you ask."}</p>`;
 }
 
 let latest = null;
@@ -175,6 +184,13 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
   }
 
   button.addEventListener("click", () => setOpen(panel.hidden));
+  panel.addEventListener("click", async (event) => {
+    const rebuild = event.target.closest?.("[data-rebuild-index]");
+    if (!rebuild) return;
+    rebuild.disabled = true;
+    await fetch("./api/indexing/rebuild", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+    await refresh();
+  });
   document.addEventListener("click", (event) => {
     if (!panel.hidden && !root.contains(event.target)) setOpen(false);
   });
