@@ -8,6 +8,9 @@ import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { answerUserGate, readCoordinationState, updateCoordinationState } from "../../dist/server/workflow/state.mjs";
+import { waitForGateAnswers } from "../../dist/hooks/wait-for-gate-answers.mjs";
+import { Readable } from "node:stream";
+import { readdir } from "node:fs/promises";
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
 const INITIATIVE = "reports";
@@ -27,7 +30,7 @@ async function project(context) {
 }
 
 function server(context, root, clientName, { version = "2.1.296", environment = {} } = {}) {
-  const env = isolatedEnv({ PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_GATE_WAIT_HEARTBEAT_MS: "200", PRISM_GATE_WAIT_SETTLE_MS: "600", CLAUDE_PROJECT_DIR: root });
+  const env = isolatedEnv({ PRISM_REVIEW_APP_DIR: path.join(root, ".app"), PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_GATE_WAIT_HEARTBEAT_MS: "200", PRISM_GATE_WAIT_SETTLE_MS: "600", CLAUDE_PROJECT_DIR: root });
   for (const name of ["MCP_TOOL_TIMEOUT", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"]) delete env[name];
   Object.assign(env, environment);
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -153,4 +156,44 @@ test("waits on several gates and collects answers given in one visit", async (co
   assert.match(response.result.content[0].text, new RegExp(`Still waiting on: ${gateIds[2]}\\.`));
   mcp.send({ id: 3, method: "tools/call", params: { name: "wait_for_user_gate", arguments: { projectRoot: root, initiative: INITIATIVE } } });
   assert.match((await mcp.response(3)).error.message, /Pass the recorded gate ids in gateIds/);
+});
+
+test("on Codex, defers the wait to the Stop hook of the same session, which continues the turn with the answer", async (context) => {
+  const { root, gateIds } = await project(context);
+  const directory = path.join(root, ".app", "gate-waits");
+  const stop = (sessionId) => waitForGateAnswers({ input: Readable.from([JSON.stringify({ hook_event_name: "Stop", session_id: sessionId, turn_id: "turn-1", stop_hook_active: false })]), directory, pollMs: 20, settleMs: 0 });
+  const mcp = server(context, root, "codex-mcp-client");
+  await mcp.ready;
+  wait(mcp, 2, root, undefined, { gateIds: gateIds.slice(0, 2) }, { sessionId: "codex-session-1", threadId: "thread-1" });
+  const deferred = await mcp.response(2, 5000);
+  assert.deepEqual([deferred.result.structuredContent.status, deferred.result.structuredContent.maxWaitMinutes], ["deferred", 55]);
+  assert.match(deferred.result.content[0].text, /end your turn now/);
+  assert.equal((await readdir(directory)).length, 1);
+  assert.equal(await stop("another-session"), null);
+  const waiting = stop("codex-session-1");
+  await delay(200);
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: gateIds[0], choice: "fresh-login" });
+  const output = await waiting;
+  assert.equal(output.decision, "block");
+  assert.match(output.reason, /Answer: Require a fresh login\./);
+  assert.match(output.reason, new RegExp(`Still waiting on: ${gateIds[1]}\\.`));
+  assert.deepEqual(await readdir(directory), []);
+  assert.equal(await stop("codex-session-1"), null);
+  wait(mcp, 3, root, gateIds[0], {}, { sessionId: "codex-session-1" });
+  assert.equal((await mcp.response(3, 5000)).result.structuredContent.status, "answered");
+  assert.deepEqual(await readdir(directory), []);
+});
+
+test("the Stop hook lets the turn stop when the gate is resolved without a browser answer", async (context) => {
+  const { root, gateId } = await project(context);
+  const directory = path.join(root, ".app", "gate-waits");
+  const mcp = server(context, root, "codex-mcp-client");
+  await mcp.ready;
+  wait(mcp, 2, root, gateId, {}, { sessionId: "codex-session-2" });
+  assert.equal((await mcp.response(2, 5000)).result.structuredContent.status, "deferred");
+  const waiting = waitForGateAnswers({ input: Readable.from([JSON.stringify({ hook_event_name: "Stop", session_id: "codex-session-2" })]), directory, pollMs: 20 });
+  await delay(100);
+  const { revision } = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
+  await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateId, reason: "Answered in the conversation." }] } });
+  assert.equal(await waiting, null);
 });

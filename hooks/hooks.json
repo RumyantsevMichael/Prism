@@ -41,6 +41,17 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/wait-for-gate-answers.mjs\"",
+            "timeout": 3600
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "hooks": [

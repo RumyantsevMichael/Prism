@@ -104,6 +104,7 @@ The browser opens on Attention, which lists the recorded user gates, and its sid
 Answering a gate on Attention records the answer in the initiative's coordination state, and the `deliver-gate-answers` prompt hook passes answered gates to the agent with the next user message until the agent resolves them.
 The same hook runs when a session resumes and lists every open gate, so the resumed agent waits on its unanswered gates again.
 In Claude Code the `wait_for_user_gate` tool also returns the answer: Claude Code moves the call to the background after about two minutes (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`), its result wakes the idle session, and progress notifications every minute keep the stdio idle window (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`) from cancelling it.
+In Codex, which does not move tool calls to the background, a call that carries the Codex session id in its `_meta` records a wait request in the review app folder and returns `deferred`, and the `wait-for-gate-answers` Stop hook of that session takes the request and waits up to 55 minutes, then blocks the stop with the answers so the turn continues.
 The review page's secret session URL is the only credential for recording an answer, so anyone who can open that URL can answer for the user.
 One shipped initiative record is written directly, because its completion gate needs accepted reviews that the offline demo cannot produce.
 
