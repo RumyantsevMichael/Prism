@@ -48,6 +48,11 @@ function hostEnvironment(name) {
   return { root, appFolder: path.join(root, "app"), env: { ...environment, HOME: path.join(root, "home"), PRISM_REVIEW_APP_DIR: path.join(root, "app"), PRISM_REVIEW_BROWSER_ON_START: "off", GIT_CONFIG_NOSYSTEM: "1" } };
 }
 
+// The first text block is the tool's JSON result; later blocks are notes for the agent, such as sync reports or a missing repository name.
+function firstText(content) {
+  return (content || []).find((part) => part.type === "text")?.text ?? "";
+}
+
 function parseResult(name, text) {
   let value;
   try { value = JSON.parse(text); } catch { throw new Error(`${name}: ${TOOL} returned text that is not JSON: ${text.slice(0, 500)}`); }
@@ -128,7 +133,7 @@ async function claude({ project, id }) {
   }
   if (!offered) throw new Error(`claude: the model was never offered ${tool}, so the plugin's MCP server did not load`);
   if (!result) throw new Error(`claude: ${tool} was offered but no tool result came back`);
-  const text = typeof result.content === "string" ? result.content : (result.content || []).map((part) => part.text ?? "").join("");
+  const text = typeof result.content === "string" ? result.content : firstText(result.content);
   if (result.is_error) throw new Error(`claude: ${TOOL} failed: ${text.slice(0, 1000)}`);
   parseResult("claude", text);
   checkClone("claude", appFolder, id);
@@ -182,7 +187,7 @@ async function codex({ project, id }) {
     const threadId = started?.thread?.id;
     if (!threadId) throw new Error(`codex: thread/start returned no thread id: ${JSON.stringify(started).slice(0, 500)}`);
     const called = await request("mcpServer/tool/call", { threadId, server: "prism-review", tool: TOOL, arguments: { projectRoot: project } });
-    const text = (called.content || []).map((part) => part.text ?? "").join("");
+    const text = firstText(called.content);
     if (called.isError) throw new Error(`codex: ${TOOL} failed: ${text.slice(0, 1000)}`);
     parseResult("codex", text);
     checkClone("codex", appFolder, id);
