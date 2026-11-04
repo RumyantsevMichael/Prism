@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { INITIATIVE, THREE, command, commitAll, componentProject, git, node, planAndAccept, read, refusal, runLog, update, workflow, write } from "./fixtures/components.mjs";
+import { DECLARATION, INITIATIVE, THREE, command, commitAll, componentProject, git, node, planAndAccept, read, refusal, runLog, update, workflow, write } from "./fixtures/components.mjs";
 
 // Requirements: docs/requirements/components.md §10, §15, §16, §19.
-// Contract: docs/plans/components/component-slices/slice.md clauses 16-23.
+// Contract: docs/plans/components/component-slices/slice.md clauses 3 and 16-23.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-component-verification-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -220,4 +220,150 @@ test("clauses 20 and 23: a slice started where Git could not hash the work tree 
   assert.equal(result.boundary, "unchecked");
   assert.equal((await recorded(root, result)).boundary, "unchecked");
   assert.deepEqual((await runs()).map((entry) => entry.name), ["billing"]);
+});
+
+// Allow the slice's command at the gate its first verification opens, and return that gate's id for the next call.
+async function allow(root, slice) {
+  const asked = await verify(root, slice);
+  assert.equal(asked.status, "approval_needed");
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: asked.gateId, choice: "allow", note: null });
+  return asked.gateId;
+}
+
+test("clauses 18 and 19: a component folder that leads outside the project is refused before any approval, and a linked folder is named where the command runs", async (context) => {
+  const runs = await runLog(context);
+  const linkedOut = await started(context);
+  const outside = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-outside-")));
+  context.after(() => rm(outside, { recursive: true, force: true }));
+  await cp(path.join(linkedOut, "packages/billing"), outside, { recursive: true });
+  await rm(path.join(linkedOut, "packages/billing"), { recursive: true, force: true });
+  await symlink(outside, path.join(linkedOut, "packages/billing"));
+  commitAll(linkedOut, "link billing outside the project");
+  const refused = await refusal(verify(linkedOut, "billing-totals"), "component_folder_outside");
+  assert.equal(refused.component, "root/billing");
+  assert.equal(refused.folder, "packages/billing");
+  assert.deepEqual((await readCoordinationState({ projectRoot: linkedOut, initiative: INITIATIVE })).state?.pending ?? [], [], "no approval was asked");
+  assert.deepEqual(await runs(), [], "the command did not run");
+
+  const linkedIn = await started(context);
+  await mkdir(path.join(linkedIn, "lib"), { recursive: true });
+  await rename(path.join(linkedIn, "packages/billing"), path.join(linkedIn, "lib/billing"));
+  await symlink("../lib/billing", path.join(linkedIn, "packages/billing"));
+  process.env.CLAUDE_CODE_REMOTE = "true";
+  context.after(() => { delete process.env.CLAUDE_CODE_REMOTE; });
+  const asked = await verify(linkedIn, "billing-totals");
+  assert.equal(asked.status, "approval_needed");
+  assert.equal(asked.folder, "lib/billing", "the result names the folder the command runs in");
+  assert.ok(asked.message.includes("lib/billing") && !asked.message.includes(linkedIn), "the chat approval names that folder, project-relative");
+  const gate = (await readCoordinationState({ projectRoot: linkedIn, initiative: INITIATIVE })).state.pending.find((item) => item.id === asked.gateId);
+  assert.ok(gate.question.includes("lib/billing") && !gate.question.includes(linkedIn), "the gate question names that folder, project-relative");
+});
+
+test("clause 21: another slice's verified work done while a slice was blocked does not count, while the slice's own changes still do", async (context) => {
+  const root = await started(context);
+  const gate = await allow(root, "billing-totals");
+  // Billing's own change in shared's folder, made before billing is blocked and before shared starts.
+  await write(root, { "packages/shared/extra.mjs": "export const extra = 1;\n" });
+  await update(root, [{ op: "set_status", slug: "billing-totals", status: "blocked" }]);
+  await start(root, "shared-values");
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n" });
+  commitAll(root, "shared values");
+  const shared = await verifyAllowed(root, "shared-values");
+  assert.equal(shared.status, "passed", shared.outputTail);
+  // The contents the exception compares stay readable after Git prunes what no ref reaches.
+  git(root, "gc", "-q", "--prune=now");
+
+  await start(root, "billing-totals");
+  await write(root, { "packages/billing/index.mjs": "export const total = 2;\n" });
+  const resumed = await verify(root, "billing-totals", { approvalGate: gate });
+  assert.equal(resumed.reason, "component_boundary");
+  assert.deepEqual(resumed.crossing, ["packages/shared/extra.mjs"], "shared's verified change and frozen test do not count, billing's own earlier change does");
+
+  await write(root, { "packages/shared/index.mjs": "export const shared = 3;\n", "packages/shared/test/shared.test.mjs": "// changed by billing\n" });
+  const later = await verify(root, "billing-totals");
+  assert.deepEqual(later.crossing, ["packages/shared/extra.mjs", "packages/shared/index.mjs", "packages/shared/test/shared.test.mjs"], "changes after shared's verified content still cross");
+
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n", "packages/shared/test/shared.test.mjs": "// frozen shared test\n" });
+  await rm(path.join(root, "packages/shared/extra.mjs"));
+  const passed = await verify(root, "billing-totals");
+  assert.equal(passed.status, "passed", passed.outputTail);
+  assert.equal(passed.boundary, "checked");
+});
+
+test("clause 21: a slice's boundary follows the declaration recorded when it started, and a changed declaration applies to slices started after it", async (context) => {
+  const root = await started(context);
+  const gate = await allow(root, "billing-totals");
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n" });
+  assert.deepEqual((await verify(root, "billing-totals", { approvalGate: gate })).crossing, ["packages/shared/index.mjs"]);
+
+  const widened = DECLARATION.replace("- shared paths: package-lock.json, config/shared/", "- shared paths: package-lock.json, config/shared/, packages/shared");
+  await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: widened }));
+  const sharedLater = await verify(root, "billing-totals");
+  assert.equal(sharedLater.reason, "component_boundary", "a shared path added after the start does not apply");
+  assert.deepEqual(sharedLater.crossing, ["packages/shared/index.mjs"]);
+
+  await start(root, "web-pages");
+  await write(root, { "packages/shared/web.mjs": "export const web = 1;\n" });
+  const web = await verifyAllowed(root, "web-pages");
+  assert.equal(web.status, "passed", web.outputTail);
+
+  const moved = ["## Components", "- billing: packages", `  - Test command: ${command("billing", 1)}`, "- web: apps/web", "  - Depends on: billing", "- docs: handbook", "- shared paths: package-lock.json, config/shared/", ""].join("\n");
+  await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: moved }));
+  const folderLater = await verifyAllowed(root, "billing-totals");
+  assert.equal(folderLater.reason, "component_boundary", "a component folder widened after the start does not apply");
+  assert.deepEqual(folderLater.crossing, ["packages/shared/index.mjs"]);
+});
+
+test("clauses 20 and 23: start content outlives git gc under its ref, and a run whose start content Git lost fails without running the command", async (context) => {
+  const runs = await runLog(context);
+  const root = await started(context);
+  const ref = `refs/prism/${INITIATIVE}/billing-totals/start`;
+  assert.match(git(root, "rev-parse", "--verify", `${ref}^{tree}`), /^[0-9a-f]{40,64}$/);
+  const gate = await allow(root, "billing-totals");
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n" });
+  git(root, "gc", "-q", "--prune=now");
+  const kept = await verify(root, "billing-totals", { approvalGate: gate });
+  assert.equal(kept.reason, "component_boundary", "the start content outlives git gc");
+  assert.equal(kept.boundary, "checked");
+
+  await write(root, { "packages/shared/index.mjs": "export const shared = 1;\n", "packages/billing/index.mjs": "export const total = 2;\n" });
+  for (const name of git(root, "for-each-ref", "--format=%(refname)", "refs/prism/").split("\n").filter(Boolean)) git(root, "update-ref", "-d", name);
+  git(root, "gc", "-q", "--prune=now");
+  const lost = await verify(root, "billing-totals");
+  assert.equal(lost.status, "failed");
+  assert.equal(lost.reason, "start_content_missing");
+  assert.match(lost.message, /not-started/, "the message tells the user to start the slice again");
+  assert.equal((await recorded(root, lost)).reason, "start_content_missing");
+  assert.deepEqual(await runs(), [], "the command did not run");
+  assert.notEqual((await read(root)).record.slices["billing-totals"].status, "done");
+
+  await update(root, [{ op: "set_status", slug: "billing-totals", status: "not-started" }]);
+  assert.equal(git(root, "for-each-ref", "--format=%(refname)", `refs/prism/${INITIATIVE}/billing-totals/`), "", "a slice back at not-started keeps no start content");
+  await start(root, "billing-totals");
+  assert.match(git(root, "rev-parse", "--verify", `${ref}^{tree}`), /^[0-9a-f]{40,64}$/, "starting it again records new start content");
+  const restarted = await verify(root, "billing-totals");
+  assert.equal(restarted.status, "passed", restarted.outputTail);
+  assert.equal(restarted.boundary, "checked");
+});
+
+test("clause 21: in a project below its Git checkout's top folder, changed paths are project-relative", async (context) => {
+  const top = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-top-")));
+  context.after(() => rm(top, { recursive: true, force: true }));
+  const created = await componentProject(context);
+  const root = path.join(top, "project");
+  await cp(created, root, { recursive: true });
+  await rm(path.join(root, ".git"), { recursive: true, force: true });
+  git(top, "init", "-q", "-b", "main");
+  commitAll(top, "start");
+  await planAndAccept(root, THREE);
+  await start(root, "billing-totals");
+  const gate = await allow(root, "billing-totals");
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n", "packages/billing/index.mjs": "export const total = 2;\n" });
+  const crossed = await verify(root, "billing-totals", { approvalGate: gate });
+  assert.equal(crossed.reason, "component_boundary");
+  assert.deepEqual(crossed.crossing, ["packages/shared/index.mjs"]);
+  await write(root, { "packages/shared/index.mjs": "export const shared = 1;\n" });
+  const passed = await verify(root, "billing-totals");
+  assert.equal(passed.status, "passed", passed.outputTail);
+  assert.equal(passed.boundary, "checked");
 });
