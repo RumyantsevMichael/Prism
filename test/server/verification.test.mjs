@@ -533,4 +533,11 @@ test("the acknowledgement counts a slice's contract defects", async (context) =>
   const brief = initiativeAcknowledgement(await initiativeUpdate(root, operations), operations);
   assert.equal(brief.slices.download.status, "blocked");
   assert.equal(brief.slices.download.contractDefects, 1);
+  assert.equal(brief.slices.download.next, undefined, "a slice still waiting for design has nothing to restart");
+  const revision = [{ op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" }];
+  const revised = initiativeAcknowledgement(await initiativeUpdate(root, revision), revision);
+  assert.equal(revised.slices.download.status, "blocked");
+  assert.match(revised.slices.download.next, /set_status in-progress restarts it/);
+  const restart = [{ op: "set_status", slug: "download", status: "in-progress" }];
+  assert.equal(initiativeAcknowledgement(await initiativeUpdate(root, restart), restart).slices.download.next, undefined);
 });
