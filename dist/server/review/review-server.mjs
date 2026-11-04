@@ -29,6 +29,11 @@ const VIEWER_HEARTBEAT_MS = 15 * 1000;
 const VIEWER_OPEN_RETRY_MS = 10 * 1000;
 // The stale hint runs Git in the project, so its answer is reused for this long however often the page asks.
 const FRESHNESS_CHECK_MS = 30 * 1000;
+// The build code loads only when a page asks for the index state, so a review server starts without the native runtime's modules.
+const backgroundPreparation = () => import("../repository-intelligence/background-preparation.mjs");
+// An out-of-date index is rebuilt once the files stopped changing for this long, so a burst of edits causes one build, and at most once per gap.
+const REBUILD_QUIET_MS = 60 * 1000;
+const REBUILD_GAP_MS = 5 * 60 * 1000;
 
 function isInside(root, target) {
   const relative = path.relative(root, target);
@@ -404,11 +409,28 @@ async function readJson(request) {
 
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null }) {
+export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null,
+  rebuildIndex = (root) => backgroundPreparation().then((module) => module.startIndexRebuild(root)), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
   let fingerprint = null;
   function currentFingerprint() {
-    if (!fingerprint || Date.now() - fingerprint.at >= FRESHNESS_CHECK_MS) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
+    if (!fingerprint || Date.now() - fingerprint.at >= rebuildTiming.freshnessMs) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
     return fingerprint.value;
+  }
+  // The index chip polls while a page is open, so an out-of-date index is rebuilt only while someone looks at the project.
+  const rebuild = { key: null, changedAt: Date.now(), startedAt: 0 };
+  async function indexingStatus() {
+    const status = await readIndexingStatus(projectRoot, intelligenceDirectories(), { fingerprint: currentFingerprint });
+    const auto = await autoRebuild(projectRoot).catch(() => false);
+    const print = await currentFingerprint();
+    const key = print ? `${print.head}\0${print.worktree}` : null;
+    if (key !== rebuild.key) Object.assign(rebuild, { key, changedAt: Date.now() });
+    const outOfDate = (status.state === "ready" && status.stale === true) || (status.state === "failed" && status.diagnostics.some((item) => item.code === "stale_snapshot"));
+    const now = Date.now();
+    if (auto && outOfDate && now - rebuild.changedAt >= rebuildTiming.quietMs && now - rebuild.startedAt >= rebuildTiming.gapMs) {
+      rebuild.startedAt = now;
+      void rebuildIndex(projectRoot);
+    }
+    return { ...status, autoRebuild: auto };
   }
   let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
   const viewers = new Map();
@@ -660,7 +682,17 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/evidence") {
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
     } else if (route === "/api/indexing" && request.method === "GET") {
-      send(response, 200, JSON.stringify(await readIndexingStatus(projectRoot, intelligenceDirectories(), { fingerprint: currentFingerprint })), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await indexingStatus()), "application/json; charset=utf-8");
+    } else if (route === "/api/indexing/rebuild" && request.method === "POST") {
+      const origin = request.headers.origin;
+      if (!String(request.headers["content-type"] ?? "").startsWith("application/json") || (origin && new URL(origin).host !== request.headers.host)) {
+        send(response, 403, "A rebuild must come from the review page as JSON.");
+        return;
+      }
+      // A person's request starts at once and ignores the background opt-out, because it is not in the background.
+      rebuild.startedAt = Date.now();
+      void rebuildIndex(projectRoot);
+      send(response, 202, JSON.stringify({ started: true }), "application/json; charset=utf-8");
     } else if (route === "/api/search") {
       send(response, 200, JSON.stringify(await searchArtifacts(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {

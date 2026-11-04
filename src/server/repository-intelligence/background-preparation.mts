@@ -49,4 +49,20 @@ export function startBackgroundPreparation(projectRoot: string, options: Options
   return run;
 }
 
-export function resetBackgroundPreparation() { started.clear(); }
+const rebuilding = new Map<string, Promise<void>>();
+
+// Starts one rebuild of a project's index and returns at once; a call while one runs in this process joins it, and a later call starts another.
+// The review browser uses it when the index went out of date or the person asks, so the line ranges it shows catch up without an agent search.
+export function startIndexRebuild(projectRoot: string, options: Omit<Options, "enabled"> = {}): Promise<void> {
+  const existing = rebuilding.get(projectRoot);
+  if (existing) return existing;
+  const { prepare = (root: string) => prepareNativeProvider(root, { waitMs: 0 }), available = runtimeAvailable, record = recordFailure } = options;
+  const run = (async () => {
+    if (!await available()) return;
+    try { await prepare(projectRoot); } catch (error) { await record(projectRoot, error); }
+  })().catch(() => {}).finally(() => { rebuilding.delete(projectRoot); });
+  rebuilding.set(projectRoot, run);
+  return run;
+}
+
+export function resetBackgroundPreparation() { started.clear(); rebuilding.clear(); }
