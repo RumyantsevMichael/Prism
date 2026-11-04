@@ -58,6 +58,44 @@
       "decision": null
     },
     {
+      "id": "components",
+      "title": "Components in one repository",
+      "intent": "Let a repository declare components with their own test commands and dependencies, keep each leaf slice inside one component, run dependents' tests when a spanning scope finishes, and prepare the native index per component so a large monorepo fits its limits.",
+      "band": "Now",
+      "requirements": [
+        "docs/requirements/components.md#1",
+        "docs/requirements/components.md#2",
+        "docs/requirements/components.md#3",
+        "docs/requirements/components.md#4",
+        "docs/requirements/components.md#5",
+        "docs/requirements/components.md#6",
+        "docs/requirements/components.md#7",
+        "docs/requirements/components.md#8",
+        "docs/requirements/components.md#9",
+        "docs/requirements/components.md#10",
+        "docs/requirements/components.md#11",
+        "docs/requirements/components.md#12",
+        "docs/requirements/components.md#13",
+        "docs/requirements/components.md#14",
+        "docs/requirements/components.md#15",
+        "docs/requirements/components.md#16",
+        "docs/requirements/components.md#17",
+        "docs/requirements/components.md#18",
+        "docs/requirements/components.md#19",
+        "docs/requirements/components.md#20",
+        "docs/requirements/components.md#21",
+        "docs/requirements/components.md#22",
+        "docs/requirements/components.md#23",
+        "docs/requirements/components.md#24",
+        "docs/requirements/components.md#25",
+        "docs/requirements/components.md#26",
+        "docs/requirements/components.md#27"
+      ],
+      "requires": [],
+      "rationale": "Now, because Michael agreed on 4 November 2026 in the project thread that components are the next milestone after repository names, as increments 2 and 4 of the M3 multi-repository workspace design, with per-component indexing for issue #14; it is proven on one real Lumen initiative across two or more packages. Requirements stay Draft until Michael accepts the file text.",
+      "decision": null
+    },
+    {
       "id": "repository-names",
       "title": "Repository names in a shared store",
       "intent": "Name each repository that shares a record store by a committed name the store registers with its remote, and let each machine know where its checkouts of each repository are.",
@@ -149,6 +187,12 @@
       "operation": "ship",
       "id": "repository-names",
       "at": "2026-11-03T23:35:20.345Z"
+    },
+    {
+      "actor": "ideate",
+      "operation": "add_initiative",
+      "id": "components",
+      "at": "2026-11-04T19:03:26.230Z"
     }
   ]
 }
