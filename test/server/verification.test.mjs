@@ -317,6 +317,48 @@ test("a review stops for the user after two waves with findings, and a finding t
   await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: second, choice: "continue" });
   await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w4", mode: "implementation-review", lanes: lanes("w4"), afterGate: second }]), (error) => error.code === "gate_blocked" && /name contract clauses \(Contract 6\)/.test(error.message) && /contractDefects/.test(error.message));
   assert.equal((await getReview(slice)).entries.find((item) => item.localId === "C6").clause, "Contract 6");
+  const c6 = "implementation-review/correctness/C6";
+  await assert.rejects(review(reviewer("w3"), [{ op: "revise_finding", id: c6, clearClause: true, reason: "Code missed the clause." }]), /does not own/, "only the coordinator corrects a clause");
+  await assert.rejects(review(coordinator, [{ op: "revise_finding", id: c6, clause: "Contract 7", clearClause: true, reason: "x" }]), /not both/);
+  await review(coordinator, [{ op: "revise_finding", id: c6, clearClause: true, reason: "The code missed clause 6; the clause itself holds." }]);
+  const revised = (await getReview(slice)).entries.find((item) => item.localId === "C6");
+  assert.equal(revised.clause, undefined);
+  assert.deepEqual(revised.history.at(-1).revised, { clause: { from: "Contract 6" } });
+  assert.equal(revised.history.at(-1).evidence, "The code missed clause 6; the clause itself holds.");
+  await review(coordinator, [{ op: "start_wave", id: "w4", mode: "implementation-review", lanes: lanes("w4"), afterGate: second }]);
+});
+
+test("a finding's close condition can be revised with a reason, a likely duplicate warns, and review pages do not repeat themselves", async (context) => {
+  const root = await project(context);
+  await accept(root, "download", "required");
+  const slice = { projectRoot: root, initiative: INITIATIVE, slice: "download" };
+  const review = async (actor, operations, extra = {}) => updateReview({ ...slice, expectedRevision: (await getReview(slice)).revision, actor, operations, ...extra });
+  const coordinator = { id: "orchestrator", role: "coordinator" }, delivery = { id: "Develop download", role: "delivery" };
+  const security = { id: "Review security", role: "reviewer" }, correctness = { id: "Review correctness", role: "reviewer" };
+  assert.equal((await verifySlice({ ...slice, approvalGate: await approve(root) })).status, "passed");
+  await review(coordinator, [{ op: "start_wave", id: "w1", mode: "implementation-review", lanes: [{ id: "security", reviewer: security.id, coverage: ["."] }, { id: "correctness", reviewer: correctness.id, coverage: ["."] }] }], { delivery: delivery.id });
+  const finding = { op: "open_finding", severity: "high", affectedPath: "source.mjs", evidence: "No check.", conditionToClose: "Downloads check the signature." };
+  const first = await review(security, [{ ...finding, lane: "security", localId: "S1", title: "Download signature is not checked" }]);
+  assert.equal(first.warnings, undefined);
+  const second = await review(correctness, [{ ...finding, lane: "correctness", localId: "C1", title: "Signature of the download never checked" }]);
+  assert.deepEqual(second.warnings.map((item) => [item.code, item.finding, item.duplicates]), [["likely_duplicate", "implementation-review/correctness/C1", ["implementation-review/security/S1"]]]);
+  assert.equal((await review(correctness, [{ ...finding, lane: "correctness", localId: "C2", title: "Progress bar flickers" }])).warnings, undefined, "an unrelated title on the same path does not warn");
+  await assert.rejects(review(correctness, [{ op: "revise_finding", id: "implementation-review/security/S1", conditionToClose: "x", reason: "y" }]), /fresh assigned reviewer/, "a reviewer revises only its own lane's findings");
+  await review(security, [{ op: "revise_finding", id: "implementation-review/security/S1", conditionToClose: "Downloads refuse a bad signature.", reason: "Matches C1's condition." }]);
+  await assert.rejects(review(security, [{ op: "revise_finding", id: "implementation-review/security/S1", conditionToClose: "Downloads refuse a bad signature.", reason: "again" }]), /changes nothing/);
+  await review(delivery, [{ op: "set_finding_status", id: "implementation-review/security/S1", status: "FIXED", evidence: "No check." }]);
+  const page = await getReview(slice);
+  const s1 = page.entries.find((item) => item.localId === "S1");
+  assert.equal(s1.conditionToClose, "Downloads refuse a bad signature.");
+  assert.deepEqual(s1.history.map((entry) => [entry.status, entry.evidence ?? null, entry.revised ?? null]), [
+    ["OPEN", null, null],
+    ["OPEN", "Matches C1's condition.", { conditionToClose: { from: "Downloads check the signature.", to: "Downloads refuse a bad signature." } }],
+    ["FIXED", "No check.", null]
+  ], "history repeats evidence only when it changed");
+  assert.equal(page.currentWave.id, "w1");
+  assert.ok(page.currentWave.lanes, "a findings page carries the whole current wave");
+  const waves = await getReview({ ...slice, section: "waves" });
+  assert.deepEqual(waves.currentWave, { id: "w1" }, "a waves page names the current wave it already lists");
 });
 
 test("review errors say which worker and which revision form an update needs", async (context) => {
@@ -533,4 +575,11 @@ test("the acknowledgement counts a slice's contract defects", async (context) =>
   const brief = initiativeAcknowledgement(await initiativeUpdate(root, operations), operations);
   assert.equal(brief.slices.download.status, "blocked");
   assert.equal(brief.slices.download.contractDefects, 1);
+  assert.equal(brief.slices.download.next, undefined, "a slice still waiting for design has nothing to restart");
+  const revision = [{ op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" }];
+  const revised = initiativeAcknowledgement(await initiativeUpdate(root, revision), revision);
+  assert.equal(revised.slices.download.status, "blocked");
+  assert.match(revised.slices.download.next, /set_status in-progress restarts it/);
+  const restart = [{ op: "set_status", slug: "download", status: "in-progress" }];
+  assert.equal(initiativeAcknowledgement(await initiativeUpdate(root, restart), restart).slices.download.next, undefined);
 });

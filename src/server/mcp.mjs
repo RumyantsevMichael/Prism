@@ -408,7 +408,7 @@ const tools = [
   ...NATIVE_INTELLIGENCE_TOOLS,
   {
     name: "get_change_map",
-    description: "Read a bounded page of a slice change map, addressed by initiative and slice, through MCP. Pin expectedRevision across pages and to the audited design. Reads never create files.",
+    description: "Read a bounded page of a slice change map, addressed by initiative and slice, through MCP. Pin expectedRevision across pages and to the audited design. Reads never create files. A slice with an accepted design has no map until its first passing verify_slice run derives one, and the missing map does not block it.",
     inputSchema: GET_CHANGE_MAP_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },

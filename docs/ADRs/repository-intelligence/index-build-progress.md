@@ -25,7 +25,10 @@ A reader MUST treat a progress file as a running build only while its process ex
 When several running builds report progress for one project, a reader MUST show the same build on every read: a build that holds the project lock before one that waits for it, then the earliest started.
 A successful build MUST remove its progress file, and a failed build MUST leave it with the failure's diagnostics until a newer index or build replaces it.
 A process that starts a build MUST remove progress files whose processes no longer exist.
-The review browser MUST only display index state and MUST NOT start, retry, or cancel a build.
+The review browser MUST NOT cancel a build.
+While a page of a project is open, its review server MUST start one rebuild of an out-of-date index after the Git fingerprint stayed unchanged for a minute, at most once every five minutes, unless the project turned background indexing off.
+The review browser MUST offer a Rebuild index action for any state but a running build, and that action MUST start a rebuild whether or not background indexing is on.
+A rebuild that the review server starts MUST join a rebuild already running in its own process and MUST wait for the project lock like any other build.
 The review browser MUST show progress as an ordered list of steps, and MUST show a percentage only for a step whose counts the build reported.
 The review browser MUST NOT combine steps into one overall percentage, because the steps have unrelated totals and durations.
 A session MUST report its index storage directory when it registers or presents a project, in the same way it reports its evidence store, because each host keeps its plugin data in another place.
@@ -41,7 +44,8 @@ A build that fails because files changed during it SHOULD read as a pending rebu
 A file beside the index survives a review app restart and works however many sessions share a project, which an in-memory push to the app would not.
 Per-process files avoid a cross-process lock on a path that a build already holds its own lock around.
 A heartbeat with a process check separates a slow step from a session that ended, which the last progress value alone cannot.
-A read-only display keeps the shared review app free of the runtime, its downloads, and the index lock, which the owner chose to defer.
+A read-only display first kept the shared review app free of the runtime, its downloads, and the index lock; the owner later chose rebuilds from the browser, because slice pages showed line ranges of an index that went out of date between agent searches.
+A quiet minute turns an agent's burst of edits into one build, and the five-minute gap bounds embedding cost while a person keeps editing.
 The Git fingerprint costs a few small Git commands, while the real snapshot fingerprint hashes every eligible file, which is too heavy for a page that polls.
 
 ## Alternatives
@@ -77,3 +81,5 @@ The Git fingerprint costs a few small Git commands, while the real snapshot fing
 7. The top bar shows that state as a chip, and the chip opens a panel with the steps, the index facts, and the diagnostics; the project switcher marks other projects whose build runs or failed.
 
 ## Decision Log
+
+2026-11-04: The review server rebuilds an out-of-date index after a quiet minute while a page is open, and the browser offers Rebuild index, replacing the read-only rule.
