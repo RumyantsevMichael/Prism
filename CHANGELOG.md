@@ -7,27 +7,24 @@
 
 * claim a slice before working on it ([#79](https://github.com/RumyantsevMichael/Prism/issues/79)) ([1a45c35](https://github.com/RumyantsevMichael/Prism/commit/1a45c35427f9848f276ac95129315fa755dbf76d))
 * let a cloud session record the user's chat approval of the test command ([#87](https://github.com/RumyantsevMichael/Prism/issues/87)) ([b0d4484](https://github.com/RumyantsevMichael/Prism/commit/b0d44844c81edf707a905a6a5b73406ad197043d))
-* name each repository that shares a record store ([#93](https://github.com/RumyantsevMichael/Prism/issues/93)) ([d340f55](https://github.com/RumyantsevMichael/Prism/commit/d340f559c058bf452d0183a4ffe9d1c3ba26069b)), closes [#48](https://github.com/RumyantsevMichael/Prism/issues/48)
-* show slice claims in the review app ([3be7688](https://github.com/RumyantsevMichael/Prism/commit/3be7688d2983556d379da9fb667f4cda03b1fd7f))
-* show slice claims in the review app ([6b4112b](https://github.com/RumyantsevMichael/Prism/commit/6b4112b18fb922c28c4016ead91cb5a0c5071bdc))
-* show the record store, its sync, and code locations in the review app ([41509ac](https://github.com/RumyantsevMichael/Prism/commit/41509ac4a745ff7bf39319241a2d61c5656e4bcb))
-* show the record store, its sync, and code locations in the review app ([01ed645](https://github.com/RumyantsevMichael/Prism/commit/01ed645138cadd18365fb3395f2b40063f9cf667))
+* name each repository that shares a record store ([#93](https://github.com/RumyantsevMichael/Prism/issues/93)) ([d340f55](https://github.com/RumyantsevMichael/Prism/commit/d340f559c058bf452d0183a4ffe9d1c3ba26069b))
+* show slice claims in the review app ([#82](https://github.com/RumyantsevMichael/Prism/issues/82)) ([6b4112b](https://github.com/RumyantsevMichael/Prism/commit/6b4112b18fb922c28c4016ead91cb5a0c5071bdc))
+* show the record store, its sync, and code locations in the review app ([#77](https://github.com/RumyantsevMichael/Prism/issues/77)) ([01ed645](https://github.com/RumyantsevMichael/Prism/commit/01ed645138cadd18365fb3395f2b40063f9cf667))
 
 
 ### Fixed
 
-* check dependencies on start, stage tests again on revert, and ignore other slices' staged tests in staleness ([5151f19](https://github.com/RumyantsevMichael/Prism/commit/5151f1908ed40663d11e9670fb7808ea2c365afa))
-* exit the MCP server once its input closes ([42ebd8c](https://github.com/RumyantsevMichael/Prism/commit/42ebd8c9513c7b050a6844634d9046ca47b3b9ae))
-* keep remote store clones in Prism's app folder so Codex can use them ([62c9d06](https://github.com/RumyantsevMichael/Prism/commit/62c9d064079dd5601b54e44dde8914106a7c3f05))
-* keep remote store clones in Prism's app folder so Codex can use them ([93dabe8](https://github.com/RumyantsevMichael/Prism/commit/93dabe894a40aa2cc1c03e5a3124e78e1ffd50f4)), closes [#81](https://github.com/RumyantsevMichael/Prism/issues/81)
-* smooth four orchestration rough edges found while dogfooding ([cb6036e](https://github.com/RumyantsevMichael/Prism/commit/cb6036e19f1081a80cf0cb7b4266fbfcbab0816c))
-* wait for the native helper to exit before the MCP server exits ([326dafb](https://github.com/RumyantsevMichael/Prism/commit/326dafb85fb2a617b0d963015fb4b37561b5b418))
+* check dependencies on start, stage tests again on revert, and ignore other slices' staged tests in staleness ([#86](https://github.com/RumyantsevMichael/Prism/issues/86)) ([5151f19](https://github.com/RumyantsevMichael/Prism/commit/5151f1908ed40663d11e9670fb7808ea2c365afa))
+* exit the MCP server once its input closes ([#86](https://github.com/RumyantsevMichael/Prism/issues/86)) ([42ebd8c](https://github.com/RumyantsevMichael/Prism/commit/42ebd8c9513c7b050a6844634d9046ca47b3b9ae))
+* keep remote store clones in Prism's app folder so Codex can use them ([#84](https://github.com/RumyantsevMichael/Prism/issues/84)) ([93dabe8](https://github.com/RumyantsevMichael/Prism/commit/93dabe894a40aa2cc1c03e5a3124e78e1ffd50f4)), closes [#81](https://github.com/RumyantsevMichael/Prism/issues/81)
+* wait for the native helper to exit before the MCP server exits ([#86](https://github.com/RumyantsevMichael/Prism/issues/86)) ([326dafb](https://github.com/RumyantsevMichael/Prism/commit/326dafb85fb2a617b0d963015fb4b37561b5b418))
 
 
 ### Documentation
 
 * close resolved issues from pull request descriptions ([#83](https://github.com/RumyantsevMichael/Prism/issues/83)) ([56cefe2](https://github.com/RumyantsevMichael/Prism/commit/56cefe2cab210e53cd3df94dc49353eae2b60848))
 * squash-merge every pull request so the changelog lists each change once ([#92](https://github.com/RumyantsevMichael/Prism/issues/92)) ([6bdce4e](https://github.com/RumyantsevMichael/Prism/commit/6bdce4ebe5880b17f8672825721ad6288b27f8c7))
+
 
 ## [0.16.0](https://github.com/RumyantsevMichael/Prism/compare/v0.15.0...v0.16.0) (2026-11-03)
 
@@ -41,7 +38,6 @@
 * collect run statistics per wave, slice and initiative ([973f888](https://github.com/RumyantsevMichael/Prism/commit/973f8883e75b82a8322b070cc3a6f127b90abb85))
 * link records to their code and merge shared records safely ([#72](https://github.com/RumyantsevMichael/Prism/issues/72)) ([1dd6e5b](https://github.com/RumyantsevMichael/Prism/commit/1dd6e5baa6fd7fd895a12f92c813ca51ab1a5471))
 * name the record store by its Git remote and let Prism keep the clone ([#73](https://github.com/RumyantsevMichael/Prism/issues/73)) ([7f23433](https://github.com/RumyantsevMichael/Prism/commit/7f2343354770e3bf1e87ccc5deee09953df8e589))
-* new Prism mark in the review app ([e2ae41d](https://github.com/RumyantsevMichael/Prism/commit/e2ae41d2dcfa4247a081ec7d2b44e2440a5a5a2e))
 * new Prism mark in the review app ([0f34458](https://github.com/RumyantsevMichael/Prism/commit/0f344589a98f301ddcb4328bf56fe54342d4618a))
 * share machine records through an external record store synced by git ([#57](https://github.com/RumyantsevMichael/Prism/issues/57)) ([76d1771](https://github.com/RumyantsevMichael/Prism/commit/76d1771b37aa12f5e92d5fc2c91d01f093047c8c))
 
@@ -74,7 +70,6 @@
 
 ### Fixed
 
-* stop upstream changes from blocking reviews with outside_scope ([ef09069](https://github.com/RumyantsevMichael/Prism/commit/ef09069bbd25f6d1271ec0c842e1a1232a675bad))
 * stop upstream changes from blocking reviews with outside_scope ([#55](https://github.com/RumyantsevMichael/Prism/issues/55)) ([3af4764](https://github.com/RumyantsevMichael/Prism/commit/3af476454e27a9bc4bbca4a40a37a8f28f23fdbe))
 
 
@@ -129,15 +124,12 @@
 
 ### Added
 
-* carry unchanged review assessments forward and return an assessment skeleton ([1ab3adc](https://github.com/RumyantsevMichael/Prism/commit/1ab3adc0c4ff8048fa1cccb8a60b72b9ac14a793))
 * carry unchanged review assessments forward and return an assessment skeleton ([1d20e47](https://github.com/RumyantsevMichael/Prism/commit/1d20e47f5a0f4e34ec8c06a28f2f982171fd8605)), closes [#17](https://github.com/RumyantsevMichael/Prism/issues/17)
 * design a shared review app with red tests ([87b16ad](https://github.com/RumyantsevMichael/Prism/commit/87b16add24d0b7f1af768477d8da8714000bb88b))
 * estimate active Claude Code session capacity conservatively ([dc1f121](https://github.com/RumyantsevMichael/Prism/commit/dc1f121b2dafdbc85aa3ecb4988487a02c307ef0))
 * open prism review in the shared review app and return ([8f5b9d3](https://github.com/RumyantsevMichael/Prism/commit/8f5b9d3ad4bf8b9fc94ad7e4ff885f39e5a1a15a))
 * reuse the review viewer credential only after a handoff ([8452908](https://github.com/RumyantsevMichael/Prism/commit/84529080421e978ce65197a9f1455d1453ea5ce9))
-* scope correction review to files changed since the previous wave ([a9469a0](https://github.com/RumyantsevMichael/Prism/commit/a9469a0ec83a63332c49c30bdb9a01cc4472d34b))
 * scope correction review to files changed since the previous wave ([c7d123c](https://github.com/RumyantsevMichael/Prism/commit/c7d123c7e17893fd4ddd532b08a6e44a3559c355))
-* share one review app across sessions and projects ([1b36d90](https://github.com/RumyantsevMichael/Prism/commit/1b36d905b22509aeb344f06f90cfc285daa3ac8d))
 * share one review app across sessions and projects ([2785f97](https://github.com/RumyantsevMichael/Prism/commit/2785f97b17cee9baa9cba5be7b2cc470e8d0faac))
 * sign review app control requests and isolate scripts ([e2e64d9](https://github.com/RumyantsevMichael/Prism/commit/e2e64d9a73ef675acc99368641f996158b6cd4bc))
 * switch projects in the review app and notify instead of opening a second tab ([8d53127](https://github.com/RumyantsevMichael/Prism/commit/8d531270779a15b054dcf31d4f75aa46760ccbf8))
@@ -156,10 +148,8 @@
 * make active session capacity work on current Codex and Claude Code ([d7da2cf](https://github.com/RumyantsevMichael/Prism/commit/d7da2cfd5a980be8a05c57d99ca822daea487560))
 * offer carry-forward from the last wave that holds accepted assessments ([9006cd5](https://github.com/RumyantsevMichael/Prism/commit/9006cd5952578f48b6be4cdec630fff4ee36b0bd))
 * read a project's evidence from every store its sessions report ([916a21c](https://github.com/RumyantsevMichael/Prism/commit/916a21cd022a940b4fb658cf8183fcf3b400d8db))
-* refuse implementation review waves before an accepted design audit ([d146852](https://github.com/RumyantsevMichael/Prism/commit/d146852d963648ad79bb1a4289280e52bf1c913b))
 * refuse implementation review waves before an accepted design audit ([aa258bc](https://github.com/RumyantsevMichael/Prism/commit/aa258bc5876f0640730a53c36f1ffd3a86f765a4))
 * serve each project's evidence from the store its sessions report ([18ea1fd](https://github.com/RumyantsevMichael/Prism/commit/18ea1fd36e62e98fe486360ad0539f3f4cd1ed47))
-* serve the review browser over plain HTTP on loopback ([485d1e3](https://github.com/RumyantsevMichael/Prism/commit/485d1e313f21161fc25acff712aae34fa51b369a))
 * serve the review browser over plain HTTP on loopback ([c450423](https://github.com/RumyantsevMichael/Prism/commit/c450423f961c9fe6952db782ee59ed4b3beb9494))
 * stop renewing a project's app lease once it falls back ([64b0c5b](https://github.com/RumyantsevMichael/Prism/commit/64b0c5ba47893046417e7c03a7e0fad746293e85))
 * treat public Python declarations as public in the conservation gate ([6d28808](https://github.com/RumyantsevMichael/Prism/commit/6d28808a643a65426eb2961736fe35ed008335ee))
@@ -246,7 +236,6 @@
 * say why a review wave cannot be accepted ([dab678b](https://github.com/RumyantsevMichael/Prism/commit/dab678b650b94a07ec4498fa53135ff22d868395))
 * share review browser reads across one refresh ([ee93332](https://github.com/RumyantsevMichael/Prism/commit/ee93332cd85c79df7313a637fd39b5c426e41c50))
 * state the root slice folder, roadmap acceptance, and wait fallbacks ([da46edf](https://github.com/RumyantsevMichael/Prism/commit/da46edff3f126253938228371e2cf04949d02dc6))
-* sync decision history records to disk before publishing them ([6ceabab](https://github.com/RumyantsevMichael/Prism/commit/6ceabab7e29250b5fd898b4090cbd58237d6c0f6))
 * sync decision history records to disk before publishing them ([b51b0d9](https://github.com/RumyantsevMichael/Prism/commit/b51b0d9db3adc7aab14c97d7b2ac784659124458))
 * treat new private units in planned spans and new planned files as implementation detail, and name whole-file convergence ([aa962c9](https://github.com/RumyantsevMichael/Prism/commit/aa962c9593e6dfc062f944f72b0c6dc70ca60363))
 
