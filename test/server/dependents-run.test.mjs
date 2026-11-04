@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { INITIATIVE, THREE, command, commitAll, componentProject, failing, git, node, planAndAccept, read, refusal, runLog, update, workflow, write } from "./fixtures/components.mjs";
+import { INITIATIVE, THREE, command, componentProject, failing, node, planAndAccept, read, refusal, runLog, update, workflow, write } from "./fixtures/components.mjs";
 import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 // Requirements: docs/requirements/components.md §17, §18, §19.
@@ -11,15 +11,12 @@ import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-dependents-run-data-")));
 process.env.PLUGIN_DATA = privateData;
-// This machine's checkout list lives in Prism's application folder, which each test file keeps private.
-process.env.PRISM_REVIEW_APP_DIR = path.join(privateData, "app");
 delete process.env.CLAUDE_PLUGIN_DATA;
 delete process.env.CLAUDE_CODE_REMOTE;
 const { verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { answerUserGate } = await import("../../dist/server/workflow/state.mjs");
 const { updateRoadmap, getRoadmap } = await import("../../dist/server/workflow/roadmap.mjs");
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
-const { recordStoreOf } = await import("../../dist/server/workflow/record-store.mjs");
 const initiativeView = await import("../../dist/server/review/public/views/initiative.js");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
@@ -328,39 +325,14 @@ test("clause 35: the roadmap and the review browser show an initiative ready to 
   assert.equal((await ship(root)).record.initiatives.find((item) => item.id === INITIATIVE).decision.kind, "shipped");
 });
 
-// Another repository's checkout beside the store, with its own history and the given Components lines, named to the same store.
-async function otherCheckout(context, parent, name, store, lines) {
-  const root = path.join(parent, name);
-  await write(root, { "README.md": `# ${name}\n`, ".prism/workflow.md": workflow({ stack: null, components: ["## Components", ...lines, ""].join("\n"), workspace: [`- Store: ${store}`, `- Repository: ${name}`] }) });
-  git(root, "init", "-q", "-b", "main");
-  commitAll(root, `start ${name}`);
-  const real = await realpath(root);
-  assert.equal((await recordStoreOf(real)).repository, name, "the store accepts the checkout and this machine lists it");
-  return real;
-}
-
-test("clause 39: the dependents' run reports other repositories' dependents it did not run and the repositories it could not read", async (context) => {
-  const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-dependents-workspace-")));
-  context.after(() => rm(parent, { recursive: true, force: true }));
-  const store = path.join(parent, "store");
-  await mkdir(store);
-  const root = await oneSlice(context, { config: workflow({ components: DEPENDENTS, workspace: [`- Store: ${store}`, "- Repository: api"] }) });
-  await otherCheckout(context, parent, "portal", store, ["- site: site", "  - Depends on: api/shared", "- console: console", "  - Depends on: site", "- help: help"]);
-  const ledger = await otherCheckout(context, parent, "ledger", store, ["- books: books", "  - Depends on: api/billing"]);
-  await rm(ledger, { recursive: true, force: true });
+test("clause 39: the dependents' run covers only its own repository, and a dependency on another repository's component neither runs nor is reported", async (context) => {
+  const crossing = DEPENDENTS.replace("- admin: apps/admin\n  - Depends on: shared", "- admin: apps/admin\n  - Depends on: shared, portal/site\n- console: apps/console\n  - Depends on: portal/site");
+  const root = await oneSlice(context, { config: workflow({ components: crossing }) });
   await finish(root, INITIATIVE);
   const result = await runDependents(root, INITIATIVE);
-  assert.equal(result.status, "passed", "dependents in other repositories never fail the run");
-  assert.deepEqual(result.components.map((item) => item.name), ["api/billing", "api/web", "api/admin"]);
-  assert.deepEqual(result.otherRepositories, {
-    notRun: [{ component: "portal/console", dependsOn: ["portal/site"] }, { component: "portal/site", dependsOn: ["api/shared"] }],
-    unread: ["ledger"]
-  });
-  assert.deepEqual(JSON.parse(await readFile(path.join(root, result.run), "utf8")).otherRepositories, result.otherRepositories);
-  const shipped = await ship(root);
-  assert.equal(shipped.record.initiatives.find((item) => item.id === INITIATIVE).decision.kind, "shipped", "they never block shipping");
-
-  const alone = await oneSlice(context);
-  await finish(alone, INITIATIVE);
-  assert.deepEqual((await runDependents(alone, INITIATIVE)).otherRepositories, { notRun: [], unread: [] }, "a repository without a store has no other repositories");
+  assert.equal(result.status, "passed", result.outputTail);
+  assert.deepEqual(result.components.map((item) => item.name), ["root/billing", "root/web", "root/admin"], "console depends only on another repository and does not run");
+  assert.equal(Object.hasOwn(result, "otherRepositories"), false);
+  assert.equal(Object.hasOwn(JSON.parse(await readFile(path.join(root, result.run), "utf8")), "otherRepositories"), false);
+  assert.equal((await ship(root)).record.initiatives.find((item) => item.id === INITIATIVE).decision.kind, "shipped");
 });

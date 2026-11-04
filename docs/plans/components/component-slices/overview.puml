@@ -16,7 +16,7 @@ Verification ..> Reader : reads components
 Verification ..> SliceComponent : verifies the slice's component
 Dependents ..> CommandFolder : runs each dependent's pair
 Dependents ..> PairApproval : asks for unapproved pairs in one gate
-Dependents ..> Reader : walks Depends on, here and in other checkouts
+Dependents ..> Reader : walks Depends on in this repository
 Label ..> SliceComponent : labels the slice
 Verification ..> Declarations : built after
 Dependents ..> Verification : built after

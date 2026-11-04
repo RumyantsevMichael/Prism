@@ -24,7 +24,7 @@ Prism 0.17.0 also only warns a checkout whose configuration names a record store
 
 ## Non-goals
 
-- Running the tests of components in another repository, which this milestone only records and reports.
+- Running or reporting the tests of components in another repository, whose dependencies this milestone only records.
 - Running or verifying a slice in another repository's checkout.
 - Read-only clones of other repositories.
 - The workspace view by repository and component in the review browser.
@@ -257,7 +257,7 @@ Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When the last leaf slice of a contract scope is done, Prism shall run once the test command of each component of the same repository that depends, directly or through other components, on the component of one of the scope's leaf slices, and name each component of another repository that depends on them and that it did not run.
+Requirement: When the last leaf slice of a contract scope is done, Prism shall run once the test command of each component of the same repository that depends, directly or through other components, on the component of one of the scope's leaf slices.
 
 Rationale: Each slice runs only its own component's tests, so a change that breaks a component depending on it shows only when the dependents run, and running them once per scope keeps each slice's verification short; running every transitive dependent, also for a scope inside one component, and not counting a change under a shared path as a change to every component are the defaults that design adopted on 4 November 2026 while the questions are open with Michael.
 
