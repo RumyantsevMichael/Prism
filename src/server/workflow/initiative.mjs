@@ -117,7 +117,7 @@ function canonicalRecord(record) {
       requirements: [...slice.requirements].sort(),
       dependencies: [...slice.dependencies].sort(),
       ...(slice.component ? { component: slice.component } : {}),
-      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}), ...(slice.design.startTree ? { startTree: slice.design.startTree } : {}) } } : {}),
+      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}), ...startOf(slice.design) } } : {}),
       ...(slice.splitEvidence ? { splitEvidence: slice.splitEvidence } : {}),
       ...(slice.contractDefects ? { contractDefects: slice.contractDefects } : {})
     };
@@ -342,11 +342,27 @@ async function sliceOutcome(resolved, slices, slugValue) {
   }
 }
 
-// The start content is hashed as a verification run hashes the project, so the two trees compare path by path.
-async function startContent(root) {
-  const { contentTree } = await import("./slice-gate.mjs");
-  try { return await contentTree(root, await readWorkflowConfig(root)); }
+// A started slice's start content: its content tree, when Prism recorded it, and the ## Components declaration in force then.
+const START_FIELDS = ["startTree", "startRecordedAt", "startDeclaration"];
+const startOf = (design) => Object.fromEntries(START_FIELDS.filter((key) => design?.[key] !== undefined).map((key) => [key, design[key]]));
+
+/**
+ * The start content of a slice, hashed as a verification run hashes the project so the two trees compare path by path, with its time and the declaration in force, or null when Git cannot hash the work tree.
+ * Starting a slice reads no components for a refusal, so an invalid declaration, or one without the slice's component, records the content without a declaration.
+ */
+async function startContent(root, identity) {
+  const { contentTree, startDeclaration } = await import("./slice-gate.mjs");
+  let config;
+  try { config = await readWorkflowConfig(root); }
   catch { return null; }
+  const startTree = await contentTree(root, config).catch(() => null);
+  if (!startTree) return null;
+  let declared = null;
+  try {
+    const declaration = readComponents(config);
+    if (findComponent(declaration, identity)) declared = startDeclaration(declaration);
+  } catch { declared = null; }
+  return { startTree, startRecordedAt: new Date().toISOString(), ...(declared ? { startDeclaration: declared } : {}) };
 }
 
 async function completionGate(resolved, slugValue) {
@@ -554,12 +570,20 @@ async function applyOperation(resolved, record, operation, effects) {
         else delete slice.design.baselineId;
       }
       // A slice that records a component keeps the project's content at its start, with its frozen tests in place, so verification can find the changes that leave the component.
-      // A slice that is already in progress keeps the content it started from, and a work tree that Git cannot hash records none.
+      // A slice restarted after a block, or already in progress, keeps the content it started from, and a work tree that Git cannot hash records none.
+      // The content stays under a local ref once the record is written, so git gc keeps it.
       if (operation.status === "in-progress" && slice.status !== "in-progress" && slice.component && slice.design && !slice.design.startTree && !effects.dryRun) {
-        const startTree = await startContent(resolved.root);
-        if (startTree) slice.design.startTree = startTree;
+        const start = await startContent(resolved.root, slice.component);
+        if (start) {
+          Object.assign(slice.design, start);
+          effects.refs.push({ slice: operation.slug, start: start.startTree });
+        }
       }
-      if (operation.status === "not-started" && slice.design) delete slice.design.startTree;
+      // A slice back at not-started drops its start content and its refs, so starting it again records new start content.
+      if (operation.status === "not-started" && (slice.design?.startTree || STARTED.has(slice.status))) {
+        if (slice.design) for (const key of START_FIELDS) delete slice.design[key];
+        if (!effects.dryRun) effects.refs.push({ slice: operation.slug, drop: true });
+      }
       // A started slice that returns to not-started stages its frozen tests again, so other slices' verification never runs them,
       // unless another slice shares a test file, which staging would take from that slice too.
       if (operation.status === "not-started" && STARTED.has(slice.status) && slice.design && !slice.design.staged && !claimedTests(slices, operation.slug, slice.design.frozenTests, true).length) {
@@ -631,8 +655,7 @@ async function applyOperation(resolved, record, operation, effects) {
       if (!staging) {
         const baselineId = await captureBaseline(resolved.root, resolved.initiative, operation.slug);
         // A new design of a started slice keeps the content the slice started from, so the changes made before the revision still count.
-        const startTree = slice.design?.startTree;
-        slice.design = { acceptedAt, frozenTests, review: operation.review, ...(baselineId ? { baselineId } : {}), ...(startTree ? { startTree } : {}) };
+        slice.design = { acceptedAt, frozenTests, review: operation.review, ...(baselineId ? { baselineId } : {}), ...startOf(slice.design) };
       } else {
         effects.staged.push(await stageFrozenTests(resolved.root, operation.slug, frozenTests));
         slice.design = { acceptedAt, frozenTests, review: operation.review, staged: true };
@@ -688,7 +711,7 @@ async function applyOperation(resolved, record, operation, effects) {
       if (outside.length) throw fail("validation_failed", `A design proposal changes only its scope ${operation.slug} and the slices inside it, not ${outside.join(", ")}.`);
       const trial = { slices: Object.assign(Object.create(null), structuredClone(slices)) };
       const accepted = new Set(operation.operations.filter((item) => item.op === "accept_design").map((item) => item.slug));
-      const trialEffects = { staged: [], installed: [], diagrams: [], checkedFolders: new Set(), diagramCache: effects.diagramCache, accepted, applied: [], dryRun: true, components: effects.components };
+      const trialEffects = { staged: [], installed: [], refs: [], diagrams: [], checkedFolders: new Set(), diagramCache: effects.diagramCache, accepted, applied: [], dryRun: true, components: effects.components };
       for (const inner of operation.operations) await applyOperation(resolved, trial, inner, trialEffects);
       try {
         analyzeInitiative(trial.slices);
@@ -844,7 +867,7 @@ async function applyAll(resolved, record, input, effects) {
   }
 }
 
-const newEffects = (input, diagramCache, claims, notes, dryRun) => ({ staged: [], installed: [], diagrams: [], checkedFolders: new Set(), diagramCache, accepted: new Set(input.operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug)), applied: [], actor: input.actor, claims, notes, dryRun });
+const newEffects = (input, diagramCache, claims, notes, dryRun) => ({ staged: [], installed: [], refs: [], diagrams: [], checkedFolders: new Set(), diagramCache, accepted: new Set(input.operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug)), applied: [], actor: input.actor, claims, notes, dryRun });
 
 // The initiative write: revision check, record lock, validation, history, and projection; the claims it ends are noted for removal after the write.
 async function writeInitiative(input, plan = null) {
@@ -868,6 +891,14 @@ async function writeInitiative(input, plan = null) {
     // Staged tests leave the work tree only after the initiative record is written, and only for slices still staged at the end of the update.
     const withdrawn = [];
     for (const staged of effects.staged) if (record.slices[staged.slice]?.design?.staged) withdrawn.push(...await withdrawFrozenTests(resolved.root, resolved.initiative, staged));
+    // The slices' local refs follow the written record, in the order the update set and dropped them.
+    if (changed && effects.refs.length) {
+      const { dropSliceRefs, setSliceRef } = await import("./slice-gate.mjs");
+      for (const item of effects.refs) {
+        if (item.drop) await dropSliceRefs(resolved.root, resolved.initiative, item.slice);
+        else await setSliceRef(resolved.root, resolved.initiative, item.slice, "start", item.start);
+      }
+    }
     let projectionStale = false;
     try {
       projectionStale = !(await writeProjection(resolved.root, resolved.projectionTarget, markdown(canonicalRecord(record)), RECORD_NAME)).written;

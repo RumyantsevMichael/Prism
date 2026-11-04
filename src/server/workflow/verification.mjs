@@ -7,11 +7,11 @@ import path from "node:path";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
-import { componentOf, findComponent, readComponents, underSharedPath } from "./components.mjs";
-import { appendRecord, locateRecord, RECORD_DIRECTORY, recordStoreOf } from "./record-store.mjs";
+import { findComponent, readComponents } from "./components.mjs";
+import { appendRecord, listRecordEntries, locateRecord, RECORD_DIRECTORY, recordStoreOf } from "./record-store.mjs";
 import { repositoryId } from "./repository-names.mjs";
-import { changedPaths, contentTree } from "./slice-gate.mjs";
-import { acceptedDesign, checkFrozenTests, unfinishedFrozenTestsOfOthers } from "./slice-design.mjs";
+import { changedPaths, contentTree, crossesComponent, setSliceRef, startDeclaration, treeReadable } from "./slice-gate.mjs";
+import { acceptedDesign, checkFrozenTests, designProblems } from "./slice-design.mjs";
 import { readCoordinationState, updateCoordinationState } from "./state.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { publicRemote } from "./remote-url.mjs";
@@ -67,15 +67,29 @@ export async function configuredTestCommand(projectRoot) {
   return { config, command: command && !/^n\/a$/i.test(command) ? command : null };
 }
 
+// The initiative's slices as its record holds them, or an empty object when it cannot be read.
+async function recordedSlices(root, initiative) {
+  const located = await locateRecord(root, { kind: "initiative", initiative });
+  try { return JSON.parse(await readFile(located.target, "utf8"))?.slices ?? {}; }
+  catch { return {}; }
+}
+
 // The component a slice's accepted design recorded, as <repository>/<component>, or undefined for a slice accepted before components existed.
 async function recordedComponent(root, initiative, slice) {
-  const located = await locateRecord(root, { kind: "initiative", initiative });
-  try { return JSON.parse(await readFile(located.target, "utf8"))?.slices?.[slice]?.component ?? undefined; }
-  catch { return undefined; }
+  return (await recordedSlices(root, initiative))[slice]?.component ?? undefined;
+}
+
+// A project-relative folder with forward slashes, "" for the project root, or null for a path outside the project.
+function projectFolder(root, target) {
+  const relative = path.relative(root, target);
+  if (relative === "") return "";
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
+  return relative.split(path.sep).join("/");
 }
 
 /**
- * What a slice's verification runs and where: { config, command, folder, cwd, component, declaration }, where folder is project-relative and "" for the project root, cwd is its real path,
+ * What a slice's verification runs and where: { config, command, folder, declaredFolder, cwd, component, declaration }, where cwd is the real path the command runs in,
+ * folder is that path project-relative and "" for the project root, declaredFolder is the component's folder as declared,
  * and component is null for a slice without one, which reads no components and runs the repository's command in the project root.
  * A slice with a component runs that component's own command in its folder, or the repository's command in the project root when it declares none.
  * Every refusal comes before any approval is asked.
@@ -85,7 +99,7 @@ async function verificationTarget(root, initiative, slice) {
   if (identity === undefined) {
     const { config, command } = await configuredTestCommand(root);
     if (!command) throw fail("test_command_missing", "The project configures no test command. Add one under ## Stack in .prism/workflow.md as - Test command: <command>.");
-    return { config, command, folder: "", cwd: root, component: null, declaration: null };
+    return { config, command, folder: "", declaredFolder: "", cwd: root, component: null, declaration: null };
   }
   const config = await readWorkflowConfig(root);
   const declaration = readComponents(config);
@@ -96,18 +110,21 @@ async function verificationTarget(root, initiative, slice) {
   }
   const own = component !== declaration.root && component.testCommand !== null;
   const command = own ? component.testCommand : declaration.root.testCommand;
-  const folder = own ? component.folder : "";
+  const declaredFolder = own ? component.folder : "";
   if (!command) {
     const message = component === declaration.root ? "The project configures no test command. Add one under ## Stack in .prism/workflow.md as - Test command: <command>." : `Neither the component ${component.identity} nor the project configures a test command. Add one under the component in ## Components as - Test command: <command>, or under ## Stack in .prism/workflow.md.`;
     throw fail("test_command_missing", message, { component: component.identity });
   }
   let cwd = null;
   try {
-    const resolved = await realpath(path.join(root, folder));
+    const resolved = await realpath(path.join(root, declaredFolder));
     if ((await stat(resolved)).isDirectory()) cwd = resolved;
   } catch { cwd = null; }
-  if (cwd === null) throw fail("component_folder_missing", `The folder ${folder} of the component ${component.identity}, where its test command runs, does not exist or is not a folder.`, { component: component.identity, folder });
-  return { config, command, folder, cwd, component, declaration };
+  if (cwd === null) throw fail("component_folder_missing", `The folder ${declaredFolder} of the component ${component.identity}, where its test command runs, does not exist or is not a folder.`, { component: component.identity, folder: declaredFolder });
+  // A folder is declared by its text, while a symbolic link on its path can lead anywhere, so the command runs only in a folder of the project.
+  const folder = projectFolder(root, cwd);
+  if (folder === null) throw fail("component_folder_outside", `The folder ${declaredFolder} of the component ${component.identity} leads outside the project through a symbolic link, so Prism does not run its test command there. Point the component at a folder inside the project.`, { component: component.identity, folder: declaredFolder });
+  return { config, command, folder, declaredFolder, cwd, component, declaration };
 }
 
 // Every result that names a command also names the folder it runs in and, for a slice with a component, that component.
@@ -150,8 +167,9 @@ async function pendingGate(projectRoot, initiative, id) {
   return (state.state?.pending ?? []).find((item) => item && typeof item === "object" && item.id === id) ?? null;
 }
 
-function approvalQuestion(command, folder, where, key) {
-  const place = folder === "" ? "the project root" : `the folder ${folder}${where ? ` (${where})` : ""}`;
+// The folder is the one the command runs in, project-relative, and a component folder that leads there through a link is named beside it, so the question holds no path of the user's machine.
+function approvalQuestion(command, folder, declaredFolder, key) {
+  const place = `${folder === "" ? "the project root" : `the folder ${folder}`}${declaredFolder && declaredFolder !== folder ? `, where the component folder ${declaredFolder} leads` : ""}`;
   return [
     "Allow Prism to run this test command to verify slices in this project?",
     "",
@@ -170,10 +188,8 @@ export function reviewBrowserUnreachable(env = process.env) {
 // Only the review browser records gate answers, so an Allow choice on the server's own gate is the user's approval.
 // Where the person cannot open the browser, the agent records the person's chat answer instead, quoted in the approval and the gate's history.
 // An approval is keyed by the real working folder and the command text, so an approval given before components existed, keyed by the project root, still allows that command there.
-async function approval({ root, initiative, slice, command, folder, cwd, approvalGate, chatApproval, dataDirectory }) {
+async function approval({ root, initiative, slice, command, folder, declaredFolder, cwd, approvalGate, chatApproval, dataDirectory }) {
   const key = digest(`${cwd}\n${command}`);
-  // A folder whose real path is not where the project path points, such as a link, is named by both, so the person sees where the command runs.
-  const where = folder !== "" && cwd !== path.join(root, folder) ? cwd : null;
   if (chatApproval && !reviewBrowserUnreachable()) throw fail("chat_approval_unavailable", "This session can open the review browser, so the user allows the test command there, not in chat. Call verify_slice without chatApproval.");
   return withApprovals(dataDirectory, async (store) => {
     if (store.approved[key]) return { approved: true, key };
@@ -206,7 +222,7 @@ async function approval({ root, initiative, slice, command, folder, cwd, approva
         return { approved: false, key, status: "approval_needed", gateId: requested };
       }
     }
-    const opened = await gateChange(root, initiative, { gateOperations: [{ op: "ask", kind: "decision", slice, question: approvalQuestion(command, folder, where, key), artifacts: [".prism/workflow.md"], options: [{ id: ALLOW, label: "Allow this command" }, { id: DECLINE, label: "Decline" }] }] });
+    const opened = await gateChange(root, initiative, { gateOperations: [{ op: "ask", kind: "decision", slice, question: approvalQuestion(command, folder, declaredFolder, key), artifacts: [".prism/workflow.md"], options: [{ id: ALLOW, label: "Allow this command" }, { id: DECLINE, label: "Decline" }] }] });
     const gateId = opened.openedGates[0].id;
     store.requests[gateId] = { key, initiative, askedAt: new Date().toISOString() };
     return { approved: false, key, status: "approval_needed", gateId };
@@ -290,15 +306,55 @@ async function logPathFor(dataDirectory, root, initiative, slice, id) {
 }
 
 /**
- * The changed paths since a slice started that leave its component, sorted, or null when Git cannot compare the trees.
- * Every path added, changed, or removed counts, except the frozen tests of the initiative's other unfinished slices, which Prism stages in and out of the work tree;
- * a path crosses when it belongs to another component and lies under no shared path.
+ * The changed paths since a slice started that a change of another slice explains:
+ * a frozen test of another slice that holds its frozen content, or is absent while that slice is not started,
+ * and a path that another slice's latest passing run changed, when that run finished after this slice's start content was recorded and the path still holds the content it tested.
+ * An exception whose contents Git cannot read does not apply.
  */
-async function crossingPaths(root, initiative, slice, { component, declaration }, startTree, tree) {
-  const changed = await changedPaths(root, startTree, tree);
+async function othersChanges(root, initiative, slice, design, changed) {
+  const explained = new Set();
+  const slices = await recordedSlices(root, initiative);
+  const pending = new Set(changed);
+  for (const [key, other] of Object.entries(slices)) {
+    if (key === slice || !Array.isArray(other?.design?.frozenTests)) continue;
+    for (const item of other.design.frozenTests) {
+      if (!pending.has(item?.path)) continue;
+      const state = await checkFrozenTests(root, [item]);
+      if (!state.changed.length && (!state.missing.length || other.status === "not-started")) explained.add(item.path);
+    }
+  }
+  const since = Date.parse(design.startRecordedAt ?? "");
+  if (Number.isNaN(since)) return explained;
+  for (const [key, other] of Object.entries(slices)) {
+    const theirs = other?.design;
+    if (key === slice || !theirs?.startTree || designProblems(theirs).length) continue;
+    const runs = await listRecordEntries(root, { kind: "runs", initiative, slice: key }).catch(() => []);
+    const latest = runs.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true && typeof item.entry.tree === "string").at(-1)?.entry;
+    // Only a run of the other slice's current start, finished after this slice's start content, explains a change.
+    if (!latest || !(Date.parse(latest.finishedAt) > since) || (theirs.startRecordedAt && !(Date.parse(latest.finishedAt) > Date.parse(theirs.startRecordedAt)))) continue;
+    const made = await changedPaths(root, theirs.startTree, latest.tree);
+    const differs = made === null ? null : await changedPaths(root, latest.tree, design.currentTree);
+    if (made === null || differs === null) continue;
+    const moved = new Set(differs);
+    for (const file of made) if (pending.has(file) && !moved.has(file)) explained.add(file);
+  }
+  return explained;
+}
+
+/**
+ * The changed paths since a slice started that leave its component, sorted, or null when Git can no longer read or compare the start content.
+ * Every path added, changed, or removed counts, except those another slice's change explains, and a path crosses by the declaration recorded with the start content.
+ */
+async function crossingPaths(root, initiative, slice, { component, declaration }, design, tree) {
+  if (!await treeReadable(root, design.startTree)) return null;
+  const changed = await changedPaths(root, design.startTree, tree);
   if (changed === null) return null;
-  const others = new Set(await unfinishedFrozenTestsOfOthers(root, initiative, slice));
-  return changed.filter((file) => !others.has(file) && componentOf(declaration, file).identity !== component.identity && !underSharedPath(declaration, file)).sort();
+  if (!changed.length) return [];
+  const explained = await othersChanges(root, initiative, slice, { ...design, currentTree: tree }, changed);
+  // A slice started before Prism recorded the declaration with its start content is classified by the declaration in force now.
+  const recorded = design.startDeclaration ?? startDeclaration(declaration);
+  const folder = component === declaration.root ? "" : component.folder;
+  return changed.filter((file) => !explained.has(file) && crossesComponent(recorded, component.identity, folder, file)).sort();
 }
 
 async function verificationRun({ root, initiative, slice, target, key, design, signal, onProgress, dataDirectory }) {
@@ -316,10 +372,13 @@ async function verificationRun({ root, initiative, slice, target, key, design, s
   } else {
     const before = await contentTree(root, config);
     // A slice with a component and start content checks, before the command runs, that its changes stay inside the component.
-    // A slice started where Git could not hash the work tree has no start content, and a start tree Git no longer holds cannot be compared, so both run unchecked.
-    const crossing = target.component && design.startTree ? await crossingPaths(root, initiative, slice, target, design.startTree, before) : null;
+    // Only a slice started where Git could not hash the work tree, which has no start content, runs unchecked; start content Git can no longer read fails the run.
+    const checking = Boolean(target.component && design.startTree);
+    const crossing = checking ? await crossingPaths(root, initiative, slice, target, design, before) : null;
     const boundary = target.component ? { boundary: crossing === null ? "unchecked" : "checked" } : {};
-    if (crossing?.length) {
+    if (checking && crossing === null) {
+      entry = { ...base, ...boundary, finishedAt: new Date().toISOString(), ...stopped, reason: "start_content_missing", tree: before };
+    } else if (crossing?.length) {
       entry = { ...base, ...boundary, finishedAt: new Date().toISOString(), ...stopped, reason: "component_boundary", crossing: crossing.slice(0, MAX_CROSSING_PATHS), crossingCount: crossing.length, tree: before };
     } else {
       const timeoutMs = Number(process.env.PRISM_VERIFY_TIMEOUT_MINUTES || DEFAULT_TIMEOUT_MINUTES) * 60000;
@@ -330,6 +389,8 @@ async function verificationRun({ root, initiative, slice, target, key, design, s
       const reason = outcome.cancelled ? "cancelled" : outcome.timedOut ? "timed_out" : outcome.exitCode !== 0 ? "command_failed" : after !== before ? "tracked_files_changed" : null;
       // A passing run keeps a snapshot of the verified source, which the derived change map compares with the design baseline.
       const snapshotId = reason === null && design.baselineId ? await conservationStore.capture(root, { initiative, slice }).then((captured) => captured.snapshotId, () => null) : null;
+      // The content a passing run tested stays under the slice's passed ref while the slice has start content, so another slice's boundary check can still read it.
+      if (reason === null && design.startTree) await setSliceRef(root, initiative, slice, "passed", before);
       entry = { ...base, ...boundary, finishedAt: new Date().toISOString(), durationMs: outcome.durationMs, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, passed: reason === null, ...(reason ? { reason } : {}), tree: before, ...(after !== before ? { treeAfter: after } : {}), ...(snapshotId ? { snapshotId } : {}), ...(reason === "command_failed" && outcome.failing.length ? { failing: outcome.failing.slice(0, MAX_FAILING_NAMES), failingCount: outcome.failing.length } : {}), outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), output: outcome.output };
     }
   }
@@ -381,7 +442,8 @@ const REASONS = {
   timed_out: "The command exceeded the verification timeout.",
   command_failed: "The test command failed.",
   tracked_files_changed: "The command changed project files while it ran, so the run does not identify one tested state. Run verify_slice again.",
-  component_boundary: "The changes since the slice started leave its component at the crossing paths, so the command did not run. Move each change back inside the component or under a shared path, or report the contract clause that needs it as a contract defect."
+  component_boundary: "The changes since the slice started leave its component at the crossing paths, so the command did not run. Move each change this slice made back inside the component or under a shared path, or report the contract clause that needs it as a contract defect; report a crossing path that holds work this slice did not make instead of moving it.",
+  start_content_missing: "Git can no longer read the content this slice started from, so its component boundary cannot be checked and the command did not run. Ask the user to set the slice back to not-started with the update_initiative set_status operation and start it again, which records the current content, the slice's earlier changes included, as new start content."
 };
 
 function resultOf(run) {
@@ -399,10 +461,10 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
   if (design.staged) throw fail("slice_not_started", `The slice ${slice} has not started, so its frozen tests are not in place. Start it with the update_initiative set_status in-progress operation.`);
   if (contractDefects) return reportContractDefects(root, initiative, slice, design, contractDefects);
   const target = await verificationTarget(root, initiative, slice);
-  const { command, folder, cwd } = target;
+  const { command, folder, declaredFolder, cwd } = target;
   const names = named(target);
   const where = folder === "" ? "the project root" : `the folder ${folder}`;
-  const allowed = await approval({ root, initiative, slice, command, folder, cwd, approvalGate, chatApproval, dataDirectory });
+  const allowed = await approval({ root, initiative, slice, command, folder, declaredFolder, cwd, approvalGate, chatApproval, dataDirectory });
   if (!allowed.approved) {
     if (allowed.status === "declined") return { status: "declined", gateId: allowed.gateId, ...names, note: allowed.note, message: "The user declined this test command, so it did not run." };
     if (allowed.status === "approval_unclear") return { status: "approval_unclear", gateId: allowed.gateId, ...names, note: allowed.note, message: "The user answered the approval question with a note and neither allowed nor declined the command, so it did not run. Read the note, then call verify_slice without approvalGate to ask again." };

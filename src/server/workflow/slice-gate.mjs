@@ -49,16 +49,74 @@ export async function contentTree(projectRoot, config, { commit = null, timeoutM
 
 /**
  * The project-relative paths that differ between two content trees, in Git's order, or null when Git cannot compare them, such as when it no longer has one of the trees.
+ * A content tree holds the whole checkout, so in a project below its Git top folder only the paths inside the project count, relative to the project root.
  * A moved file is a removal and an addition, so a rename lists both of its paths.
  */
 export async function changedPaths(projectRoot, from, to) {
   if (from === to) return [];
   try {
-    const { stdout } = await run("git", ["diff-tree", "-r", "-z", "--no-renames", "--name-only", from, to], { cwd: await realpath(projectRoot), env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, maxBuffer: 256 * 1024 * 1024 });
+    const root = await realpath(projectRoot);
+    const env = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
+    const prefix = (await run("git", ["rev-parse", "--show-prefix"], { cwd: root, env })).stdout.trim();
+    const { stdout } = await run("git", ["diff-tree", "-r", "-z", "--no-renames", "--name-only", ...(prefix ? [`--relative=${prefix}`] : []), from, to], { cwd: root, env, maxBuffer: 256 * 1024 * 1024 });
     return stdout.split("\0").filter(Boolean);
   } catch {
     return null;
   }
+}
+
+/** Whether Git still holds a content tree. */
+export async function treeReadable(projectRoot, tree) {
+  if (typeof tree !== "string" || !/^[0-9a-f]{40,64}$/.test(tree)) return false;
+  try {
+    await run("git", ["cat-file", "-e", `${tree}^{tree}`], { cwd: await realpath(projectRoot), env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// A slice's start content and the content its latest passing run tested stay under local refs, which no push or clone carries, so git gc keeps them while the slice needs them.
+const sliceRefs = (initiative, slice) => `refs/prism/${initiative}/${slice}/`;
+
+/** Point the slice's local ref `start` or `passed` at a content tree; a project where Git cannot write the ref keeps none. */
+export async function setSliceRef(projectRoot, initiative, slice, name, tree) {
+  try {
+    await run("git", ["update-ref", `${sliceRefs(initiative, slice)}${name}`, tree], { cwd: await realpath(projectRoot) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Delete every local ref of a slice under refs/prism/<initiative>/<slice>/. */
+export async function dropSliceRefs(projectRoot, initiative, slice) {
+  try {
+    const root = await realpath(projectRoot);
+    const { stdout } = await run("git", ["for-each-ref", "--format=%(refname)", sliceRefs(initiative, slice)], { cwd: root });
+    for (const name of stdout.split("\n").filter(Boolean)) await run("git", ["update-ref", "-d", name], { cwd: root });
+  } catch { /* A project without Git keeps no refs. */ }
+}
+
+/**
+ * The part of a ## Components declaration a slice's boundary check reads, recorded with the slice's start content:
+ * the shared paths, the root component, and every declared component's folder.
+ */
+export function startDeclaration(declaration) {
+  return { root: declaration.root.identity, sharedPaths: [...declaration.sharedPaths], components: declaration.declared.map((component) => ({ component: component.identity, folder: component.folder })) };
+}
+
+const insideFolder = (file, folder) => file === folder || file.startsWith(`${folder}/`);
+
+/**
+ * Whether a changed project-relative path leaves a component under a recorded declaration: it lies under no shared path, and either outside the component's folder or, for the root component, inside another component's folder.
+ * A component declared after the start, which the record does not name, keeps the folder it has now.
+ */
+export function crossesComponent(recorded, component, currentFolder, file) {
+  if (recorded.sharedPaths.some((shared) => insideFolder(file, shared))) return false;
+  if (component === recorded.root || currentFolder === "") return recorded.components.some((item) => item.component !== component && insideFolder(file, item.folder));
+  const folder = recorded.components.find((item) => item.component === component)?.folder ?? currentFolder;
+  return !insideFolder(file, folder);
 }
 
 /**

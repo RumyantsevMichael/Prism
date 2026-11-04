@@ -89,15 +89,25 @@ export async function checkFrozenTests(projectRoot, frozenTests) {
   return { checked: frozenTests.length, changed, missing };
 }
 
+const isText = (value) => typeof value === "string" && value.length > 0;
+function recordedDeclaration(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && isText(value.root)
+    && Array.isArray(value.sharedPaths) && value.sharedPaths.every(isText)
+    && Array.isArray(value.components) && value.components.every((item) => isText(item?.component) && isText(item?.folder));
+}
+
 /** Problems with a stored slice design, or an empty list. */
 export function designProblems(design) {
   if (design === undefined) return [];
   if (design === null || typeof design !== "object" || Array.isArray(design)) return ["design must be an object."];
   const problems = [];
-  if (Object.keys(design).some((key) => !["acceptedAt", "frozenTests", "review", "baselineId", "staged", "startTree"].includes(key))) problems.push("design holds only acceptedAt, frozenTests, review, baselineId, staged, and startTree.");
+  if (Object.keys(design).some((key) => !["acceptedAt", "frozenTests", "review", "baselineId", "staged", "startTree", "startRecordedAt", "startDeclaration"].includes(key))) problems.push("design holds only acceptedAt, frozenTests, review, baselineId, staged, startTree, startRecordedAt, and startDeclaration.");
   if (design.staged !== undefined && design.staged !== true) problems.push("design.staged must be true when present.");
-  // The start content is the Git tree a started slice's verification compares with, to find the changes that leave its component.
+  // The start content is the Git tree a started slice's verification compares with, to find the changes that leave its component,
+  // with the time Prism recorded it and the ## Components declaration in force then, which classifies those changes.
   if (design.startTree !== undefined && (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(String(design.startTree)) || design.staged)) problems.push("design.startTree must be a Git tree identifier on a started slice's design.");
+  if (design.startRecordedAt !== undefined && (design.startTree === undefined || typeof design.startRecordedAt !== "string" || Number.isNaN(Date.parse(design.startRecordedAt)))) problems.push("design.startRecordedAt must be an ISO timestamp beside design.startTree.");
+  if (design.startDeclaration !== undefined && (design.startTree === undefined || !recordedDeclaration(design.startDeclaration))) problems.push("design.startDeclaration must hold root, sharedPaths, and components as { component, folder } beside design.startTree.");
   if (design.baselineId !== undefined && !/^[0-9a-f]{64}$/.test(String(design.baselineId))) problems.push("design.baselineId must be a snapshot identifier.");
   if (typeof design.acceptedAt !== "string" || Number.isNaN(Date.parse(design.acceptedAt))) problems.push("design.acceptedAt must be an ISO timestamp.");
   if (!REVIEW_MARKS.includes(design.review)) problems.push(`design.review must be one of ${REVIEW_MARKS.join(", ")}.`);
