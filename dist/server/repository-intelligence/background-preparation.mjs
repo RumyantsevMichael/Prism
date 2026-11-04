@@ -39,11 +39,32 @@ function startBackgroundPreparation(projectRoot, options = {}) {
   started.set(projectRoot, run);
   return run;
 }
+const rebuilding = /* @__PURE__ */ new Map();
+function startIndexRebuild(projectRoot, options = {}) {
+  const existing = rebuilding.get(projectRoot);
+  if (existing) return existing;
+  const { prepare = (root) => prepareNativeProvider(root, { waitMs: 0 }), available = runtimeAvailable, record = recordFailure } = options;
+  const run = (async () => {
+    if (!await available()) return;
+    try {
+      await prepare(projectRoot);
+    } catch (error) {
+      await record(projectRoot, error);
+    }
+  })().catch(() => {
+  }).finally(() => {
+    rebuilding.delete(projectRoot);
+  });
+  rebuilding.set(projectRoot, run);
+  return run;
+}
 function resetBackgroundPreparation() {
   started.clear();
+  rebuilding.clear();
 }
 export {
   backgroundIndexingEnabled,
   resetBackgroundPreparation,
-  startBackgroundPreparation
+  startBackgroundPreparation,
+  startIndexRebuild
 };

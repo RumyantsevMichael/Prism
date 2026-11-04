@@ -790,6 +790,10 @@ a.code-link:hover {
   text-transform: uppercase;
 }
 
+.indexing-actions {
+  margin: 8px 0;
+}
+
 .indexing-panel-note {
   color: var(--ink-muted);
   font-size: 0.72rem;
