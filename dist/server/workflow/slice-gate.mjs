@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdtemp, realpath, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, realpath, rm, stat, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -28,7 +28,12 @@ export async function contentTree(projectRoot, config, { commit = null, timeoutM
     const env = { ...process.env, GIT_INDEX_FILE: index, GIT_OPTIONAL_LOCKS: "0" };
     if (commit) await git(root, ["read-tree", commit], env, timeoutMs);
     else {
-      await copyFile(path.resolve(root, await git(root, ["rev-parse", "--git-path", "index"])), index).catch(() => {});
+      // The copy keeps the index's modification time, so Git still re-reads a file changed in the same timestamp tick as the index ("racy" entries) instead of trusting its cached size and time.
+      const source = path.resolve(root, await git(root, ["rev-parse", "--git-path", "index"]));
+      await copyFile(source, index).then(async () => {
+        const { atime, mtime } = await stat(source);
+        await utimes(index, atime, mtime);
+      }).catch(() => {});
       await git(root, ["add", "-A", "--", "."], env);
     }
     const roadmap = roadmapPaths(config);

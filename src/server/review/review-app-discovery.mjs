@@ -9,6 +9,7 @@ import { writeAtomically } from "../workflow/artifact-store.mjs";
 export const REVIEW_APP_PROTOCOL = 1;
 const DISCOVERY_FILE = "review-app.json";
 const PROJECTS_FILE = "review-app-projects.json";
+const PORT_FILE = "review-app-port.json";
 const LOCK_BASE = "review-app";
 const FALLBACK_LOG = "fallbacks.log";
 const FALLBACK_LOG_BYTES = 256 * 1024;
@@ -136,6 +137,23 @@ export async function readProjectDirectories(directory, field) {
 
 export async function writeProjectRoots(directory, roots, { evidence = {}, intelligence = {}, records = {} } = {}) {
   await writeAtomically(projectsPath(directory), `${JSON.stringify({ projects: roots, evidence, intelligence, records }, null, 2)}\n`, { mode: 0o600 });
+}
+
+// The last bound port outlives the app, so a cold restart can serve the same origin, where the browser keeps site permissions and storage.
+export async function readLastPort(directory) {
+  try {
+    if (!(await trustedDirectory(directory))) return null;
+    const file = path.join(directory, PORT_FILE);
+    if (!trustedEntry(await lstat(file), "file")) return null;
+    const port = JSON.parse(await readFile(file, "utf8"))?.port;
+    return Number.isSafeInteger(port) && port >= 1024 && port <= 65535 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeLastPort(directory, port) {
+  await writeAtomically(path.join(directory, PORT_FILE), `${JSON.stringify({ port })}\n`, { mode: 0o600 });
 }
 
 export const newCredential = () => randomBytes(24).toString("base64url");

@@ -14,11 +14,13 @@ import {
   projectId,
   proveResponse,
   readDiscovery,
+  readLastPort,
   readProjectDirectories,
   readProjectRoots,
   removeDiscovery,
   verifyRequest,
   writeDiscovery,
+  writeLastPort,
   writeProjectRoots
 } from "./review-app-discovery.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
@@ -446,8 +448,19 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       if (error.code !== "EADDRINUSE" && error.code !== "EACCES") throw error;
     }
   }
+  // A cold restart tries the last bound port, so the browser keeps the origin's permissions and storage, while the viewer credential is always new.
+  const last = bound ? null : await readLastPort(directory);
+  if (last) {
+    try {
+      await listen(server, last);
+      bound = true;
+    } catch (error) {
+      if (error.code !== "EADDRINUSE" && error.code !== "EACCES") throw error;
+    }
+  }
   if (!bound) await listen(server, 0);
   port = server.address().port;
+  await writeLastPort(directory, port).catch(() => {});
 
   // The file lists projects most recent first, so a restarted app takes recency from its order.
   const restored = await readProjectRoots(directory);

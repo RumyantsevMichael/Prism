@@ -188,7 +188,7 @@ async function loadDelta(resolved) {
   let handle;
   try { handle = await open(resolved.target, constants.O_RDONLY | constants.O_NOFOLLOW); }
   catch (error) {
-    if (error.code === "ENOENT") return { exists: false, revision: null, document: null, valid: true, ready: false, errors: [], diagnostics: [{ code: "delta_missing", message: "Create the change map before FIT." }] };
+    if (error.code === "ENOENT") return { exists: false, revision: null, document: null, valid: true, ready: false, errors: [], diagnostics: [{ code: "delta_missing", blocking: false, message: "No change map exists yet. Prism derives the change map of a slice with an accepted design after its first passing verify_slice run, so a missing map never blocks implementation. Only a slice designed before verification runs needs an agent-written change map before its FIT review." }] };
     throw error;
   }
   let contents;

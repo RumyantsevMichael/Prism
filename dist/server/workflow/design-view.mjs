@@ -298,7 +298,9 @@ export async function loadDesignView(projectRoot, initiative, slice, { changeMap
     for (const change of planned.changes) {
       if (change.action === "add" || change.path.endsWith("/")) continue;
       const found = await stat(path.join(root, change.path)).then(() => true, () => false);
-      if (!found) changeProblems.push(`${change.path} is planned to ${change.action} but does not exist.`);
+      // A new file is planned as add, so a missing path to change is usually a wrong action, unless the path is mistyped.
+      const hint = change.action === "change" ? " Plan a new file as add, or correct the path." : " Correct the path.";
+      if (!found) changeProblems.push(`${change.path} is planned to ${change.action} but does not exist.${hint}`);
     }
   }
   // A change's tests are those cited for the clauses it serves, which is design's claim until coverage confirms it.
