@@ -5700,6 +5700,8 @@ mark.find-hit {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
 /* A foldable heading carries its toggle in the left gutter, so heading text keeps its alignment. */
 .document-content .md-foldable {
   position: relative;
