@@ -40,7 +40,8 @@ import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
 import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
-import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
+import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
+import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
@@ -688,7 +689,7 @@ const tools = [
   },
   {
     name: "wait_for_user_gate",
-    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. It returns answered with the recorded answer, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, or unsupported_host when this host cannot wait in the background.",
+    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn.",
     inputSchema: {
       type: "object",
       properties: {
@@ -850,7 +851,16 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   }
   let value;
   const unsupported = waitUnsupportedReason();
-  if (unsupported) {
+  const hookSession = typeof metadata?.sessionId === "string" && metadata.sessionId ? metadata.sessionId : null;
+  if (unsupported && hookSession) {
+    // Codex names its session in the call's metadata, and its Stop hook for that session waits once this turn ends.
+    value = await waitForUserGates({ projectRoot, initiative: argumentsValue.initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0 });
+    if (value.status === "timeout") {
+      const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
+      await recordWaitRequest({ sessionId: hookSession, projectRoot, initiative: argumentsValue.initiative, gateIds: value.gateIds, maxWaitMinutes });
+      value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
+    }
+  } else if (unsupported) {
     value = { status: "unsupported_host", gateIds, client: clientName, reason: unsupported };
   } else {
     const controller = new AbortController();
@@ -877,6 +887,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
     resolved: () => `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
     timeout: () => `No answer arrived for user gates ${list} before the wait ended.`,
     unknown_gate: () => `No pending user gate has any of the ids ${list}.`,
+    deferred: () => `This host cannot wait during a tool call, so Prism waits after this turn ends: end your turn now, and the session continues with the answer when the user answers user gates ${list} in the review browser within ${value.maxWaitMinutes} minutes. If it does not continue, the user's next message delivers any browser answer.`,
     unsupported_host: () => `The wait returned at once because it cannot run in the background here: ${value.reason} The user's next message delivers any browser answer.`,
     cancelled: () => `The wait for user gates ${list} was cancelled.`
   }[value.status]();
