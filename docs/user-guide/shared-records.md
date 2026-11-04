@@ -164,7 +164,7 @@ Prism never replaces a record that changed while a merge was running: it leaves 
 
 ## Who works on a slice
 
-Starting a slice, or starting the design of a scope, claims it for the Prism server that does the work, so no other agent in any checkout or on any machine that shares the records starts it at the same time.
+Starting a slice, or starting the design of a scope, claims it for the agent session that does the work, so no other agent in any checkout or on any machine that shares the records starts it at the same time.
 A claim covers the parts inside its slice, so a design claim on a scope also blocks a start of any slice inside it, and the reverse.
 Two agents can still work on two independent slices of one initiative at once.
 Another agent's start of a claimed slice is refused with `slice_claimed`, which names who holds it, for design or implementation, and until when, and that agent moves on to another slice.
@@ -184,7 +184,9 @@ A slice whose session ended without finishing frees itself that way, and the nex
 A server never renews a claim that expired, for example while its laptop slept, or that someone released or took over; its next `get_initiative` or `update_initiative` result for the initiative lists the claim under `lostClaims`.
 Claims are kept apart from the initiative record, so renewals never collide with someone else's edit of the slice.
 A claim ends when its slice is done, blocked, or back to not started, or when the design proposal of its scope is accepted.
-To free a slice sooner, for example after restarting a session, which gives its server a new holder, ask your agent to send `update_initiative` with a `release_claim` operation for the slice.
+In Claude Code a claim belongs to the session, so a server that Claude Code restarts in the same session keeps its claims and renews them again after its first initiative read or update.
+On a host that gives the server no session identifier, such as Codex, a claim belongs to the server process, and a restarted server gets a new holder.
+To free a slice sooner, for example after such a restart, ask your agent to send `update_initiative` with a `release_claim` operation for the slice.
 Anyone may release any claim, and the initiative's history records who released whose claim.
 
 ## Sync status

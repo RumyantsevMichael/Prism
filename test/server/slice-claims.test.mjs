@@ -14,11 +14,13 @@ Object.assign(process.env, {
   GIT_AUTHOR_NAME: "Prism Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Prism Test", GIT_COMMITTER_EMAIL: "test@example.invalid"
 });
 delete process.env.CLAUDE_PLUGIN_DATA;
+// The process plays servers without a host session, whose holder is random, unless a test names one.
+delete process.env.CLAUDE_CODE_SESSION_ID;
 const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
 const { forgetMigrations } = await import("../../dist/server/workflow/record-store.mjs");
 const CLAIM_FILE = (slug) => `initiatives/reports/claims/${slug}.json`;
 const { getInitiative, initiativeAcknowledgement, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
-const { claimHolder, configureClaims, heldClaims, renewHeldClaims, stopClaimRenewals } = await import("../../dist/server/workflow/slice-claims.mjs");
+const { claimHolder, configureClaims, heldClaims, renewHeldClaims, sessionHolder, stopClaimRenewals } = await import("../../dist/server/workflow/slice-claims.mjs");
 const { verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { withFileLock } = await import("../../dist/server/workflow/artifact-store.mjs");
 const { answerUserGate } = await import("../../dist/server/workflow/state.mjs");
@@ -179,6 +181,26 @@ test("refuses a second start of a claimed slice from another worktree without sy
   as(A);
   const again = await start(value.a, "s1");
   assert.equal(again.record.slices.s1.claim.claimedAt, first.record.slices.s1.claim.claimedAt, "the holder's own start keeps when it first claimed the slice");
+});
+
+test("a server the host restarts in the same session keeps and renews its claims", async (context) => {
+  const value = await worktrees(context);
+  const holder = sessionHolder({ CLAUDE_CODE_SESSION_ID: " 3f1c-session " });
+  assert.match(holder, /^session-[0-9a-f]{16}$/);
+  assert.equal(holder, sessionHolder({ CLAUDE_CODE_SESSION_ID: "3f1c-session" }));
+  assert.doesNotMatch(holder, /3f1c/, "the record keeps a digest, not the host's session identifier");
+  assert.equal(sessionHolder({}), null, "a server without a session identifier keeps a holder of its own");
+  as({ holder, label: "Ada on alpha" });
+  await start(value.a, "s1");
+  stopClaimRenewals();
+  assert.deepEqual(heldClaims(), [], "the host stopped the first server");
+  const restarted = await read(value.a);
+  assert.equal(restarted.claims.s1.heldHere, true);
+  assert.deepEqual(heldClaims().map((entry) => [entry.slug, entry.holder]), [["s1", holder]], "the next server renews the session's claim after reading it");
+  assert.equal((await start(value.a, "s1")).record.slices.s1.claim.holder, holder, "the session starts its own slice again");
+  as(B);
+  await assert.rejects(start(value.b, "s1"), refusal("slice_claimed"), "another session is still refused");
+  assert.equal(heldClaims().length, 1);
 });
 
 test("replaces an expired claim and names its holder", async (context) => {
