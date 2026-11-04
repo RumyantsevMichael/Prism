@@ -1,0 +1,11 @@
+@startuml
+title component-proposal - code
+component "workspace-manifests.mjs\nproposeComponents" as Propose
+component "components.mjs\nlistComponents, readComponents" as Components
+component "roadmap.mjs\ngetRoadmap" as Roadmap
+component "workflow-init and design skills" as Skills
+Roadmap --> Components : declared components and problem
+Roadmap --> Propose : proposal when none are declared
+Roadmap ..> Components : checks the proposed block
+Skills ..> Roadmap : get_roadmap, offer the proposal to the person
+@enduml

@@ -1,22 +1,25 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { INITIATIVE, THREE, command, componentProject, failing, node, planAndAccept, read, refusal, runLog, update, workflow, write } from "./fixtures/components.mjs";
+import { INITIATIVE, THREE, command, commitAll, componentProject, failing, git, node, planAndAccept, read, refusal, runLog, update, workflow, write } from "./fixtures/components.mjs";
 import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 // Requirements: docs/requirements/components.md §17, §18, §19.
-// Contract: docs/plans/components/component-slices/slice.md clauses 24-31 and 35.
+// Contract: docs/plans/components/component-slices/slice.md clauses 24-31, 35, and 39.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-dependents-run-data-")));
 process.env.PLUGIN_DATA = privateData;
+// This machine's checkout list lives in Prism's application folder, which each test file keeps private.
+process.env.PRISM_REVIEW_APP_DIR = path.join(privateData, "app");
 delete process.env.CLAUDE_PLUGIN_DATA;
 delete process.env.CLAUDE_CODE_REMOTE;
 const { verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { answerUserGate } = await import("../../dist/server/workflow/state.mjs");
 const { updateRoadmap, getRoadmap } = await import("../../dist/server/workflow/roadmap.mjs");
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
+const { recordStoreOf } = await import("../../dist/server/workflow/record-store.mjs");
 const initiativeView = await import("../../dist/server/review/public/views/initiative.js");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
@@ -119,7 +122,7 @@ test("clause 26: dependents are every transitive dependent, also for a scope ins
   const result = await runDependents(root, INITIATIVE);
   assert.equal(result.status, "passed");
   assert.equal(result.scope, INITIATIVE);
-  assert.deepEqual(result.components.map((item) => item.name), ["billing", "web", "admin"]);
+  assert.deepEqual(result.components.map((item) => item.name), ["root/billing", "root/web", "root/admin"]);
 
   const docs = await oneSlice(context, { component: "docs", changes: ["change `handbook/guide.md`: guide (§2)"], tests: ["handbook/test/guide.test.mjs"] });
   await finish(docs, INITIATIVE);
@@ -145,20 +148,20 @@ test("clause 27: each distinct command and folder runs once, in dependency order
   await finish(root, INITIATIVE);
   const result = await runDependents(root, INITIATIVE);
   assert.deepEqual(result.components.map(({ name, folder, command: text, status }) => ({ name, folder, command: text, status })), [
-    { name: "billing", folder: "packages/billing", command: command("billing"), status: "passed" },
-    { name: "web", folder: "", command: command("root", 0), status: "passed" },
-    { name: "admin", folder: "", command: command("root", 0), status: "passed" }
+    { name: "root/billing", folder: "packages/billing", command: command("billing"), status: "passed" },
+    { name: "root/web", folder: "", command: command("root", 0), status: "passed" },
+    { name: "root/admin", folder: "", command: command("root", 0), status: "passed" }
   ]);
   assert.deepEqual((await runs()).map((entry) => [entry.name, entry.cwd]), [["shared", path.join(root, "packages/shared")], ["billing", path.join(root, "packages/billing")], ["root", root]], "the shared slice, then billing, then one run for web and admin");
 
   const commandless = await oneSlice(context, { config: workflow({ components: DEPENDENTS, stack: null }) });
   await finish(commandless, INITIATIVE);
-  assert.equal((await refusal(dependents(commandless, INITIATIVE), "test_command_missing")).component, "web");
+  assert.equal((await refusal(dependents(commandless, INITIATIVE), "test_command_missing")).component, "root/web");
   const folderless = await oneSlice(context);
   await finish(folderless, INITIATIVE);
   await rm(path.join(folderless, "packages/billing"), { recursive: true, force: true });
   const missing = await refusal(dependents(folderless, INITIATIVE), "component_folder_missing");
-  assert.equal(missing.component, "billing");
+  assert.equal(missing.component, "root/billing");
   assert.equal(missing.folder, "packages/billing");
 });
 
@@ -170,13 +173,13 @@ test("clause 28: one gate lists every pair not yet allowed, a decline blocks its
   const asked = await dependents(root, "values");
   assert.equal(asked.status, "approval_needed");
   assert.equal(asked.scope, "values");
-  assert.deepEqual(asked.commands, [{ command: command("billing"), folder: "packages/billing", components: ["billing"] }], "the repository's command in the project root was allowed for the tools slice");
+  assert.deepEqual(asked.commands, [{ command: command("billing"), folder: "packages/billing", components: ["root/billing"] }], "the repository's command in the project root was allowed for the tools slice");
   assert.equal((await dependents(root, "values")).gateId, asked.gateId, "an unanswered gate is reused");
   await allow(root, asked.gateId, "decline", "Not billing.");
   const declined = await dependents(root, "values", { approvalGate: asked.gateId });
   assert.equal(declined.status, "failed");
-  assert.deepEqual(declined.components.map((item) => [item.name, item.status]), [["billing", "declined"], ["web", "passed"], ["admin", "passed"]]);
-  assert.deepEqual(declined.blocked, ["billing"]);
+  assert.deepEqual(declined.components.map((item) => [item.name, item.status]), [["root/billing", "declined"], ["root/web", "passed"], ["root/admin", "passed"]]);
+  assert.deepEqual(declined.blocked, ["root/billing"]);
   assert.deepEqual((await runs()).filter((entry) => entry.name !== "shared").map((entry) => entry.name), ["root", "root"], "the tools slice, then one run of the allowed pair; billing never ran");
 
   const unclear = await dependents(root, "values");
@@ -191,8 +194,8 @@ test("clause 29: the run is recorded on the scope with each dependent's result, 
   await finish(root, INITIATIVE);
   const failed = await runDependents(root, INITIATIVE);
   assert.equal(failed.status, "failed");
-  assert.deepEqual(failed.components.map((item) => [item.name, item.status]), [["billing", "failed"], ["web", "passed"], ["admin", "passed"]]);
-  assert.deepEqual(failed.blocked, ["billing"]);
+  assert.deepEqual(failed.components.map((item) => [item.name, item.status]), [["root/billing", "failed"], ["root/web", "passed"], ["root/admin", "passed"]]);
+  assert.deepEqual(failed.blocked, ["root/billing"]);
   const run = JSON.parse(await readFile(path.join(root, failed.run), "utf8"));
   assert.equal(run.kind, "dependents");
   assert.equal(run.passed, false);
@@ -206,7 +209,7 @@ test("clause 29: the run is recorded on the scope with each dependent's result, 
   const result = await runDependents(changed, INITIATIVE);
   assert.equal(result.status, "failed");
   assert.equal(result.reason, "tracked_files_changed");
-  assert.deepEqual(result.blocked, ["billing", "web", "admin"]);
+  assert.deepEqual(result.blocked, ["root/billing", "root/web", "root/admin"]);
 });
 
 test("clause 30: get_initiative reports each scope's latest dependents' run without reading components", async (context) => {
@@ -218,7 +221,7 @@ test("clause 30: get_initiative reports each scope's latest dependents' run with
   const blocked = (await read(root)).dependents[INITIATIVE];
   assert.equal(blocked.status, "blocked");
   assert.equal(blocked.run, failed.run);
-  assert.deepEqual(blocked.blocked, ["billing"]);
+  assert.deepEqual(blocked.blocked, ["root/billing"]);
   assert.ok(Number.isFinite(Date.parse(blocked.finishedAt)));
   await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: DEPENDENTS }));
   delete process.env.FAIL_billing;
@@ -232,17 +235,17 @@ test("clause 31: shipping waits for a passing dependents' run of every finished 
   const root = await oneSlice(context);
   await finish(root, INITIATIVE);
   const notRun = await refusal(ship(root), "dependents_blocked");
-  assert.deepEqual(notRun.scopes, [{ scope: INITIATIVE, blocked: ["billing", "web", "admin"], reason: "not_run" }]);
+  assert.deepEqual(notRun.scopes, [{ scope: INITIATIVE, blocked: ["root/billing", "root/web", "root/admin"], reason: "not_run" }]);
   failing(context, "billing");
   await runDependents(root, INITIATIVE);
   const red = await refusal(ship(root), "dependents_blocked");
-  assert.deepEqual(red.scopes, [{ scope: INITIATIVE, blocked: ["billing"], reason: "failed" }]);
+  assert.deepEqual(red.scopes, [{ scope: INITIATIVE, blocked: ["root/billing"], reason: "failed" }]);
   delete process.env.FAIL_billing;
   assert.equal((await runDependents(root, INITIATIVE)).status, "passed");
   const grown = DEPENDENTS.replace("- docs: handbook\n", "- docs: handbook\n  - Depends on: shared\n");
   await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: grown }));
   const missing = await refusal(ship(root), "dependents_blocked");
-  assert.deepEqual(missing.scopes, [{ scope: INITIATIVE, blocked: ["docs"], reason: "not_run" }], "a dependent declared after the run has not run");
+  assert.deepEqual(missing.scopes, [{ scope: INITIATIVE, blocked: ["root/docs"], reason: "not_run" }], "a dependent declared after the run has not run");
   await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: DEPENDENTS }));
   const shipped = await ship(root);
   assert.equal(shipped.record.initiatives.find((item) => item.id === INITIATIVE).decision.kind, "shipped");
@@ -323,4 +326,41 @@ test("clause 35: the roadmap and the review browser show an initiative ready to 
   assert.equal(ready.browserReady, true);
   assert.equal(ready.label, true, "the browser shows the ready to ship label");
   assert.equal((await ship(root)).record.initiatives.find((item) => item.id === INITIATIVE).decision.kind, "shipped");
+});
+
+// Another repository's checkout beside the store, with its own history and the given Components lines, named to the same store.
+async function otherCheckout(context, parent, name, store, lines) {
+  const root = path.join(parent, name);
+  await write(root, { "README.md": `# ${name}\n`, ".prism/workflow.md": workflow({ stack: null, components: ["## Components", ...lines, ""].join("\n"), workspace: [`- Store: ${store}`, `- Repository: ${name}`] }) });
+  git(root, "init", "-q", "-b", "main");
+  commitAll(root, `start ${name}`);
+  const real = await realpath(root);
+  assert.equal((await recordStoreOf(real)).repository, name, "the store accepts the checkout and this machine lists it");
+  return real;
+}
+
+test("clause 39: the dependents' run reports other repositories' dependents it did not run and the repositories it could not read", async (context) => {
+  const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-dependents-workspace-")));
+  context.after(() => rm(parent, { recursive: true, force: true }));
+  const store = path.join(parent, "store");
+  await mkdir(store);
+  const root = await oneSlice(context, { config: workflow({ components: DEPENDENTS, workspace: [`- Store: ${store}`, "- Repository: api"] }) });
+  await otherCheckout(context, parent, "portal", store, ["- site: site", "  - Depends on: api/shared", "- console: console", "  - Depends on: site", "- help: help"]);
+  const ledger = await otherCheckout(context, parent, "ledger", store, ["- books: books", "  - Depends on: api/billing"]);
+  await rm(ledger, { recursive: true, force: true });
+  await finish(root, INITIATIVE);
+  const result = await runDependents(root, INITIATIVE);
+  assert.equal(result.status, "passed", "dependents in other repositories never fail the run");
+  assert.deepEqual(result.components.map((item) => item.name), ["api/billing", "api/web", "api/admin"]);
+  assert.deepEqual(result.otherRepositories, {
+    notRun: [{ component: "portal/console", dependsOn: ["portal/site"] }, { component: "portal/site", dependsOn: ["api/shared"] }],
+    unread: ["ledger"]
+  });
+  assert.deepEqual(JSON.parse(await readFile(path.join(root, result.run), "utf8")).otherRepositories, result.otherRepositories);
+  const shipped = await ship(root);
+  assert.equal(shipped.record.initiatives.find((item) => item.id === INITIATIVE).decision.kind, "shipped", "they never block shipping");
+
+  const alone = await oneSlice(context);
+  await finish(alone, INITIATIVE);
+  assert.deepEqual((await runDependents(alone, INITIATIVE)).otherRepositories, { notRun: [], unread: [] }, "a repository without a store has no other repositories");
 });

@@ -6,7 +6,7 @@
 
 ## Changes
 
-- change `src/server/workflow/verification.mjs`: `verifySlice` resolves the component, command, and working folder and refuses before approval, `approval` keys a pair by working folder and command and names the folder, `execute` runs in that folder, `verificationRun` checks the boundary before the command and records `folder`, `component`, `boundary`, and `crossing`, and `verificationBrief` keeps them (§16, §17, §18, §19, §21, §22, §23)
+- change `src/server/workflow/verification.mjs`: `verifySlice` resolves the component, command, and working folder and refuses before approval, `approval` keys a pair by working folder and command and names the folder, `execute` runs in that folder, `verificationRun` checks the boundary before the command and records `folder`, the component's identity, `boundary`, and `crossing`, and `verificationBrief` keeps them (§16, §17, §18, §19, §21, §22, §23, §36)
 - change `src/server/workflow/slice-gate.mjs`: `changedPaths` lists the paths that differ between two content trees, a rename as both paths (§21)
 - change `src/server/workflow/initiative.mjs`: `applyOperation` records the start content when `set_status` `in-progress` starts a slice with a component, and drops it when the slice returns to not-started (§20)
 - change `src/server/workflow/slice-design.mjs`: `designProblems` accepts the start content on a design (§20)

@@ -50,7 +50,7 @@ const context = (state = {}) => ({
   openEvidence() {}
 });
 
-const LABEL = /<span class="component-chip" data-component="([a-z0-9_-]+)">([^<]*)<\/span>/g;
+const LABEL = /<span class="component-chip" data-component="([a-z0-9_/-]+)">([^<]*)<\/span>/g;
 const labels = (html) => [...html.matchAll(LABEL)].map(([, name, text]) => [name, text.trim()]);
 
 async function withEntities(t, root, run) {
@@ -79,14 +79,14 @@ test("clause 34: the slice tree, the board cards, and the slice page label each 
 
   await withEntities(t, root, async (entity) => {
     const initiative = await entity(`initiative:${INITIATIVE}`);
-    assert.equal(initiative.data.record.slices["billing-totals"].component, "billing");
+    assert.equal(initiative.data.record.slices["billing-totals"].component, "root/billing");
     for (const mode of ["list", "board"]) {
       const view = container();
       await initiativeView.render(view, initiative, context({ mode }));
       const shown = labels(view.html());
-      assert.deepEqual(shown.filter(([name]) => name === "billing"), [["billing", "billing"]], `${mode}: billing is labelled once`);
-      assert.deepEqual(shown.filter(([name]) => name === "shared"), [["shared", "shared"]], `${mode}: shared is labelled once`);
-      assert.equal(shown.some(([name]) => name === "web"), false, `${mode}: a slice without a component has no label`);
+      assert.deepEqual(shown.filter(([name]) => name === "root/billing"), [["root/billing", "root/billing"]], `${mode}: billing is labelled once with its identity`);
+      assert.deepEqual(shown.filter(([name]) => name === "root/shared"), [["root/shared", "root/shared"]], `${mode}: shared is labelled once`);
+      assert.equal(shown.some(([name]) => name === "root/web"), false, `${mode}: a slice without a component has no label`);
     }
     const page = async (slug) => {
       const slice = await entity(`slice:${INITIATIVE}/${slug}`);
@@ -94,7 +94,7 @@ test("clause 34: the slice tree, the board cards, and the slice page label each 
       await sliceView.render(view, slice, context());
       return labels(view.html());
     };
-    assert.deepEqual(await page("billing-totals"), [["billing", "billing"]]);
+    assert.deepEqual(await page("billing-totals"), [["root/billing", "root/billing"]]);
     assert.deepEqual(await page("web-pages"), []);
     assert.deepEqual(await page(INITIATIVE), [], "a split scope records no component");
   });

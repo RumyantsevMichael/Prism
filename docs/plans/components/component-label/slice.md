@@ -2,11 +2,11 @@
 
 ## Outcome
 
-The review browser labels each slice that records a component with its name.
+The review browser labels each slice that records a component with its identity.
 
 ## Changes
 
-- add `src/server/review/public/views/components.js`: `componentChip`, the label of a slice's component (§34)
+- add `src/server/review/public/views/components.js`: `componentChip`, the label of a slice's component identity (§34, §36)
 - change `src/server/review/public/views/initiative.js`: `tree` and `boardCard` show the label (§34)
 - change `src/server/review/public/views/slice.js`: `render` shows the label on the slice page (§34)
 - change `src/server/review/public/review.css`: `.component-chip` styles the label beside the other chips (§34)

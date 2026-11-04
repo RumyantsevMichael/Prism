@@ -89,18 +89,18 @@ test("clause 17: results, recorded runs, and brief results name the working fold
   assert.equal(asked.status, "approval_needed");
   assert.equal(asked.command, command("billing"));
   assert.equal(asked.folder, "packages/billing");
-  assert.equal(asked.component, "billing");
+  assert.equal(asked.component, "root/billing");
   await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: asked.gateId, choice: "allow", note: null });
   const passed = await verify(root, "billing-totals", { approvalGate: asked.gateId });
   assert.equal(passed.status, "passed", passed.outputTail);
   assert.equal(passed.folder, "packages/billing");
-  assert.equal(passed.component, "billing");
+  assert.equal(passed.component, "root/billing");
   const run = await recorded(root, passed);
   assert.equal(run.command, command("billing"));
   assert.equal(run.folder, "packages/billing");
-  assert.equal(run.component, "billing");
+  assert.equal(run.component, "root/billing");
   const brief = verificationBrief(passed);
-  assert.equal(brief.component, "billing");
+  assert.equal(brief.component, "root/billing");
   assert.equal(brief.folder, "packages/billing");
   assert.equal(brief.boundary, "checked");
 });
@@ -110,17 +110,17 @@ test("clause 18: a component that is gone, a missing test command, or a missing 
   await writeFile(path.join(gone, ".prism/workflow.md"), workflow({ components: "## Components\n- shared: packages/shared\n- web: apps/web\n" }));
   const unknown = await refusal(verify(gone, "billing-totals"), "component_unknown");
   assert.equal(unknown.slice, "billing-totals");
-  assert.equal(unknown.component, "billing");
-  assert.deepEqual(unknown.components, ["root", "shared", "web"]);
+  assert.equal(unknown.component, "root/billing");
+  assert.deepEqual(unknown.components, ["root/root", "root/shared", "root/web"]);
 
   const commandless = await started(context, "web-pages", { config: workflow({ stack: null }) });
   const missing = await refusal(verify(commandless, "web-pages"), "test_command_missing");
-  assert.equal(missing.component, "web");
+  assert.equal(missing.component, "root/web");
 
   const folderless = await started(context);
   await rm(path.join(folderless, "packages/billing"), { recursive: true, force: true });
   const noFolder = await refusal(verify(folderless, "billing-totals"), "component_folder_missing");
-  assert.equal(noFolder.component, "billing");
+  assert.equal(noFolder.component, "root/billing");
   assert.equal(noFolder.folder, "packages/billing");
   for (const root of [gone, commandless, folderless]) assert.deepEqual((await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state?.pending ?? [], [], "no approval was asked");
 });

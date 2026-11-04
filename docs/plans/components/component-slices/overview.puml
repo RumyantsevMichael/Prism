@@ -11,14 +11,17 @@ package "component-verification" as Verification {
 package "dependents-run" as Dependents
 package "repository-name-required" as NameRequired
 package "component-label" as Label
+package "component-proposal" as Proposal
 Verification ..> Reader : reads components
 Verification ..> SliceComponent : verifies the slice's component
 Dependents ..> CommandFolder : runs each dependent's pair
 Dependents ..> PairApproval : asks for unapproved pairs in one gate
-Dependents ..> Reader : walks Depends on
+Dependents ..> Reader : walks Depends on, here and in other checkouts
 Label ..> SliceComponent : labels the slice
 Verification ..> Declarations : built after
 Dependents ..> Verification : built after
 Label ..> Declarations : built after
+Proposal ..> Reader : checks the proposed block
+Proposal ..> Declarations : built after
 note bottom of NameRequired : independent of the others
 @enduml

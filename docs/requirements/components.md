@@ -24,7 +24,7 @@ Prism 0.17.0 also only warns a checkout whose configuration names a record store
 
 ## Non-goals
 
-- Dependencies on components in another repository.
+- Running the tests of components in another repository, which this milestone only records and reports.
 - Running or verifying a slice in another repository's checkout.
 - Read-only clones of other repositories.
 - The workspace view by repository and component in the review browser.
@@ -75,9 +75,9 @@ Pattern: Optional feature
 
 Disposition: Active
 
-Requirement: Where a repository's committed `.prism/workflow.md` lists components under `## Components`, Prism shall treat each listed component as the folder it names, with its own `Test command` and its `Depends on` components when the entry gives them.
+Requirement: Where a repository's committed `.prism/workflow.md` lists components under `## Components`, Prism shall treat each listed component as the folder it names, identified across the workspace as `<repository>/<component>`, with its own `Test command` and its `Depends on` components, of its own repository or as `<repository>/<component>` of another, when the entry gives them.
 
-Rationale: The team that owns a repository knows its packages and their tests, and a committed declaration is the same in every checkout.
+Rationale: The team that owns a repository knows its packages and their tests, and a committed declaration is the same in every checkout; Michael decided on 4 November 2026 that a component's identity is workspace-wide, because a workspace may hold a plain repository beside a monorepo, so that later multi-repository work needs no migration.
 
 Related: [§4](#4), [§5](#5)
 
@@ -88,9 +88,9 @@ Pattern: Optional feature
 
 Disposition: Active
 
-Requirement: Where a repository's workflow configuration declares no components, Prism shall treat the whole repository as one component named after the repository.
+Requirement: Where a repository's workflow configuration declares no components, Prism shall treat the whole repository as one component named after the repository and offer, for the person to review and commit, a `## Components` declaration derived from the repository's workspace manifests.
 
-Rationale: Michael decided on 3 November 2026 that a repository that declares no components is one component, so every existing repository keeps working without a change.
+Rationale: Michael decided on 3 November 2026 that a repository that declares no components is one component, so every existing repository keeps working without a change, and on 4 November 2026 that manual declaration is acceptable while Prism proposes it from Bun, npm, pnpm, Cargo, and Go workspace manifests and never applies it silently.
 
 Related: [§3](#3), [§10](#10)
 
@@ -127,9 +127,9 @@ Pattern: Unwanted behavior
 
 Disposition: Active
 
-Requirement: If a component's `Depends on` entry names a component that its repository does not declare, then Prism shall refuse every operation that reads the repository's components with an error that names the component and the unknown dependency.
+Requirement: If a component's `Depends on` entry names a component of its own repository that the repository does not declare, then Prism shall refuse every operation that reads the repository's components with an error that names the component and the unknown dependency.
 
-Rationale: A misspelled or cross-repository dependency would otherwise be ignored silently, so a breaking change would skip its dependents' tests, and dependencies on other repositories are out of scope for this milestone.
+Rationale: A misspelled dependency would otherwise be ignored silently, so a breaking change would skip its dependents' tests, while Michael decided on 4 November 2026 that a dependency on another repository's component is recorded and checked only for its form in this milestone.
 
 Related: [§3](#3), [§17](#17)
 
@@ -179,7 +179,7 @@ Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When an orchestrator accepts a design proposal, Prism shall record on each planned leaf slice the one component that the design names for it, or the repository's only component when the repository declares none.
+Requirement: When an orchestrator accepts a design proposal, Prism shall record on each planned leaf slice the one component that the design names for it, or the repository's only component when the repository declares none, as `<repository>/<component>`.
 
 Rationale: The slice's component decides its boundary, its test command, and the index it needs, so it must be fixed when the design is accepted.
 
@@ -257,11 +257,11 @@ Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When the last leaf slice of a contract scope is done, Prism shall run once the test command of each component that depends, directly or through other components, on the component of one of the scope's leaf slices.
+Requirement: When the last leaf slice of a contract scope is done, Prism shall run once the test command of each component of the same repository that depends, directly or through other components, on the component of one of the scope's leaf slices, and name each component of another repository that depends on them and that it did not run.
 
 Rationale: Each slice runs only its own component's tests, so a change that breaks a component depending on it shows only when the dependents run, and running them once per scope keeps each slice's verification short; running every transitive dependent, also for a scope inside one component, and not counting a change under a shared path as a change to every component are the defaults that design adopted on 4 November 2026 while the questions are open with Michael.
 
-Related: [§14](#14), [§18](#18), [§19](#19)
+Related: [§7](#7), [§14](#14), [§18](#18), [§19](#19)
 
 <a id="18"></a>
 ## 18. Block a scope with a red dependent
