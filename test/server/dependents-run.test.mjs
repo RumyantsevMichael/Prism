@@ -7,7 +7,7 @@ import { INITIATIVE, THREE, command, componentProject, failing, node, planAndAcc
 import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 // Requirements: docs/requirements/components.md §17, §18, §19.
-// Contract: docs/plans/components/component-slices/slice.md clauses 24-31.
+// Contract: docs/plans/components/component-slices/slice.md clauses 24-31 and 35.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-dependents-run-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -16,6 +16,8 @@ delete process.env.CLAUDE_CODE_REMOTE;
 const { verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { answerUserGate } = await import("../../dist/server/workflow/state.mjs");
 const { updateRoadmap, getRoadmap } = await import("../../dist/server/workflow/roadmap.mjs");
+const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
+const initiativeView = await import("../../dist/server/review/public/views/initiative.js");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
 // shared is used by billing and admin, and web uses billing; web and admin have no test command of their own, and docs depends on nothing.
@@ -248,4 +250,77 @@ test("clause 31: shipping waits for a passing dependents' run of every finished 
   const plain = await oneSlice(context, { component: null, config: workflow({ components: null }), changes: ["change `packages/shared/index.mjs`: `shared` (§2)"] });
   await finish(plain, INITIATIVE);
   assert.equal((await ship(plain)).record.initiatives.find((item) => item.id === INITIATIVE).decision.kind, "shipped");
+});
+
+// A stand-in for the browser container: views write HTML strings, and queried children collect their own HTML.
+function container() {
+  const element = () => ({
+    innerHTML: "",
+    children: [],
+    dataset: {},
+    style: {},
+    classList: { toggle() {} },
+    addEventListener() {},
+    appendChild(child) { this.children.push(child); },
+    querySelectorAll() { return []; },
+    querySelector(selector) {
+      if (selector === "[data-index-notice]") return null;
+      const child = element();
+      this.children.push(child);
+      return child;
+    }
+  });
+  const root = element();
+  root.html = () => [root.innerHTML, ...root.children.map((child) => child.innerHTML)].join("\n");
+  return root;
+}
+const viewContext = () => ({ state: {}, hasArtifact: () => false, fetchArtifact: async () => ({ content: "" }), renderMarkdown: () => "", rerender() {}, openArtifact() {}, openEvidence() {} });
+
+// The roadmap's derived item for the initiative, and whether the review browser's initiative page shows the ready to ship label.
+async function readiness(root) {
+  const item = (await getRoadmap({ projectRoot: root })).derived.find((entry) => entry.id === INITIATIVE);
+  const review = await startReviewServer({ projectRoot: root });
+  try {
+    const response = await fetch(`${review.baseUrl}/api/entity?ref=${encodeURIComponent(`initiative:${INITIATIVE}`)}`);
+    assert.equal(response.status, 200);
+    const entity = await response.json();
+    const view = container();
+    await initiativeView.render(view, entity, viewContext());
+    return { item, browserReady: entity.data.roadmapItem?.readyToShip, label: view.html().includes("ready to ship") };
+  } finally {
+    await review.close();
+  }
+}
+
+test("clause 35: the roadmap and the review browser show an initiative ready to ship only once its dependents pass", async (context) => {
+  const root = await oneSlice(context);
+  await roadmap(root);
+  const unfinished = await readiness(root);
+  assert.equal(unfinished.item.readyToShip, false);
+  assert.equal((await refusal(ship(root), "gate_blocked")).code, "gate_blocked", "a leaf that is not done still refuses first");
+
+  await finish(root, INITIATIVE);
+  const notRun = await readiness(root);
+  assert.equal(notRun.item.readyToShip, false);
+  const blocked = notRun.item.diagnostics.find((entry) => entry.code === "dependents_blocked");
+  assert.ok(blocked, JSON.stringify(notRun.item.diagnostics));
+  assert.equal(typeof blocked.message, "string");
+  assert.deepEqual(blocked.scopes, (await refusal(ship(root), "dependents_blocked")).scopes);
+  assert.equal(notRun.browserReady, false);
+  assert.equal(notRun.label, false, "the browser shows no ready to ship label");
+
+  await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: "## Components\n- billing: packages\n- shared: packages/shared\n" }));
+  const invalid = await readiness(root);
+  assert.equal(invalid.item.readyToShip, false, "the read is not refused");
+  assert.ok(invalid.item.diagnostics.some((entry) => entry.code === "component_overlap" && typeof entry.message === "string"), JSON.stringify(invalid.item.diagnostics));
+  assert.equal(invalid.label, false);
+
+  await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: DEPENDENTS }));
+  assert.equal((await runDependents(root, INITIATIVE)).status, "passed");
+  const ready = await readiness(root);
+  assert.equal(ready.item.readyToShip, true);
+  assert.equal(ready.item.diagnostics.some((entry) => entry.code === "dependents_blocked"), false);
+  assert.equal(ready.browserReady, true);
+  assert.equal(ready.label, true, "the browser shows the ready to ship label");
+  assert.equal((await ship(root)).record.initiatives.find((item) => item.id === INITIATIVE).decision.kind, "shipped");
 });
