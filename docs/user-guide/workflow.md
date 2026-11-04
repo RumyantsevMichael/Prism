@@ -70,7 +70,8 @@ Before it asks for approval, Prism refuses a slice whose recorded component the 
 
 When a slice that records a component starts, Prism records the project's content, with the slice's frozen tests in place, as its start content, together with that time and the `## Components` declaration in force.
 A slice keeps its start content when it is restarted after being blocked and when it receives a new design.
-Prism keeps the start content under the local Git ref `refs/prism/<initiative>/<slice>/start`, and the content of the slice's latest passing run under `refs/prism/<initiative>/<slice>/passed`, so `git gc` keeps them; Prism never pushes these refs, and a clone does not carry them.
+Prism keeps the start content under the local Git ref `refs/prism/<initiative>/<slice>/<checkout>/start`, and the content of the slice's latest passing run under `refs/prism/<initiative>/<slice>/<checkout>/passed`, so `git gc` in any worktree of the repository keeps them.
+`<checkout>` is the first 16 hexadecimal digits of the SHA-256 of the project root's real path, so linked worktrees and projects that share one Git repository each keep their own refs, and Prism sets and deletes only the refs of its own checkout.
 Before each run, Prism compares the project with the start content, and every project file added, changed, or removed since then, committed or not, counts as a change, a moved file at both of its paths.
 Two kinds of change made by other slices of the initiative do not count: another slice's frozen test that holds its frozen content, or is absent while that slice has not started, and a file that another slice's latest passing run changed after this slice started and that still holds the content that run tested.
 So another slice's verified work done while this slice was blocked or waiting does not fail it, while this slice's own changes still count.
@@ -79,7 +80,34 @@ For the root component, a change crosses when it lies inside another component's
 A change to `## Components` therefore applies only to slices started after it.
 A result's `boundary` is `checked` when the run made that comparison, and `unchecked` when Prism recorded no content at the slice's start, such as a slice started where Git could not hash the work tree, which runs without the check.
 When Git can no longer read a slice's start content, for example in another checkout that shares the records but not the Git objects, the run fails with reason `start_content_missing` and the command does not run.
-To continue, set the slice back to `not-started` and start it again: Prism drops the old start content and its refs, and records the current content, the slice's earlier changes included, as new start content.
+To continue, set the slice back to `not-started` and start it again: Prism drops the old start content and this checkout's refs of the slice, and records the current content, the slice's earlier changes included, as new start content.
+A slice started while the `## Components` declaration was invalid or did not hold the slice's component records its start content without a declaration, and the start still succeeds.
+Every run of such a slice fails with reason `start_content_missing` without running the command, because no later declaration may decide its boundary.
+To continue, first make the `## Components` declaration valid and hold the slice's component, then set the slice back to `not-started` and start it again, which records the current content with that declaration.
+
+The start and passed refs are snapshots of the project, not of its commits.
+They hold every file that Git does not ignore, uncommitted changes and untracked files included, apart from Prism's records, plans, and roadmap.
+They stay until the slice is set back to `not-started`, so a done slice keeps them, and removing an initiative's records with `remove_records` leaves them in place.
+A checkout that is moved or removed leaves its refs behind, because Prism deletes only the refs named by a checkout's current path.
+Prism never pushes these refs, and a plain clone or fetch does not carry them.
+A mirror push such as `git push --mirror`, a push of every ref such as a `refs/*` refspec, a mirror clone such as `git clone --mirror`, and a bundle of every ref such as `git bundle create <file> --all` do carry them, with any uncommitted file they hold.
+
+To list every slice's refs in the repository, and the segment that names the current checkout, run these in the project root:
+
+```bash
+git for-each-ref refs/prism/
+printf %s "$(pwd -P)" | shasum -a 256 | cut -c 1-16
+```
+
+To delete one ref, or every ref under a prefix, such as a finished initiative's or a removed checkout's, run:
+
+```bash
+git update-ref -d refs/prism/<initiative>/<slice>/<checkout>/start
+git for-each-ref --format='delete %(refname)' refs/prism/<initiative>/ | git update-ref --stdin
+```
+
+`git gc` then removes the snapshots once nothing else holds them.
+Delete only the refs of slices that are done or that you will restart, because a started slice whose start content Git has removed fails its next run with `start_content_missing`.
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
 When the design requires review, an independent reviewer also reviews the verified result, and a later change needs a new run and a new review.
 A finding that a contract clause itself causes sends the slice back to design instead of into another fix.
