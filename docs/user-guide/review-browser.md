@@ -170,6 +170,7 @@ When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review
 ## Security
 
 The server binds to `127.0.0.1`, selects an available port, and uses an unguessable session URL.
+The shared app reuses the port it last bound when that port is free, so the browser keeps the site's notification permission and stored settings after a restart, while the session URL of every cold restart is new.
 It serves plain HTTP, which browsers treat as a secure context on `127.0.0.1`, so no certificate trust step is needed.
 It refuses requests whose host is not `127.0.0.1` or `localhost`.
 It renders entirely in the browser and does not send project sources to a remote renderer.
