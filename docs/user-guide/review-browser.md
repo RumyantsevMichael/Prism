@@ -123,10 +123,15 @@ Prism stores diagrams as PlantUML `.puml` source files, and the browser renders 
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
 A document with three or more headings gets a contents list that marks the current section.
+Each heading with text under it has a fold toggle beside it, and a link or contents entry that leads into a folded section opens it.
+Code in source files, Markdown code blocks, previews, and diagram source is highlighted by language.
 
 Hover over or focus any internal link to preview its target.
 An initiative preview shows its state, band, intent, and progress, and a slice preview shows its status and outcome.
 A link to a document section previews that section.
+A file's preview has a Show in side panel button, and Alt+click on a link does the same: the whole file opens in a panel beside the current page, at the linked heading or lines.
+The side panel holds one file at a time, so opening another replaces it, and a link inside the panel opens its target in the panel.
+Open as tab moves the file into a tab, Esc or the close button closes the panel, and dragging its left edge sets its width.
 Graph, diagram, and document cards can be maximized, and Esc restores them.
 
 ## Find artifacts
@@ -147,9 +152,9 @@ See [Watch an index build in the review browser](repository-intelligence.md#watc
 
 All Prism sessions of one user share one review app on one local port, and each project has its own page there.
 The project switcher names the project as `repository/branch`, falls back to the worktree folder without a branch, and shows a detached checkout by its commit.
-It lists recent projects under their repository, even a repository with one checkout, with their open questions, and marks the ones an agent session is using now.
-Checkouts whose records live in one shared store appear as one entry, Shared records, with one count of open questions and each checkout listed under it, because their roadmap, initiatives, and questions are the same.
-A checkout without a record store keeps records of its own and stays a separate entry.
+Checkouts whose records live in one shared store form one workspace, named after the store, with one count of open questions and each checkout listed under it as `repository / branch`, because their roadmap, initiatives, and questions are the same, whichever repository each checkout belongs to.
+Every other recent project is listed under its repository, even a repository with one checkout, with its open questions.
+The switcher marks the projects an agent session is using now, and lists workspaces first and then repositories, each in name order, so entries never move while you look.
 When an agent presents a review for another project while a tab is open, that tab shows a notice with a link instead of a second tab opening.
 
 The app starts with the MCP server of the first Prism session, outlives that session, and exits after 30 minutes with no session and no open viewer.

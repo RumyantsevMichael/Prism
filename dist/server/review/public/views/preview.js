@@ -72,7 +72,8 @@ function fileSummary(data, anchor, { renderMarkdown, kindLabel }) {
 }
 
 // Hovering or focusing an internal link shows what it points to: an entity's summary, or the start of a file or the linked section.
-export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath }) {
+// A file's preview offers to show the whole file in the side panel when the page has one.
+export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath, onShowInPanel = null }) {
   const popover = document.createElement("div");
   popover.className = "link-preview";
   popover.setAttribute("role", "tooltip");
@@ -122,6 +123,21 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
       const html = await load(target);
       if (current !== request || anchorElement !== element || !element.isConnected) return;
       popover.innerHTML = html;
+      if (onShowInPanel && !parseEntityRef(target.ref)) {
+        const bar = document.createElement("div");
+        bar.className = "link-preview-actions";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "tool-button link-preview-panel";
+        button.textContent = "Show in side panel";
+        button.title = "Show the whole file beside this page (Alt+click the link)";
+        button.addEventListener("click", () => {
+          hide();
+          onShowInPanel(target.ref, target.anchor);
+        });
+        bar.append(button);
+        popover.prepend(bar);
+      }
       popover.hidden = false;
       place();
     } catch {
