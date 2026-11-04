@@ -104,7 +104,7 @@ test("a planned change to a missing file is flagged before implementation", asyn
   const root = await project(context);
   await writeFile(path.join(root, "docs", "plans", INITIATIVE, "slice.md"), DESIGN.replace("src/cli/report.rs", "src/cli/missing.rs"));
   const view = await loadDesignView(root, INITIATIVE, INITIATIVE);
-  assert.deepEqual(view.changeProblems, ["src/cli/missing.rs is planned to change but does not exist."]);
+  assert.deepEqual(view.changeProblems, ["src/cli/missing.rs is planned to change but does not exist. Plan a new file as add, or correct the path."]);
   assert.equal(view.examplesWritten, null);
 });
 

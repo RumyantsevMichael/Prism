@@ -690,6 +690,33 @@ test("a successor ignores a handoff that is older than the lock lifetime", async
   assert.notEqual(second.viewerToken, first.viewerToken, "an old handoff never hands out its viewer credential again");
 });
 
+test("a cold restart serves the last port with a new viewer credential, and takes another port when that one is busy", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "last-port");
+  const start = async () => {
+    await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]);
+    return readDiscovery(directory);
+  };
+  const stop = async (discovery) => {
+    await control(discovery, "shutdown", { method: "POST", body: { handoff: false } });
+    await eventually(async () => !(await stat(path.join(directory, "review-app.lock")).catch(() => null)));
+  };
+  const first = await start();
+  await stop(first);
+  const second = await start();
+  assert.equal(second.port, first.port, "the browser keeps the origin after an idle stop or a crash");
+  assert.notEqual(second.viewerToken, first.viewerToken, "a cold restart never serves an old viewer credential");
+  await stop(second);
+  const squatter = http.createServer();
+  await new Promise((resolve) => squatter.listen(second.port, "127.0.0.1", resolve));
+  context.after(() => new Promise((resolve) => squatter.close(resolve)));
+  const third = await start();
+  assert.notEqual(third.port, second.port);
+  await stop(third);
+  squatter.close();
+  assert.equal((await start()).port, third.port, "the port the app last bound is the one it tries next");
+});
+
 // A stand-in for an app of another release that implements only the cross-version contract: the discovery file, health, shutdown, and the lock.
 async function standInApp(context, directory, health) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
