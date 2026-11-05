@@ -54,7 +54,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Roadmap record | The Prism record owning initiative bands, order, required initiatives, rationale, open questions, and recorded ship and supersede decisions, read through `get_roadmap` and changed through `update_roadmap`. |
 | Initiative lifecycle | `envisioned`, `planned`, and `in-progress` derived by `get_roadmap` from the initiative record and coordination state, plus recorded `shipped` and `superseded` decisions. |
 | Initiative record | The Prism record of slice titles, outcomes, topology, requirement assignments, dependencies, status, and accepted designs, read through `get_initiative` and changed through `update_initiative`; `initiative.md` is its generated view. |
-| Coordination state | The initiative's Prism record of settings, active work, pending user gate records, and next actions, read through `get_coordination_state` and changed through `update_coordination_state`. |
+| Coordination state | The initiative's Prism record of settings, active work, pending user gate records, next actions, and the action history, read through `get_coordination_state` and changed through `update_coordination_state`, except the action history and the settings marks that only review app actions write. |
 | Slice | One observable outcome across required layers that one fresh implementation session delivers, planned by a contract. |
 | Contract scope | The root slice, or a part that a split design created, that one design gives one contract. |
 | Slice plan | The **Slices** section of a contract: each planned slice with its outcome, component, requirements, dependencies, frozen test files, and review recommendation. |
@@ -96,7 +96,9 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | CLEAN | A review lane result with no unresolved finding. |
 | Review probe | A minimal failing test that a reviewer adds through a public surface to prove a finding. |
 | Gate | A user decision that controls progress. |
-| User gate record | A pending coordination state entry for a question to the user, with its kind, slice, question, artifacts, optional options, and any answer recorded in the review browser. |
+| User gate record | A pending coordination state entry for a question to the user, with its kind, slice, question, artifacts, optional options, and any answer that the person recorded in the review browser as a review app action, with its author and history entry. |
+| Review app action | A change to Prism records that the review app lists and applies through one registry of declared actions, such as an initiative setting, a gate answer, or a component's index rebuild, refused when the record changed since the page read it. |
+| Action history | The entries of applied review app actions, each with a unique id, the values before and after, the time, and its author as the applying checkout's Git identity and checkout label, a claim that nothing verifies; the coordination state keeps an initiative's history, and each checkout keeps its index rebuilds on its own machine. |
 | Orchestrator | The agent that coordinates an initiative: it runs design, implementation, and review in child sessions, starts slices, and keeps gates, while Prism records progress from its calls. |
 | Child status | The short fixed result a child session returns: result, last commit, a one-sentence summary, and questions. |
 | Fresh context | A session that starts without the conversation that authored its inputs. |

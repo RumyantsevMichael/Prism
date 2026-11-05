@@ -65,6 +65,35 @@ Under Earlier questions it shows the 20 most recently closed questions with your
 Anyone who can open the review page's URL can answer for you, so do not share that URL.
 See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-the-browser) for the tool timeout that the Claude Code wait needs.
 
+## Changes you make in the page
+
+Every change that the review page makes to Prism's records is an action: answering a question, changing an initiative setting, or rebuilding an index.
+The page sends each action with the version of the record it showed you, so when an agent or another tab changed that record in the meantime, Prism refuses your action and changes nothing.
+An action changes only Prism's records, and apart from a rebuild starting Prism's own indexer, it never runs a command, changes a project file, or writes to Git.
+
+Prism records each action with when it happened and who made it.
+The author is the `user.name` and `user.email` that Git reports in the checkout whose page you used, with that checkout's `repository/branch` label and this machine's host name.
+That author is what the checkout's Git configuration claims, so Prism shows it as information and never as proof of who made the change.
+Answers and setting changes go into the initiative's history, which every checkout of a workspace shares, and which keeps the newest 200 entries.
+An index rebuild goes into the checkout's own index history, `index-history/<checkout>.json` in Prism's state directory, which stays on this machine.
+
+An initiative has these settings, each with its default and the moment an agent acts on a change:
+
+| Setting | Values | Default | Takes effect |
+| --- | --- | --- | --- |
+| Autonomy | `conservative`, `broad`, `full` | `conservative` | Decides which later gates wait for you; a gate already open keeps waiting for you. |
+| Agent flow | `multi`, `mono` | `multi` | When work on the initiative starts; it cannot change once a slice has started, is claimed, or has active work. |
+| Commit | `off`, `on` | `on` with `full` autonomy, otherwise `off` | For child sessions started after the change. |
+| Push | `off`, `on` | `off` | For child sessions started after the change. |
+| Continuation | `auto`, `stepwise` | `auto` | When the slice in progress finishes. |
+| Review | `marked`, `recommended`, `all` | `marked` | Sets the review mark of slices whose design is not yet accepted. |
+| Models | `host defaults`, or a delivery, review, and security review model with an optional examples model | `host defaults` | For child sessions started after the change. |
+
+Turning autonomy to `full`, commit on, or push on asks you to confirm first, because it lets agents act further without you.
+
+Each component that `## Components` declares has its own index target, named `<repository>/<component>`, after the root component of the checkout.
+Prism's indexer builds one index for the whole checkout, so rebuilding any component's index rebuilds that index, and a rebuild is refused while a build is already running.
+
 ## Roadmap, initiatives, and slices
 
 The roadmap shows initiatives as a board, a list, or a dependency graph.
