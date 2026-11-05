@@ -464,7 +464,7 @@ const tools = [
   },
   {
     name: "list_repository_intelligence_providers",
-    description: "List registered repository intelligence providers and their current availability for a project. This tool does not create, synchronize, or update provider indexes.",
+    description: "List registered repository intelligence providers and their current availability for a project. This tool does not create, synchronize, or update provider indexes. In a repository that declares components, native.components lists each component's native index status.",
     inputSchema: {
       type: "object",
       properties: {
@@ -477,7 +477,7 @@ const tools = [
   },
   {
     name: "plan_repository_context",
-    description: "Plan bounded repository source context. Auto prepares bundled native semantic analysis, downloading pinned assets and writing private caches as needed. Returns preparing after ten seconds or source ranges with token estimates. Explicit external providers remain available. This tool does not decide session fit.",
+    description: "Plan bounded repository source context. Auto prepares bundled native semantic analysis, downloading pinned assets and writing private caches as needed. Returns preparing after ten seconds or source ranges with token estimates. Explicit external providers remain available. In a repository that declares components, it reads every component that holds a file, returns preparing while none is ready, and while one is not ready, the components_missing diagnostic names it and every token estimate is null. This tool does not decide session fit.",
     inputSchema: {
       type: "object",
       properties: {

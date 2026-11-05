@@ -1,4 +1,4 @@
-import type { SourceUnit, Diagnostic, Relationship, UnresolvedReference } from "../repository-intelligence/repository-unit-types.mjs";
+import type { ComponentState, SourceUnit, Diagnostic, Relationship, UnresolvedReference } from "../repository-intelligence/repository-unit-types.mjs";
 
 export type Selector = string | { type: "symbol" | "heading" | "text" | "json-pointer" | "yaml-key"; value: string }
   | { type: "span"; start: number; end: number; sourceHash: string };
@@ -6,19 +6,26 @@ export interface Reference { path: string; selector?: Selector }
 export interface InventoryEntry { file: string; kind: "source" | "opaque" | "symlink"; hash: string; bytes: number; mode: number; target?: string }
 export interface SnapshotEvidence {
   kind: "snapshot"; schemaVersion: 1; project: string; commit: string; fingerprint: string; capturePolicy: "conservation-source-v1";
-  files: InventoryEntry[]; exclusions: string[]; omissions: { file: string; reason: string }[]; complete: boolean; unknownOmissions?: boolean; diagnostics: Diagnostic[];
+  files: InventoryEntry[]; exclusions: string[]; omissions: { file: string; reason: string }[]; complete: boolean; unknownOmissions?: boolean;
+  // Recorded by an incomplete baseline: the tracked ignored files its scan enumerated, which files and omissions leave out.
+  ignored?: ({ file: string; kind: InventoryEntry["kind"]; bytes: number } | { file: string; reason: string })[];
+  diagnostics: Diagnostic[];
 }
 export interface SearchReceipt {
   kind: "search"; schemaVersion: 1; project: string; snapshotId: string | null; snapshot: string; query: string;
   filters: unknown; limit: number; status: string; capabilities: Record<string, boolean>; modelIdentity: string | null;
   indexRevision: string | null; versions: Record<string, string>; coverage: unknown; diagnostics: Diagnostic[];
-  candidates: (SourceUnit & { excerpt: string; cosineSimilarity: number | null; lexicalScore: number | null; fusedRank: number })[];
+  // In a repository that declares components: each selected component's part in the result, and each candidate's component.
+  components?: ComponentState[];
+  candidates: (SourceUnit & { excerpt: string; cosineSimilarity: number | null; lexicalScore: number | null; fusedRank: number; component?: string })[];
 }
 // The result of a repository analysis tool, retained so that a report or a review view can cite it and detect stale results.
 export interface AnalysisReceipt {
   kind: "repository-analysis"; schemaVersion: 1; project: string; tool: "find_shared_dependencies" | "find_shared_literals" | "find_same_name_units" | "report_module_interfaces" | "report_cohesion_clusters" | "report_complex_units";
   snapshotId: string | null; snapshot: string; indexRevision: string; versions: Record<string, string>; scope: Record<string, unknown>;
   coverage: unknown; diagnostics: Diagnostic[]; files: { file: string; hash: string }[];
+  // In a repository that declares components: each selected component's part in the result, whose snapshot and index revision cover the selection.
+  components?: ComponentState[];
   groups?: unknown[]; modules?: unknown[]; delegatingClasses?: unknown[]; containers?: unknown[]; units?: unknown[]; shapes?: unknown[];
 }
 export interface GrowthJustification { dimensions: string[]; conceptIds: string[]; requirements: Reference[]; reason: string }

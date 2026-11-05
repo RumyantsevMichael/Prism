@@ -97,7 +97,7 @@ Each result also gives its `ancestry`, the names of its containing classes or se
 A class, a section, or a configuration object is an `outline` result that lists its members, and each member is also a separate result.
 A unit longer than the model limit is split into `part` results, and its `parts` field gives their number.
 The `tokens` field gives the size of the complete unit, so a large value can show a refactoring candidate.
-When two or more results share a container, the search also returns that container with `groupedMembers`.
+When two or more results share a container, the search also returns that container with `groupedMembers`, directly after the one of those results that their index ranks first.
 Lockfiles, generated output, vendored code, and minified files are not search candidates.
 Cosine similarity, lexical score, fused rank, model identity, and index revision have distinct meanings.
 Similarity does not establish conceptual equivalence or approve an addition.
@@ -114,6 +114,71 @@ A `preparing` response is unfinished discovery, not an empty search result.
 Keep the original `snapshotId` through retries and edits so new code cannot appear as preexisting reuse evidence.
 Use `discover_repository_intelligence` for native runtime, model, index, and coverage status without starting downloads or preparation.
 
+#### Index a repository per component
+
+A repository that declares components under `## Components` in `.prism/workflow.md` has one native index per component.
+Each declared component's index holds only the files in its folder, and the root component's index holds every other file, including documents outside every declared folder.
+The native limits of 20,000 files, 64 MiB of source, a 512 MiB index file, and 30 minutes of preparation apply to each component's index on its own.
+A repository without components keeps one index of the whole repository, so an index that it prepared earlier is reused.
+
+A search of the current files with `filters.paths` prepares and reads only the components that hold a file at or under those paths.
+A search without paths prepares and reads every component that holds a file.
+Prism prepares one index at a time, in component order: the root component first, then the declared components in declaration order.
+The components that a later call needs move ahead of components that only an earlier call waits for, and the running preparation always finishes.
+A component is prepared again only when its own files change, and its new index reuses the embeddings of its unchanged fragments.
+A component that another session is preparing is reported `preparing`, and this server tries it again every few seconds while it prepares the other components.
+A component whose storage lock names a running process but has gone unrenewed for more than 30 seconds, as when a killed session's process id was reused, fails with `lock_timeout`, and its diagnostic names the lock file to delete when no session is preparing that component.
+Each component's index is reused across sessions and after the repository's name changes.
+
+Each result lists the components it read in `components`, in component order, with each one's identity `<repository>/<component>`, `folder`, `status`, `indexRevision`, and `failure`.
+A component's `status` is `included` when its up-to-date index answered, `waiting` while it is queued, `preparing` while it is built, and `failed` when its preparation failed.
+The result's `status` is `ready` when every component it read is included, `partial` when only some are, `preparing` when none is included yet, and `degraded` when every one failed.
+A result that leaves out a component starts its diagnostics with `components_missing`, whose `components` lists the components it left out and whose message says why for each one.
+A `partial` result is not evidence that the missing components hold no matching code, so wait with `get_repository_intelligence_status` and repeat the search.
+The result's `snapshot` covers only the components it read, so an edit in another component leaves it unchanged.
+
+Each search result names the identity of its component in `component`.
+When one component is included, its results keep that index's order and `fusedRank`.
+When several components are included, each one answers the query with the search's filters and `limit`, and the merged results are ordered by `cosineSimilarity` from highest to lowest, with equal similarities in component order and then in each index's order.
+A result without a similarity, such as a container returned for its grouped members, stays directly after the result that it follows in its component's index.
+Such a result counts toward `limit` like any other, so it is left out when the result it follows is the last one kept.
+The merged list keeps the first `limit` results and numbers `fusedRank` from 1.
+Each result keeps the `fusedScore` and `lexicalScore` that its component's index computed, and those scores depend on that index's own files, so compare them only between results of one component.
+When every component that the search read failed, the search returns lexical matches over those components' files, each with its `component` and a `cosineSimilarity` of `null`, and the result's `status` is `degraded`.
+The search's receipt records the result's `components`, `snapshot`, and `indexRevision`.
+
+A component whose preparation fails keeps its earlier indexes, and every other component's index stays in use.
+Its `failure` gives a `code` and a `message`, and a component that reached a native limit has the code `resource_limit` and a message that names the limit.
+The same server does not prepare that component again until its files change, while any other failure is retried by the next call that needs the component.
+
+In a repository with components, `get_repository_intelligence_status` and `discover_repository_intelligence` list each component that holds a file in `components`.
+Each entry gives the component's `status`, `preparationId`, `snapshot`, `indexRevision`, `builtAt`, `progress`, `coverage`, `failure`, and `diagnosticCount`, where `status` is `unprepared`, `waiting`, `preparing`, `ready`, `indexed`, or `degraded`.
+The top-level `status` is `preparing` while a component waits or prepares, else `degraded` when a component's latest preparation in this server failed, else `indexed` when a component has an index, else `unprepared`.
+The top-level `progress` is the running preparation's progress with its `component`, and each diagnostic names its `component`.
+An invalid `## Components` declaration refuses the native index and status tools before any preparation, with the declaration's error code.
+A search, a structural report, or a context plan builds the components it reads, and background preparation and the review browser's rebuild only refresh components that already have an index or a failed build, as [Watch an index build in the review browser](#watch-an-index-build-in-the-review-browser) describes.
+
+#### Report and plan across component indexes
+
+In a repository with components, the six structural reports select and prepare components as a search does.
+A report with `filters.paths` reads only the components that hold a file at or under those paths, and a report without paths reads every component that holds a file.
+A report runs over its included components as over one index that held all of their units, references, and files, so its ordering, `limit`, `offset`, totals, and `coverage` apply to that union.
+A group of `find_shared_dependencies`, `find_shared_literals`, or `find_same_name_units` keeps only members in the components that the report reads, and `report_module_interfaces` counts only importers in those components.
+A path-scoped report sees only the components that hold those paths, so matches in other components appear only in an unscoped report.
+Each report result has the `components`, `status`, `components_missing` diagnostic, `snapshot`, and `indexRevision` that a search result has, and a `preparing` result has a `preparationId` of `null`.
+A component's index does not resolve references into other components, so a report that includes such a component can report incomplete structure.
+A search or report with `snapshotId` splits the retained baseline's files into components by the current declaration and prepares one index per component from the baseline's content.
+It selects, prepares, and reads the baseline's components as a call on the current files does, and its result has the same `components`, `status`, and `components_missing` diagnostic.
+A component whose baseline files are the same as its current files, or as another baseline's, reuses that component's index without building it.
+A baseline's component counts as incompletely scanned only when the baseline's capture could have missed any file, or when that component's own files, tracked files that `.gitignore` matches included, exceed a native limit or include a file the scan left out other than a binary file, as a scan of the current files decides, so a reused index reports the same completeness for both.
+An incomplete baseline captured by an earlier Prism version does not record its tracked ignored files, so each of its components counts as incompletely scanned.
+A search with `snapshotId` keeps the baseline's analysis for conservation checks only when it read every component of the baseline and included all of them, so a path-scoped or `partial` search keeps none.
+
+`plan_repository_context` prepares every component that holds a file and returns `preparing` while none of them is included.
+Its semantic candidates come from the merged search of every included component, and its graph expands within the included components.
+While a component is not included, `diagnostics.provider` holds the `components_missing` diagnostic that names it, `diagnostics.estimateEligible` is `false`, and every `tokenEstimate` value is `null`.
+Its `expectedSnapshot` accepts the `snapshot` of an unscoped search or the plan's own `sourceFingerprint`.
+
 #### Watch an index build in the review browser
 
 The review browser's status bar shows the open project's native index at its right end.
@@ -128,13 +193,22 @@ An agent's search also starts or retries a build.
 While a page of the project is open, the review browser rebuilds an index that is out of date once the files stayed unchanged for a minute, at most once every five minutes, so slice pages show current line ranges.
 The index panel's Rebuild index button starts a build at once.
 To keep a project from building at startup or from the open page, add `- Background indexing: off` under `## Repository intelligence` in `.prism/workflow.md`; searches and the button still build the index.
+In a repository with components, background preparation at startup rebuilds, in component order, only the components that already have an index and whose files changed, so a component that no tool has read yet is never built in the background.
+The review browser's rebuild, automatic or from the button, prepares each component that has an index or a recorded failed build and whose files changed or whose latest build failed, including one that reached a native limit, and no other component.
+An invalid `## Components` declaration builds nothing in the background or from the page, and the chip shows the declaration's refusal as a failed build.
 `Not indexed` means no build has run yet, and `Indexing stopped` means the session that ran the build ended before it finished.
 `Index rebuild pending` means files changed during the build, and the next build uses the current files.
+
+In a repository with components, the chip combines every component's index.
+It shows a running build while any component builds in any session, and names that component in the chip and its panel.
+Otherwise it shows `Indexing failed` or `Indexing stopped` when some component's latest build ended so after its latest index, preferring a failure, and `Indexed` when some component has an index.
+The panel lists each component that has an index or a recorded build with its state, names the component of each failure's diagnostics, and describes the most recently built component index.
 
 `Index out of date` is a hint from Git, not a comparison of file contents.
 It compares the commit and the changed files' sizes and modification times with those recorded when the index was built or last reused.
 A commit that leaves indexed files unchanged looks out of date until the next build, and an edit that keeps a file's size and modification time looks current.
 A folder outside Git, an index of a retained baseline, and an index built by a Prism version without the chip show no hint.
+The Git state covers the whole repository, so in a repository with components an edit in one component marks every component's index out of date, and the rebuild then reuses each unchanged component's index without building it.
 
 ### Find shared dependencies
 
@@ -163,6 +237,7 @@ Test code is left out unless `includeTests` is true.
 Test code is a file in a test directory or with a test name, such as `store.test.ts`, `test_store.py`, `store_test.go`, or `StoreTest.java`, and a Rust `#[cfg(test)]` module or `#[test]` function.
 Generated, vendored, and minified files are always left out.
 With `filters.paths`, a group is reported when one of its members is inside the paths, and it keeps its members elsewhere, so a scoped analysis still sees code that the scope repeats.
+In a repository with components, `filters.paths` also selects the components that the report reads, so a group keeps only its members in the components that hold those paths, as [Report and plan across component indexes](#report-and-plan-across-component-indexes) describes.
 A function that only uses core operations has no dependency profile, so use search for small helpers.
 `coverage` gives the number of profiled units, and a `dependency_names_unavailable` diagnostic means that the index was prepared without library call names.
 A shared dependency set identifies candidates for investigation and does not establish equivalent behavior.
@@ -189,6 +264,7 @@ A test-only export is often a deliberate test seam.
 `namesPerImporter` is the median number of exports that one importer uses, so a low value on a module with many exports shows that each caller needs only a small part of the interface.
 By default, only modules with unused or test-only exports appear, and `allModules` reports every exporting module.
 With `filters.paths`, only modules inside the paths are reported, while importers outside the paths still count.
+In a repository with components, only importers in the components that hold those paths count.
 Use `offset` and `nextOffset` to page through modules.
 
 Imports resolve through relative paths, `package.json` names and `exports` maps of workspace packages, `tsconfig` path aliases, and built output that mirrors a `src/` file.
@@ -334,6 +410,7 @@ The facts identify candidates for a split and do not decide that a unit is too c
 `find_shared_dependencies`, `find_shared_literals`, `find_same_name_units`, `report_module_interfaces`, `report_cohesion_clusters`, and `report_complex_units` retain each complete result as immutable private evidence and return its `receiptId`.
 The receipt keeps every result before the response `limit`, so `totalGroups`, `totalContainers`, or `totalUnits` can be larger than the returned list.
 The receipt also records the tool, the scope, the snapshot, the index revision, coverage, diagnostics, and the hash of every file that the result names.
+In a repository with components, the receipt also records the result's `components`, and its snapshot and index revision cover the components that the report read.
 A file hash that differs from the current file shows a result that a later edit made stale.
 Read a receipt in pages with `get_conservation_evidence`.
 The default section is `groups`, `modules`, `containers`, or `units`, and the `delegatingClasses` and `files` sections are also available.

@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { realpath, lstat, readlink } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "../repository-intelligence/native-repository-intelligence.mjs";
+import { NativeRepositoryIntelligence, contentFingerprint, openNativeRepositoryIntelligence } from "../repository-intelligence/native-repository-intelligence.mjs";
 import { privateDirectory, regularBytes, semanticError } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { CHANGE_MAP_FILES, resolveArtifactPath } from "./change-map.mjs";
@@ -42,6 +42,12 @@ function withRenamedChangeMaps(outputs) {
   const names = [...CHANGE_MAP_FILES, ...CHANGE_MAP_FILES.map((name) => `${name}.lock`)];
   const siblings = outputs.filter((file) => names.includes(path.posix.basename(file))).flatMap((file) => names.map((name) => `${path.posix.dirname(file)}/${name}`));
   return [.../* @__PURE__ */ new Set([...outputs, ...siblings])].sort();
+}
+function componentComplete(snapshot, filter, { maxFiles, maxBytes }) {
+  if (snapshot.unknownOmissions !== false || !snapshot.ignored) return false;
+  const entries = [...snapshot.files, ...snapshot.omissions, ...snapshot.ignored].filter((entry) => filter(entry.file));
+  const bytes = entries.reduce((sum, entry) => sum + ("kind" in entry && entry.kind !== "opaque" ? entry.bytes : 0), 0);
+  return entries.length <= maxFiles && bytes <= maxBytes && entries.every((entry) => !("reason" in entry) || entry.reason === "binary");
 }
 class ConservationStore {
   directory;
@@ -201,6 +207,11 @@ class ConservationStore {
       throw conservationError("stale_snapshot", "Source changed during baseline capture.");
     }
     const files = selected.map(({ file, kind, hash, bytes, mode, target }) => ({ file, kind, hash, bytes, mode, ...target === void 0 ? {} : { target } }));
+    const trackedIgnoredFile = (file) => !exclusions.includes(file) && ignored.has(file);
+    const tracked = snapshot.complete ? {} : { ignored: [
+      ...snapshot.inventory.filter((entry) => trackedIgnoredFile(entry.file)).map(({ file, kind, bytes }) => ({ file, kind, bytes })),
+      ...snapshot.omissions.filter((item) => trackedIgnoredFile(item.file))
+    ] };
     const evidence = {
       kind: "snapshot",
       schemaVersion: 1,
@@ -213,16 +224,20 @@ class ConservationStore {
       omissions: snapshot.omissions.filter((item) => !exclusions.includes(item.file) && !ignored.has(item.file)),
       complete: snapshot.complete,
       unknownOmissions: snapshot.unknownOmissions,
+      ...tracked,
       diagnostics: snapshot.diagnostics
     };
     return { snapshotId: await this.put(root, evidence), snapshot: evidence };
   }
-  async source(projectRoot, snapshotId) {
+  // With a filter, the source holds only the retained source files that the filter accepts, such as one component's files, and its fingerprint
+  // is their content fingerprint, computed as the live scan of a component computes it, so a component index built from the same content is reused.
+  async source(projectRoot, snapshotId, filter) {
     const snapshot = await this.get(projectRoot, snapshotId, "snapshot").catch((error) => {
       if (error.code !== "evidence_missing") throw error;
       throw conservationError("evidence_missing", "snapshotId does not name a retained baseline. Pass the snapshotId that capture_repository_snapshot returned, or pass the fingerprint of the live index as expectedSnapshot.", { evidenceId: snapshotId });
     }), files = [];
-    for (const entry of snapshot.files) if (entry.kind === "source") {
+    const held = filter ? snapshot.files.filter((entry) => entry.kind === "source" && filter(entry.file)) : snapshot.files;
+    for (const entry of held) if (entry.kind === "source") {
       const content = (await this.bytes(projectRoot, entry)).toString("utf8");
       files.push(Object.assign(
         {
@@ -235,19 +250,20 @@ class ConservationStore {
       ));
     }
     const retained = new NativeRepositoryIntelligence(snapshot.project);
+    const complete = !filter || snapshot.complete ? snapshot.complete : componentComplete(snapshot, filter, retained.options);
     const value = {
       root: snapshot.project,
       commit: snapshot.commit,
-      sourceFingerprint: snapshot.fingerprint,
-      complete: snapshot.complete,
+      sourceFingerprint: filter ? contentFingerprint(files) : snapshot.fingerprint,
+      complete,
       files,
       filesByPath: new Map(files.map((file) => [file.file, file]))
     };
-    Object.assign(value, { diagnostics: snapshot.diagnostics, enumerator: "retained", totalBytes: snapshot.files.reduce((sum, file) => sum + file.bytes, 0) });
+    Object.assign(value, { diagnostics: snapshot.diagnostics, enumerator: "retained", totalBytes: held.reduce((sum, file) => sum + file.bytes, 0) });
     retained.snapshot = async () => value;
     retained.verifySnapshot = async () => {
       await this.get(projectRoot, snapshotId, "snapshot");
-      for (const entry of snapshot.files) await this.bytes(projectRoot, entry);
+      for (const entry of held) await this.bytes(projectRoot, entry);
     };
     retained.read = async (input) => {
       const source = value.filesByPath.get(input.file);

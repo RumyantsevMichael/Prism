@@ -1,0 +1,20 @@
+@startuml
+title component-index-views - units
+package "repository-intelligence" {
+  component "background-preparation.mts" as Background
+  component "index-status.mts" as Status
+  component "component-indexes.mts" as Indexes
+}
+package "review" {
+  component "review-server.mjs" as Server
+  component "workspace-model.mjs" as Model
+  component "views/indexing.js" as Panel
+}
+component "mcp.mjs" as Mcp
+Mcp --> Background : startBackgroundPreparation at start
+Server --> Status : readIndexingStatus
+Server --> Background : startIndexRebuild
+Model --> Status : readPublishedUnits
+Background --> Indexes : prepare components with an index
+Panel ..> Server : index status with components
+@enduml

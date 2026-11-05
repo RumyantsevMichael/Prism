@@ -3,10 +3,13 @@ import path from "node:path";
 import { readChangeMapDocument } from "./change-map.mjs";
 import { conservationStore, conservationError, digest, canonical, withinScope } from "./conservation-store.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, selectedComponents } from "../repository-intelligence/component-indexes.mjs";
 import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
 import { CHUNKER_VERSION } from "../../native-runtime/versions.mjs";
 import { sameNameGroups } from "../repository-intelligence/same-name-units.mjs";
 import { detectorDiff, DUPLICATE_MIN_LINES } from "./detector-diff.mjs";
+const NONE = { components: [], files: [] };
+const partial = (analysis) => analysis.diagnostics.some((item) => item.code === "components_missing");
 const keyFor = (file, kind, selector) => canonical([file, kind, selector]);
 const ANALYSIS_VERSION = "conservation-metrics-v3";
 const COMPARISON_VERSION = "conservation-comparison-v3";
@@ -36,12 +39,29 @@ async function retainAnalysis(projectRoot, snapshotId, prepared, store = conserv
 }
 async function prepareAnalysis(projectRoot, snapshotId, options = {}) {
   const store = options.store || conservationStore, existing = await store.analysis(projectRoot, snapshotId);
-  if (existing?.versions.extractor === CHUNKER_VERSION && existing.versions.metrics === ANALYSIS_VERSION) return { status: "ready", analysis: existing };
-  const runtime = options.runtime || nativeSemanticRuntime, source = await store.source(projectRoot, snapshotId);
+  if (existing?.versions.extractor === CHUNKER_VERSION && existing.versions.metrics === ANALYSIS_VERSION && !partial(existing))
+    return { status: "ready", analysis: existing, missing: NONE };
+  const runtime = options.runtime || nativeSemanticRuntime;
+  const declaration = await indexComponents(projectRoot);
+  if (declaration) return prepareComponentAnalysis(projectRoot, snapshotId, declaration, runtime, store);
+  const source = await store.source(projectRoot, snapshotId);
   const prepared = await runtime.prepare(source);
   if (prepared.status === "preparing") return { status: "preparing", preparationId: prepared.preparationId };
   if (!prepared.prepared) return { status: "degraded", diagnostics: prepared.diagnostics, analysis: null };
-  return { status: "ready", analysis: await retainAnalysis(projectRoot, snapshotId, prepared.prepared, store) };
+  return { status: "ready", analysis: await retainAnalysis(projectRoot, snapshotId, prepared.prepared, store), missing: NONE };
+}
+async function prepareComponentAnalysis(projectRoot, snapshotId, declaration, runtime, store) {
+  const { selected, snapshot } = await selectedComponents(projectRoot, declaration, void 0, void 0, (filter) => store.source(projectRoot, snapshotId, filter));
+  const preparations = await prepareComponents(runtime, selected);
+  const result = componentResult(componentStates(selected, preparations), snapshot);
+  if (result.components.some((state) => state.status === "waiting" || state.status === "preparing")) return { status: "preparing", preparationId: null, components: result.components };
+  if (!result.components.some((state) => state.status === "included")) return { status: "degraded", diagnostics: componentDiagnostics(result, preparations), components: result.components, analysis: null };
+  const missing = { components: [], files: [] };
+  for (const [position, state] of result.components.entries()) if (state.status !== "included") {
+    missing.components.push(state.component);
+    missing.files.push(...(await selected[position].source.snapshot()).files.map((file) => file.file));
+  }
+  return { status: "ready", analysis: await retainAnalysis(projectRoot, snapshotId, await baselineIndex(selected, preparations, result), store), missing };
 }
 async function sourceUnits(projectRoot, snapshot, analysis, store = conservationStore) {
   const units = [];
@@ -114,17 +134,21 @@ async function duplicationDiagnostics(projectRoot, document, baseline, analysis,
   };
   const additions = entryFiles("ADD", "after"), modifications = entryFiles("MODIFY", "before");
   if (additions.size < 2 && modifications.size < 2) return [];
-  if (!analysis) {
+  let missing = NONE;
+  if (!analysis || partial(analysis)) {
     const prepared = await prepareAnalysis(projectRoot, document.baselineId, options);
     if (prepared.status === "preparing") return [{ code: "duplication_check_preparing", message: "Read the change map again after the baseline analysis is ready.", blocking: true }];
     if (!prepared.analysis) return [{ code: "duplication_check_unavailable", message: "The baseline analysis is unavailable, so a review must check the additions and modifications for duplicated functions.", blocking: false }];
     analysis = prepared.analysis;
+    missing = prepared.missing;
   }
   const candidates = /* @__PURE__ */ new Set([...additions.keys(), ...modifications.keys()]), contents = /* @__PURE__ */ new Map();
+  const unchecked = [...candidates].filter((file) => missing.files.includes(file)).sort();
+  const unavailable = unchecked.length ? [{ code: "duplication_check_unavailable", blocking: false, message: `The baseline analysis leaves out the components ${missing.components.join(", ")}, whose preparation failed, so a review must check ${unchecked.join(", ")} for duplicated functions.` }] : [];
   for (const file of candidates) contents.set(file, (await store.bytes(projectRoot, files.get(file))).toString("utf8"));
   const { groups } = sameNameGroups({ units: analysis.units.filter((unit) => unit.range), edges: analysis.edges || [], unresolvedReferences: analysis.unresolvedReferences }, contents, { include: (unit) => candidates.has(unit.file) });
   const duplicated = groups.filter((group) => group.variants.every((variant) => variant.lines >= DUPLICATE_MIN_LINES));
-  if (!duplicated.length) return [];
+  if (!duplicated.length) return unavailable;
   const span = (file, selector, line) => analysis.units.find((unit) => unit.file === file && (unit.selector || unit.name) === selector && unit.range.startLine === line)?.span;
   const members = (group) => group.variants.flatMap((variant) => variant.members).map((member) => ({ file: member.file, source: span(member.file, member.selector, member.range.startLine) }));
   const covers = (units, member) => !!member.source && units.some((unit) => unit.file === member.file && unit.start <= member.source.start && member.source.end <= unit.end);
@@ -136,8 +160,8 @@ async function duplicationDiagnostics(projectRoot, document, baseline, analysis,
   }
   const added = duplicated.filter((group) => new Set(members(group).map((member) => member.file).filter((file) => additions.has(file))).size >= 2);
   const changed = duplicated.filter((group) => new Set(members(group).filter((member) => covers(modified.map((item) => item.unit), member)).map((member) => member.file)).size >= 2);
-  if (!added.length && !changed.length) return [];
-  const consolidating = [], diagnostics = [];
+  if (!added.length && !changed.length) return unavailable;
+  const consolidating = [], diagnostics = [...unavailable];
   const documents = [document];
   for (const item of document.consolidations || []) {
     const named = item.slice ? `${item.initiative}/${item.slice}` : item.deltaPath;
@@ -295,6 +319,8 @@ async function compareChangeMap(input, options = {}) {
   const preparedB = input.baselineId === input.resultSnapshotId ? preparedA : await prepareAnalysis(input.projectRoot, input.resultSnapshotId, options);
   if (preparedB.status === "preparing") return preparedB;
   const a = preparedA.analysis || null, b = preparedB.analysis || null;
+  const missingComponents = [.../* @__PURE__ */ new Set([...(preparedA.missing || NONE).components, ...(preparedB.missing || NONE).components])];
+  const unknown = /* @__PURE__ */ new Set([...(preparedA.missing || NONE).files, ...(preparedB.missing || NONE).files]);
   if (a && b && canonical(a.versions) !== canonical(b.versions)) throw conservationError("evidence_missing", "Both measurements require the same parser and tokenizer versions.");
   const observations = [];
   const observe = (code, severity, message, fields = {}) => {
@@ -404,16 +430,17 @@ async function compareChangeMap(input, options = {}) {
     const side = async (parts) => {
       const contents = /* @__PURE__ */ new Map(), index = { units: [], edges: [], unresolvedReferences: void 0 };
       const taken = [];
+      const leftOut = new Set(parts.flatMap(([, analysis]) => analysis.units.filter((unit) => unknown.has(unit.file)).map((unit) => unit.id)));
       for (const [snapshot, analysis, keep] of parts) {
-        const files = new Set(analysis.units.map((unit) => unit.file).filter(keep));
+        const files = new Set(analysis.units.map((unit) => unit.file).filter((file) => keep(file) && !unknown.has(file)));
         for (const file of snapshot.files) if (file.kind === "source" && files.has(file.file) && !excluded.includes(file.file)) contents.set(file.file, (await store.bytes(input.projectRoot, file)).toString("utf8"));
         const units = analysis.units.filter((unit) => files.has(unit.file) && contents.has(unit.file) && unit.range && unit.span);
         taken.push(new Set(units.map((unit) => unit.id)));
         index.units.push(...units);
       }
       if (parts.length === 1) {
-        index.edges.push(...parts[0][1].edges || []);
-        index.unresolvedReferences = parts[0][1].unresolvedReferences;
+        index.edges.push(...(parts[0][1].edges || []).filter((edge) => !leftOut.has(edge.source) && !leftOut.has(edge.target)));
+        index.unresolvedReferences = parts[0][1].unresolvedReferences?.filter((reference) => !leftOut.has(reference.source));
         return { index, contents };
       }
       const identity = (unit) => `${unit.file}\0${unit.kind}\0${unit.selector ?? unit.name}`, mergedIds = new Set(index.units.map((unit) => unit.id));
@@ -436,13 +463,14 @@ async function compareChangeMap(input, options = {}) {
           return (targets[own.get(identity(unit)).indexOf(unit)] ?? targets[0]).id;
         };
         const owned = (source) => taken[position].has(source);
-        index.edges.push(...(analysis.edges || []).filter((edge) => owned(edge.source)).map((edge) => ({ ...edge, target: remap(edge.target) })));
+        index.edges.push(...(analysis.edges || []).filter((edge) => owned(edge.source) && !leftOut.has(edge.target)).map((edge) => ({ ...edge, target: remap(edge.target) })));
         if (analysis.unresolvedReferences) (index.unresolvedReferences ||= []).push(...analysis.unresolvedReferences.filter((reference) => owned(reference.source)));
       }
       return { index, contents };
     };
     const baselineSide = await side(beforeStart.size ? [[before, a, (file) => !beforeStart.has(file)], [after, b, (file) => beforeStart.has(file)]] : [[before, a, () => true]]);
-    for (const finding of detectorDiff(baselineSide, await side([[after, b, () => true]]), new Set(changedSource))) observe(finding.code, finding.severity, finding.message, { file: finding.file });
+    for (const finding of detectorDiff(baselineSide, await side([[after, b, () => true]]), new Set(changedSource.filter((file) => !unknown.has(file))))) observe(finding.code, finding.severity, finding.message, { file: finding.file });
+    if (missingComponents.length) observe("detector_diff_unknown", "review_required", `The structural analysis leaves out the components ${missingComponents.join(", ")}, whose preparation failed, so a review must check the change for new duplication and complexity.`);
   } else if (changedSource.length) observe("detector_diff_unknown", "review_required", "The structural analysis is unavailable, so a review must check the change for new duplication and complexity.");
   for (const snapshot of start ? [before, start, after] : [before, after]) if (!snapshot.complete && (snapshot.unknownOmissions !== false || snapshot.omissions.some((item) => withinScope(item.file, document.scope)))) observe("source_inventory_incomplete", "failure", "The affected source inventory is incomplete.");
   const measured = await measurements(input.projectRoot, before, after, a, b, document, store);

@@ -232,7 +232,8 @@ async function gitCommit(root, options) {
   }
 }
 
-async function filesystemFiles(root, maxFiles) {
+// A filter keeps only the files it accepts, and only those count toward maxFiles, so a component's scan never stops in another component's files.
+async function filesystemFiles(root, maxFiles, filter = null) {
   const files = [];
   let unreadableDirectories = 0;
   let truncated = false;
@@ -246,20 +247,20 @@ async function filesystemFiles(root, maxFiles) {
     }
     entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
-      if (files.length >= maxFiles) {
+      if (truncated || (!filter && files.length >= maxFiles)) {
         truncated = true;
         return;
       }
       const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
-      if (entry.isSymbolicLink()) {
-        files.push(relativePath);
-      } else if (entry.isDirectory()) {
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
         if (!FALLBACK_EXCLUDED_DIRECTORIES.has(entry.name)) {
           await visit(path.join(directory, entry.name), relativePath);
         }
-      } else if (entry.isFile()) {
-        files.push(relativePath);
-      } else {
+      } else if (!filter || filter(relativePath)) {
+        if (files.length >= maxFiles) {
+          truncated = true;
+          return;
+        }
         files.push(relativePath);
       }
     }
@@ -272,7 +273,7 @@ async function enumerateFiles(root, options) {
   try {
     return { ...(await gitFiles(root, options)), enumerator: "git", diagnostics: [] };
   } catch {
-    const fallback = await filesystemFiles(root, options.maxFiles);
+    const fallback = await filesystemFiles(root, options.maxFiles, options.filter);
     return {
       ...fallback,
       enumerator: "filesystem",
@@ -360,6 +361,8 @@ async function buildSnapshot(projectRoot, options) {
   const { isManagedRecordFile } = await import("../workflow/record-store.mjs");
   const evidenceOutputs = new Set(await conservationStore.outputs(root));
   enumeration.files = enumeration.files.filter(file => !evidenceOutputs.has(file) && !isManagedRecordFile(file));
+  // A component's source scans only the files of its component, so the native limits apply to each component on its own.
+  if (options.filter) enumeration.files = enumeration.files.filter(options.filter);
   const diagnostics = [...enumeration.diagnostics];
   const counters = {
     binary: 0,
@@ -436,7 +439,8 @@ async function buildSnapshot(projectRoot, options) {
     fingerprintHash.update("\0");
     if (options.retainOpaque) fingerprintHash.update(`${identity.mode}\0`);
   }
-  const sourceFingerprint = fingerprintHash.digest("hex");
+  // A component's identity is its content alone, computed the same way for the live project and for a retained baseline.
+  const sourceFingerprint = options.filter ? contentFingerprint(files) : fingerprintHash.digest("hex");
   const head = enumeration.enumerator === "git" ? await gitCommit(root, options) : null;
   return {
     root,
@@ -452,6 +456,12 @@ async function buildSnapshot(projectRoot, options) {
     enumerator: enumeration.enumerator,
     diagnostics
   };
+}
+
+/** The SHA-256 of the lines `<path> <sha256>\n` of the given source files, sorted by path in code point order. */
+export function contentFingerprint(files) {
+  const lines = files.map(({ file, hash }) => [file, hash]).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return sha256(lines.map(([file, hash]) => `${file} ${hash}\n`).join(""));
 }
 
 function scoreFile(file, tokens, task) {
@@ -486,7 +496,8 @@ export class NativeRepositoryIntelligence {
       maxFiles: positiveInteger(options.maxFiles, DEFAULT_MAX_FILES, "maxFiles"),
       maxBytes: positiveInteger(options.maxBytes, DEFAULT_MAX_BYTES, "maxBytes"),
       maxFileBytes: positiveInteger(options.maxFileBytes, DEFAULT_MAX_FILE_BYTES, "maxFileBytes"),
-      retainOpaque: options.retainOpaque === true
+      retainOpaque: options.retainOpaque === true,
+      filter: typeof options.filter === "function" ? options.filter : null
     };
     this.snapshotPromise = null;
   }

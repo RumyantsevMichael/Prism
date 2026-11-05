@@ -21,12 +21,15 @@ Each tool reports facts for investigation, not defects.
 4. If the scope is part of the project, pass its directories as `filters.paths`.
 5. For each responsibility that the scope implements, call `search_repository_concepts` with a query that describes it.
 6. While a call returns `preparing`, wait through bounded `get_repository_intelligence_status` requests and repeat the same call.
-7. Read the source of the reported units before you rank them.
-8. Cite the `receiptId` of each discovery result in the evidence of the candidates that it supports.
-9. Preserve the same baseline through target edits, retries, and corrections.
-10. If a tool is unavailable, report that limitation with the fallback source identity and coverage.
+7. If a call returns `partial` while a component that its `components_missing` diagnostic names is waiting or preparing, wait as for `preparing` and repeat the same call.
+8. If a `partial` result still names a component in `components_missing`, report each named component as uncovered in the discovery coverage.
+9. Read the source of the reported units before you rank them.
+10. Cite the `receiptId` of each discovery result in the evidence of the candidates that it supports.
+11. Preserve the same baseline through target edits, retries, and corrections.
+12. If a tool is unavailable, report that limitation with the fallback source identity and coverage.
 
 A `preparing` response supplies neither completed candidates nor successful semantic evidence.
+In a repository that declares components, a `partial` response holds results only from the components it includes, so it is no evidence that a component it left out has no candidates.
 Live files cannot replace the original baseline after target edits.
 A known omission outside the affected scope limits repository coverage without implying missing affected source.
 
