@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { realpath, lstat, readlink } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "../repository-intelligence/native-repository-intelligence.mjs";
+import { NativeRepositoryIntelligence, contentFingerprint, openNativeRepositoryIntelligence } from "../repository-intelligence/native-repository-intelligence.mjs";
 import { privateDirectory, regularBytes, semanticError } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { CHANGE_MAP_FILES, resolveArtifactPath } from "./change-map.mjs";
@@ -191,26 +191,29 @@ export class ConservationStore {
       omissions: snapshot.omissions.filter(item => !exclusions.includes(item.file) && !ignored.has(item.file)), complete: snapshot.complete, unknownOmissions: snapshot.unknownOmissions, diagnostics: snapshot.diagnostics };
     return { snapshotId: await this.put(root, evidence), snapshot: evidence };
   }
-  async source(projectRoot: string, snapshotId: string): Promise<NativeSource> {
+  // With a filter, the source holds only the retained source files that the filter accepts, such as one component's files, and its fingerprint
+  // is their content fingerprint, computed as the live scan of a component computes it, so a component index built from the same content is reused.
+  async source(projectRoot: string, snapshotId: string, filter?: (file: string) => boolean): Promise<NativeSource> {
     // A caller can confuse a retained baseline with the fingerprint of the live index, so the error names both fields.
     const snapshot = await this.get<SnapshotEvidence>(projectRoot, snapshotId, "snapshot").catch(error => {
       if (error.code !== "evidence_missing") throw error;
       throw conservationError("evidence_missing", "snapshotId does not name a retained baseline. Pass the snapshotId that capture_repository_snapshot returned, or pass the fingerprint of the live index as expectedSnapshot.", { evidenceId: snapshotId });
     }), files: SourceFile[] = [];
-    for (const entry of snapshot.files) if (entry.kind === "source") {
+    const held = filter ? snapshot.files.filter(entry => entry.kind === "source" && filter(entry.file)) : snapshot.files;
+    for (const entry of held) if (entry.kind === "source") {
       const content = (await this.bytes(projectRoot, entry)).toString("utf8");
       files.push(Object.assign({ file: entry.file, hash: entry.hash,
         absolutePath: await this.blobPath(projectRoot, entry.hash), content },
         { lineCount: (content.match(/[^\n]*\n|[^\n]+$/g) || [""]).length, bytes: entry.bytes, kind: "source" }));
     }
     const retained = new NativeRepositoryIntelligence(snapshot.project) as unknown as NativeSource;
-    const value: SourceSnapshot = { root: snapshot.project, commit: snapshot.commit, sourceFingerprint: snapshot.fingerprint,
+    const value: SourceSnapshot = { root: snapshot.project, commit: snapshot.commit, sourceFingerprint: filter ? contentFingerprint(files) : snapshot.fingerprint,
       complete: snapshot.complete, files, filesByPath: new Map(files.map(file => [file.file, file])) };
-    Object.assign(value, { diagnostics: snapshot.diagnostics, enumerator: "retained", totalBytes: snapshot.files.reduce((sum, file) => sum + file.bytes, 0) });
+    Object.assign(value, { diagnostics: snapshot.diagnostics, enumerator: "retained", totalBytes: held.reduce((sum, file) => sum + file.bytes, 0) });
     retained.snapshot = async () => value;
     retained.verifySnapshot = async () => {
       await this.get(projectRoot, snapshotId, "snapshot");
-      for (const entry of snapshot.files) await this.bytes(projectRoot, entry);
+      for (const entry of held) await this.bytes(projectRoot, entry);
     };
     // The native read method checks live paths; retained reads use only verified blobs.
     retained.read = async input => {

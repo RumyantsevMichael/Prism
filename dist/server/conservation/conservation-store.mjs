@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { realpath, lstat, readlink } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "../repository-intelligence/native-repository-intelligence.mjs";
+import { NativeRepositoryIntelligence, contentFingerprint, openNativeRepositoryIntelligence } from "../repository-intelligence/native-repository-intelligence.mjs";
 import { privateDirectory, regularBytes, semanticError } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { CHANGE_MAP_FILES, resolveArtifactPath } from "./change-map.mjs";
@@ -217,12 +217,15 @@ class ConservationStore {
     };
     return { snapshotId: await this.put(root, evidence), snapshot: evidence };
   }
-  async source(projectRoot, snapshotId) {
+  // With a filter, the source holds only the retained source files that the filter accepts, such as one component's files, and its fingerprint
+  // is their content fingerprint, computed as the live scan of a component computes it, so a component index built from the same content is reused.
+  async source(projectRoot, snapshotId, filter) {
     const snapshot = await this.get(projectRoot, snapshotId, "snapshot").catch((error) => {
       if (error.code !== "evidence_missing") throw error;
       throw conservationError("evidence_missing", "snapshotId does not name a retained baseline. Pass the snapshotId that capture_repository_snapshot returned, or pass the fingerprint of the live index as expectedSnapshot.", { evidenceId: snapshotId });
     }), files = [];
-    for (const entry of snapshot.files) if (entry.kind === "source") {
+    const held = filter ? snapshot.files.filter((entry) => entry.kind === "source" && filter(entry.file)) : snapshot.files;
+    for (const entry of held) if (entry.kind === "source") {
       const content = (await this.bytes(projectRoot, entry)).toString("utf8");
       files.push(Object.assign(
         {
@@ -238,16 +241,16 @@ class ConservationStore {
     const value = {
       root: snapshot.project,
       commit: snapshot.commit,
-      sourceFingerprint: snapshot.fingerprint,
+      sourceFingerprint: filter ? contentFingerprint(files) : snapshot.fingerprint,
       complete: snapshot.complete,
       files,
       filesByPath: new Map(files.map((file) => [file.file, file]))
     };
-    Object.assign(value, { diagnostics: snapshot.diagnostics, enumerator: "retained", totalBytes: snapshot.files.reduce((sum, file) => sum + file.bytes, 0) });
+    Object.assign(value, { diagnostics: snapshot.diagnostics, enumerator: "retained", totalBytes: held.reduce((sum, file) => sum + file.bytes, 0) });
     retained.snapshot = async () => value;
     retained.verifySnapshot = async () => {
       await this.get(projectRoot, snapshotId, "snapshot");
-      for (const entry of snapshot.files) await this.bytes(projectRoot, entry);
+      for (const entry of held) await this.bytes(projectRoot, entry);
     };
     retained.read = async (input) => {
       const source = value.filesByPath.get(input.file);

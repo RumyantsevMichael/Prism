@@ -1,7 +1,7 @@
 // Generated from src/server/repository-intelligence/semantic-native-provider.mts by scripts/native-build/compile.mjs.
 import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
-import { componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectedComponents, unionIndex, unionSnapshot } from "./component-indexes.mjs";
+import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectComponents, selectedComponents, unionIndex, unionSnapshot } from "./component-indexes.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { moduleInterfaceReport } from "./module-interfaces.mjs";
@@ -323,7 +323,7 @@ async function prepareNativeProvider(projectRoot, options = {}) {
 async function searchRepositoryConcepts(input, options = {}) {
   validateConceptSearch(input);
   const declaration = options.nativeSource ? null : await indexComponents(input.projectRoot);
-  if (declaration && !input.snapshotId) return searchComponentIndexes(input, declaration, options);
+  if (declaration) return searchComponentIndexes(input, declaration, options);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
   if (preparation.status === "preparing") return { ...preparation, prepared: void 0, results: [] };
@@ -386,9 +386,10 @@ async function lexicalResults(sources, input, limit, components = []) {
   }
   return results;
 }
+const retainedSources = (projectRoot, snapshotId) => snapshotId ? (filter) => conservationStore.source(projectRoot, snapshotId, filter) : void 0;
 async function searchComponentIndexes(input, declaration, options) {
   const runtime = options.runtime || nativeSemanticRuntime, limit = input.limit || 10;
-  const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot);
+  const { sources, selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot, retainedSources(input.projectRoot, input.snapshotId));
   const preparations = await prepareComponents(runtime, selected, options.waitMs);
   const states = componentStates(selected, preparations);
   const preparing = () => ({ status: "preparing", preparationId: null, snapshot, diagnostics: componentResult(states, snapshot).diagnostics, components: states, results: [] });
@@ -406,6 +407,8 @@ async function searchComponentIndexes(input, declaration, options) {
   const candidates = result.status === "degraded" ? await lexicalResults(selected.map((entry) => entry.source), input, limit, selected.map((entry) => entry.component)) : searched.results;
   const verified = result.status === "degraded" ? selected.map((entry, index) => new SemanticNativeRepositoryIntelligence(entry.source, preparations[index], runtime)) : providers;
   for (const provider of verified) await provider.verifySnapshot();
+  if (input.snapshotId && result.status === "ready" && selected.length === (await selectComponents(declaration, sources)).length)
+    await retainAnalysis(input.projectRoot, input.snapshotId, await baselineIndex(selected, preparations, result));
   const prepared = providers.map((provider) => provider.prepared);
   const diagnostics = componentDiagnostics(result, preparations);
   const capabilities = { lexicalSearch: true, semanticSearch: prepared.length > 0, hybridSearch: prepared.length > 0, symbolGraph: prepared.length > 0, verifiedSource: true, documentGraph: prepared.length > 0 };
@@ -414,7 +417,7 @@ async function searchComponentIndexes(input, declaration, options) {
     kind: "search",
     schemaVersion: 1,
     project: (await conservationStore.location(input.projectRoot)).root,
-    snapshotId: null,
+    snapshotId: input.snapshotId || null,
     snapshot,
     query: input.query,
     filters: input.filters || null,
@@ -434,7 +437,7 @@ async function searchComponentIndexes(input, declaration, options) {
     status: result.status,
     preparationId: null,
     snapshot,
-    snapshotId: null,
+    snapshotId: input.snapshotId || null,
     receiptId,
     indexRevision: result.indexRevision,
     modelIdentity: first?.modelIdentity || null,
@@ -481,7 +484,7 @@ function validateComplexUnits(value) {
 }
 async function preparedAnalysis(input, options) {
   const declaration = options.nativeSource ? null : await indexComponents(input.projectRoot);
-  if (declaration && !input.snapshotId) return componentAnalysis(input, declaration, options);
+  if (declaration) return componentAnalysis(input, declaration, options);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
   const identity = { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot, snapshotId: input.snapshotId || null };
@@ -489,7 +492,7 @@ async function preparedAnalysis(input, options) {
 }
 async function componentAnalysis(input, declaration, options) {
   const runtime = options.runtime || nativeSemanticRuntime;
-  const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot);
+  const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot, retainedSources(input.projectRoot, input.snapshotId));
   const preparations = await prepareComponents(runtime, selected, options.waitMs);
   const parts = { selected, preparations, states: componentStates(selected, preparations), snapshot };
   const result = componentResult(parts.states, snapshot), preparation = componentPreparation(result, parts);
@@ -497,7 +500,7 @@ async function componentAnalysis(input, declaration, options) {
   let files;
   return {
     preparation,
-    identity: { status: result.status, preparationId: null, snapshot, snapshotId: null, components: result.components },
+    identity: { status: result.status, preparationId: null, snapshot, snapshotId: input.snapshotId || null, components: result.components },
     prepared: preparation.prepared,
     diagnostics: preparation.diagnostics,
     components: result.components,

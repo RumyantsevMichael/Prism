@@ -167,7 +167,10 @@ A group of `find_shared_dependencies`, `find_shared_literals`, or `find_same_nam
 A path-scoped report sees only the components that hold those paths, so matches in other components appear only in an unscoped report.
 Each report result has the `components`, `status`, `components_missing` diagnostic, `snapshot`, and `indexRevision` that a search result has, and a `preparing` result has a `preparationId` of `null`.
 A component's index does not resolve references into other components, so a report that includes such a component can report incomplete structure.
-A retained baseline named by `snapshotId` is still analyzed as one index of the whole baseline; analyzing it per component is Planned.
+A search or report with `snapshotId` splits the retained baseline's files into components by the current declaration and prepares one index per component from the baseline's content.
+It selects, prepares, and reads the baseline's components as a call on the current files does, and its result has the same `components`, `status`, and `components_missing` diagnostic.
+A component whose baseline files are the same as its current files, or as another baseline's, reuses that component's index without building it.
+A search with `snapshotId` keeps the baseline's analysis for conservation checks only when it read every component of the baseline and included all of them, so a path-scoped or `partial` search keeps none.
 
 `plan_repository_context` prepares every component that holds a file and returns `preparing` while none of them is included.
 Its semantic candidates come from the merged search of every included component, and its graph expands within the included components.

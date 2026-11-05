@@ -1,7 +1,7 @@
 import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
-import { componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectedComponents, unionIndex, unionSnapshot } from "./component-indexes.mjs";
-import type { ComponentResult, ComponentSource, Declaration } from "./component-indexes.mjs";
+import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectComponents, selectedComponents, unionIndex, unionSnapshot } from "./component-indexes.mjs";
+import type { ComponentResult, ComponentSource, Declaration, OpenSource } from "./component-indexes.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { moduleInterfaceReport } from "./module-interfaces.mjs";
@@ -293,7 +293,7 @@ export async function prepareNativeProvider(projectRoot: string, options: Provid
 export async function searchRepositoryConcepts(input: ConceptSearchInput, options: ProviderOptions = {}) {
   validateConceptSearch(input);
   const declaration = options.nativeSource ? null : await indexComponents(input.projectRoot);
-  if (declaration && !input.snapshotId) return searchComponentIndexes(input, declaration, options);
+  if (declaration) return searchComponentIndexes(input, declaration, options);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, results: [] };
@@ -330,12 +330,16 @@ async function lexicalResults(sources: NativeSource[], input: ConceptSearchInput
   return results;
 }
 
+// A retained baseline's source of the files that a filter accepts, for a call with snapshotId in a repository with components.
+const retainedSources = (projectRoot: string, snapshotId?: string): OpenSource | undefined => snapshotId ? filter => conservationStore.source(projectRoot, snapshotId, filter) : undefined;
+
 // In a repository with components, the search prepares the components that its paths select, or every component that holds a file, and answers
 // from the indexes of those that are ready, merged across components and naming each component it left out. When every selected component
-// failed, it answers with the lexical fallback over the selected components' files.
+// failed, it answers with the lexical fallback over the selected components' files. A call with snapshotId splits the retained baseline into
+// components and reads them the same way, and it retains the baseline's analysis only when it selected and included every component of the baseline.
 async function searchComponentIndexes(input: ConceptSearchInput, declaration: Declaration, options: ProviderOptions) {
   const runtime = (options.runtime || nativeSemanticRuntime) as ComponentRuntime, limit = input.limit || 10;
-  const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot);
+  const { sources, selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot, retainedSources(input.projectRoot, input.snapshotId));
   const preparations = await prepareComponents(runtime, selected, options.waitMs);
   const states = componentStates(selected, preparations);
   const preparing = () => ({ status: "preparing", preparationId: null, snapshot, diagnostics: componentResult(states, snapshot).diagnostics, components: states, results: [] });
@@ -354,17 +358,19 @@ async function searchComponentIndexes(input: ConceptSearchInput, declaration: De
   const candidates = result.status === "degraded" ? await lexicalResults(selected.map(entry => entry.source), input, limit, selected.map(entry => entry.component)) : searched.results;
   const verified = result.status === "degraded" ? selected.map((entry, index) => new SemanticNativeRepositoryIntelligence(entry.source, preparations[index], runtime)) : providers;
   for (const provider of verified) await provider.verifySnapshot();
+  if (input.snapshotId && result.status === "ready" && selected.length === (await selectComponents(declaration, sources)).length)
+    await retainAnalysis(input.projectRoot, input.snapshotId, await baselineIndex(selected, preparations, result));
   const prepared = providers.map(provider => provider.prepared!);
   const diagnostics = componentDiagnostics(result, preparations);
   const capabilities = { lexicalSearch: true, semanticSearch: prepared.length > 0, hybridSearch: prepared.length > 0, symbolGraph: prepared.length > 0, verifiedSource: true, documentGraph: prepared.length > 0 };
   const first = prepared[0];
   const receipt: SearchReceipt = { kind: "search", schemaVersion: 1, project: (await conservationStore.location(input.projectRoot)).root,
-    snapshotId: null, snapshot, query: input.query, filters: input.filters || null, limit, status: result.status, capabilities, modelIdentity: first?.modelIdentity || null, indexRevision: result.indexRevision,
+    snapshotId: input.snapshotId || null, snapshot, query: input.query, filters: input.filters || null, limit, status: result.status, capabilities, modelIdentity: first?.modelIdentity || null, indexRevision: result.indexRevision,
     versions: { graph: "1.6.0", extractor: first?.index.chunkerVersion || "unavailable", tokenizer: first?.modelIdentity || "unavailable", runtime: first?.assetIdentity || "unavailable" },
     coverage: prepared.length ? { files: Object.assign({}, ...prepared.map(item => item.index.fileCoverage)), counts: prepared.map(item => item.index.counts) } : null,
     diagnostics, components: result.components, candidates };
   const receiptId = await conservationStore.put(input.projectRoot, receipt);
-  return { status: result.status, preparationId: null, snapshot, snapshotId: null, receiptId, indexRevision: result.indexRevision, modelIdentity: first?.modelIdentity || null,
+  return { status: result.status, preparationId: null, snapshot, snapshotId: input.snapshotId || null, receiptId, indexRevision: result.indexRevision, modelIdentity: first?.modelIdentity || null,
     capabilities, diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, components: result.components, results: candidates };
 }
 
@@ -404,7 +410,7 @@ interface Analysis {
 async function preparedAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string; filters?: { paths?: string[] } }, options: ProviderOptions): Promise<Analysis> {
   // A retained baseline is split by the current declaration, so an invalid one refuses it too, as it refuses the live project.
   const declaration = options.nativeSource ? null : await indexComponents(input.projectRoot);
-  if (declaration && !input.snapshotId) return componentAnalysis(input, declaration, options);
+  if (declaration) return componentAnalysis(input, declaration, options);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
   const identity = { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot, snapshotId: input.snapshotId || null };
@@ -413,15 +419,16 @@ async function preparedAnalysis(input: { projectRoot: string; snapshotId?: strin
 
 // In a repository with components, an analysis reads the components that its paths select, or every component that holds a file, as one index
 // over the included components, so its file contents, such as the importers a module report counts, come only from those components.
-async function componentAnalysis(input: { projectRoot: string; expectedSnapshot?: string; filters?: { paths?: string[] } }, declaration: Declaration, options: ProviderOptions): Promise<Analysis> {
+// A call with snapshotId reads the retained baseline's components the same way.
+async function componentAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string; filters?: { paths?: string[] } }, declaration: Declaration, options: ProviderOptions): Promise<Analysis> {
   const runtime = (options.runtime || nativeSemanticRuntime) as ComponentRuntime;
-  const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot);
+  const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot, retainedSources(input.projectRoot, input.snapshotId));
   const preparations = await prepareComponents(runtime, selected, options.waitMs);
   const parts = { selected, preparations, states: componentStates(selected, preparations), snapshot };
   const result = componentResult(parts.states, snapshot), preparation = componentPreparation(result, parts);
   const sources = selected.filter((_, index) => result.components[index].status === "included").map(entry => entry.source);
   let files: Promise<SourceSnapshot> | undefined;
-  return { preparation, identity: { status: result.status, preparationId: null, snapshot, snapshotId: null, components: result.components }, prepared: preparation.prepared,
+  return { preparation, identity: { status: result.status, preparationId: null, snapshot, snapshotId: input.snapshotId || null, components: result.components }, prepared: preparation.prepared,
     diagnostics: preparation.diagnostics, components: result.components, snapshot: () => files ??= unionSnapshot(sources, snapshot),
     verifySnapshot: async () => { for (const entry of selected) await verifySource(entry.source); } };
 }

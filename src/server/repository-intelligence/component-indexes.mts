@@ -31,6 +31,17 @@ export function componentSources(root: string, declaration: Declaration, options
     source: new NativeRepositoryIntelligence(root, { ...options, filter: (file: string) => componentOf(declaration, file).identity === component.identity }) as unknown as NativeSource }));
 }
 
+/** Opens a source of the files that a filter accepts, such as a retained baseline's files of one component. */
+export type OpenSource = (filter: (file: string) => boolean) => Promise<NativeSource>;
+
+/** One source per component of a retained baseline, splitting its source files by the current declaration, in component order. */
+export async function baselineSources(declaration: Declaration, open: OpenSource): Promise<ComponentSource[]> {
+  const sources = [];
+  for (const component of declaration.components) sources.push({ component: component.identity, name: component.name, folder: component.folder,
+    source: await open((file: string) => componentOf(declaration, file).identity === component.identity) });
+  return sources;
+}
+
 /** The components that hold a scanned file equal to or inside one of the paths, or every component that holds a scanned file when no path is given. */
 export async function selectComponents(declaration: Declaration, sources: ComponentSource[], paths: string[] = []): Promise<ComponentSource[]> {
   // A declared component can hold such a file only when its folder and a path contain one another, and the root component only for a path outside every declared folder.
@@ -141,11 +152,29 @@ export async function searchComponents(included: ComponentSearch[], limit: numbe
   return { answers, results: merged.slice(0, limit).map(({ result }, index) => ({ ...result, fusedRank: index + 1 })) };
 }
 
-/** Reads the declaration and the selected components of a call, and refuses an expected snapshot that differs from the selection's snapshot. */
-export async function selectedComponents(projectRoot: string, declaration: Declaration, paths: string[] | undefined, expectedSnapshot?: string) {
+/**
+ * Reads the declaration and the selected components of a call, of the live project or, with `baseline`, of a retained baseline split into components,
+ * and refuses an expected snapshot that differs from the selection's snapshot. `sources` holds every component's source, selected or not.
+ */
+export async function selectedComponents(projectRoot: string, declaration: Declaration, paths: string[] | undefined, expectedSnapshot?: string, baseline?: OpenSource) {
   const root = await realpath(projectRoot);
-  const selected = await selectComponents(declaration, componentSources(root, declaration), paths);
+  const sources = baseline ? await baselineSources(declaration, baseline) : componentSources(root, declaration);
+  const selected = await selectComponents(declaration, sources, paths);
   const snapshot = await selectionSnapshot(selected);
   if (expectedSnapshot && expectedSnapshot !== snapshot) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
-  return { root, selected, snapshot };
+  return { root, sources, selected, snapshot };
+}
+
+/**
+ * The analysis index of a retained baseline: the union of its included components' indexes, in which each file of a failed component is held
+ * without units and as not covered, and whose diagnostics start with the components_missing diagnostic that names each failed component.
+ * Call it only when no selected component is waiting or preparing and at least one is included.
+ */
+export async function baselineIndex(selected: ComponentSource[], preparations: Preparation[], result: ComponentResult): Promise<PreparedIndex> {
+  const included = result.components.flatMap((state, index) => state.status === "included" ? [{ component: state.component, prepared: preparations[index].prepared! }] : []);
+  const union = unionIndex(included, result.snapshot, result.indexRevision!), index = union.index;
+  const uncovered: Record<string, boolean> = {};
+  for (const [position, state] of result.components.entries()) if (state.status !== "included") for (const file of (await selected[position].source.snapshot()).files) uncovered[file.file] = false;
+  return { ...union, index: { ...index, fileCoverage: { ...index.fileCoverage, ...uncovered }, ...(index.syntaxCoverage ? { syntaxCoverage: { ...index.syntaxCoverage, ...uncovered } } : {}),
+    structureComplete: index.structureComplete && !Object.keys(uncovered).length, diagnostics: [...result.diagnostics, ...index.diagnostics] } };
 }

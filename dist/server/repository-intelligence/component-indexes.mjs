@@ -25,6 +25,16 @@ function componentSources(root, declaration, options = {}) {
     source: new NativeRepositoryIntelligence(root, { ...options, filter: (file) => componentOf(declaration, file).identity === component.identity })
   }));
 }
+async function baselineSources(declaration, open) {
+  const sources = [];
+  for (const component of declaration.components) sources.push({
+    component: component.identity,
+    name: component.name,
+    folder: component.folder,
+    source: await open((file) => componentOf(declaration, file).identity === component.identity)
+  });
+  return sources;
+}
 async function selectComponents(declaration, sources, paths = []) {
   const candidates = paths.length ? sources.filter((entry) => paths.some((item) => entry.folder === "" ? !declaration.declared.some((component) => inside(item, component.folder)) : inside(item, entry.folder) || inside(entry.folder, item))) : sources;
   const selected = [];
@@ -115,14 +125,30 @@ async function searchComponents(included, limit) {
   const merged = keyed.sort((left, right) => left.key === right.key ? 0 : right.key > left.key ? 1 : -1);
   return { answers, results: merged.slice(0, limit).map(({ result }, index) => ({ ...result, fusedRank: index + 1 })) };
 }
-async function selectedComponents(projectRoot, declaration, paths, expectedSnapshot) {
+async function selectedComponents(projectRoot, declaration, paths, expectedSnapshot, baseline) {
   const root = await realpath(projectRoot);
-  const selected = await selectComponents(declaration, componentSources(root, declaration), paths);
+  const sources = baseline ? await baselineSources(declaration, baseline) : componentSources(root, declaration);
+  const selected = await selectComponents(declaration, sources, paths);
   const snapshot = await selectionSnapshot(selected);
   if (expectedSnapshot && expectedSnapshot !== snapshot) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
-  return { root, selected, snapshot };
+  return { root, sources, selected, snapshot };
+}
+async function baselineIndex(selected, preparations, result) {
+  const included = result.components.flatMap((state, index2) => state.status === "included" ? [{ component: state.component, prepared: preparations[index2].prepared }] : []);
+  const union = unionIndex(included, result.snapshot, result.indexRevision), index = union.index;
+  const uncovered = {};
+  for (const [position, state] of result.components.entries()) if (state.status !== "included") for (const file of (await selected[position].source.snapshot()).files) uncovered[file.file] = false;
+  return { ...union, index: {
+    ...index,
+    fileCoverage: { ...index.fileCoverage, ...uncovered },
+    ...index.syntaxCoverage ? { syntaxCoverage: { ...index.syntaxCoverage, ...uncovered } } : {},
+    structureComplete: index.structureComplete && !Object.keys(uncovered).length,
+    diagnostics: [...result.diagnostics, ...index.diagnostics]
+  } };
 }
 export {
+  baselineIndex,
+  baselineSources,
   componentDiagnostics,
   componentResult,
   componentSources,

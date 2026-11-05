@@ -3,6 +3,7 @@ import path from "node:path";
 import { readChangeMapDocument } from "./change-map.mjs";
 import { conservationStore, conservationError, digest, canonical, withinScope } from "./conservation-store.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, selectedComponents } from "../repository-intelligence/component-indexes.mjs";
 import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
 import { CHUNKER_VERSION } from "../../native-runtime/versions.mjs";
 import { sameNameGroups } from "../repository-intelligence/same-name-units.mjs";
@@ -36,12 +37,24 @@ async function retainAnalysis(projectRoot, snapshotId, prepared, store = conserv
 }
 async function prepareAnalysis(projectRoot, snapshotId, options = {}) {
   const store = options.store || conservationStore, existing = await store.analysis(projectRoot, snapshotId);
-  if (existing?.versions.extractor === CHUNKER_VERSION && existing.versions.metrics === ANALYSIS_VERSION) return { status: "ready", analysis: existing };
-  const runtime = options.runtime || nativeSemanticRuntime, source = await store.source(projectRoot, snapshotId);
+  if (existing?.versions.extractor === CHUNKER_VERSION && existing.versions.metrics === ANALYSIS_VERSION && !existing.diagnostics.some((item) => item.code === "components_missing"))
+    return { status: "ready", analysis: existing };
+  const runtime = options.runtime || nativeSemanticRuntime;
+  const declaration = await indexComponents(projectRoot);
+  if (declaration) return prepareComponentAnalysis(projectRoot, snapshotId, declaration, runtime, store);
+  const source = await store.source(projectRoot, snapshotId);
   const prepared = await runtime.prepare(source);
   if (prepared.status === "preparing") return { status: "preparing", preparationId: prepared.preparationId };
   if (!prepared.prepared) return { status: "degraded", diagnostics: prepared.diagnostics, analysis: null };
   return { status: "ready", analysis: await retainAnalysis(projectRoot, snapshotId, prepared.prepared, store) };
+}
+async function prepareComponentAnalysis(projectRoot, snapshotId, declaration, runtime, store) {
+  const { selected, snapshot } = await selectedComponents(projectRoot, declaration, void 0, void 0, (filter) => store.source(projectRoot, snapshotId, filter));
+  const preparations = await prepareComponents(runtime, selected);
+  const result = componentResult(componentStates(selected, preparations), snapshot);
+  if (result.components.some((state) => state.status === "waiting" || state.status === "preparing")) return { status: "preparing", preparationId: null, components: result.components };
+  if (!result.components.some((state) => state.status === "included")) return { status: "degraded", diagnostics: componentDiagnostics(result, preparations), components: result.components, analysis: null };
+  return { status: "ready", analysis: await retainAnalysis(projectRoot, snapshotId, await baselineIndex(selected, preparations, result), store) };
 }
 async function sourceUnits(projectRoot, snapshot, analysis, store = conservationStore) {
   const units = [];
