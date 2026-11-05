@@ -468,6 +468,35 @@ a {
   font-weight: 500;
 }
 
+/* The component of the running build shares the chip's single line, so a long identity ends in an ellipsis; the chip's tooltip names it whole. */
+.statusbar .indexing {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.statusbar .indexing-chip {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.indexing-component {
+  color: #f8f7ff;
+  flex: 0 1 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  max-width: 16rem;
+  min-width: 2.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.indexing-component[hidden] {
+  display: none;
+}
+
+.statusbar .indexing-detail {
+  flex: 0 0 auto;
+}
+
 .statusbar .indexing-panel {
   bottom: calc(100% + 0.35rem);
   left: auto;
@@ -476,6 +505,7 @@ a {
 }
 
 @media (max-width: 720px) {
+  .statusbar .indexing-component,
   .statusbar .indexing-detail,
   .statusbar .indexing-meter {
     display: none;
@@ -919,6 +949,72 @@ a.code-link:hover {
 
 .indexing-diagnostics span {
   color: var(--ink-muted);
+}
+
+/* A long identity ends in an ellipsis; a zero width keeps it from widening a panel that sizes to its content. */
+.indexing-building {
+  display: flex;
+  gap: 0.3em;
+  white-space: nowrap;
+}
+
+.indexing-building code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 0;
+}
+
+.indexing-facts dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.indexing-components {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+}
+
+/* One component per line: its identity ends in an ellipsis before its state, and the row's tooltip names both. */
+.indexing-component-row {
+  align-items: center;
+  display: flex;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.12rem 0;
+  white-space: nowrap;
+}
+
+.indexing-component-name {
+  flex: 1 1 auto;
+  width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.indexing-component-state {
+  color: var(--ink-muted);
+  flex: 0 0 auto;
+}
+
+.indexing-component-row[data-state="ready"] .indexing-dot { background: var(--good); }
+.indexing-component-row[data-state="interrupted"] .indexing-dot { background: #e0a030; }
+.indexing-component-row[data-state="failed"] .indexing-dot { background: var(--danger); }
+.indexing-component-row[data-state="preparing"] .indexing-dot {
+  animation: indexing-pulse 1.4s ease-in-out infinite;
+  background: var(--accent);
+}
+
+.indexing-diagnostics .indexing-diagnostic-component {
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .notice-banner {

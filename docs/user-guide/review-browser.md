@@ -95,6 +95,7 @@ A colored badge after the file name says whether the file is added, changed, or 
 For a changed or removed file, the card names each function or type involved with the lines it spans in the project's code index.
 Hover one to see those lines, or click it to open the file with them marked.
 Line numbers come from the latest published index, so they can drift if the file changed after that build, and they are missing until the first build finishes.
+In a repository with [components](workflow.md#components), they come from each component's latest index, so a file of a component that has no index yet has no line numbers.
 Below the file, the card gives the reason for the change, then the contract clauses it serves and the tests cited for those clauses.
 A change that names no clause supports the slice as a whole.
 After a passing verification run, each card also says what the verified result actually changed, and marks each file "as planned", "partly as planned", or "planned but untouched".
@@ -147,6 +148,8 @@ In the palette, Enter opens the result in the preview tab, Ctrl+Enter keeps it o
 ## Index status
 
 The index item at the right of the status bar shows the open project's native index, and its panel lists every build step.
+In a repository with components, the item combines every component's index and names the component being built, and its panel lists each component with its state.
+A long component identity ends in an ellipsis, and the item's tooltip names it whole.
 See [Watch an index build in the review browser](repository-intelligence.md#watch-an-index-build-in-the-review-browser) for what each state means.
 
 ## Several projects

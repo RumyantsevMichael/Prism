@@ -156,7 +156,7 @@ Each entry gives the component's `status`, `preparationId`, `snapshot`, `indexRe
 The top-level `status` is `preparing` while a component waits or prepares, else `degraded` when a component's latest preparation in this server failed, else `indexed` when a component has an index, else `unprepared`.
 The top-level `progress` is the running preparation's progress with its `component`, and each diagnostic names its `component`.
 An invalid `## Components` declaration refuses the native index and status tools before any preparation, with the declaration's error code.
-Background preparation at startup and the review browser's rebuild do not build any index in a repository with components yet, so a search, a structural report, or a context plan builds the components it reads; refreshing each component's index in the background is Planned.
+A search, a structural report, or a context plan builds the components it reads, and background preparation and the review browser's rebuild only refresh components that already have an index or a failed build, as [Watch an index build in the review browser](#watch-an-index-build-in-the-review-browser) describes.
 
 #### Report and plan across component indexes
 
@@ -188,13 +188,22 @@ An agent's search also starts or retries a build.
 While a page of the project is open, the review browser rebuilds an index that is out of date once the files stayed unchanged for a minute, at most once every five minutes, so slice pages show current line ranges.
 The index panel's Rebuild index button starts a build at once.
 To keep a project from building at startup or from the open page, add `- Background indexing: off` under `## Repository intelligence` in `.prism/workflow.md`; searches and the button still build the index.
+In a repository with components, background preparation at startup rebuilds, in component order, only the components that already have an index and whose files changed, so a component that no tool has read yet is never built in the background.
+The review browser's rebuild, automatic or from the button, prepares each component that has an index or a recorded failed build and whose files changed or whose latest build failed, including one that reached a native limit, and no other component.
+An invalid `## Components` declaration builds nothing in the background or from the page, and the chip shows the declaration's refusal as a failed build.
 `Not indexed` means no build has run yet, and `Indexing stopped` means the session that ran the build ended before it finished.
 `Index rebuild pending` means files changed during the build, and the next build uses the current files.
+
+In a repository with components, the chip combines every component's index.
+It shows a running build while any component builds in any session, and names that component in the chip and its panel.
+Otherwise it shows `Indexing failed` or `Indexing stopped` when some component's latest build ended so after its latest index, preferring a failure, and `Indexed` when some component has an index.
+The panel lists each component that has an index or a recorded build with its state, names the component of each failure's diagnostics, and describes the most recently built component index.
 
 `Index out of date` is a hint from Git, not a comparison of file contents.
 It compares the commit and the changed files' sizes and modification times with those recorded when the index was built or last reused.
 A commit that leaves indexed files unchanged looks out of date until the next build, and an edit that keeps a file's size and modification time looks current.
 A folder outside Git, an index of a retained baseline, and an index built by a Prism version without the chip show no hint.
+The Git state covers the whole repository, so in a repository with components an edit in one component marks every component's index out of date, and the rebuild then reuses each unchanged component's index without building it.
 
 ### Find shared dependencies
 
