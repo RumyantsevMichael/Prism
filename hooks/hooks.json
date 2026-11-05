@@ -24,6 +24,12 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/offer-prism.mjs\"",
+            "timeout": 5,
+            "additionalContextLimit": 1500
           }
         ]
       }

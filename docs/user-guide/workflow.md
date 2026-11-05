@@ -341,6 +341,17 @@ Run it again, or the agent runs it for you, when you add a test, lint, or BDD to
 During an orchestrated run, the orchestrator runs setup between slices in a child agent and asks you its questions on Attention.
 Setup never adds a component declaration, store, or repository name that you did not approve.
 
+## Offer at the start of a conversation
+
+When you start a new conversation, or clear one, Prism tells the agent it is available.
+If your first request asks for code that adds or changes behavior your requirements, ADRs, or feature files describe, the agent asks once whether to run it through Prism, and on yes it starts `prism:orchestrate` with your request.
+In a project without `.prism/workflow.md`, it offers `prism:setup` instead.
+It does not ask about a question on the code, a change that no requirement or ADR covers, such as a color or a typo, or a request that already names a Prism skill.
+When questions already wait on you in an initiative, it offers to resume that initiative.
+A resumed conversation and a child agent get no offer.
+Set `- Session offer: off` under `## Interaction` in `.prism/workflow.md`, or the environment variable `PRISM_SESSION_OFFER=off`, to turn the offer off.
+In Codex the offer needs Prism's hooks to be trusted through `/hooks`, like gate answers and run totals.
+
 ## Migrate an older setup
 
 Prism no longer reads `.claude/workflow-config.md`, and `prism:setup` migrates its values into `.prism/workflow.md` without changing the old file.
