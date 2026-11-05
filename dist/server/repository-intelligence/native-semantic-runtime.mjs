@@ -465,8 +465,9 @@ class NativeSemanticRuntime {
     return { status: this.legacyStatus(job), preparationId: job.id, snapshot: job.snapshot, diagnostics: job.diagnostics, prepared: job.prepared };
   }
   // Queues the components a call needs, in the order given, and waits at most the call's bound in total for all of them.
-  async prepareComponents(entries, waitMs = 1e4) {
-    const jobs = await this.enqueue(entries);
+  // `retryLimited` prepares again a component whose content reached a native limit in this process, as the review browser's rebuild does.
+  async prepareComponents(entries, waitMs = 1e4, { retryLimited = false } = {}) {
+    const jobs = await this.enqueue(entries, void 0, retryLimited);
     const pending = jobs.filter(busy);
     if (pending.length) await boundedWait(Promise.all(pending.map((job) => job.promise)).then(() => {
     }), Math.min(waitMs, 1e4));
@@ -481,8 +482,8 @@ class NativeSemanticRuntime {
     }));
   }
   // A job is shared by every call for the same content. A failed job is prepared again by the next call, except a component's job that reached
-  // a native limit, which this process does not prepare again for the same content.
-  async enqueue(entries, expectedSnapshot) {
+  // a native limit, which this process does not prepare again for the same content unless `retryLimited` asks for it.
+  async enqueue(entries, expectedSnapshot, retryLimited = false) {
     const manifest = await this.manifest(), jobs = [];
     for (const { source, component } of entries) {
       const projectRoot = source.projectRoot, fingerprint = typeof projectRoot === "string" ? await gitFingerprint(projectRoot) : null;
@@ -490,6 +491,7 @@ class NativeSemanticRuntime {
       const live = snapshot.enumerator !== "retained";
       if (expectedSnapshot && expectedSnapshot !== snapshot.sourceFingerprint) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
       const generationKey = `${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`;
+      if (retryLimited && this.limited.get(generationKey)?.status === "degraded") this.limited.delete(generationKey);
       let job = this.limited.get(generationKey) ?? this.generations.get(generationKey);
       if (!job || job.status === "degraded" && !this.limited.has(generationKey)) {
         job = this.job(source, snapshot, location, generationKey, component ? sha(`${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : void 0, component, live, read);

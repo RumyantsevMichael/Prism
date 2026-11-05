@@ -424,7 +424,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const print = await currentFingerprint();
     const key = print ? `${print.head}\0${print.worktree}` : null;
     if (key !== rebuild.key) Object.assign(rebuild, { key, changedAt: Date.now() });
-    const outOfDate = (status.state === "ready" && status.stale === true) || (status.state === "failed" && status.diagnostics.some((item) => item.code === "stale_snapshot"));
+    // With components, any component's stale index starts the rebuild, which also retries the components whose latest preparation failed.
+    const outOfDate = (status.stale === true && (status.state === "ready" || (status.components !== undefined && status.state !== "preparing")))
+      || (status.state === "failed" && status.diagnostics.some((item) => item.code === "stale_snapshot"));
     const now = Date.now();
     if (auto && outOfDate && now - rebuild.changedAt >= rebuildTiming.quietMs && now - rebuild.startedAt >= rebuildTiming.gapMs) {
       rebuild.startedAt = now;

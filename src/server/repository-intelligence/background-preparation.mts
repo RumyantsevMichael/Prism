@@ -1,23 +1,50 @@
+import { realpath } from "node:fs/promises";
 import { prepareNativeProvider } from "./semantic-native-provider.mjs";
 import { nativeSemanticRuntime, privateDirectory } from "./native-semantic-runtime.mjs";
-import { ProgressRecorder } from "./index-progress.mjs";
+import type { NativeSemanticRuntime } from "./native-semantic-runtime.mjs";
+import { ProgressRecorder, readProgressRecords } from "./index-progress.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { indexComponents } from "./component-indexes.mjs";
+import { componentSources, indexComponents } from "./component-indexes.mjs";
+import type { Declaration } from "./component-indexes.mjs";
 
 interface Options {
   prepare?: (projectRoot: string) => Promise<unknown>;
   enabled?: (projectRoot: string) => Promise<boolean>;
   available?: () => Promise<boolean>;
   record?: (projectRoot: string, error: Error & { code?: unknown }) => Promise<void>;
+  runtime?: NativeSemanticRuntime;
 }
 
 const started = new Map<string, Promise<void>>();
+const time = (value: string | undefined) => { const parsed = Date.parse(value ?? ""); return Number.isFinite(parsed) ? parsed : 0; };
 
-// A repository that declares components has no whole-repository index for a tool to read, so this preparation queues no build of the whole
-// repository there; an invalid declaration refuses here, as it refuses the native tools, and so prepares nothing.
-async function prepareProject(projectRoot: string) {
-  if (await indexComponents(projectRoot)) return;
-  await prepareNativeProvider(projectRoot, { waitMs: 0 });
+// In a repository that declares components, the start refreshes only the components that already have an index in this storage and are out of
+// date, so a component that no tool has needed yet is never built in the background. The rebuild also prepares each component whose latest
+// preparation failed, with or without an index, including one that reached a native limit in this process.
+async function prepareComponentIndexes(projectRoot: string, declaration: Declaration, runtime: NativeSemanticRuntime, rebuild: boolean) {
+  const root = await realpath(projectRoot), chosen = [];
+  for (const entry of componentSources(root, declaration)) {
+    const snapshot = await entry.source.snapshot();
+    if (!snapshot.files.length) continue;
+    const component = { name: entry.name, identity: entry.component, folder: entry.folder };
+    const { directory } = await runtime.location(root, component);
+    const published = await runtime.published(directory), indexed = Boolean(published?.snapshot);
+    const outOfDate = indexed && published!.snapshot !== snapshot.sourceFingerprint;
+    // A failure counts only when it ended after the component's latest index; a job of this process that failed counts as recorded too.
+    const failed = rebuild && (runtime.jobs.get(directory)?.status === "degraded"
+      || (await readProgressRecords(directory)).some(record => record.state === "failed" && (!indexed || time(record.finishedAt ?? record.updatedAt) > time(published!.builtAt))));
+    if (outOfDate || failed) chosen.push({ source: entry.source, component });
+  }
+  if (chosen.length) await runtime.prepareComponents(chosen, 0, { retryLimited: rebuild });
+}
+
+// A repository without components prepares its one index; an invalid declaration refuses here, as it refuses the native tools, and so prepares nothing.
+function preparation(runtime: NativeSemanticRuntime, rebuild: boolean) {
+  return async (projectRoot: string) => {
+    const declaration = await indexComponents(projectRoot);
+    if (declaration) return prepareComponentIndexes(projectRoot, declaration, runtime, rebuild);
+    await prepareNativeProvider(projectRoot, { waitMs: 0, runtime });
+  };
 }
 
 // A project opts out with "- Background indexing: off" under "## Repository intelligence" in .prism/workflow.md.
@@ -28,27 +55,30 @@ export async function backgroundIndexingEnabled(projectRoot: string) {
 }
 
 // A platform without a published runtime would only fail, so it keeps the unavailable state the review browser already shows.
-async function runtimeAvailable() {
-  const availability = await nativeSemanticRuntime.availability();
-  return availability.supported && availability.published;
+function runtimeAvailable(runtime: NativeSemanticRuntime) {
+  return async () => {
+    const availability = await runtime.availability();
+    return availability.supported && availability.published;
+  };
 }
 
 // Failures inside a build are recorded by the runtime. A failure before the build starts, such as an unreadable snapshot, is recorded here
 // in the same progress file, unless a build for the project is already running in this process and owns that file.
-async function recordFailure(projectRoot: string, error: Error & { code?: unknown }) {
-  const location = await nativeSemanticRuntime.location(projectRoot);
-  if (["waiting", "preparing"].includes(nativeSemanticRuntime.jobs.get(location.directory)?.status ?? "")) return;
+const recordFailure = (runtime: NativeSemanticRuntime) => async (projectRoot: string, error: Error & { code?: unknown }) => {
+  const location = await runtime.location(projectRoot);
+  if (["waiting", "preparing"].includes(runtime.jobs.get(location.directory)?.status ?? "")) return;
   await privateDirectory(location.directory);
   await new ProgressRecorder(location.directory, "background").fail([{ code: typeof error.code === "string" ? error.code : "preparation_failed", message: error.message,
     recovery: "Retry preparation after correcting the reported runtime, network, or source problem." }]);
-}
+};
 
 // Starts index preparation for a project once per process and returns at once, so startup and tool calls never wait for it.
 // The runtime shares a preparation between callers with the same snapshot, so a later search joins this build instead of starting another.
 export function startBackgroundPreparation(projectRoot: string, options: Options = {}): Promise<void> {
   const existing = started.get(projectRoot);
   if (existing) return existing;
-  const { prepare = prepareProject, enabled = backgroundIndexingEnabled, available = runtimeAvailable, record = recordFailure } = options;
+  const { runtime = nativeSemanticRuntime } = options;
+  const { prepare = preparation(runtime, false), enabled = backgroundIndexingEnabled, available = runtimeAvailable(runtime), record = recordFailure(runtime) } = options;
   const run = (async () => {
     if (!await enabled(projectRoot) || !await available()) return;
     try { await prepare(projectRoot); } catch (error) { await record(projectRoot, error); }
@@ -64,7 +94,8 @@ const rebuilding = new Map<string, Promise<void>>();
 export function startIndexRebuild(projectRoot: string, options: Omit<Options, "enabled"> = {}): Promise<void> {
   const existing = rebuilding.get(projectRoot);
   if (existing) return existing;
-  const { prepare = prepareProject, available = runtimeAvailable, record = recordFailure } = options;
+  const { runtime = nativeSemanticRuntime } = options;
+  const { prepare = preparation(runtime, true), available = runtimeAvailable(runtime), record = recordFailure(runtime) } = options;
   const run = (async () => {
     if (!await available()) return;
     try { await prepare(projectRoot); } catch (error) { await record(projectRoot, error); }

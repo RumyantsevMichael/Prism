@@ -49,5 +49,5 @@ export interface SemanticRuntime {
   search(prepared: PreparedIndex, source: NativeSource, query: string, filters: SearchFilters | undefined, limit: number): Promise<SearchResult[]>;
 }
 export interface ComponentRuntime extends SemanticRuntime {
-  prepareComponents(entries: { source: NativeSource; component: IndexComponent }[], waitMs?: number): Promise<Preparation[]>;
+  prepareComponents(entries: { source: NativeSource; component: IndexComponent }[], waitMs?: number, options?: { retryLimited?: boolean }): Promise<Preparation[]>;
 }

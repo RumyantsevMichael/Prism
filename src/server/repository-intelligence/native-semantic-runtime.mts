@@ -381,16 +381,17 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     return { status: this.legacyStatus(job), preparationId: job.id, snapshot: job.snapshot, diagnostics: job.diagnostics, prepared: job.prepared };
   }
   // Queues the components a call needs, in the order given, and waits at most the call's bound in total for all of them.
-  async prepareComponents(entries: { source: NativeSource; component: IndexComponent }[], waitMs = 10000): Promise<Preparation[]> {
-    const jobs = await this.enqueue(entries);
+  // `retryLimited` prepares again a component whose content reached a native limit in this process, as the review browser's rebuild does.
+  async prepareComponents(entries: { source: NativeSource; component: IndexComponent }[], waitMs = 10000, { retryLimited = false } = {}): Promise<Preparation[]> {
+    const jobs = await this.enqueue(entries, undefined, retryLimited);
     const pending = jobs.filter(busy);
     if (pending.length) await boundedWait(Promise.all(pending.map(job => job.promise)).then(() => {}), Math.min(waitMs, 10000));
     return jobs.map(job => ({ status: job.status, preparationId: job.id, snapshot: job.snapshot, diagnostics: job.diagnostics, prepared: job.prepared,
       component: job.component!.identity, failure: job.status === "degraded" ? job.failure : null }));
   }
   // A job is shared by every call for the same content. A failed job is prepared again by the next call, except a component's job that reached
-  // a native limit, which this process does not prepare again for the same content.
-  async enqueue(entries: Entry[], expectedSnapshot?: string): Promise<Job[]> {
+  // a native limit, which this process does not prepare again for the same content unless `retryLimited` asks for it.
+  async enqueue(entries: Entry[], expectedSnapshot?: string, retryLimited = false): Promise<Job[]> {
     const manifest = await this.manifest(), jobs: Job[] = [];
     for (const { source, component } of entries) {
       // The Git fingerprint is read before the snapshot, so a concurrent edit can only make the index look stale, never fresh.
@@ -400,6 +401,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       const live = (snapshot as { enumerator?: string }).enumerator !== "retained";
       if (expectedSnapshot && expectedSnapshot !== snapshot.sourceFingerprint) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
       const generationKey = `${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`;
+      if (retryLimited && this.limited.get(generationKey)?.status === "degraded") this.limited.delete(generationKey);
       let job = this.limited.get(generationKey) ?? this.generations.get(generationKey);
       if (!job || (job.status === "degraded" && !this.limited.has(generationKey))) {
         job = this.job(source, snapshot, location, generationKey, component ? sha(`${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : undefined, component, live, read);
