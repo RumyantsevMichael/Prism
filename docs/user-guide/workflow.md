@@ -163,7 +163,7 @@ Accepting a design, and verifying a slice that records a component, refuse an in
 | `component_dependency_unknown` | A `Depends on` entry of this repository that names no declared component and not the root component |
 | `component_cycle` | `Depends on` entries that form a cycle, listed in dependency order |
 
-Reading an initiative never reads the declaration, so an invalid one stops only design acceptance and the verification of slices that record a component.
+Reading an initiative never reads the declaration, so an invalid one stops only design acceptance, the verification of slices that record a component, [dependents' runs](#dependents), and shipping.
 
 `get_roadmap` returns the repository's components without refusing an invalid declaration.
 Its `components` holds the repository's name in `repository`, and in `declared` the root component and then each declared component in declaration order, each as `{ component, folder, testCommand, dependsOn }` with identities, where the root component's folder is `""` and a missing test command is `null`.
@@ -194,6 +194,36 @@ The shared paths are the root lockfiles of the workspace tools whose manifests g
 The proposal holds `markdown`, the block ready to commit, its `components` in folder order as `{ name, folder, testCommand, dependsOn }`, `sharedPaths`, and `skipped`, each manifest Prism could not read as `{ path, reason }`.
 A member folder with a manifest Prism could not read is still proposed under its folder name, without a test command or dependencies.
 When the proposed block would be refused, for example because its dependencies form a cycle, `problem` holds the refusal's `code` and `message`, and you change the block before you commit it.
+
+## Dependents
+
+Each slice runs only its own component's tests, so once every leaf of a contract scope is done, the orchestrator runs the scope's dependents' run with `verify_slice` and `dependents` `true`, naming the scope.
+A scope is the slice whose design accepted the slice plan, or a leaf that is a scope of its own, such as a root that design gave no slice plan or a part of a split.
+Prism refuses a slice that is not a scope with `validation_failed`, and a scope with a leaf that is not done with `scope_unfinished`, listing the leaves it waits for in `waiting`.
+
+The dependents are every component of this repository that depends, directly or through other components, on a component that one of the scope's leaves records, a component of the scope included when it depends on another one of them.
+A scope inside one component runs them too, while a leaf without a component and a change under a shared path add none.
+When nothing depends on the scope, the result is `no_dependents` with an empty `components`, and nothing is recorded.
+A dependency on another repository's component never runs there: Prism reads no other repository's configuration, and the result does not mention it.
+
+Each dependent runs its own `Test command` in its folder, or the `Test command` under `## Stack` in the project root when it declares none, and each distinct command and folder runs once.
+The commands run in dependency order, each in the place of the first dependent that uses it.
+Before anything is asked, Prism refuses as for a slice's [verification](#verification), naming the first dependent in that order that has no command, a missing folder, or a folder that leads outside the project.
+
+One approval question lists every command and folder that you have not allowed yet, with the components each one tests, and the result is `approval_needed` with `commands`, each `{ command, folder, components }`.
+Allowing it allows each listed command in its folder, as a slice's approval does, so later runs ask only about new commands or folders.
+Declining it marks the components of every listed command `declined` for this run, while the commands you allowed earlier still run, and the next run asks again.
+An answer with only a note returns `approval_unclear` and runs nothing.
+
+The run is recorded on the scope, and its result has `status` `passed` when every dependent passed and `failed` otherwise, with `components` in run order as `{ name, folder, command, status }`, `blocked` naming each dependent that failed or was declined, and `run`, the record of the run.
+A run whose commands change project files fails with reason `tracked_files_changed` and blocks every dependent.
+`get_initiative` returns `dependents` keyed by scope with the latest run's `status`, `passed` or `blocked`, `run`, `finishedAt`, and `blocked`.
+
+`update_roadmap` refuses to `ship` the initiative with `dependents_blocked` while a scope has dependents, by the current declaration, whose latest dependents' run did not pass or did not run each of them.
+Its `scopes` lists each such scope as `{ scope, blocked, reason }`, where `reason` is `failed` when that run failed or declined one of them and `not_run` when none ran or a dependent was declared after it.
+A later passing run of those dependents lets it ship, and an initiative of a repository that declares no components ships as before.
+A leaf that is not done still refuses `ship` with `gate_blocked` first, and an invalid declaration refuses it with its own code.
+`get_roadmap` reports such an initiative with `readyToShip` `false` and a `diagnostics` entry, `dependents_blocked` with the same `scopes`, or the code and message of the invalid declaration, so the review browser shows an initiative as ready to ship only once `ship` would succeed.
 
 ## Questions and answers
 
