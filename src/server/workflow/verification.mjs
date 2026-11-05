@@ -660,12 +660,14 @@ async function dependentsRun({ root, initiative, scope, approvalGate, chatApprov
   const leaves = scopeLeaves(record, scope);
   const waiting = leaves.filter((leaf) => record.slices[leaf]?.status !== "done");
   if (waiting.length) throw fail("scope_unfinished", `The scope ${scope} is not finished, so its dependents do not run yet. Finish ${waiting.join(", ")} first.`, { scope, waiting });
-  // A call while this scope's dependents run joins that run, and a call with the gate a finished run was started under returns that run, so neither asks again.
+  // A call while this scope's dependents run joins that run, and a call with the gate of a finished run that declined pairs returns that run, so neither asks again.
+  // Any other call forgets the declined run, so a call without its gate asks again, and a gate whose pairs were all allowed runs the dependents again.
   const jobKey = `${root}\0${initiative}\0${scope}\0dependents`;
   const running = jobs.get(jobKey);
   if (running) return dependentsWaited(await awaitJob(jobKey, running.signature, null, { signal, onProgress, maxWaitMs }), scope, signal);
-  const settled = approvalGate ? settledDependents.get(jobKey) : null;
-  if (settled && settled.gate === approvalGate) return dependentsResult(settled.run);
+  const settled = settledDependents.get(jobKey);
+  if (settled && approvalGate && settled.gate === approvalGate) return dependentsResult(settled.run);
+  settledDependents.delete(jobKey);
   const config = await readWorkflowConfig(root);
   const declaration = readComponents(config);
   const dependents = scopeDependents(record, scope, declaration);
@@ -699,7 +701,7 @@ async function dependentsRun({ root, initiative, scope, approvalGate, chatApprov
   const signature = pairs.map((pair) => `${pair.key}${declined.has(pair.key) ? "-" : "+"}`).join(",");
   const start = (jobSignal, progress) => inWorkTree(root, () => dependentsExecution({ root, initiative, scope, config, pairs, placed, declined, dataDirectory, signal: jobSignal, onProgress: progress }))
     .then((run) => {
-      if (gate) settledDependents.set(jobKey, { gate, run });
+      if (gate && declined.size) settledDependents.set(jobKey, { gate, run });
       return run;
     });
   return dependentsWaited(await awaitJob(jobKey, signature, start, { signal, onProgress, maxWaitMs }, { commands: listed(pairs) }), scope, signal);
@@ -710,7 +712,7 @@ function dependentsWaited(waited, scope, signal) {
   return waited.finished.reason === "cancelled" && signal?.aborted ? { status: "cancelled", scope } : dependentsResult(waited.finished);
 }
 
-// The latest finished dependents' run of each scope that an approval gate started, with that gate's id.
+// The latest finished dependents' run of each scope whose approval gate was declined, with that gate's id, until a call with another gate or none.
 const settledDependents = new Map();
 // The dependents' runs of one work tree run one after another, since each runs commands that may read or write the same files.
 const workTreeRuns = new Map();
@@ -767,8 +769,12 @@ const DEPENDENTS_REASONS = {
   tracked_files_changed: "The dependents' test commands changed project files while they ran, so the run does not identify one tested state and every dependent is blocked. Run the dependents again."
 };
 
+// A run with declined pairs is returned again for its gate, so its message says how to ask again.
+const ASK_AGAIN = "The user declined some of these commands, so calling with the same approvalGate returns this run again; call verify_slice with dependents and without approvalGate to ask and run again.";
+
 function dependentsResult(run) {
-  const message = DEPENDENTS_REASONS[run.reason] ?? (run.passed ? `Every dependent of ${run.scope} passed.` : `The scope ${run.scope} is blocked by ${run.blocked.join(", ")}: a dependent whose tests failed or were declined blocks shipping until a later dependents' run passes.`);
+  const base = DEPENDENTS_REASONS[run.reason] ?? (run.passed ? `Every dependent of ${run.scope} passed.` : `The scope ${run.scope} is blocked by ${run.blocked.join(", ")}: a dependent whose tests failed or were declined blocks shipping until a later dependents' run passes.`);
+  const message = run.commands.some((item) => item.status === "declined") ? `${base} ${ASK_AGAIN}` : base;
   return { status: run.passed ? "passed" : "failed", scope: run.scope, ...(run.reason ? { reason: run.reason } : {}), message, components: run.components, blocked: run.blocked, commands: run.commands, durationMs: run.durationMs, run: run.path, ...(run.checkout ? { code: run.checkout } : {}), kind: "dependents" };
 }
 

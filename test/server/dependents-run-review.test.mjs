@@ -3,11 +3,12 @@ import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { INITIATIVE, THREE, command, componentProject, node, planAndAccept, runLog, update, workflow, write } from "./fixtures/components.mjs";
+import { INITIATIVE, THREE, command, componentProject, failing, node, planAndAccept, runLog, update, workflow, write } from "./fixtures/components.mjs";
 import { splitEvidence } from "./fixtures/split-evidence.mjs";
 
 // Regressions found by reviewing the dependents' run: a chat answer allows only what the chat question named,
-// a leaf whose component was removed adds no dependents to the run nor to ship, and a call after a decline joins the run it started.
+// a leaf whose component was removed adds no dependents to the run nor to ship, a call after a decline joins the run it started,
+// and only a run with declined pairs is returned again for its gate, until a call without that gate asks again.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-dependents-review-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -155,4 +156,62 @@ test("the dependents' runs of two scopes in one work tree run one after the othe
   const results = await Promise.all(["tools", "values"].map((scope) => verify(root, scope, { dependents: true })));
   assert.deepEqual(results.map((item) => item.status), ["passed", "passed"]);
   assert.deepEqual((await runs()).slice(before).map((item) => item.at), ["start", "end", "start", "end"], "one run ends before the other starts");
+});
+
+const BILLING = ["## Components", "- shared: packages/shared", `  - Test command: ${command("shared")}`, "- billing: packages/billing", `  - Test command: ${command("billing")}`, "  - Depends on: shared", ""].join("\n");
+
+test("after a failed dependents' run is fixed, calling again with its allowed gate runs the dependents again", async (context) => {
+  const root = await sharedScope(context, BILLING);
+  failing(context, "billing");
+  const asked = await verify(root, INITIATIVE, { dependents: true });
+  assert.equal(asked.status, "approval_needed");
+  await allow(root, asked.gateId);
+  const failed = await verify(root, INITIATIVE, { dependents: true, approvalGate: asked.gateId });
+  assert.equal(failed.status, "failed");
+  assert.ok(!failed.message.includes("without approvalGate"), failed.message);
+  // billing is fixed, and the dependents' run is called again with the same arguments.
+  delete process.env.FAIL_billing;
+  const again = await verify(root, INITIATIVE, { dependents: true, approvalGate: asked.gateId });
+  assert.equal(again.status, "passed");
+  assert.notEqual(again.run, failed.run, "a new run started");
+});
+
+test("a run without the gate leaves no older run to return for that gate", async (context) => {
+  const runs = await runLog(context);
+  const root = await sharedScope(context, BILLING);
+  const asked = await verify(root, INITIATIVE, { dependents: true });
+  await allow(root, asked.gateId);
+  const passed = await verify(root, INITIATIVE, { dependents: true, approvalGate: asked.gateId });
+  assert.equal(passed.status, "passed");
+  failing(context, "billing");
+  const fresh = await verify(root, INITIATIVE, { dependents: true });
+  assert.equal(fresh.status, "failed");
+  const stale = await verify(root, INITIATIVE, { dependents: true, approvalGate: asked.gateId });
+  assert.equal(stale.status, "failed");
+  assert.ok(![passed.run, fresh.run].includes(stale.run), "the old gate starts a new run");
+  // A dependent declared since then needs a new approval, which the old gate does not give.
+  await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: `${BILLING}- web: apps/web\n  - Test command: echo web\n  - Depends on: billing\n` }));
+  const declared = await verify(root, INITIATIVE, { dependents: true, approvalGate: asked.gateId });
+  assert.equal(declared.status, "approval_needed");
+  assert.deepEqual(declared.commands.map((item) => item.components), [["root/web"]]);
+  assert.equal((await runs()).filter((item) => item.name === "billing").length, 3, "billing ran once for each started run");
+});
+
+test("a declined run is returned for its gate and says to call without the gate, which asks again", async (context) => {
+  const root = await sharedScope(context, BILLING);
+  const asked = await verify(root, INITIATIVE, { dependents: true });
+  await allow(root, asked.gateId, "decline");
+  const declined = await verify(root, INITIATIVE, { dependents: true, approvalGate: asked.gateId });
+  assert.equal(declined.status, "failed");
+  assert.ok(declined.message.includes("without approvalGate"), declined.message);
+  const repeated = await verify(root, INITIATIVE, { dependents: true, approvalGate: asked.gateId });
+  assert.equal(repeated.run, declined.run);
+  assert.ok(repeated.message.includes("without approvalGate"), repeated.message);
+  const again = await verify(root, INITIATIVE, { dependents: true });
+  assert.equal(again.status, "approval_needed");
+  assert.notEqual(again.gateId, asked.gateId);
+  // Once asked again, the declined gate no longer returns its run.
+  const old = await verify(root, INITIATIVE, { dependents: true, approvalGate: asked.gateId });
+  assert.equal(old.status, "approval_needed");
+  assert.equal(old.gateId, again.gateId);
 });
