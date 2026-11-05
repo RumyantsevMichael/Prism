@@ -75,6 +75,7 @@ An initiative page shows its slices as a board, a list, or a graph.
 The board has one column per slice status, and the card of an active slice also shows its activity, workers, and review lanes.
 A slice whose design waits for your answer at its design gate shows as in design review until the agent accepts the design, even though its record still says not started.
 The list shows the slice tree, and the graph orders leaf slices by execution order.
+A slice that records a [component](workflow.md#components) carries a small label with its `<repository>/<component>` identity in the slice tree, on its board card, and on its slice page, and a slice without one, such as a split scope or a slice accepted before components existed, has no label.
 Below them, the page lists the unstarted leaves that can be designed next, leaving out those in design review.
 A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, and every file in the slice folder.
 It is the page to read at a design gate.

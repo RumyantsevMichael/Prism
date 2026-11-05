@@ -688,6 +688,38 @@ a {
   font-size: inherit;
 }
 
+/* A component label names the <repository>/<component> that holds a slice.
+   A long identity wraps inside the label instead of widening its row, its board column, or the slice page. */
+.component-chip {
+  align-items: flex-start;
+  background: var(--surface-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: 0.3rem;
+  color: var(--ink);
+  column-gap: 0.3rem;
+  display: inline-flex;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.35;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 0.05rem 0.4rem;
+}
+
+.component-chip::before {
+  border: 1.5px solid var(--accent);
+  border-radius: 0.12rem;
+  box-sizing: border-box;
+  content: "";
+  content: "" / "Component";
+  flex: 0 0 auto;
+  height: 0.55rem;
+  /* The mark sits centered on the first line when the identity wraps. */
+  margin-top: calc((1.35em - 0.55rem) / 2);
+  width: 0.55rem;
+}
+
 .code-dirty {
   color: var(--warn);
   font-weight: 700;
@@ -4066,7 +4098,10 @@ th {
 
 .slice-tags {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 0.3rem;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .slice-status {
