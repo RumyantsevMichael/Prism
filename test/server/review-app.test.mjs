@@ -1045,8 +1045,11 @@ test("a gate answer from the app writes the state record without touching any ev
     stores.push(storeDirectory);
   }
   const url = (await standalone(context, { projectRoot: root, env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: () => true })).url;
-  const body = JSON.stringify({ initiative: "work", id: "gate-00000000", choice: null, note: "Answered from the page." });
-  const answered = await request(new URL("api/gates/answer", url), { method: "POST", headers: { "Content-Type": "application/json" }, body });
+  const target = "gate:work/gate-00000000";
+  const listed = await request(new URL(`api/actions?target=${encodeURIComponent(target)}`, url));
+  assert.equal(listed.status, 200, listed.body);
+  const body = JSON.stringify({ action: "gate.answer", target, input: { note: "Answered from the page." }, revision: JSON.parse(listed.body).actions[0].revision });
+  const answered = await request(new URL("api/actions/apply", url), { method: "POST", headers: { "Content-Type": "application/json" }, body });
   assert.equal(answered.status, 200, answered.body);
   const contents = await Promise.all(stores.map((store) => readdir(store)));
   // State records sit outside conservation snapshots, so an answer has nothing to register in a store.

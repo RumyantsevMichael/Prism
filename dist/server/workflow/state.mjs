@@ -11,14 +11,20 @@ import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 
 const SCHEMA_VERSION = 1;
 
-const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed"]);
+const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed", "history", "personSettings"]);
+// Only the review app's action registry writes the person's history and setting marks, so agents' state changes never carry them.
+const REGISTRY_KEYS = new Set(["history", "personSettings"]);
 const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "review", "models"]);
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
 const GATE_KEYS = new Set(["id", "kind", "slice", "question", "artifacts", "options", "askedAt", "answer"]);
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
 const OPTION_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
-const ANSWER_KEYS = new Set(["choice", "note", "via", "answeredAt"]);
+const ANSWER_KEYS = new Set(["choice", "note", "via", "answeredAt", "by", "entry"]);
+const ENTRY_ID = /^[0-9a-f]{32}$/;
+const ENTRY_KEYS = new Set(["id", "action", "target", "before", "after", "at", "by", "via"]);
+const AUTHOR_KEYS = new Set(["name", "email", "checkout"]);
+export const HISTORY_LIMIT = 200;
 // Closed gates stay readable so the user can see what they answered and why a question went away.
 const CLOSED_LIMIT = 20;
 const REASON_LIMIT = 1000;
@@ -115,7 +121,9 @@ function normalizeState(raw) {
     pending: raw.pending ?? [],
     next: raw.next ?? [],
     evidence: raw.evidence ?? [],
-    ...(raw.closed === undefined ? {} : { closed: raw.closed })
+    ...(raw.closed === undefined ? {} : { closed: raw.closed }),
+    ...(raw.history === undefined ? {} : { history: raw.history }),
+    ...(raw.personSettings === undefined ? {} : { personSettings: raw.personSettings })
   };
   for (const [key, value] of Object.entries(raw)) {
     if (!TOP_LEVEL_KEYS.has(key)) {
@@ -311,12 +319,14 @@ function validateGate(entry, entryPath, errors) {
   }
   if (entry.answer !== undefined) {
     if (!isRecord(entry.answer) || Object.keys(entry.answer).some((key) => !ANSWER_KEYS.has(key))) {
-      addError(errors, `${entryPath}.answer`, "must contain only choice, note, via, and answeredAt");
+      addError(errors, `${entryPath}.answer`, "must contain only choice, note, via, answeredAt, by, and entry");
     } else {
       const problem = answerProblem(entry, entry.answer.choice, entry.answer.note);
       if (problem) addError(errors, `${entryPath}.answer`, problem);
       if (entry.answer.via !== "browser") addError(errors, `${entryPath}.answer.via`, "must be browser");
       if (typeof entry.answer.answeredAt !== "string" || Number.isNaN(Date.parse(entry.answer.answeredAt))) addError(errors, `${entryPath}.answer.answeredAt`, "must be an ISO timestamp");
+      if (entry.answer.by !== undefined && !validAuthor(entry.answer.by)) addError(errors, `${entryPath}.answer.by`, "must be an author { name, email, checkout }");
+      if (entry.answer.entry !== undefined && (typeof entry.answer.entry !== "string" || !ENTRY_ID.test(entry.answer.entry))) addError(errors, `${entryPath}.answer.entry`, "must be a history entry id of 32 lowercase hexadecimal characters");
     }
   }
 }
@@ -466,6 +476,69 @@ function assertAnswersUnchanged(before, after) {
   }
 }
 
+const nullableText = (value) => value === null || (typeof value === "string" && value.length <= 200);
+
+function validAuthor(value) {
+  return isRecord(value) && Object.keys(value).every((key) => AUTHOR_KEYS.has(key)) && nullableText(value.name) && nullableText(value.email) && typeof value.checkout === "string" && value.checkout.trim() !== "" && value.checkout.length <= 400;
+}
+
+const validTime = (value) => typeof value === "string" && !Number.isNaN(Date.parse(value));
+
+/** The order of a history: ascending by the time of the machine that applied each entry, and then by id. */
+export function historyOrder(left, right) {
+  if (left.at !== right.at) return left.at < right.at ? -1 : 1;
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+}
+
+/** A history with one more entry at its place in history order, keeping the newest entries within the limit. */
+export function insertHistoryEntry(history, entry, limit = HISTORY_LIMIT) {
+  const entries = [...(history ?? [])];
+  let position = entries.length;
+  while (position > 0 && historyOrder(entries[position - 1], entry) > 0) position -= 1;
+  entries.splice(position, 0, entry);
+  return entries.slice(-limit);
+}
+
+/** The problem of a history entry, or null when it is well formed. */
+export function historyEntryProblem(entry) {
+  if (!isRecord(entry) || Object.keys(entry).some((key) => !ENTRY_KEYS.has(key))) return "must contain only id, action, target, before, after, at, by, and via";
+  if (typeof entry.id !== "string" || !ENTRY_ID.test(entry.id)) return "id must be 32 lowercase hexadecimal characters";
+  for (const key of ["action", "target", "via"]) if (typeof entry[key] !== "string" || !entry[key].trim() || entry[key].length > 400) return `${key} must be a non-empty text`;
+  if (!Object.hasOwn(entry, "before") || !Object.hasOwn(entry, "after")) return "before and after must be present";
+  if (!validTime(entry.at)) return "at must be an ISO timestamp";
+  if (!validAuthor(entry.by)) return "by must be an author { name, email, checkout }";
+  return null;
+}
+
+function validateHistory(value, errors) {
+  if (!Array.isArray(value) || value.length > HISTORY_LIMIT) {
+    addError(errors, "history", `must be an array of at most ${HISTORY_LIMIT} history entries`);
+    return;
+  }
+  const seen = new Set();
+  value.forEach((entry, index) => {
+    const problem = historyEntryProblem(entry);
+    if (problem) {
+      addError(errors, `history[${index}]`, problem);
+      return;
+    }
+    if (seen.has(entry.id)) addError(errors, `history[${index}].id`, "must not duplicate another entry");
+    seen.add(entry.id);
+    if (index > 0 && historyEntryProblem(value[index - 1]) === null && historyOrder(value[index - 1], entry) > 0) addError(errors, `history[${index}]`, "must follow the entries before it by time and then by id");
+  });
+}
+
+function validatePersonSettings(value, errors) {
+  if (!isRecord(value)) {
+    addError(errors, "personSettings", "must be an object");
+    return;
+  }
+  for (const [key, mark] of Object.entries(value)) {
+    if (!SETTING_KEYS.has(key)) addError(errors, `personSettings.${key}`, "is not an initiative setting");
+    else if (!isRecord(mark) || Object.keys(mark).some((name) => name !== "at" && name !== "entry") || !validTime(mark.at) || typeof mark.entry !== "string" || !ENTRY_ID.test(mark.entry)) addError(errors, `personSettings.${key}`, "must be { at, entry } with an ISO time and a history entry id");
+  }
+}
+
 function validateStateValue(raw) {
   const errors = [];
   const warnings = [];
@@ -489,6 +562,12 @@ function validateStateValue(raw) {
   if (raw.closed !== undefined) {
     validateClosed(raw.closed, errors);
   }
+  if (raw.history !== undefined) {
+    validateHistory(raw.history, errors);
+  }
+  if (raw.personSettings !== undefined) {
+    validatePersonSettings(raw.personSettings, errors);
+  }
   for (const key of ["next", "evidence"]) {
     if (raw[key] !== undefined) {
       validateStringArray(raw[key], key, errors);
@@ -507,6 +586,9 @@ function validateChanges(changes) {
     throw error("invalid_changes", "The changes argument must contain at least one managed state field.");
   }
   for (const key of Object.keys(changes)) {
+    if (REGISTRY_KEYS.has(key)) {
+      throw error("invalid_changes", `The state field ${key} records the person's changes in the review app, so only the review app's actions write it.`);
+    }
     if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations" && key !== "gateOperations") || key === "schemaVersion" || key === "closed") {
       throw error("invalid_changes", `The state field ${key} cannot be changed through this capability.`);
     }
@@ -686,6 +768,52 @@ export async function answerUserGate({ projectRoot, initiative, id, choice = nul
     await write(resolved.root, { kind: "state", initiative: resolved.initiative }, `${JSON.stringify(candidate, null, 2)}\n`);
     const updated = await loadState(resolved.path);
     return { ...publicStateResult(resolved, updated), gate: pending[position] };
+  }, error));
+}
+
+/**
+ * The review app's one write of a person's action on coordination state, under the state lock.
+ * prepare(current) sees { exists, revision, state, valid } as the lock found it and returns null to change nothing,
+ * or { entry, setting?: { name, value }, answer?: { id, choice, note } }: a setting is stored and marked in personSettings, an answer is recorded on its gate with its author and entry,
+ * and the entry joins history at its place, in the same write.
+ */
+export async function recordPersonAction({ projectRoot, initiative, prepare }) {
+  await moveLegacyRecords(projectRoot);
+  const resolved = await resolveState(projectRoot, initiative);
+  await mkdir(path.dirname(resolved.path), { recursive: true });
+  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+    const current = await loadState(resolved.path);
+    const change = await prepare({ exists: current.exists, revision: current.revision, state: current.state, valid: current.valid });
+    if (change === null) return { ...publicStateResult(resolved, current), entry: null };
+    if (current.exists && !current.valid) {
+      throw error("invalid_state", "The existing state is invalid and was not changed.", { validation: publicStateResult(resolved, current) });
+    }
+    const { entry, setting, answer } = change;
+    const problem = historyEntryProblem(entry);
+    if (problem) throw error("invalid_changes", `The history entry is invalid: ${problem}.`);
+    const before = current.state ?? defaultState();
+    const candidate = { ...before, history: insertHistoryEntry(before.history, entry) };
+    if (setting) {
+      if (!SETTING_KEYS.has(setting.name)) throw error("invalid_changes", `${setting.name} is not an initiative setting.`);
+      candidate.settings = { ...before.settings, [setting.name]: setting.value };
+      candidate.personSettings = { ...(before.personSettings ?? {}), [setting.name]: { at: entry.at, entry: entry.id } };
+    }
+    if (answer) {
+      const position = before.pending.findIndex((item) => isRecord(item) && item.id === answer.id);
+      if (position === -1) throw error("unknown_gate", "The question is no longer open; the agent resolved or withdrew it.");
+      if (before.pending[position].answer) throw error("gate_answered", "The question already has an answer.");
+      const answerProblemText = answerProblem(before.pending[position], answer.choice, answer.note);
+      if (answerProblemText) throw error("invalid_answer", `The answer is invalid: ${answerProblemText}.`);
+      candidate.pending = [...before.pending];
+      candidate.pending[position] = { ...before.pending[position], answer: { choice: answer.choice, note: answer.note, via: "browser", answeredAt: entry.at, by: entry.by, entry: entry.id } };
+    }
+    const normalized = normalizeState(candidate);
+    const validation = validateStateValue(normalized);
+    if (validation.errors.length > 0) {
+      throw error("invalid_state", "The changed state is invalid and was not written.", { errors: validation.errors });
+    }
+    await writeRecord(resolved.root, { kind: "state", initiative: resolved.initiative }, `${JSON.stringify(normalized, null, 2)}\n`);
+    return { ...publicStateResult(resolved, await loadState(resolved.path)), created: !current.exists, entry };
   }, error));
 }
 

@@ -76,9 +76,19 @@ test("background indexing off leaves rebuilding to the person, whose request mus
   assert.equal(calls.length, 0);
   assert.match(panelHtml(status), /Rebuild index/);
   assert.match(panelHtml(status), /only when you ask/);
-  assert.equal((await call("/api/indexing/rebuild", { method: "POST", body: "{}" })).status, 403);
-  assert.equal((await call("/api/indexing/rebuild", { method: "POST", headers: { "Content-Type": "application/json", Origin: "http://evil.example" }, body: "{}" })).status, 403);
-  assert.equal((await call("/api/indexing/rebuild", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status, 202);
+  // The rebuild records its history entry in Prism's application folder, so the test gives it a folder of its own.
+  const appFolder = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-rebuild-app-")));
+  const previous = process.env.PRISM_REVIEW_APP_DIR;
+  process.env.PRISM_REVIEW_APP_DIR = appFolder;
+  context.after(() => {
+    if (previous === undefined) delete process.env.PRISM_REVIEW_APP_DIR;
+    else process.env.PRISM_REVIEW_APP_DIR = previous;
+    return rm(appFolder, { recursive: true, force: true });
+  });
+  const body = JSON.stringify({ action: "index.rebuild", target: "index:root/root", input: {}, revision: null });
+  assert.equal((await call("/api/actions/apply", { method: "POST", body })).status, 403);
+  assert.equal((await call("/api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", Origin: "http://evil.example" }, body })).status, 403);
+  assert.equal((await call("/api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body })).status, 200);
   assert.deepEqual(calls, [root]);
   assert.doesNotMatch(panelHtml({ ...status, state: "preparing", progress: { phase: "embedding", current: 1, total: 2 } }), /Rebuild index/, "a running build has no rebuild button");
 });

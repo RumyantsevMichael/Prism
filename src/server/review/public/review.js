@@ -1309,14 +1309,25 @@ function viewContext(path, state) {
         await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section);
       }
     },
-    async answerGate(payload) {
+    // A gate answer is the gate's answer action, applied against the revision its listing shows.
+    async answerGate({ initiative, id, choice, note }) {
       if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-      const response = await fetch("./api/gates/answer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(() => {
+      const target = `gate:${initiative}/${id}`;
+      const unanswered = () => {
         throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
-      });
+      };
+      const listed = await fetch(`./api/actions?target=${encodeURIComponent(target)}`).catch(unanswered);
+      const listing = await listed.json().catch(() => ({}));
+      if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
+      const action = (listing.actions ?? []).find((item) => item.id === "gate.answer");
+      const names = new Set((action?.fields ?? []).map((field) => field.name));
+      const input = Object.fromEntries([["choice", choice], ["note", note]].filter(([name, value]) => names.has(name) && value !== null && value !== undefined && value !== ""));
+      const response = await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
       const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
       if (!response.ok) {
-        throw Object.assign(new Error(result.message ?? "The answer was not recorded."), { code: result.code });
+        // The answer form names an answered or withdrawn question as it always has.
+        const code = result.code === "action_unavailable" ? "gate_answered" : result.code === "unknown_target" ? "unknown_gate" : result.code;
+        throw Object.assign(new Error(result.message ?? "The answer was not recorded."), { code });
       }
       return result;
     },

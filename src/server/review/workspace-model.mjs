@@ -5,7 +5,7 @@ import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workfl
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
-import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
+import { readCoordinationState } from "../workflow/state.mjs";
 import { keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, locateRecord, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
@@ -501,17 +501,6 @@ async function computeAttention(projectRoot) {
   // The newest closed questions come first, across initiatives, so the list stays short.
   earlier.sort((left, right) => newestFirst(left.closedAt, right.closedAt));
   return { needsYou, answered, earlier: earlier.slice(0, 20), watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
-}
-
-// The browser names the initiative and gate; the state record is always the initiative's own, never a client path.
-export async function answerGate(projectRoot, body) {
-  if (!body || typeof body !== "object" || !SLUG_PATTERN.test(body.initiative ?? "") || typeof body.id !== "string") {
-    throw Object.assign(new Error("An initiative and a gate id are required."), { code: "invalid_answer" });
-  }
-  const choice = typeof body.choice === "string" && body.choice ? body.choice : null;
-  const note = typeof body.note === "string" ? body.note : null;
-  const result = await answerUserGate({ projectRoot, initiative: body.initiative, id: body.id, choice, note });
-  return { gate: result.gate, revision: result.revision };
 }
 
 function glossaryTerms(content) {

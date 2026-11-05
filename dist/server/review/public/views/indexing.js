@@ -188,7 +188,14 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
     const rebuild = event.target.closest?.("[data-rebuild-index]");
     if (!rebuild) return;
     rebuild.disabled = true;
-    await fetch("./api/indexing/rebuild", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+    // The rebuild is the index rebuild action of the checkout's root component, whose index this checkout's one index serves.
+    try {
+      const { targets } = await fetchJson("./api/actions/targets?kind=index");
+      const listing = await fetchJson(`./api/actions?target=${encodeURIComponent(targets[0])}`);
+      const action = listing.actions.find((item) => item.id === "index.rebuild");
+      await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "index.rebuild", target: targets[0], input: {}, revision: action?.revision ?? null }) });
+    } catch {
+    }
     await refresh();
   });
   document.addEventListener("click", (event) => {
