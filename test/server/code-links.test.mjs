@@ -132,7 +132,7 @@ test("two worktrees that share a store record their own branches, and the summar
   const parent = await folder(context);
   const a = path.join(parent, "a"), b = path.join(parent, "b");
   await mkdir(path.join(parent, "store"));
-  await files(a, "\n## Workspace\n- Store: ../store\n");
+  await files(a, "\n## Workspace\n- Store: ../store\n- Repository: project\n");
   git(a, "init", "-q", "-b", "main");
   git(a, "remote", "add", "origin", "git@github.com:owner/repo.git");
   git(a, "add", "-A");

@@ -28,8 +28,10 @@ export const DEFAULT_PATHS = Object.freeze({
   productStrategy: null
 });
 
+// Each section keeps its raw lines too, with their indentation, for readers such as the component reader that give nested items a meaning of their own.
 function sections(markdown) {
   const result = new Map();
+  const lines = new Map();
   let current = null;
   let fence = null;
   for (const line of markdown.split(/\r?\n/)) {
@@ -46,6 +48,7 @@ function sections(markdown) {
       current = heading[1].trim();
       if (!result.has(current)) {
         result.set(current, []);
+        lines.set(current, []);
       }
       continue;
     }
@@ -53,12 +56,15 @@ function sections(markdown) {
       current = null;
       continue;
     }
+    if (current) {
+      lines.get(current).push(line);
+    }
     const entry = line.match(/^\s*-\s+([^:]+):\s*(.*?)\s*$/);
     if (current && entry) {
       result.get(current).push({ label: entry[1].trim(), value: entry[2].replace(/^(['"])(.*)\1$/, "$2").trim() });
     }
   }
-  return result;
+  return { entries: result, lines };
 }
 
 function normalizePath(value, label, diagnostics) {
@@ -85,7 +91,7 @@ function workspaceValue(parsed, key) {
 
 export function parseWorkflowConfig(markdown) {
   const diagnostics = [];
-  const parsed = sections(markdown ?? "");
+  const { entries: parsed, lines } = sections(markdown ?? "");
   const paths = { ...DEFAULT_PATHS };
   const configured = new Set();
   if (!parsed.has("Paths")) {
@@ -110,7 +116,9 @@ export function parseWorkflowConfig(markdown) {
   const sync = workspaceValue(parsed, "store sync") ?? "";
   // A repository name only names a checkout to its record store, so without a store the Repository line is ignored.
   const repository = store === null ? null : workspaceValue(parsed, "repository");
-  return { paths, configured: [...configured].sort(), sections: values, workspace: { store, repository, sync: isRemoteStore(store) ? !/^off$/i.test(sync) : /^on$/i.test(sync) }, diagnostics };
+  // Only the sections whose nesting a reader interprets keep their raw lines, so the parsed result stays small.
+  const raw = Object.fromEntries(["Components", "Workspace"].filter((name) => lines.has(name)).map((name) => [name, lines.get(name)]));
+  return { paths, configured: [...configured].sort(), sections: values, lines: raw, workspace: { store, repository, sync: isRemoteStore(store) ? !/^off$/i.test(sync) : /^on$/i.test(sync) }, diagnostics };
 }
 
 export async function readWorkflowConfig(projectRoot) {

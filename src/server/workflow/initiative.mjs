@@ -4,7 +4,8 @@ import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { analyzeInitiative, LEAF_STATUSES, parseLegacyMap, SLUG_PATTERN } from "./initiative-graph.mjs";
-import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
+import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
+import { componentOf, dependentsOf, findComponent, readComponents, underSharedPath } from "./components.mjs";
 import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
@@ -13,7 +14,7 @@ import { listClaimRecords, locateRecord, moveLegacyRecords, readRecord, recordSt
 import { syncRecordStoreNow } from "./record-store-sync.mjs";
 import { blockingClaim, claimedMessage, claimHolder, claimLabel, claimView, dropClaim, holdClaim, isLive, newClaim, parseClaim, pendClaim, renewal, serializeClaim, settleClaim, takeLostClaims, adoptClaims } from "./slice-claims.mjs";
 import { mergeHistory, mergeKeyed, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
-import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, measureContract, restageFrozenTests, REVIEW_MARKS, stageFrozenTests, verifiedCode, withdrawFrozenTests } from "./slice-design.mjs";
+import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, latestDependentsRun, measureContract, restageFrozenTests, REVIEW_MARKS, stageFrozenTests, verifiedCode, withdrawFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { contractClauses, plannedChanges } from "./design-view.mjs";
@@ -48,7 +49,7 @@ const evidenceSchema = { oneOf: [
 const splitOperation = object({ op: { const: "split" }, parent: slug, children: { type: "array", minItems: 1, maxItems: 50, items: childSchema }, evidence: evidenceSchema }, ["op", "parent", "children"]);
 const dependenciesOperation = object({ op: { const: "set_dependencies" }, slug, dependencies: { type: "array", maxItems: 200, items: slug } });
 const updateSliceOperation = object({ op: { const: "update_slice" }, slug, title: text, outcome: text }, ["op", "slug"]);
-const acceptDesignOperation = object({ op: { const: "accept_design" }, slug, frozenTests: { type: "array", minItems: 1, maxItems: 200, items: text }, review: { enum: REVIEW_MARKS } });
+const acceptDesignOperation = object({ op: { const: "accept_design" }, slug, frozenTests: { type: "array", minItems: 1, maxItems: 200, items: text }, review: { enum: REVIEW_MARKS }, component: { type: "string", minLength: 1, maxLength: 200 } }, ["op", "slug", "frozenTests", "review"]);
 const STANDALONE = new Set(["remove_records", "propose_design", "accept_proposal"]);
 // Sync outcomes that mean nothing else shares the record, so a claim is confirmed locally.
 const LOCAL_SYNC = new Set(["no_upstream", "not_a_repository"]);
@@ -115,7 +116,8 @@ function canonicalRecord(record) {
       parent: slice.parent,
       requirements: [...slice.requirements].sort(),
       dependencies: [...slice.dependencies].sort(),
-      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}) } } : {}),
+      ...(slice.component ? { component: slice.component } : {}),
+      ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}), ...startOf(slice.design) } } : {}),
       ...(slice.splitEvidence ? { splitEvidence: slice.splitEvidence } : {}),
       ...(slice.contractDefects ? { contractDefects: slice.contractDefects } : {})
     };
@@ -128,6 +130,8 @@ function serialize(record) {
   return `${JSON.stringify(canonicalRecord(record), null, 2)}\n`;
 }
 
+const COMPONENT_IDENTITY = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
+
 function validateRecord(raw, initiative) {
   const errors = [];
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -139,6 +143,7 @@ function validateRecord(raw, initiative) {
   for (const [key, slice] of Object.entries(raw.slices ?? {})) {
     for (const problem of designProblems(slice?.design)) errors.push(`${key}: ${problem}`);
     if (slice?.contractDefects !== undefined && (!Array.isArray(slice.contractDefects) || slice.contractDefects.some((item) => typeof item?.clause !== "string" || typeof item?.reason !== "string"))) errors.push(`${key}: contractDefects must list { clause, reason } entries.`);
+    if (slice?.component !== undefined && (typeof slice.component !== "string" || !COMPONENT_IDENTITY.test(slice.component) || slice.status === "split")) errors.push(`${key}: component must be a <repository>/<component> identity on a slice that is not split.`);
     if (slice?.splitEvidence !== undefined && (slice.status !== "split" || !SPLIT_EVIDENCE_KINDS.includes(slice.splitEvidence?.kind))) errors.push(`${key}: splitEvidence belongs to a split slice and names its kind.`);
   }
   if (raw.proposals !== undefined) {
@@ -239,8 +244,49 @@ export async function getInitiative(input) {
     const checkout = await verifiedCode(resolved.root, resolved.initiative, slug).catch(() => null);
     if (checkout) code[slug] = checkout;
   }
+  // Each fit scope with a recorded dependents' run shows its latest one, read from the run records alone, never from the components.
+  const dependents = {};
+  for (const scope of fitScopes(loaded.record)) {
+    const latest = await latestDependentsRun(resolved.root, resolved.initiative, scope).catch(() => null);
+    if (latest) dependents[scope] = { status: latest.entry.passed === true ? "passed" : "blocked", run: latest.path, finishedAt: latest.entry.finishedAt ?? null, blocked: Array.isArray(latest.entry.blocked) ? latest.entry.blocked : [] };
+  }
   const view = await claimsView(resolved, loaded);
-  return { ...publicResult(resolved, view.loaded), ...(Object.keys(code).length ? { code } : {}), ...view.fields };
+  return { ...publicResult(resolved, view.loaded), ...(Object.keys(code).length ? { code } : {}), ...(Object.keys(dependents).length ? { dependents } : {}), ...view.fields };
+}
+
+/**
+ * The fit scopes of an initiative record, in slug order: each split slice without split evidence, whose design accepted a slice plan,
+ * and each leaf whose parent is null or has split evidence, which is a scope of its own.
+ */
+export function fitScopes(record) {
+  const slices = record?.slices && typeof record.slices === "object" ? record.slices : {};
+  return Object.keys(slices).filter((slug) => {
+    const slice = slices[slug];
+    if (slice?.status === "split") return !slice.splitEvidence;
+    return slice?.parent == null || Boolean(slices[slice.parent]?.splitEvidence);
+  }).sort();
+}
+
+/** The leaves of a scope in slug order: the leaves below its planned slices, which are the planned slices themselves unless one was split, or the leaf itself. */
+export function scopeLeaves(record, scope) {
+  const slices = record?.slices && typeof record.slices === "object" ? record.slices : {};
+  const children = (slug) => Object.keys(slices).filter((key) => slices[key]?.parent === slug);
+  const leaves = (slug, seen = new Set()) => {
+    if (seen.has(slug)) return [];
+    seen.add(slug);
+    const own = children(slug);
+    return own.length ? own.flatMap((child) => leaves(child, seen)) : [slug];
+  };
+  return Object.hasOwn(slices, scope) ? [...new Set(leaves(scope))].sort() : [];
+}
+
+/**
+ * The dependents of a scope by a valid declaration, in run order: every component that depends on a component its leaves record.
+ * A leaf without a component, or with one the declaration no longer holds, adds none, so the dependents' run and ship judge a scope alike.
+ */
+export function scopeDependents(record, scope, declaration) {
+  const recorded = scopeLeaves(record, scope).map((leaf) => record.slices[leaf]?.component).filter((identity) => typeof identity === "string");
+  return dependentsOf(declaration, recorded.map((identity) => findComponent(declaration, identity)).filter(Boolean));
 }
 
 /** The claim records of an initiative by slice, with the problems of any that cannot be read. */
@@ -335,6 +381,29 @@ async function sliceOutcome(resolved, slices, slugValue) {
   } catch {
     return undefined;
   }
+}
+
+// A started slice's start content: its content tree, when Prism recorded it, and the ## Components declaration in force then.
+const START_FIELDS = ["startTree", "startRecordedAt", "startDeclaration"];
+const startOf = (design) => Object.fromEntries(START_FIELDS.filter((key) => design?.[key] !== undefined).map((key) => [key, design[key]]));
+
+/**
+ * The start content of a slice, hashed as a verification run hashes the project so the two trees compare path by path, with its time and the declaration in force, or null when Git cannot hash the work tree.
+ * Starting a slice reads no components for a refusal, so an invalid declaration, or one without the slice's component, records the content without a declaration.
+ */
+async function startContent(root, identity) {
+  const { contentTree, startDeclaration } = await import("./slice-gate.mjs");
+  let config;
+  try { config = await readWorkflowConfig(root); }
+  catch { return null; }
+  const startTree = await contentTree(root, config).catch(() => null);
+  if (!startTree) return null;
+  let declared = null;
+  try {
+    const declaration = readComponents(config);
+    if (findComponent(declaration, identity)) declared = startDeclaration(declaration);
+  } catch { declared = null; }
+  return { startTree, startRecordedAt: new Date().toISOString(), ...(declared ? { startDeclaration: declared } : {}) };
 }
 
 async function completionGate(resolved, slugValue) {
@@ -452,6 +521,36 @@ function endClaim(slugValue, effects) {
   else claims.ended.add(slugValue);
 }
 
+// An accepted design records the component that holds the slice, so every accept_design of an update reads the repository's declaration once, refusing an invalid one.
+async function declarationOf(resolved, effects) {
+  effects.components ??= readWorkflowConfig(resolved.root).then((config) => ({ config, declaration: readComponents(config) }));
+  return effects.components;
+}
+
+// A repository that declares no components is one root component, which a design may leave unnamed; otherwise each design names a component of this repository, bare or qualified.
+async function designComponent(resolved, operation, effects) {
+  const { config, declaration } = await declarationOf(resolved, effects);
+  const given = operation.component;
+  const found = given === undefined ? (declaration.declared.length ? null : declaration.root) : findComponent(declaration, given);
+  if (found === null || (!declaration.declared.length && found !== declaration.root)) {
+    const identities = declaration.components.map((item) => item.identity);
+    throw fail("component_unknown", `The design of ${operation.slug} was not accepted: ${given === undefined ? "it names no component" : `${given} is not a component of this repository`}. Name one of ${identities.join(", ")} as its component.`, { slice: operation.slug, component: given ?? null, components: identities });
+  }
+  return { component: found, declaration, config };
+}
+
+// Prism's own files belong to no component: .prism, the plans folder, and the roadmap record and projection.
+function prismOwned(config, file) {
+  const within = (folder) => folder !== null && folder !== "" && (file === folder || file.startsWith(`${folder}/`));
+  const roadmap = roadmapPaths(config);
+  return within(".prism") || within(config.paths.plans) || (roadmap !== null && (file === roadmap.record || file === roadmap.projection));
+}
+
+function checkBoundary({ component, declaration, config }, slug, files) {
+  const crossing = [...new Set(files.map((file) => file.replace(/\/$/, "")))].filter((file) => !prismOwned(config, file) && componentOf(declaration, file) !== component && !underSharedPath(declaration, file)).sort();
+  if (crossing.length) throw fail("component_boundary", `The design of ${slug} was not accepted: its planned changes and frozen tests leave its component ${component.identity} at ${crossing.join(", ")}. Keep each slice inside one component or under a shared path.`, { slice: slug, component: component.identity, paths: crossing });
+}
+
 async function applyOperation(resolved, record, operation, effects) {
   const slices = record.slices;
   const requireSlice = (slugValue) => {
@@ -487,6 +586,7 @@ async function applyOperation(resolved, record, operation, effects) {
       const evidence = operation.children.every((child) => effects.accepted.has(child.slug)) ? null : await splitEvidence(resolved, slices, operation, effects);
       parent.status = "split";
       delete parent.design;
+      delete parent.component;
       if (evidence) parent.splitEvidence = evidence;
       break;
     }
@@ -509,6 +609,21 @@ async function applyOperation(resolved, record, operation, effects) {
         delete slice.design.staged;
         if (baselineId) slice.design.baselineId = baselineId;
         else delete slice.design.baselineId;
+      }
+      // A slice that records a component keeps the project's content at its start, with its frozen tests in place, so verification can find the changes that leave the component.
+      // A slice restarted after a block, or already in progress, keeps the content it started from, and a work tree that Git cannot hash records none.
+      // The content stays under this checkout's local ref once the record is written, so git gc keeps it.
+      if (operation.status === "in-progress" && slice.status !== "in-progress" && slice.component && slice.design && !slice.design.startTree && !effects.dryRun) {
+        const start = await startContent(resolved.root, slice.component);
+        if (start) {
+          Object.assign(slice.design, start);
+          effects.refs.push({ slice: operation.slug, start: start.startTree });
+        }
+      }
+      // A slice back at not-started drops its start content and its refs, so starting it again records new start content.
+      if (operation.status === "not-started" && (slice.design?.startTree || STARTED.has(slice.status))) {
+        if (slice.design) for (const key of START_FIELDS) delete slice.design[key];
+        if (!effects.dryRun) effects.refs.push({ slice: operation.slug, drop: true });
       }
       // A started slice that returns to not-started stages its frozen tests again, so other slices' verification never runs them,
       // unless another slice shares a test file, which staging would take from that slice too.
@@ -540,6 +655,7 @@ async function applyOperation(resolved, record, operation, effects) {
       const slice = requireSlice(operation.slug);
       if (slice.status === "split") throw fail("validation_failed", "A split slice is designed through its children.");
       if (slice.status === "done") throw fail("validation_failed", "A done slice cannot take a new design.");
+      const component = await designComponent(resolved, operation, effects);
       const frozenTests = await digestFrozenTests(resolved.root, operation.frozenTests);
       const staging = !STARTED.has(slice.status);
       const claimed = claimedTests(slices, operation.slug, frozenTests, staging);
@@ -563,12 +679,15 @@ async function applyOperation(resolved, record, operation, effects) {
         seen.add(parent);
         contractText = await designOf(parent);
       }
-      const changeProblems = designText === null ? [] : plannedChanges(designText, contractText ?? designText).problems;
+      const planned = designText === null ? { changes: [], problems: [] } : plannedChanges(designText, contractText ?? designText);
+      const changeProblems = planned.problems;
       if (changeProblems.length) throw fail("validation_failed", `The design of ${operation.slug} was not accepted: ${changeProblems.join(" ")}`, { problems: changeProblems });
+      checkBoundary(component, operation.slug, [...planned.changes.map((change) => change.path), ...frozenTests.map((test) => test.path)]);
       effects.diagrams.push(...diagrams);
       const acceptedAt = new Date().toISOString();
-      // A new design answers the contract defects reported against the old one.
+      // A new design answers the contract defects reported against the old one, and names the slice's component anew.
       delete slice.contractDefects;
+      slice.component = component.component.identity;
       if (effects.dryRun) {
         slice.design = { acceptedAt, frozenTests, review: operation.review, ...(staging ? { staged: true } : {}) };
         break;
@@ -576,7 +695,8 @@ async function applyOperation(resolved, record, operation, effects) {
       effects.staged = effects.staged.filter((item) => item.slice !== operation.slug);
       if (!staging) {
         const baselineId = await captureBaseline(resolved.root, resolved.initiative, operation.slug);
-        slice.design = { acceptedAt, frozenTests, review: operation.review, ...(baselineId ? { baselineId } : {}) };
+        // A new design of a started slice keeps the content the slice started from, so the changes made before the revision still count.
+        slice.design = { acceptedAt, frozenTests, review: operation.review, ...(baselineId ? { baselineId } : {}), ...startOf(slice.design) };
       } else {
         effects.staged.push(await stageFrozenTests(resolved.root, operation.slug, frozenTests));
         slice.design = { acceptedAt, frozenTests, review: operation.review, staged: true };
@@ -632,7 +752,7 @@ async function applyOperation(resolved, record, operation, effects) {
       if (outside.length) throw fail("validation_failed", `A design proposal changes only its scope ${operation.slug} and the slices inside it, not ${outside.join(", ")}.`);
       const trial = { slices: Object.assign(Object.create(null), structuredClone(slices)) };
       const accepted = new Set(operation.operations.filter((item) => item.op === "accept_design").map((item) => item.slug));
-      const trialEffects = { staged: [], installed: [], diagrams: [], checkedFolders: new Set(), diagramCache: effects.diagramCache, accepted, applied: [], dryRun: true };
+      const trialEffects = { staged: [], installed: [], refs: [], diagrams: [], checkedFolders: new Set(), diagramCache: effects.diagramCache, accepted, applied: [], dryRun: true, components: effects.components };
       for (const inner of operation.operations) await applyOperation(resolved, trial, inner, trialEffects);
       try {
         analyzeInitiative(trial.slices);
@@ -788,7 +908,7 @@ async function applyAll(resolved, record, input, effects) {
   }
 }
 
-const newEffects = (input, diagramCache, claims, notes, dryRun) => ({ staged: [], installed: [], diagrams: [], checkedFolders: new Set(), diagramCache, accepted: new Set(input.operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug)), applied: [], actor: input.actor, claims, notes, dryRun });
+const newEffects = (input, diagramCache, claims, notes, dryRun) => ({ staged: [], installed: [], refs: [], diagrams: [], checkedFolders: new Set(), diagramCache, accepted: new Set(input.operations.filter((operation) => operation.op === "accept_design").map((operation) => operation.slug)), applied: [], actor: input.actor, claims, notes, dryRun });
 
 // The initiative write: revision check, record lock, validation, history, and projection; the claims it ends are noted for removal after the write.
 async function writeInitiative(input, plan = null) {
@@ -812,6 +932,14 @@ async function writeInitiative(input, plan = null) {
     // Staged tests leave the work tree only after the initiative record is written, and only for slices still staged at the end of the update.
     const withdrawn = [];
     for (const staged of effects.staged) if (record.slices[staged.slice]?.design?.staged) withdrawn.push(...await withdrawFrozenTests(resolved.root, resolved.initiative, staged));
+    // The slices' local refs follow the written record, in the order the update set and dropped them.
+    if (changed && effects.refs.length) {
+      const { dropSliceRefs, setSliceRef } = await import("./slice-gate.mjs");
+      for (const item of effects.refs) {
+        if (item.drop) await dropSliceRefs(resolved.root, resolved.initiative, item.slice);
+        else await setSliceRef(resolved.root, resolved.initiative, item.slice, "start", item.start);
+      }
+    }
     let projectionStale = false;
     try {
       projectionStale = !(await writeProjection(resolved.root, resolved.projectionTarget, markdown(canonicalRecord(record)), RECORD_NAME)).written;
@@ -1010,7 +1138,7 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts, while a started slice set back to not-started stages them again; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design, which clears them but leaves the slice blocked until set_status in-progress restarts it. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements, and refuses a slice.md Changes line that is not add, change, or remove followed by comma-separated paths in backticks and a colon with the note. set_status in-progress refuses to start a not-started slice with dependencies_incomplete, naming them, until every slice it depends on directly or through an ancestor is done. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. A slice has at most one holder, the host session that claimed it, or the Prism server process when the host names no session, across every checkout and machine that shares the records: set_status in-progress takes an implementation claim, claim takes a design claim on a scope before design starts, and a claim covers the slice's descendants. Taking a claim is refused with slice_claimed, naming the holder's label, activity, and expiry, while another holder's live claim covers the slice, an ancestor, or a descendant; an expired claim is replaced and the result names it under replacedClaims. An update that takes or releases claims is checked whole, writes its claims first, and where store sync is on waits for a sync before anything else is written: another machine's claim or renewal that won refuses it with slice_claimed, and an unreachable remote refuses it with claim_unconfirmed; a refused update applies none of its operations. The holding server renews its live claims every 10 minutes, a server the host restarts in the same session renews them after its first read or update of the initiative, a claim expires 30 minutes after its last renewal, and an expired claim is never renewed. A claim ends when its slice leaves in-progress, when the scope's proposal is accepted, or through release_claim, which anyone may send and which the history records. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts, while a started slice set back to not-started stages them again; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design, which clears them but leaves the slice blocked until set_status in-progress restarts it. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements, and refuses a slice.md Changes line that is not add, change, or remove followed by comma-separated paths in backticks and a colon with the note. accept_design takes the slice's component, bare or as <repository>/<component>, records it as <repository>/<component>, and may leave it out only in a repository that declares no components under ## Components in .prism/workflow.md, which records the root component; acceptance refuses an invalid declaration with component_invalid, component_overlap, component_dependency_unknown, or component_cycle, a component that is not this repository's with component_unknown, listing its components, and a slice whose Changes paths or frozen tests belong to another component and lie under no shared path with component_boundary, listing the paths. set_status in-progress refuses to start a not-started slice with dependencies_incomplete, naming them, until every slice it depends on directly or through an ancestor is done. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. A slice has at most one holder, the host session that claimed it, or the Prism server process when the host names no session, across every checkout and machine that shares the records: set_status in-progress takes an implementation claim, claim takes a design claim on a scope before design starts, and a claim covers the slice's descendants. Taking a claim is refused with slice_claimed, naming the holder's label, activity, and expiry, while another holder's live claim covers the slice, an ancestor, or a descendant; an expired claim is replaced and the result names it under replacedClaims. An update that takes or releases claims is checked whole, writes its claims first, and where store sync is on waits for a sync before anything else is written: another machine's claim or renewal that won refuses it with slice_claimed, and an unreachable remote refuses it with claim_unconfirmed; a refused update applies none of its operations. The holding server renews its live claims every 10 minutes, a server the host restarts in the same session renews them after its first read or update of the initiative, a claim expires 30 minutes after its last renewal, and an expired claim is never renewed. A claim ends when its slice leaves in-progress, when the scope's proposal is accepted, or through release_claim, which anyone may send and which the history records. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. After the roadmap records the initiative as shipped or superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

@@ -1,0 +1,27 @@
+@startuml
+title Components for slices and verification - slices
+package "component-declarations" as Declarations {
+  interface "## Components reader" as Reader
+  interface "slice component in get_initiative" as SliceComponent
+}
+package "component-verification" as Verification {
+  interface "command and folder of a component" as CommandFolder
+  interface "approval per command and folder" as PairApproval
+}
+package "dependents-run" as Dependents
+package "repository-name-required" as NameRequired
+package "component-label" as Label
+package "component-proposal" as Proposal
+Verification ..> Reader : reads components
+Verification ..> SliceComponent : verifies the slice's component
+Dependents ..> CommandFolder : runs each dependent's pair
+Dependents ..> PairApproval : asks for unapproved pairs in one gate
+Dependents ..> Reader : walks Depends on in this repository
+Label ..> SliceComponent : labels the slice
+Verification ..> Declarations : built after
+Dependents ..> Verification : built after
+Label ..> Declarations : built after
+Proposal ..> Reader : checks the proposed block
+Proposal ..> Declarations : built after
+note bottom of NameRequired : independent of the others
+@enduml

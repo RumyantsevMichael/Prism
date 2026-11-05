@@ -32,7 +32,7 @@ async function fixture() {
   const url = pathToFileURL(path.join(work, "store.git")).href;
   const project = path.join(work, "project");
   await mkdir(path.join(project, ".prism"), { recursive: true });
-  await writeFile(path.join(project, ".prism/workflow.md"), `# Workflow config\n\n## Workspace\n- Store: ${url}\n`);
+  await writeFile(path.join(project, ".prism/workflow.md"), `# Workflow config\n\n## Workspace\n- Store: ${url}\n- Repository: project\n`);
   git(project, "init", "-q");
   git(project, "add", ".");
   git(project, "commit", "-q", "-m", "init");

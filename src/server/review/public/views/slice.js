@@ -3,6 +3,7 @@ import { artifactChip, bindLinks, card, cardSource, emptyNote, escapeHtml, forma
 import { sliceRunTotalsHtml } from "./run-totals.js";
 import { codeParts } from "./code-location.js";
 import { claimChip } from "./claims.js";
+import { componentChip } from "./components.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
@@ -295,6 +296,7 @@ export async function render(container, entity, ctx) {
       ${slice.outcome ? `<p class="initiative-intent large">${escapeHtml(slice.outcome)}</p>` : '<p class="muted">No outcome is recorded for this slice.</p>'}
       ${keyValues([
         ["Slug", `<code>${escapeHtml(data.slug)}</code>`],
+        ["Component", componentChip(slice.component) || null],
         ["Requirements", requirementLinks(slice.requirements, ctx)],
         ["Parent", slice.parent ? sliceChip(data, slice.parent, ctx) : '<span class="muted">root slice</span>'],
         ["Children", data.children.length ? data.children.map((slug) => sliceChip(data, slug, ctx)).join(" ") : null],

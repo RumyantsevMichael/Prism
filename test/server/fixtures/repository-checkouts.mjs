@@ -137,7 +137,7 @@ export async function prismServer(context, root, { appFolder, hostRoot = true, e
   };
 }
 
-/** The text items of a tool result after its first one, where Prism adds notes such as migration reports and warnings. */
+/** The text items of a tool result after its first one, where Prism adds notes such as migration reports and saved sync conflicts. */
 export const notes = (response) => (response.result?.content ?? []).slice(1).map((item) => item.text).join("\n");
 
 /** Create an initiative through the server, a record write that opens the store. */

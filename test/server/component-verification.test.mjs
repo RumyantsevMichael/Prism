@@ -1,0 +1,460 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { DECLARATION, INITIATIVE, THREE, command, commitAll, componentProject, git, node, planAndAccept, read, refusal, runLog, update, workflow, write } from "./fixtures/components.mjs";
+
+// Requirements: docs/requirements/components.md §10, §15, §16, §19.
+// Contract: docs/plans/components/component-slices/slice.md clauses 3 and 16-23.
+
+// The prefix of a slice's local refs in this checkout, named by the project root's real path (clause 20).
+const checkoutRefs = async (root, slug) => `refs/prism/${INITIATIVE}/${slug}/${createHash("sha256").update(await realpath(root)).digest("hex").slice(0, 16)}/`;
+
+const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-component-verification-data-")));
+process.env.PLUGIN_DATA = privateData;
+delete process.env.CLAUDE_PLUGIN_DATA;
+delete process.env.CLAUDE_CODE_REMOTE;
+const { verificationBrief, verifySlice } = await import("../../dist/server/workflow/verification.mjs");
+const { answerUserGate, readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+test.after(() => rm(privateData, { recursive: true, force: true }));
+
+const verify = (root, slice, extra = {}) => verifySlice({ projectRoot: root, initiative: INITIATIVE, slice, ...extra });
+const start = (root, slug) => update(root, [{ op: "set_status", slug, status: "in-progress" }]);
+
+// Verify a slice, allowing its command in the review browser when Prism asks.
+async function verifyAllowed(root, slice) {
+  const first = await verify(root, slice);
+  if (first.status !== "approval_needed") return first;
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: first.gateId, choice: "allow", note: null });
+  return verify(root, slice, { approvalGate: first.gateId });
+}
+
+// A project with the usual declaration and the three-slice plan accepted, and the named slice started.
+async function started(context, slug = "billing-totals", options = {}) {
+  const root = await componentProject(context, options);
+  await planAndAccept(root, options.plan ?? THREE);
+  await start(root, slug);
+  return root;
+}
+
+const recorded = async (root, result) => JSON.parse(await readFile(path.join(root, result.run ?? result.path), "utf8"));
+
+// Remove a slice's component from its record, as a slice accepted before components existed has none.
+async function forgetComponent(root, slug) {
+  const current = await read(root);
+  const file = path.join(root, current.recordPath);
+  const raw = JSON.parse(await readFile(file, "utf8"));
+  delete raw.slices[slug].component;
+  await writeFile(file, `${JSON.stringify(raw, null, 2)}\n`);
+}
+
+test("clause 16: a slice runs its component's command in the component's folder, or the repository's command in the project root", async (context) => {
+  const runs = await runLog(context);
+  const root = await started(context);
+  const own = await verifyAllowed(root, "billing-totals");
+  assert.equal(own.status, "passed", own.outputTail);
+  assert.equal(own.command, command("billing"));
+  await start(root, "web-pages");
+  const inherited = await verifyAllowed(root, "web-pages");
+  assert.equal(inherited.status, "passed", inherited.outputTail);
+  assert.equal(inherited.command, command("root", 0), "a component without its own command runs the repository's");
+  assert.deepEqual((await runs()).map((entry) => [entry.name, entry.cwd]), [["billing", path.join(root, "packages/billing")], ["root", root]]);
+
+  const rootSlice = { slug: "billing-totals", component: "root", requirement: "r.md#1", changes: ["change `README.md`: overview (§1)"], tests: ["test/root.test.mjs"] };
+  const rootProject = await componentProject(context, { config: workflow({ components: "## Components\n- root-tools: tools\n  - Test command: tools-only\n" }), requirements: ["r.md#1"] });
+  await planAndAccept(rootProject, [rootSlice]);
+  await start(rootProject, "billing-totals");
+  const rooted = await verifyAllowed(rootProject, "billing-totals");
+  assert.equal(rooted.status, "passed", rooted.outputTail);
+  assert.equal(rooted.command, command("root", 0), "the root component always runs the repository's command");
+  assert.equal(rooted.folder, "");
+});
+
+test("clause 16: a slice without a component runs the repository's command in the project root and reads no components", async (context) => {
+  const runs = await runLog(context);
+  const root = await started(context);
+  await forgetComponent(root, "billing-totals");
+  await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: "## Components\n- billing: packages\n- shared: packages/shared\n" }));
+  const legacy = await verifyAllowed(root, "billing-totals");
+  assert.equal(legacy.status, "passed", legacy.outputTail);
+  assert.equal(legacy.command, command("root", 0));
+  assert.equal(legacy.folder, "");
+  assert.equal(Object.hasOwn(legacy, "component"), false);
+  assert.equal(Object.hasOwn(legacy, "boundary"), false);
+  assert.deepEqual((await runs()).map((entry) => entry.cwd), [root]);
+});
+
+test("clause 17: results, recorded runs, and brief results name the working folder and the component", async (context) => {
+  const root = await started(context);
+  const asked = await verify(root, "billing-totals");
+  assert.equal(asked.status, "approval_needed");
+  assert.equal(asked.command, command("billing"));
+  assert.equal(asked.folder, "packages/billing");
+  assert.equal(asked.component, "root/billing");
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: asked.gateId, choice: "allow", note: null });
+  const passed = await verify(root, "billing-totals", { approvalGate: asked.gateId });
+  assert.equal(passed.status, "passed", passed.outputTail);
+  assert.equal(passed.folder, "packages/billing");
+  assert.equal(passed.component, "root/billing");
+  const run = await recorded(root, passed);
+  assert.equal(run.command, command("billing"));
+  assert.equal(run.folder, "packages/billing");
+  assert.equal(run.component, "root/billing");
+  const brief = verificationBrief(passed);
+  assert.equal(brief.component, "root/billing");
+  assert.equal(brief.folder, "packages/billing");
+  assert.equal(brief.boundary, "checked");
+});
+
+test("clause 18: a component that is gone, a missing test command, or a missing folder is refused before any approval", async (context) => {
+  const gone = await started(context);
+  await writeFile(path.join(gone, ".prism/workflow.md"), workflow({ components: "## Components\n- shared: packages/shared\n- web: apps/web\n" }));
+  const unknown = await refusal(verify(gone, "billing-totals"), "component_unknown");
+  assert.equal(unknown.slice, "billing-totals");
+  assert.equal(unknown.component, "root/billing");
+  assert.deepEqual(unknown.components, ["root/root", "root/shared", "root/web"]);
+
+  const commandless = await started(context, "web-pages", { config: workflow({ stack: null }) });
+  const missing = await refusal(verify(commandless, "web-pages"), "test_command_missing");
+  assert.equal(missing.component, "root/web");
+
+  const folderless = await started(context);
+  await rm(path.join(folderless, "packages/billing"), { recursive: true, force: true });
+  const noFolder = await refusal(verify(folderless, "billing-totals"), "component_folder_missing");
+  assert.equal(noFolder.component, "root/billing");
+  assert.equal(noFolder.folder, "packages/billing");
+  for (const root of [gone, commandless, folderless]) assert.deepEqual((await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state?.pending ?? [], [], "no approval was asked");
+});
+
+test("clause 19: each pair of command and folder is allowed once, and an approval from before components still allows the project root", async (context) => {
+  const same = `${node} ../../check.mjs same`;
+  const config = workflow({ components: `## Components\n- billing: packages/billing\n  - Test command: ${same}\n- shared: packages/shared\n  - Test command: ${same}\n- web: apps/web\n` });
+  const root = await started(context, "billing-totals", { config });
+  const first = await verify(root, "billing-totals");
+  assert.equal(first.status, "approval_needed");
+  const gate = (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state.pending.find((item) => item.id === first.gateId);
+  assert.ok(gate.question.includes(same), "the question names the command");
+  assert.ok(gate.question.includes("packages/billing"), "the question names the folder");
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: first.gateId, choice: "allow", note: null });
+  assert.equal((await verify(root, "billing-totals", { approvalGate: first.gateId })).status, "passed");
+  await start(root, "shared-values");
+  const other = await verify(root, "shared-values");
+  assert.equal(other.status, "approval_needed", "the same command in another folder asks again");
+  assert.equal(other.folder, "packages/shared");
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: other.gateId, choice: "allow", note: null });
+  assert.equal((await verify(root, "shared-values", { approvalGate: other.gateId })).status, "passed");
+
+  // The approvals file of Prism 0.17.0 keys an approval by the project root and the command text.
+  const earlier = await started(context, "web-pages");
+  const rootCommand = command("root", 0);
+  const file = path.join(privateData, "verification-approvals.json");
+  const approvals = await readFile(file, "utf8").then(JSON.parse, () => ({ schemaVersion: 1, approved: {}, requests: {} }));
+  approvals.approved[createHash("sha256").update(`${earlier}\n${rootCommand}`).digest("hex")] = { root: earlier, command: rootCommand, approvedAt: "2026-11-01T10:00:00.000Z", gate: "gate-0000000000" };
+  await writeFile(file, `${JSON.stringify(approvals, null, 2)}\n`);
+  const allowed = await verify(earlier, "web-pages");
+  assert.equal(allowed.status, "passed", "the earlier approval of the repository's command still allows it in the project root");
+  assert.equal(allowed.folder, "");
+});
+
+test("clauses 20-22: changes since the slice started that leave its component fail the run without running the command", async (context) => {
+  const runs = await runLog(context);
+  const root = await componentProject(context);
+  await planAndAccept(root, THREE);
+  // A change made before the slice starts is part of its start content.
+  await write(root, { "apps/web/index.mjs": "export const web = 0;\n" });
+  await start(root, "billing-totals");
+  const asked = await verify(root, "billing-totals");
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: asked.gateId, choice: "allow", note: null });
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n" });
+  commitAll(root, "committed change in shared");
+  await write(root, { "apps/web/index.mjs": "export const web = 2;\n", "package-lock.json": "{\"lock\":2}\n", "config/shared/base.json": "{\"base\":2}\n", "packages/billing/index.mjs": "export const total = 2;\n" });
+  await mkdir(path.join(root, "packages/billing/lib"), { recursive: true });
+  await rename(path.join(root, "README.md"), path.join(root, "packages/billing/lib/README.md"));
+  // The other unfinished slices' frozen tests go back in place for a design revision, which is no change of this slice.
+  await update(root, [{ op: "restore_tests", slug: INITIATIVE }]);
+  const failed = await verify(root, "billing-totals", { approvalGate: asked.gateId });
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.reason, "component_boundary");
+  assert.match(failed.message, /component/);
+  assert.deepEqual(failed.crossing, ["README.md", "apps/web/index.mjs", "packages/shared/index.mjs"]);
+  assert.equal(failed.crossingCount, 3);
+  assert.deepEqual(await runs(), [], "the command did not run");
+  const run = await recorded(root, failed);
+  assert.equal(run.passed, false);
+  assert.equal(run.reason, "component_boundary");
+  assert.deepEqual(run.crossing, failed.crossing);
+  assert.equal(verificationBrief(failed).reason, "component_boundary");
+  assert.notEqual((await read(root)).record.slices["billing-totals"].status, "done");
+
+  await rename(path.join(root, "packages/billing/lib/README.md"), path.join(root, "README.md"));
+  git(root, "checkout", "-q", "HEAD~1", "--", "packages/shared/index.mjs");
+  await write(root, { "apps/web/index.mjs": "export const web = 0;\n" });
+  const passed = await verify(root, "billing-totals");
+  assert.equal(passed.status, "passed", passed.outputTail);
+  assert.equal(passed.boundary, "checked");
+  assert.equal((await read(root)).record.slices["billing-totals"].status, "done");
+});
+
+test("clause 22: a run lists at most 200 crossing paths and counts them all", async (context) => {
+  const root = await started(context);
+  const asked = await verify(root, "billing-totals");
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: asked.gateId, choice: "allow", note: null });
+  await write(root, Object.fromEntries(Array.from({ length: 205 }, (_, index) => [`packages/shared/generated/file-${String(index).padStart(3, "0")}.mjs`, "export {};\n"])));
+  const failed = await verify(root, "billing-totals", { approvalGate: asked.gateId });
+  assert.equal(failed.reason, "component_boundary");
+  assert.equal(failed.crossing.length, 200);
+  assert.equal(failed.crossing[0], "packages/shared/generated/file-000.mjs");
+  assert.equal(failed.crossingCount, 205);
+});
+
+test("clauses 20 and 23: a slice started where Git could not hash the work tree runs without the boundary check and says so", async (context) => {
+  const runs = await runLog(context);
+  const root = await componentProject(context);
+  await planAndAccept(root, THREE);
+  await rm(path.join(root, ".git"), { recursive: true, force: true });
+  await start(root, "billing-totals");
+  git(root, "init", "-q", "-b", "main");
+  commitAll(root, "start again");
+  await write(root, { "packages/shared/index.mjs": "export const shared = 3;\n" });
+  const result = await verifyAllowed(root, "billing-totals");
+  assert.equal(result.status, "passed", result.outputTail);
+  assert.equal(result.boundary, "unchecked");
+  assert.equal((await recorded(root, result)).boundary, "unchecked");
+  assert.deepEqual((await runs()).map((entry) => entry.name), ["billing"]);
+});
+
+// Allow the slice's command at the gate its first verification opens, and return that gate's id for the next call.
+async function allow(root, slice) {
+  const asked = await verify(root, slice);
+  assert.equal(asked.status, "approval_needed");
+  await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: asked.gateId, choice: "allow", note: null });
+  return asked.gateId;
+}
+
+test("clauses 18 and 19: a component folder that leads outside the project is refused before any approval, and a linked folder is named where the command runs", async (context) => {
+  const runs = await runLog(context);
+  const linkedOut = await started(context);
+  const outside = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-outside-")));
+  context.after(() => rm(outside, { recursive: true, force: true }));
+  await cp(path.join(linkedOut, "packages/billing"), outside, { recursive: true });
+  await rm(path.join(linkedOut, "packages/billing"), { recursive: true, force: true });
+  await symlink(outside, path.join(linkedOut, "packages/billing"));
+  commitAll(linkedOut, "link billing outside the project");
+  const refused = await refusal(verify(linkedOut, "billing-totals"), "component_folder_outside");
+  assert.equal(refused.component, "root/billing");
+  assert.equal(refused.folder, "packages/billing");
+  assert.deepEqual((await readCoordinationState({ projectRoot: linkedOut, initiative: INITIATIVE })).state?.pending ?? [], [], "no approval was asked");
+  assert.deepEqual(await runs(), [], "the command did not run");
+
+  const linkedIn = await started(context);
+  await mkdir(path.join(linkedIn, "lib"), { recursive: true });
+  await rename(path.join(linkedIn, "packages/billing"), path.join(linkedIn, "lib/billing"));
+  await symlink("../lib/billing", path.join(linkedIn, "packages/billing"));
+  process.env.CLAUDE_CODE_REMOTE = "true";
+  context.after(() => { delete process.env.CLAUDE_CODE_REMOTE; });
+  const asked = await verify(linkedIn, "billing-totals");
+  assert.equal(asked.status, "approval_needed");
+  assert.equal(asked.folder, "lib/billing", "the result names the folder the command runs in");
+  assert.ok(asked.message.includes("lib/billing") && !asked.message.includes(linkedIn), "the chat approval names that folder, project-relative");
+  const gate = (await readCoordinationState({ projectRoot: linkedIn, initiative: INITIATIVE })).state.pending.find((item) => item.id === asked.gateId);
+  assert.ok(gate.question.includes("lib/billing") && !gate.question.includes(linkedIn), "the gate question names that folder, project-relative");
+});
+
+test("clause 21: another slice's verified work done while a slice was blocked does not count, while the slice's own changes still do", async (context) => {
+  const root = await started(context);
+  const gate = await allow(root, "billing-totals");
+  // Billing's own change in shared's folder, made before billing is blocked and before shared starts.
+  await write(root, { "packages/shared/extra.mjs": "export const extra = 1;\n" });
+  await update(root, [{ op: "set_status", slug: "billing-totals", status: "blocked" }]);
+  await start(root, "shared-values");
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n" });
+  commitAll(root, "shared values");
+  const shared = await verifyAllowed(root, "shared-values");
+  assert.equal(shared.status, "passed", shared.outputTail);
+  // The contents the exception compares stay readable after Git prunes what no ref reaches.
+  git(root, "gc", "-q", "--prune=now");
+
+  await start(root, "billing-totals");
+  await write(root, { "packages/billing/index.mjs": "export const total = 2;\n" });
+  const resumed = await verify(root, "billing-totals", { approvalGate: gate });
+  assert.equal(resumed.reason, "component_boundary");
+  assert.deepEqual(resumed.crossing, ["packages/shared/extra.mjs"], "shared's verified change and frozen test do not count, billing's own earlier change does");
+
+  await write(root, { "packages/shared/index.mjs": "export const shared = 3;\n", "packages/shared/test/shared.test.mjs": "// changed by billing\n" });
+  const later = await verify(root, "billing-totals");
+  assert.deepEqual(later.crossing, ["packages/shared/extra.mjs", "packages/shared/index.mjs", "packages/shared/test/shared.test.mjs"], "changes after shared's verified content still cross");
+
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n", "packages/shared/test/shared.test.mjs": "// frozen shared test\n" });
+  await rm(path.join(root, "packages/shared/extra.mjs"));
+  const passed = await verify(root, "billing-totals");
+  assert.equal(passed.status, "passed", passed.outputTail);
+  assert.equal(passed.boundary, "checked");
+});
+
+test("clause 21: a slice's boundary follows the declaration recorded when it started, and a changed declaration applies to slices started after it", async (context) => {
+  const root = await started(context);
+  const gate = await allow(root, "billing-totals");
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n" });
+  assert.deepEqual((await verify(root, "billing-totals", { approvalGate: gate })).crossing, ["packages/shared/index.mjs"]);
+
+  const widened = DECLARATION.replace("- shared paths: package-lock.json, config/shared/", "- shared paths: package-lock.json, config/shared/, packages/shared");
+  await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: widened }));
+  const sharedLater = await verify(root, "billing-totals");
+  assert.equal(sharedLater.reason, "component_boundary", "a shared path added after the start does not apply");
+  assert.deepEqual(sharedLater.crossing, ["packages/shared/index.mjs"]);
+
+  await start(root, "web-pages");
+  await write(root, { "packages/shared/web.mjs": "export const web = 1;\n" });
+  const web = await verifyAllowed(root, "web-pages");
+  assert.equal(web.status, "passed", web.outputTail);
+
+  const moved = ["## Components", "- billing: packages", `  - Test command: ${command("billing", 1)}`, "- web: apps/web", "  - Depends on: billing", "- docs: handbook", "- shared paths: package-lock.json, config/shared/", ""].join("\n");
+  await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: moved }));
+  const folderLater = await verifyAllowed(root, "billing-totals");
+  assert.equal(folderLater.reason, "component_boundary", "a component folder widened after the start does not apply");
+  assert.deepEqual(folderLater.crossing, ["packages/shared/index.mjs"]);
+});
+
+test("clauses 20 and 23: start content outlives git gc under its ref, and a run whose start content Git lost fails without running the command", async (context) => {
+  const runs = await runLog(context);
+  const root = await started(context);
+  const ref = `${await checkoutRefs(root, "billing-totals")}start`;
+  assert.match(git(root, "rev-parse", "--verify", `${ref}^{tree}`), /^[0-9a-f]{40,64}$/);
+  const gate = await allow(root, "billing-totals");
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n" });
+  git(root, "gc", "-q", "--prune=now");
+  const kept = await verify(root, "billing-totals", { approvalGate: gate });
+  assert.equal(kept.reason, "component_boundary", "the start content outlives git gc");
+  assert.equal(kept.boundary, "checked");
+
+  await write(root, { "packages/shared/index.mjs": "export const shared = 1;\n", "packages/billing/index.mjs": "export const total = 2;\n" });
+  for (const name of git(root, "for-each-ref", "--format=%(refname)", "refs/prism/").split("\n").filter(Boolean)) git(root, "update-ref", "-d", name);
+  git(root, "gc", "-q", "--prune=now");
+  const lost = await verify(root, "billing-totals");
+  assert.equal(lost.status, "failed");
+  assert.equal(lost.reason, "start_content_missing");
+  assert.match(lost.message, /not-started/, "the message tells the user to start the slice again");
+  assert.equal((await recorded(root, lost)).reason, "start_content_missing");
+  assert.deepEqual(await runs(), [], "the command did not run");
+  assert.notEqual((await read(root)).record.slices["billing-totals"].status, "done");
+
+  await update(root, [{ op: "set_status", slug: "billing-totals", status: "not-started" }]);
+  assert.equal(git(root, "for-each-ref", "--format=%(refname)", `refs/prism/${INITIATIVE}/billing-totals/`), "", "a slice back at not-started keeps no start content");
+  await start(root, "billing-totals");
+  assert.match(git(root, "rev-parse", "--verify", `${ref}^{tree}`), /^[0-9a-f]{40,64}$/, "starting it again records new start content");
+  const restarted = await verify(root, "billing-totals");
+  assert.equal(restarted.status, "passed", restarted.outputTail);
+  assert.equal(restarted.boundary, "checked");
+});
+
+test("clause 21: in a project below its Git checkout's top folder, changed paths are project-relative", async (context) => {
+  const top = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-top-")));
+  context.after(() => rm(top, { recursive: true, force: true }));
+  const created = await componentProject(context);
+  const root = path.join(top, "project");
+  await cp(created, root, { recursive: true });
+  await rm(path.join(root, ".git"), { recursive: true, force: true });
+  git(top, "init", "-q", "-b", "main");
+  commitAll(top, "start");
+  await planAndAccept(root, THREE);
+  await start(root, "billing-totals");
+  const gate = await allow(root, "billing-totals");
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n", "packages/billing/index.mjs": "export const total = 2;\n" });
+  const crossed = await verify(root, "billing-totals", { approvalGate: gate });
+  assert.equal(crossed.reason, "component_boundary");
+  assert.deepEqual(crossed.crossing, ["packages/shared/index.mjs"]);
+  await write(root, { "packages/shared/index.mjs": "export const shared = 1;\n" });
+  const passed = await verify(root, "billing-totals");
+  assert.equal(passed.status, "passed", passed.outputTail);
+  assert.equal(passed.boundary, "checked");
+});
+
+test("clause 20: linked worktrees that keep their own records never move or delete each other's start content refs", async (context) => {
+  const root = await started(context);
+  const startTree = (await read(root)).record.slices["billing-totals"].design.startTree;
+  const gate = await allow(root, "billing-totals");
+  commitAll(root, "records and frozen tests");
+  const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-worktree-")));
+  context.after(() => rm(parent, { recursive: true, force: true }));
+  const linked = path.join(parent, "linked");
+  git(root, "worktree", "add", "-q", "-b", "linked", linked);
+  // The linked worktree holds its own copy of the records, so it starts the same slice again from its own content.
+  await update(linked, [{ op: "set_status", slug: "billing-totals", status: "not-started" }]);
+  await write(linked, { "packages/billing/index.mjs": "export const total = 5;\n" });
+  await start(linked, "billing-totals");
+  const linkedTree = (await read(linked)).record.slices["billing-totals"].design.startTree;
+  assert.notEqual(linkedTree, startTree);
+  git(linked, "gc", "-q", "--prune=now");
+
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n" });
+  const crossed = await verify(root, "billing-totals", { approvalGate: gate });
+  assert.equal(crossed.reason, "component_boundary", "the main worktree still compares with its own start content");
+  assert.deepEqual(crossed.crossing, ["packages/shared/index.mjs"]);
+  assert.equal(crossed.boundary, "checked");
+  assert.equal(git(root, "rev-parse", `${await checkoutRefs(root, "billing-totals")}start`), startTree, "the main worktree's start ref still names its start content");
+  assert.equal(git(root, "rev-parse", `${await checkoutRefs(linked, "billing-totals")}start`), linkedTree);
+});
+
+test("clauses 20 and 23: a slice started while the declaration was invalid or lacked its component fails without running the command until it starts again", async (context) => {
+  const runs = await runLog(context);
+  const root = await componentProject(context);
+  await planAndAccept(root, THREE);
+  await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: DECLARATION.replace("- web: apps/web\n", "- web: apps/web\n- web: apps/web2\n") }));
+  await start(root, "billing-totals");
+  assert.equal((await read(root)).record.slices["billing-totals"].status, "in-progress", "the start succeeds");
+  await write(root, { "packages/shared/index.mjs": "export const shared = 2;\n" });
+  // The repaired declaration also makes packages/shared shared, which must not move the boundary of a slice already started.
+  const widened = DECLARATION.replace("- shared paths: package-lock.json, config/shared/", "- shared paths: package-lock.json, config/shared/, packages/shared");
+  await writeFile(path.join(root, ".prism/workflow.md"), workflow({ components: widened }));
+  const invalidAtStart = await verifyAllowed(root, "billing-totals");
+  assert.equal(invalidAtStart.status, "failed");
+  assert.equal(invalidAtStart.reason, "start_content_missing");
+  assert.match(invalidAtStart.message, /## Components/, "the message tells the user to fix the declaration");
+  assert.match(invalidAtStart.message, /not-started/, "the message tells the user to start the slice again");
+  assert.equal((await recorded(root, invalidAtStart)).reason, "start_content_missing");
+  assert.deepEqual(await runs(), [], "the command did not run");
+  assert.notEqual((await read(root)).record.slices["billing-totals"].status, "done");
+
+  await update(root, [{ op: "set_status", slug: "billing-totals", status: "not-started" }]);
+  await start(root, "billing-totals");
+  const restarted = await verifyAllowed(root, "billing-totals");
+  assert.equal(restarted.status, "passed", restarted.outputTail);
+  assert.equal(restarted.boundary, "checked");
+  const ran = (await runs()).length;
+
+  const lacking = await componentProject(context);
+  await planAndAccept(lacking, THREE);
+  await writeFile(path.join(lacking, ".prism/workflow.md"), workflow({ components: DECLARATION.replace(/- billing: packages\/billing\n(?: {2}- .*\n)*/, "").replace("  - Depends on: billing\n", "") }));
+  await start(lacking, "billing-totals");
+  await writeFile(path.join(lacking, ".prism/workflow.md"), workflow());
+  await write(lacking, { "packages/billing/index.mjs": "export const total = 2;\n" });
+  const withoutComponent = await verifyAllowed(lacking, "billing-totals");
+  assert.equal(withoutComponent.status, "failed");
+  assert.equal(withoutComponent.reason, "start_content_missing");
+  assert.match(withoutComponent.message, /## Components/);
+  assert.equal((await runs()).length, ran, "the command did not run");
+});
+
+test("clause 21: another slice's run record whose tree is not a Git object identifier is ignored and never reaches Git as an option", async (context) => {
+  const root = await componentProject(context);
+  await planAndAccept(root, THREE);
+  await start(root, "billing-totals");
+  await start(root, "shared-values");
+  const shared = await verifyAllowed(root, "shared-values");
+  assert.equal(shared.status, "passed", shared.outputTail);
+  // A run record as another checkout that shares the record store could write it.
+  const runFile = path.join(root, shared.path ?? shared.run);
+  const entry = JSON.parse(await readFile(runFile, "utf8"));
+  const outside = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-victim-")));
+  context.after(() => rm(outside, { recursive: true, force: true }));
+  const victim = path.join(outside, "victim.txt");
+  await writeFile(victim, "precious\n");
+  await writeFile(path.join(path.dirname(runFile), "verification-999999999999999-ffffff.json"), JSON.stringify({ ...entry, tree: `--output=${victim}`, finishedAt: "2999-01-01T00:00:00.000Z" }));
+  await write(root, { "packages/billing/index.mjs": "export const total = 2;\n" });
+  const billing = await verifyAllowed(root, "billing-totals");
+  assert.equal(await readFile(victim, "utf8"), "precious\n", "no file outside the project changed");
+  assert.equal(billing.status, "passed", billing.outputTail);
+  assert.equal(billing.boundary, "checked");
+});

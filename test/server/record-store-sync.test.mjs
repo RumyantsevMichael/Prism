@@ -27,7 +27,7 @@ test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive:
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
 const exists = (target) => access(target).then(() => true, () => false);
-const syncConfig = (store, sync = "on") => `## Paths\n- Plans (scratch): docs/plans/\n\n## Workspace\n- Store: ../${store}\n- Store sync: ${sync}\n`;
+const syncConfig = (store, sync = "on") => `## Paths\n- Plans (scratch): docs/plans/\n\n## Workspace\n- Store: ../${store}\n- Repository: project\n- Store sync: ${sync}\n`;
 
 async function folder(context) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-sync-")));
@@ -291,7 +291,7 @@ const savedConflicts = (store) => exists(path.join(store, ".prism-sync", "confli
 // Both machines hold one shared base written on A, with a roadmap projection path configured.
 async function sharedBase(context, write) {
   const value = await machines(context);
-  for (const [root, store] of [[value.a, "store-a"], [value.b, "store-b"]]) await writeFile(path.join(root, ".prism/workflow.md"), `## Paths\n- Roadmap: product/roadmap.md\n- Plans (scratch): docs/plans/\n\n## Workspace\n- Store: ../${store}\n- Store sync: on\n`);
+  for (const [root, store] of [[value.a, "store-a"], [value.b, "store-b"]]) await writeFile(path.join(root, ".prism/workflow.md"), `## Paths\n- Roadmap: product/roadmap.md\n- Plans (scratch): docs/plans/\n\n## Workspace\n- Store: ../${store}\n- Repository: project\n- Store sync: on\n`);
   await write(value.a);
   assert.equal((await syncRecordStore(value.storeA)).state, "ok");
   assert.equal((await syncRecordStore(value.storeB)).state, "ok");

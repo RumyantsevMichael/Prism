@@ -6,7 +6,7 @@ Created: 2026-11-03
 ## Requirements
 
 No Approved requirement governs this decision yet.
-The Draft [repository name requirements](../../requirements/repository-names.md) §1-§10 describe the behavior it implements.
+The Draft [repository name requirements](../../requirements/repository-names.md) §1-§10 describe the behavior it implements, and the Draft [component requirements](../../requirements/components.md) §1 replaces their §2.
 It records the first increment of the multi-repository workspace design, which Michael asked to start on 3 November 2026.
 
 ## Problem
@@ -28,8 +28,7 @@ A registration without a root commit MUST take the first full checkout's root co
 A refusal MUST name both remotes without user information, say how to prove a move or pick another name, and propose a name that the store would accept.
 One remote MUST NOT be registered under a second name.
 Registration files MUST be store sync records without a structural merge, so the first pushed registration of a name stands, and a new registration in a synced store MUST be confirmed with the store's remote before the operation continues, as a slice claim is.
-A checkout that names a store but no repository MUST keep working on its root-commit identity, register nothing, and carry a warning on each record tool result that shows the line to add and a proposed name.
-That leniency MUST be the only place where an unnamed checkout differs from a refused one, so that a later release can refuse it instead.
+A checkout that names a store but no repository MUST be refused on every record operation, registering nothing, with a refusal that shows the line to add and a proposed name that the store would accept.
 Verification runs and contract-defect reports of a named checkout MUST record its name as their repository.
 Records, ledger entries, and runs from before names MUST stay unchanged, and a ledger marker named by a root commit MUST keep covering that repository after it is named.
 Each machine MUST list its checkouts of each named repository in `checkouts.json` in Prism's application folder, and a checkout path MUST NOT reach the store.
@@ -42,14 +41,14 @@ A false refusal names both remotes and how to fix it, whereas a false acceptance
 A registration file of its own per name merges like a claim: two machines that register one name write the same file, the upstream wins, and confirmation tells the loser before it writes anything else.
 The application folder is shared by every host on the machine and lies outside every project and store, which a per-machine list needs.
 Codex gives a plugin's MCP server no plugin data directory ([#81](https://github.com/RumyantsevMichael/Prism/issues/81)), which is why managed store clones already moved to that folder, so a list in the plugin data directory would be missing in Codex and split between hosts.
-Warning before refusing lets every existing store upgrade with one committed line, chosen from a proposal that the store accepts.
+Every store user upgrades with one committed line, chosen from a proposal that the store accepts, and components can then name a repository's root component after it in every checkout.
 
 ## Alternatives
 
 Keeping the root commit as the identity fails for shallow clones and cannot tell a fork from the original.
 Keying registrations by remote alone would refuse every repository moved on its host, and keying them by root commit alone would refuse to tell a fork from the original by name.
 One shared registry file would conflict on every concurrent registration and fail the store's merge, and a structural merge of it would let two machines both believe they registered one name.
-Refusing an unnamed checkout at once would stop every M1 user on upgrade until they add the line.
+Warning an unnamed checkout for good would leave checkouts of one store without a name, so the root component of their repository would have none.
 Keeping the checkout list in the store would publish local folder names to everyone who can clone it, and keeping it under a host's plugin data directory fails in Codex.
 
 ## Consequences
@@ -70,7 +69,7 @@ The name check runs in the record store before migration and is cached for each 
 It reads the checkout's origin with Git and its root commit as run records do, compares them with the registration, and writes or extends the registration file atomically under a store lock.
 In a synced store, a new registration waits for a sync of its own, and the check runs again against the registration the store then holds; a sync that cannot reach the remote withdraws the registration.
 While that sync runs, a pending marker that sync never commits tells every other check on the machine, whatever its own sync setting, that the registration is unconfirmed, so such a check answers `repository_unconfirmed` at once instead of accepting or refusing on it, and no lock is held across the network.
-The MCP server passes the check's refusal codes in error data and appends the unnamed warning to the tool result, as it appends migration notes.
+The MCP server passes the check's refusal codes and the proposed name in error data.
 After a checkout's first accepted check in a process, the server rewrites `checkouts.json` atomically under a lock, replacing the entry for its path and dropping entries of its store and repository whose folders no longer name them.
 A server whose host names the project at start runs that check in the background, and any other server runs it on its first record tool call.
 
@@ -79,3 +78,4 @@ A server whose host names the project at start runs that check in the background
 2026-11-03: A registration keeps every remote its root commit proves, because Michael asked that a repository moved on its Git host not block anyone.
 2026-11-03: A matching root commit never adds a remote that another name registered, because implementation review found that a fork's checkout naming the original would register one remote under two names.
 2026-11-03: A pending marker replaced holding the registration lock across the confirming sync, because implementation review found that the held lock let unsynced checkouts accept unconfirmed registrations, could commit the lock file, and made record writers wait on another check's network sync.
+2026-11-04: A checkout that names a store but no repository is refused instead of warned, because Michael decided on 3 November 2026 that a later release refuses it and agreed on 4 November 2026 that the components milestone is that release ([components.md§1](../../requirements/components.md#1)).

@@ -13,7 +13,7 @@ Object.assign(process.env, {
 });
 test.after(() => rm(environment, { recursive: true, force: true }));
 
-const { collectUnnamedCheckouts, describeRecordStore, forgetMigrations, listInitiatives, recordStoreOf, recordsUnavailable } = await import("../../dist/server/workflow/record-store.mjs");
+const { describeRecordStore, forgetMigrations, listInitiatives, recordStoreOf, recordsUnavailable } = await import("../../dist/server/workflow/record-store.mjs");
 const { remoteIdentity } = await import("../../dist/server/workflow/repository-names.mjs");
 const { listArtifacts } = await import("../../dist/server/review/review-server.mjs");
 
@@ -38,17 +38,17 @@ test("the review browser shows a refused checkout as an unavailable store and st
   assert.ok((await listArtifacts(other)).includes("docs/plans/reports/slice.md"), "documents still list");
 });
 
-test("only the tool call that opened an unnamed checkout's store collects its warning", async (context) => {
+test("an unnamed checkout is refused on every record access with the same proposed name", async (context) => {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-repository-review-")));
   context.after(() => rm(parent, { recursive: true, force: true }));
   await storeFolder(parent);
   const unnamed = await repository(parent, "Web App", { remote: "git@github.com:acme/Web_App.git" });
   forgetMigrations();
-  await recordStoreOf(unnamed);
-  const { value, unnamed: warnings } = await collectUnnamedCheckouts(async () => (await recordStoreOf(unnamed)).repository);
-  assert.equal(value, null);
-  assert.deepEqual(warnings, [{ root: unnamed, proposed: "web_app" }]);
-  assert.deepEqual((await collectUnnamedCheckouts(async () => 1)).unnamed, [], "a call that opens no store collects nothing");
+  for (const access of [() => recordStoreOf(unnamed), () => recordStoreOf(unnamed), () => listInitiatives(unnamed)]) {
+    const refusal = await access().then(() => null, (error) => error);
+    assert.equal(refusal?.code, "repository_name_missing");
+    assert.equal(refusal.proposed, "web_app", "the remote's last segment, lowercased");
+  }
 });
 
 test("remote identity ignores scheme, user, host case, port, and surrounding slashes but keeps path case", () => {

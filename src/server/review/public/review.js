@@ -1042,7 +1042,7 @@ function highlightText(query) {
 }
 
 // Chips are one line, so a label cut off by its ellipsis gets its full text as a tooltip.
-const CHIPS = ".status-pill, .meta-pill, .relation-chip, .link-chip, .claim-chip, .readiness-jump, .type-badge, .code-span-chip";
+const CHIPS = ".status-pill, .meta-pill, .relation-chip, .link-chip, .claim-chip, .readiness-jump, .type-badge, .code-span-chip, .component-chip";
 
 function titleClippedChips(root) {
   for (const chip of root.querySelectorAll(CHIPS)) {

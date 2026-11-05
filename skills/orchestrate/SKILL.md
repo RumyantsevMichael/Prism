@@ -64,8 +64,9 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
 2. Call `update_initiative` with `set_status` `in-progress`, which puts its frozen tests in place.
 3. Run `implement` for the slice in one fresh session, passing the contract's `slice.md` and the slice folder; it verifies the slice through `verify_slice` itself.
 4. When it returns `DONE`, read the slice with `get_initiative`: when its review mark is `required`, review it through [review](#5-review), then call `update_initiative` with `set_status` `done`; when it is not done otherwise, call `set_status` `done`, which refuses without a fresh passing run.
-5. Accept the slice's Proposed ADRs, and push when push is on.
-6. When continuation is `stepwise`, pause and report the finished slice.
+5. When the slice was the last leaf of its contract scope that was not done, call `verify_slice` with the scope as `slice` and `dependents` `true` for its dependents' run; call it again after `running`, after `approval_needed` get the user's answer as for an implementer's approval gate below and call it again with `approvalGate` and any `chatApproval`, and report a `failed` or `approval_unclear` scope to the user as blocked, with each `blocked` component.
+6. Accept the slice's Proposed ADRs, and push when push is on.
+7. When continuation is `stepwise`, pause and report the finished slice.
 
 - When the slice is `blocked` with contract defects, or its dependencies changed:
   1. Call `update_initiative` with `restore_tests` for the scope.
@@ -95,8 +96,9 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 ## 7. Finish or pause
 
 - When every leaf is done:
-  1. Call `update_roadmap` with a `ship` operation for the initiative.
-  2. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
-  3. When the slice folders hold uncommitted files, ask a `decision` gate before deleting them.
-  4. Delete the slice folders and call `update_initiative` with a single `remove_records` operation.
+  1. Run the dependents' run of each contract scope that has no `passed` entry in `get_initiative`'s `dependents`.
+  2. Call `update_roadmap` with a `ship` operation for the initiative; when it refuses with `dependents_blocked`, run the dependents' run again of each listed scope whose `reason` is `not_run` and call `ship` again, then report each scope whose `reason` is `failed` or whose new run did not pass to the user with its `blocked` components and stop until a later dependents' run passes.
+  3. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
+  4. When the slice folders hold uncommitted files, ask a `decision` gate before deleting them.
+  5. Delete the slice folders and call `update_initiative` with a single `remove_records` operation.
 - When work must pause, call `checkpoint_pause` with the initiative, the current revision, the active slice, recovery content that names the next action, and the state changes.

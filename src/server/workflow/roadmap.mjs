@@ -4,7 +4,7 @@ import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { normalizeRequirementReference, readInitiative } from "./initiative.mjs";
+import { fitScopes, normalizeRequirementReference, readInitiative, scopeDependents } from "./initiative.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
@@ -13,6 +13,9 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { locateRecord, moveLegacyRecords, writeRecord } from "./record-store.mjs";
 import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
+import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
+import { latestDependentsRun } from "./slice-design.mjs";
+import { proposeComponents } from "./workspace-manifests.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
@@ -176,20 +179,53 @@ async function loadRoadmap(resolved) {
   return { exists: true, revision, record: raw, valid: errors.length === 0, errors };
 }
 
-// Progress states come from the initiative record and coordination state; only shipped and superseded are recorded decisions.
-export async function deriveInitiative(projectRoot, config, item) {
+/**
+ * What keeps a finished initiative from shipping by its components: { problem } with the refusal of an invalid ## Components declaration,
+ * or { scopes }, each fit scope { scope, blocked, reason } whose dependents by the current declaration have no passing run of every one of them,
+ * where reason is failed when the latest dependents' run failed or declined one of them and not_run otherwise, and blocked names those dependents in run order.
+ * A leaf without a component, or with one the repository no longer declares, adds no dependents, so a repository that declares no components ships as before.
+ */
+export async function dependentsBlockers(projectRoot, config, initiative, record) {
+  let declaration;
+  try {
+    declaration = readComponents(config);
+  } catch (error) {
+    if (error instanceof ComponentError) return { problem: error, scopes: [] };
+    throw error;
+  }
+  const scopes = [];
+  for (const scope of fitScopes(record)) {
+    const dependents = scopeDependents(record, scope, declaration).map((component) => component.identity);
+    if (!dependents.length) continue;
+    const latest = await latestDependentsRun(projectRoot, initiative, scope).catch(() => null);
+    // A dependent passed when the latest run ran it and did not block it; one the run blocked failed, and one it never ran has not run.
+    const ran = new Set((Array.isArray(latest?.entry?.components) ? latest.entry.components : []).map((component) => component?.name));
+    const red = new Set(Array.isArray(latest?.entry?.blocked) ? latest.entry.blocked : []);
+    const blocked = dependents.filter((name) => !ran.has(name) || red.has(name));
+    if (!blocked.length) continue;
+    const reason = blocked.some((name) => ran.has(name) && red.has(name)) ? "failed" : "not_run";
+    scopes.push({ scope, blocked, reason });
+  }
+  return { scopes };
+}
+
+const dependentsMessage = (scopes) => `The initiative cannot ship while the dependents of a finished scope are red or have not run: ${scopes.map((item) => `${item.scope} (${item.reason === "failed" ? "failed or declined" : "not run"}: ${item.blocked.join(", ")})`).join("; ")}. Run verify_slice with dependents for each scope, and fix or allow what it reports.`;
+
+// The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { problem } for an invalid declaration, or { scopes } for blocked dependents.
+async function deriveItem(projectRoot, config, item) {
   const base = { id: item.id, band: item.band, state: "envisioned", readyToShip: false, progress: null, active: [], diagnostics: [] };
-  if (item.decision?.kind === "shipped") return { ...base, band: "Shipped", state: "shipped" };
-  if (item.decision?.kind === "superseded") return { ...base, state: "superseded", supersededBy: item.decision.by };
+  const leaves = { leaves: true };
+  if (item.decision?.kind === "shipped") return { derived: { ...base, band: "Shipped", state: "shipped" }, blocker: null };
+  if (item.decision?.kind === "superseded") return { derived: { ...base, state: "superseded", supersededBy: item.decision.by }, blocker: leaves };
   let initiative;
   try {
     initiative = await readInitiative(projectRoot, item.id);
   } catch (error) {
-    return { ...base, diagnostics: [{ code: error.code ?? "initiative_unreadable", message: error.message }] };
+    return { derived: { ...base, diagnostics: [{ code: error.code ?? "initiative_unreadable", message: error.message }] }, blocker: leaves };
   }
   const { loaded } = initiative;
-  if (!loaded.exists) return base;
-  if (!loaded.valid) return { ...base, state: "planned", diagnostics: loaded.errors.map((message) => ({ code: "invalid_initiative", message })) };
+  if (!loaded.exists) return { derived: base, blocker: leaves };
+  if (!loaded.valid) return { derived: { ...base, state: "planned", diagnostics: loaded.errors.map((message) => ({ code: "invalid_initiative", message })) }, blocker: leaves };
   const analysis = loaded.analysis;
   const progress = { leaves: analysis.leaves.length, ...analysis.counts };
   let active = [];
@@ -200,7 +236,18 @@ export async function deriveInitiative(projectRoot, config, item) {
     base.diagnostics.push({ code: error.code ?? "state_unreadable", message: error.message });
   }
   const started = analysis.leaves.some((slug) => analysis.slices[slug].status !== "not-started") || active.length > 0;
-  return { ...base, state: started ? "in-progress" : "planned", readyToShip: analysis.complete[analysis.root] === true, progress, active, root: analysis.root };
+  const derived = { ...base, state: started ? "in-progress" : "planned", readyToShip: analysis.complete[analysis.root] === true, progress, active, root: analysis.root };
+  if (!derived.readyToShip) return { derived, blocker: leaves };
+  // A finished initiative is ready to ship only once ship would succeed: its declaration is valid and every finished scope's dependents passed.
+  const found = await dependentsBlockers(projectRoot, config, item.id, loaded.record);
+  if (found.problem) return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, { code: found.problem.code, message: found.problem.message }] }, blocker: { problem: found.problem } };
+  if (found.scopes.length) return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, { code: "dependents_blocked", message: dependentsMessage(found.scopes), scopes: found.scopes }] }, blocker: { scopes: found.scopes } };
+  return { derived, blocker: null };
+}
+
+// Progress states come from the initiative record and coordination state; only shipped and superseded are recorded decisions.
+export async function deriveInitiative(projectRoot, config, item) {
+  return (await deriveItem(projectRoot, config, item)).derived;
 }
 
 function publicResult(resolved, loaded, derivedItems = null) {
@@ -225,10 +272,31 @@ export async function readRoadmap(projectRoot) {
   return { resolved, loaded, derived: derivedItems };
 }
 
+/**
+ * The repository's components as get_roadmap reports them, never refusing an invalid declaration: { repository, declared, problem?, proposal? },
+ * where proposal is a ## Components block built from the workspace manifests when the configuration lists no component, which Prism never writes.
+ */
+export async function roadmapComponents(projectRoot, config) {
+  const listed = listComponents(config);
+  if (listsComponents(config)) return listed;
+  const proposed = await proposeComponents(projectRoot, { rootName: listed.repository ?? "root" });
+  if (proposed === null) return listed;
+  // The proposed block is checked as the declaration it would become, in place of whatever ## Components holds now.
+  const block = proposed.markdown.split("\n").slice(1, -1);
+  let problem;
+  try {
+    readComponents({ ...config, lines: { ...config?.lines, Components: block } });
+  } catch (error) {
+    if (!(error instanceof ComponentError)) throw error;
+    problem = { code: error.code, message: error.message };
+  }
+  return { ...listed, proposal: { ...proposed, ...(problem ? { problem } : {}) } };
+}
+
 export async function getRoadmap(input) {
   validateInput(GET_ROADMAP_SCHEMA, input);
   const { resolved, loaded, derived } = await readRoadmap(input.projectRoot);
-  return publicResult(resolved, loaded, derived);
+  return { ...publicResult(resolved, loaded, derived), components: await roadmapComponents(resolved.root, resolved.config) };
 }
 
 function markdown(record, recordName) {
@@ -316,8 +384,11 @@ async function applyOperation(resolved, record, operation, actor, at) {
     case "ship": {
       const item = findInitiative(record, operation.id);
       if (item.decision) throw fail("validation_failed", `Initiative ${item.id} already has a ${item.decision.kind} decision.`);
-      const derived = await deriveInitiative(resolved.root, resolved.config, item);
-      if (!derived.readyToShip) throw fail("gate_blocked", "Every leaf slice in the initiative record must be done before the initiative ships.", { state: derived.state, progress: derived.progress, diagnostics: derived.diagnostics });
+      const { derived, blocker } = await deriveItem(resolved.root, resolved.config, item);
+      if (blocker?.leaves) throw fail("gate_blocked", "Every leaf slice in the initiative record must be done before the initiative ships.", { state: derived.state, progress: derived.progress, diagnostics: derived.diagnostics });
+      // Shipping reads the components after the leaf check: an invalid declaration refuses with its own code and fields, and a red or unproven dependent blocks it.
+      if (blocker?.problem) throw blocker.problem;
+      if (blocker?.scopes) throw fail("dependents_blocked", dependentsMessage(blocker.scopes), { scopes: blocker.scopes });
       item.decision = { kind: "shipped", at, actor };
       break;
     }
@@ -385,13 +456,13 @@ export async function updateRoadmap(input) {
 export const ROADMAP_TOOLS = [
   {
     name: "get_roadmap",
-    description: "Read the MCP-managed roadmap record with each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship. Reads never create files.",
+    description: "Read the MCP-managed roadmap record with each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship, and the repository's components: its repository name, the declared components by identity <repository>/<component> with their folder, test command, and dependencies, the declaration's problem when it is invalid, and, when the configuration lists no component and a root workspace manifest (package.json, pnpm-workspace.yaml, Cargo.toml, or go.work) gives workspace patterns, a proposal of a ## Components block with its components, shared paths, skipped manifests, and problem. Reads never create files, and the proposal is never written; offer it to the person to commit.",
     inputSchema: GET_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_roadmap",
-    description: "Apply revision-checked roadmap operations: set what the roadmap serves, add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. Ship requires every leaf slice to be done, and every write regenerates the roadmap Markdown without overwriting a hand-written file.",
+    description: "Apply revision-checked roadmap operations: set what the roadmap serves, add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. Ship requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
     inputSchema: UPDATE_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

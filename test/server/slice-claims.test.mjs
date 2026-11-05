@@ -36,7 +36,7 @@ const as = (server) => configureClaims(server);
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
 const exists = (target) => access(target).then(() => true, () => false);
-const storeConfig = (store, sync) => `## Paths\n- Plans (scratch): docs/plans/\n\n## Stack\n- Test command: ${process.execPath} check.mjs\n\n## Workspace\n- Store: ../${store}\n${sync ? `- Store sync: ${sync}\n` : ""}`;
+const storeConfig = (store, sync) => `## Paths\n- Plans (scratch): docs/plans/\n\n## Stack\n- Test command: ${process.execPath} check.mjs\n\n## Workspace\n- Store: ../${store}\n- Repository: project\n${sync ? `- Store sync: ${sync}\n` : ""}`;
 const read = (root) => getInitiative({ projectRoot: root, initiative: "reports" });
 const write = async (root, operations, actor = path.basename(root)) => updateInitiative({ projectRoot: root, initiative: "reports", expectedRevision: (await read(root)).revision, actor, operations });
 const start = (root, slug) => write(root, [{ op: "set_status", slug, status: "in-progress" }]);

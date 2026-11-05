@@ -56,7 +56,7 @@ Related: [shared-record-store.md§1](shared-record-store.md#1)
 
 Pattern: Unwanted behavior
 
-Disposition: Active
+Disposition: Superseded by [components.md§1](components.md#1)
 
 Requirement: If a project's workflow configuration names a record store but no repository name, then Prism shall keep serving record operations on the checkout's identity from before repository names, register nothing, and add to each record tool result a warning that shows the `- Repository: <name>` line to add under `## Workspace` and proposes a name that the store would accept for this checkout.
 

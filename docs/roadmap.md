@@ -12,6 +12,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Shared record store** (`shared-record-store`): Let every checkout and machine of a project share one set of Prism records through an ordinary Git repository, without losing bytes or colliding on unrelated changes.
 - **Single review app** (`single-review-app`): Run one review app per user that every agent session and project shares, with a project switcher that shows which project waits on the user.
 - **Repository intelligence** (`repository-intelligence`): Give workflow agents deterministic repository evidence: providers, context planning, session capacity, structural analysis, and duplication gates.
+- **Components in one repository** (`components`): Let a repository declare components with their own test commands and dependencies, keep each leaf slice inside one component, run dependents' tests when a spanning scope finishes, and prepare the native index per component so a large monorepo fits its limits.
 
 ### Next
 
@@ -26,6 +27,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Shared record store**: Now, because Michael made shared state outside working repositories milestone M1 on 2026-10-31: his colleagues use Prism across many repositories and give the best feedback. Increments 1 and 2 shipped in PR #57; code links, the migration ledger, the saved-conflict notice, and the structural merge are in PR #72; slice claims come next. Requirements and ADRs stay Proposed while they are adjusted.
 - **Single review app**: Now, because Michael asked for it on 2026-10-17 and approved the design direction in the project thread; it builds on the plain-HTTP review server from PR #25.
 - **Repository intelligence**: Kept in Now while repository-intelligence work continues on main.
+- **Components in one repository**: Now, because Michael agreed on 4 November 2026 in the project thread that components are the next milestone after repository names, as increments 2 and 4 of the M3 multi-repository workspace design, with per-component indexing for issue #14; it is proven on one real Lumen initiative across two or more packages. Requirements stay Draft until Michael accepts the file text.
 - **Agent execution evidence and continuity**: Next, because observed-range reporting consumes verified ranges from repository context planning, while pause checkpoints and diagram-readability assessment can proceed independently after design. The new work stays together until design shows that its outcomes need separate sequencing.
 
 ## Open questions

@@ -1,0 +1,13 @@
+@startuml
+title Components in one repository - parts
+package "component-slices" as Slices {
+  interface "## Components in .prism/workflow.md" as Declaration
+  interface "component of a file" as FileComponent
+  interface "slice component in get_initiative" as SliceComponent
+}
+package "component-indexes" as Indexes
+Indexes ..> Declaration : reads the declared components
+Indexes ..> FileComponent : keys each index by component
+Indexes ..> SliceComponent : may scope a slice's evidence
+Indexes ..> Slices : designed and built after
+@enduml

@@ -7,7 +7,7 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { collectUnnamedCheckouts, recordStoreOf, takeMigrationReports } from "./workflow/record-store.mjs";
+import { recordStoreOf, takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
@@ -312,8 +312,10 @@ function stateErrorData(error) {
   if (error instanceof ChangeMapError) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
-  if (error instanceof InitiativeError || error instanceof RoadmapError || ["InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError"].includes(error?.name)) {
-    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
+  // A refused component declaration or design names the entry, components, dependency, cycle, slice, or crossing paths it is about,
+  // an unfinished scope names the leaves it waits on, and a blocked ship names each scope and its blocked dependents.
+  if (error instanceof InitiativeError || error instanceof RoadmapError || ["InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError", "ComponentError"].includes(error?.name)) {
+    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
     if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
@@ -394,7 +396,7 @@ const tools = [
   ...INITIATIVE_TOOLS,
   {
     name: "verify_slice",
-    description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. A passing run completes a slice whose design marks no review and returns the initiative revision that write produced. The result is brief: the verdict, failing test names, the run record, and the path of the full output log. The first run of a command text asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. In a cloud session, where the user cannot open the review browser, approval_needed says so: ask the user in chat to allow the exact command, then call again with approvalGate and chatApproval quoting their answer word for word; the approval and the gate's history keep the quote, and any other session refuses chatApproval. An answer with a note and no choice returns approval_unclear and runs nothing. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run. An implementer that finds the contract wrong calls it with contractDefects instead: nothing runs, the defects are kept as a run entry and on the slice, and the slice is blocked until design revises the contract.",
+    description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. A slice that records a component runs that component's Test command in the component's folder, or the repository's Test command under ## Stack in the project root when the component declares none; the root component and a slice without a component run the repository's command in the project root. Before asking for approval it refuses an invalid ## Components declaration, a recorded component the repository no longer declares with component_unknown, a missing command with test_command_missing, a working folder that does not exist with component_folder_missing, and a component folder that leads outside the project through a symbolic link with component_folder_outside. Before the command runs, a slice with a component compares the project with its content when the slice started, kept under this checkout's local ref refs/prism/<initiative>/<slice>/<checkout>/start, where <checkout> is the first 16 hexadecimal digits of the SHA-256 of the project root's real path: a change outside the component and every shared path, by the declaration recorded when the slice started, fails the run with reason component_boundary, listing the crossing paths, and the command does not run. Another slice's frozen test at its frozen content, and a path that another slice's latest passing run changed after this slice started and that still holds the content it tested, do not count, while this slice's own changes do. A slice without start content runs with boundary unchecked, and a run whose start content Git can no longer read, or was recorded while the ## Components declaration was invalid or lacked the slice's component, fails with reason start_content_missing without running the command: ask the user to fix the ## Components declaration first when the message says so, then set the slice back to not-started and start it again. Results name the command, the folder it runs in with links followed and project-relative, and the slice's component. A passing run completes a slice whose design marks no review and returns the initiative revision that write produced. The result is brief: the verdict, failing test names, the run record, and the path of the full output log. The first run of a command text in a working folder asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. In a cloud session, where the user cannot open the review browser, approval_needed says so: ask the user in chat to allow the exact command in the folder it names, then call again with approvalGate and chatApproval quoting their answer word for word; the approval and the gate's history keep the quote, and any other session refuses chatApproval. An answer with a note and no choice returns approval_unclear and runs nothing. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run. An implementer that finds the contract wrong calls it with contractDefects instead: nothing runs, the defects are kept as a run entry and on the slice, and the slice is blocked until design revises the contract. With dependents true, slice names a finished fit scope (a slice whose design accepted a slice plan, or a leaf that is a scope of its own) and the call runs its dependents' run instead: the test command of every component of this repository that depends, directly or through others, on a component of the scope's leaves, each distinct command and folder once in dependency order, never a component of another repository. It refuses a slice that is not a fit scope, and contractDefects, with validation_failed, and a scope with a leaf that is not done with scope_unfinished, listing waiting; it applies the same refusals as above to each dependent, and returns no_dependents when nothing depends on the scope. One approval gate lists every command and folder not yet allowed, with the components each tests: allowing it allows each listed pair, and declining it marks their components declined while the allowed pairs still run. The run is recorded on the scope, and its result lists each dependent with its status, the blocked dependents, and each command's log; a run whose commands change project files fails with reason tracked_files_changed and blocks every dependent. update_roadmap ship refuses with dependents_blocked while a finished scope's dependents have no passing run of every one of them.",
     inputSchema: VERIFY_SLICE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   },
@@ -1097,18 +1099,12 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
 // The first write after an upgrade moves files in the user's work tree, so its result says which, to commit on their own.
 const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
-// A checkout that names a store but no repository is told on each result which line to commit, before a later release refuses it.
-function unnamedWarning(unnamed) {
-  return unnamed.map(({ root, proposed }) => `The checkout at ${root} names a record store but no repository name. Add \`- Repository: ${proposed}\` under \`## Workspace\` in its .prism/workflow.md and commit it; a later Prism release will refuse record operations without it.`).join("\n");
-}
-
 // A sync that found the same record changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
-async function withRecordNotes(value, unnamed = []) {
+async function withRecordNotes(value) {
   const reports = takeMigrationReports();
   const saved = await takeSavedConflicts().catch(() => []);
   if (!Array.isArray(value?.content)) return value;
-  const warning = unnamed.length ? [{ type: "text", text: unnamedWarning(unnamed) }] : [];
-  if (!reports.length && !saved.length) return warning.length ? { ...value, content: [...value.content, ...warning] } : value;
+  if (!reports.length && !saved.length) return value;
   const lines = [];
   for (const report of reports) {
     const into = report.store ? `the record store at ${report.store}` : ".prism";
@@ -1122,7 +1118,7 @@ async function withRecordNotes(value, unnamed = []) {
   if (saved.length) {
     lines.push(`Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, ...saved.map((item) => `- ${item.record} (this machine's version: ${item.savedAs})`));
   }
-  return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }, ...warning] };
+  return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
 }
 
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
@@ -1216,8 +1212,7 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
-      const { value: called, unnamed } = await collectUnnamedCheckouts(() => callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id));
-      const value = await withRecordNotes(called, unnamed);
+      const value = await withRecordNotes(await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id));
       // A cancelled request gets no response, as the MCP cancellation rules require.
       if (value.structuredContent?.status !== "cancelled") {
         result(request.id, value);

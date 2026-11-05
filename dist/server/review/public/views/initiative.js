@@ -5,6 +5,7 @@ import { artifactChip, bindLinks, card, emptyNote, escapeHtml, keyValues, plural
 import { runTotalsHtml } from "./run-totals.js";
 import { codeChip } from "./code-location.js";
 import { claimChip, claimOf } from "./claims.js";
+import { componentChip } from "./components.js";
 
 const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 // These columns always show; another status, such as deferred, gets a column only while a slice has it.
@@ -39,7 +40,7 @@ function tree(data, slug, depth, ctx) {
       ${statusBadge(statusOf(data, slug))}
       <button type="button" class="text-button slice-title" data-artifact="slice:${escapeHtml(data.id)}/${escapeHtml(slug)}">${escapeHtml(slice.title)}</button>
       <code class="slice-slug">${escapeHtml(slug)}</code>
-      <span class="slice-tags">${claimChip(claimOf(data.record.slices, slug))}${sliceSignals(data.slices[slug])}${codeChip(data.code?.[slug])}</span>
+      <span class="slice-tags">${componentChip(slice.component)}${claimChip(claimOf(data.record.slices, slug))}${sliceSignals(data.slices[slug])}${codeChip(data.code?.[slug])}</span>
     </div>
     ${slice.outcome ? `<p class="slice-outcome">${escapeHtml(slice.outcome)}</p>` : ""}
     ${children.length ? `<ul class="slice-tree">${children.map((child) => tree(data, child, depth + 1, ctx)).join("")}</ul>` : ""}
@@ -62,7 +63,7 @@ function boardCard(data, slug, ctx) {
     <h3><button type="button" class="text-button" data-artifact="slice:${escapeHtml(data.id)}/${escapeHtml(slug)}">${escapeHtml(slice.title)}</button></h3>
     ${slice.outcome ? `<p class="initiative-intent">${escapeHtml(slice.outcome)}</p>` : ""}
     ${claimOf(data.record.slices, slug) ? `<p class="slice-claim">${claimChip(claimOf(data.record.slices, slug))}</p>` : ""}
-    ${sliceSignals(data.slices[slug]) || data.code?.[slug] ? `<p class="slice-tags">${sliceSignals(data.slices[slug])}${codeChip(data.code?.[slug])}</p>` : ""}
+    ${componentChip(slice.component) || sliceSignals(data.slices[slug]) || data.code?.[slug] ? `<p class="slice-tags">${componentChip(slice.component)}${sliceSignals(data.slices[slug])}${codeChip(data.code?.[slug])}</p>` : ""}
     ${active.map((entry) => activeDetails(entry, ctx)).join("")}
   </li>`;
 }

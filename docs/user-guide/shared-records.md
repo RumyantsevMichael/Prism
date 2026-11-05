@@ -93,6 +93,7 @@ git clone git@github.com:you/prism-store.git ../prism-store
 ```markdown
 ## Workspace
 - Store: ../prism-store
+- Repository: api
 - Store sync: on
 ```
 
@@ -101,9 +102,9 @@ Without `Store sync: on`, Prism never runs Git in a path store, and you can comm
 
 ## Name each repository
 
-One store can hold the records of several repositories, so each repository that uses a store names itself with a `Repository` line under `## Workspace`, beside `Store`.
+One store can hold the records of several repositories, so each repository that uses a store must name itself with a `Repository` line under `## Workspace`, beside `Store`.
 Every clone, shallow clone, fork, worktree, and machine reads the same committed name.
-Without a `Store` line, a `Repository` line is ignored.
+Without a `Store` line, record operations need no `Repository` line and ignore one, which then only names the repository's components.
 
 A name has 1 to 64 lowercase letters, digits, hyphens, or underscores, and starts and ends with a letter or digit.
 Any other value makes every record operation fail with `repository_name_invalid`, and the message proposes a valid name.
@@ -126,13 +127,14 @@ These refusals make every record operation of the checkout fail, and each error'
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
+| `repository_name_missing` | The configuration names a store but no repository. The message shows the `- Repository: <name>` line to add under `## Workspace`. | Add the proposed line to `.prism/workflow.md` and commit it. |
 | `repository_name_invalid` | The name breaks the naming rules. | Use the proposed name. |
 | `repository_name_taken` | The name is registered for other remotes, and the checkout's history cannot prove it is the same repository. The message names both remotes and why, such as a shallow clone. | For the same repository moved on its host, run `git fetch --unshallow` in a shallow clone; otherwise use the proposed name. |
 | `repository_remote_registered` | The checkout's remote is already registered under another name. | Use the name it is registered under. |
 | `repository_unconfirmed` | Store sync is on, and the sync that confirms a new registration failed, for example because the store's remote cannot be reached, so the registration was withdrawn; or, whatever the checkout's own store sync setting, another check's new registration that decides this check is still being confirmed. The message names the sync state, and `proposed` is the name itself. | Try again once the remote is reachable, or in a moment while a registration is being confirmed. |
 
 The proposed name is the registered name that would accept the checkout, or else the last part of its remote's path without `.git`, or its folder name without a network remote, made valid and given a suffix such as `-2` when another repository holds it.
-The review browser hides the records of a refused checkout as it does for an unavailable store, and still lists its documents.
+The review browser hides the records of a refused checkout as it does for an unavailable store, shows the refusal's message as the reason, and still lists its documents.
 
 Each machine remembers where its checkouts of each named repository are, in `checkouts.json` in Prism's application folder, beside the store clones.
 A server lists its checkout once its name is first accepted: at start when the host names the project, as Claude Code does, or else at its first tool call, as in Codex.
@@ -146,9 +148,8 @@ The registration that lost is saved under `.prism-sync/conflicts/` like a record
 A remote or root commit added to an existing registration does not wait: the next sync pushes it, and the next check that needs it adds it again if a sync lost it.
 Each name is a file of its own, so two machines that register one remote under two different names at the same time both keep their registrations, because `repository_remote_registered` refuses a second name for a remote only once the store holds the first.
 
-A checkout whose configuration names a store but no repository keeps working as before and registers nothing.
-Each tool result that opened its store ends with a warning that shows the `- Repository: <name>` line to add under `## Workspace` and commit, with a proposed name, because a later Prism release will refuse record operations without it.
-A verification run or contract-defect report of a named checkout records the name as its repository, while other checkouts keep recording the root commit.
+A checkout whose configuration names a store but no repository is refused with `repository_name_missing` on every record operation, registers nothing, and writes nothing to the store, while the records it holds under `.prism` stay where they are until the name is committed and its first record operation moves them.
+A verification run or contract-defect report of a named checkout records the name as its repository, while a checkout without a store keeps recording the root commit.
 Naming a repository changes no record, migration entry, or run that the store already holds, and a store's migration marker from before Prism listed moved records keeps covering the repository after it is named.
 
 ## When two people change the same record

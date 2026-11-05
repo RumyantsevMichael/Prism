@@ -51,11 +51,12 @@ test("R2: a registration that links to an endless file, or exceeds the size limi
   assert.equal((await failure(recordStoreOf(big)))?.code, "repository_name_taken", "an oversized registration keeps its name and accepts no checkout");
 });
 
-test("R3: a repositories folder that cannot be listed leaves an unnamed checkout working and refuses a named one with a code", async (context) => {
+test("R3: a repositories folder that cannot be listed still proposes a name to an unnamed checkout and refuses a named one with a code", async (context) => {
   const place = await folder(context);
   await symlink("repositories", path.join(place.store, "repositories"));
   const unnamed = await repository(place.parent, "web", { remote: "https://github.com/acme/web.git" });
-  ok(await createInitiative(await server(context, place, unnamed)));
+  const missing = (await createInitiative(await server(context, place, unnamed))).error?.data;
+  assert.deepEqual(missing, { code: "repository_name_missing", proposed: "web" }, "the proposal is derived from the remote alone");
   const named = await repository(place.parent, "api", { remote: "https://github.com/acme/api.git", repository: "api" });
   const refusal = await failure(recordStoreOf(named));
   assert.equal(refusal?.name, "RecordStoreError");
