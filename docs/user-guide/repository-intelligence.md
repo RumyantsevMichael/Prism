@@ -156,7 +156,23 @@ Each entry gives the component's `status`, `preparationId`, `snapshot`, `indexRe
 The top-level `status` is `preparing` while a component waits or prepares, else `degraded` when a component's latest preparation in this server failed, else `indexed` when a component has an index, else `unprepared`.
 The top-level `progress` is the running preparation's progress with its `component`, and each diagnostic names its `component`.
 An invalid `## Components` declaration refuses the native index and status tools before any preparation, with the declaration's error code.
-Background preparation at startup and the review browser's rebuild do not build any index in a repository with components yet, so a search builds the components it reads; refreshing each component's index in the background is Planned.
+Background preparation at startup and the review browser's rebuild do not build any index in a repository with components yet, so a search, a structural report, or a context plan builds the components it reads; refreshing each component's index in the background is Planned.
+
+#### Report and plan across component indexes
+
+In a repository with components, the six structural reports select and prepare components as a search does.
+A report with `filters.paths` reads only the components that hold a file at or under those paths, and a report without paths reads every component that holds a file.
+A report runs over its included components as over one index that held all of their units, references, and files, so its ordering, `limit`, `offset`, totals, and `coverage` apply to that union.
+A group of `find_shared_dependencies`, `find_shared_literals`, or `find_same_name_units` keeps only members in the components that the report reads, and `report_module_interfaces` counts only importers in those components.
+A path-scoped report sees only the components that hold those paths, so matches in other components appear only in an unscoped report.
+Each report result has the `components`, `status`, `components_missing` diagnostic, `snapshot`, and `indexRevision` that a search result has, and a `preparing` result has a `preparationId` of `null`.
+A component's index does not resolve references into other components, so a report that includes such a component can report incomplete structure.
+A retained baseline named by `snapshotId` is still analyzed as one index of the whole baseline; analyzing it per component is Planned.
+
+`plan_repository_context` prepares every component that holds a file and returns `preparing` while none of them is included.
+Its semantic candidates come from the merged search of every included component, and its graph expands within the included components.
+While a component is not included, `diagnostics.provider` holds the `components_missing` diagnostic that names it, `diagnostics.estimateEligible` is `false`, and every `tokenEstimate` value is `null`.
+Its `expectedSnapshot` accepts the `snapshot` of an unscoped search or the plan's own `sourceFingerprint`.
 
 #### Watch an index build in the review browser
 
@@ -207,6 +223,7 @@ Test code is left out unless `includeTests` is true.
 Test code is a file in a test directory or with a test name, such as `store.test.ts`, `test_store.py`, `store_test.go`, or `StoreTest.java`, and a Rust `#[cfg(test)]` module or `#[test]` function.
 Generated, vendored, and minified files are always left out.
 With `filters.paths`, a group is reported when one of its members is inside the paths, and it keeps its members elsewhere, so a scoped analysis still sees code that the scope repeats.
+In a repository with components, `filters.paths` also selects the components that the report reads, so a group keeps only its members in the components that hold those paths, as [Report and plan across component indexes](#report-and-plan-across-component-indexes) describes.
 A function that only uses core operations has no dependency profile, so use search for small helpers.
 `coverage` gives the number of profiled units, and a `dependency_names_unavailable` diagnostic means that the index was prepared without library call names.
 A shared dependency set identifies candidates for investigation and does not establish equivalent behavior.
@@ -233,6 +250,7 @@ A test-only export is often a deliberate test seam.
 `namesPerImporter` is the median number of exports that one importer uses, so a low value on a module with many exports shows that each caller needs only a small part of the interface.
 By default, only modules with unused or test-only exports appear, and `allModules` reports every exporting module.
 With `filters.paths`, only modules inside the paths are reported, while importers outside the paths still count.
+In a repository with components, only importers in the components that hold those paths count.
 Use `offset` and `nextOffset` to page through modules.
 
 Imports resolve through relative paths, `package.json` names and `exports` maps of workspace packages, `tsconfig` path aliases, and built output that mirrors a `src/` file.
@@ -378,6 +396,7 @@ The facts identify candidates for a split and do not decide that a unit is too c
 `find_shared_dependencies`, `find_shared_literals`, `find_same_name_units`, `report_module_interfaces`, `report_cohesion_clusters`, and `report_complex_units` retain each complete result as immutable private evidence and return its `receiptId`.
 The receipt keeps every result before the response `limit`, so `totalGroups`, `totalContainers`, or `totalUnits` can be larger than the returned list.
 The receipt also records the tool, the scope, the snapshot, the index revision, coverage, diagnostics, and the hash of every file that the result names.
+In a repository with components, the receipt also records the result's `components`, and its snapshot and index revision cover the components that the report read.
 A file hash that differs from the current file shows a result that a later edit made stale.
 Read a receipt in pages with `get_conservation_evidence`.
 The default section is `groups`, `modules`, `containers`, or `units`, and the `delegatingClasses` and `files` sections are also available.
