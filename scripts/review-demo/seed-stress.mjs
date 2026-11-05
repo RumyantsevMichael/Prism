@@ -89,7 +89,7 @@ try {
     activeOperations: Array.from({ length: 4 }, (_, i) => ({ op: "start", entry: { slice: i === 0 ? "slice-with-long-name" : `slice-${i}`, activity: "design", label: i === 0 ? LONG : "Working on it", workers: Array.from({ length: 5 }, (_, j) => `worker-${i}-${j}`), workspace: realRoot } })),
     next: slices.slice(0, 10).map((slice) => `${base}/${slice.slug}`),
     evidence: [`${slicePath}/slice.md`, notesPath],
-    gateOperations: Array.from({ length: 9 }, (_, i) => ({ op: "ask", kind: i % 2 ? "decision" : "visual-review", slice: i === 0 ? "slice-with-long-name" : `slice-${i}`, question: i === 0 ? `${LONG} ${PARA.repeat(3)}` : `Question ${i}: ${PARA}`, artifacts: [deltaPath, reviewPath, `${slicePath}/slice.md`, notesPath], ...(i % 2 ? { options: Array.from({ length: 5 }, (_, j) => ({ id: `option-${j}`, label: j === 0 ? LONG : `Option ${j} with a long label that wraps` })) } : {}) }))
+    gateOperations: Array.from({ length: 9 }, (_, i) => ({ op: "ask", kind: i % 2 ? "decision" : "visual-review", slice: i === 0 ? "slice-with-long-name" : `slice-${i}`, question: i === 0 ? `${LONG} ${PARA.repeat(3)}` : `Question ${i}: ${PARA}`, artifacts: [deltaPath, reviewPath, `${slicePath}/slice.md`, notesPath], ...(i % 2 ? { context: `${LONG} ${PARA.repeat(4)}\n\n- ${LONG}\n- \`${LONG}\``, options: Array.from({ length: 5 }, (_, j) => ({ id: `option-${j}`, label: j === 0 ? LONG : `Option ${j} with a long label that wraps`, consequence: j === 0 ? LONG : `${PARA}`.slice(0, 300) })), recommended: { option: "option-0", reason: `${LONG} ${PARA}`.slice(0, 500) } } : {}) }))
   } });
 
   process.stdout.write(`Stress project: ${realRoot}\nPrivate evidence: ${dataDir}\n`);

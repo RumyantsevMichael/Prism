@@ -11,7 +11,7 @@ import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { locateRecord, moveLegacyRecords, writeRecord } from "./record-store.mjs";
+import { locateRecord, moveLegacyRecords, readRecord, writeRecord } from "./record-store.mjs";
 import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
 import { latestDependentsRun } from "./slice-design.mjs";
@@ -40,6 +40,17 @@ const object = (properties, required = Object.keys(properties)) => ({ type: "obj
 const band = { enum: BANDS };
 const position = { type: "integer", minimum: 0, maximum: 10000 };
 
+// A workspace name is a short label for people, so it stays on one line; an empty name clears it.
+export const WORKSPACE_NAME_MAX = 64;
+
+function workspaceNameProblem(value) {
+  if (typeof value !== "string") return "workspaceName must be a string.";
+  if (value !== value.trim() || !value) return "workspaceName must be non-empty and have no leading or trailing spaces.";
+  if (value.length > WORKSPACE_NAME_MAX) return `workspaceName must have at most ${WORKSPACE_NAME_MAX} characters.`;
+  if (/[\u0000-\u001f\u007f]/.test(value)) return "workspaceName must be one line without control characters.";
+  return null;
+}
+
 export const GET_ROADMAP_SCHEMA = object({ projectRoot: text }, ["projectRoot"]);
 export const UPDATE_ROADMAP_SCHEMA = object({
   projectRoot: text,
@@ -47,6 +58,7 @@ export const UPDATE_ROADMAP_SCHEMA = object({
   actor: text,
   operations: { type: "array", minItems: 1, maxItems: 100, items: { oneOf: [
     object({ op: { const: "set_serves" }, serves: text }),
+    object({ op: { const: "set_workspace_name" }, name: { type: "string", maxLength: WORKSPACE_NAME_MAX } }, ["op", "name"]),
     object({ op: { const: "add_initiative" }, id, title: text, intent: text, pillar: text, band, position, requirements: references, requires: ids, rationale: text }, ["op", "id", "title", "intent", "band"]),
     object({ op: { const: "update_initiative" }, id, title: text, intent: text, pillar: text, requirements: references, rationale: text }, ["op", "id"]),
     object({ op: { const: "place" }, id, band, position }, ["op", "id", "band"]),
@@ -85,6 +97,7 @@ function validateRoadmap(raw) {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return ["The roadmap record must be a JSON object."];
   if (raw.schemaVersion !== 1) errors.push("schemaVersion must be 1.");
   if (typeof raw.serves !== "string") errors.push("serves must be a string.");
+  if (raw.workspaceName !== undefined && workspaceNameProblem(raw.workspaceName)) errors.push(workspaceNameProblem(raw.workspaceName));
   if (!Array.isArray(raw.openQuestions) || raw.openQuestions.some((item) => typeof item !== "string")) errors.push("openQuestions must be an array of strings.");
   if (!Array.isArray(raw.history)) errors.push("history must be an array.");
   if (!Array.isArray(raw.initiatives)) return [...errors, "initiatives must be an array."];
@@ -293,6 +306,18 @@ export async function roadmapComponents(projectRoot, config) {
   return { ...listed, proposal: { ...proposed, ...(problem ? { problem } : {}) } };
 }
 
+/** The workspace name kept in the roadmap record of the project's record store, or null when none is set or the record cannot be read. */
+export async function readWorkspaceName(projectRoot) {
+  try {
+    const { bytes } = await readRecord(projectRoot, { kind: "roadmap" });
+    if (!bytes) return null;
+    const name = JSON.parse(bytes.toString("utf8"))?.workspaceName;
+    return typeof name === "string" && !workspaceNameProblem(name) ? name : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getRoadmap(input) {
   validateInput(GET_ROADMAP_SCHEMA, input);
   const { resolved, loaded, derived } = await readRoadmap(input.projectRoot);
@@ -301,6 +326,7 @@ export async function getRoadmap(input) {
 
 function markdown(record, recordName) {
   const lines = ["# Roadmap", "", generatedNotice(recordName), "Current progress is derived from initiative records, so read it through `get_roadmap` or the review browser.", ""];
+  if (record.workspaceName) lines.push(`Workspace: ${record.workspaceName}`, "");
   if (record.serves) lines.push(`Serves: ${record.serves}`, "");
   const titles = new Map(record.initiatives.map((item) => [item.id, item.title]));
   const entry = (item) => {
@@ -360,6 +386,17 @@ async function applyOperation(resolved, record, operation, actor, at) {
     case "set_serves":
       record.serves = operation.serves;
       break;
+    case "set_workspace_name": {
+      const name = operation.name.trim().replace(/\s+/g, " ");
+      if (!name) {
+        delete record.workspaceName;
+        break;
+      }
+      const problem = workspaceNameProblem(name);
+      if (problem) throw fail("validation_failed", problem.replace("workspaceName", "The workspace name"));
+      record.workspaceName = name;
+      break;
+    }
     case "add_initiative": {
       if (!SLUG_PATTERN.test(operation.id)) throw fail("validation_failed", "Initiative identifiers use letters, digits, hyphens, or underscores.");
       if (record.initiatives.some((item) => item.id === operation.id)) throw fail("validation_failed", `The roadmap already has initiative ${operation.id}.`);
@@ -462,7 +499,7 @@ export const ROADMAP_TOOLS = [
   },
   {
     name: "update_roadmap",
-    description: "Apply revision-checked roadmap operations: set what the roadmap serves, add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. Ship requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
+    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. Ship requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
     inputSchema: UPDATE_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

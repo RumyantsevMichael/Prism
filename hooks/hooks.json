@@ -19,6 +19,17 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/deliver-gate-answers.mjs\"",
             "timeout": 5,
             "additionalContextLimit": 4000
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/offer-prism.mjs\"",
+            "timeout": 5,
+            "additionalContextLimit": 1500
           }
         ]
       }
@@ -37,6 +48,11 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/deliver-gate-answers.mjs\"",
             "timeout": 5,
             "additionalContextLimit": 4000
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"",
+            "timeout": 5
           }
         ]
       }
@@ -63,6 +79,16 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"",
             "timeout": 5
           }
         ]
@@ -129,6 +155,11 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"",
             "timeout": 5
           }
         ]

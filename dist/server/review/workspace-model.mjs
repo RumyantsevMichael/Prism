@@ -411,8 +411,17 @@ async function initiativeSnapshot(projectRoot, config, id, roadmapItem) {
   };
 }
 
+// The newest question comes first, so the one just asked is on top; an unreadable time sorts last.
+function newestFirst(left, right) {
+  const time = (value) => {
+    const parsed = Date.parse(value ?? "");
+    return Number.isFinite(parsed) ? parsed : -Infinity;
+  };
+  return time(right) - time(left) || 0;
+}
+
 function gateOrder(left, right) {
-  return String(left.askedAt ?? "").localeCompare(String(right.askedAt ?? ""));
+  return newestFirst(left.askedAt, right.askedAt);
 }
 
 export function loadAttention(projectRoot) {
@@ -444,7 +453,7 @@ async function computeAttention(projectRoot) {
           const current = key ? await recordFile(projectRoot, key).catch(() => artifact) : artifact;
           artifacts.push({ path: current, available: await isFile(projectRoot, current) });
         }
-        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, options: entry.options ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts };
+        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts };
         // A question whose every attached file is gone was likely overtaken by later work, so the page says it may no longer apply.
         if (!gate.answer && artifacts.length && artifacts.every((artifact) => !artifact.available)) gate.stale = true;
         (gate.answer ? answered : needsYou).push(gate);
@@ -453,7 +462,7 @@ async function computeAttention(projectRoot) {
       }
     }
     for (const entry of state?.valid ? state.state?.closed ?? [] : []) {
-      earlier.push({ type: "closed-gate", id: entry.id, kind: entry.kind, question: entry.question, options: entry.options ?? null, askedAt: entry.askedAt, closedAt: entry.closedAt, answer: entry.answer ?? null, reason: entry.reason ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null });
+      earlier.push({ type: "closed-gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, closedAt: entry.closedAt, answer: entry.answer ?? null, reason: entry.reason ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null });
     }
     if (snapshot.record.exists && !snapshot.record.valid) {
       watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "initiative", initiative: id }), message: snapshot.record.errors.join(" ") });
@@ -488,9 +497,9 @@ async function computeAttention(projectRoot) {
   for (const diagnostic of config.diagnostics) needsYou.push({ type: "config", code: diagnostic.code, message: diagnostic.message });
   const blockingOrder = (entry) => ({ "record-problem": 0, blocked: 1, findings: entry.blocking ? 2 : 3, "ready-to-ship": 4, active: 5 })[entry.type] ?? 6;
   watch.sort((left, right) => blockingOrder(left) - blockingOrder(right));
-  answered.sort((left, right) => String(left.answer.answeredAt).localeCompare(String(right.answer.answeredAt)));
+  answered.sort((left, right) => newestFirst(left.answer.answeredAt, right.answer.answeredAt));
   // The newest closed questions come first, across initiatives, so the list stays short.
-  earlier.sort((left, right) => String(right.closedAt).localeCompare(String(left.closedAt)));
+  earlier.sort((left, right) => newestFirst(left.closedAt, right.closedAt));
   return { needsYou, answered, earlier: earlier.slice(0, 20), watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
 }
 

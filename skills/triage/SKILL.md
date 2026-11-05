@@ -32,7 +32,7 @@ Triage decides whether a reported problem breaks an obligation that already exis
 
 - `DEFECT`: the initiative identifier, the requirement references, the issue, and the reproduction steps.
 - `NOT_A_DEFECT`: what the report expects that no requirement states, for `ideate`.
-- `NOT_REPRODUCED` or `BLOCKED`: what you tried, the nonconforming file, or the exact question.
+- `NOT_REPRODUCED` or `BLOCKED`: what you tried, the nonconforming file, or a [blocker](../workflow/SKILL.md#common-terms).
 
 - Don't
   - Fix the defect or add tests to the project.

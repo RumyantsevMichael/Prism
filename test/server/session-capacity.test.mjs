@@ -28,7 +28,7 @@ test("keeps the usable window percentage separate from automatic compaction", ()
   for (const profile of registry.profiles) {
     assert.equal(profile.capacity.effectiveContextWindowPercent, 95);
     assert.equal(profile.capacity.autoCompactionPercent, 90);
-    assert.equal(profile.capacity.compactionThresholdTokens, 244800);
+    assert.equal(profile.capacity.compactionThresholdTokens, Math.floor(profile.capacity.contextWindowTokens * 90 / 100));
   }
 });
 
@@ -210,6 +210,16 @@ test("covers later versions with the newest verified minimum profile", () => {
   ]) {
     assert.equal(resolveSessionCapacity({ ...supportedSession, harnessVersion, model }).status, "UNSUPPORTED", `${harnessVersion} ${model}`);
   }
+});
+
+test("resolves gpt-6.1-terra from Codex 0.166.0 with its larger context window", () => {
+  const terra = resolveSessionCapacity({ ...supportedSession, harnessVersion: "0.166.0", model: "gpt-6.1-terra" });
+  assert.equal(terra.status, "SUPPORTED");
+  assert.equal(terra.profileId, "codex-cli-0.166.0-openai-gpt-6.1-terra");
+  assert.equal(terra.capacity.compactionThresholdTokens, 450000);
+  // Other models at that version stay on the newest minimum profile that lists them.
+  assert.equal(resolveSessionCapacity({ ...supportedSession, harnessVersion: "0.166.0", model: "gpt-6-sol" }).profileId, "codex-cli-0.163.0-openai-default");
+  assert.equal(resolveSessionCapacity({ ...supportedSession, harnessVersion: "0.165.0", model: "gpt-6.1-terra" }).status, "UNSUPPORTED");
 });
 
 test("resolves aliases only inside an exact profile match", () => {

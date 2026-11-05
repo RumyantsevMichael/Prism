@@ -260,8 +260,8 @@ test("accepts a decision answered by a note alone and an assistance gate marked 
   const current = await readCoordinationState({ projectRoot, initiative: "reports" });
   await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: {
     gateOperations: [
-      { op: "ask", kind: "decision", question: "Keep the old export format?", artifacts: [], options: [{ id: "keep", label: "Keep" }, { id: "drop", label: "Drop" }] },
-      { op: "ask", kind: "assistance", question: "Install the signing key.", artifacts: [] }
+      { op: "ask", kind: "decision", question: "Keep the old export format?", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [], options: [{ id: "keep", label: "Keep", consequence: "The run continues with this choice." }, { id: "drop", label: "Drop", consequence: "The run continues with this choice." }], recommended: { option: "keep", reason: "It keeps the current behavior." } },
+      { op: "ask", kind: "assistance", question: "Install the signing key.", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [] }
     ]
   } });
   const review = await startReviewServer({ projectRoot });
@@ -278,6 +278,32 @@ test("accepts a decision answered by a note alone and an assistance gate marked 
     const done = await post(endpoint, { initiative: "reports", id: assistance.id, choice: "done", note: "" });
     assert.equal(done.status, 200, done.text);
     assert.deepEqual([JSON.parse(done.text).gate.answer.choice, JSON.parse(done.text).gate.answer.note], ["done", null]);
+  } finally {
+    await review.close();
+  }
+});
+
+test("lists the newest open question and the newest answer first", async (context) => {
+  const projectRoot = await fixture(context);
+  const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  for (const question of ["Asked first?", "Asked second?"]) {
+    const current = await readCoordinationState({ projectRoot, initiative: "reports" });
+    await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question, context: "The run reached a choice that needs the person.", artifacts: [], options: [{ id: "yes", label: "Yes", consequence: "The run continues with this choice." }], recommended: { option: "yes", reason: "It keeps the current behavior." } }] } });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+  }
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const attention = async () => (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
+    const gates = (await attention()).needsYou.filter((item) => item.type === "gate");
+    const asked = gates.filter((item) => item.question.startsWith("Asked"));
+    assert.deepEqual(asked.map((item) => item.question), ["Asked second?", "Asked first?"]);
+    for (const item of gates) assert.ok(gates.indexOf(item) === 0 || Date.parse(gates[gates.indexOf(item) - 1].askedAt) >= Date.parse(item.askedAt));
+    for (const item of [asked[1], asked[0]]) {
+      const answer = await post(`${review.baseUrl}/api/gates/answer`, { initiative: "reports", id: item.id, choice: "yes", note: "" });
+      assert.equal(answer.status, 200, answer.text);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    assert.deepEqual((await attention()).answered.map((item) => item.question), ["Asked second?", "Asked first?"]);
   } finally {
     await review.close();
   }
@@ -306,12 +332,12 @@ test("flags an open question whose every attached file is gone", async (context)
   const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
   const current = await readCoordinationState({ projectRoot, initiative: "reports" });
   await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: {
-    gateOperations: [{ op: "ask", kind: "decision", question: "Keep the dropped attribution file?", artifacts: ["docs/requirements/dropped.md"], options: [{ id: "keep", label: "Keep" }, { id: "drop", label: "Drop" }] }]
+    gateOperations: [{ op: "ask", kind: "decision", question: "Keep the dropped attribution file?", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: ["docs/requirements/dropped.md"], options: [{ id: "keep", label: "Keep", consequence: "The run continues with this choice." }, { id: "drop", label: "Drop", consequence: "The run continues with this choice." }], recommended: { option: "keep", reason: "It keeps the current behavior." } }]
   } });
   const review = await startReviewServer({ projectRoot });
   try {
     const gates = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data.needsYou.filter((item) => item.type === "gate");
-    assert.deepEqual(gates.map((gate) => [gate.kind, gate.stale ?? false]), [["visual-review", false], ["decision", true]], "a question with some files left is not flagged");
+    assert.deepEqual(gates.map((gate) => [gate.kind, gate.stale ?? false]), [["decision", true], ["visual-review", false]], "a question with some files left is not flagged, and the newest question comes first");
   } finally {
     await review.close();
   }

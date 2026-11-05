@@ -12,7 +12,8 @@ Only machine records move into the store.
 Tools, tool results, review browser links, and stored references keep naming records by their `.prism/...` address, so nothing that agents or people see changes.
 Each verified slice records where its code lives, the repository, branch, and commit of its latest passing run, and the review browser shows it on the slice page and beside each slice on the initiative page.
 On GitHub, GitLab, and Bitbucket the branch, commit, and repository link to their web pages.
-The review browser's project menu lists every checkout that shares one record store under that store as one workspace, whichever repository each checkout belongs to, and lists projects in name order.
+The review browser's project menu lists every checkout that shares one record store under that store as one workspace, named after the store, whichever repository each checkout belongs to, and lists projects in name order.
+Choosing the workspace there opens its records, which every checkout shares.
 
 ## Share records between machines
 
@@ -100,6 +101,14 @@ git clone git@github.com:you/prism-store.git ../prism-store
 Prism then syncs it as it syncs a remote store.
 Without `Store sync: on`, Prism never runs Git in a path store, and you can commit and push it yourself.
 
+## Name the workspace
+
+The checkouts that share one store form one workspace, and the store keeps its name, so every checkout, repository, and machine shows the same name.
+Ask the agent to name the workspace, and it records the name with the `set_workspace_name` operation of `update_roadmap`.
+A name is one line of at most 64 characters, and an empty name clears it.
+The name is kept in the store's roadmap record and appears as a `Workspace:` line at the top of the generated roadmap Markdown.
+Until a name is set, the review browser names the workspace after the store's folder, or after its repository for a remote store, such as `prism-store`.
+
 ## Name each repository
 
 One store can hold the records of several repositories, so each repository that uses a store must name itself with a `Repository` line under `## Workspace`, beside `Store`.
@@ -186,8 +195,9 @@ A slice whose session ended without finishing frees itself that way, and the nex
 A server never renews a claim that expired, for example while its laptop slept, or that someone released or took over; its next `get_initiative` or `update_initiative` result for the initiative lists the claim under `lostClaims`.
 Claims are kept apart from the initiative record, so renewals never collide with someone else's edit of the slice.
 A claim ends when its slice is done, blocked, or back to not started, or when the design proposal of its scope is accepted.
-In Claude Code a claim belongs to the session, so a server that Claude Code restarts in the same session keeps its claims and renews them again after its first initiative read or update.
-On a host that gives the server no session identifier, such as Codex, a claim belongs to the server process, and a restarted server gets a new holder.
+In Claude Code and Codex a claim belongs to the session, so a server that the host restarts in the same session keeps its claims and renews them again after its first initiative read or update.
+Claude Code names the session in the server's environment, and Codex names it in each tool call, so sub-agents in Codex share their session's claims as subagents in Claude Code do.
+On a host that gives the server no session identifier, a claim belongs to the server process, and a restarted server gets a new holder.
 To free a slice sooner, for example after such a restart, ask your agent to send `update_initiative` with a `release_claim` operation for the slice.
 Anyone may release any claim, and the initiative's history records who released whose claim.
 

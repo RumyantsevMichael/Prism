@@ -474,6 +474,13 @@ async function runStatisticsEvents({
   };
 
   if (collector === "codex-hook") {
+    // Codex names a spawned agent by its thread id, so its start link carries the hash its own events use; the
+    // subagent's cost before its own first Prism call then belongs to the root segment current at that link.
+    if (hostEvent === "SubagentStart") {
+      const agentThread = nonemptyString(hookInput.agent_id);
+      if (!agentThread) return incomplete();
+      return [runStatisticsEvent({ ...rootOptions, executionHash: agentThread, eventType: "subagent_start", eventId: `subagent_start:${agentThread}` })];
+    }
     const threadId = nonemptyString(transcriptMetadata?.threadId);
     const usesThread = ["SessionStart", "SessionEnd", "PreCompact", ...TOOL_EVENTS].includes(hostEvent);
     if (!usesThread) return [];

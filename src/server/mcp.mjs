@@ -10,6 +10,7 @@ import path from "node:path";
 import { recordStoreOf, takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { takeSavedConflicts } from "./workflow/record-store-sync.mjs";
+import { withCallSession } from "./workflow/slice-claims.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -726,7 +727,6 @@ const tools = [
               additionalProperties: false,
               properties: {
                 autonomy: { type: "string", enum: ["conservative", "broad", "full"] },
-                agentFlow: { type: "string", enum: ["mono", "multi"] },
                 commit: { type: "string", enum: ["on", "off"] },
                 push: { type: "string", enum: ["on", "off"] },
                 continuation: { type: "string", enum: ["auto", "stepwise"] },
@@ -779,14 +779,22 @@ const tools = [
                       op: { const: "ask" },
                       kind: { type: "string", enum: ["visual-review", "correctness", "decision", "assistance"] },
                       slice: { type: "string", minLength: 1 },
-                      question: { type: "string", minLength: 1, maxLength: 4000 },
+                      question: { type: "string", minLength: 1, maxLength: 4000, description: "The question itself, one or two plain sentences." },
+                      context: { type: "string", minLength: 1, maxLength: 8000, description: "Markdown the person reads before answering: what happened, what was tried, what the choice changes, and a concrete example. Required for decision and assistance gates, so a person who has not followed the run can decide from the gate alone." },
                       artifacts: { type: "array", maxItems: 50, items: { type: "string", minLength: 1 } },
                       options: {
                         type: "array",
                         minItems: 1,
                         maxItems: 8,
-                        description: "Choices the user can pick in the review browser; decision gates only.",
-                        items: { type: "object", required: ["id", "label"], additionalProperties: false, properties: { id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, label: { type: "string", minLength: 1, maxLength: 200 } } }
+                        description: "Choices the user can pick in the review browser; decision gates only, each with the consequence of picking it.",
+                        items: { type: "object", required: ["id", "label", "consequence"], additionalProperties: false, properties: { id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, label: { type: "string", minLength: 1, maxLength: 200 }, consequence: { type: "string", minLength: 1, maxLength: 300, description: "One sentence on what happens if the person picks this option." } } }
+                      },
+                      recommended: {
+                        type: "object",
+                        required: ["reason"],
+                        additionalProperties: false,
+                        description: "Required for decision gates: the answer you recommend, as one of the options when the gate has options, and why.",
+                        properties: { option: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, reason: { type: "string", minLength: 1, maxLength: 500 } }
                       }
                     }
                   },
@@ -1212,7 +1220,8 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
-      const value = await withRecordNotes(await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id));
+      const meta = request.params?._meta;
+      const value = await withRecordNotes(await withCallSession(meta, () => callTool(request.params?.name, request.params?.arguments, meta, request.id)));
       // A cancelled request gets no response, as the MCP cancellation rules require.
       if (value.structuredContent?.status !== "cancelled") {
         result(request.id, value);

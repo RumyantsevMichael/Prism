@@ -26,7 +26,7 @@ function fileName(path) {
   return path.split("/").pop() || path;
 }
 
-// The panel shows a file the way its tab would show its text: Markdown rendered, code highlighted with line numbers, and a record or diagram as highlighted source.
+// The panel shows a file the way its tab shows it: Markdown rendered with its diagrams drawn, code highlighted with line numbers, a diagram drawn, and a record as highlighted source.
 function fileBody(data, { renderMarkdown }) {
   if (data.kind === "source") {
     const lines = highlightLines(data.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(data.path));
@@ -35,16 +35,16 @@ function fileBody(data, { renderMarkdown }) {
   if (data.path.toLowerCase().endsWith(".md")) {
     return `<div class="document-content">${renderMarkdown(data.path, data.content) || '<p class="muted">The document is empty.</p>'}</div>`;
   }
-  const language = languageOf(data.path);
-  const note = data.kind || language === "plantuml" ? `<p class="side-panel-note">Open it as a tab to see it ${language === "plantuml" ? "drawn" : "as a structured view"}.</p>` : "";
-  return `${note}<pre><code>${highlight(data.content, language)}</code></pre>`;
+  if (data.path.toLowerCase().endsWith(".puml")) return "";
+  const note = data.kind ? '<p class="side-panel-note">Open it as a tab to see it as a structured view.</p>' : "";
+  return `${note}<pre><code>${highlight(data.content, languageOf(data.path))}</code></pre>`;
 }
 
 /**
  * One panel beside the workspace that shows a single item at a time: a file opened from a link preview or link, or other context such as a review finding.
  * Opening another item replaces the current one; there are no tabs.
  */
-export function createSidePanel({ shell, fetchJson, renderMarkdown, onOpenTab, onChange }) {
+export function createSidePanel({ shell, fetchJson, renderMarkdown, mountDiagram = null, onOpenTab, onChange }) {
   const root = document.getElementById("side-panel");
   const kind = document.getElementById("side-panel-kind");
   const title = document.getElementById("side-panel-title");
@@ -99,10 +99,28 @@ export function createSidePanel({ shell, fetchJson, renderMarkdown, onOpenTab, o
     body.scrollTop += target.getBoundingClientRect().top - body.getBoundingClientRect().top - 24;
   }
 
+  // A diagram file and the diagrams a document links are drawn after the text, as its tab draws them.
+  async function drawDiagrams(data, ticket) {
+    if (!mountDiagram || data.kind) return;
+    const diagrams = data.diagrams?.length ? data.diagrams : data.path.toLowerCase().endsWith(".puml") ? [{ path: data.path, source: data.content }] : [];
+    for (const diagram of diagrams) {
+      if (ticket !== request) return;
+      const slot = document.createElement("div");
+      slot.className = "side-panel-diagram";
+      body.appendChild(slot);
+      await mountDiagram(slot, diagram).catch((error) => {
+        slot.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+      });
+    }
+  }
+
   function render(data, anchor, { keepScroll = false } = {}) {
     const top = body.scrollTop;
     body.innerHTML = fileBody(data, { renderMarkdown });
     for (const content of body.querySelectorAll(".document-content")) decorateFolds(content, current.folds);
+    void drawDiagrams(data, request).then(() => {
+      if (keepScroll) body.scrollTop = top;
+    });
     if (keepScroll) body.scrollTop = top;
     else scrollTo(anchor);
   }
@@ -110,7 +128,7 @@ export function createSidePanel({ shell, fetchJson, renderMarkdown, onOpenTab, o
   async function showFile(path, anchor = null) {
     const ticket = ++request;
     const same = current?.ref === path;
-    current = { ref: path, anchor, content: same ? current.content : null, folds: same ? current.folds : new Set() };
+    current = { ref: path, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : new Set() };
     header({ eyebrow: "File", name: fileName(path), detail: anchor ? `${path} · ${anchor.match(LINE_RANGE) ? `lines ${anchor.slice(1).replace("-", "–")}` : `#${anchor}`}` : path, ref: path });
     setOpen(true);
     if (same && current.content !== null) {
@@ -122,6 +140,7 @@ export function createSidePanel({ shell, fetchJson, renderMarkdown, onOpenTab, o
       const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(path)}`);
       if (ticket !== request) return;
       current.content = data.content;
+      current.diagrams = JSON.stringify(data.diagrams ?? []);
       render(data, anchor);
     } catch (error) {
       if (ticket !== request) return;
@@ -147,14 +166,16 @@ export function createSidePanel({ shell, fetchJson, renderMarkdown, onOpenTab, o
     setOpen(false);
   }
 
-  // A changed file re-renders in place and keeps the reader's scroll position; an unchanged one is left alone.
+  // A changed file or linked diagram re-renders in place and keeps the reader's scroll position; an unchanged one is left alone.
   async function refresh() {
     if (!current?.ref || current.custom || current.content === null) return;
     const ticket = request;
     try {
       const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(current.ref)}`);
-      if (ticket !== request || !current || data.content === current.content) return;
+      const diagrams = JSON.stringify(data.diagrams ?? []);
+      if (ticket !== request || !current || (data.content === current.content && diagrams === current.diagrams)) return;
       current.content = data.content;
+      current.diagrams = diagrams;
       render(data, current.anchor, { keepScroll: true });
     } catch {
     }

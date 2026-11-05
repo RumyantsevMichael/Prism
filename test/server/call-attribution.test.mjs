@@ -391,7 +391,7 @@ test("marks Codex attribution below the session partial and leaves a subagent th
     environment: { PLUGIN_DATA: dataDirectory }
   });
   const updateReview = {
-    tool_name: "mcp__prism-review__update_review",
+    tool_name: "mcp__prism_review__update_review",
     tool_use_id: "codex-update-review",
     tool_input: { projectRoot: project, initiative: "demo", slice: "alpha", expectedRevision: null, actor: { id: "private-actor", role: "coordinator" }, operations: [] }
   };
@@ -413,11 +413,64 @@ test("marks Codex attribution below the session partial and leaves a subagent th
   assert.deepEqual(wave.wallTimeMs, measure(1000, "partial"));
   assert.deepEqual(wave.activeTimeMs, measure(1000, "partial"));
   const { unattributed } = summary.runMeasures.attribution;
-  // No subagent start is observed for a Codex thread, so its cost before its own first Prism call has no target.
+  // Without a subagent start link, as before Codex sent SubagentStart, a thread's cost before its own first Prism call has no target.
   assert.deepEqual(unattributed.toolCalls, measure(1, "partial"));
   assert.deepEqual(unattributed.inputTokens, measure(200, "partial"));
   // Root thread 14:00:00-14:00:01 plus subagent thread 14:00:04-14:00:06, even though the execution's own row is exact.
   assert.deepEqual(unattributed.wallTimeMs, measure(3000, "partial"));
   assert.deepEqual(unattributed.activeTimeMs, measure(3000, "partial"));
+  assertConserved(summary);
+});
+
+test("gives a Codex subagent thread's cost before its first Prism call to the root target current at its start link", async (context) => {
+  const project = await temporaryDirectory(context, "prism-call-attribution-codex-link-project-");
+  const dataDirectory = await temporaryDirectory(context, "prism-call-attribution-codex-link-data-");
+  await writePlans(project);
+  const rollout = (transcript, { id, source, usage }) => writeFile(transcript, [
+    line({ type: "session_meta", payload: { id, session_id: sessionId, cli_version: "0.147.0", model_provider: "openai", cwd: project, source } }),
+    line({
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: { input_tokens: usage[0], cached_input_tokens: usage[1], output_tokens: usage[2], reasoning_output_tokens: 0, total_tokens: usage[0] + usage[2] },
+          model_context_window: 200000
+        }
+      }
+    })
+  ].join(""));
+  const rootTranscript = path.join(project, "rollout-root.jsonl");
+  const subagentTranscript = path.join(project, "rollout-subagent.jsonl");
+  await rollout(rootTranscript, { id: sessionId, source: "vscode", usage: [1000, 600, 50] });
+  await rollout(subagentTranscript, { id: "codex-subagent-thread", source: { subagent: { depth: 1 } }, usage: [300, 100, 20] });
+  const hook = (transcript, input) => recordSessionTrace({
+    input: Readable.from([JSON.stringify({ session_id: sessionId, cwd: project, transcript_path: transcript, turn_id: "turn-1", ...input, timestamp: at(input.timestamp) })]),
+    environment: { PLUGIN_DATA: dataDirectory }
+  });
+  const updateReview = {
+    tool_name: "mcp__prism_review__update_review",
+    tool_use_id: "codex-update-review",
+    tool_input: { projectRoot: project, initiative: "demo", slice: "alpha", expectedRevision: null, actor: { id: "private-actor", role: "coordinator" }, operations: [] }
+  };
+  await hook(rootTranscript, { hook_event_name: "SessionStart", timestamp: "14:00:00" });
+  await hook(rootTranscript, { hook_event_name: "PreToolUse", ...updateReview, timestamp: "14:00:01" });
+  await hook(rootTranscript, { hook_event_name: "PostToolUse", ...updateReview, tool_response: "private result", timestamp: "14:00:02" });
+  // Codex 0.166 sends SubagentStart with the spawned thread's id as agent_id and that thread's rollout as transcript_path.
+  await hook(subagentTranscript, { hook_event_name: "SubagentStart", agent_id: "codex-subagent-thread", agent_type: "default", timestamp: "14:00:03" });
+  await hook(subagentTranscript, { hook_event_name: "PreToolUse", tool_name: "exec_command", tool_use_id: "codex-subagent-call", timestamp: "14:00:04" });
+  await hook(subagentTranscript, { hook_event_name: "PostToolUse", tool_name: "exec_command", tool_use_id: "codex-subagent-call", tool_response: "private output", timestamp: "14:00:06" });
+
+  const summary = await summarizeSessionConsumption({ dataDirectory, sessionId, projectRoot: project });
+  assertMeasured(summary);
+  const wave = targetEntry(summary, { slice: "alpha", kind: "wave", role: "coordinator" });
+  assert.equal(wave.attribution, "partial");
+  // The root thread's call plus the subagent thread's call, which it made after starting under the root's alpha segment.
+  assert.deepEqual(wave.toolCalls, measure(2, "partial"));
+  assert.deepEqual(wave.inputTokens, measure(600, "partial"));
+  // Root thread 14:00:01-14:00:02 plus subagent thread 14:00:03-14:00:06.
+  assert.deepEqual(wave.wallTimeMs, measure(4000, "partial"));
+  const { unattributed } = summary.runMeasures.attribution;
+  assert.deepEqual(unattributed.toolCalls, measure(0, "partial"));
+  assert.deepEqual(unattributed.wallTimeMs, measure(1000, "partial"));
   assertConserved(summary);
 });

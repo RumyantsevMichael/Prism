@@ -68,6 +68,13 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
   for (const event of ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PreCompact", "SubagentStart", "SubagentStop", "SessionEnd"]) {
     assert.ok(commands(event).includes(traceCommand));
   }
+  const offerHook = hookManifest.hooks.SessionStart.flatMap((group) => group.hooks).find((hook) => hook.command === "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/offer-prism.mjs\"");
+  assert.deepEqual([offerHook.timeout, offerHook.additionalContextLimit], [5, 1500]);
+  const roleCommand = "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"";
+  for (const event of ["SessionStart", "UserPromptSubmit", "SessionEnd"]) {
+    assert.ok(commands(event).includes(roleCommand), event);
+  }
+  assert.deepEqual(hookManifest.hooks.PreToolUse.filter((group) => group.hooks.some((hook) => hook.command === roleCommand)).map((group) => group.matcher), ["Skill"]);
   assert.equal(Object.hasOwn(hookManifest.hooks, "PostModelSwitch"), false);
   assert.equal(Object.hasOwn(hookManifest.hooks, "PostCompact"), false);
   assert.deepEqual(traceBehaviorRegistry.profiles.map((profile) => profile.match.harnessVersion), [

@@ -548,7 +548,8 @@ test("records a quiet Codex session's run with attribution below the session mar
     input: Readable.from([JSON.stringify({ session_id: sessionId, cwd: root, transcript_path: rollout, turn_id: "turn-1", ...input, timestamp: time(input.at) })]),
     environment: { PLUGIN_DATA: dataDirectory }
   });
-  const review = { tool_name: "mcp__prism-review__update_review", tool_use_id: "codex-review", tool_input: updateAlphaReview(root).input };
+  // Codex names the Prism server prism_review, with an underscore.
+  const review = { tool_name: "mcp__prism_review__update_review", tool_use_id: "codex-review", tool_input: updateAlphaReview(root).input };
   await codexHook({ hook_event_name: "SessionStart", at: 0 });
   await codexHook({ hook_event_name: "PreToolUse", ...review, at: 0.5 });
   await codexHook({ hook_event_name: "PostToolUse", ...review, tool_response: "private result", at: 0.6 });

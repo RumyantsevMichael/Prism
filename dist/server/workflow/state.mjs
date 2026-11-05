@@ -12,10 +12,18 @@ import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 const SCHEMA_VERSION = 1;
 
 const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed"]);
-const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "review", "models"]);
+const SETTING_KEYS = new Set(["autonomy", "commit", "push", "continuation", "review", "models"]);
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
-const GATE_KEYS = new Set(["id", "kind", "slice", "question", "artifacts", "options", "askedAt", "answer"]);
+const GATE_KEYS = new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "answer"]);
+const ASK_KEYS = ["op", "kind", "slice", "question", "context", "artifacts", "options", "recommended"];
+const OPTION_KEYS = new Set(["id", "label", "consequence"]);
+const RECOMMENDED_KEYS = new Set(["option", "reason"]);
+const CONTEXT_LIMIT = 8000;
+const CONSEQUENCE_LIMIT = 300;
+const RECOMMENDATION_LIMIT = 500;
+// A person who has not followed the run decides from the gate alone, so a choice or an action carries its situation.
+const CONTEXT_KINDS = new Set(["decision", "assistance"]);
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
 const OPTION_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ANSWER_KEYS = new Set(["choice", "note", "via", "answeredAt"]);
@@ -25,7 +33,6 @@ const REASON_LIMIT = 1000;
 const REVIEW_CHOICES = new Set(["approve", "request-changes"]);
 const SETTING_VALUES = {
   autonomy: new Set(["conservative", "broad", "full"]),
-  agentFlow: new Set(["mono", "multi"]),
   commit: new Set(["on", "off"]),
   push: new Set(["on", "off"]),
   continuation: new Set(["auto", "stepwise"]),
@@ -104,13 +111,23 @@ function defaultState() {
   };
 }
 
+// Every child now runs in a fresh agent, so a stored agent flow from an older Prism is dropped on read.
+const RETIRED_SETTINGS = new Set(["agentFlow"]);
+
+function withoutRetiredSettings(settings) {
+  if (!isRecord(settings)) {
+    return settings;
+  }
+  return Object.fromEntries(Object.entries(settings).filter(([key]) => !RETIRED_SETTINGS.has(key)));
+}
+
 function normalizeState(raw) {
   if (!isRecord(raw)) {
     return raw;
   }
   const state = {
     schemaVersion: raw.schemaVersion ?? SCHEMA_VERSION,
-    settings: raw.settings ?? {},
+    settings: withoutRetiredSettings(raw.settings ?? {}),
     active: raw.active ?? [],
     pending: raw.pending ?? [],
     next: raw.next ?? [],
@@ -261,6 +278,27 @@ function validGatePath(value) {
   return normalized === value && normalized !== "." && !normalized.startsWith("../");
 }
 
+function boundedText(value, limit) {
+  return typeof value === "string" && value.trim() !== "" && value.length <= limit;
+}
+
+// A new question must stand on its own; gates recorded before these fields existed stay valid as they are.
+function askProblems(gate) {
+  const problems = [];
+  if (CONTEXT_KINDS.has(gate.kind) && gate.context === undefined) {
+    problems.push("context is required for a decision or assistance gate: in plain language, say what happened, what was tried, what the choice changes, and give a concrete example, so a person who has not followed the run can decide from the gate alone");
+  }
+  if (gate.kind !== "decision") return problems;
+  const missing = (gate.options ?? []).filter((option) => isRecord(option) && option.consequence === undefined).map((option) => option.id);
+  if (missing.length) problems.push(`each option needs a consequence, one sentence on what happens if the person picks it; missing for ${missing.join(", ")}`);
+  if (gate.recommended === undefined) {
+    problems.push(gate.options?.length
+      ? "recommended is required: { option, reason } naming the option you recommend and why"
+      : "recommended is required: { reason } with the answer you recommend and why");
+  }
+  return problems;
+}
+
 function validateGate(entry, entryPath, errors) {
   for (const key of Object.keys(entry)) {
     if (!GATE_KEYS.has(key)) {
@@ -296,14 +334,29 @@ function validateGate(entry, entryPath, errors) {
     } else {
       const ids = new Set();
       entry.options.forEach((option, index) => {
-        if (!isRecord(option) || Object.keys(option).some((key) => key !== "id" && key !== "label") || !OPTION_ID.test(option.id ?? "") || typeof option.label !== "string" || !option.label.trim() || option.label.length > 200) {
-          addError(errors, `${entryPath}.options[${index}]`, "must be { id, label } with a lowercase slug id and a label of at most 200 characters");
+        if (!isRecord(option) || Object.keys(option).some((key) => !OPTION_KEYS.has(key)) || !OPTION_ID.test(option.id ?? "") || typeof option.label !== "string" || !option.label.trim() || option.label.length > 200) {
+          addError(errors, `${entryPath}.options[${index}]`, "must be { id, label, consequence } with a lowercase slug id and a label of at most 200 characters");
+        } else if (option.consequence !== undefined && !boundedText(option.consequence, CONSEQUENCE_LIMIT)) {
+          addError(errors, `${entryPath}.options[${index}].consequence`, `must be non-empty text of at most ${CONSEQUENCE_LIMIT} characters`);
         } else if (ids.has(option.id)) {
           addError(errors, `${entryPath}.options[${index}].id`, "must not duplicate another option");
         } else {
           ids.add(option.id);
         }
       });
+    }
+  }
+  if (entry.context !== undefined && !boundedText(entry.context, CONTEXT_LIMIT)) {
+    addError(errors, `${entryPath}.context`, `must be non-empty Markdown of at most ${CONTEXT_LIMIT} characters`);
+  }
+  if (entry.recommended !== undefined) {
+    const recommended = entry.recommended;
+    if (entry.kind !== "decision") {
+      addError(errors, `${entryPath}.recommended`, "is allowed only for decision gates");
+    } else if (!isRecord(recommended) || Object.keys(recommended).some((key) => !RECOMMENDED_KEYS.has(key)) || !boundedText(recommended.reason, RECOMMENDATION_LIMIT)) {
+      addError(errors, `${entryPath}.recommended`, `must be { option, reason } with a reason of at most ${RECOMMENDATION_LIMIT} characters`);
+    } else if (recommended.option !== undefined && !(entry.options ?? []).some((option) => isRecord(option) && option.id === recommended.option)) {
+      addError(errors, `${entryPath}.recommended.option`, "must name one of the gate's options");
     }
   }
   if (typeof entry.askedAt !== "string" || Number.isNaN(Date.parse(entry.askedAt))) {
@@ -411,7 +464,7 @@ function applyGateOperations(pending, operations) {
       throw error("invalid_changes", `gateOperations[${index}] must be an object.`);
     }
     if (operation.op === "ask") {
-      const unknown = Object.keys(operation).filter((key) => !["op", "kind", "slice", "question", "artifacts", "options"].includes(key));
+      const unknown = Object.keys(operation).filter((key) => !ASK_KEYS.includes(key));
       if (unknown.length) {
         throw error("invalid_changes", `gateOperations[${index}] has unsupported fields: ${unknown.join(", ")}.`);
       }
@@ -420,12 +473,18 @@ function applyGateOperations(pending, operations) {
         kind: operation.kind,
         ...(operation.slice === undefined ? {} : { slice: operation.slice }),
         question: operation.question,
+        ...(operation.context === undefined ? {} : { context: operation.context }),
         artifacts: operation.artifacts ?? [],
         ...(operation.options === undefined ? {} : { options: operation.options }),
+        ...(operation.recommended === undefined ? {} : { recommended: operation.recommended }),
         askedAt: new Date().toISOString()
       };
       const errors = [];
       validateGate(gate, `gateOperations[${index}]`, errors);
+      const problems = errors.length ? [] : askProblems(gate);
+      if (problems.length) {
+        throw error("gate_context_missing", `The question cannot be asked yet: ${problems.join("; ")}.`, { errors: problems });
+      }
       if (errors.length) {
         throw error("invalid_changes", `The user gate is invalid: ${errors.join("; ")}.`, { errors });
       }

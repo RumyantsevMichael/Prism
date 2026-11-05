@@ -14,7 +14,7 @@ sdm: "0.3"
 
 | Need | Skill |
 | --- | --- |
-| Configure a project | `workflow-init` |
+| Set up, amend, or migrate a project, including when the person adds a tool or mentions another repository the work touches | `setup` |
 | Approve product intent and add it to the roadmap | `ideate`, using `write-requirements` |
 | Trace a reported defect to the requirement it breaks | `triage` |
 | Run an initiative | `orchestrate` |
@@ -24,8 +24,7 @@ sdm: "0.3"
 | Analyze reuse or restructure existing concepts | `refactor` |
 | Author a specific artifact | The matching `write-*` skill |
 
-These names resolve under the Prism plugin namespace.
-A direct skill invocation does not require an earlier `orchestrate` invocation.
+These names resolve under the Prism plugin namespace, and a direct skill invocation does not require an earlier `orchestrate` invocation.
 
 ## Delivery lifecycle
 
@@ -58,6 +57,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Slice | One observable outcome across required layers that one fresh implementation session delivers, planned by a contract. |
 | Contract scope | The root slice, or a part that a split design created, that one design gives one contract. |
 | Slice plan | The **Slices** section of a contract: each planned slice with its outcome, component, requirements, dependencies, frozen test files, and review recommendation. |
+| Workspace | The checkouts and repositories whose Prism records share one store, named by the workspace name that `update_roadmap` sets with `set_workspace_name`, or after the store while it has none. |
 | Component | A part of a repository with its own folder, optional test command, and dependencies, declared under `## Components` in `.prism/workflow.md` and identified across the workspace as `<repository>/<component>`, where the repository's name is its `Repository` name under `## Workspace`, or `root` when it gives none. |
 | Root component | The component named after the repository that holds every file outside the declared folders and tests with the repository's test command; a repository that declares no components is its root component alone. |
 | Component proposal | A `## Components` block that `get_roadmap` returns as `components.proposal` when `.prism/workflow.md` lists no component and a workspace manifest at the project root gives workspace patterns, one component per member folder; Prism never writes it, and it takes effect only when the person commits it under `## Components`. |
@@ -96,12 +96,12 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | CLEAN | A review lane result with no unresolved finding. |
 | Review probe | A minimal failing test that a reviewer adds through a public surface to prove a finding. |
 | Gate | A user decision that controls progress. |
-| User gate record | A pending coordination state entry for a question to the user, with its kind, slice, question, artifacts, optional options, and any answer recorded in the review browser. |
+| User gate record | A pending coordination state entry for a question to the user, with its kind, slice, question, context, artifacts, optional options with consequences, a recommendation for a decision, and any answer recorded in the review browser; Prism refuses a decision or assistance gate without context, and a decision gate without consequences or a recommendation. |
+| Blocker | A question for the person that stands on its own: the question in one or two plain sentences; context with what happened, what was tried, and a concrete example; for a choice, each option with what happens if the person picks it; and the recommended answer with why. |
 | Orchestrator | The agent that coordinates an initiative: it runs design, implementation, and review in child sessions, starts slices, and keeps gates, while Prism records progress from its calls. |
-| Child status | The short fixed result a child session returns: result, last commit, a one-sentence summary, and questions. |
+| Child status | The short fixed result a child session returns: result, last commit, a one-sentence summary, and questions written as blockers. |
 | Fresh context | A session that starts without the conversation that authored its inputs. |
 | Decision autonomy | A run setting that selects which gates wait for the user. |
-| Agent flow | A run setting that selects child agents or inline work for design and implementation. |
 | Slice continuation | A run setting that controls whether the next slice starts without the user. |
 | `recovery.md` | A slice note that preserves unfinished work when a run pauses. |
 | Pause checkpoint | An orchestrator action that writes `recovery.md` and updates coordination state together. |
@@ -120,5 +120,4 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 
 - Read [delegation.md](references/delegation.md) before starting child agents.
 - Read [visual-review.md](references/visual-review.md) before human artifact review.
-- State each decision in plain language before its artifact reference.
-- Ask only at a real gate or unresolved choice.
+- Ask only at a real gate or unresolved choice, as a [blocker](#common-terms) in plain language before its artifact reference.
