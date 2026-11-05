@@ -1,0 +1,18 @@
+@startuml
+title action-controls - code
+component "views/actions.js\nactionFormState, renderActions" as Actions
+component "views/initiative.js" as InitiativeView
+component "views/slice.js" as SliceView
+component "views/attention.js\nRecent changes" as Attention
+component "views/palette.js\naction entries" as Palette
+component "public/review.js\nconfirm dialog, read-only notice,\naction events" as Page
+component "review-server.mjs\naction event" as Routes
+component "workspace-model.mjs\nrecentChanges" as Model
+InitiativeView --> Actions
+SliceView --> Actions
+Page --> Palette
+Page --> Actions : confirm, refusals
+Page ..> Routes : api/actions, api/events
+Attention ..> Model : recentChanges
+Routes ..> Model
+@enduml

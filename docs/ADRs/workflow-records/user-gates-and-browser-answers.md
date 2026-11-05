@@ -5,8 +5,10 @@ Created: 2026-10-14
 
 ## Requirements
 
-No Approved requirement governs this decision yet.
-It records the direction taken with the entity-first review browser and the [managed roadmap and initiative records](managed-roadmap-and-initiative-records.md).
+- [review-app-actions.md§9](../../requirements/review-app-actions.md#9)
+- [review-app-actions.md§11](../../requirements/review-app-actions.md#11)
+
+It also records the direction taken with the entity-first review browser and the [managed roadmap and initiative records](managed-roadmap-and-initiative-records.md).
 
 ## Problem
 
@@ -24,7 +26,7 @@ A gate MUST accept one answer, and an answer to a resolved or withdrawn gate MUS
 A recorded answer MUST reach the agent with the user's next message until the agent resolves the gate.
 Where the host moves a long tool call to the background before its tool timeout, the agent SHOULD wait for answers in such a call so that an answer resumes the run without a message.
 The wait MUST return at once on hosts where it cannot run in the background.
-The session URL token MUST be the only credential for recording an answer, and the answer endpoint MUST accept only JSON from the page's own origin.
+A browser answer MUST be an action of the [review app action registry](review-app-actions.md), so it requires the write session that Prism gives only to a tab it opened, and it MUST accept only JSON from the page's own origin.
 
 ## Rationale
 
@@ -42,7 +44,7 @@ Answering only in the conversation leaves the browser unable to act on what it s
 ## Consequences
 
 The Attention page lists open questions with their artifacts and accepts answers, and answered questions wait visibly until the agent acts.
-Anyone who can open the session URL can answer for the user, and agents print that URL.
+Agents print the session URL, which reads and presents but cannot answer, so a tab opened from it shows the questions and asks the user to open a writable tab through Prism.
 On hosts or settings where the wait cannot background, or during the first background handoff interval, the user still sends one message after answering, and a chat answer typed during that interval waits until the handoff.
 Browser answers change the coordination state revision, so an agent's next state write may need one re-read and retry.
 
@@ -50,7 +52,7 @@ Browser answers change the coordination state revision, so an agent's next state
 
 The orchestrator records gates with a typed operation that returns their identifiers, then calls the waiting tool once with every gate it just recorded.
 The waiting tool polls the coordination state, sends progress notifications that keep the host's idle window open, and returns the answered gates after a short pause for answers given in the same visit.
-The review browser records an answer through its own endpoint, and a prompt hook adds every answered but unresolved gate to the user's next message.
+The review browser records an answer by applying the gate answer action, and a prompt hook adds every answered but unresolved gate to the user's next message.
 The agent acts on each answer and then resolves its gate.
 
 ## Decision Log
