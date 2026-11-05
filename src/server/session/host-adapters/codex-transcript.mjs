@@ -147,8 +147,15 @@ function tokenUsage(value) {
     : null;
 }
 
+// A turn's task_started event carries the context window too, and is the only record of it before the session's first token
+// count, which code-mode models such as gpt-6-luna write only after the tool calls of their first script ran.
+// The later of the two wins, so a turn that switched models reports its own window.
+const TOKEN_COUNT_SOURCE = "transcript.event_msg.token_count.info.model_context_window";
+const TASK_STARTED_SOURCE = "transcript.event_msg.task_started.model_context_window";
+
 function latestTokenCount(text) {
   let latest = null;
+  let source = null;
   let totalTokenUsage = null;
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
@@ -158,15 +165,23 @@ function latestTokenCount(text) {
     } catch {
       continue;
     }
-    if (record?.type !== "event_msg" || record.payload?.type !== "token_count") {
+    if (record?.type !== "event_msg") continue;
+    if (record.payload?.type === "task_started" && record.payload.model_context_window !== undefined) {
+      latest = record.payload.model_context_window;
+      source = TASK_STARTED_SOURCE;
+      continue;
+    }
+    if (record.payload?.type !== "token_count") {
       continue;
     }
     latest = record.payload?.info?.model_context_window;
+    source = TOKEN_COUNT_SOURCE;
     totalTokenUsage = tokenUsage(record.payload?.info?.total_token_usage);
   }
   if (latest === null) return { contextWindowTokens: null, totalTokenUsage: null };
   return {
     contextWindowTokens: Number.isSafeInteger(latest) && latest > 0 ? latest : undefined,
+    contextWindowSource: source,
     totalTokenUsage
   };
 }
@@ -236,6 +251,7 @@ export async function inspectCodexTranscriptMetadata({
     };
   }
   let contextWindowTokens = null;
+  let contextWindowSource = null;
   let totalTokenUsage = null;
   try {
     const tokenCount = latestTokenCount(await readTranscriptTail(
@@ -254,6 +270,7 @@ export async function inspectCodexTranscriptMetadata({
       };
     }
     contextWindowTokens = tokenCount.contextWindowTokens;
+    contextWindowSource = tokenCount.contextWindowSource ?? null;
     totalTokenUsage = tokenCount.totalTokenUsage;
   } catch {
     return {
@@ -276,7 +293,7 @@ export async function inspectCodexTranscriptMetadata({
       ? {}
       : {
           contextWindowTokens,
-          contextWindowSource: "transcript.event_msg.token_count.info.model_context_window"
+          contextWindowSource
         })
   };
 }
