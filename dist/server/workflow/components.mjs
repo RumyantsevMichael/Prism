@@ -146,6 +146,34 @@ export function readComponents(config) {
   return { repository: repository.name, root: rootComponent, declared: components, components: [rootComponent, ...components], sharedPaths };
 }
 
+/** Whether the configuration lists a component under ## Components, valid or not, rather than only shared paths or nothing. */
+export function listsComponents(config) {
+  return (config?.lines?.Components ?? []).some((line) => {
+    const top = /^-\s+(.*?)\s*$/.exec(line);
+    return top !== null && label(/^([^:]*)/.exec(top[1])[1]) !== "shared paths";
+  });
+}
+
+/**
+ * The components a repository declares, for reading without refusing: { repository, declared, problem? }, where declared lists the root component and then
+ * the declared ones in declaration order as { component, folder, testCommand, dependsOn } with dependsOn as identities in the order declared,
+ * and an invalid declaration gives an empty declared and problem { code, message }, and repository null when the Repository line itself is invalid.
+ */
+export function listComponents(config) {
+  let declaration;
+  try {
+    declaration = readComponents(config);
+  } catch (error) {
+    if (!(error instanceof ComponentError)) throw error;
+    return { repository: repositoryOf(config?.lines?.Workspace ?? []).name ?? null, declared: [], problem: { code: error.code, message: error.message } };
+  }
+  const identity = (dependency) => (dependency.includes("/") ? dependency : `${declaration.repository}/${dependency}`);
+  return {
+    repository: declaration.repository,
+    declared: declaration.components.map((component) => ({ component: component.identity, folder: component.folder, testCommand: component.testCommand, dependsOn: component.dependsOn.map(identity) }))
+  };
+}
+
 /** The component a project-relative file belongs to: the declared component whose folder holds it, otherwise the root component. */
 export function componentOf(declaration, file) {
   const normalized = file.replace(/\/$/, "");

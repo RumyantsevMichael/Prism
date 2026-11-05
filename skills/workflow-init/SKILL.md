@@ -43,7 +43,13 @@ Both styles follow the [workflow gate rules](../workflow/SKILL.md#supporting-pro
 
 1. Write `.prism/workflow.md` with all sections below and the resolved values.
 2. For unavailable values, use `n/a`, except the BDD harness value `none`.
-3. When the repository holds packages that the person agrees to declare as [components](../workflow/SKILL.md#common-terms), add the optional `## Components` section after `## Stack`, as in the components example.
+3. Call `get_roadmap` and read its `components`:
+   1. When `components.proposal` is present, show the person this [component proposal](../workflow/SKILL.md#common-terms): its `markdown` block, its `skipped` manifests, and, when present, its `problem`, the refusal the block meets until it changes.
+   2. When the person approves the proposal, add its block, with the changes the person asks for, as the optional `## Components` section after `## Stack`.
+   3. When there is no proposal and the repository holds packages that the person agrees to declare as [components](../workflow/SKILL.md#common-terms), add the optional `## Components` section after `## Stack`, as in the components example.
+
+- Don't
+  - Add a proposed `## Components` block that the person has not approved.
 
 ```markdown
 # Workflow config

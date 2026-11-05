@@ -165,6 +165,36 @@ Accepting a design, and verifying a slice that records a component, refuse an in
 
 Reading an initiative never reads the declaration, so an invalid one stops only design acceptance and the verification of slices that record a component.
 
+`get_roadmap` returns the repository's components without refusing an invalid declaration.
+Its `components` holds the repository's name in `repository`, and in `declared` the root component and then each declared component in declaration order, each as `{ component, folder, testCommand, dependsOn }` with identities, where the root component's folder is `""` and a missing test command is `null`.
+For an invalid declaration, `declared` is empty and `problem` holds the refusal's `code` and `message`.
+
+### Component proposal
+
+When `.prism/workflow.md` lists no component under `## Components`, `get_roadmap` proposes a `## Components` block from the workspace manifests at the project root, in `components.proposal`.
+Prism never writes the proposal to any file; `workflow-init` shows it to you and adds it only when you approve it, and design reports it as an open question.
+The proposal reads these workspace patterns:
+
+| Manifest | Patterns |
+|---|---|
+| `package.json` | `workspaces`, as a list or as the `packages` of an object |
+| `pnpm-workspace.yaml` | `packages` |
+| `Cargo.toml` | `members` and `exclude` of `[workspace]` |
+| `go.work` | each `use` directive |
+
+In a pattern, `*` matches within one folder name and `**` matches any number of folders, and a pattern that starts with `!` or is listed in `exclude` removes the folders it matches.
+Every matched folder that holds a `package.json`, `Cargo.toml`, `go.mod`, or `Package.swift` becomes one proposed component, except a folder inside `node_modules` or inside a folder whose name starts with `.`.
+A component is named after its `package.json` `name` after the last `/`, else its Cargo `[package]` `name`, else the last segment of its Go module, else its folder's last segment.
+The name is lowercased, each run of other characters than letters, digits, `_`, and `-` becomes `-`, and it is trimmed of leading and trailing `-` and `_` and cut to 64 characters.
+A name that ends up empty, equal to the root component's name, or already taken by an earlier folder uses the folder's last segment the same way, and then `-2`, `-3`, and so on.
+A component whose `package.json` has a `test` script tests with `<manager> run test`, where the manager is `bun` when the root holds `bun.lock` or `bun.lockb`, `pnpm` for `pnpm-lock.yaml` or `pnpm-workspace.yaml`, `yarn` for `yarn.lock`, and `npm` otherwise.
+A component depends, in name order, on every other proposed component that its `package.json` dependencies name, that a `path` dependency of its Cargo `[dependencies]` or `[dev-dependencies]` leads to, or whose Go module its `go.mod` requires; a package name or module that several folders share names the first of them in folder order.
+The shared paths are the root lockfiles of the workspace tools whose manifests gave patterns: the package manager's own lockfile for `package.json` or `pnpm-workspace.yaml`, `Cargo.lock` for Cargo, and `go.work.sum` for Go.
+
+The proposal holds `markdown`, the block ready to commit, its `components` in folder order as `{ name, folder, testCommand, dependsOn }`, `sharedPaths`, and `skipped`, each manifest Prism could not read as `{ path, reason }`.
+A member folder with a manifest Prism could not read is still proposed under its folder name, without a test command or dependencies.
+When the proposed block would be refused, for example because its dependencies form a cycle, `problem` holds the refusal's `code` and `message`, and you change the block before you commit it.
+
 ## Questions and answers
 
 Each question that waits on you is recorded, and the review browser's Attention page lists it with the artifacts to inspect.

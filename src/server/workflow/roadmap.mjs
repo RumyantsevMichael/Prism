@@ -13,6 +13,8 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { locateRecord, moveLegacyRecords, writeRecord } from "./record-store.mjs";
 import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
+import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
+import { proposeComponents } from "./workspace-manifests.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
@@ -225,10 +227,31 @@ export async function readRoadmap(projectRoot) {
   return { resolved, loaded, derived: derivedItems };
 }
 
+/**
+ * The repository's components as get_roadmap reports them, never refusing an invalid declaration: { repository, declared, problem?, proposal? },
+ * where proposal is a ## Components block built from the workspace manifests when the configuration lists no component, which Prism never writes.
+ */
+export async function roadmapComponents(projectRoot, config) {
+  const listed = listComponents(config);
+  if (listsComponents(config)) return listed;
+  const proposed = await proposeComponents(projectRoot, { rootName: listed.repository ?? "root" });
+  if (proposed === null) return listed;
+  // The proposed block is checked as the declaration it would become, in place of whatever ## Components holds now.
+  const block = proposed.markdown.split("\n").slice(1, -1);
+  let problem;
+  try {
+    readComponents({ ...config, lines: { ...config?.lines, Components: block } });
+  } catch (error) {
+    if (!(error instanceof ComponentError)) throw error;
+    problem = { code: error.code, message: error.message };
+  }
+  return { ...listed, proposal: { ...proposed, ...(problem ? { problem } : {}) } };
+}
+
 export async function getRoadmap(input) {
   validateInput(GET_ROADMAP_SCHEMA, input);
   const { resolved, loaded, derived } = await readRoadmap(input.projectRoot);
-  return publicResult(resolved, loaded, derived);
+  return { ...publicResult(resolved, loaded, derived), components: await roadmapComponents(resolved.root, resolved.config) };
 }
 
 function markdown(record, recordName) {
@@ -385,7 +408,7 @@ export async function updateRoadmap(input) {
 export const ROADMAP_TOOLS = [
   {
     name: "get_roadmap",
-    description: "Read the MCP-managed roadmap record with each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship. Reads never create files.",
+    description: "Read the MCP-managed roadmap record with each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship, and the repository's components: its repository name, the declared components by identity <repository>/<component> with their folder, test command, and dependencies, the declaration's problem when it is invalid, and, when the configuration lists no component and a root workspace manifest (package.json, pnpm-workspace.yaml, Cargo.toml, or go.work) gives workspace patterns, a proposal of a ## Components block with its components, shared paths, skipped manifests, and problem. Reads never create files, and the proposal is never written; offer it to the person to commit.",
     inputSchema: GET_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },

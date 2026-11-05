@@ -33,7 +33,7 @@ Implementers later work from its output in fresh sessions, and they are judged o
 4. For each assumption, do one of the following and record which:
    - Probe it with a small experiment against the real system and record the command and what you observed.
    - When it cannot be probed, write the contract so that an uncovered case produces a clear error or a documented observable fallback, never a silent wrong result.
-5. Plan the slices that implement the contract, each small enough for one fresh implementation session and inside one [component](../workflow/SKILL.md#common-terms), in dependency order.
+5. Plan the slices that implement the contract, each small enough for one fresh implementation session and inside one [component](../workflow/SKILL.md#common-terms), in dependency order, and when the repository declares no components but `get_roadmap` returns a [component proposal](../workflow/SKILL.md#common-terms) in `components.proposal`, plan them in the root component and report its block as an open question, never adding it to `.prism/workflow.md` yourself.
 6. Write acceptance tests in the project's test location, black-box through the starting surface, with one test per contract clause, covering error, edge, and interaction cases as well as the main path.
    Give each slice its own new test files, so that each file belongs to exactly one slice and lies inside its component or under a shared path; Prism keeps a slice's test files out of the work tree until the slice starts.
 7. Run the tests and confirm they build and fail because the behavior is absent, not because of setup defects.
