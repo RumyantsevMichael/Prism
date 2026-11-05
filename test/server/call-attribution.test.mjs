@@ -391,7 +391,7 @@ test("marks Codex attribution below the session partial and leaves a subagent th
     environment: { PLUGIN_DATA: dataDirectory }
   });
   const updateReview = {
-    tool_name: "mcp__prism-review__update_review",
+    tool_name: "mcp__prism_review__update_review",
     tool_use_id: "codex-update-review",
     tool_input: { projectRoot: project, initiative: "demo", slice: "alpha", expectedRevision: null, actor: { id: "private-actor", role: "coordinator" }, operations: [] }
   };
