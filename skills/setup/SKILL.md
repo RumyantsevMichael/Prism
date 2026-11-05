@@ -32,7 +32,7 @@ Onboarding covers every topic in the interview, while migration and amendment co
 | Workspace | Whether records live in a store shared with other checkouts or repositories; with a store, its `Store` location, this repository's `Repository` name, `Store sync`, and a workspace name. |
 | Components | The packages the person declares as [components](../workflow/SKILL.md#common-terms), and for several repositories, the other repositories' components they depend on. |
 | Tracker and commits | The tracker, its labels, commit scopes, and conventions; for GitHub, whether the repository has a GitHub remote and `gh` is available. |
-| Interaction | `Interaction style` and `Review browser`. |
+| Interaction | `Interaction style`, `Review browser`, and `Session offer`. |
 | Constraints | Project prohibitions and sign-off requirements. |
 | Repository intelligence | `CodeNib command`: an absolute executable path when CodeNib is outside the Prism MCP process `PATH`, otherwise `n/a`. |
 
@@ -44,6 +44,7 @@ Onboarding covers every topic in the interview, while migration and amendment co
 
 `Interaction style` defaults to `structured`, and `plain-text` presents the same choices as numbered options in the message body.
 `Review browser` defaults to `auto`, selecting the internal browser on desktop and the system browser in CLI sessions; `internal` and `external` select those browsers explicitly.
+`Session offer` defaults to `ask`, so a new conversation offers Prism for work that changes documented intent, and `off` stops the offer.
 A missing BDD harness uses `none`, making feature files specification-only.
 
 - Don't
@@ -97,6 +98,7 @@ A missing BDD harness uses `none`, making feature files specification-only.
 ## Interaction
 - Interaction style: structured
 - Review browser: auto
+- Session offer: ask
 
 ## Constraints
 - <Project prohibitions and sign-off requirements.>

@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Run or resume an initiative: design one contract per scope, gate it, start each planned slice, implement and verify it in a fresh session, review it only when marked, and keep the user's gates. Use only when the user or a coordinating agent asks to run or resume a named initiative, issue, or idea through Prism."
+description: "Run or resume an initiative: design one contract per scope, gate it, start each planned slice, implement and verify it in a fresh session, review it only when marked, and keep the user's gates. Use when the user asks, or agrees when offered, to run or resume an initiative, issue, or idea through Prism, or when a coordinating agent asks."
 argument-hint: '[initiative]'
 sdm: "0.3"
 ---
