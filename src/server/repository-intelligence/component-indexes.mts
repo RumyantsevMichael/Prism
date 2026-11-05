@@ -4,7 +4,7 @@ import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { componentOf, listsComponents, readComponents } from "../workflow/components.mjs";
 import { NativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { semanticError } from "./native-semantic-runtime.mjs";
-import type { ComponentRuntime, ComponentState, Diagnostic, NativeSource, Preparation, SearchResult } from "./repository-unit-types.mjs";
+import type { ComponentRuntime, ComponentState, Diagnostic, IndexMetadata, NativeSource, Preparation, PreparedIndex, SearchResult, SourceSnapshot } from "./repository-unit-types.mjs";
 
 // A repository that declares components has one native index per component. Each component's source scans only that component's files,
 // and a call prepares and reads only the components that hold the paths it names, or every component that holds a file.
@@ -75,6 +75,46 @@ export function componentResult(components: ComponentState[], snapshot: string):
   const diagnostics = missing.length ? [{ code: "components_missing", message: `The result does not include every component it selected: ${named.join("; ")}.`, components: missing.map(entry => entry.component) }] : [];
   const indexRevision = included.length ? sha(included.map(entry => `${entry.component} ${entry.indexRevision}\n`).join("")) : null;
   return { components, status, diagnostics, snapshot, indexRevision };
+}
+
+/** The diagnostics of a result: the components_missing diagnostic first, then each selected component's own diagnostics, except a failed one's, whose failure that diagnostic names. */
+export function componentDiagnostics(result: ComponentResult, preparations: Preparation[]): Diagnostic[] {
+  return [...result.diagnostics, ...result.components.flatMap((state, index) => state.status === "failed" ? [] : preparations[index].diagnostics.map(item => ({ ...item, component: state.component })))];
+}
+
+/**
+ * One index over the included components, as if one index held their units, edges, references, coverage, and diagnostics, so the structural reports
+ * and graph expansion run over their union. Unit identifiers never repeat between component indexes, so the union needs no renaming; units keep
+ * one index's file order, and the union's structure is complete only when every component's structure is. The union is never searched itself:
+ * a semantic search asks each component's index and merges the answers.
+ */
+export function unionIndex(included: { component: string; prepared: PreparedIndex }[], snapshot: string, revision: string): PreparedIndex {
+  const indexes = included.map(entry => entry.prepared.index), [first] = included.map(entry => entry.prepared);
+  const merge = (key: "syntaxCoverage" | "tokenCounts" | "structureCounts") => indexes.some(index => index[key]) ? Object.assign({}, ...indexes.map(index => index[key] ?? {})) : undefined;
+  const sum = (key: keyof IndexMetadata["counts"]) => indexes.reduce((total, index) => total + (index.counts[key] ?? 0), 0);
+  const index: IndexMetadata = {
+    schemaVersion: 1, chunkerVersion: first.index.chunkerVersion, modelIdentity: first.index.modelIdentity, snapshot,
+    // Array sort is stable, so units of one file keep their index's order.
+    units: indexes.flatMap(item => item.units).sort((left, right) => left.file === right.file ? 0 : left.file < right.file ? -1 : 1),
+    edges: indexes.flatMap(item => item.edges),
+    // An index built before the graph recorded library call names has none, and the union has none only when no component has them.
+    unresolvedReferences: indexes.some(item => item.unresolvedReferences) ? indexes.flatMap(item => item.unresolvedReferences ?? []) : undefined,
+    fileCoverage: Object.assign({}, ...indexes.map(item => item.fileCoverage)), syntaxCoverage: merge("syntaxCoverage"),
+    diagnostics: included.flatMap(entry => entry.prepared.index.diagnostics.map(item => ({ ...item, component: entry.component }))),
+    counts: { files: sum("files"), units: sum("units"), fragments: sum("fragments"), searchExcludedFiles: sum("searchExcludedFiles"), reusedEmbeddings: sum("reusedEmbeddings"), newEmbeddings: sum("newEmbeddings") },
+    structureComplete: indexes.every(item => item.structureComplete), assetIdentity: first.index.assetIdentity, tokenCounts: merge("tokenCounts"), structureCounts: merge("structureCounts"),
+    resources: { rssBytes: Math.max(...indexes.map(item => item.resources.rssBytes)), peakRssBytes: Math.max(...indexes.map(item => item.resources.peakRssBytes)) }
+  };
+  return { runtime: first.runtime, modelDirectory: first.modelDirectory, modelIdentity: first.modelIdentity, assetIdentity: first.assetIdentity, index, indexPath: "", revision };
+}
+
+/** The source files of the given components as one snapshot in path order, identified by the selection's snapshot. */
+export async function unionSnapshot(sources: NativeSource[], snapshot: string): Promise<SourceSnapshot> {
+  const snapshots = [];
+  for (const source of sources) snapshots.push(await source.snapshot());
+  const files = snapshots.flatMap(item => item.files).sort((left, right) => left.file === right.file ? 0 : left.file < right.file ? -1 : 1);
+  return { root: snapshots[0]?.root ?? "", sourceFingerprint: snapshot, commit: snapshots[0]?.commit ?? `snapshot:${snapshot}`, files,
+    filesByPath: new Map(files.map(file => [file.file, file])), complete: snapshots.every(item => item.complete) };
 }
 
 /** A component's search: null when its index did not answer, so it adds no result. */

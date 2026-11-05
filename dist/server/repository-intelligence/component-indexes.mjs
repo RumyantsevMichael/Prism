@@ -61,6 +61,48 @@ function componentResult(components, snapshot) {
 `).join("")) : null;
   return { components, status, diagnostics, snapshot, indexRevision };
 }
+function componentDiagnostics(result, preparations) {
+  return [...result.diagnostics, ...result.components.flatMap((state, index) => state.status === "failed" ? [] : preparations[index].diagnostics.map((item) => ({ ...item, component: state.component })))];
+}
+function unionIndex(included, snapshot, revision) {
+  const indexes = included.map((entry) => entry.prepared.index), [first] = included.map((entry) => entry.prepared);
+  const merge = (key) => indexes.some((index2) => index2[key]) ? Object.assign({}, ...indexes.map((index2) => index2[key] ?? {})) : void 0;
+  const sum = (key) => indexes.reduce((total, index2) => total + (index2.counts[key] ?? 0), 0);
+  const index = {
+    schemaVersion: 1,
+    chunkerVersion: first.index.chunkerVersion,
+    modelIdentity: first.index.modelIdentity,
+    snapshot,
+    // Array sort is stable, so units of one file keep their index's order.
+    units: indexes.flatMap((item) => item.units).sort((left, right) => left.file === right.file ? 0 : left.file < right.file ? -1 : 1),
+    edges: indexes.flatMap((item) => item.edges),
+    // An index built before the graph recorded library call names has none, and the union has none only when no component has them.
+    unresolvedReferences: indexes.some((item) => item.unresolvedReferences) ? indexes.flatMap((item) => item.unresolvedReferences ?? []) : void 0,
+    fileCoverage: Object.assign({}, ...indexes.map((item) => item.fileCoverage)),
+    syntaxCoverage: merge("syntaxCoverage"),
+    diagnostics: included.flatMap((entry) => entry.prepared.index.diagnostics.map((item) => ({ ...item, component: entry.component }))),
+    counts: { files: sum("files"), units: sum("units"), fragments: sum("fragments"), searchExcludedFiles: sum("searchExcludedFiles"), reusedEmbeddings: sum("reusedEmbeddings"), newEmbeddings: sum("newEmbeddings") },
+    structureComplete: indexes.every((item) => item.structureComplete),
+    assetIdentity: first.index.assetIdentity,
+    tokenCounts: merge("tokenCounts"),
+    structureCounts: merge("structureCounts"),
+    resources: { rssBytes: Math.max(...indexes.map((item) => item.resources.rssBytes)), peakRssBytes: Math.max(...indexes.map((item) => item.resources.peakRssBytes)) }
+  };
+  return { runtime: first.runtime, modelDirectory: first.modelDirectory, modelIdentity: first.modelIdentity, assetIdentity: first.assetIdentity, index, indexPath: "", revision };
+}
+async function unionSnapshot(sources, snapshot) {
+  const snapshots = [];
+  for (const source of sources) snapshots.push(await source.snapshot());
+  const files = snapshots.flatMap((item) => item.files).sort((left, right) => left.file === right.file ? 0 : left.file < right.file ? -1 : 1);
+  return {
+    root: snapshots[0]?.root ?? "",
+    sourceFingerprint: snapshot,
+    commit: snapshots[0]?.commit ?? `snapshot:${snapshot}`,
+    files,
+    filesByPath: new Map(files.map((file) => [file.file, file])),
+    complete: snapshots.every((item) => item.complete)
+  };
+}
 async function searchComponents(included, limit) {
   const answers = [];
   for (const entry of included) answers.push(await entry.search());
@@ -81,6 +123,7 @@ async function selectedComponents(projectRoot, declaration, paths, expectedSnaps
   return { root, selected, snapshot };
 }
 export {
+  componentDiagnostics,
   componentResult,
   componentSources,
   componentStates,
@@ -89,5 +132,7 @@ export {
   searchComponents,
   selectComponents,
   selectedComponents,
-  selectionSnapshot
+  selectionSnapshot,
+  unionIndex,
+  unionSnapshot
 };
