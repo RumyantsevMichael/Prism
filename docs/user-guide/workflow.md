@@ -111,7 +111,7 @@ A started slice whose start content Git has removed fails its next run with `sta
 A done slice's refs are still needed while another slice of its initiative is started and not done, because Prism leaves the done slice's verified changes out of that slice's boundary check only while Git can read the done slice's start content and its latest passing run.
 Deleting a done slice's start or passed ref before then can therefore make that other slice fail with reason `component_boundary` for the done slice's changes.
 That other slice can be in another checkout, because checkouts that share a `Store` share records, while only the refs of the checkout that ran the done slice keep its content.
-Delete an initiative's refs only when no slice of it is started and not done in any checkout that shares this Git repository or its records, for example after the initiative is shipped and its records are removed.
+Delete an initiative's refs only after the initiative is shipped and `remove_records` has removed its records in every checkout that shares this Git repository, because until then any slice of it may still read them, a deferred slice included.
 Delete a single slice's refs only when you will set that slice back to `not-started`.
 A removed checkout's refs are harmless to keep, so leave them until you can delete their initiative's refs.
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
