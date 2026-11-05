@@ -779,14 +779,22 @@ const tools = [
                       op: { const: "ask" },
                       kind: { type: "string", enum: ["visual-review", "correctness", "decision", "assistance"] },
                       slice: { type: "string", minLength: 1 },
-                      question: { type: "string", minLength: 1, maxLength: 4000 },
+                      question: { type: "string", minLength: 1, maxLength: 4000, description: "The question itself, one or two plain sentences." },
+                      context: { type: "string", minLength: 1, maxLength: 8000, description: "Markdown the person reads before answering: what happened, what was tried, what the choice changes, and a concrete example. Required for decision and assistance gates, so a person who has not followed the run can decide from the gate alone." },
                       artifacts: { type: "array", maxItems: 50, items: { type: "string", minLength: 1 } },
                       options: {
                         type: "array",
                         minItems: 1,
                         maxItems: 8,
-                        description: "Choices the user can pick in the review browser; decision gates only.",
-                        items: { type: "object", required: ["id", "label"], additionalProperties: false, properties: { id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, label: { type: "string", minLength: 1, maxLength: 200 } } }
+                        description: "Choices the user can pick in the review browser; decision gates only, each with the consequence of picking it.",
+                        items: { type: "object", required: ["id", "label", "consequence"], additionalProperties: false, properties: { id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, label: { type: "string", minLength: 1, maxLength: 200 }, consequence: { type: "string", minLength: 1, maxLength: 300, description: "One sentence on what happens if the person picks this option." } } }
+                      },
+                      recommended: {
+                        type: "object",
+                        required: ["reason"],
+                        additionalProperties: false,
+                        description: "Required for decision gates: the answer you recommend, as one of the options when the gate has options, and why.",
+                        properties: { option: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, reason: { type: "string", minLength: 1, maxLength: 500 } }
                       }
                     }
                   },

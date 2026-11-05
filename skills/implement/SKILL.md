@@ -46,11 +46,11 @@ A passing run of a slice whose review mark is `none` marks it done.
 
 ## 4. Return the status
 
-Return only these fields, one line each:
+Return only these fields, one line each, except that each question is a [blocker](../workflow/SKILL.md#common-terms):
 
 ```text
 result: DONE | BLOCKED
 commit: <last commit, or none>
 summary: <one sentence on what changed>
-questions: <exact questions, or none>
+questions: <each a blocker, or none>
 ```

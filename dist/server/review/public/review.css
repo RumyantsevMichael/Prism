@@ -5004,6 +5004,89 @@ th {
   margin: 0.45rem 0 0.35rem;
 }
 
+/* The situation and the guidance an agent wrote for the person, kept compact inside the card. */
+.gate-context {
+  border-left: 3px solid var(--line-strong);
+  font-size: 0.84rem;
+  margin: 0.2rem 0 0.5rem;
+  max-width: 72ch;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-left: 0.7rem;
+}
+
+.gate-context > :first-child {
+  margin-top: 0;
+}
+
+.gate-context > :last-child {
+  margin-bottom: 0;
+}
+
+.gate-context pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.gate-context-plain {
+  white-space: pre-wrap;
+}
+
+.gate-guidance {
+  display: grid;
+  font-size: 0.82rem;
+  gap: 0.35rem;
+  margin: 0 0 0.5rem;
+  max-width: 72ch;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gate-consequences {
+  display: grid;
+  gap: 0.3rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gate-consequences li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.4rem;
+  min-width: 0;
+}
+
+.gate-consequence {
+  color: var(--ink-muted);
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.gate-option-label {
+  font-weight: 650;
+  min-width: 0;
+}
+
+.gate-recommendation {
+  margin: 0;
+}
+
+.gate-tag {
+  background: var(--accent-soft);
+  border-radius: 0.35rem;
+  color: var(--accent-strong);
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 650;
+  padding: 0.05rem 0.4rem;
+  vertical-align: 0.05rem;
+}
+
+.choice-button.is-recommended {
+  border-style: dashed;
+}
+
 .attention-artifacts {
   align-items: center;
   display: flex;

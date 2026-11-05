@@ -18,7 +18,7 @@ async function project(context) {
   await mkdir(path.join(root, "docs/plans/reports"), { recursive: true });
   const initiative = "reports";
   const created = await updateCoordinationState({ projectRoot: root, initiative, expectedRevision: null, changes: { gateOperations: [
-    { op: "ask", kind: "decision", slice: "authorize", question: "Fresh login or active session?", artifacts: [], options: [{ id: "fresh-login", label: "Require a fresh login" }, { id: "session", label: "Accept the active session" }] },
+    { op: "ask", kind: "decision", slice: "authorize", question: "Fresh login or active session?", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [], options: [{ id: "fresh-login", label: "Require a fresh login", consequence: "The run continues with this choice." }, { id: "session", label: "Accept the active session", consequence: "The run continues with this choice." }], recommended: { option: "fresh-login", reason: "It keeps the current behavior." } },
     { op: "ask", kind: "visual-review", question: "Review the design.", artifacts: [] }
   ] } });
   return { root, initiative, gates: created.openedGates.map((gate) => gate.id) };

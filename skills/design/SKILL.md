@@ -118,7 +118,7 @@ Write PlantUML source only: Prism parses each `.puml` file when the design is ac
    - `FIT`: a `split` of the scope into its planned slices, their `set_dependencies` operations, and an `accept_design` operation per slice with its frozen tests, review recommendation, and `component`, which a repository without declared components leaves out; for a one-slice plan, only `accept_design` on the scope.
    - `SPLIT`: a `split` into the parts with the evidence, and their `set_dependencies` operations.
 2. When Prism refuses the proposal, fix the design and propose again; on `revision_conflict`, read the revision again, and on a refusal of the components declaration, such as `component_invalid`, return `BLOCKED` with its message.
-3. Return `PROPOSED` with the scope's `slice.md` path, the failing test result from step 7 of section 3, and open questions, or `BLOCKED` with the exact question or missing fact.
+3. Return `PROPOSED` with the scope's `slice.md` path, the failing test result from step 7 of section 3, and open questions, or `BLOCKED`, each question written as a [blocker](../workflow/SKILL.md#common-terms).
 
 ## 7. Revise a design
 
