@@ -339,9 +339,11 @@ function sharedStore(entry) {
   return store.kind === "remote" && store.label ? `remote:${store.label}` : null;
 }
 
-// A workspace is named after its store: a folder store by its folder, because each checkout may spell the configured path differently,
+// A workspace takes the name kept in its store when one is set.
+// Otherwise it is named after its store: a folder store by its folder, because each checkout may spell the configured path differently,
 // and a remote store by its repository, so the name reads as a name rather than an address.
 function storeName(store) {
+  if (store.workspaceName) return store.workspaceName;
   if (store.kind === "folder" && store.location) return folderName(store.location);
   if (store.kind === "remote" && store.label) return store.label.replace(/[\\/]+$/, "").split(/[\\/:]/).filter(Boolean).pop()?.replace(/\.git$/i, "") || store.label;
   return store.label ?? "records";

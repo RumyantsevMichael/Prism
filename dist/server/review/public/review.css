@@ -2315,13 +2315,16 @@ th {
     margin-top: 0.8rem;
   }
 
+  /* A wrapping column sizes its line to the widest item, so a long title would stretch past the card. */
   .diagram-header {
     align-items: flex-start;
     flex-direction: column;
+    flex-wrap: nowrap;
   }
 
   .diagram-title {
     align-self: stretch;
+    flex: 0 0 auto;
   }
 
   .stat-row {

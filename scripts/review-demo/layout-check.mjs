@@ -115,7 +115,8 @@ try {
       page.on("pageerror", (error) => record(`page error: ${error.message}`, current));
       page.on("console", (message) => {
         // The vendored PlantUML runtime sets a style attribute while it renders, which the page's style policy refuses without effect on the result.
-        if (message.type() === "error" && !message.text().startsWith("Refused to apply inline style")) record(`console error: ${message.text().split("\n")[0]}`, current);
+        // Chromium words that refusal either way, depending on its version.
+        if (message.type() === "error" && !/^(Refused to apply inline style|Applying inline style violates)/.test(message.text())) record(`console error: ${message.text().split("\n")[0]}`, current);
       });
       const visit = async (project, ref, label = ref) => {
         current = `${viewport}/${theme} ${project.name}: ${label}`;

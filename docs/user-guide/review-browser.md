@@ -156,8 +156,8 @@ See [Watch an index build in the review browser](repository-intelligence.md#watc
 
 All Prism sessions of one user share one review app on one local port, and each project has its own page there.
 The project switcher names the project as `repository/branch`, falls back to the worktree folder without a branch, and shows a detached checkout by its commit.
-A checkout of a workspace shows the workspace's name first, as `workspace · repository/branch`.
-Checkouts whose records live in one shared store form one workspace, named after the store's folder or, for a remote store, after its repository, with one count of open questions and each checkout listed under it as `repository / branch`, because their roadmap, initiatives, and questions are the same, whichever repository each checkout belongs to.
+A checkout of a workspace shows the workspace's name first, as `workspace · repository/branch`; see [Name the workspace](shared-records.md#name-the-workspace).
+Checkouts whose records live in one shared store form one workspace, with the name kept in its store, or until one is set named after the store's folder or, for a remote store, after its repository, with one count of open questions and each checkout listed under it as `repository / branch`, because their roadmap, initiatives, and questions are the same, whichever repository each checkout belongs to.
 Choose the workspace's name to open its records through the checkout already open, else one an agent session is using, else the one you used last.
 Every checkout of a workspace shows the same roadmap, initiatives, and questions, so choose a checkout only for its own source files and index.
 Every other recent project is listed under its repository, even a repository with one checkout, with its open questions.

@@ -6,6 +6,7 @@ import { ConservationStore, conservationStore } from "../conservation/conservati
 import { withFileLock } from "../workflow/artifact-store.mjs";
 import { useManagedStores } from "../workflow/record-store-remote.mjs";
 import { describeRecordStore } from "../workflow/record-store.mjs";
+import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import {
   REVIEW_APP_PROTOCOL,
   lockBase,
@@ -292,7 +293,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       live: live(project, now),
       gates: await gateCount(project.root),
       // Checkouts whose records resolve to one store share their records, so the switcher lists them as one project.
-      store: await describeRecordStore(project.root).then(({ kind, label, location }) => ({ kind, label, location })).catch(() => null),
+      store: await describeRecordStore(project.root).then(async ({ kind, label, location }) => ({ kind, label, location, workspaceName: kind === "project" ? null : await readWorkspaceName(project.root) })).catch(() => null),
       indexing: (await readIndexingStatus(project.root, intelligenceDirectoriesOf(project)).catch(() => null))?.state ?? null,
       url: project.review.reviewUrl([]),
       lastSeen: project.lastSeen

@@ -101,6 +101,14 @@ git clone git@github.com:you/prism-store.git ../prism-store
 Prism then syncs it as it syncs a remote store.
 Without `Store sync: on`, Prism never runs Git in a path store, and you can commit and push it yourself.
 
+## Name the workspace
+
+The checkouts that share one store form one workspace, and the store keeps its name, so every checkout, repository, and machine shows the same name.
+Ask the agent to name the workspace, and it records the name with the `set_workspace_name` operation of `update_roadmap`.
+A name is one line of at most 64 characters, and an empty name clears it.
+The name is kept in the store's roadmap record and appears as a `Workspace:` line at the top of the generated roadmap Markdown.
+Until a name is set, the review browser names the workspace after the store's folder, or after its repository for a remote store, such as `prism-store`.
+
 ## Name each repository
 
 One store can hold the records of several repositories, so each repository that uses a store must name itself with a `Repository` line under `## Workspace`, beside `Store`.

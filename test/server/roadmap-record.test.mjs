@@ -8,7 +8,7 @@ import { splitEvidence } from "./fixtures/split-evidence.mjs";
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-roadmap-data-")));
 process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
-const { getRoadmap, updateRoadmap } = await import("../../dist/server/workflow/roadmap.mjs");
+const { getRoadmap, readWorkspaceName, updateRoadmap } = await import("../../dist/server/workflow/roadmap.mjs");
 const { updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 test.after(() => rm(privateData, { recursive: true, force: true }));
@@ -22,6 +22,20 @@ async function project(context, paths = "- Roadmap: product/roadmap.md\n- Plans 
 }
 
 const add = (id, band, extra = {}) => ({ op: "add_initiative", id, title: `Title ${id}`, intent: `Intent ${id}.`, band, ...extra });
+
+test("keeps one workspace name in the roadmap record and clears it with an empty name", async (context) => {
+  const projectRoot = await project(context);
+  assert.equal(await readWorkspaceName(projectRoot), null);
+  const named = await updateRoadmap({ projectRoot, expectedRevision: null, actor: "workflow-init", operations: [{ op: "set_workspace_name", name: "  Platform   team  " }] });
+  assert.equal(named.record.workspaceName, "Platform team");
+  assert.equal(await readWorkspaceName(projectRoot), "Platform team");
+  assert.match(await readFile(path.join(projectRoot, "product/roadmap.md"), "utf8"), /^Workspace: Platform team$/m);
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: named.revision, actor: "workflow-init", operations: [{ op: "set_workspace_name", name: "x".repeat(65) }] }), (error) => error.code === "validation_failed");
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: named.revision, actor: "workflow-init", operations: [{ op: "set_workspace_name", name: "bell\u0007" }] }), (error) => error.code === "validation_failed");
+  const cleared = await updateRoadmap({ projectRoot, expectedRevision: named.revision, actor: "workflow-init", operations: [{ op: "set_workspace_name", name: "" }] });
+  assert.equal(Object.hasOwn(cleared.record, "workspaceName"), false);
+  assert.equal(await readWorkspaceName(projectRoot), null);
+});
 
 test("records initiative decisions and orders them within bands", async (context) => {
   const projectRoot = await project(context);
