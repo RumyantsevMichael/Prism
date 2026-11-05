@@ -1,5 +1,7 @@
 import { openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
+import { componentResult, componentStates, indexComponents, prepareComponents, selectedComponents } from "./component-indexes.mjs";
+import type { Declaration } from "./component-indexes.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { moduleInterfaceReport } from "./module-interfaces.mjs";
@@ -11,7 +13,7 @@ import { complexUnits } from "./complex-units.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
 import type { AnalysisReceipt, SearchReceipt } from "../conservation/conservation-types.mjs";
-import type { SourceUnit, Domain, NativeSource, Neighbor, Preparation, PreparedIndex, RetrievalEvidence, SearchFilters, SearchHints, SearchHit, SearchResult, SemanticRuntime, SourceRange, StructuralEvidence } from "./repository-unit-types.mjs";
+import type { SourceUnit, Domain, NativeSource, Neighbor, Preparation, PreparedIndex, RetrievalEvidence, SearchFilters, SearchHints, SearchHit, SearchResult, SemanticRuntime, ComponentRuntime, SourceRange, StructuralEvidence } from "./repository-unit-types.mjs";
 
 interface ConceptSearchInput { projectRoot: string; query: string; filters?: SearchFilters; expectedSnapshot?: string; snapshotId?: string; limit?: number }
 interface SharedDependencyInput { projectRoot: string; filters?: { paths?: string[] }; includeTests?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number }
@@ -26,19 +28,19 @@ const pinned = (hit: SearchHit) => hit.reasons?.some(reason => ["explicit-design
 export const NATIVE_INTELLIGENCE_TOOLS = [
   {
     name: "discover_repository_intelligence",
-    description: "Read native runtime, model, index, and structural capability status without downloads or index preparation.",
+    description: "Read native runtime, model, index, and structural capability status without downloads or index preparation. In a repository that declares components, components lists each component's index status in component order.",
     inputSchema: { type: "object", properties: { projectRoot: { type: "string" } }, required: ["projectRoot"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "get_repository_intelligence_status",
-    description: "Read native preparation progress, versions, coverage, and diagnostics. Optionally wait up to thirty seconds for an existing preparation.",
+    description: "Read native preparation progress, versions, coverage, and diagnostics. Optionally wait up to thirty seconds for an existing preparation. In a repository that declares components, each component has its own index and components lists each one's status, progress, coverage, and failure in component order.",
     inputSchema: { type: "object", properties: { projectRoot: { type: "string" }, waitMs: { type: "integer", minimum: 0, maximum: 30000, default: 0 }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }, required: ["projectRoot"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "search_repository_concepts",
-    description: "Search code, instructions, documentation, and configuration for reusable concepts. Downloads pinned runtime/model assets on first use and writes only private caches. Similarity ranks candidates and does not establish conceptual equivalence.",
+    description: "Search code, instructions, documentation, and configuration for reusable concepts. Downloads pinned runtime/model assets on first use and writes only private caches. Similarity ranks candidates and does not establish conceptual equivalence. In a repository that declares components, each component has its own index: filters.paths reads only the components that hold those paths, and a search without paths reads every component that holds a file. components gives each read component's status; partial means some of them are not included, and the components_missing diagnostic names each one with why.",
     inputSchema: { type: "object", required: ["projectRoot", "query"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, query: { type: "string", minLength: 1, maxLength: 4096 },
       expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
@@ -211,6 +213,8 @@ export class SemanticNativeRepositoryIntelligence {
 }
 
 export async function prepareNativeProvider(projectRoot: string, options: ProviderOptions = {}) {
+  // An invalid component declaration refuses every native index tool before any preparation.
+  if (!options.nativeSource) await indexComponents(projectRoot);
   const source = options.nativeSource || await openNativeRepositoryIntelligence(projectRoot, options.source) as unknown as NativeSource;
   const runtime = options.runtime || nativeSemanticRuntime;
   const preparation = await runtime.prepare(source, options.expectedSnapshot, options.waitMs);
@@ -219,6 +223,8 @@ export async function prepareNativeProvider(projectRoot: string, options: Provid
 
 export async function searchRepositoryConcepts(input: ConceptSearchInput, options: ProviderOptions = {}) {
   validateConceptSearch(input);
+  const declaration = options.nativeSource ? null : await indexComponents(input.projectRoot);
+  if (declaration && !input.snapshotId) return searchComponentIndexes(input, declaration, options);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, results: [] };
@@ -247,6 +253,41 @@ export async function searchRepositoryConcepts(input: ConceptSearchInput, option
     snapshotId: input.snapshotId || null, receiptId,
     indexRevision: provider.prepared?.revision || null, modelIdentity: provider.prepared?.modelIdentity || null,
     capabilities, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, results };
+}
+
+// In a repository with components, the search prepares the components that its paths select, or every component that holds a file, and answers
+// from the indexes of those that are ready, naming each component it left out.
+async function searchComponentIndexes(input: ConceptSearchInput, declaration: Declaration, options: ProviderOptions) {
+  const runtime = (options.runtime || nativeSemanticRuntime) as ComponentRuntime, limit = input.limit || 10;
+  const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot);
+  const preparations = await prepareComponents(runtime, selected, options.waitMs);
+  const states = componentStates(selected, preparations);
+  const waiting = componentResult(states, snapshot);
+  if (waiting.status === "preparing") return { status: waiting.status, preparationId: null, snapshot, diagnostics: waiting.diagnostics, components: waiting.components, results: [] };
+  const providers: SemanticNativeRepositoryIntelligence[] = [];
+  const results: SearchResult[] = [];
+  for (const [index, state] of states.entries()) {
+    if (state.status !== "included") continue;
+    const provider = new SemanticNativeRepositoryIntelligence(selected[index].source, preparations[index], runtime);
+    const found = await provider.semanticSearch(input.query, input.filters, limit);
+    // An index that fails to answer is not part of the result.
+    if (found === null) { const [failure] = provider.preparation.diagnostics.slice(-1); states[index] = { ...state, status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } }; continue; }
+    providers.push(provider);
+    results.push(...found);
+  }
+  for (const provider of providers) await provider.verifySnapshot();
+  const result = componentResult(states, snapshot), prepared = providers.map(provider => provider.prepared!);
+  const diagnostics = [...result.diagnostics, ...selected.flatMap((entry, index) => states[index].status === "failed" ? [] : preparations[index].diagnostics.map(item => ({ ...item, component: entry.component })))];
+  const capabilities = { lexicalSearch: true, semanticSearch: prepared.length > 0, hybridSearch: prepared.length > 0, symbolGraph: prepared.length > 0, verifiedSource: true, documentGraph: prepared.length > 0 };
+  const candidates = results.slice(0, limit), first = prepared[0];
+  const receipt: SearchReceipt = { kind: "search", schemaVersion: 1, project: (await conservationStore.location(input.projectRoot)).root,
+    snapshotId: null, snapshot, query: input.query, filters: input.filters || null, limit, status: result.status, capabilities, modelIdentity: first?.modelIdentity || null, indexRevision: result.indexRevision,
+    versions: { graph: "1.6.0", extractor: first?.index.chunkerVersion || "unavailable", tokenizer: first?.modelIdentity || "unavailable", runtime: first?.assetIdentity || "unavailable" },
+    coverage: prepared.length ? { files: Object.assign({}, ...prepared.map(item => item.index.fileCoverage)), counts: prepared.map(item => item.index.counts) } : null,
+    diagnostics, candidates };
+  const receiptId = await conservationStore.put(input.projectRoot, receipt);
+  return { status: result.status, preparationId: null, snapshot, snapshotId: null, receiptId, indexRevision: result.indexRevision, modelIdentity: first?.modelIdentity || null,
+    capabilities, diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, components: result.components, results: candidates };
 }
 
 // Both repository analyses take a snapshot, an optional path filter, a result limit, and their own boolean switches.

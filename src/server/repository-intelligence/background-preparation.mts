@@ -29,7 +29,7 @@ async function runtimeAvailable() {
 // in the same progress file, unless a build for the project is already running in this process and owns that file.
 async function recordFailure(projectRoot: string, error: Error & { code?: unknown }) {
   const location = await nativeSemanticRuntime.location(projectRoot);
-  if (nativeSemanticRuntime.jobs.get(location.root)?.status === "preparing") return;
+  if (["waiting", "preparing"].includes(nativeSemanticRuntime.jobs.get(location.directory)?.status ?? "")) return;
   await privateDirectory(location.directory);
   await new ProgressRecorder(location.directory, "background").fail([{ code: typeof error.code === "string" ? error.code : "preparation_failed", message: error.message,
     recovery: "Retry preparation after correcting the reported runtime, network, or source problem." }]);

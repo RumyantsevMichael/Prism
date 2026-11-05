@@ -1,6 +1,7 @@
 // Generated from src/server/repository-intelligence/semantic-native-provider.mts by scripts/native-build/compile.mjs.
 import { openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
+import { componentResult, componentStates, indexComponents, prepareComponents, selectedComponents } from "./component-indexes.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { moduleInterfaceReport } from "./module-interfaces.mjs";
@@ -17,19 +18,19 @@ const pinned = (hit) => hit.reasons?.some((reason) => ["explicit-design-referenc
 const NATIVE_INTELLIGENCE_TOOLS = [
   {
     name: "discover_repository_intelligence",
-    description: "Read native runtime, model, index, and structural capability status without downloads or index preparation.",
+    description: "Read native runtime, model, index, and structural capability status without downloads or index preparation. In a repository that declares components, components lists each component's index status in component order.",
     inputSchema: { type: "object", properties: { projectRoot: { type: "string" } }, required: ["projectRoot"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "get_repository_intelligence_status",
-    description: "Read native preparation progress, versions, coverage, and diagnostics. Optionally wait up to thirty seconds for an existing preparation.",
+    description: "Read native preparation progress, versions, coverage, and diagnostics. Optionally wait up to thirty seconds for an existing preparation. In a repository that declares components, each component has its own index and components lists each one's status, progress, coverage, and failure in component order.",
     inputSchema: { type: "object", properties: { projectRoot: { type: "string" }, waitMs: { type: "integer", minimum: 0, maximum: 3e4, default: 0 }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }, required: ["projectRoot"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "search_repository_concepts",
-    description: "Search code, instructions, documentation, and configuration for reusable concepts. Downloads pinned runtime/model assets on first use and writes only private caches. Similarity ranks candidates and does not establish conceptual equivalence.",
+    description: "Search code, instructions, documentation, and configuration for reusable concepts. Downloads pinned runtime/model assets on first use and writes only private caches. Similarity ranks candidates and does not establish conceptual equivalence. In a repository that declares components, each component has its own index: filters.paths reads only the components that hold those paths, and a search without paths reads every component that holds a file. components gives each read component's status; partial means some of them are not included, and the components_missing diagnostic names each one with why.",
     inputSchema: { type: "object", required: ["projectRoot", "query"], additionalProperties: false, properties: {
       projectRoot: { type: "string" },
       query: { type: "string", minLength: 1, maxLength: 4096 },
@@ -251,6 +252,7 @@ class SemanticNativeRepositoryIntelligence {
   }
 }
 async function prepareNativeProvider(projectRoot, options = {}) {
+  if (!options.nativeSource) await indexComponents(projectRoot);
   const source = options.nativeSource || await openNativeRepositoryIntelligence(projectRoot, options.source);
   const runtime = options.runtime || nativeSemanticRuntime;
   const preparation = await runtime.prepare(source, options.expectedSnapshot, options.waitMs);
@@ -258,6 +260,8 @@ async function prepareNativeProvider(projectRoot, options = {}) {
 }
 async function searchRepositoryConcepts(input, options = {}) {
   validateConceptSearch(input);
+  const declaration = options.nativeSource ? null : await indexComponents(input.projectRoot);
+  if (declaration && !input.snapshotId) return searchComponentIndexes(input, declaration, options);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
   if (preparation.status === "preparing") return { ...preparation, prepared: void 0, results: [] };
@@ -306,6 +310,66 @@ async function searchRepositoryConcepts(input, options = {}) {
     diagnostics: provider.preparation.diagnostics.slice(0, 20),
     diagnosticCount: provider.preparation.diagnostics.length,
     results
+  };
+}
+async function searchComponentIndexes(input, declaration, options) {
+  const runtime = options.runtime || nativeSemanticRuntime, limit = input.limit || 10;
+  const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot);
+  const preparations = await prepareComponents(runtime, selected, options.waitMs);
+  const states = componentStates(selected, preparations);
+  const waiting = componentResult(states, snapshot);
+  if (waiting.status === "preparing") return { status: waiting.status, preparationId: null, snapshot, diagnostics: waiting.diagnostics, components: waiting.components, results: [] };
+  const providers = [];
+  const results = [];
+  for (const [index, state] of states.entries()) {
+    if (state.status !== "included") continue;
+    const provider = new SemanticNativeRepositoryIntelligence(selected[index].source, preparations[index], runtime);
+    const found = await provider.semanticSearch(input.query, input.filters, limit);
+    if (found === null) {
+      const [failure] = provider.preparation.diagnostics.slice(-1);
+      states[index] = { ...state, status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } };
+      continue;
+    }
+    providers.push(provider);
+    results.push(...found);
+  }
+  for (const provider of providers) await provider.verifySnapshot();
+  const result = componentResult(states, snapshot), prepared = providers.map((provider) => provider.prepared);
+  const diagnostics = [...result.diagnostics, ...selected.flatMap((entry, index) => states[index].status === "failed" ? [] : preparations[index].diagnostics.map((item) => ({ ...item, component: entry.component })))];
+  const capabilities = { lexicalSearch: true, semanticSearch: prepared.length > 0, hybridSearch: prepared.length > 0, symbolGraph: prepared.length > 0, verifiedSource: true, documentGraph: prepared.length > 0 };
+  const candidates = results.slice(0, limit), first = prepared[0];
+  const receipt = {
+    kind: "search",
+    schemaVersion: 1,
+    project: (await conservationStore.location(input.projectRoot)).root,
+    snapshotId: null,
+    snapshot,
+    query: input.query,
+    filters: input.filters || null,
+    limit,
+    status: result.status,
+    capabilities,
+    modelIdentity: first?.modelIdentity || null,
+    indexRevision: result.indexRevision,
+    versions: { graph: "1.6.0", extractor: first?.index.chunkerVersion || "unavailable", tokenizer: first?.modelIdentity || "unavailable", runtime: first?.assetIdentity || "unavailable" },
+    coverage: prepared.length ? { files: Object.assign({}, ...prepared.map((item) => item.index.fileCoverage)), counts: prepared.map((item) => item.index.counts) } : null,
+    diagnostics,
+    candidates
+  };
+  const receiptId = await conservationStore.put(input.projectRoot, receipt);
+  return {
+    status: result.status,
+    preparationId: null,
+    snapshot,
+    snapshotId: null,
+    receiptId,
+    indexRevision: result.indexRevision,
+    modelIdentity: first?.modelIdentity || null,
+    capabilities,
+    diagnostics: diagnostics.slice(0, 20),
+    diagnosticCount: diagnostics.length,
+    components: result.components,
+    results: candidates
   };
 }
 function validateAnalysis(value, booleans, extra = []) {

@@ -9,7 +9,7 @@ import { constants } from "node:fs";
 import { mkdir, lstat, realpath, readdir, open, rename, rm, chmod, utimes } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/artifact-store.mjs";
-import { ProgressRecorder, gitFingerprint, projectStorageKey, sameFingerprint, writeFreshness } from "./index-progress.mjs";
+import { ProgressRecorder, componentStorageKey, gitFingerprint, projectStorageKey, sameFingerprint, writeFreshness } from "./index-progress.mjs";
 const semanticError = (code, message) => Object.assign(new Error(message), { code });
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const supported = /* @__PURE__ */ new Set(["darwin-x64", "darwin-arm64", "linux-x64", "linux-arm64", "win32-x64"]);
@@ -28,6 +28,7 @@ const inside = (root, file) => {
   return !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`);
 };
 const indexMetadata = ({ chunks: _chunks, ...metadata }) => metadata;
+const busy = (job) => job?.status === "waiting" || job?.status === "preparing";
 const stableFailure = (error) => ["invalid_path", "lock_timeout", "stale_snapshot", "unsupported_runtime", "corrupt_asset", "resource_limit", "validation_failed"].includes(error.code || "") ? error.code : error.code === "snapshot-changed" ? "stale_snapshot" : "preparation_failed";
 async function privateDirectory(directory) {
   const parent = path.dirname(directory);
@@ -272,9 +273,16 @@ class NativeSemanticRuntime {
   }
   directory;
   manifestPath;
+  // The latest job of each storage location, the jobs of recent contents, and the component contents that reached a native limit in this process.
   jobs = /* @__PURE__ */ new Map();
   generations = /* @__PURE__ */ new Map();
+  limited = /* @__PURE__ */ new Map();
+  // One preparation runs at a time; the jobs waiting for it are in queue order, which a later call can change.
+  queue = [];
+  running = null;
+  // Settles when no job runs or waits.
   sequence = Promise.resolve();
+  idle;
   pinned;
   process;
   verifiedRuntime;
@@ -286,40 +294,95 @@ class NativeSemanticRuntime {
     }
     return this.pinned;
   }
-  async location(projectRoot) {
+  async location(projectRoot, component) {
     const root = await realpath(projectRoot);
     if (inside(root, this.directory)) throw semanticError("invalid_path", "Native storage must be outside the target project.");
-    return { root, directory: path.join(this.directory, "projects", projectStorageKey(root)) };
+    const key = component ? componentStorageKey(root, component.folder === "" ? "" : component.name) : projectStorageKey(root);
+    return { root, directory: path.join(this.directory, "projects", key) };
+  }
+  async published(directory) {
+    try {
+      return await readJson(path.join(directory, "current.json"));
+    } catch (error) {
+      if (error.code !== "ENOENT") return { diagnostics: [{ code: "corrupt_asset", message: "The previous index pointer is invalid. Rebuild the index." }] };
+    }
+    return void 0;
   }
   async status(projectRoot, waitMs = 0) {
     if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 3e4) throw semanticError("validation_failed", "waitMs must be from 0 through 30000.");
-    const location = await this.location(projectRoot), job = this.jobs.get(location.root);
-    if (waitMs && job?.status === "preparing") await boundedWait(job.promise, waitMs);
-    const manifest = await this.manifest();
-    let published;
-    try {
-      published = await readJson(path.join(location.directory, "current.json"));
-    } catch (error) {
-      if (error.code !== "ENOENT") published = { diagnostics: [{ code: "corrupt_asset", message: "The previous index pointer is invalid. Rebuild the index." }] };
-    }
+    const location = await this.location(projectRoot);
+    const { indexComponents, componentSources } = await import("./component-indexes.mjs");
+    const declaration = await indexComponents(location.root);
+    if (declaration) return this.componentStatus(location.root, componentSources(location.root, declaration), waitMs);
+    const job = this.jobs.get(location.directory);
+    if (waitMs && busy(job)) await boundedWait(job.promise, waitMs);
+    const published = await this.published(location.directory);
     return {
-      status: job?.status || (published?.snapshot ? "indexed" : "unprepared"),
+      status: job ? this.legacyStatus(job) : published?.snapshot ? "indexed" : "unprepared",
       preparationId: job?.id || null,
       snapshot: job?.snapshot || published?.snapshot || null,
       indexRevision: job?.revision || published?.revision || null,
       progress: job?.progress || null,
       coverage: job?.coverage || published?.coverage || null,
-      versions: {
-        runtime: manifest.assetVersion,
-        model: `${manifest.model.id}@${manifest.model.revision}`,
-        graph: "1.6.0",
-        chunker: job?.prepared?.index.chunkerVersion || published?.chunkerVersion || null
-      },
-      runtime: await this.availability(),
-      structuralCapabilities: { code: ["JavaScript", "TypeScript", "Python", "Go", "Rust", "Java", "C#", "C", "C++"], documents: ["Markdown", "JSON", "YAML"] },
-      limits: { files: 2e4, sourceBytes: 64 * 1024 * 1024, fileBytes: 2 * 1024 * 1024, sdkFileBytes: 1024 * 1024, modelTokens: 512 },
+      ...await this.statusFacts(job?.prepared?.index.chunkerVersion || published?.chunkerVersion || null),
       diagnostics: job?.diagnostics || published?.diagnostics || [],
       freshness: "verify-on-use"
+    };
+  }
+  // A repository without components has one job, which reports a queued preparation as preparing, as it always has.
+  legacyStatus(job) {
+    return job.status === "waiting" ? "preparing" : job.status;
+  }
+  async statusFacts(chunker) {
+    const manifest = await this.manifest();
+    return {
+      versions: { runtime: manifest.assetVersion, model: `${manifest.model.id}@${manifest.model.revision}`, graph: "1.6.0", chunker },
+      runtime: await this.availability(),
+      structuralCapabilities: { code: ["JavaScript", "TypeScript", "Python", "Go", "Rust", "Java", "C#", "C", "C++"], documents: ["Markdown", "JSON", "YAML"] },
+      limits: { files: 2e4, sourceBytes: 64 * 1024 * 1024, fileBytes: 2 * 1024 * 1024, sdkFileBytes: 1024 * 1024, modelTokens: 512 }
+    };
+  }
+  // Each component that holds a scanned file, in component order, with the state of its latest job in this process or of its published index.
+  async componentStatus(root, sources, waitMs) {
+    const held = [];
+    for (const entry of sources) if ((await entry.source.snapshot()).files.length) held.push({ ...entry, location: await this.location(root, { name: entry.name, identity: entry.component, folder: entry.folder }) });
+    const directories = new Map(held.map((entry) => [entry.location.directory, entry.component]));
+    if (waitMs && this.running && directories.has(this.running.directory)) await boundedWait(this.running.promise, waitMs);
+    const components = [], diagnostics = [];
+    let chunker = null;
+    for (const { component, folder, location } of held) {
+      const job = this.jobs.get(location.directory), published = await this.published(location.directory);
+      const status2 = job ? job.status : published?.snapshot ? "indexed" : "unprepared", own = job ? job.diagnostics : published?.diagnostics || [];
+      chunker ??= job?.prepared?.index.chunkerVersion || published?.chunkerVersion || null;
+      components.push({
+        component,
+        folder,
+        status: status2,
+        preparationId: job?.id || null,
+        snapshot: job?.snapshot || published?.snapshot || null,
+        indexRevision: job?.revision || published?.revision || null,
+        builtAt: job?.builtAt || published?.builtAt || null,
+        progress: job?.status === "preparing" && job.progress ? { ...job.progress, component } : null,
+        coverage: job?.coverage || published?.coverage || null,
+        failure: job?.status === "degraded" ? job.failure : null,
+        diagnosticCount: own.length
+      });
+      diagnostics.push(...own.map((item) => ({ ...item, component })));
+    }
+    const running = this.running && directories.has(this.running.directory) && this.running.progress ? { ...this.running.progress, component: directories.get(this.running.directory) } : null;
+    const states = components.map((entry) => entry.status);
+    const status = states.some((state) => state === "waiting" || state === "preparing") ? "preparing" : states.includes("degraded") ? "degraded" : components.some((entry) => entry.indexRevision) ? "indexed" : "unprepared";
+    return {
+      status,
+      preparationId: null,
+      snapshot: null,
+      indexRevision: null,
+      progress: running,
+      coverage: null,
+      ...await this.statusFacts(chunker),
+      diagnostics,
+      freshness: "verify-on-use",
+      components
     };
   }
   async availability() {
@@ -390,46 +453,107 @@ class NativeSemanticRuntime {
   }
   async prepare(source, expectedSnapshot, waitMs = 1e4) {
     if (expectedSnapshot !== void 0 && (typeof expectedSnapshot !== "string" || !/^[a-f\d]{64}$/.test(expectedSnapshot))) throw semanticError("validation_failed", "expectedSnapshot must be a SHA-256 snapshot identity.");
-    const projectRoot = source.projectRoot, fingerprint = typeof projectRoot === "string" ? await gitFingerprint(projectRoot) : null;
-    const snapshot = await source.snapshot(), location = await this.location(snapshot.root);
-    const live = snapshot.enumerator !== "retained";
-    if (expectedSnapshot && expectedSnapshot !== snapshot.sourceFingerprint) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
-    const manifest = await this.manifest();
-    const generationKey = `${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`;
-    let job = this.generations.get(generationKey);
-    if (job?.snapshot !== snapshot.sourceFingerprint || job?.status === "degraded") {
-      job = { id: sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), snapshot: snapshot.sourceFingerprint, status: "preparing", diagnostics: [], promise: Promise.resolve(), freshness: live ? fingerprint : void 0 };
-      this.jobs.set(location.root, job);
-      this.generations.set(generationKey, job);
-      for (const [key, generation] of this.generations) if (this.generations.size > KEPT_INDEX_REVISIONS && generation.status !== "preparing") this.generations.delete(key);
-      const preparing = job;
-      job.promise = this.sequence = this.sequence.catch(() => {
-      }).then(async () => {
-        const recorder = preparing.recorder = new ProgressRecorder(location.directory, preparing.id);
-        const started = privateDirectory(location.directory).then(() => recorder.start()).catch(() => {
-        });
-        try {
-          preparing.prepared = await this.build(source, snapshot, location, preparing);
-          preparing.status = "ready";
-          if (preparing.freshness !== void 0) await writeFreshness(location.directory, preparing.snapshot, preparing.freshness);
-          await started;
-          await recorder.succeed();
-        } catch (error) {
-          preparing.status = "degraded";
-          preparing.diagnostics = [{ code: stableFailure(error), message: error.message, recovery: "Retry preparation after correcting the reported runtime, network, or source problem." }];
-          await started;
-          await recorder.fail(preparing.diagnostics);
-        } finally {
-          preparing.recorder = void 0;
-        }
-      });
-    } else if (live && fingerprint && job.status === "ready" && !sameFingerprint(job.freshness ?? null, fingerprint)) {
-      job.freshness = fingerprint;
-      await writeFreshness(location.directory, job.snapshot, fingerprint);
+    const [job] = await this.enqueue([{ source }], expectedSnapshot);
+    if (busy(job)) await boundedWait(job.promise, Math.min(waitMs, 1e4));
+    return { status: this.legacyStatus(job), preparationId: job.id, snapshot: job.snapshot, diagnostics: job.diagnostics, prepared: job.prepared };
+  }
+  // Queues the components a call needs, in the order given, and waits at most the call's bound in total for all of them.
+  async prepareComponents(entries, waitMs = 1e4) {
+    const jobs = await this.enqueue(entries);
+    const pending = jobs.filter(busy);
+    if (pending.length) await boundedWait(Promise.all(pending.map((job) => job.promise)).then(() => {
+    }), Math.min(waitMs, 1e4));
+    return jobs.map((job) => ({
+      status: job.status,
+      preparationId: job.id,
+      snapshot: job.snapshot,
+      diagnostics: job.diagnostics,
+      prepared: job.prepared,
+      component: job.component.identity,
+      failure: job.status === "degraded" ? job.failure : null
+    }));
+  }
+  // A job is shared by every call for the same content. A failed job is prepared again by the next call, except a component's job that reached
+  // a native limit, which this process does not prepare again for the same content.
+  async enqueue(entries, expectedSnapshot) {
+    const manifest = await this.manifest(), jobs = [];
+    for (const { source, component } of entries) {
+      const projectRoot = source.projectRoot, fingerprint = typeof projectRoot === "string" ? await gitFingerprint(projectRoot) : null;
+      const snapshot = await source.snapshot(), location = await this.location(snapshot.root, component);
+      const live = snapshot.enumerator !== "retained";
+      if (expectedSnapshot && expectedSnapshot !== snapshot.sourceFingerprint) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
+      const generationKey = `${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`;
+      let job = this.limited.get(generationKey) ?? this.generations.get(generationKey);
+      if (!job || job.status === "degraded" && !this.limited.has(generationKey)) {
+        job = this.job(source, snapshot, location, generationKey, component ? sha(`${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : void 0, component);
+      } else if (live && fingerprint && job.status === "ready" && !sameFingerprint(job.freshness ?? null, fingerprint)) {
+        job.freshness = fingerprint;
+        await writeFreshness(location.directory, job.snapshot, fingerprint);
+      }
+      this.jobs.set(location.directory, job);
+      jobs.push(job);
     }
-    this.jobs.set(location.root, job);
-    if (job.status === "preparing") await boundedWait(job.promise, Math.min(waitMs, 1e4));
-    return { status: job.status, preparationId: job.id, snapshot: job.snapshot, diagnostics: job.diagnostics, prepared: job.prepared };
+    const needed = [...new Set(jobs.filter((job) => job.status === "waiting"))];
+    this.queue = [...needed, ...this.queue.filter((job) => !needed.includes(job))];
+    this.pump();
+    return jobs;
+  }
+  job(source, snapshot, location, generationKey, id, freshness, component) {
+    let finish = () => {
+    };
+    const promise = new Promise((resolve) => {
+      finish = resolve;
+    });
+    const job = { id, directory: location.directory, component, snapshot: snapshot.sourceFingerprint, status: "waiting", diagnostics: [], failure: null, promise, finish, freshness, run: async () => {
+      const recorder = job.recorder = new ProgressRecorder(location.directory, job.id);
+      const started = privateDirectory(location.directory).then(() => recorder.start()).catch(() => {
+      });
+      try {
+        job.prepared = await this.build(source, snapshot, location, job);
+        job.status = "ready";
+        if (job.freshness !== void 0) await writeFreshness(location.directory, job.snapshot, job.freshness);
+        await started;
+        await recorder.succeed();
+      } catch (error) {
+        const code = stableFailure(error);
+        job.status = "degraded";
+        job.failure = { code, message: error.message };
+        job.diagnostics = [{ code, message: error.message, recovery: "Retry preparation after correcting the reported runtime, network, or source problem." }];
+        if (component && code === "resource_limit") this.limited.set(generationKey, job);
+        await started;
+        await recorder.fail(job.diagnostics);
+      } finally {
+        job.recorder = void 0;
+      }
+    } };
+    this.generations.set(generationKey, job);
+    const same = [...this.generations].filter(([, generation]) => generation.directory === location.directory);
+    let excess = same.length - KEPT_INDEX_REVISIONS;
+    for (const [key, generation] of same) if (excess > 0 && !busy(generation)) {
+      this.generations.delete(key);
+      excess--;
+    }
+    return job;
+  }
+  pump() {
+    if (this.running) return;
+    const job = this.queue.shift();
+    if (!job) {
+      this.idle?.();
+      this.idle = void 0;
+      return;
+    }
+    if (!this.idle) this.sequence = new Promise((resolve) => {
+      this.idle = resolve;
+    });
+    this.running = job;
+    job.status = "preparing";
+    void job.run().catch(() => {
+    }).finally(() => {
+      this.running = null;
+      job.finish();
+      this.pump();
+    });
   }
   report(job, progress) {
     job.progress = progress;
@@ -459,6 +583,7 @@ class NativeSemanticRuntime {
             job.revision = pointer.revision;
             job.coverage = pointer.coverage;
             job.diagnostics = previous.diagnostics;
+            job.builtAt = pointer.builtAt;
             const used = /* @__PURE__ */ new Date();
             await utimes(indexPath, used, used).catch(() => {
             });
@@ -511,12 +636,14 @@ class NativeSemanticRuntime {
           await writeAtomically(indexPath, contents, { mode: 384 });
           await writeAtomically(path.join(directory, unitsFile(revision)), JSON.stringify(publishedUnits(index, revision)), { mode: 384 });
           const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
-          const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics, builtAt: (/* @__PURE__ */ new Date()).toISOString() });
+          const builtAt = (/* @__PURE__ */ new Date()).toISOString();
+          const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics, builtAt });
           await writeAtomically(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`), pointerContents, { mode: 384 });
           await writeAtomically(path.join(directory, "current.json"), pointerContents, { mode: 384 });
           job.revision = revision;
           job.coverage = coverage;
           job.diagnostics = index.diagnostics;
+          job.builtAt = builtAt;
           await rm(mirror, { recursive: true, force: true });
           await pruneIndexes(directory, revision).catch(() => {
           });

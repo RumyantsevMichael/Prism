@@ -114,6 +114,37 @@ A `preparing` response is unfinished discovery, not an empty search result.
 Keep the original `snapshotId` through retries and edits so new code cannot appear as preexisting reuse evidence.
 Use `discover_repository_intelligence` for native runtime, model, index, and coverage status without starting downloads or preparation.
 
+#### Index a repository per component
+
+A repository that declares components under `## Components` in `.prism/workflow.md` has one native index per component.
+Each declared component's index holds only the files in its folder, and the root component's index holds every other file, including documents outside every declared folder.
+The native limits of 20,000 files, 64 MiB of source, a 512 MiB index file, and 30 minutes of preparation apply to each component's index on its own.
+A repository without components keeps one index of the whole repository, so an index that it prepared earlier is reused.
+
+A search of the current files with `filters.paths` prepares and reads only the components that hold a file at or under those paths.
+A search without paths prepares and reads every component that holds a file.
+Prism prepares one index at a time, in component order: the root component first, then the declared components in declaration order.
+The components that a later call needs move ahead of components that only an earlier call waits for, and the running preparation always finishes.
+A component is prepared again only when its own files change, and its new index reuses the embeddings of its unchanged fragments.
+Each component's index is reused across sessions and after the repository's name changes.
+
+Each result lists the components it read in `components`, in component order, with each one's identity `<repository>/<component>`, `folder`, `status`, `indexRevision`, and `failure`.
+A component's `status` is `included` when its up-to-date index answered, `waiting` while it is queued, `preparing` while it is built, and `failed` when its preparation failed.
+The result's `status` is `ready` when every component it read is included, `partial` when only some are, `preparing` when none is included yet, and `degraded` when every one failed.
+A result that leaves out a component starts its diagnostics with `components_missing`, whose `components` lists the components it left out and whose message says why for each one.
+A `partial` result is not evidence that the missing components hold no matching code, so wait with `get_repository_intelligence_status` and repeat the search.
+The result's `snapshot` covers only the components it read, so an edit in another component leaves it unchanged.
+
+A component whose preparation fails keeps its earlier indexes, and every other component's index stays in use.
+Its `failure` gives a `code` and a `message`, and a component that reached a native limit has the code `resource_limit` and a message that names the limit.
+The same server does not prepare that component again until its files change, while any other failure is retried by the next call that needs the component.
+
+In a repository with components, `get_repository_intelligence_status` and `discover_repository_intelligence` list each component that holds a file in `components`.
+Each entry gives the component's `status`, `preparationId`, `snapshot`, `indexRevision`, `builtAt`, `progress`, `coverage`, `failure`, and `diagnosticCount`, where `status` is `unprepared`, `waiting`, `preparing`, `ready`, `indexed`, or `degraded`.
+The top-level `status` is `preparing` while a component waits or prepares, else `degraded` when a component's latest preparation in this server failed, else `indexed` when a component has an index, else `unprepared`.
+The top-level `progress` is the running preparation's progress with its `component`, and each diagnostic names its `component`.
+An invalid `## Components` declaration refuses the native index and status tools before any preparation, with the declaration's error code.
+
 #### Watch an index build in the review browser
 
 The review browser's status bar shows the open project's native index at its right end.

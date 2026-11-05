@@ -463,7 +463,7 @@ const tools = [
   },
   {
     name: "list_repository_intelligence_providers",
-    description: "List registered repository intelligence providers and their current availability for a project. This tool does not create, synchronize, or update provider indexes.",
+    description: "List registered repository intelligence providers and their current availability for a project. This tool does not create, synchronize, or update provider indexes. In a repository that declares components, native.components lists each component's native index status.",
     inputSchema: {
       type: "object",
       properties: {

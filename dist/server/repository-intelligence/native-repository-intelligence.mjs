@@ -360,6 +360,8 @@ async function buildSnapshot(projectRoot, options) {
   const { isManagedRecordFile } = await import("../workflow/record-store.mjs");
   const evidenceOutputs = new Set(await conservationStore.outputs(root));
   enumeration.files = enumeration.files.filter(file => !evidenceOutputs.has(file) && !isManagedRecordFile(file));
+  // A component's source scans only the files of its component, so the native limits apply to each component on its own.
+  if (options.filter) enumeration.files = enumeration.files.filter(options.filter);
   const diagnostics = [...enumeration.diagnostics];
   const counters = {
     binary: 0,
@@ -436,7 +438,8 @@ async function buildSnapshot(projectRoot, options) {
     fingerprintHash.update("\0");
     if (options.retainOpaque) fingerprintHash.update(`${identity.mode}\0`);
   }
-  const sourceFingerprint = fingerprintHash.digest("hex");
+  // A component's identity is its content alone, computed the same way for the live project and for a retained baseline.
+  const sourceFingerprint = options.filter ? contentFingerprint(files) : fingerprintHash.digest("hex");
   const head = enumeration.enumerator === "git" ? await gitCommit(root, options) : null;
   return {
     root,
@@ -452,6 +455,12 @@ async function buildSnapshot(projectRoot, options) {
     enumerator: enumeration.enumerator,
     diagnostics
   };
+}
+
+/** The SHA-256 of the lines `<path> <sha256>\n` of the given source files, sorted by path in code point order. */
+export function contentFingerprint(files) {
+  const lines = files.map(({ file, hash }) => [file, hash]).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return sha256(lines.map(([file, hash]) => `${file} ${hash}\n`).join(""));
 }
 
 function scoreFile(file, tokens, task) {
@@ -486,7 +495,8 @@ export class NativeRepositoryIntelligence {
       maxFiles: positiveInteger(options.maxFiles, DEFAULT_MAX_FILES, "maxFiles"),
       maxBytes: positiveInteger(options.maxBytes, DEFAULT_MAX_BYTES, "maxBytes"),
       maxFileBytes: positiveInteger(options.maxFileBytes, DEFAULT_MAX_FILE_BYTES, "maxFileBytes"),
-      retainOpaque: options.retainOpaque === true
+      retainOpaque: options.retainOpaque === true,
+      filter: typeof options.filter === "function" ? options.filter : null
     };
     this.snapshotPromise = null;
   }
