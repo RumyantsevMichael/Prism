@@ -1,4 +1,5 @@
 import { entityLabel, parseEntityRef, progressBar, stateBadge } from "./entities.js";
+import { highlight, highlightLines, languageOf } from "./highlight.js";
 import { anchorTarget, LINE_RANGE } from "./markdown.js";
 import { escapeHtml } from "./util.js";
 
@@ -47,9 +48,9 @@ function entitySummary(entity) {
 
 // A line range previews those lines with their numbers, up to a cap, so a planned change shows the code it touches.
 function sourceRange(data, start, end) {
-  const all = data.content.split(/\r?\n/);
+  const all = highlightLines(data.content.replace(/\r\n/g, "\n"), languageOf(data.path));
   const last = Math.min(end, all.length, start + RANGE_LINES - 1);
-  const lines = all.slice(start - 1, last).map((line, index) => `<li data-line="${start + index}"><code>${escapeHtml(line) || " "}</code></li>`).join("");
+  const lines = all.slice(start - 1, last).map((line, index) => `<li data-line="${start + index}"><code>${line || " "}</code></li>`).join("");
   const more = end > last ? `<p class="muted">${end - last} more lines; open the file to see them all.</p>` : "";
   return `<p class="card-source">${escapeHtml(data.path)} · lines ${start}–${end}</p><ol class="source-lines preview-lines">${lines}</ol>${more}`;
 }
@@ -60,7 +61,7 @@ function fileSummary(data, anchor, { renderMarkdown, kindLabel }) {
     const range = anchor?.match(LINE_RANGE);
     if (range) return sourceRange(data, Number(range[1]), Number(range[2] ?? range[1]));
     const lines = data.content.split(/\r?\n/).slice(0, SOURCE_LINES).join("\n");
-    return `${head}<pre><code>${escapeHtml(lines)}</code></pre>`;
+    return `${head}<pre><code>${highlight(lines, languageOf(data.path))}</code></pre>`;
   }
   if (data.kind) return `${head}<h3>${escapeHtml(kindLabel(data.kind))}</h3>`;
   if (data.path.toLowerCase().endsWith(".puml")) return `${head}<h3>PlantUML diagram</h3>`;
@@ -71,7 +72,8 @@ function fileSummary(data, anchor, { renderMarkdown, kindLabel }) {
 }
 
 // Hovering or focusing an internal link shows what it points to: an entity's summary, or the start of a file or the linked section.
-export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath }) {
+// A file's preview offers to show the whole file in the side panel when the page has one.
+export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath, onShowInPanel = null }) {
   const popover = document.createElement("div");
   popover.className = "link-preview";
   popover.setAttribute("role", "tooltip");
@@ -121,6 +123,21 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
       const html = await load(target);
       if (current !== request || anchorElement !== element || !element.isConnected) return;
       popover.innerHTML = html;
+      if (onShowInPanel && !parseEntityRef(target.ref)) {
+        const bar = document.createElement("div");
+        bar.className = "link-preview-actions";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "tool-button link-preview-panel";
+        button.textContent = "Show in side panel";
+        button.title = "Show the whole file beside this page (Alt+click the link)";
+        button.addEventListener("click", () => {
+          hide();
+          onShowInPanel(target.ref, target.anchor);
+        });
+        bar.append(button);
+        popover.prepend(bar);
+      }
       popover.hidden = false;
       place();
     } catch {

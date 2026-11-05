@@ -77,6 +77,21 @@
         </div>
       </div>
     </section>
+    <aside id="side-panel" class="side-panel" aria-labelledby="side-panel-title" hidden>
+      <div id="side-panel-resizer" class="side-panel-resizer" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0"></div>
+      <header class="side-panel-header">
+        <div class="side-panel-heading">
+          <p class="eyebrow" id="side-panel-kind"></p>
+          <h2 id="side-panel-title"></h2>
+          <p class="side-panel-source" id="side-panel-source"></p>
+        </div>
+        <div class="side-panel-tools">
+          <button class="tool-button" id="side-panel-open" type="button" title="Open as a tab">Open as tab</button>
+          <button class="tool-button side-panel-close" id="side-panel-close" type="button" aria-label="Close the side panel" title="Close (Esc)">×</button>
+        </div>
+      </header>
+      <div class="side-panel-body" id="side-panel-body"></div>
+    </aside>
   </main>
   <footer class="statusbar" id="statusbar" aria-label="Status">
     <button class="status-item" id="store-status" type="button" aria-haspopup="dialog" hidden>

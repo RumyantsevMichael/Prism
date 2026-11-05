@@ -148,7 +148,11 @@ try {
         "sidebar toggled": ["roadmap", () => page.click("#sidebar-toggle")],
         "maximized document": ["docs/wide.md", () => page.click(".maximize-button")],
         "maximized diagram": ["docs/plans/huge-initiative/slice-with-long-name/diagram.puml", () => page.click(".maximize-button")],
-        "link preview": ["slice:huge-initiative/slice-with-long-name", () => page.locator("#artifact .link-chip").first().hover()]
+        "link preview": ["slice:huge-initiative/slice-with-long-name", () => page.locator("#artifact .link-chip").first().hover()],
+        "side panel": ["slice:huge-initiative/slice-with-long-name", async () => {
+          await page.locator('#artifact .link-chip[data-artifact$=".md"]').first().hover();
+          await page.locator(".link-preview .link-preview-panel").click({ timeout: 3000 });
+        }]
       };
       for (const [name, [ref, open]] of Object.entries(states)) {
         await visit(stress, ref, name);

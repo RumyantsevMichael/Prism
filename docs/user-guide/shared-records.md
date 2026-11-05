@@ -12,6 +12,7 @@ Only machine records move into the store.
 Tools, tool results, review browser links, and stored references keep naming records by their `.prism/...` address, so nothing that agents or people see changes.
 Each verified slice records where its code lives, the repository, branch, and commit of its latest passing run, and the review browser shows it on the slice page and beside each slice on the initiative page.
 On GitHub, GitLab, and Bitbucket the branch, commit, and repository link to their web pages.
+The review browser's project menu lists every checkout that shares one record store under that store as one workspace, whichever repository each checkout belongs to, and lists projects in name order.
 
 ## Share records between machines
 
