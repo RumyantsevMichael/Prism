@@ -235,12 +235,15 @@ Each question that waits on you is recorded, and the review browser's Attention 
 You can answer there instead of in the conversation.
 See [Review browser](review-browser.md#attention) for how the agent receives the answer.
 
-## Autonomy and agent flow
+## Autonomy
 
-`orchestrate` stores decision autonomy and agent flow per initiative.
-Autonomy is `conservative`, `broad`, or `full`, and agent flow is `multi` or `mono`.
+`orchestrate` stores decision autonomy per initiative.
+Autonomy is `conservative`, `broad`, or `full`.
 Conservative autonomy waits for you at every design gate, broad autonomy accepts a design unless it changes requirements, adds an ADR, or reports an open question, and full autonomy accepts every design.
-Multi flow runs design, each implementation step, and review in fresh child agents, while mono flow runs design and implementation in the orchestrator's context.
+The orchestrator runs triage, ideation, design, each implementation step, and review in fresh child agents, and never in its own context.
+In Claude Code, a Prism hook refuses the orchestrating session's own load of those skills and tells it to start a child agent instead.
+When no child agent can start, the orchestrator stops and asks you to run it where child agents are available.
+An `agentFlow` setting stored by an earlier Prism is dropped when the initiative's coordination state is next read.
 Full autonomy turns commits on when you have not set them, while explicit commit, continuation, and push settings always apply.
 
 ## Defects
