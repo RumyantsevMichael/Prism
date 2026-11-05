@@ -3,16 +3,20 @@ title action-controls - code
 component "views/actions.js\nactionFormState, renderActions" as Actions
 component "views/initiative.js" as InitiativeView
 component "views/slice.js" as SliceView
+component "views/indexing.js\nrebuild per index target" as Indexing
 component "views/attention.js\nRecent changes" as Attention
 component "views/palette.js\naction entries" as Palette
 component "public/review.js\nconfirm dialog, read-only notice,\naction events" as Page
 component "review-server.mjs\naction event" as Routes
+component "review-app-server.mjs\nevents to the workspace pages" as App
 component "workspace-model.mjs\nrecentChanges" as Model
 InitiativeView --> Actions
 SliceView --> Actions
+Indexing --> Actions
 Page --> Palette
 Page --> Actions : confirm, refusals
 Page ..> Routes : api/actions, api/events
+Routes --> App : applied action
 Attention ..> Model : recentChanges
 Routes ..> Model
 @enduml

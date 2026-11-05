@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { INITIATIVE, actionOf, actionProject, apply, listing, pageSession, post, startActionReview } from "./fixtures/review-actions.mjs";
+import { ENTRY_ID, INITIATIVE, actionOf, actionProject, apply, authorOf, get, inHistoryOrder, listing, pageSession, post, startActionReview } from "./fixtures/review-actions.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-actions-data-")));
 process.env.PLUGIN_DATA = privateData;
+// Prism's application folder, which holds this machine's checkout list and each checkout's index history.
+const appFolder = path.join(privateData, "app");
+process.env.PRISM_REVIEW_APP_DIR = appFolder;
 delete process.env.CLAUDE_PLUGIN_DATA;
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+const { writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
 const SETTINGS = ["autonomy", "agentFlow", "commit", "push", "continuation", "review", "models"];
@@ -84,11 +89,30 @@ test("a slice lists its initiative's settings, a roadmap-only initiative lists t
   const envisioned = await listing(base, "initiative:search", headers);
   assert.equal(envisioned.status, 200, envisioned.text);
   assert.ok(envisioned.json.actions.every((action) => action.revision === null), "no coordination state exists yet");
-  for (const target of ["initiative:missing", "slice:reports/missing", "gate:reports/gate-000000000000", "initiative:../x", "reports", "", "index:extra"]) {
+  for (const target of ["initiative:missing", "slice:reports/missing", "gate:reports/gate-000000000000", "initiative:../x", "reports", "", "index", "index:extra", "index:root/api", "index:other/root"]) {
     const refused = await listing(base, target, headers);
     assert.deepEqual([refused.status, refused.json?.code], [404, "unknown_target"], target);
   }
-  assert.equal((await listing(base, "index", headers)).json.actions[0].id, "index.rebuild");
+  const index = await listing(base, "index:root/root", headers);
+  assert.equal(index.status, 200, "a repository without a Repository line is named root, and its root component is root/root");
+  assert.deepEqual(index.json.actions.map((action) => [action.id, action.target]), [["index.rebuild", "index:root/root"]]);
+});
+
+test("a checkout lists one index target per component, root first, and no other kind of target list", async (context) => {
+  const plain = await setup(context);
+  const single = await get(plain.base, "api/actions/targets?kind=index", plain.headers);
+  assert.deepEqual([single.status, single.json.targets], [200, ["index:root/root"]]);
+  const { root } = await actionProject(context, { components: true });
+  const { review, base, opened } = await startActionReview(context, root);
+  const headers = await pageSession(review, opened);
+  const targets = await get(base, "api/actions/targets?kind=index", headers);
+  assert.deepEqual([targets.status, targets.json.targets], [200, ["index:reports-app/reports-app", "index:reports-app/api"]]);
+  for (const reference of targets.json.targets) assert.equal((await listing(base, reference, headers)).json.actions[0].id, "index.rebuild", reference);
+  assert.deepEqual([(await listing(base, "index:root/root", headers)).status], [404], "the root component is named by the Repository line");
+  const other = await get(base, "api/actions/targets?kind=gate", headers);
+  assert.deepEqual([other.status, other.json.code], [404, "unknown_target"]);
+  const { listActionTargets } = await import("../../dist/server/workflow/actions.mjs");
+  assert.deepEqual(await listActionTargets({ projectRoot: root, kind: "index" }), { targets: targets.json.targets });
 });
 
 test("agent flow becomes unavailable once work starts, and applying it then is refused without a change", async (context) => {
@@ -117,17 +141,21 @@ test("a risky setting applies only after confirmation and is recorded in the ini
   assert.equal(applied.status, 200, applied.text);
   const entry = applied.json.applied;
   assert.deepEqual([entry.action, entry.target, entry.before, entry.after, entry.via], ["initiative.push", `initiative:${INITIATIVE}`, "off", "on", "review-app"]);
-  assert.ok(Number.isInteger(entry.seq));
+  assert.deepEqual(Object.keys(entry).sort(), ["action", "after", "at", "before", "by", "id", "target", "via"]);
+  assert.match(entry.id, ENTRY_ID);
+  assert.deepEqual(entry.by, authorOf(root), "the author is the serving checkout's Git identity and its checkout label");
   assert.ok(Date.parse(entry.at) <= Date.now());
   assert.equal(actionOf({ json: applied.json }, "initiative.push").value, "on", "the answer lists the target's actions after the change");
   const stored = await state(root);
   assert.equal(stored.settings.push, "on");
-  assert.ok(Date.parse(stored.personSettings.push.at));
+  assert.deepEqual(stored.personSettings.push, { at: entry.at, entry: entry.id });
   assert.deepEqual(stored.history.at(-1), entry);
   assert.equal(stored.pending.length, 4, "the gates stay as they were");
   const lowered = await apply(base, { action: "initiative.push", target: `initiative:${INITIATIVE}`, input: { value: "off" }, revision: actionOf({ json: applied.json }, "initiative.push").revision }, headers);
   assert.equal(lowered.status, 200, "turning push off needs no confirmation");
-  assert.equal(lowered.json.applied.seq, entry.seq + 1);
+  assert.match(lowered.json.applied.id, ENTRY_ID);
+  assert.notEqual(lowered.json.applied.id, entry.id);
+  assert.deepEqual((await state(root)).personSettings.push, { at: lowered.json.applied.at, entry: lowered.json.applied.id });
   const autonomy = actionOf({ json: lowered.json }, "initiative.autonomy");
   const full = await apply(base, { action: "initiative.autonomy", target: `initiative:${INITIATIVE}`, input: { value: "full" }, revision: autonomy.revision }, headers);
   assert.deepEqual([full.json.code, full.json.message], ["confirmation_required", "Agents will accept every design and resolve internal decisions without you."]);
@@ -235,6 +263,7 @@ test("gate answers are actions whose fields follow the gate kind, and the old an
   const stored = await state(root);
   const gate = stored.pending.find((item) => item.id === gateIds.review);
   assert.deepEqual([gate.answer.choice, gate.answer.note, gate.answer.via], ["approve", "Looks right.", "browser"]);
+  assert.deepEqual([gate.answer.by, gate.answer.entry], [authorOf(root), answered.json.applied.id], "the answer names its author and its history entry");
   assert.equal(stored.history.at(-1).action, "gate.answer");
   const [after] = await fieldsOf(gateIds.review);
   assert.deepEqual([after.available, after.reason], [false, "The question already has an answer."]);
@@ -245,22 +274,46 @@ test("gate answers are actions whose fields follow the gate kind, and the old an
   assert.equal((await state(root)).pending.find((item) => item.id === gateIds.assistance).answer, undefined);
 });
 
-test("the index rebuild is an action recorded in the project history, and the old rebuild route is gone", async (context) => {
-  const { root } = await actionProject(context);
+test("each component's index rebuild is an action recorded in the checkout's own index history, and the old rebuild route is gone", async (context) => {
+  const { root } = await actionProject(context, { components: true });
   const calls = [];
-  const { review, base, opened } = await startActionReview(context, root, { rebuildIndex: async (projectRoot) => { calls.push(projectRoot); } });
+  const { review, base, opened } = await startActionReview(context, root, { rebuildIndex: async (projectRoot, component) => { calls.push([projectRoot, component?.identity, component?.folder]); } });
   const headers = await pageSession(review, opened);
-  const [rebuild] = (await listing(base, "index", headers)).json.actions;
-  assert.deepEqual([rebuild.id, rebuild.target, rebuild.fields, rebuild.value, rebuild.revision, rebuild.confirm], ["index.rebuild", "index", [], null, null, null]);
+  const target = "index:reports-app/api";
+  const [rebuild] = (await listing(base, target, headers)).json.actions;
+  assert.deepEqual([rebuild.id, rebuild.target, rebuild.fields, rebuild.value, rebuild.revision, rebuild.confirm], ["index.rebuild", target, [], null, null, null]);
   assert.equal(typeof rebuild.effect, "string");
   assert.deepEqual([rebuild.available, rebuild.reason], [true, null], "no build runs in a new project");
-  const applied = await apply(base, { action: "index.rebuild", target: "index", input: {}, revision: null }, headers);
+  const before = (await state(root)).history;
+  const applied = await apply(base, { action: "index.rebuild", target, input: {}, revision: null }, headers);
   assert.equal(applied.status, 200, applied.text);
-  assert.deepEqual([applied.json.applied.action, applied.json.applied.before, applied.json.applied.after, applied.json.applied.via], ["index.rebuild", null, "started", "review-app"]);
-  assert.deepEqual(calls, [root]);
-  const history = JSON.parse(await readFile(path.join(root, ".prism/history.json"), "utf8"));
-  assert.deepEqual(history.history.at(-1), applied.json.applied);
+  const entry = applied.json.applied;
+  assert.deepEqual([entry.action, entry.target, entry.before, entry.after, entry.via, entry.by], ["index.rebuild", target, null, "started", "review-app", authorOf(root)]);
+  assert.match(entry.id, ENTRY_ID);
+  assert.deepEqual(calls, [[root, "reports-app/api", "packages/api"]]);
+  const key = createHash("sha256").update(root).digest("hex").slice(0, 16);
+  const file = path.join(appFolder, "index-history", `${key}.json`);
+  const kept = JSON.parse(await readFile(file, "utf8"));
+  assert.deepEqual([kept.schemaVersion, kept.checkout, kept.history.at(-1)], [1, root, entry]);
+  if (process.platform !== "win32") assert.equal((await stat(file)).mode & 0o077, 0, "the index history is private to its user");
+  assert.deepEqual((await state(root)).history, before, "the shared initiative history does not hold the index rebuild");
+  await assert.rejects(readFile(path.join(root, ".prism/history.json")), (error) => error.code === "ENOENT", "no record holds the checkout's index history");
   assert.equal((await post(base, "api/indexing/rebuild", {}, headers)).status, 404);
+});
+
+test("an index rebuild is unavailable only while its own component's index is preparing", async (context) => {
+  const { root } = await actionProject(context, { components: true });
+  const { applyAction, listActions } = await import("../../dist/server/workflow/actions.mjs");
+  const rebuilt = [];
+  const indexer = { status: async (_root, component) => ({ state: component.identity === "reports-app/api" ? "preparing" : "ready" }), rebuild: async (_root, component) => { rebuilt.push(component.identity); } };
+  const busy = (await listActions({ projectRoot: root, target: "index:reports-app/api", indexer })).actions[0];
+  assert.deepEqual([busy.available, busy.reason], [false, "An index build is already running."]);
+  const idle = (await listActions({ projectRoot: root, target: "index:reports-app/reports-app", indexer })).actions[0];
+  assert.deepEqual([idle.available, idle.reason], [true, null]);
+  await assert.rejects(applyAction({ projectRoot: root, target: "index:reports-app/api", action: "index.rebuild", input: {}, revision: null, via: "review-app", indexer }), (error) => error.code === "action_unavailable");
+  const applied = await applyAction({ projectRoot: root, target: "index:reports-app/reports-app", action: "index.rebuild", input: {}, revision: null, via: "review-app", indexer });
+  assert.equal(applied.applied.after, "started");
+  assert.deepEqual(rebuilt, ["reports-app/reports-app"]);
 });
 
 test("a write must come from the page as JSON", async (context) => {
@@ -299,7 +352,20 @@ test("the registry works without HTTP and keeps the newest 200 history entries",
   }
   const history = (await state(root)).history;
   assert.equal(history.length, 200);
-  assert.deepEqual(history.map((entry) => entry.seq), Array.from({ length: 200 }, (_, index) => history[0].seq + index));
+  assert.equal(new Set(history.map((entry) => entry.id)).size, 200, "every entry has its own id");
+  assert.ok(inHistoryOrder(history), "the history is ordered by time and then by id");
   assert.equal(history.at(-1).after, "auto");
   await assert.rejects(applyAction({ projectRoot: root, target: `initiative:${INITIATIVE}`, action: "initiative.continuation", input: { value: "stepwise" }, revision: "0".repeat(64), via: "review-app" }), (error) => error.code === "stale_revision" && error.current?.value === "auto");
+});
+
+test("a new entry takes its place by time and id among entries another machine wrote", async (context) => {
+  const { root } = await actionProject(context, { gates: false });
+  const { applyAction, listActions } = await import("../../dist/server/workflow/actions.mjs");
+  const later = { id: "f".repeat(32), action: "initiative.review", target: `initiative:${INITIATIVE}`, before: "marked", after: "all", at: "2999-01-01T00:00:00.000Z", by: { name: "Grace", email: null, checkout: "reports/main on far" }, via: "review-app" };
+  const earlier = { ...later, id: "0".repeat(32), at: "2000-01-01T00:00:00.000Z", action: "initiative.continuation", before: "auto", after: "stepwise" };
+  await writeRecord(root, { kind: "state", initiative: INITIATIVE }, `${JSON.stringify({ schemaVersion: 1, settings: { review: "all", continuation: "stepwise" }, active: [], pending: [], next: [], evidence: [], history: [earlier, later], personSettings: { review: { at: later.at, entry: later.id }, continuation: { at: earlier.at, entry: earlier.id } } }, null, 2)}\n`);
+  const view = (await listActions({ projectRoot: root, target: `initiative:${INITIATIVE}` })).actions.find((action) => action.id === "initiative.push");
+  const { applied } = await applyAction({ projectRoot: root, target: `initiative:${INITIATIVE}`, action: "initiative.push", input: { value: "on" }, revision: view.revision, confirmed: true, via: "review-app" });
+  const history = (await state(root)).history;
+  assert.deepEqual(history.map((entry) => entry.id), [earlier.id, applied.id, later.id], "the entry lands between the earlier and the later one");
 });

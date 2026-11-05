@@ -8,12 +8,23 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
-import { INITIATIVE, actionProject } from "./fixtures/review-actions.mjs";
+import { INITIATIVE, actionProject, authorOf } from "./fixtures/review-actions.mjs";
 
 const { applyAction, listActions } = await import("../../dist/server/workflow/actions.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 const { waitForGateAnswers } = await import("../../dist/hooks/wait-for-gate-answers.mjs");
+const { readRecord, writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
+
+// What a store sync does when it brings another machine's change: the state gains an entry of that machine, whose clock may be behind.
+async function arriveFromAnotherMachine(root, { at = "2000-01-01T00:00:00.000Z", id = "0123456789abcdef0123456789abcdef" } = {}) {
+  const key = { kind: "state", initiative: INITIATIVE };
+  const current = JSON.parse((await readRecord(root, key)).bytes.toString("utf8"));
+  const entry = { id, action: "initiative.review", target: `initiative:${INITIATIVE}`, before: current.settings?.review ?? "marked", after: "all", at, by: { name: "Grace", email: null, checkout: "reports/main on far" }, via: "review-app" };
+  const history = [...(current.history ?? []), entry].sort((left, right) => left.at < right.at ? -1 : left.at > right.at ? 1 : left.id < right.id ? -1 : 1);
+  await writeRecord(root, key, `${JSON.stringify({ ...current, settings: { ...current.settings, review: "all" }, history, personSettings: { ...current.personSettings, review: { at, entry: id } } }, null, 2)}\n`);
+  return entry;
+}
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
 const target = `initiative:${INITIATIVE}`;
@@ -106,6 +117,8 @@ test("a session is told once of the person's changes since it last read the init
   assert.match(text, /off/);
   assert.match(text, /\bon\b/);
   assert.match(text, /Applies to child sessions started after the change\./);
+  const author = authorOf(root);
+  assert.ok(text.includes(`by ${author.name} <${author.email}> (${author.checkout})`), "the notice names the change's author and checkout");
   const again = await orchestrator.call("get_coordination_state", { initiative: INITIATIVE });
   assert.equal(changesOf(again), undefined, "the notice is shown once per session");
   assert.doesNotMatch(noticeText(again), NOTICE);
@@ -118,6 +131,22 @@ test("a session is told once of the person's changes since it last read the init
   assert.deepEqual(changesOf(resumed), [later], "a restarted server of the same session shows only what this session has not seen");
   const other = server(context, root, { data, sessionId: "another-session" });
   assert.equal(changesOf(await other.call("get_initiative", { initiative: INITIATIVE })), undefined);
+});
+
+test("a change that a store sync brings is shown once even when its time is older than what the session saw", async (context) => {
+  const { root } = await actionProject(context);
+  const data = await dataDirectory(context);
+  await person(root, "initiative.continuation", { value: "stepwise" });
+  const mcp = server(context, root, { data, sessionId: "synced-session" });
+  await mcp.call("get_initiative", { initiative: INITIATIVE });
+  const seen = await person(root, "initiative.push", { value: "on" }, { confirmed: true });
+  assert.deepEqual(changesOf(await mcp.call("get_initiative", { initiative: INITIATIVE })), [seen]);
+  const arrived = await arriveFromAnotherMachine(root);
+  const told = await mcp.call("get_coordination_state", { initiative: INITIATIVE });
+  assert.deepEqual(changesOf(told), [arrived], "an entry this session has not been shown is shown, whatever its time");
+  const text = noticeText(told);
+  assert.ok(text.includes("by Grace (reports/main on far)"), "an unset email is left out of the author");
+  assert.equal(changesOf(await mcp.call("get_initiative", { initiative: INITIATIVE })), undefined, "and only once");
 });
 
 test("a gate wait ends when the person changes the initiative and counts the change as shown", async (context) => {
@@ -133,6 +162,11 @@ test("a gate wait ends when the person changes the initiative and counts the cha
   assert.deepEqual([ended.result.structuredContent.status, ended.result.structuredContent.gateIds, ended.result.structuredContent.waiting], ["changed", [gateIds.review], [gateIds.review]]);
   assert.deepEqual(ended.result.structuredContent.changes, [changed]);
   assert.equal(changesOf(await mcp.call("get_initiative", { initiative: INITIATIVE })), undefined, "the wait already showed the change");
+  const syncing = mcp.start("wait_for_user_gate", { initiative: INITIATIVE, gateIds: [gateIds.review] }, { progressToken: "sync" });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  const arrived = await arriveFromAnotherMachine(root);
+  const synced = await mcp.response(syncing);
+  assert.deepEqual([synced.result.structuredContent.status, synced.result.structuredContent.changes], ["changed", [arrived]], "an entry a sync brings ends the wait, though its time is older than the wait");
   const answering = mcp.start("wait_for_user_gate", { initiative: INITIATIVE, gateIds: [gateIds.review] }, { progressToken: "answer" });
   await new Promise((resolve) => setTimeout(resolve, 400));
   await person(root, "gate.answer", { choice: "approve" }, { actionTarget: `gate:${INITIATIVE}/${gateIds.review}` });

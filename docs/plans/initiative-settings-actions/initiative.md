@@ -1,0 +1,7 @@
+# Initiative: initiative-settings-actions
+
+This file is a generated view of initiative.json.
+
+- **Initiative settings from the review app** (`initiative-settings-actions`): not-started
+  - Outcome: The person changes an initiative's orchestration settings from the review app through a generic, revision-checked action registry that only the person's page can write, and running agents act on the change at its next effect point.
+  - Requirements: docs/requirements/initiative-settings.md#1, docs/requirements/initiative-settings.md#2, docs/requirements/initiative-settings.md#3, docs/requirements/initiative-settings.md#4, docs/requirements/initiative-settings.md#5, docs/requirements/initiative-settings.md#6, docs/requirements/initiative-settings.md#7, docs/requirements/initiative-settings.md#8, docs/requirements/initiative-settings.md#9, docs/requirements/review-app-actions.md#1, docs/requirements/review-app-actions.md#10, docs/requirements/review-app-actions.md#11, docs/requirements/review-app-actions.md#12, docs/requirements/review-app-actions.md#13, docs/requirements/review-app-actions.md#14, docs/requirements/review-app-actions.md#2, docs/requirements/review-app-actions.md#3, docs/requirements/review-app-actions.md#4, docs/requirements/review-app-actions.md#5, docs/requirements/review-app-actions.md#6, docs/requirements/review-app-actions.md#7, docs/requirements/review-app-actions.md#8, docs/requirements/review-app-actions.md#9

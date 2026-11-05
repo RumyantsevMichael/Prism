@@ -1,11 +1,19 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 export const INITIATIVE = "reports";
+export const AUTHOR = { name: "Ada Reviewer", email: "ada@example.invalid" };
 
-// A project with a roadmap entry, an initiative record of one root slice, and coordination state that holds one gate of each kind.
-export async function actionProject(context, { gates = true } = {}) {
+// The author that a page of this checkout records: its Git identity and its checkout label on this host.
+export const authorOf = (root) => ({ ...AUTHOR, checkout: `${path.basename(root)}/main on ${os.hostname().split(".")[0] || "an unnamed host"}` });
+
+/**
+ * A Git checkout on branch main with a local Git identity, a roadmap entry, an initiative record of one root slice, and coordination state that holds one gate of each kind.
+ * components declares the repository name reports-app and one component api, so the checkout has two index targets.
+ */
+export async function actionProject(context, { gates = true, components = false } = {}) {
   const { updateInitiative } = await import("../../../dist/server/workflow/initiative.mjs");
   const { updateRoadmap } = await import("../../../dist/server/workflow/roadmap.mjs");
   const { updateCoordinationState } = await import("../../../dist/server/workflow/state.mjs");
@@ -13,7 +21,11 @@ export async function actionProject(context, { gates = true } = {}) {
   context.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await mkdir(path.join(root, "docs/plans", INITIATIVE), { recursive: true });
-  await writeFile(path.join(root, ".prism/workflow.md"), "## Paths\n- Requirements: docs/requirements/\n- Plans: docs/plans/\n- Roadmap: docs/roadmap.md\n");
+  const declared = components ? "\n## Workspace\n- Repository: reports-app\n\n## Components\n- api: packages/api\n" : "";
+  await writeFile(path.join(root, ".prism/workflow.md"), `## Paths\n- Requirements: docs/requirements/\n- Plans: docs/plans/\n- Roadmap: docs/roadmap.md\n${declared}`);
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root, stdio: "pipe" });
+  execFileSync("git", ["config", "user.name", AUTHOR.name], { cwd: root, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", AUTHOR.email], { cwd: root, stdio: "pipe" });
   await writeFile(path.join(root, "docs/plans", INITIATIVE, "slice.md"), "# Export reports\n");
   await updateRoadmap({ projectRoot: root, expectedRevision: null, operations: [
     { op: "add_initiative", id: INITIATIVE, title: "Export reports", intent: "Signed exports.", band: "Now" },
@@ -87,3 +99,7 @@ export async function post(base, route, body, headers = {}) {
 export const listing = (base, target, headers = {}) => get(base, `api/actions?target=${encodeURIComponent(target)}`, headers);
 export const apply = (base, body, headers = {}) => post(base, "api/actions/apply", body, headers);
 export const actionOf = (list, id) => list.json.actions.find((action) => action.id === id);
+
+// A history entry's identity and its place: ascending by time and then by id.
+export const ENTRY_ID = /^[0-9a-f]{32}$/;
+export const inHistoryOrder = (entries) => entries.every((entry, index) => index === 0 || entries[index - 1].at < entry.at || (entries[index - 1].at === entry.at && entries[index - 1].id < entry.id));

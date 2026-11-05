@@ -181,6 +181,23 @@ test("the shared app grants a write session through the presenting process and r
   assert.equal(grantOf(reviewUrl), null);
 });
 
+test("a write session of the shared app works on the page of every checkout it serves", async (context) => {
+  const directory = await appDirectory(context);
+  const { root } = await actionProject(context);
+  const { root: other } = await actionProject(context);
+  const opened = [];
+  const openBrowser = (url) => { opened.push(url); return true; };
+  const first = await startStandaloneReview({ projectRoot: root, env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser });
+  const headers = await writeHeaders(projectBase(first.url), opened.at(-1));
+  const second = await startStandaloneReview({ projectRoot: other, env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser });
+  const otherBase = projectBase(second.url);
+  assert.notEqual(otherBase, projectBase(first.url));
+  const listed = await listing(otherBase, target, headers);
+  assert.equal(listed.status, 200, listed.text);
+  assert.equal(listed.json.writable, true, "a tab that switches checkouts keeps its write session");
+  assert.equal((await continuation(otherBase, headers)).status, 200);
+});
+
 test("a write session survives a handoff of the shared app and ends with a cold restart", async (context) => {
   const directory = await appDirectory(context);
   const { root } = await actionProject(context);

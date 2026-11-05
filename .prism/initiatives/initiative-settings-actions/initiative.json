@@ -35,12 +35,172 @@
       "dependencies": []
     }
   },
+  "proposals": {
+    "initiative-settings-actions": {
+      "operations": [
+        {
+          "op": "split",
+          "parent": "initiative-settings-actions",
+          "children": [
+            {
+              "slug": "action-registry",
+              "title": "Apply actions through one registry",
+              "outcome": "The review app lists and applies revision-checked actions from one transport-independent registry, with the seven initiative settings, gate answers, and each component's index rebuild as its actions, and records each with its author in history.",
+              "requirements": [
+                "docs/requirements/review-app-actions.md#1",
+                "docs/requirements/review-app-actions.md#2",
+                "docs/requirements/review-app-actions.md#3",
+                "docs/requirements/review-app-actions.md#4",
+                "docs/requirements/review-app-actions.md#5",
+                "docs/requirements/review-app-actions.md#6",
+                "docs/requirements/review-app-actions.md#7",
+                "docs/requirements/review-app-actions.md#9",
+                "docs/requirements/review-app-actions.md#10",
+                "docs/requirements/initiative-settings.md#1",
+                "docs/requirements/initiative-settings.md#2",
+                "docs/requirements/initiative-settings.md#3",
+                "docs/requirements/initiative-settings.md#9"
+              ]
+            },
+            {
+              "slug": "state-merge",
+              "title": "Merge coordination state across machines",
+              "outcome": "A coordination state changed on two machines within one sync window merges by its structure, so the person's changes, agents' writes, and both histories survive without a saved conflict.",
+              "requirements": [
+                "docs/requirements/review-app-actions.md#7",
+                "docs/requirements/initiative-settings.md#7"
+              ]
+            },
+            {
+              "slug": "write-credential",
+              "title": "Write only from the page Prism opened",
+              "outcome": "Only a tab that Prism opened can apply actions, through a one-time grant exchanged for a per-tab write session that no agent-visible surface reveals, on the shared app and the per-project session server.",
+              "requirements": [
+                "docs/requirements/review-app-actions.md#11",
+                "docs/requirements/review-app-actions.md#12"
+              ]
+            },
+            {
+              "slug": "action-controls",
+              "title": "Generic action controls in the review page",
+              "outcome": "The initiative, slice, and index pages render every action generically as compact keyboard-reachable controls with confirmation and stale handling, read-only tabs say why, and every tab of the workspace's checkouts shows applied actions and their authors as they happen.",
+              "requirements": [
+                "docs/requirements/review-app-actions.md#1",
+                "docs/requirements/review-app-actions.md#2",
+                "docs/requirements/review-app-actions.md#5",
+                "docs/requirements/review-app-actions.md#8",
+                "docs/requirements/initiative-settings.md#1",
+                "docs/requirements/initiative-settings.md#9"
+              ]
+            },
+            {
+              "slug": "agent-change-notices",
+              "title": "Agents act on the person's changes",
+              "outcome": "Running agents learn of the person's changes and who made them once per session, from this machine or through store sync, in Prism's tool results and gate waits, keep the person's settings over their own, and apply the review policy at design acceptance.",
+              "requirements": [
+                "docs/requirements/review-app-actions.md#13",
+                "docs/requirements/review-app-actions.md#14",
+                "docs/requirements/initiative-settings.md#3",
+                "docs/requirements/initiative-settings.md#4",
+                "docs/requirements/initiative-settings.md#5",
+                "docs/requirements/initiative-settings.md#6",
+                "docs/requirements/initiative-settings.md#7",
+                "docs/requirements/initiative-settings.md#8"
+              ]
+            }
+          ]
+        },
+        {
+          "op": "set_dependencies",
+          "slug": "state-merge",
+          "dependencies": [
+            "action-registry"
+          ]
+        },
+        {
+          "op": "set_dependencies",
+          "slug": "write-credential",
+          "dependencies": [
+            "action-registry"
+          ]
+        },
+        {
+          "op": "set_dependencies",
+          "slug": "action-controls",
+          "dependencies": [
+            "write-credential"
+          ]
+        },
+        {
+          "op": "set_dependencies",
+          "slug": "agent-change-notices",
+          "dependencies": [
+            "action-registry"
+          ]
+        },
+        {
+          "op": "accept_design",
+          "slug": "action-registry",
+          "frozenTests": [
+            "test/server/fixtures/review-actions.mjs",
+            "test/server/review-actions.test.mjs"
+          ],
+          "review": "required"
+        },
+        {
+          "op": "accept_design",
+          "slug": "state-merge",
+          "frozenTests": [
+            "test/server/coordination-state-merge.test.mjs"
+          ],
+          "review": "required"
+        },
+        {
+          "op": "accept_design",
+          "slug": "write-credential",
+          "frozenTests": [
+            "test/server/review-write-credential.test.mjs"
+          ],
+          "review": "required"
+        },
+        {
+          "op": "accept_design",
+          "slug": "action-controls",
+          "frozenTests": [
+            "test/server/review-action-controls.test.mjs"
+          ],
+          "review": "none"
+        },
+        {
+          "op": "accept_design",
+          "slug": "agent-change-notices",
+          "frozenTests": [
+            "test/server/agent-change-notices.test.mjs"
+          ],
+          "review": "required"
+        }
+      ],
+      "proposedAt": "2026-11-05T23:03:03.039Z"
+    }
+  },
   "history": [
     {
       "actor": "orchestrator",
       "operation": "create",
       "slug": "initiative-settings-actions",
       "at": "2026-11-05T22:21:57.924Z"
+    },
+    {
+      "actor": "design",
+      "operation": "propose_design",
+      "slug": "initiative-settings-actions",
+      "at": "2026-11-05T22:39:25.368Z"
+    },
+    {
+      "actor": "agent",
+      "operation": "propose_design",
+      "slug": "initiative-settings-actions",
+      "at": "2026-11-05T23:03:03.039Z"
     }
   ]
 }

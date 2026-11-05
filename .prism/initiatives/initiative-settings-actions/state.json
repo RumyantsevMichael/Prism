@@ -10,7 +10,24 @@
     "models": "host defaults"
   },
   "active": [],
-  "pending": [],
+  "pending": [
+    {
+      "id": "gate-a4d56a533b1f",
+      "kind": "visual-review",
+      "slice": "initiative-settings-actions",
+      "question": "Approve the design (44 clauses, 4 slices) and the review marks (action-registry, write-credential, agent-change-notices required; action-controls none)? Open point: a setting the person changed in the page cannot be overridden by an agent even when the person asks in chat.",
+      "artifacts": [
+        "docs/plans/initiative-settings-actions/slice.md",
+        "docs/plans/initiative-settings-actions/overview.puml",
+        "docs/ADRs/workflow-records/review-app-actions.md",
+        "test/server/review-actions.test.mjs",
+        "test/server/review-write-credential.test.mjs",
+        "test/server/review-action-controls.test.mjs",
+        "test/server/agent-change-notices.test.mjs"
+      ],
+      "askedAt": "2026-11-05T22:40:21.228Z"
+    }
+  ],
   "next": [],
   "evidence": [],
   "closed": [

@@ -1,15 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { INITIATIVE, actionOf, actionProject, apply, get, listing, pageSession, startActionReview } from "./fixtures/review-actions.mjs";
+import { INITIATIVE, actionOf, actionProject, apply, authorOf, get, listing, pageSession, startActionReview, writeHeaders } from "./fixtures/review-actions.mjs";
+import { repository, storeFolder } from "./fixtures/repository-checkouts.mjs";
 
+// Git runs with a private home and configuration, so the checkouts of a workspace test have their own identity.
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-controls-data-")));
-process.env.PLUGIN_DATA = privateData;
+await writeFile(path.join(privateData, "gitconfig"), "[user]\n\tname = Grace Workspace\n\temail = grace@example.invalid\n");
+Object.assign(process.env, {
+  HOME: privateData, GIT_CONFIG_GLOBAL: path.join(privateData, "gitconfig"), GIT_CONFIG_NOSYSTEM: "1", PLUGIN_DATA: privateData, PRISM_REVIEW_APP_DIR: path.join(privateData, "app"),
+  GIT_AUTHOR_NAME: "Prism Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Prism Test", GIT_COMMITTER_EMAIL: "test@example.invalid"
+});
 delete process.env.CLAUDE_PLUGIN_DATA;
 const { actionFormState } = await import("../../dist/server/review/public/views/actions.js");
+const { startStandaloneReview } = await import("../../dist/server/review/review-server-pool.mjs");
+const { updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
 const target = `initiative:${INITIATIVE}`;
@@ -82,7 +90,7 @@ test("every connected tab of the project receives an applied action as it happen
   for (const [event] of await Promise.all([first, second])) assert.deepEqual(event, { ...applied.json.applied, initiative: INITIATIVE });
 });
 
-test("Attention lists the newest applied actions across initiatives and the project", async (context) => {
+test("Attention lists the newest applied actions across initiatives and the checkout's index, with their authors", async (context) => {
   const { root, gateIds } = await actionProject(context);
   const calls = [];
   const { review, base, opened } = await startActionReview(context, root, { rebuildIndex: async (projectRoot) => { calls.push(projectRoot); } });
@@ -97,13 +105,60 @@ test("Attention lists the newest applied actions across initiatives and the proj
   const entries = [
     await send(target, "initiative.continuation", { value: "stepwise" }),
     await send(`gate:${INITIATIVE}/${gateIds.assistance}`, "gate.answer", { choice: "done" }),
-    await send("index", "index.rebuild", {})
+    await send("index:root/root", "index.rebuild", {})
   ];
   const attention = (await get(base, "api/entity?ref=attention")).json.data;
   assert.ok(Array.isArray(attention.recentChanges));
   assert.deepEqual(attention.recentChanges.map((entry) => [entry.action, entry.initiative]), [["index.rebuild", null], ["gate.answer", INITIATIVE], ["initiative.continuation", INITIATIVE]]);
   assert.deepEqual(attention.recentChanges[1], { ...entries.find((entry) => entry.action === "gate.answer"), initiative: INITIATIVE });
+  for (const entry of attention.recentChanges) assert.deepEqual(entry.by, authorOf(root), "each change names who made it and from which checkout");
   assert.ok(attention.recentChanges.length <= 20);
+});
+
+// The shared app's project base, the prefix of one checkout's routes.
+const projectBase = (url) => /^(.*\/p\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
+
+test("an applied action reaches the tabs of every checkout of the workspace, and an index rebuild only its own checkout's", async (context) => {
+  const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-controls-workspace-")));
+  const directory = path.join(parent, "app");
+  context.after(async () => {
+    const discovery = await readFile(path.join(directory, "review-app.json"), "utf8").then(JSON.parse, () => null);
+    if (discovery?.pid && discovery.pid !== process.pid) try { process.kill(discovery.pid); } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await rm(parent, { recursive: true, force: true });
+  });
+  await storeFolder(parent);
+  const billing = await repository(parent, "billing", { repository: "billing" });
+  const portal = await repository(parent, "portal", { repository: "portal" });
+  await updateInitiative({ projectRoot: billing, initiative: INITIATIVE, expectedRevision: null, operations: [{ op: "create", slug: INITIATIVE, title: "Export reports", requirements: ["docs/requirements/reports.md#1"] }] });
+  const opened = [];
+  const env = { ...process.env, PRISM_REVIEW_APP_DIR: directory };
+  const openBrowser = (url) => { opened.push(url); return true; };
+  const first = await startStandaloneReview({ projectRoot: billing, env, openBrowser });
+  const billingBase = projectBase(first.url);
+  const headers = await writeHeaders(billingBase, opened.at(-1));
+  const second = await startStandaloneReview({ projectRoot: portal, env, openBrowser });
+  const portalBase = projectBase(second.url);
+  assert.notEqual(portalBase, billingBase);
+  const portalTargets = (await get(portalBase, "api/actions/targets?kind=index")).json.targets;
+  assert.deepEqual(portalTargets, ["index:portal/portal"], "a checkout's page lists only its own index");
+  assert.equal((await listing(portalBase, "index:billing/billing")).status, 404, "another checkout's index is not a target of this page");
+  assert.equal((await listing(portalBase, target)).status, 200, "every checkout of the workspace lists the shared initiative's actions");
+  const onPortal = events(context, `${portalBase}/api/events`, "action", 1);
+  const onBilling = events(context, `${billingBase}/api/events`, "action", 2);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const rebuild = actionOf(await listing(billingBase, "index:billing/billing", headers), "index.rebuild");
+  const indexed = await apply(billingBase, { action: rebuild.id, target: rebuild.target, input: {}, revision: null }, headers);
+  assert.equal(indexed.status, 200, indexed.text);
+  const action = actionOf(await listing(billingBase, target, headers), "initiative.continuation");
+  const applied = await apply(billingBase, { action: action.id, target, input: { value: "stepwise" }, revision: action.revision }, headers);
+  assert.equal(applied.status, 200, applied.text);
+  assert.equal(applied.json.applied.by.checkout.startsWith("billing/main on "), true, "the author's checkout is the one whose page applied it");
+  const [portalEvents, billingEvents] = await Promise.all([onPortal, onBilling]);
+  assert.deepEqual(portalEvents, [{ ...applied.json.applied, initiative: INITIATIVE }], "the other checkout's tab receives the shared change but not the index rebuild");
+  assert.deepEqual(billingEvents.map((event) => event.action), ["index.rebuild", "initiative.continuation"]);
+  const attention = (await get(portalBase, "api/entity?ref=attention")).json.data;
+  assert.deepEqual(attention.recentChanges.map((entry) => entry.action), ["initiative.continuation"], "Attention of the other checkout shows the shared history and only its own index history");
 });
 
 test("the page loads the generic action view", async (context) => {

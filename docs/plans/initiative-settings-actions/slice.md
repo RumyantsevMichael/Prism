@@ -6,14 +6,16 @@ The person changes an initiative's orchestration settings from the review app th
 
 ## Contract
 
-The review page base is the URL prefix of one project's review: `/session/<viewer>` on a per-project session server, and `/session/<viewer>/p/<project>` in the shared review app.
+The review page base is the URL prefix of one checkout's review: `/session/<viewer>` on a per-project session server, and `/session/<viewer>/p/<project>` in the shared review app, where `<project>` names one checkout.
 Every route below exists under both, with the same behavior, unless a clause names one.
+The checkouts whose records live in one record store form a workspace and hold the same initiatives, slices, and gates, so every checkout's page of a workspace lists and applies the same initiative, slice, and gate actions on those shared records, and the workspace head of the project menu opens them through one checkout's page.
+An index belongs to one checkout, so an index target exists only on the page of the checkout that holds it.
 
 ### Targets and the action listing
 
-1. A target reference is one of `initiative:<initiative>`, `slice:<initiative>/<slice>`, `gate:<initiative>/<gate id>`, or `index`, where identifiers follow the existing slug and gate id rules.
-   An initiative target exists while the initiative has an initiative record or a roadmap entry, a slice target while its initiative record holds the slice, a gate target while the initiative's coordination state lists the gate as pending, and `index` always.
-2. `GET <base>/api/actions?target=<reference>` answers 200 with `{ target, writable, actions }`, where `target` echoes the reference, `writable` is clause 25's answer, and `actions` lists every action that applies to the target, available or not.
+1. A target reference is one of `initiative:<initiative>`, `slice:<initiative>/<slice>`, `gate:<initiative>/<gate id>`, or `index:<repository>/<component>`, where identifiers follow the existing slug and gate id rules and `<repository>/<component>` is a component identity as `## Components` defines it.
+   An initiative target exists while the initiative has an initiative record or a roadmap entry, a slice target while its initiative record holds the slice, a gate target while the initiative's coordination state lists the gate as pending, and an index target while it is one of clause 5's index targets of the page's checkout.
+2. `GET <base>/api/actions?target=<reference>` answers 200 with `{ target, writable, actions }`, where `target` echoes the reference, `writable` is clause 37's answer, and `actions` lists every action that applies to the target, available or not.
    A malformed reference, or one whose target does not exist, answers 404 with `{ code: "unknown_target", message }`.
 3. Each entry of `actions` is an action view `{ id, label, group, target, value, fields, effect, available, reason, confirm, revision }`:
    - `id` is a stable dotted identifier, such as `initiative.push`.
@@ -25,16 +27,19 @@ Every route below exists under both, with the same behavior, unless a clause nam
    - `available` is a boolean, and `reason` is the sentence why not, or `null` while available.
    - `confirm` is `null` or `{ field, values, message }`: an input whose `field` holds one of `values` needs the person's confirmation, and `message` says what it lets agents do.
    - `revision` is the revision of the record that the action changes, or `null` while that record does not exist or when the action changes no record.
-4. An initiative target lists the seven setting actions of clause 6, in the order `autonomy`, `agentFlow`, `commit`, `push`, `continuation`, `review`, `models`, each with `group` `Initiative settings`.
+4. An initiative target lists the seven setting actions of clause 8, in the order `autonomy`, `agentFlow`, `commit`, `push`, `continuation`, `review`, `models`, each with `group` `Initiative settings`.
    A slice target lists the same seven actions of its initiative, with `target` naming the initiative, so a slice page changes the initiative's settings.
-   A gate target lists `gate.answer`, and `index` lists `index.rebuild`.
-5. An action is one definition in the registry: its id, the target kinds it applies to, its fields, its effect, its availability rule, its confirmation rule, the record it changes, and how it changes it.
-   The registry lives in a module that neither imports nor needs HTTP: `listActions({ projectRoot, target })` returns `{ target, actions }` and `applyAction({ projectRoot, target, action, input, revision, confirmed, via })` returns clause 12's result, both from `dist/server/workflow/actions.mjs`, and every refusal throws an error with `code` and the fields that clause 13 gives it.
+   A gate target lists `gate.answer`, and an index target lists `index.rebuild`.
+5. `GET <base>/api/actions/targets?kind=index` answers 200 with `{ targets }`, the index target references of the page's checkout: one per component of its `## Components` declaration, the root component `<repository>/<repository>` first and the declared components after it in declaration order.
+   A checkout without declared components has only its root component, a repository without a valid `Repository` line under `## Workspace` is named `root`, an invalid `## Components` declaration leaves only the root component, and any other `kind` answers 404 with `unknown_target`.
+6. An action is one definition in the registry: its id, the target kinds it applies to, its fields, its effect, its availability rule, its confirmation rule, the record it changes, and how it changes it.
+7. The registry lives in a module that neither imports nor needs HTTP: `listActionTargets({ projectRoot, kind })` returns clause 5's `{ targets }`, `listActions({ projectRoot, target, indexer })` returns `{ target, actions }`, and `applyAction({ projectRoot, target, action, input, revision, confirmed, via, indexer })` returns clause 14's result, all from `dist/server/workflow/actions.mjs`, and every refusal throws an error with `code` and the fields that clause 15 gives it.
+   `projectRoot` is the checkout whose page asks, and `indexer` is `{ status(projectRoot, component), rebuild(projectRoot, component) }`, where `component` is `{ identity, folder }`, `status` resolves to that component's indexing status, an object whose `state` is an indexing state such as `preparing` or `ready`, and `rebuild` starts its rebuild; without `indexer` the registry uses Prism's own indexer.
    The HTTP routes only translate requests, refusals, and the write credential, so another transport such as a desktop shell serves the same registry, and a later action, such as a request to an agent or a comment on a document, joins by adding a definition without changing the listing, the apply path, the routes, or page code.
 
 ### The initiative settings
 
-6. Each setting action has `id` `initiative.<setting>`, changes the initiative's coordination state, takes its value from the stored setting or, while unset, from the default, and has these fields, effects, and confirmations:
+8. Each setting action has `id` `initiative.<setting>`, changes the initiative's coordination state, takes its value from the stored setting or, while unset, from the default, and has these fields, effects, and confirmations:
 
 | Setting | Fields | Default value | Effect | Confirm |
 | --- | --- | --- | --- | --- |
@@ -46,94 +51,121 @@ Every route below exists under both, with the same behavior, unless a clause nam
 | `review` | `value` choice `marked`, `recommended`, `all` | `marked` | `Sets the review mark of slices whose design is not yet accepted.` | none |
 | `models` | `mode` choice `host defaults`, `custom`; `delivery`, `review`, `securityReview` text required when `mode` is `custom`; `examples` text, optional | `host defaults` | `Applies to child sessions started after the change.` | none |
 
-7. The `models` value is the string `host defaults` or the object `{ delivery, review, securityReview, examples }`, without `examples` when it is empty; its text fields take at most 200 characters, and applying `mode` `host defaults` stores `host defaults` and ignores the text fields.
-8. `initiative.agentFlow` is unavailable with the reason `Agent flow is fixed once work on the initiative starts.` while any slice of the initiative record has a status other than `not-started`, any slice holds a live claim, or the coordination state lists active work.
-9. Every other setting action is available while its initiative target exists.
+9. The `models` value is the string `host defaults` or the object `{ delivery, review, securityReview, examples }`, without `examples` when it is empty; its text fields take at most 200 characters, and applying `mode` `host defaults` stores `host defaults` and ignores the text fields.
+10. `initiative.agentFlow` is unavailable with the reason `Agent flow is fixed once work on the initiative starts.` while any slice of the initiative record has a status other than `not-started`, any slice holds a live claim, or the coordination state lists active work.
+    Availability is decided on the records that the page's checkout holds when it lists or applies the action, with a claim live by this machine's clock, so work that another machine started since the last store sync does not count yet; when a sync later merges such a change with work started elsewhere, both stay recorded, agents receive the change as clause 50's notice, and work already started keeps the agent flow it started with.
+11. Every other setting action is available while its initiative target exists.
 
 ### Applying an action
 
-10. `POST <base>/api/actions/apply` takes a JSON body `{ action, target, input, revision, confirmed }` of at most 64 KiB, where `input` maps field names to values and `confirmed` is optional.
+12. `POST <base>/api/actions/apply` takes a JSON body `{ action, target, input, revision, confirmed }` of at most 64 KiB, where `input` maps field names to values and `confirmed` is optional.
     A request whose `Content-Type` is not `application/json`, or whose `Origin` names another host than the request's `Host`, answers 403 with `{ code: "origin_refused", message }`.
-11. The apply route checks a request in this order and stops at the first refusal, which changes no record and runs nothing: the origin of clause 10, the write credential of clause 22, the target of clause 2, the action, the revision, availability, the input, and confirmation.
-12. An applied action answers 200 with `{ applied, actions }`, where `applied` is the history entry of clause 16, and `actions` is the target's action listing after the change.
+13. The apply route checks a request in this order and stops at the first refusal, which changes no record and runs nothing: the origin of clause 12, the write credential of clause 34, the target of clause 2, the action, the revision, availability, the input, and confirmation.
+14. An applied action answers 200 with `{ applied, actions }`, where `applied` is the history entry of clause 19, and `actions` is the target's action listing after the change.
     An input equal to the current value changes and records nothing, needs no confirmation, and answers 200 with `applied: null`.
-13. Refusals answer with a JSON body holding `code` and `message`:
+15. Refusals answer with a JSON body holding `code` and `message`:
     - An action that the target does not list answers 404 with `unknown_action`.
     - A `revision` that differs from the action's current `revision` answers 409 with `stale_revision` and `current`, the action's current view, so the page shows the value as it is now.
     - An unavailable action answers 409 with `action_unavailable`, its `reason`, and `current`.
     - An input that the fields do not accept answers 400 with `invalid_input`, the `field` it names, and `accepted`: the option values of a choice or toggle, or a sentence naming the text limit, the required field, or the unknown field name.
     - An input that clause 3's `confirm` matches, without `confirmed: true`, answers 409 with `confirmation_required` and the confirmation `message`, and the same request with `confirmed: true` applies it.
-14. Applying a setting writes the new value into the initiative's coordination state, creating that state when it does not exist yet, and marks the setting as the person's under `personSettings.<setting>` with the time, in the same locked write as its history entry.
-15. Every review app change to a Prism record goes through the apply route, and `<base>/api/gates/answer` and `<base>/api/indexing/rebuild` answer 404.
-    An action changes only Prism records and runs no command, changes no project file, and runs no Git operation, except that `index.rebuild` starts Prism's own repository indexer as the rebuild route did.
+16. Applying a setting writes the new value into the initiative's coordination state, creating that state when it does not exist yet, and sets `personSettings.<setting>` to `{ at, entry }`, the time and the `id` of its history entry, in the same locked write as that entry.
+17. Every review app change to a Prism record goes through the apply route, and `<base>/api/gates/answer` and `<base>/api/indexing/rebuild` answer 404.
+18. An action changes only Prism records and runs no command, changes no project file, and runs no Git operation that writes, except that `index.rebuild` starts Prism's own repository indexer as the rebuild route did; reading the Git identity of clause 20 is the one Git read an apply adds.
 
 ### History
 
-16. A history entry is `{ seq, action, target, before, after, at, via }`, where `seq` is an integer that grows by one per entry within its history, `before` and `after` are the values the person saw and set, `at` is an ISO time, and `via` is `review-app`.
-17. An action on an initiative, slice, or gate target appends its entry to the initiative's history, which the coordination state keeps as `history` with its newest 200 entries, and `index.rebuild` appends its entry to the project history record, whose record path is `.prism/history.json` beside the roadmap record, with its newest 200 entries.
-18. `update_coordination_state` and `checkpoint_pause` refuse `history` and `personSettings` in their changes with `invalid_changes`, so only the registry writes them.
+19. A history entry is `{ id, action, target, before, after, at, by, via }`, where `id` is 32 lowercase hexadecimal characters from 16 random bytes, unique across every machine that shares the records, `before` and `after` are the values the person saw and set, `at` is the ISO time of the machine that applied it, `by` is clause 20's author, and `via` is `review-app`.
+20. `by` is `{ name, email, checkout }`: `name` and `email` are the `user.name` and `user.email` that Git reports in the checkout whose review page applied the action, each `null` when unset, and `checkout` is that checkout's label `<repository>/<branch>`, as the project switcher names it, followed by ` on ` and the machine's host name without its domain, as claim labels name it.
+    `by` records what that checkout's Git configuration claims and proves nothing: anyone who can write the record store can write any `by`, and Prism neither checks it nor shows it as verified.
+21. A history lists its entries in ascending order of `at` and then of `id`, a writer inserts each new entry at its place in that order and keeps the newest 200, and no clause takes an entry's position or the number of entries as its identity.
+22. An action on an initiative, slice, or gate target adds its entry to the initiative's history, which the coordination state keeps as `history`.
+23. `index.rebuild` adds its entry to the checkout's index history, a file of this machine that no record store holds: `index-history/<checkout>.json` in Prism's application folder, the folder that holds `checkouts.json`, where `<checkout>` is the first 16 hexadecimal digits of the SHA-256 of the checkout's real path.
+    The file holds `{ schemaVersion: 1, checkout, history }`, where `checkout` is the checkout's real path, is readable only by its user, and keeps the history of every index target of that checkout.
+24. `update_coordination_state` and `checkpoint_pause` refuse `history` and `personSettings` in their changes with `invalid_changes`, so only the registry writes them.
+
+### Concurrent writers
+
+25. `recordMergeFor("initiatives/<initiative>/state.json")` from `dist/server/workflow/record-merge.mjs` returns the coordination state merge, which store sync applies to a coordination state that changed on two machines: it takes `{ path, base, local, upstream }` as UTF-8 text, `base` `null` for a state new on both sides, and returns `{ contents }` or `{ conflict }`, as the roadmap and initiative merges do.
+26. The merge combines the three versions part by part, and a part changed on only one side takes that side:
+    - `settings` and `personSettings` merge per setting: a setting changed differently on both sides takes the side whose `personSettings` mark of that setting is the later by `at` and then `entry`, with that mark, when either side changed the mark, and is a conflict otherwise.
+    - `pending` merges per gate id, in the order of the side that reordered it, with an added gate after its nearest preceding gate: a gate answered differently on both sides keeps the answer with the earlier `answeredAt`, and the upstream's on equal times, a gate that one side removed stays removed, and any other gate changed differently on both sides is a conflict.
+    - `history` holds every entry of either side once by `id`, in clause 21's order, keeping the newest 200.
+    - `active` merges per slice, in the order rule of `pending`, and a slice's entry changed differently on both sides is a conflict.
+    - `closed` holds every closed gate of either side once by gate id, in ascending order of `closedAt` and then of `id`, keeping the newest 20.
+    - `evidence` keeps each path that neither side removed, in the upstream's order, followed by the paths only the local side added, in its order.
+    - Every other top-level field merges by the existing three-way unit rule, so a field changed differently on both sides is a conflict.
+27. A merged state that coordination state validation rejects, or that exceeds the record size limit, is a conflict, and a conflict leaves the upstream state and saves the local one, as store sync does for every record kind.
+28. A merge without a conflict saves no conflict and ends with the same state bytes on both machines once each has synced, so a person's change on one machine and an agent's state write on another within one sync window both survive.
 
 ### Gate answers and the index
 
-19. `gate.answer` has a `choice` field and a `note` text field of at most 4000 characters, multiline, by gate kind:
+29. `gate.answer` has a `choice` field and a `note` text field of at most 4000 characters, multiline, by gate kind:
     - `visual-review` and `correctness`: `choice` options `approve` and `request-changes`, required, and `note` required when `choice` is `request-changes`.
     - `decision` with options: `choice` with the gate's options, optional, and `note` required when `choice` is empty.
     - `decision` without options: no `choice` field, and `note` required.
     - `assistance`: `choice` option `done`, required, and `note` optional.
-20. Applying `gate.answer` records the answer on the gate exactly as the browser answer did, with `before` `null` and `after` `{ choice, note }`, and an answered gate keeps its target and lists `gate.answer` as unavailable with the reason `The question already has an answer.`
-21. `index.rebuild` has no fields, `value` `null`, and `revision` `null`, is unavailable with the reason `An index build is already running.` while the indexing state is `preparing`, and starts a rebuild when applied, with `before` `null` and `after` `started`.
-    `startReviewServer` takes `rebuildIndex`, the function that starts a rebuild, as `createProjectReview` does.
-    The project history record holds `{ schemaVersion: 1, history }`.
+30. Applying `gate.answer` records the answer on the gate as the browser answer did, with `via` `browser`, and adds `by` and `entry`, clause 20's author and the history entry's `id`; its entry has `before` `null` and `after` `{ choice, note }`, and an answered gate keeps its target and lists `gate.answer` as unavailable with the reason `The question already has an answer.`
+31. `index.rebuild` has no fields, `value` `null`, and `revision` `null`, is unavailable with the reason `An index build is already running.` while its component's indexing state is `preparing`, and calls the indexer's `rebuild` for its component when applied, with `before` `null` and `after` `started`.
+32. An indexer that prepares one index for the whole checkout serves that index as every component's index, so each index target shows its state and rebuilding any of them rebuilds it; an indexer that prepares an index per component rebuilds only the target's.
+33. `startReviewServer` and `createProjectReview` take `rebuildIndex(projectRoot, component)`, the function that starts a rebuild, and pass the registry an indexer built from it and from their indexing status.
 
 ### The write credential
 
-22. The apply route refuses a request without a live write session with 403 and `{ code: "write_forbidden", message }`, where `message` is clause 27's notice, and a write session is a token in the `X-Prism-Write` request header that this review server or app issued.
-23. When Prism opens a browser itself, for `present_review`, a session start, or `prism review`, the URL it opens is the review URL followed by `#write=<grant>`, where a grant is 32 random bytes in base64url, issued for that open, valid once, and expiring 120 seconds after issue.
+34. The apply route refuses a request without a live write session with 403 and `{ code: "write_forbidden", message }`, where `message` is clause 39's notice, and a write session is a token in the `X-Prism-Write` request header that this review server or app issued.
+35. When Prism opens a browser itself, for `present_review`, a session start, or `prism review`, the URL it opens is the review URL followed by `#write=<grant>`, where a grant is 32 random bytes in base64url, issued for that open, valid once, and expiring 120 seconds after issue.
     In the shared app, the `present` control answer carries the grant as `writeGrant` when it tells the presenting process to open a browser, and the presenting process adds it to the URL it opens.
-24. `POST <base>/api/write-session` with the JSON body `{ grant }` and the origin rule of clause 10 answers 200 with `{ token }`, a new 32-byte base64url write session, and consumes the grant; a used, expired, or unknown grant answers 403 with `{ code: "grant_refused", message }`.
+36. `POST <base>/api/write-session` with the JSON body `{ grant }` and the origin rule of clause 12 answers 200 with `{ token }`, a new 32-byte base64url write session, and consumes the grant; a used, expired, or unknown grant answers 403 with `{ code: "grant_refused", message }`.
     The page keeps the token in the tab's session storage, which no other tab shares, and removes the fragment from its address without a new history entry, so a tab opened from a URL that an agent handed over has no write session and stays read-only.
-25. `writable` in the action listing is `true` only when the request carries a live write session.
-26. No tool result, review URL, control answer other than clause 23's, discovery file, or other file that Prism writes holds a grant or a write session token.
+    A write session is valid on every page of the server or app that issued it, so a tab that switches to another checkout of the same app keeps it.
+37. `writable` in the action listing is `true` only when the request carries a live write session.
+38. No tool result, review URL, control answer other than clause 35's, discovery file, or other file that Prism writes holds a grant or a write session token.
     A review server or app keeps only SHA-256 digests of the tokens it issued; the shared app keeps the digests of its newest 100 tokens in its private app directory, readable only by its user, and an app that starts from a handoff in which it reuses the viewer credential accepts them, while an app that starts any other way accepts none.
-27. A read-only tab shows the notice `This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.`, its action controls are disabled, and the same text is the `write_forbidden` message.
-28. A viewer stream `GET <base>/api/events?write=<token>` counts as writable when the token is a live write session, and when Prism decides whether to open a browser at a presentation, a session start, or `prism review`, it counts only writable viewer streams of the app, or of the session server in fallback, as connected tabs, keeping every other rule of that decision.
+39. A read-only tab shows the notice `This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.`, its action controls are disabled, and the same text is the `write_forbidden` message.
+40. A viewer stream `GET <base>/api/events?write=<token>` counts as writable when the token is a live write session, and when Prism decides whether to open a browser at a presentation, a session start, or `prism review`, it counts only writable viewer streams of the app, or of the session server in fallback, as connected tabs, keeping every other rule of that decision.
 
 ### What the page shows
 
-29. The initiative page and every slice page show a card titled `Initiative settings` that renders every action of the target's listing generically from its fields: `choice` and `toggle` as the existing segmented button group, `text` as the existing text input, the effect sentence under each action, and an unavailable action's reason in place of its control; a slice page's card names the initiative, so the settings read as the initiative's.
-30. `actionFormState(action, draft)`, exported by `dist/server/review/public/views/actions.js`, gives the state of one action's control from `draft = { values }`: `{ input, ready, confirm, hint }`, where `input` maps every field to the draft value or else the current value, `ready` is `false` while the action is unavailable, while `input` equals the current value, or while a required field is empty, `confirm` is the confirmation message when clause 3's `confirm` matches `input` and otherwise `null`, and `hint` is the unavailable reason, `Fill in <field label>.` for the first empty required field, or an empty string.
-31. Every control is reachable with Tab and works with Enter and Space, a control that needs confirmation opens the page's modal dialog with the confirmation message and the buttons `Confirm` and `Cancel`, where Escape cancels, and the page resends the request with `confirmed: true` only after `Confirm`.
-32. On `stale_revision` or `action_unavailable`, the page shows the action from `current`, keeps the person's draft out of it, and shows the toast `Someone changed this since you opened it; it now shows the current value.`
-33. The jump palette lists the shown target's available actions as entries labeled `<label>: <value>`, and choosing one moves focus to that action's control.
-34. When an action is applied, every connected viewer stream of the action's project receives an `action` event whose data is the history entry with `initiative`, the initiative identifier or `null` for the project history.
-35. The Attention entity's data gains `recentChanges`: the newest 20 history entries across every initiative and the project, newest first, each with `initiative`, and the Attention page lists them under `Recent changes` and adds each `action` event at the top without a reload.
+41. The initiative page and every slice page show a card titled `Initiative settings` that renders every action of the target's listing generically from its fields: `choice` and `toggle` as the existing segmented button group, `text` as the existing text input, the effect sentence under each action, and an unavailable action's reason in place of its control; a slice page's card names the initiative, so the settings read as the initiative's.
+42. The index view shows one `index.rebuild` control per index target of clause 5, labeled with its component identity and its indexing state.
+43. `actionFormState(action, draft)`, exported by `dist/server/review/public/views/actions.js`, gives the state of one action's control from `draft = { values }`: `{ input, ready, confirm, hint }`, where `input` maps every field to the draft value or else the current value, `ready` is `false` while the action is unavailable, while `input` equals the current value, or while a required field is empty, `confirm` is the confirmation message when clause 3's `confirm` matches `input` and otherwise `null`, and `hint` is the unavailable reason, `Fill in <field label>.` for the first empty required field, or an empty string.
+44. Every control is reachable with Tab and works with Enter and Space, a control that needs confirmation opens the page's modal dialog with the confirmation message and the buttons `Confirm` and `Cancel`, where Escape cancels, and the page resends the request with `confirmed: true` only after `Confirm`.
+45. On `stale_revision` or `action_unavailable`, the page shows the action from `current`, keeps the person's draft out of it, and shows the toast `Someone changed this since you opened it; it now shows the current value.`
+46. The jump palette lists the shown target's available actions as entries labeled `<label>: <value>`, and choosing one moves focus to that action's control.
+47. When an action is applied, an `action` event whose data is the history entry with `initiative`, the initiative identifier or `null` for an index target, reaches every connected viewer stream of every page of the same server or app whose records resolve to the same record store as the applying page, for an initiative, slice, or gate target, and only the applying page's viewer streams for an index target.
+    An entry that a store sync brings from another machine sends no event and appears in `Recent changes` when Attention next loads.
+48. The Attention entity's data gains `recentChanges`: the newest 20 entries, newest first by clause 21's order, of every initiative history in the page's records and of the page's checkout's index history, each with `initiative`, and the Attention page lists them under `Recent changes`, each with its author's name, or its email when the name is unset, and its `checkout`, and adds each `action` event at the top without a reload.
 
 ### Agents learn of the person's changes
 
-36. A session is the holder that claims use: the host session that the call's metadata or the server's environment names, or else the Prism server process.
-37. When a tool call names an initiative in its `initiative` argument and succeeds, and that initiative's history holds entries newer than the newest one this session has been shown, the result's `structuredContent` gains `personChanges`, those entries oldest first, and its content gains a text block that starts `The person changed this initiative in the review app since this session last read it:` and lists one line per entry with its action, target, before and after values, and the action's effect.
-    Those entries then count as shown to this session, so no later result of this session repeats them.
-38. A session's first successful call that names an initiative shows it nothing and counts every existing entry as shown.
-39. What a session was shown is kept in the host's private plugin data folder, so a server that the host restarts in the same session does not show entries again.
-40. A `wait_for_user_gate` call ends when an entry is appended to the initiative's history after the call started, other than an answer to one of its gates, and returns `{ status: "changed", gateIds, waiting, changes }`, where `changes` lists those entries, which count as shown; on a host where the Stop hook waits, the hook blocks the stop with clause 37's text for them.
-41. When `update_coordination_state` or `checkpoint_pause` names a setting that `personSettings` marks, with another value, the stored value stays, and the result lists `keptSettings: [{ setting, kept, requested }]`.
-42. `update_initiative` results of `claim` and `set_status` operations carry `settings`: the seven effective setting values of clause 6 and `personSettings`, the names of the settings the person set.
-43. When `accept_proposal` or `accept_design` accepts a design, Prism sets its review mark from the initiative's `review` setting at that moment: `all` marks every accepted design `required`, `recommended` marks `required` each slice that `reviewRequired` names or whose proposed `accept_design` recommended `required`, and `marked` or an unset setting keeps today's marks; an accepted design keeps its mark when the setting changes later.
-44. The orchestrate skill acts on `personChanges`, a `changed` gate wait, and `keptSettings` before its next step, applying each change at the effect point its action names.
+49. A session is the holder that claims use: the host session that the call's metadata or the server's environment names, or else the Prism server process.
+50. When a tool call names an initiative in its `initiative` argument and succeeds, and that initiative's history holds entries whose `id` this session has not been shown, the result's `structuredContent` gains `personChanges`, those entries in history order, and its content gains a text block that starts `The person changed this initiative in the review app since this session last read it:` and lists one line per entry with its action, target, before and after values, the action's effect, and `by <author>`, where `<author>` is `<name> <<email>>` without whichever part is unset, or `an unknown person` when both are, followed by ` (<checkout>)`.
+    Those entries then count as shown to this session, so no later result of this session repeats them, and an entry that a store sync brings later counts as not shown whatever its `at`.
+51. A session's first successful call that names an initiative shows it nothing and counts every existing entry as shown.
+52. What a session was shown is kept as the shown entry ids of each initiative, at most those still in its history, in the host's private plugin data folder, so a server that the host restarts in the same session does not show entries again.
+53. A `wait_for_user_gate` call ends when the initiative's history holds an entry whose `id` it did not hold when the call started, other than an answer to one of its gates, whether this machine applied it or a store sync brought it, and returns `{ status: "changed", gateIds, waiting, changes }`, where `changes` lists those entries, which count as shown; on a host where the Stop hook waits, the hook blocks the stop with clause 50's text for them.
+54. When `update_coordination_state` or `checkpoint_pause` names a setting that `personSettings` marks, with another value, the stored value stays, and the result lists `keptSettings: [{ setting, kept, requested }]`.
+55. `update_initiative` results of `claim` and `set_status` operations carry `settings`: the seven effective setting values of clause 8 and `personSettings`, the names of the settings the person set.
+56. When `accept_proposal` or `accept_design` accepts a design, Prism sets its review mark from the initiative's `review` setting at that moment: `all` marks every accepted design `required`, `recommended` marks `required` each slice that `reviewRequired` names or whose proposed `accept_design` recommended `required`, and `marked` or an unset setting keeps today's marks; an accepted design keeps its mark when the setting changes later.
+57. The orchestrate skill acts on `personChanges`, a `changed` gate wait, and `keptSettings` before its next step, applying each change at the effect point its action names, and names the change's author when it reports the change to the person.
 
 ## Assumptions
 
 - Probed: a write session kept in a tab's session storage from a one-time grant in the URL fragment survives a reload of that tab, is absent from a second tab opened on the same URL in the same browser, and the fragment never reaches the server; after the page replaces its address the tab's URL has no fragment (`node docs/plans/initiative-settings-actions/probes/tab-write-session.mjs`, observed the first tab's two requests with `X-Prism-Write: token-for-G1`, the second tab's request with none, and `afterGrantUrl` without `#write`).
-- Unprobed: every platform's browser opener passes the URL fragment to the browser; where one drops it, the tab opens without a write session and shows clause 27's notice, so the person sees why it cannot write rather than a silent failure.
-- Unprobed: hosts give child agents the same session identity as their orchestrator, as Codex does for its sub-agents, so a child that calls Prism first is shown the person's changes instead of the orchestrator; clause 42 gives the orchestrator the current settings whenever it claims a scope or starts a slice, and clause 40 ends its gate waits, so a change still reaches it before the next child starts.
+- Probed: without a structural merge, Git's line merge of two coordination states that each appended a history entry conflicts, while changes to different fields can merge by lines (`git merge-file` on pretty-printed state versions, observed exit 1 for two appended entries and exit 0 for a setting on one side and `next` on the other), so clause 25's merge is what keeps concurrent writers from a saved conflict.
+- Probed: `git config user.email` answers the configured identity of the checkout, and `os.hostname()` gives the host name that claim labels already use (`git config user.email` in a checkout, observed the configured address; `hostname`, observed `vm`).
+- Unprobed: every platform's browser opener passes the URL fragment to the browser; where one drops it, the tab opens without a write session and shows clause 39's notice, so the person sees why it cannot write rather than a silent failure.
+- Unprobed: hosts give child agents the same session identity as their orchestrator, as Codex does for its sub-agents, so a child that calls Prism first is shown the person's changes instead of the orchestrator; clause 55 gives the orchestrator the current settings whenever it claims a scope or starts a slice, and clause 53 ends its gate waits, so a change still reaches it before the next child starts.
+- Unprobed: machine clocks agree; a machine whose clock is off places its entries out of real-time order under clause 21, while notices and gate waits follow entry ids, so no entry is skipped or shown twice, and a setting changed on two machines within the clock difference may resolve to the change made earlier in real time.
 
 ## Slices
 
 | Slug | Outcome | Requirements | Depends on | Frozen tests | Review |
 | --- | --- | --- | --- | --- | --- |
-| `action-registry` | The review app lists and applies revision-checked actions from one transport-independent registry, with the seven initiative settings, gate answers, and the index rebuild as its actions, and records each in history. | `review-app-actions.md§1`-`§7`, `§9`, `§10`; `initiative-settings.md§1`, `§2`, `§3`, `§9` | | `test/server/fixtures/review-actions.mjs`, `test/server/review-actions.test.mjs` | required: the single write path of the person's authority over untrusted page input |
+| `action-registry` | The review app lists and applies revision-checked actions from one transport-independent registry, with the seven initiative settings, gate answers, and each component's index rebuild as its actions, and records each with its author in history. | `review-app-actions.md§1`-`§7`, `§9`, `§10`; `initiative-settings.md§1`, `§2`, `§3`, `§9` | | `test/server/fixtures/review-actions.mjs`, `test/server/review-actions.test.mjs` | required: the single write path of the person's authority over untrusted page input |
+| `state-merge` | A coordination state changed on two machines within one sync window merges by its structure, so the person's changes, agents' writes, and both histories survive without a saved conflict. | `review-app-actions.md§7`; `initiative-settings.md§7` | `action-registry` | `test/server/coordination-state-merge.test.mjs` | required: a wrong merge loses records on every machine |
 | `write-credential` | Only a tab that Prism opened can apply actions, through a one-time grant exchanged for a per-tab write session that no agent-visible surface reveals, on the shared app and the per-project session server. | `review-app-actions.md§11`, `§12` | `action-registry` | `test/server/review-write-credential.test.mjs` | required: authentication and secret handling |
-| `action-controls` | The initiative and slice pages render every action generically as compact keyboard-reachable controls with confirmation and stale handling, read-only tabs say why, and every tab's Attention page shows applied actions as they happen. | `review-app-actions.md§1`, `§2`, `§5`, `§8`; `initiative-settings.md§1`, `§9` | `write-credential` | `test/server/review-action-controls.test.mjs` | none |
-| `agent-change-notices` | Running agents learn of the person's changes once per session from Prism's tool results and gate waits, keep the person's settings over their own, and apply the review policy at design acceptance. | `review-app-actions.md§13`, `§14`; `initiative-settings.md§3`-`§8` | `action-registry` | `test/server/agent-change-notices.test.mjs` | required: keeps agents from overriding the person's push and commit settings |
+| `action-controls` | The initiative, slice, and index pages render every action generically as compact keyboard-reachable controls with confirmation and stale handling, read-only tabs say why, and every tab of the workspace's checkouts shows applied actions and their authors as they happen. | `review-app-actions.md§1`, `§2`, `§5`, `§8`; `initiative-settings.md§1`, `§9` | `write-credential` | `test/server/review-action-controls.test.mjs` | none |
+| `agent-change-notices` | Running agents learn of the person's changes and who made them once per session, from this machine or through store sync, in Prism's tool results and gate waits, keep the person's settings over their own, and apply the review policy at design acceptance. | `review-app-actions.md§13`, `§14`; `initiative-settings.md§3`-`§8` | `action-registry` | `test/server/agent-change-notices.test.mjs` | required: keeps agents from overriding the person's push and commit settings |
 
 The overview is [overview.puml](overview.puml).

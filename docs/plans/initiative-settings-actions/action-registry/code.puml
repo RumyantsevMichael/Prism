@@ -1,17 +1,23 @@
 @startuml
 title action-registry - code
-component "workflow/actions.mjs\nlistActions, applyAction,\naction definitions" as Registry
+component "workflow/actions.mjs\nlistActionTargets, listActions,\napplyAction, action definitions" as Registry
 component "workflow/state.mjs\nsettings, personSettings,\nhistory, gate answer" as State
+component "workflow/index-history.mjs\ncheckout's index history" as IndexHistory
 component "workflow/initiative.mjs\nslices, claims" as Initiative
-component "workflow/record-store.mjs\nproject history record" as Store
-component "review-server.mjs\napi/actions, api/actions/apply" as Routes
+component "workflow/components.mjs\nreadComponents" as Components
+component "workspace-identity.mjs\ncheckoutLabel" as Identity
+component "review-server.mjs\napi/actions, targets, apply" as Routes
+component "review-app-server.mjs\nper-checkout indexer" as App
 component "workspace-model.mjs\nentity cache" as Model
 component "public/review.js\ngate answer form" as Page
-component "views/indexing.js\nrebuild button" as Indexing
+component "views/indexing.js\nrebuild controls" as Indexing
 Registry --> State : writes settings, answers, history
+Registry --> IndexHistory : index.rebuild entries
 Registry ..> Initiative : reads work started
-Registry --> Store : project history
+Registry ..> Components : index targets
+Registry ..> Identity : author
 Routes --> Registry
+App --> Routes : indexer
 Routes ..> Model : forget cache
 Page ..> Routes : apply gate.answer
 Indexing ..> Routes : apply index.rebuild
