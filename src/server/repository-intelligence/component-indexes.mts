@@ -4,7 +4,7 @@ import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { componentOf, listsComponents, readComponents } from "../workflow/components.mjs";
 import { NativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { semanticError } from "./native-semantic-runtime.mjs";
-import type { ComponentRuntime, ComponentState, Diagnostic, NativeSource, Preparation } from "./repository-unit-types.mjs";
+import type { ComponentRuntime, ComponentState, Diagnostic, NativeSource, Preparation, SearchResult } from "./repository-unit-types.mjs";
 
 // A repository that declares components has one native index per component. Each component's source scans only that component's files,
 // and a call prepares and reads only the components that hold the paths it names, or every component that holds a file.
@@ -75,6 +75,26 @@ export function componentResult(components: ComponentState[], snapshot: string):
   const diagnostics = missing.length ? [{ code: "components_missing", message: `The result does not include every component it selected: ${named.join("; ")}.`, components: missing.map(entry => entry.component) }] : [];
   const indexRevision = included.length ? sha(included.map(entry => `${entry.component} ${entry.indexRevision}\n`).join("")) : null;
   return { components, status, diagnostics, snapshot, indexRevision };
+}
+
+/** A component's search: null when its index did not answer, so it adds no result. */
+export interface ComponentSearch { component: string; search(): Promise<SearchResult[] | null> }
+
+/**
+ * Searches each included component in component order and returns each one's answer and the results, each naming its component.
+ * One component that answers keeps its index's order. Several merge by cosineSimilarity from highest to lowest, with ties, and results that have no
+ * similarity after every result that has one, in component order and then in each index's order; the merged list keeps the first `limit` and
+ * numbers fusedRank from 1, while each result keeps the other scores its index computed.
+ */
+export async function searchComponents(included: ComponentSearch[], limit: number) {
+  const answers: (SearchResult[] | null)[] = [];
+  for (const entry of included) answers.push(await entry.search());
+  const lists = included.flatMap((entry, index) => answers[index] ? [answers[index]!.map(result => ({ ...result, component: entry.component }))] : []);
+  if (lists.length === 1) return { answers, results: lists[0].slice(0, limit) };
+  const similarity = (result: SearchResult) => result.cosineSimilarity ?? -Infinity;
+  // Array sort is stable, so equal similarities keep the order of the concatenation: component order, then each index's order.
+  const merged = lists.flat().sort((left, right) => similarity(left) === similarity(right) ? 0 : similarity(right) > similarity(left) ? 1 : -1);
+  return { answers, results: merged.slice(0, limit).map((result, index) => ({ ...result, fusedRank: index + 1 })) };
 }
 
 /** Reads the declaration and the selected components of a call, and refuses an expected snapshot that differs from the selection's snapshot. */

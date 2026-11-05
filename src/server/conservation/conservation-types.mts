@@ -1,4 +1,4 @@
-import type { SourceUnit, Diagnostic, Relationship, UnresolvedReference } from "../repository-intelligence/repository-unit-types.mjs";
+import type { ComponentState, SourceUnit, Diagnostic, Relationship, UnresolvedReference } from "../repository-intelligence/repository-unit-types.mjs";
 
 export type Selector = string | { type: "symbol" | "heading" | "text" | "json-pointer" | "yaml-key"; value: string }
   | { type: "span"; start: number; end: number; sourceHash: string };
@@ -12,7 +12,9 @@ export interface SearchReceipt {
   kind: "search"; schemaVersion: 1; project: string; snapshotId: string | null; snapshot: string; query: string;
   filters: unknown; limit: number; status: string; capabilities: Record<string, boolean>; modelIdentity: string | null;
   indexRevision: string | null; versions: Record<string, string>; coverage: unknown; diagnostics: Diagnostic[];
-  candidates: (SourceUnit & { excerpt: string; cosineSimilarity: number | null; lexicalScore: number | null; fusedRank: number })[];
+  // In a repository that declares components: each selected component's part in the result, and each candidate's component.
+  components?: ComponentState[];
+  candidates: (SourceUnit & { excerpt: string; cosineSimilarity: number | null; lexicalScore: number | null; fusedRank: number; component?: string })[];
 }
 // The result of a repository analysis tool, retained so that a report or a review view can cite it and detect stale results.
 export interface AnalysisReceipt {

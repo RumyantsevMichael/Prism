@@ -40,6 +40,7 @@ export async function callConservationTool(name: string, input: Record<string, u
     throw conservationError("validation_failed", `The ${evidence.kind} evidence has no section ${section}. Its sections are ${sections.join(", ") || "none"}.`);
   }
   const offset = input.offset as number || 0, limit = input.limit as number || 50;
-  const metadata = Object.fromEntries(Object.entries(record).filter(([key, value]) => !Array.isArray(value) && !["units", "fileCoverage", "tokenCounts", "structureCounts", "project"].includes(key)));
+  // A section is paged, while a receipt's components, one short entry per component it read, describe the whole result and stay with its metadata.
+  const metadata = Object.fromEntries(Object.entries(record).filter(([key, value]) => (!Array.isArray(value) || key === "components") && !["units", "fileCoverage", "tokenCounts", "structureCounts", "project"].includes(key)));
   return { evidenceId: input.evidenceId, ...metadata, section, entries: values.slice(offset, offset + limit), totalCount: values.length, nextOffset: offset + limit < values.length ? offset + limit : null };
 }

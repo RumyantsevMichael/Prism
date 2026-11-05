@@ -1,7 +1,7 @@
 // Generated from src/server/repository-intelligence/semantic-native-provider.mts by scripts/native-build/compile.mjs.
 import { openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
-import { componentResult, componentStates, indexComponents, prepareComponents, selectedComponents } from "./component-indexes.mjs";
+import { componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectedComponents } from "./component-indexes.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { moduleInterfaceReport } from "./module-interfaces.mjs";
@@ -266,16 +266,7 @@ async function searchRepositoryConcepts(input, options = {}) {
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
   if (preparation.status === "preparing") return { ...preparation, prepared: void 0, results: [] };
   let results = await provider.semanticSearch(input.query, input.filters, input.limit || 10);
-  if (results === null) {
-    const { hits } = await provider.source.search(input.query, {}, { topK: input.limit || 10, filters: input.filters });
-    results = [];
-    for (const { node, score } of hits) {
-      const domain = domainFor(node.file);
-      const source = await provider.source.read({ file: node.file, range: node.range });
-      results.push({ ...node, domain, selector: node.name, sourceHash: (await provider.snapshot()).filesByPath.get(node.file).hash, excerpt: source.content.slice(0, 600), lexicalScore: score, cosineSimilarity: null, fusedRank: results.length + 1 });
-      if (results.length >= (input.limit || 10)) break;
-    }
-  }
+  if (results === null) results = await lexicalResults([provider.source], input, input.limit || 10);
   await provider.verifySnapshot();
   if (input.snapshotId && provider.prepared) await retainAnalysis(input.projectRoot, input.snapshotId, provider.prepared);
   const capabilities = (await provider.describe()).capabilities;
@@ -312,32 +303,51 @@ async function searchRepositoryConcepts(input, options = {}) {
     results
   };
 }
+async function lexicalResults(sources, input, limit, components = []) {
+  const hits = [];
+  for (const [index, source] of sources.entries()) for (const hit of (await source.search(input.query, {}, { topK: limit, filters: input.filters })).hits) hits.push({ ...hit, source, component: components[index] });
+  hits.sort((left, right) => right.score - left.score || left.node.file.localeCompare(right.node.file));
+  const results = [];
+  for (const { node, score, source, component } of hits.slice(0, limit)) {
+    const read = await source.read({ file: node.file, range: node.range });
+    results.push({
+      ...node,
+      domain: domainFor(node.file),
+      selector: node.name,
+      sourceHash: (await source.snapshot()).filesByPath.get(node.file).hash,
+      excerpt: read.content.slice(0, 600),
+      lexicalScore: score,
+      cosineSimilarity: null,
+      fusedRank: results.length + 1,
+      ...component ? { component } : {}
+    });
+  }
+  return results;
+}
 async function searchComponentIndexes(input, declaration, options) {
   const runtime = options.runtime || nativeSemanticRuntime, limit = input.limit || 10;
   const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot);
   const preparations = await prepareComponents(runtime, selected, options.waitMs);
   const states = componentStates(selected, preparations);
-  const waiting = componentResult(states, snapshot);
-  if (waiting.status === "preparing") return { status: waiting.status, preparationId: null, snapshot, diagnostics: waiting.diagnostics, components: waiting.components, results: [] };
-  const providers = [];
-  const results = [];
-  for (const [index, state] of states.entries()) {
-    if (state.status !== "included") continue;
-    const provider = new SemanticNativeRepositoryIntelligence(selected[index].source, preparations[index], runtime);
-    const found = await provider.semanticSearch(input.query, input.filters, limit);
-    if (found === null) {
-      const [failure] = provider.preparation.diagnostics.slice(-1);
-      states[index] = { ...state, status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } };
-      continue;
-    }
-    providers.push(provider);
-    results.push(...found);
+  const preparing = () => ({ status: "preparing", preparationId: null, snapshot, diagnostics: componentResult(states, snapshot).diagnostics, components: states, results: [] });
+  if (componentResult(states, snapshot).status === "preparing") return preparing();
+  const included = states.flatMap((state, index) => state.status === "included" ? [{ index, provider: new SemanticNativeRepositoryIntelligence(selected[index].source, preparations[index], runtime) }] : []);
+  const searched = await searchComponents(included.map(({ index, provider }) => ({ component: selected[index].component, search: () => provider.semanticSearch(input.query, input.filters, limit) })), limit);
+  for (const [position, { index, provider }] of included.entries()) {
+    if (searched.answers[position] !== null) continue;
+    const [failure] = provider.preparation.diagnostics.slice(-1);
+    states[index] = { ...states[index], status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } };
   }
-  for (const provider of providers) await provider.verifySnapshot();
-  const result = componentResult(states, snapshot), prepared = providers.map((provider) => provider.prepared);
+  const providers = included.filter((_, position) => searched.answers[position] !== null).map((entry) => entry.provider);
+  const result = componentResult(states, snapshot);
+  if (result.status === "preparing") return preparing();
+  const candidates = result.status === "degraded" ? await lexicalResults(selected.map((entry) => entry.source), input, limit, selected.map((entry) => entry.component)) : searched.results;
+  const verified = result.status === "degraded" ? selected.map((entry, index) => new SemanticNativeRepositoryIntelligence(entry.source, preparations[index], runtime)) : providers;
+  for (const provider of verified) await provider.verifySnapshot();
+  const prepared = providers.map((provider) => provider.prepared);
   const diagnostics = [...result.diagnostics, ...selected.flatMap((entry, index) => states[index].status === "failed" ? [] : preparations[index].diagnostics.map((item) => ({ ...item, component: entry.component })))];
   const capabilities = { lexicalSearch: true, semanticSearch: prepared.length > 0, hybridSearch: prepared.length > 0, symbolGraph: prepared.length > 0, verifiedSource: true, documentGraph: prepared.length > 0 };
-  const candidates = results.slice(0, limit), first = prepared[0];
+  const first = prepared[0];
   const receipt = {
     kind: "search",
     schemaVersion: 1,
@@ -354,6 +364,7 @@ async function searchComponentIndexes(input, declaration, options) {
     versions: { graph: "1.6.0", extractor: first?.index.chunkerVersion || "unavailable", tokenizer: first?.modelIdentity || "unavailable", runtime: first?.assetIdentity || "unavailable" },
     coverage: prepared.length ? { files: Object.assign({}, ...prepared.map((item) => item.index.fileCoverage)), counts: prepared.map((item) => item.index.counts) } : null,
     diagnostics,
+    components: result.components,
     candidates
   };
   const receiptId = await conservationStore.put(input.projectRoot, receipt);

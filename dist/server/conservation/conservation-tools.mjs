@@ -49,7 +49,7 @@ async function callConservationTool(name, input) {
     throw conservationError("validation_failed", `The ${evidence.kind} evidence has no section ${section}. Its sections are ${sections.join(", ") || "none"}.`);
   }
   const offset = input.offset || 0, limit = input.limit || 50;
-  const metadata = Object.fromEntries(Object.entries(record).filter(([key, value]) => !Array.isArray(value) && !["units", "fileCoverage", "tokenCounts", "structureCounts", "project"].includes(key)));
+  const metadata = Object.fromEntries(Object.entries(record).filter(([key, value]) => (!Array.isArray(value) || key === "components") && !["units", "fileCoverage", "tokenCounts", "structureCounts", "project"].includes(key)));
   return { evidenceId: input.evidenceId, ...metadata, section, entries: values.slice(offset, offset + limit), totalCount: values.length, nextOffset: offset + limit < values.length ? offset + limit : null };
 }
 export {

@@ -61,6 +61,15 @@ function componentResult(components, snapshot) {
 `).join("")) : null;
   return { components, status, diagnostics, snapshot, indexRevision };
 }
+async function searchComponents(included, limit) {
+  const answers = [];
+  for (const entry of included) answers.push(await entry.search());
+  const lists = included.flatMap((entry, index) => answers[index] ? [answers[index].map((result) => ({ ...result, component: entry.component }))] : []);
+  if (lists.length === 1) return { answers, results: lists[0].slice(0, limit) };
+  const similarity = (result) => result.cosineSimilarity ?? -Infinity;
+  const merged = lists.flat().sort((left, right) => similarity(left) === similarity(right) ? 0 : similarity(right) > similarity(left) ? 1 : -1);
+  return { answers, results: merged.slice(0, limit).map((result, index) => ({ ...result, fusedRank: index + 1 })) };
+}
 async function selectedComponents(projectRoot, declaration, paths, expectedSnapshot) {
   const root = await realpath(projectRoot);
   const selected = await selectComponents(declaration, componentSources(root, declaration), paths);
@@ -74,6 +83,7 @@ export {
   componentStates,
   indexComponents,
   prepareComponents,
+  searchComponents,
   selectComponents,
   selectedComponents,
   selectionSnapshot
