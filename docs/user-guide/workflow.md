@@ -215,7 +215,9 @@ In a cloud session the chat question names the same commands and folders, becaus
 Allowing it allows each listed command in its folder, as a slice's approval does, so later runs ask only about new commands or folders.
 Declining it marks the components of every listed command `declined` for this run, while the commands you allowed earlier still run, and the next run asks again.
 An answer with only a note returns `approval_unclear` and runs nothing.
-The dependents' runs of one work tree run one at a time, and a call while a scope's run is still going, or a repeated call with the gate that started a finished run, returns that run instead of asking again.
+The dependents' runs of one work tree run one at a time, and a call while a scope's run is still going returns that run instead of asking again.
+A repeated call with the gate of a finished run that declined commands returns that run too, and its result says to call `verify_slice` with `dependents` and without `approvalGate`, which asks again.
+A call with the gate of a finished run whose commands were all allowed runs the dependents again, and any call with another gate or none forgets the declined run, so a later call with its gate asks or runs instead of returning it.
 
 The run is recorded on the scope, and its result has `status` `passed` when every dependent passed and `failed` otherwise, with `components` in run order as `{ name, folder, command, status }`, `blocked` naming each dependent that failed or was declined, and `run`, the record of the run.
 A run whose commands change project files fails with reason `tracked_files_changed` and blocks every dependent.
