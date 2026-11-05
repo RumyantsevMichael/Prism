@@ -101,7 +101,6 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Child status | The short fixed result a child session returns: result, last commit, a one-sentence summary, and questions. |
 | Fresh context | A session that starts without the conversation that authored its inputs. |
 | Decision autonomy | A run setting that selects which gates wait for the user. |
-| Agent flow | A run setting that selects child agents or inline work for design and implementation. |
 | Slice continuation | A run setting that controls whether the next slice starts without the user. |
 | `recovery.md` | A slice note that preserves unfinished work when a run pauses. |
 | Pause checkpoint | An orchestrator action that writes `recovery.md` and updates coordination state together. |

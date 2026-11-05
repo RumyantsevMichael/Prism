@@ -11,20 +11,21 @@ The orchestrator coordinates; it judges order, contract defects, and gates, and 
 Design, implementation, review, and example writer sessions get identifiers and folders from it and return a short status.
 Prism records progress from `update_initiative` calls and from the `verify_slice` calls of implementers, so the orchestrator makes no other bookkeeping calls.
 The [workflow](../workflow/SKILL.md) defines the terms.
+To run a skill in a child, start a fresh child agent whose prompt asks it to use that skill and passes the identifiers and folders below, and when no child agent can start, stop and ask the user to run the orchestration where child agents are available.
 
 - Don't
+  - Load or follow `design`, `implement`, `review`, `triage`, or `ideate` yourself; only their child agents do.
   - Run git, hash files, or read code while slices run; children commit their own work and Prism checks the frozen tests.
   - Keep a child's transcript; keep its status.
 
 ## 1. Settings
 
 Settings live in the initiative's coordination state, read with `get_coordination_state` and written once before active work with `update_coordination_state` and the current revision.
-A stored value stays authoritative on resume, and `agentFlow` is fixed once work starts.
+A stored value stays authoritative on resume.
 
 | Setting | Values | Default | Effect |
 | --- | --- | --- | --- |
 | `autonomy` | `conservative`, `broad`, `full` | `conservative` | Which gates wait for the user. |
-| `agentFlow` | `multi`, `mono` | `multi` | `multi` runs every child in a fresh agent; `mono` runs design and implementation inline. |
 | `commit` | `on`, `off` | `on` under `full`, otherwise `off` | Whether design and implementation commit their changes. |
 | `push` | `on`, `off` | `off` | Whether finished slices are pushed; autonomy never turns it on. |
 | `continuation` | `auto`, `stepwise` | `auto` | Whether the next slice starts without the user. |
@@ -62,7 +63,7 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
 
 1. Read the slice's state with `get_initiative`.
 2. Call `update_initiative` with `set_status` `in-progress`, which puts its frozen tests in place.
-3. Run `implement` for the slice in one fresh session, passing the contract's `slice.md` and the slice folder; it verifies the slice through `verify_slice` itself.
+3. Run `implement` for the slice in one fresh child agent, passing the contract's `slice.md` and the slice folder; it verifies the slice through `verify_slice` itself.
 4. When it returns `DONE`, read the slice with `get_initiative`: when its review mark is `required`, review it through [review](#5-review), then call `update_initiative` with `set_status` `done`; when it is not done otherwise, call `set_status` `done`, which refuses without a fresh passing run.
 5. When the slice was the last leaf of its contract scope that was not done, call `verify_slice` with the scope as `slice` and `dependents` `true` for its dependents' run; call it again after `running`, after `approval_needed` get the user's answer as for an implementer's approval gate below and call it again with `approvalGate` and any `chatApproval`, and report a `failed` or `approval_unclear` scope to the user as blocked, with each `blocked` component.
 6. Accept the slice's Proposed ADRs, and push when push is on.

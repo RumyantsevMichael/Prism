@@ -81,7 +81,7 @@ test("implementation works from files against frozen tests and verifies its own 
 
 test("orchestration designs one contract per scope, starts each slice, and completes on verification", async () => {
   const orchestrate = await skill("orchestrate");
-  for (const value of ["conservative", "broad", "full", "mono", "multi", "on", "off", "auto", "stepwise", "host defaults"]) {
+  for (const value of ["conservative", "broad", "full", "on", "off", "auto", "stepwise", "host defaults"]) {
     assert.match(orchestrate, new RegExp(`\\\`${value}\\\``), value);
   }
   assert.match(orchestrate, /\| `commit` \| `on`, `off` \| `on` under `full`, otherwise `off` \|/);

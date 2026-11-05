@@ -27,7 +27,7 @@ test("creates and updates a validated coordination state atomically", async (con
     ...fixture,
     expectedRevision: null,
     changes: {
-      settings: { autonomy: "full", agentFlow: "mono", commit: "off", push: "off", continuation: "stepwise", models: "defaults" },
+      settings: { autonomy: "full", commit: "off", push: "off", continuation: "stepwise", models: "defaults" },
       activeOperations: active("download").map(entry => ({ op: "start", entry })),
       pending: ["User decision: retention"],
       next: ["Run the design audit"],
@@ -50,35 +50,47 @@ test("creates and updates a validated coordination state atomically", async (con
   assert.deepEqual(JSON.parse(await readFile(stateFile(fixture), "utf8")), updated.state);
 });
 
-test("rejects unsupported autonomy and agent flow values", async (context) => {
+test("rejects unsupported autonomy values", async (context) => {
   const fixture = await stateFixture(context);
 
   await assert.rejects(
     updateCoordinationState({
       ...fixture,
       expectedRevision: null,
-      changes: { settings: { autonomy: "reckless", agentFlow: "hybrid" } }
+      changes: { settings: { autonomy: "reckless" } }
     }),
-    (caught) => caught.code === "invalid_state" && caught.errors.some((item) => item.includes("settings.autonomy")) && caught.errors.some((item) => item.includes("settings.agentFlow"))
+    (caught) => caught.code === "invalid_state" && caught.errors.some((item) => item.includes("settings.autonomy"))
   );
 });
 
-test("accepts every autonomy and agent flow value", async (context) => {
+test("accepts every autonomy value", async (context) => {
   const fixture = await stateFixture(context);
   let expectedRevision = null;
   for (const autonomy of ["conservative", "broad", "full"]) {
-    for (const agentFlow of ["mono", "multi"]) {
-      const updated = await updateCoordinationState({
-        ...fixture,
-        expectedRevision,
-        changes: { settings: { autonomy, agentFlow } }
-      });
-      assert.equal(updated.valid, true);
-      assert.equal(updated.state.settings.autonomy, autonomy);
-      assert.equal(updated.state.settings.agentFlow, agentFlow);
-      expectedRevision = updated.revision;
-    }
+    const updated = await updateCoordinationState({
+      ...fixture,
+      expectedRevision,
+      changes: { settings: { autonomy } }
+    });
+    assert.equal(updated.valid, true);
+    assert.equal(updated.state.settings.autonomy, autonomy);
+    expectedRevision = updated.revision;
   }
+});
+
+test("drops a stored agent flow from an older Prism when the state is read and written", async (context) => {
+  const fixture = await stateFixture(context);
+  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { settings: { autonomy: "broad" } } });
+  const stored = JSON.parse(await readFile(stateFile(fixture), "utf8"));
+  stored.settings.agentFlow = "mono";
+  await writeFile(stateFile(fixture), `${JSON.stringify(stored, null, 2)}\n`);
+  const loaded = await readCoordinationState(fixture);
+  assert.deepEqual(loaded.state.settings, { autonomy: "broad" });
+  assert.equal(loaded.valid, true);
+  const updated = await updateCoordinationState({ ...fixture, expectedRevision: loaded.revision, changes: { settings: { review: "all" } } });
+  assert.deepEqual(updated.state.settings, { autonomy: "broad", review: "all" });
+  assert.equal(JSON.parse(await readFile(stateFile(fixture), "utf8")).settings.agentFlow, undefined);
+  assert.notEqual(created.revision, null);
 });
 
 test("keeps legacy state valid without the additive settings", async (context) => {

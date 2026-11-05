@@ -12,7 +12,7 @@ import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 const SCHEMA_VERSION = 1;
 
 const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed"]);
-const SETTING_KEYS = new Set(["autonomy", "agentFlow", "commit", "push", "continuation", "review", "models"]);
+const SETTING_KEYS = new Set(["autonomy", "commit", "push", "continuation", "review", "models"]);
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
 const GATE_KEYS = new Set(["id", "kind", "slice", "question", "artifacts", "options", "askedAt", "answer"]);
@@ -25,7 +25,6 @@ const REASON_LIMIT = 1000;
 const REVIEW_CHOICES = new Set(["approve", "request-changes"]);
 const SETTING_VALUES = {
   autonomy: new Set(["conservative", "broad", "full"]),
-  agentFlow: new Set(["mono", "multi"]),
   commit: new Set(["on", "off"]),
   push: new Set(["on", "off"]),
   continuation: new Set(["auto", "stepwise"]),
@@ -104,13 +103,23 @@ function defaultState() {
   };
 }
 
+// Every child now runs in a fresh agent, so a stored agent flow from an older Prism is dropped on read.
+const RETIRED_SETTINGS = new Set(["agentFlow"]);
+
+function withoutRetiredSettings(settings) {
+  if (!isRecord(settings)) {
+    return settings;
+  }
+  return Object.fromEntries(Object.entries(settings).filter(([key]) => !RETIRED_SETTINGS.has(key)));
+}
+
 function normalizeState(raw) {
   if (!isRecord(raw)) {
     return raw;
   }
   const state = {
     schemaVersion: raw.schemaVersion ?? SCHEMA_VERSION,
-    settings: raw.settings ?? {},
+    settings: withoutRetiredSettings(raw.settings ?? {}),
     active: raw.active ?? [],
     pending: raw.pending ?? [],
     next: raw.next ?? [],

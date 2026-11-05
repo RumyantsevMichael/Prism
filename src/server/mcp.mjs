@@ -726,7 +726,6 @@ const tools = [
               additionalProperties: false,
               properties: {
                 autonomy: { type: "string", enum: ["conservative", "broad", "full"] },
-                agentFlow: { type: "string", enum: ["mono", "multi"] },
                 commit: { type: "string", enum: ["on", "off"] },
                 push: { type: "string", enum: ["on", "off"] },
                 continuation: { type: "string", enum: ["auto", "stepwise"] },
