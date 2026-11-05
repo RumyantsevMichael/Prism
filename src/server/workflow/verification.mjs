@@ -65,6 +65,14 @@ const digest = (value) => createHash("sha256").update(value).digest("hex");
 const approvalKey = (cwd, command) => digest(`${cwd}\n${command}`);
 
 /** The test command a project configures in .prism/workflow.md under Stack. */
+// A project with no tests yet configures `- Test command: none yet`, which never passes a run as a no-op command would.
+export const TEST_COMMAND_PLACEHOLDER = /^none yet$/i;
+const PLACEHOLDER_MESSAGE = "The project has no tests yet: its test command is the placeholder none yet, so Prism has nothing to run. The slice that adds the project's test runner sets the real command in .prism/workflow.md, and verification runs that command once it is set.";
+
+function refusePlaceholder(command, details = {}) {
+  if (TEST_COMMAND_PLACEHOLDER.test(command)) throw fail("test_command_placeholder", PLACEHOLDER_MESSAGE, details);
+}
+
 export async function configuredTestCommand(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const command = config.sections?.Stack?.["Test command"]?.trim();
@@ -102,7 +110,8 @@ async function verificationTarget(root, initiative, slice) {
   const identity = await recordedComponent(root, initiative, slice);
   if (identity === undefined) {
     const { config, command } = await configuredTestCommand(root);
-    if (!command) throw fail("test_command_missing", "The project configures no test command. Add one under ## Stack in .prism/workflow.md as - Test command: <command>.");
+    if (!command) throw fail("test_command_missing", "The project configures no test command. Add one under ## Stack in .prism/workflow.md as - Test command: <command>, or - Test command: none yet while the project has no tests.");
+    refusePlaceholder(command);
     return { config, command, folder: "", declaredFolder: "", cwd: root, component: null, declaration: null };
   }
   const config = await readWorkflowConfig(root);
@@ -129,6 +138,7 @@ async function componentTarget(root, declaration, component) {
     const message = component === declaration.root ? "The project configures no test command. Add one under ## Stack in .prism/workflow.md as - Test command: <command>." : `Neither the component ${component.identity} nor the project configures a test command. Add one under the component in ## Components as - Test command: <command>, or under ## Stack in .prism/workflow.md.`;
     throw fail("test_command_missing", message, { component: component.identity });
   }
+  refusePlaceholder(command, { component: component.identity });
   let cwd = null;
   try {
     const resolved = await realpath(path.join(root, declaredFolder));

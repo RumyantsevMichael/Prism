@@ -22,7 +22,7 @@ test("refuses a child skill in the execution that loaded orchestrate and allows 
   const environment = { CLAUDE_PLUGIN_DATA: await dataDirectory(context) };
   assert.equal(await run(environment, skillCall("prism:design")), null);
   assert.equal(await run(environment, skillCall("prism:orchestrate")), null);
-  for (const skill of ["design", "implement", "review", "triage", "ideate"]) {
+  for (const skill of ["setup", "design", "implement", "review", "triage", "ideate"]) {
     const output = await run(environment, skillCall(`prism:${skill}`));
     assert.equal(output.hookSpecificOutput.permissionDecision, "deny", skill);
     assert.match(output.hookSpecificOutput.permissionDecisionReason, new RegExp(`child agent whose prompt asks it to use the prism:${skill} skill`));

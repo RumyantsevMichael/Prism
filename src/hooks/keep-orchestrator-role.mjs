@@ -3,12 +3,12 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// An orchestrating session coordinates and leaves design, implementation, review, triage, and ideation to child
+// An orchestrating session coordinates and leaves setup, design, implementation, review, triage, and ideation to child
 // agents. This hook remembers which Claude Code executions loaded the orchestrate skill and refuses their own load of
 // a skill that a child should run. A child agent is a separate execution, so its own load of the skill goes through.
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 const ORCHESTRATE = "orchestrate";
-export const CHILD_SKILLS = new Set(["design", "implement", "review", "triage", "ideate"]);
+export const CHILD_SKILLS = new Set(["setup", "design", "implement", "review", "triage", "ideate"]);
 const MARKER_FOLDER = "orchestrator-executions";
 // A marker older than this belongs to a session that ended without a SessionEnd event.
 const MARKER_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;

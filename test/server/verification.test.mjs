@@ -586,3 +586,15 @@ test("the acknowledgement counts a slice's contract defects", async (context) =>
   const restart = [{ op: "set_status", slug: "download", status: "in-progress" }];
   assert.equal(initiativeAcknowledgement(await initiativeUpdate(root, restart), restart).slices.download.next, undefined);
 });
+
+test("the placeholder test command of a project with no tests refuses without running or asking, and the real command takes over once set", async (context) => {
+  const root = await project(context, "none yet");
+  await accept(root);
+  const refused = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" }).catch((error) => error);
+  assert.equal(refused.code, "test_command_placeholder");
+  assert.match(refused.message, /sets the real command in \.prism\/workflow\.md/);
+  const state = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
+  assert.equal(state.state?.pending?.length ?? 0, 0, "no approval is asked for the placeholder");
+  await writeFile(path.join(root, ".prism", "workflow.md"), `## Paths\n- Plans: docs/plans\n\n## Stack\n- Test command: ${node} check.mjs\n`);
+  assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" })).status, "approval_needed");
+});

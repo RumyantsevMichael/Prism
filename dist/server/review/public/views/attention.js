@@ -219,7 +219,7 @@ function noteCard(item, ctx) {
     "pending-note": () => ["Pending item", escapeHtml(item.text), location(item, ctx)],
     unlisted: () => ["Needs prioritization", `${escapeHtml(item.initiative.id)} has an initiative record but no roadmap entry. Ask the agent to run <code>roadmap</code>.`, location(item, ctx)],
     "open-question": () => ["Roadmap question", escapeHtml(item.text), roadmapLink],
-    "roadmap-missing": () => ["No roadmap", `No roadmap record exists at <code>${escapeHtml(item.path)}</code>. Ask the agent to run <code>roadmap</code> or <code>workflow-init</code>.`, ""],
+    "roadmap-missing": () => ["No roadmap", `No roadmap record exists at <code>${escapeHtml(item.path)}</code>. Ask the agent to run <code>setup</code>.`, ""],
     "roadmap-problem": () => ["Roadmap problem", escapeHtml(item.message), roadmapLink],
     config: () => ["Workflow config", escapeHtml(item.message), "<code>.prism/workflow.md</code>"]
   }[item.type];
