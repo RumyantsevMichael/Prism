@@ -30,13 +30,16 @@ function nonemptyString(value) {
 }
 
 // A Prism call is "mcp__<server>__<tool>" whose server is "prism-review" or ends with "_prism-review".
+// Codex replaces the hyphen in a server name with an underscore, so it names the server "prism_review".
+const PRISM_SERVER_NAMES = ["prism-review", "prism_review"];
+
 function isPrismTool(toolName) {
   if (typeof toolName !== "string" || !toolName.startsWith("mcp__")) return false;
   const rest = toolName.slice("mcp__".length);
   const separator = rest.indexOf("__");
   if (separator <= 0 || separator + 2 >= rest.length) return false;
   const server = rest.slice(0, separator);
-  return server === "prism-review" || server.endsWith("_prism-review");
+  return PRISM_SERVER_NAMES.some((name) => server === name || server.endsWith(`_${name}`));
 }
 
 // Reads one complete regular file within its bound, or reports why it cannot: absent, unreadable, oversized, or late.

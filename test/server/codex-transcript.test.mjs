@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import * as fileSystem from "node:fs/promises";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -71,6 +71,32 @@ test("reads the latest bounded token count context window", async (context) => {
   assert.equal(result.status, "SUPPORTED");
   assert.equal(result.contextWindowTokens, 260000);
   assert.equal(result.contextWindowSource, "transcript.event_msg.token_count.info.model_context_window");
+});
+
+test("reads the turn's context window before its first token count", async (context) => {
+  const root = await fixture(context);
+  const transcript = path.join(root, "rollout-code-mode.jsonl");
+  // A code-mode model's first script calls tools before the session's first token count is written.
+  await writeFile(transcript, [
+    sessionMeta({ sessionId: "thread-1", projectRoot: root }),
+    JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "turn-1", model_context_window: 258400 } }),
+    JSON.stringify({ type: "response_item", payload: { type: "custom_tool_call", name: "exec" } })
+  ].join("\n") + "\n");
+  const read = () => inspectCodexTranscriptMetadata({ transcriptPath: transcript, sessionId: "thread-1", projectRoot: root });
+
+  const before = await read();
+  assert.equal(before.status, "SUPPORTED");
+  assert.equal(before.contextWindowTokens, 258400);
+  assert.equal(before.contextWindowSource, "transcript.event_msg.task_started.model_context_window");
+
+  // A later turn on a model with a larger window reports its own window, before and after its token count.
+  await appendFile(transcript, `${JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { model_context_window: 258400 } } })}\n`);
+  await appendFile(transcript, `${JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "turn-2", model_context_window: 475000 } })}\n`);
+  assert.equal((await read()).contextWindowTokens, 475000);
+  await appendFile(transcript, `${JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { model_context_window: 475000 } } })}\n`);
+  const after = await read();
+  assert.equal(after.contextWindowTokens, 475000);
+  assert.equal(after.contextWindowSource, "transcript.event_msg.token_count.info.model_context_window");
 });
 
 test("identifies subagent execution with the parent session identifier", async (context) => {

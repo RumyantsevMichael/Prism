@@ -97,6 +97,7 @@ const SOURCE_VALUES = Object.freeze({
   contextWindowTokens: new Set([
     "hook.model_context_window",
     "transcript.event_msg.token_count.info.model_context_window",
+    "transcript.event_msg.task_started.model_context_window",
     "estimate.claude_code.context_window",
     null
   ]),
