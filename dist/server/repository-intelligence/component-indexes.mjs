@@ -66,9 +66,12 @@ async function searchComponents(included, limit) {
   for (const entry of included) answers.push(await entry.search());
   const lists = included.flatMap((entry, index) => answers[index] ? [answers[index].map((result) => ({ ...result, component: entry.component }))] : []);
   if (lists.length === 1) return { answers, results: lists[0].slice(0, limit) };
-  const similarity = (result) => result.cosineSimilarity ?? -Infinity;
-  const merged = lists.flat().sort((left, right) => similarity(left) === similarity(right) ? 0 : similarity(right) > similarity(left) ? 1 : -1);
-  return { answers, results: merged.slice(0, limit).map((result, index) => ({ ...result, fusedRank: index + 1 })) };
+  const keyed = lists.flatMap((list) => {
+    let previous = -Infinity;
+    return list.map((result) => ({ result, key: previous = result.cosineSimilarity ?? previous }));
+  });
+  const merged = keyed.sort((left, right) => left.key === right.key ? 0 : right.key > left.key ? 1 : -1);
+  return { answers, results: merged.slice(0, limit).map(({ result }, index) => ({ ...result, fusedRank: index + 1 })) };
 }
 async function selectedComponents(projectRoot, declaration, paths, expectedSnapshot) {
   const root = await realpath(projectRoot);

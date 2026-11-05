@@ -97,7 +97,7 @@ Each result also gives its `ancestry`, the names of its containing classes or se
 A class, a section, or a configuration object is an `outline` result that lists its members, and each member is also a separate result.
 A unit longer than the model limit is split into `part` results, and its `parts` field gives their number.
 The `tokens` field gives the size of the complete unit, so a large value can show a refactoring candidate.
-When two or more results share a container, the search also returns that container with `groupedMembers`.
+When two or more results share a container, the search also returns that container with `groupedMembers`, directly after the best of those results.
 Lockfiles, generated output, vendored code, and minified files are not search candidates.
 Cosine similarity, lexical score, fused rank, model identity, and index revision have distinct meanings.
 Similarity does not establish conceptual equivalence or approve an addition.
@@ -140,7 +140,8 @@ The result's `snapshot` covers only the components it read, so an edit in anothe
 Each search result names the identity of its component in `component`.
 When one component is included, its results keep that index's order and `fusedRank`.
 When several components are included, each one answers the query with the search's filters and `limit`, and the merged results are ordered by `cosineSimilarity` from highest to lowest, with equal similarities in component order and then in each index's order.
-A result without a similarity, such as a container returned for its grouped members, follows every result that has one.
+A result without a similarity, such as a container returned for its grouped members, stays directly after the result that it follows in its component's index.
+Such a result counts toward `limit` like any other, so it is left out when the result it follows is the last one kept.
 The merged list keeps the first `limit` results and numbers `fusedRank` from 1.
 Each result keeps the `fusedScore` and `lexicalScore` that its component's index computed, and those scores depend on that index's own files, so compare them only between results of one component.
 When every component that the search read failed, the search returns lexical matches over those components' files, each with its `component` and a `cosineSimilarity` of `null`, and the result's `status` is `degraded`.

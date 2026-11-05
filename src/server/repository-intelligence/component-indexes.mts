@@ -82,19 +82,23 @@ export interface ComponentSearch { component: string; search(): Promise<SearchRe
 
 /**
  * Searches each included component in component order and returns each one's answer and the results, each naming its component.
- * One component that answers keeps its index's order. Several merge by cosineSimilarity from highest to lowest, with ties, and results that have no
- * similarity after every result that has one, in component order and then in each index's order; the merged list keeps the first `limit` and
- * numbers fusedRank from 1, while each result keeps the other scores its index computed.
+ * One component that answers keeps its index's order. Several merge by cosineSimilarity from highest to lowest, with ties in component order and
+ * then in each index's order. A result without a similarity, such as a container that its index placed after its best member, sorts by the
+ * similarity of the result it follows in its index, so it stays directly after that result; one that follows no such result comes after every
+ * result that has one. The merged list keeps the first `limit` and numbers fusedRank from 1, while each result keeps the other scores its index computed.
  */
 export async function searchComponents(included: ComponentSearch[], limit: number) {
   const answers: (SearchResult[] | null)[] = [];
   for (const entry of included) answers.push(await entry.search());
   const lists = included.flatMap((entry, index) => answers[index] ? [answers[index]!.map(result => ({ ...result, component: entry.component }))] : []);
   if (lists.length === 1) return { answers, results: lists[0].slice(0, limit) };
-  const similarity = (result: SearchResult) => result.cosineSimilarity ?? -Infinity;
-  // Array sort is stable, so equal similarities keep the order of the concatenation: component order, then each index's order.
-  const merged = lists.flat().sort((left, right) => similarity(left) === similarity(right) ? 0 : similarity(right) > similarity(left) ? 1 : -1);
-  return { answers, results: merged.slice(0, limit).map((result, index) => ({ ...result, fusedRank: index + 1 })) };
+  const keyed = lists.flatMap(list => {
+    let previous = -Infinity;
+    return list.map(result => ({ result, key: previous = result.cosineSimilarity ?? previous }));
+  });
+  // Array sort is stable, so equal keys keep the order of the concatenation: component order, then each index's order.
+  const merged = keyed.sort((left, right) => left.key === right.key ? 0 : right.key > left.key ? 1 : -1);
+  return { answers, results: merged.slice(0, limit).map(({ result }, index) => ({ ...result, fusedRank: index + 1 })) };
 }
 
 /** Reads the declaration and the selected components of a call, and refuses an expected snapshot that differs from the selection's snapshot. */

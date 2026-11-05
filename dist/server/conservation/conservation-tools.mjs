@@ -43,13 +43,14 @@ async function callConservationTool(name, input) {
   const results = evidence.kind === "repository-analysis" ? { report_module_interfaces: "modules", report_cohesion_clusters: "containers", report_complex_units: "units" }[evidence.tool] || "groups" : void 0;
   const section = input.section || { snapshot: "files", search: "candidates", comparison: "observations", analysis: "units", migration: "lines", "repository-analysis": results }[evidence.kind];
   const record = evidence;
+  const paged = (key) => key !== "components" && Array.isArray(record[key]);
   const values = section === "unitsBefore" || section === "unitsAfter" ? record.units?.[section === "unitsBefore" ? "before" : "after"] : record[section];
   if (!Array.isArray(values)) {
-    const sections = [...Object.keys(record).filter((key) => Array.isArray(record[key])), ...record.units && !Array.isArray(record.units) ? ["unitsBefore", "unitsAfter"] : []];
+    const sections = [...Object.keys(record).filter(paged), ...record.units && !Array.isArray(record.units) ? ["unitsBefore", "unitsAfter"] : []];
     throw conservationError("validation_failed", `The ${evidence.kind} evidence has no section ${section}. Its sections are ${sections.join(", ") || "none"}.`);
   }
   const offset = input.offset || 0, limit = input.limit || 50;
-  const metadata = Object.fromEntries(Object.entries(record).filter(([key, value]) => (!Array.isArray(value) || key === "components") && !["units", "fileCoverage", "tokenCounts", "structureCounts", "project"].includes(key)));
+  const metadata = Object.fromEntries(Object.entries(record).filter(([key]) => !paged(key) && !["units", "fileCoverage", "tokenCounts", "structureCounts", "project"].includes(key)));
   return { evidenceId: input.evidenceId, ...metadata, section, entries: values.slice(offset, offset + limit), totalCount: values.length, nextOffset: offset + limit < values.length ? offset + limit : null };
 }
 export {
