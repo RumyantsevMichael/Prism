@@ -309,8 +309,10 @@ function workspaceName(identity) {
   return identity.worktree;
 }
 
-function projectLabel(identity) {
+// A checkout of a workspace leads with the workspace's name, because the records it shows belong to the whole workspace.
+function projectLabel(identity, workspace = null) {
   const label = element("span", "project-label-text");
+  if (workspace) label.append(element("span", "project-workspace", workspace), element("span", "project-separator is-workspace", "·"));
   label.append(element("span", "project-repository", identity.repository));
   const name = workspaceName(identity);
   if (name) label.append(element("span", "project-separator", "/"), element("span", "project-worktree", name));
@@ -337,9 +339,19 @@ function sharedStore(entry) {
   return store.kind === "remote" && store.label ? `remote:${store.label}` : null;
 }
 
-// A folder store is named by its folder, because each checkout may spell the configured path differently.
+// A workspace takes the name kept in its store when one is set.
+// Otherwise it is named after its store: a folder store by its folder, because each checkout may spell the configured path differently,
+// and a remote store by its repository, so the name reads as a name rather than an address.
 function storeName(store) {
-  return store.kind === "folder" && store.location ? folderName(store.location) : store.label ?? "records";
+  if (store.workspaceName) return store.workspaceName;
+  if (store.kind === "folder" && store.location) return folderName(store.location);
+  if (store.kind === "remote" && store.label) return store.label.replace(/[\\/]+$/, "").split(/[\\/:]/).filter(Boolean).pop()?.replace(/\.git$/i, "") || store.label;
+  return store.label ?? "records";
+}
+
+// Only a store that other checkouts can share makes a workspace; a checkout's own records do not.
+function workspaceOf(store) {
+  return store && store.kind !== "project" ? storeName(store) : null;
 }
 
 function storeKey(entry) {
@@ -418,7 +430,7 @@ async function refreshProjects() {
   if (text === projectListing) return;
   projectListing = text;
   const focused = document.activeElement?.closest?.(".project-entry")?.dataset.project;
-  if (current) setProjectLabel(workspaceIdentity(current), current.projectRoot);
+  if (current) setProjectLabel(workspaceIdentity(current), current.projectRoot, current.store);
   // Checkouts that share one record store form one workspace, whichever repositories they belong to: its records and gates show once, and each checkout stays reachable for its code.
   // Every other checkout is listed under its repository, even a repository with one checkout.
   // Workspaces come first, then repositories, each in name order.
@@ -440,9 +452,15 @@ async function refreshProjects() {
     const gates = Math.max(...members.map(({ entry }) => entry.gates ?? 0));
     const repositoryCount = new Set(members.map(({ identity }) => identity.repository)).size;
     const item = element("li", "project-cluster");
-    const head = element("div", "project-cluster-head");
+    // Choosing the workspace opens its records through the checkout already open, else one an agent is using, else the one used last.
+    // Every checkout shows the same records, so only code views, such as source files and the index, differ between them.
+    const opened = members.find(({ entry }) => entry.id === listing.current) ?? members.find(({ entry }) => entry.live) ?? listing.projects.map((entry) => members.find((member) => member.entry === entry)).find(Boolean);
+    const head = element("a", "project-cluster-head");
+    head.href = opened.entry.url;
+    head.dataset.project = `workspace:${opened.entry.id}`;
+    if (opened.entry.id === listing.current) head.setAttribute("aria-current", "true");
     const holders = `${members.length} ${members.length === 1 ? "checkout" : "checkouts"}${repositoryCount > 1 ? ` of ${repositoryCount} repositories` : ""}`;
-    head.title = `Workspace: ${holders} keep their records in ${shared.store.location ?? shared.store.label}, so their roadmap, initiatives, and gates are the same.`;
+    head.title = `Workspace ${storeName(shared.store)}: ${holders} keep their records in ${shared.store.location ?? shared.store.label}, so their roadmap, initiatives, and gates are the same.\nOpens through ${[opened.identity.repository, workspaceName(opened.identity)].filter(Boolean).join("/")}.`;
     const badge = element("span", `project-entry-gates${gates ? "" : " none"}`, String(gates));
     badge.title = `${gates} open ${gates === 1 ? "gate" : "gates"}`;
     head.append(element("span", "store-icon"), element("span", "project-cluster-name", storeName(shared.store)), badge);
@@ -467,10 +485,11 @@ async function refreshProjects() {
   if (focused) projectList.querySelector(`[data-project="${focused}"]`)?.focus();
 }
 
-function setProjectLabel(identity, projectRoot) {
-  project.replaceChildren(projectLabel(identity));
-  projectButton.title = projectTitle(identity, projectRoot);
-  signals.project = [identity.repository ?? folderName(projectRoot), workspaceName(identity)].filter(Boolean).join("/");
+function setProjectLabel(identity, projectRoot, store = null) {
+  const workspace = workspaceOf(store);
+  project.replaceChildren(projectLabel(identity, workspace));
+  projectButton.title = [workspace ? `Workspace: ${workspace}` : "", projectTitle(identity, projectRoot)].filter(Boolean).join("\n");
+  signals.project = [workspace, [identity.repository ?? folderName(projectRoot), workspaceName(identity)].filter(Boolean).join("/")].filter(Boolean).join(" · ");
   document.title = signalTitle(baseTitle(), signals.count ?? 0);
 }
 
@@ -690,34 +709,47 @@ function configureDiagram(section, source) {
   });
 }
 
-function renderDiagram(source, target, section) {
-  return new Promise((resolve) => {
+// The PlantUML runtime draws one diagram at a time, so previews, the side panel, and the open tab take turns.
+let plantUmlQueue = Promise.resolve();
+
+function drawPlantUml(source) {
+  const drawn = plantUmlQueue.then(() => new Promise((resolve) => {
     renderToString(source.split(/\r?\n/), (svg) => {
-      if (svg.includes("Syntax Error")) {
-        target.innerHTML = '<p class="error">PlantUML reported a syntax error.</p>';
-      } else {
-        // The page's style policy refuses inline style attributes, so the stylesheet sets PlantUML's preserved text spacing instead.
-        // The runtime still sets that attribute once while it renders, and the browser logs that refusal.
-        target.innerHTML = svg.replace(/ style="white-space: ?pre;?"/g, "");
-        configureDiagram(section, source);
-      }
-      resolve();
-    }, (message) => {
-      target.innerHTML = `<p class="error">${escapeHtml(String(message))}</p>`;
-      resolve();
-    }, { maxSvgSize: 8192 });
-  });
+      // The page's style policy refuses inline style attributes, so the stylesheet sets PlantUML's preserved text spacing instead.
+      // The runtime still sets that attribute once while it renders, and the browser logs that refusal.
+      resolve(svg.includes("Syntax Error") ? { error: "PlantUML reported a syntax error." } : { svg: svg.replace(/ style="white-space: ?pre;?"/g, "") });
+    }, (message) => resolve({ error: String(message) }), { maxSvgSize: 8192 });
+  }));
+  plantUmlQueue = drawn.catch(() => {});
+  return drawn;
 }
 
-function diagramCard(diagram) {
+async function renderDiagram(source, target, section, { fit = false } = {}) {
+  const drawn = await drawPlantUml(source);
+  if (drawn.error) {
+    target.innerHTML = `<p class="error">${escapeHtml(drawn.error)}</p>`;
+    return;
+  }
+  target.innerHTML = drawn.svg;
+  configureDiagram(section, source);
+  // A narrow place, such as the side panel, starts the diagram at the width it has, and the zoom buttons still reach every size.
+  if (fit) {
+    const room = target.clientWidth - 2 * Number.parseFloat(getComputedStyle(target).paddingLeft || "0");
+    const natural = Number(section.dataset.naturalWidth);
+    if (room > 0 && natural > room) setDiagramScale(section, room / natural);
+  }
+}
+
+// A compact card leaves the name to its container, such as the side panel, whose header already names the file.
+function diagramCard(diagram, { compact = false } = {}) {
   const section = document.createElement("section");
-  section.className = "diagram-card";
+  section.className = `diagram-card${compact ? " is-compact" : ""}`;
   section.innerHTML = `
     <header class="diagram-header">
-      <div class="diagram-title">
+      ${compact ? "" : `<div class="diagram-title">
         <p class="eyebrow">PlantUML diagram</p>
         <h2 title="${escapeHtml(diagram.path)}">${escapeHtml(diagram.path)}</h2>
-      </div>
+      </div>`}
       <div class="diagram-tools" aria-label="Diagram controls">
         <button class="tool-button" data-action="zoom-out" type="button" aria-label="Zoom out">−</button>
         <button class="tool-button" data-action="reset" data-scale-label type="button" aria-label="Reset zoom">100%</button>
@@ -1337,7 +1369,7 @@ async function initialize() {
   appVersion = typeof data.appVersion === "string" ? data.appVersion : null;
   const requestedPath = selectedPath;
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
-  setProjectLabel(workspaceIdentity(data), data.projectRoot);
+  setProjectLabel(workspaceIdentity(data), data.projectRoot, data.recordStore);
   showPrivateServer(data.privateServer);
   setSidebarCollapsed(readSidebarPreference(), { remember: false });
   sidebarToggle.addEventListener("click", () => setSidebarCollapsed(!appShell.classList.contains("sidebar-collapsed")));
@@ -1388,6 +1420,12 @@ async function initialize() {
     shell: appShell,
     fetchJson,
     renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
+    // The panel draws a diagram as the same card its tab shows, without the name its header already gives, and fitted to the panel's width.
+    mountDiagram: async (target, diagram) => {
+      const section = diagramCard(diagram, { compact: true });
+      target.appendChild(section);
+      await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section, { fit: true });
+    },
     onOpenTab: (ref, anchor) => {
       pendingAnchor = anchor ? { path: ref, anchor } : null;
       // The file moves into its tab, so the panel closes rather than showing it twice.
@@ -1402,6 +1440,7 @@ async function initialize() {
     fetchJson,
     renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
     kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
+    drawDiagram: drawPlantUml,
     currentPath: () => selectedPath,
     onShowInPanel: showInPanel
   });
@@ -1411,6 +1450,7 @@ async function initialize() {
     fetchJson,
     renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
     kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
+    drawDiagram: drawPlantUml,
     currentPath: () => sidePanel.current()?.ref ?? null,
     onShowInPanel: showInPanel
   });

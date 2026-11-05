@@ -129,6 +129,17 @@ a {
   color: #aaa5c8;
 }
 
+.project-workspace {
+  color: #f8f7ff;
+  font-weight: 650;
+}
+
+/* After a workspace name the checkout is secondary, so it reads lighter. */
+.project-separator.is-workspace ~ .project-repository {
+  color: #cbc7df;
+  font-weight: 500;
+}
+
 .project-switcher {
   flex: 0 1 auto;
   min-width: 0;
@@ -233,6 +244,21 @@ a {
   grid-template-columns: auto minmax(0, 1fr) auto;
   margin-left: 0.6rem;
   padding: 0.45rem 0.5rem 0.2rem;
+}
+
+a.project-cluster-head {
+  border-radius: 0.45rem;
+  padding-bottom: 0.45rem;
+  text-decoration: none;
+}
+
+a.project-cluster-head:hover,
+a.project-cluster-head:focus-visible {
+  background: var(--surface-soft);
+}
+
+a.project-cluster-head[aria-current] .project-cluster-name {
+  color: var(--accent);
 }
 
 .project-cluster-head .store-icon {
@@ -2009,16 +2035,19 @@ th {
   overflow: hidden;
 }
 
+/* The tools wrap below the title when the card is narrow, such as beside the side panel, so the title never folds into a column of letters. */
 .diagram-header {
   align-items: center;
   border-bottom: 1px solid var(--line);
   display: flex;
-  gap: 1rem;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
   justify-content: space-between;
   padding: 0.82rem 0.95rem 0.82rem 1.1rem;
 }
 
 .diagram-title {
+  flex: 1 1 12rem;
   min-width: 0;
 }
 
@@ -2286,13 +2315,16 @@ th {
     margin-top: 0.8rem;
   }
 
+  /* A wrapping column sizes its line to the widest item, so a long title would stretch past the card. */
   .diagram-header {
     align-items: flex-start;
     flex-direction: column;
+    flex-wrap: nowrap;
   }
 
   .diagram-title {
     align-self: stretch;
+    flex: 0 0 auto;
   }
 
   .stat-row {
@@ -5959,4 +5991,54 @@ mark.find-hit {
   .document-content .md-fold {
     opacity: 0.7;
   }
+}
+
+/* A diagram in a link preview is drawn small; the side panel draws it as a compact card fitted to the panel. */
+.link-preview .preview-diagram {
+  background: var(--surface-soft);
+  border-radius: 0.45rem;
+  margin-top: 0.35rem;
+  overflow: hidden;
+  padding: 0.5rem;
+}
+
+.link-preview .preview-diagram svg {
+  display: block;
+  height: auto;
+  margin: 0 auto;
+  max-width: 100%;
+}
+
+.link-preview .preview-diagram svg text {
+  white-space: pre;
+}
+
+@media (prefers-color-scheme: dark) {
+  .link-preview .preview-diagram {
+    background: #f8f7fb;
+  }
+}
+
+.diagram-card.is-compact .diagram-header {
+  justify-content: flex-end;
+  padding: 0.45rem 0.55rem;
+}
+
+.side-panel-diagram .diagram-card {
+  margin-top: 0;
+}
+
+.side-panel-diagram + .side-panel-diagram,
+.document-content + .side-panel-diagram {
+  margin-top: 1rem;
+}
+
+.side-panel-diagram .diagram-output {
+  min-height: 8rem;
+  padding: 1rem;
+}
+
+.link-preview:has(.preview-diagram) {
+  max-height: min(32rem, 80vh);
+  max-width: min(37rem, calc(100vw - 1rem));
 }

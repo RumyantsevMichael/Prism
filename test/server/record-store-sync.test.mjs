@@ -188,7 +188,7 @@ test("lists saved conflicts and serves each saved copy beside its current record
   const review = await startReviewServer({ projectRoot: a });
   try {
     const index = await fetchJson(`${review.baseUrl}/api/index`);
-    assert.deepEqual(index.recordStore, { kind: "folder", label: "../store-a", location: storeA, sync: true });
+    assert.deepEqual(index.recordStore, { kind: "folder", label: "../store-a", location: storeA, sync: true, workspaceName: null });
     assert.deepEqual((await fetchJson(`${review.baseUrl}/api/store/conflicts`)).conflicts, listed);
     assert.equal((await fetchJson(`${review.baseUrl}/api/store/conflict?savedAs=${encodeURIComponent(listed[0].savedAs)}`)).saved, "{\"v\":\"a\"}\n");
   } finally {

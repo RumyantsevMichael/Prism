@@ -45,6 +45,7 @@ The page keeps checking and recovers on its own when the same app or its upgrade
 ## Attention
 
 Attention lists the questions that an agent recorded for you, with the artifacts to inspect, including read-only source files.
+The newest question comes first, and so does the newest answer that still waits for the agent.
 Answer a question on Attention or in the conversation.
 A design or correctness review needs Approve or Request changes, and Request changes also needs a note that says what should change.
 A decision takes one of its options, a note in your own words, or both.
@@ -130,7 +131,9 @@ Code in source files, Markdown code blocks, previews, and diagram source is high
 Hover over or focus any internal link to preview its target.
 An initiative preview shows its state, band, intent, and progress, and a slice preview shows its status and outcome.
 A link to a document section previews that section.
+A link to a PlantUML file previews the diagram drawn small enough to fit.
 A file's preview has a Show in side panel button, and Alt+click on a link does the same: the whole file opens in a panel beside the current page, at the linked heading or lines.
+The panel draws a PlantUML file, and the diagrams a document links, as its tab does, fitted to the panel's width, with the same zoom and source controls.
 The side panel holds one file at a time, so opening another replaces it, and a link inside the panel opens its target in the panel.
 Open as tab moves the file into a tab, Esc or the close button closes the panel, and dragging its left edge sets its width.
 Graph, diagram, and document cards can be maximized, and Esc restores them.
@@ -153,7 +156,10 @@ See [Watch an index build in the review browser](repository-intelligence.md#watc
 
 All Prism sessions of one user share one review app on one local port, and each project has its own page there.
 The project switcher names the project as `repository/branch`, falls back to the worktree folder without a branch, and shows a detached checkout by its commit.
-Checkouts whose records live in one shared store form one workspace, named after the store, with one count of open questions and each checkout listed under it as `repository / branch`, because their roadmap, initiatives, and questions are the same, whichever repository each checkout belongs to.
+A checkout of a workspace shows the workspace's name first, as `workspace · repository/branch`; see [Name the workspace](shared-records.md#name-the-workspace).
+Checkouts whose records live in one shared store form one workspace, with the name kept in its store, or until one is set named after the store's folder or, for a remote store, after its repository, with one count of open questions and each checkout listed under it as `repository / branch`, because their roadmap, initiatives, and questions are the same, whichever repository each checkout belongs to.
+Choose the workspace's name to open its records through the checkout already open, else one an agent session is using, else the one you used last.
+Every checkout of a workspace shows the same roadmap, initiatives, and questions, so choose a checkout only for its own source files and index.
 Every other recent project is listed under its repository, even a repository with one checkout, with its open questions.
 The switcher marks the projects an agent session is using now, and lists workspaces first and then repositories, each in name order, so entries never move while you look.
 When an agent presents a review for another project while a tab is open, that tab shows a notice with a link instead of a second tab opening.

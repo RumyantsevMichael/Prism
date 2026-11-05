@@ -283,6 +283,32 @@ test("accepts a decision answered by a note alone and an assistance gate marked 
   }
 });
 
+test("lists the newest open question and the newest answer first", async (context) => {
+  const projectRoot = await fixture(context);
+  const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  for (const question of ["Asked first?", "Asked second?"]) {
+    const current = await readCoordinationState({ projectRoot, initiative: "reports" });
+    await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question, artifacts: [], options: [{ id: "yes", label: "Yes" }] }] } });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+  }
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const attention = async () => (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
+    const gates = (await attention()).needsYou.filter((item) => item.type === "gate");
+    const asked = gates.filter((item) => item.question.startsWith("Asked"));
+    assert.deepEqual(asked.map((item) => item.question), ["Asked second?", "Asked first?"]);
+    for (const item of gates) assert.ok(gates.indexOf(item) === 0 || Date.parse(gates[gates.indexOf(item) - 1].askedAt) >= Date.parse(item.askedAt));
+    for (const item of [asked[1], asked[0]]) {
+      const answer = await post(`${review.baseUrl}/api/gates/answer`, { initiative: "reports", id: item.id, choice: "yes", note: "" });
+      assert.equal(answer.status, 200, answer.text);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    assert.deepEqual((await attention()).answered.map((item) => item.question), ["Asked second?", "Asked first?"]);
+  } finally {
+    await review.close();
+  }
+});
+
 test("treats the initiative directory as the root slice folder", async (context) => {
   const projectRoot = await fixture(context);
   const review = await startReviewServer({ projectRoot });
@@ -311,7 +337,7 @@ test("flags an open question whose every attached file is gone", async (context)
   const review = await startReviewServer({ projectRoot });
   try {
     const gates = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data.needsYou.filter((item) => item.type === "gate");
-    assert.deepEqual(gates.map((gate) => [gate.kind, gate.stale ?? false]), [["visual-review", false], ["decision", true]], "a question with some files left is not flagged");
+    assert.deepEqual(gates.map((gate) => [gate.kind, gate.stale ?? false]), [["decision", true], ["visual-review", false]], "a question with some files left is not flagged, and the newest question comes first");
   } finally {
     await review.close();
   }
