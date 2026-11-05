@@ -142,6 +142,14 @@ export async function verifiedCode(projectRoot, initiative, slice) {
   return entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1)?.entry.checkout ?? null;
 }
 
+/** The latest dependents' run recorded on a scope, as { entry, path } with the run's project-relative record path, or null when none is recorded. */
+export async function latestDependentsRun(projectRoot, initiative, scope) {
+  const key = { kind: "runs", initiative, slice: scope };
+  const latest = (await listRecordEntries(projectRoot, key)).filter((item) => item.entry?.kind === "dependents").at(-1);
+  if (!latest) return null;
+  return { entry: latest.entry, path: `${(await locateRecord(projectRoot, key)).path}/${latest.id}.json` };
+}
+
 /** The accepted design of a slice, read from its initiative record, or null for a slice designed before verification runs existed. */
 export async function acceptedDesign(projectRoot, initiative, slice) {
   const located = await locateRecord(projectRoot, { kind: "initiative", initiative });

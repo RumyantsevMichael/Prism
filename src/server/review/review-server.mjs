@@ -758,6 +758,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 export async function startReviewServer(options = {}) {
   const browserOpener = options.openBrowser ?? openBrowser;
   const projectRoot = await realpath(path.resolve(options.projectRoot ?? process.cwd()));
+  // The workspace cache is shared by the process, so a new server starts from the records as they are, not as an earlier server read them within the cache window.
+  forgetWorkspace();
   const token = randomBytes(24).toString("base64url");
   const prefix = `/session/${token}`;
   let review;

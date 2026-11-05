@@ -14,7 +14,7 @@ import { listClaimRecords, locateRecord, moveLegacyRecords, readRecord, recordSt
 import { syncRecordStoreNow } from "./record-store-sync.mjs";
 import { blockingClaim, claimedMessage, claimHolder, claimLabel, claimView, dropClaim, holdClaim, isLive, newClaim, parseClaim, pendClaim, renewal, serializeClaim, settleClaim, takeLostClaims, adoptClaims } from "./slice-claims.mjs";
 import { mergeHistory, mergeKeyed, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
-import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, measureContract, restageFrozenTests, REVIEW_MARKS, stageFrozenTests, verifiedCode, withdrawFrozenTests } from "./slice-design.mjs";
+import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, latestDependentsRun, measureContract, restageFrozenTests, REVIEW_MARKS, stageFrozenTests, verifiedCode, withdrawFrozenTests } from "./slice-design.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { contractClauses, plannedChanges } from "./design-view.mjs";
@@ -244,8 +244,40 @@ export async function getInitiative(input) {
     const checkout = await verifiedCode(resolved.root, resolved.initiative, slug).catch(() => null);
     if (checkout) code[slug] = checkout;
   }
+  // Each fit scope with a recorded dependents' run shows its latest one, read from the run records alone, never from the components.
+  const dependents = {};
+  for (const scope of fitScopes(loaded.record)) {
+    const latest = await latestDependentsRun(resolved.root, resolved.initiative, scope).catch(() => null);
+    if (latest) dependents[scope] = { status: latest.entry.passed === true ? "passed" : "blocked", run: latest.path, finishedAt: latest.entry.finishedAt ?? null, blocked: Array.isArray(latest.entry.blocked) ? latest.entry.blocked : [] };
+  }
   const view = await claimsView(resolved, loaded);
-  return { ...publicResult(resolved, view.loaded), ...(Object.keys(code).length ? { code } : {}), ...view.fields };
+  return { ...publicResult(resolved, view.loaded), ...(Object.keys(code).length ? { code } : {}), ...(Object.keys(dependents).length ? { dependents } : {}), ...view.fields };
+}
+
+/**
+ * The fit scopes of an initiative record, in slug order: each split slice without split evidence, whose design accepted a slice plan,
+ * and each leaf whose parent is null or has split evidence, which is a scope of its own.
+ */
+export function fitScopes(record) {
+  const slices = record?.slices && typeof record.slices === "object" ? record.slices : {};
+  return Object.keys(slices).filter((slug) => {
+    const slice = slices[slug];
+    if (slice?.status === "split") return !slice.splitEvidence;
+    return slice?.parent == null || Boolean(slices[slice.parent]?.splitEvidence);
+  }).sort();
+}
+
+/** The leaves of a scope in slug order: the leaves below its planned slices, which are the planned slices themselves unless one was split, or the leaf itself. */
+export function scopeLeaves(record, scope) {
+  const slices = record?.slices && typeof record.slices === "object" ? record.slices : {};
+  const children = (slug) => Object.keys(slices).filter((key) => slices[key]?.parent === slug);
+  const leaves = (slug, seen = new Set()) => {
+    if (seen.has(slug)) return [];
+    seen.add(slug);
+    const own = children(slug);
+    return own.length ? own.flatMap((child) => leaves(child, seen)) : [slug];
+  };
+  return Object.hasOwn(slices, scope) ? [...new Set(leaves(scope))].sort() : [];
 }
 
 /** The claim records of an initiative by slice, with the problems of any that cannot be read. */

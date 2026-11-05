@@ -196,3 +196,43 @@ export function findComponent(declaration, given) {
   const name = parts.at(-1);
   return declaration.components.find((component) => component.name === name) ?? null;
 }
+
+// The components of this repository that a component depends on directly: a bare name, or one qualified with this repository's name; a dependency on another repository's component is left out.
+function localDependencies(declaration, component) {
+  const named = component.dependsOn.map((dependency) => {
+    const parts = dependency.split("/");
+    return parts.length === 1 ? parts[0] : parts[0] === declaration.repository ? parts[1] : null;
+  }).filter((name) => name !== null);
+  return declaration.components.filter((other) => named.includes(other.name));
+}
+
+/**
+ * The repository's components in dependency order: every component after the components of this repository it depends on, with ties in declaration order, the root component first.
+ * A valid declaration has no cycle, so every component is placed.
+ */
+export function dependencyOrder(declaration) {
+  const placed = new Set();
+  const order = [];
+  while (order.length < declaration.components.length) {
+    const next = declaration.components.find((component) => !placed.has(component.identity) && localDependencies(declaration, component).every((dependency) => placed.has(dependency.identity)));
+    if (!next) break;
+    placed.add(next.identity);
+    order.push(next);
+  }
+  return order;
+}
+
+/**
+ * The components of this repository that depend, directly or through other components of this repository, on any of the given components, in dependency order.
+ * A given component is listed only when it depends on another given one, and a dependency on another repository's component makes nothing depend on it here.
+ */
+export function dependentsOf(declaration, components) {
+  const reached = new Set(components.map((component) => component.identity));
+  const dependents = new Set();
+  const order = dependencyOrder(declaration);
+  // In dependency order every dependency of a component comes before it, so one pass reaches every transitive dependent.
+  for (const component of order) {
+    if (localDependencies(declaration, component).some((dependency) => reached.has(dependency.identity) || dependents.has(dependency.identity))) dependents.add(component.identity);
+  }
+  return order.filter((component) => dependents.has(component.identity));
+}
