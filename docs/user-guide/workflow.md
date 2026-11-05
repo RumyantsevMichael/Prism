@@ -99,7 +99,7 @@ git for-each-ref refs/prism/
 printf %s "$(pwd -P)" | shasum -a 256 | cut -c 1-16
 ```
 
-To delete one ref, or every ref under a prefix, such as a finished initiative's or a removed checkout's, run:
+To delete one ref of a slice, or every ref of an initiative in every checkout of the repository, run:
 
 ```bash
 git update-ref -d refs/prism/<initiative>/<slice>/<checkout>/start
@@ -110,7 +110,10 @@ git for-each-ref --format='delete %(refname)' refs/prism/<initiative>/ | git upd
 A started slice whose start content Git has removed fails its next run with `start_content_missing`.
 A done slice's refs are still needed while another slice of its initiative is started and not done, because Prism leaves the done slice's verified changes out of that slice's boundary check only while Git can read the done slice's start content and its latest passing run.
 Deleting a done slice's start or passed ref before then can therefore make that other slice fail with reason `component_boundary` for the done slice's changes.
-Delete refs only for an initiative with no slice that is started and not done, for a removed checkout, or for a slice that you will restart.
+That other slice can be in another checkout, because checkouts that share a `Store` share records, while only the refs of the checkout that ran the done slice keep its content.
+Delete an initiative's refs only when no slice of it is started and not done in any checkout that shares this Git repository or its records, for example after the initiative is shipped and its records are removed.
+Delete a single slice's refs only when you will set that slice back to `not-started`.
+A removed checkout's refs are harmless to keep, so leave them until you can delete their initiative's refs.
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
 When the design requires review, an independent reviewer also reviews the verified result, and a later change needs a new run and a new review.
 A finding that a contract clause itself causes sends the slice back to design instead of into another fix.
