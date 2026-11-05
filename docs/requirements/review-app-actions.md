@@ -119,7 +119,7 @@ Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When Prism applies an action, Prism shall record in the history of the target's initiative, or of the project when the target has no initiative, the action, its target, the time, that it came from the review app, and the value before and after.
+Requirement: When Prism applies an action, Prism shall record in the history of the target's initiative, or of the checkout whose index it rebuilds when the target is an index, the action, its target, the time, that it came from the review app, and the value before and after.
 
 Rationale: Agents and people can then see who changed what, and when, after the page closes.
 

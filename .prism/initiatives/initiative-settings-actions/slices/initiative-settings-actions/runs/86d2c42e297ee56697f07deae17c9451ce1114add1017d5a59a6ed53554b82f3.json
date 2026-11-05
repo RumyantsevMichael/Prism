@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "runId": "86d2c42e297ee56697f07deae17c9451ce1114add1017d5a59a6ed53554b82f3",
+  "host": "claude-code",
+  "initiative": "initiative-settings-actions",
+  "slice": "initiative-settings-actions",
+  "startedAt": "2026-11-05T22:49:50.527Z",
+  "endedAt": "2026-11-05T23:03:36.356Z",
+  "idleThresholdMs": 300000,
+  "segments": [
+    {
+      "kind": "slice",
+      "role": "coordinator",
+      "attribution": "approximate",
+      "wallTimeMs": {
+        "value": 825829,
+        "coverage": "approximate"
+      },
+      "activeTimeMs": {
+        "value": 825829,
+        "coverage": "approximate"
+      },
+      "inputTokens": {
+        "value": 150,
+        "coverage": "approximate"
+      },
+      "cacheWriteTokens": {
+        "value": 254648,
+        "coverage": "approximate"
+      },
+      "cacheReadTokens": {
+        "value": 12455831,
+        "coverage": "approximate"
+      },
+      "outputTokens": {
+        "value": 74590,
+        "coverage": "approximate"
+      },
+      "toolCalls": {
+        "value": 76,
+        "coverage": "approximate"
+      },
+      "activeIntervals": {
+        "value": [
+          [
+            1793918990527,
+            1793919816356
+          ]
+        ],
+        "coverage": "approximate"
+      }
+    }
+  ]
+}

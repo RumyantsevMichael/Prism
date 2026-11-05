@@ -2,10 +2,108 @@
   "schemaVersion": 1,
   "id": "initiative-settings-actions",
   "slices": {
+    "action-controls": {
+      "title": "Generic action controls in the review page",
+      "outcome": "The initiative, slice, and index pages render every action generically as compact keyboard-reachable controls with confirmation and stale handling, read-only tabs say why, and every tab of the workspace's checkouts shows applied actions and their authors as they happen.",
+      "status": "not-started",
+      "parent": "initiative-settings-actions",
+      "requirements": [
+        "docs/requirements/initiative-settings.md#1",
+        "docs/requirements/initiative-settings.md#9",
+        "docs/requirements/review-app-actions.md#1",
+        "docs/requirements/review-app-actions.md#2",
+        "docs/requirements/review-app-actions.md#5",
+        "docs/requirements/review-app-actions.md#8"
+      ],
+      "dependencies": [
+        "write-credential"
+      ],
+      "component": "root/root",
+      "design": {
+        "acceptedAt": "2026-11-05T23:07:14.134Z",
+        "frozenTests": [
+          {
+            "path": "test/server/review-action-controls.test.mjs",
+            "sha256": "e429d1f3dbb8095b6aadc4460af8c09288574cfe35b3794dfee0a794a8d51974"
+          }
+        ],
+        "review": "none",
+        "staged": true
+      }
+    },
+    "action-registry": {
+      "title": "Apply actions through one registry",
+      "outcome": "The review app lists and applies revision-checked actions from one transport-independent registry, with the seven initiative settings, gate answers, and each component's index rebuild as its actions, and records each with its author in history.",
+      "status": "not-started",
+      "parent": "initiative-settings-actions",
+      "requirements": [
+        "docs/requirements/initiative-settings.md#1",
+        "docs/requirements/initiative-settings.md#2",
+        "docs/requirements/initiative-settings.md#3",
+        "docs/requirements/initiative-settings.md#9",
+        "docs/requirements/review-app-actions.md#1",
+        "docs/requirements/review-app-actions.md#10",
+        "docs/requirements/review-app-actions.md#2",
+        "docs/requirements/review-app-actions.md#3",
+        "docs/requirements/review-app-actions.md#4",
+        "docs/requirements/review-app-actions.md#5",
+        "docs/requirements/review-app-actions.md#6",
+        "docs/requirements/review-app-actions.md#7",
+        "docs/requirements/review-app-actions.md#9"
+      ],
+      "dependencies": [],
+      "component": "root/root",
+      "design": {
+        "acceptedAt": "2026-11-05T23:07:14.127Z",
+        "frozenTests": [
+          {
+            "path": "test/server/fixtures/review-actions.mjs",
+            "sha256": "3897d0874e2467c75887779b3b0b2db188230d693d97435b7f3180ecaad2cc19"
+          },
+          {
+            "path": "test/server/review-actions.test.mjs",
+            "sha256": "45101001f0d914c4a4464c3d3e58450785d46b68f500762d5ac46caea3ac241a"
+          }
+        ],
+        "review": "required",
+        "staged": true
+      }
+    },
+    "agent-change-notices": {
+      "title": "Agents act on the person's changes",
+      "outcome": "Running agents learn of the person's changes and who made them once per session, from this machine or through store sync, in Prism's tool results and gate waits, keep the person's settings over their own, and apply the review policy at design acceptance.",
+      "status": "not-started",
+      "parent": "initiative-settings-actions",
+      "requirements": [
+        "docs/requirements/initiative-settings.md#3",
+        "docs/requirements/initiative-settings.md#4",
+        "docs/requirements/initiative-settings.md#5",
+        "docs/requirements/initiative-settings.md#6",
+        "docs/requirements/initiative-settings.md#7",
+        "docs/requirements/initiative-settings.md#8",
+        "docs/requirements/review-app-actions.md#13",
+        "docs/requirements/review-app-actions.md#14"
+      ],
+      "dependencies": [
+        "action-registry"
+      ],
+      "component": "root/root",
+      "design": {
+        "acceptedAt": "2026-11-05T23:07:14.136Z",
+        "frozenTests": [
+          {
+            "path": "test/server/agent-change-notices.test.mjs",
+            "sha256": "e87c2c182383e59340543c992c213494b2d3499a0e128e57a22445438ed9f800"
+          }
+        ],
+        "review": "required",
+        "staged": true
+      }
+    },
     "initiative-settings-actions": {
       "title": "Initiative settings from the review app",
       "outcome": "The person changes an initiative's orchestration settings from the review app through a generic, revision-checked action registry that only the person's page can write, and running agents act on the change at its next effect point.",
-      "status": "not-started",
+      "status": "split",
       "parent": null,
       "requirements": [
         "docs/requirements/initiative-settings.md#1",
@@ -33,154 +131,56 @@
         "docs/requirements/review-app-actions.md#9"
       ],
       "dependencies": []
-    }
-  },
-  "proposals": {
-    "initiative-settings-actions": {
-      "operations": [
-        {
-          "op": "split",
-          "parent": "initiative-settings-actions",
-          "children": [
-            {
-              "slug": "action-registry",
-              "title": "Apply actions through one registry",
-              "outcome": "The review app lists and applies revision-checked actions from one transport-independent registry, with the seven initiative settings, gate answers, and each component's index rebuild as its actions, and records each with its author in history.",
-              "requirements": [
-                "docs/requirements/review-app-actions.md#1",
-                "docs/requirements/review-app-actions.md#2",
-                "docs/requirements/review-app-actions.md#3",
-                "docs/requirements/review-app-actions.md#4",
-                "docs/requirements/review-app-actions.md#5",
-                "docs/requirements/review-app-actions.md#6",
-                "docs/requirements/review-app-actions.md#7",
-                "docs/requirements/review-app-actions.md#9",
-                "docs/requirements/review-app-actions.md#10",
-                "docs/requirements/initiative-settings.md#1",
-                "docs/requirements/initiative-settings.md#2",
-                "docs/requirements/initiative-settings.md#3",
-                "docs/requirements/initiative-settings.md#9"
-              ]
-            },
-            {
-              "slug": "state-merge",
-              "title": "Merge coordination state across machines",
-              "outcome": "A coordination state changed on two machines within one sync window merges by its structure, so the person's changes, agents' writes, and both histories survive without a saved conflict.",
-              "requirements": [
-                "docs/requirements/review-app-actions.md#7",
-                "docs/requirements/initiative-settings.md#7"
-              ]
-            },
-            {
-              "slug": "write-credential",
-              "title": "Write only from the page Prism opened",
-              "outcome": "Only a tab that Prism opened can apply actions, through a one-time grant exchanged for a per-tab write session that no agent-visible surface reveals, on the shared app and the per-project session server.",
-              "requirements": [
-                "docs/requirements/review-app-actions.md#11",
-                "docs/requirements/review-app-actions.md#12"
-              ]
-            },
-            {
-              "slug": "action-controls",
-              "title": "Generic action controls in the review page",
-              "outcome": "The initiative, slice, and index pages render every action generically as compact keyboard-reachable controls with confirmation and stale handling, read-only tabs say why, and every tab of the workspace's checkouts shows applied actions and their authors as they happen.",
-              "requirements": [
-                "docs/requirements/review-app-actions.md#1",
-                "docs/requirements/review-app-actions.md#2",
-                "docs/requirements/review-app-actions.md#5",
-                "docs/requirements/review-app-actions.md#8",
-                "docs/requirements/initiative-settings.md#1",
-                "docs/requirements/initiative-settings.md#9"
-              ]
-            },
-            {
-              "slug": "agent-change-notices",
-              "title": "Agents act on the person's changes",
-              "outcome": "Running agents learn of the person's changes and who made them once per session, from this machine or through store sync, in Prism's tool results and gate waits, keep the person's settings over their own, and apply the review policy at design acceptance.",
-              "requirements": [
-                "docs/requirements/review-app-actions.md#13",
-                "docs/requirements/review-app-actions.md#14",
-                "docs/requirements/initiative-settings.md#3",
-                "docs/requirements/initiative-settings.md#4",
-                "docs/requirements/initiative-settings.md#5",
-                "docs/requirements/initiative-settings.md#6",
-                "docs/requirements/initiative-settings.md#7",
-                "docs/requirements/initiative-settings.md#8"
-              ]
-            }
-          ]
-        },
-        {
-          "op": "set_dependencies",
-          "slug": "state-merge",
-          "dependencies": [
-            "action-registry"
-          ]
-        },
-        {
-          "op": "set_dependencies",
-          "slug": "write-credential",
-          "dependencies": [
-            "action-registry"
-          ]
-        },
-        {
-          "op": "set_dependencies",
-          "slug": "action-controls",
-          "dependencies": [
-            "write-credential"
-          ]
-        },
-        {
-          "op": "set_dependencies",
-          "slug": "agent-change-notices",
-          "dependencies": [
-            "action-registry"
-          ]
-        },
-        {
-          "op": "accept_design",
-          "slug": "action-registry",
-          "frozenTests": [
-            "test/server/fixtures/review-actions.mjs",
-            "test/server/review-actions.test.mjs"
-          ],
-          "review": "required"
-        },
-        {
-          "op": "accept_design",
-          "slug": "state-merge",
-          "frozenTests": [
-            "test/server/coordination-state-merge.test.mjs"
-          ],
-          "review": "required"
-        },
-        {
-          "op": "accept_design",
-          "slug": "write-credential",
-          "frozenTests": [
-            "test/server/review-write-credential.test.mjs"
-          ],
-          "review": "required"
-        },
-        {
-          "op": "accept_design",
-          "slug": "action-controls",
-          "frozenTests": [
-            "test/server/review-action-controls.test.mjs"
-          ],
-          "review": "none"
-        },
-        {
-          "op": "accept_design",
-          "slug": "agent-change-notices",
-          "frozenTests": [
-            "test/server/agent-change-notices.test.mjs"
-          ],
-          "review": "required"
-        }
+    },
+    "state-merge": {
+      "title": "Merge coordination state across machines",
+      "outcome": "A coordination state changed on two machines within one sync window merges by its structure, so the person's changes, agents' writes, and both histories survive without a saved conflict.",
+      "status": "not-started",
+      "parent": "initiative-settings-actions",
+      "requirements": [
+        "docs/requirements/initiative-settings.md#7",
+        "docs/requirements/review-app-actions.md#7"
       ],
-      "proposedAt": "2026-11-05T23:03:03.039Z"
+      "dependencies": [
+        "action-registry"
+      ],
+      "component": "root/root",
+      "design": {
+        "acceptedAt": "2026-11-05T23:07:14.130Z",
+        "frozenTests": [
+          {
+            "path": "test/server/coordination-state-merge.test.mjs",
+            "sha256": "5df21a723ac461c9fcdaa4019419b71c9502219009026fff54f87ae60623dd05"
+          }
+        ],
+        "review": "required",
+        "staged": true
+      }
+    },
+    "write-credential": {
+      "title": "Write only from the page Prism opened",
+      "outcome": "Only a tab that Prism opened can apply actions, through a one-time grant exchanged for a per-tab write session that no agent-visible surface reveals, on the shared app and the per-project session server.",
+      "status": "not-started",
+      "parent": "initiative-settings-actions",
+      "requirements": [
+        "docs/requirements/review-app-actions.md#11",
+        "docs/requirements/review-app-actions.md#12"
+      ],
+      "dependencies": [
+        "action-registry"
+      ],
+      "component": "root/root",
+      "design": {
+        "acceptedAt": "2026-11-05T23:07:14.132Z",
+        "frozenTests": [
+          {
+            "path": "test/server/review-write-credential.test.mjs",
+            "sha256": "be95a2ec7b0aaa6b4c91e1bec9c6fd9095aa7025f69235686ed299530421efa3"
+          }
+        ],
+        "review": "required",
+        "staged": true
+      }
     }
   },
   "history": [
@@ -201,6 +201,12 @@
       "operation": "propose_design",
       "slug": "initiative-settings-actions",
       "at": "2026-11-05T23:03:03.039Z"
+    },
+    {
+      "actor": "orchestrator",
+      "operation": "accept_proposal",
+      "slug": "initiative-settings-actions",
+      "at": "2026-11-05T23:07:14.138Z"
     }
   ]
 }
