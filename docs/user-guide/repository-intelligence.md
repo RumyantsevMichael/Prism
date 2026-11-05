@@ -97,7 +97,7 @@ Each result also gives its `ancestry`, the names of its containing classes or se
 A class, a section, or a configuration object is an `outline` result that lists its members, and each member is also a separate result.
 A unit longer than the model limit is split into `part` results, and its `parts` field gives their number.
 The `tokens` field gives the size of the complete unit, so a large value can show a refactoring candidate.
-When two or more results share a container, the search also returns that container with `groupedMembers`, directly after the best of those results.
+When two or more results share a container, the search also returns that container with `groupedMembers`, directly after the one of those results that their index ranks first.
 Lockfiles, generated output, vendored code, and minified files are not search candidates.
 Cosine similarity, lexical score, fused rank, model identity, and index revision have distinct meanings.
 Similarity does not establish conceptual equivalence or approve an addition.
