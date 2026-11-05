@@ -5,7 +5,7 @@ import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { analyzeInitiative, LEAF_STATUSES, parseLegacyMap, SLUG_PATTERN } from "./initiative-graph.mjs";
 import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
-import { componentOf, findComponent, readComponents, underSharedPath } from "./components.mjs";
+import { componentOf, dependentsOf, findComponent, readComponents, underSharedPath } from "./components.mjs";
 import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
@@ -278,6 +278,15 @@ export function scopeLeaves(record, scope) {
     return own.length ? own.flatMap((child) => leaves(child, seen)) : [slug];
   };
   return Object.hasOwn(slices, scope) ? [...new Set(leaves(scope))].sort() : [];
+}
+
+/**
+ * The dependents of a scope by a valid declaration, in run order: every component that depends on a component its leaves record.
+ * A leaf without a component, or with one the declaration no longer holds, adds none, so the dependents' run and ship judge a scope alike.
+ */
+export function scopeDependents(record, scope, declaration) {
+  const recorded = scopeLeaves(record, scope).map((leaf) => record.slices[leaf]?.component).filter((identity) => typeof identity === "string");
+  return dependentsOf(declaration, recorded.map((identity) => findComponent(declaration, identity)).filter(Boolean));
 }
 
 /** The claim records of an initiative by slice, with the problems of any that cannot be read. */

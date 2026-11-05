@@ -7,7 +7,7 @@ import path from "node:path";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
-import { dependentsOf, findComponent, readComponents } from "./components.mjs";
+import { findComponent, readComponents } from "./components.mjs";
 import { appendRecord, listRecordEntries, locateRecord, RECORD_DIRECTORY, recordStoreOf } from "./record-store.mjs";
 import { repositoryId } from "./repository-names.mjs";
 import { changedPaths, contentTree, crossesComponent, setSliceRef, treeId, treeReadable } from "./slice-gate.mjs";
@@ -500,12 +500,12 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
  * Join the running job under a key when it runs the same work, named by its signature, or start a new one, and wait for it up to maxWaitMs:
  * { finished } with its result, or { running, startedAt } when the wait ended first, so a host that returns early can call again to keep waiting.
  */
-async function awaitJob(jobKey, signature, start, { signal, onProgress, maxWaitMs }) {
+async function awaitJob(jobKey, signature, start, { signal, onProgress, maxWaitMs }, info = null) {
   let job = jobs.get(jobKey);
   if (!job || job.signature !== signature) {
     const controller = new AbortController();
     const listeners = new Set();
-    job = { signature, controller, listeners, startedAt: new Date().toISOString(), promise: null };
+    job = { signature, controller, listeners, startedAt: new Date().toISOString(), promise: null, info };
     job.promise = start(controller.signal, (seconds, latest) => listeners.forEach((listener) => listener(seconds, latest)))
       .finally(() => { if (jobs.get(jobKey) === job) jobs.delete(jobKey); });
     // A caller that returned early no longer awaits the run, so its failure must not go unhandled.
@@ -519,7 +519,7 @@ async function awaitJob(jobKey, signature, start, { signal, onProgress, maxWaitM
   try {
     const early = Number.isFinite(maxWaitMs) ? new Promise((resolve) => { timer = setTimeout(() => resolve(null), maxWaitMs); }) : new Promise(() => {});
     const finished = await Promise.race([job.promise, early]);
-    return finished === null ? { running: true, startedAt: job.startedAt } : { finished };
+    return finished === null ? { running: true, startedAt: job.startedAt, info: job.info } : { finished };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);
@@ -597,14 +597,16 @@ function dependentsQuestion(scope, pairs, key) {
 /**
  * Ask once for every pair of command and working folder of a dependents' run that is not allowed yet: { approved: true, declined } when the run may start,
  * with declined holding the keys of the pairs the user declined, or { approved: false, status, gateId, pending } while it waits for an answer or the answer was only a note.
- * A gate allows exactly the pairs it listed, and an existing gate is reused only when it lists every pair still to allow.
+ * A gate allows exactly the pairs it listed, and an existing gate is reused only while the pairs it lists that are not allowed yet are exactly those still to allow.
  */
 async function dependentsApproval({ root, initiative, scope, pairs, approvalGate, chatApproval, dataDirectory }) {
   if (chatApproval && !reviewBrowserUnreachable()) throw fail("chat_approval_unavailable", "This session can open the review browser, so the user allows the test commands there, not in chat. Call verify_slice without chatApproval.");
   return withApprovals(dataDirectory, async (store) => {
     const pending = pairs.filter((pair) => !store.approved[pair.key]);
-    if (!pending.length) return { approved: true, declined: new Set() };
-    const covers = (request) => request?.kind === "dependents" && request.initiative === initiative && request.scope === scope && Array.isArray(request.pairs) && pending.every((pair) => request.pairs.some((item) => item?.key === pair.key));
+    if (!pending.length) return { approved: true, declined: new Set(), gateId: null };
+    // A gate is reused only while the pairs it lists that are not allowed yet are exactly the pairs still to allow, so the result and its chat message name every pair that answering it allows.
+    const wanted = pending.map((pair) => pair.key).sort().join("\n");
+    const covers = (request) => request?.kind === "dependents" && request.initiative === initiative && request.scope === scope && Array.isArray(request.pairs) && request.pairs.filter((item) => !store.approved[item?.key]).map((item) => item?.key).sort().join("\n") === wanted;
     if (approvalGate && store.requests[approvalGate] && !covers(store.requests[approvalGate])) throw fail("approval_mismatch", `The gate ${approvalGate} asked about other test commands or folders. Call verify_slice with dependents and without approvalGate to ask about the ones this run needs.`);
     if (chatApproval && !(approvalGate && store.requests[approvalGate])) throw fail("validation_failed", "chatApproval answers the approval gate that verify_slice opened, so pass that gate's id as approvalGate.");
     const requested = approvalGate && store.requests[approvalGate] ? approvalGate : Object.entries(store.requests).find(([, item]) => covers(item))?.[0];
@@ -612,7 +614,7 @@ async function dependentsApproval({ root, initiative, scope, pairs, approvalGate
       const request = store.requests[requested];
       const gate = await pendingGate(root, request.initiative, requested);
       const allowAll = (approvedAt, extra = {}) => {
-        for (const item of request.pairs) store.approved[item.key] = { root, folder: item.folder, command: item.command, approvedAt, gate: requested, ...extra };
+        for (const item of request.pairs) store.approved[item.key] ??= { root, folder: item.folder, command: item.command, approvedAt, gate: requested, ...extra };
         delete store.requests[requested];
       };
       if (!gate) {
@@ -620,7 +622,7 @@ async function dependentsApproval({ root, initiative, scope, pairs, approvalGate
       } else if (gate.answer?.via === "browser" && gate.answer.choice === ALLOW) {
         allowAll(gate.answer.answeredAt);
         await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested }] }).catch(() => {});
-        return { approved: true, declined: new Set() };
+        return { approved: true, declined: new Set(), gateId: requested };
       } else if (gate.answer) {
         delete store.requests[requested];
         await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested }] }).catch(() => {});
@@ -631,7 +633,7 @@ async function dependentsApproval({ root, initiative, scope, pairs, approvalGate
         const quote = chatApproval.quote.trim();
         allowAll(new Date().toISOString(), { via: "chat", quote });
         await gateChange(root, request.initiative, { gateOperations: [{ op: "resolve", id: requested, reason: `The user allowed these commands in chat, as recorded by the agent: "${quote}"` }] }).catch(() => {});
-        return { approved: true, declined: new Set() };
+        return { approved: true, declined: new Set(), gateId: requested };
       } else {
         return { approved: false, status: "approval_needed", gateId: requested, pending };
       }
@@ -651,27 +653,22 @@ async function dependentsApproval({ root, initiative, scope, pairs, approvalGate
  */
 async function dependentsRun({ root, initiative, scope, approvalGate, chatApproval, contractDefects, dataDirectory, signal, onProgress, maxWaitMs }) {
   if (contractDefects) throw fail("validation_failed", "A dependents' run takes no contract defects. Report a wrong contract clause with verify_slice on the slice whose contract it is, without dependents.");
-  const { fitScopes, readInitiative, scopeLeaves } = await import("./initiative.mjs");
+  const { fitScopes, readInitiative, scopeDependents, scopeLeaves } = await import("./initiative.mjs");
   const { loaded } = await readInitiative(root, initiative);
   const record = loaded.valid ? loaded.record : null;
   if (!record || !fitScopes(record).includes(scope)) throw fail("validation_failed", `The slice ${scope} is not a fit scope of ${initiative}, so it has no dependents' run. Run the dependents of the scope whose design accepted the slice plan, or of a leaf that is a scope of its own.`);
   const leaves = scopeLeaves(record, scope);
   const waiting = leaves.filter((leaf) => record.slices[leaf]?.status !== "done");
   if (waiting.length) throw fail("scope_unfinished", `The scope ${scope} is not finished, so its dependents do not run yet. Finish ${waiting.join(", ")} first.`, { scope, waiting });
+  // A call while this scope's dependents run joins that run, and a call with the gate a finished run was started under returns that run, so neither asks again.
+  const jobKey = `${root}\0${initiative}\0${scope}\0dependents`;
+  const running = jobs.get(jobKey);
+  if (running) return dependentsWaited(await awaitJob(jobKey, running.signature, null, { signal, onProgress, maxWaitMs }), scope, signal);
+  const settled = approvalGate ? settledDependents.get(jobKey) : null;
+  if (settled && settled.gate === approvalGate) return dependentsResult(settled.run);
   const config = await readWorkflowConfig(root);
   const declaration = readComponents(config);
-  const own = [];
-  for (const leaf of leaves) {
-    const identity = record.slices[leaf]?.component;
-    if (identity === undefined) continue;
-    const component = typeof identity === "string" ? findComponent(declaration, identity) : null;
-    if (component === null) {
-      const components = declaration.components.map((item) => item.identity);
-      throw fail("component_unknown", `The slice ${leaf} records the component ${identity}, which is not a component of this repository now, so the dependents of ${scope} cannot be found. Declare it again under ## Components in .prism/workflow.md.`, { slice: leaf, component: identity, components });
-    }
-    own.push(component);
-  }
-  const dependents = dependentsOf(declaration, own);
+  const dependents = scopeDependents(record, scope, declaration);
   if (!dependents.length) return { status: "no_dependents", scope, components: [], message: `No component of this repository depends on the components of ${scope}, so nothing ran and nothing was recorded.` };
   // Every dependent's command and folder is checked, in run order, before anything is asked or run.
   const pairs = [];
@@ -698,10 +695,32 @@ async function dependentsRun({ root, initiative, scope, approvalGate, chatApprov
     return { status: "approval_needed", gateId: allowed.gateId, scope, commands, message: `The user must allow the dependents' test commands in the review browser first. Wait with wait_for_user_gate on ${allowed.gateId}, then call verify_slice again with dependents true and approvalGate ${allowed.gateId}.` };
   }
   const declined = allowed.declined;
+  const gate = allowed.gateId ?? approvalGate ?? null;
   const signature = pairs.map((pair) => `${pair.key}${declined.has(pair.key) ? "-" : "+"}`).join(",");
-  const waited = await awaitJob(`${root}\0${initiative}\0${scope}\0dependents`, signature, (jobSignal, progress) => dependentsExecution({ root, initiative, scope, config, pairs, placed, declined, dataDirectory, signal: jobSignal, onProgress: progress }), { signal, onProgress, maxWaitMs });
-  if (waited.running) return { status: "running", scope, commands: listed(pairs), startedAt: waited.startedAt, message: "The dependents' run continues in the Prism server. Call verify_slice again with the same arguments to keep waiting for its result." };
+  const start = (jobSignal, progress) => inWorkTree(root, () => dependentsExecution({ root, initiative, scope, config, pairs, placed, declined, dataDirectory, signal: jobSignal, onProgress: progress }))
+    .then((run) => {
+      if (gate) settledDependents.set(jobKey, { gate, run });
+      return run;
+    });
+  return dependentsWaited(await awaitJob(jobKey, signature, start, { signal, onProgress, maxWaitMs }, { commands: listed(pairs) }), scope, signal);
+}
+
+function dependentsWaited(waited, scope, signal) {
+  if (waited.running) return { status: "running", scope, commands: waited.info.commands, startedAt: waited.startedAt, message: "The dependents' run continues in the Prism server. Call verify_slice again with the same arguments to keep waiting for its result." };
   return waited.finished.reason === "cancelled" && signal?.aborted ? { status: "cancelled", scope } : dependentsResult(waited.finished);
+}
+
+// The latest finished dependents' run of each scope that an approval gate started, with that gate's id.
+const settledDependents = new Map();
+// The dependents' runs of one work tree run one after another, since each runs commands that may read or write the same files.
+const workTreeRuns = new Map();
+
+function inWorkTree(root, action) {
+  const run = (workTreeRuns.get(root) ?? Promise.resolve()).then(action);
+  const settledRun = run.then(() => {}, () => {});
+  workTreeRuns.set(root, settledRun);
+  settledRun.then(() => { if (workTreeRuns.get(root) === settledRun) workTreeRuns.delete(root); });
+  return run;
 }
 
 async function dependentsExecution({ root, initiative, scope, config, pairs, placed, declined, dataDirectory, signal, onProgress }) {

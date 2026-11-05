@@ -4,7 +4,7 @@ import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { fitScopes, normalizeRequirementReference, readInitiative, scopeLeaves } from "./initiative.mjs";
+import { fitScopes, normalizeRequirementReference, readInitiative, scopeDependents } from "./initiative.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
@@ -13,7 +13,7 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { locateRecord, moveLegacyRecords, writeRecord } from "./record-store.mjs";
 import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
-import { ComponentError, dependentsOf, findComponent, listComponents, listsComponents, readComponents } from "./components.mjs";
+import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
 import { latestDependentsRun } from "./slice-design.mjs";
 import { proposeComponents } from "./workspace-manifests.mjs";
 
@@ -195,9 +195,7 @@ export async function dependentsBlockers(projectRoot, config, initiative, record
   }
   const scopes = [];
   for (const scope of fitScopes(record)) {
-    const recorded = scopeLeaves(record, scope).map((leaf) => record.slices[leaf]?.component).filter((identity) => typeof identity === "string");
-    const components = recorded.map((identity) => findComponent(declaration, identity)).filter(Boolean);
-    const dependents = dependentsOf(declaration, components).map((component) => component.identity);
+    const dependents = scopeDependents(record, scope, declaration).map((component) => component.identity);
     if (!dependents.length) continue;
     const latest = await latestDependentsRun(projectRoot, initiative, scope).catch(() => null);
     // A dependent passed when the latest run ran it and did not block it; one the run blocked failed, and one it never ran has not run.

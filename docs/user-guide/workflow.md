@@ -202,7 +202,7 @@ A scope is the slice whose design accepted the slice plan, or a leaf that is a s
 Prism refuses a slice that is not a scope with `validation_failed`, and a scope with a leaf that is not done with `scope_unfinished`, listing the leaves it waits for in `waiting`.
 
 The dependents are every component of this repository that depends, directly or through other components, on a component that one of the scope's leaves records, a component of the scope included when it depends on another one of them.
-A scope inside one component runs them too, while a leaf without a component and a change under a shared path add none.
+A scope inside one component runs them too, while a leaf without a component, a leaf whose component the declaration no longer holds, and a change under a shared path add none, for the run and for `ship` alike.
 When nothing depends on the scope, the result is `no_dependents` with an empty `components`, and nothing is recorded.
 A dependency on another repository's component never runs there: Prism reads no other repository's configuration, and the result does not mention it.
 
@@ -211,9 +211,11 @@ The commands run in dependency order, each in the place of the first dependent t
 Before anything is asked, Prism refuses as for a slice's [verification](#verification), naming the first dependent in that order that has no command, a missing folder, or a folder that leads outside the project.
 
 One approval question lists every command and folder that you have not allowed yet, with the components each one tests, and the result is `approval_needed` with `commands`, each `{ command, folder, components }`.
+In a cloud session the chat question names the same commands and folders, because Prism asks a new question instead of reusing one that still asks about a command or folder this run does not need.
 Allowing it allows each listed command in its folder, as a slice's approval does, so later runs ask only about new commands or folders.
 Declining it marks the components of every listed command `declined` for this run, while the commands you allowed earlier still run, and the next run asks again.
 An answer with only a note returns `approval_unclear` and runs nothing.
+The dependents' runs of one work tree run one at a time, and a call while a scope's run is still going, or a repeated call with the gate that started a finished run, returns that run instead of asking again.
 
 The run is recorded on the scope, and its result has `status` `passed` when every dependent passed and `failed` otherwise, with `components` in run order as `{ name, folder, command, status }`, `blocked` naming each dependent that failed or was declined, and `run`, the record of the run.
 A run whose commands change project files fails with reason `tracked_files_changed` and blocks every dependent.
