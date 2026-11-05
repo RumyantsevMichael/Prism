@@ -96,6 +96,40 @@
       "decision": null
     },
     {
+      "id": "initiative-settings-actions",
+      "title": "Initiative settings from the review app",
+      "intent": "Let the person change an initiative's orchestration settings from the review app through a generic, revision-checked action mechanism that only the person's page can write and that later actions reuse unchanged.",
+      "band": "Now",
+      "requirements": [
+        "docs/requirements/review-app-actions.md#1",
+        "docs/requirements/review-app-actions.md#2",
+        "docs/requirements/review-app-actions.md#3",
+        "docs/requirements/review-app-actions.md#4",
+        "docs/requirements/review-app-actions.md#5",
+        "docs/requirements/review-app-actions.md#6",
+        "docs/requirements/review-app-actions.md#7",
+        "docs/requirements/review-app-actions.md#8",
+        "docs/requirements/review-app-actions.md#9",
+        "docs/requirements/review-app-actions.md#10",
+        "docs/requirements/review-app-actions.md#11",
+        "docs/requirements/review-app-actions.md#12",
+        "docs/requirements/review-app-actions.md#13",
+        "docs/requirements/review-app-actions.md#14",
+        "docs/requirements/initiative-settings.md#1",
+        "docs/requirements/initiative-settings.md#2",
+        "docs/requirements/initiative-settings.md#3",
+        "docs/requirements/initiative-settings.md#4",
+        "docs/requirements/initiative-settings.md#5",
+        "docs/requirements/initiative-settings.md#6",
+        "docs/requirements/initiative-settings.md#7",
+        "docs/requirements/initiative-settings.md#8",
+        "docs/requirements/initiative-settings.md#9"
+      ],
+      "requires": [],
+      "rationale": "Now, because Michael agreed the scope and approved the requirements on 2026-11-05; it builds on the single review app and moves gate answers and index rebuild onto one write path.",
+      "decision": null
+    },
+    {
       "id": "repository-names",
       "title": "Repository names in a shared store",
       "intent": "Name each repository that shares a record store by a committed name the store registers with its remote, and let each machine know where its checkouts of each repository are.",
@@ -193,6 +227,12 @@
       "operation": "add_initiative",
       "id": "components",
       "at": "2026-11-04T19:03:26.230Z"
+    },
+    {
+      "actor": "agent",
+      "operation": "add_initiative",
+      "id": "initiative-settings-actions",
+      "at": "2026-11-05T22:21:51.174Z"
     }
   ]
 }

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "settings": {
+    "autonomy": "conservative",
+    "agentFlow": "multi",
+    "commit": "on",
+    "push": "off",
+    "continuation": "auto",
+    "review": "marked",
+    "models": "host defaults"
+  },
+  "active": [],
+  "pending": [],
+  "next": [],
+  "evidence": [],
+  "closed": [
+    {
+      "id": "gate-c0983967d796",
+      "kind": "decision",
+      "question": "Approve the 23 Draft requirements in review-app-actions.md and initiative-settings.md? Open question: should a tab opened from a URL an agent handed over stay read-only?",
+      "artifacts": [
+        "docs/requirements/review-app-actions.md",
+        "docs/requirements/initiative-settings.md"
+      ],
+      "options": [
+        {
+          "id": "approve",
+          "label": "Approve as written"
+        },
+        {
+          "id": "change",
+          "label": "Change something"
+        }
+      ],
+      "askedAt": "2026-11-05T22:07:54.049Z",
+      "closedAt": "2026-11-05T22:21:50.971Z",
+      "reason": "Michael approved in the project thread on 2026-11-05 22:21 UTC, including the read-only tab for URLs handed over by agents."
+    }
+  ]
+}

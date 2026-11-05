@@ -13,6 +13,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Single review app** (`single-review-app`): Run one review app per user that every agent session and project shares, with a project switcher that shows which project waits on the user.
 - **Repository intelligence** (`repository-intelligence`): Give workflow agents deterministic repository evidence: providers, context planning, session capacity, structural analysis, and duplication gates.
 - **Components in one repository** (`components`): Let a repository declare components with their own test commands and dependencies, keep each leaf slice inside one component, run dependents' tests when a spanning scope finishes, and prepare the native index per component so a large monorepo fits its limits.
+- **Initiative settings from the review app** (`initiative-settings-actions`): Let the person change an initiative's orchestration settings from the review app through a generic, revision-checked action mechanism that only the person's page can write and that later actions reuse unchanged.
 
 ### Next
 
@@ -28,6 +29,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Single review app**: Now, because Michael asked for it on 2026-10-17 and approved the design direction in the project thread; it builds on the plain-HTTP review server from PR #25.
 - **Repository intelligence**: Kept in Now while repository-intelligence work continues on main.
 - **Components in one repository**: Now, because Michael agreed on 4 November 2026 in the project thread that components are the next milestone after repository names, as increments 2 and 4 of the M3 multi-repository workspace design, with per-component indexing for issue #14; it is proven on one real Lumen initiative across two or more packages. Requirements stay Draft until Michael accepts the file text.
+- **Initiative settings from the review app**: Now, because Michael agreed the scope and approved the requirements on 2026-11-05; it builds on the single review app and moves gate answers and index rebuild onto one write path.
 - **Agent execution evidence and continuity**: Next, because observed-range reporting consumes verified ranges from repository context planning, while pause checkpoints and diagram-readability assessment can proceed independently after design. The new work stays together until design shows that its outcomes need separate sequencing.
 
 ## Open questions
