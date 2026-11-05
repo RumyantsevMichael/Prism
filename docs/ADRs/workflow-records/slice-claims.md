@@ -93,3 +93,4 @@ Every initiative read and update compares the server's held claims for that init
 ## Decision Log
 
 2026-11-04: Made the host session the holder when the host gives the server a session identifier, so a restarted server in the same session keeps its claims.
+2026-11-05: Read the session identifier from each tool call's metadata when the host names it there, as Codex does, before the server's environment, so Codex sessions keep their claims across server restarts too.
