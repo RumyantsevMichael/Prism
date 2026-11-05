@@ -288,7 +288,7 @@ test("lists the newest open question and the newest answer first", async (contex
   const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
   for (const question of ["Asked first?", "Asked second?"]) {
     const current = await readCoordinationState({ projectRoot, initiative: "reports" });
-    await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question, artifacts: [], options: [{ id: "yes", label: "Yes" }] }] } });
+    await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question, context: "The run reached a choice that needs the person.", artifacts: [], options: [{ id: "yes", label: "Yes", consequence: "The run continues with this choice." }], recommended: { option: "yes", reason: "It keeps the current behavior." } }] } });
     await new Promise((resolve) => setTimeout(resolve, 15));
   }
   const review = await startReviewServer({ projectRoot });
