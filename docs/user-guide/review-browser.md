@@ -47,6 +47,9 @@ The page keeps checking and recovers on its own when the same app or its upgrade
 Attention lists the questions that an agent recorded for you, with the artifacts to inspect, including read-only source files.
 The newest question comes first, and so does the newest answer that still waits for the agent.
 Answer a question on Attention or in the conversation.
+Each decision and action request explains itself so you can answer without having followed the run: below the question it shows what happened, what was tried, and an example, and a decision lists what each option leads to and which option the agent recommends and why.
+Prism refuses to record a decision or action request without that explanation, or a decision without a consequence for each option and a recommendation, so a question always reaches you with them.
+Questions recorded by an earlier Prism version show only their question.
 A design or correctness review needs Approve or Request changes, and Request changes also needs a note that says what should change.
 A decision takes one of its options, a note in your own words, or both.
 An action request needs only Mark as done, with an optional note.

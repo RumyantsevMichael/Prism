@@ -96,9 +96,10 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | CLEAN | A review lane result with no unresolved finding. |
 | Review probe | A minimal failing test that a reviewer adds through a public surface to prove a finding. |
 | Gate | A user decision that controls progress. |
-| User gate record | A pending coordination state entry for a question to the user, with its kind, slice, question, artifacts, optional options, and any answer recorded in the review browser. |
+| User gate record | A pending coordination state entry for a question to the user, with its kind, slice, question, context, artifacts, optional options with consequences, a recommendation for a decision, and any answer recorded in the review browser; Prism refuses a decision or assistance gate without context, and a decision gate without consequences or a recommendation. |
+| Blocker | A question for the person that stands on its own: the question in one or two plain sentences; context with what happened, what was tried, and a concrete example; for a choice, each option with what happens if the person picks it; and the recommended answer with why. |
 | Orchestrator | The agent that coordinates an initiative: it runs design, implementation, and review in child sessions, starts slices, and keeps gates, while Prism records progress from its calls. |
-| Child status | The short fixed result a child session returns: result, last commit, a one-sentence summary, and questions. |
+| Child status | The short fixed result a child session returns: result, last commit, a one-sentence summary, and questions written as blockers. |
 | Fresh context | A session that starts without the conversation that authored its inputs. |
 | Decision autonomy | A run setting that selects which gates wait for the user. |
 | Slice continuation | A run setting that controls whether the next slice starts without the user. |
@@ -119,5 +120,4 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 
 - Read [delegation.md](references/delegation.md) before starting child agents.
 - Read [visual-review.md](references/visual-review.md) before human artifact review.
-- State each decision in plain language before its artifact reference.
-- Ask only at a real gate or unresolved choice.
+- Ask only at a real gate or unresolved choice, as a [blocker](#common-terms) in plain language before its artifact reference.

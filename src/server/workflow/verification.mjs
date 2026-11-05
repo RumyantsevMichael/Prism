@@ -181,6 +181,10 @@ async function pendingGate(projectRoot, initiative, id) {
   return (state.state?.pending ?? []).find((item) => item && typeof item === "object" && item.id === id) ?? null;
 }
 
+// The approval gates follow the rule for every decision gate: the situation, each option's consequence, and a recommendation.
+const APPROVAL_CONTEXT = "A slice is done only when Prism itself runs the project's tests and they pass. The command comes from `.prism/workflow.md`, and Prism has not run it in this folder before, so it asks you once. Whatever the command runs, runs with your shell, so check that it is the test command you expect.";
+const APPROVAL_RECOMMENDATION = { option: ALLOW, reason: "Allow it when it is the test command you configured for this project; decline when you do not recognize it." };
+
 // The folder is the one the command runs in, project-relative, and a component folder that leads there through a link is named beside it, so the question holds no path of the user's machine.
 function approvalQuestion(command, folder, declaredFolder, key) {
   const place = `${folder === "" ? "the project root" : `the folder ${folder}`}${declaredFolder && declaredFolder !== folder ? `, where the component folder ${declaredFolder} leads` : ""}`;
@@ -236,7 +240,10 @@ async function approval({ root, initiative, slice, command, folder, declaredFold
         return { approved: false, key, status: "approval_needed", gateId: requested };
       }
     }
-    const opened = await gateChange(root, initiative, { gateOperations: [{ op: "ask", kind: "decision", slice, question: approvalQuestion(command, folder, declaredFolder, key), artifacts: [".prism/workflow.md"], options: [{ id: ALLOW, label: "Allow this command" }, { id: DECLINE, label: "Decline" }] }] });
+    const opened = await gateChange(root, initiative, { gateOperations: [{ op: "ask", kind: "decision", slice, question: approvalQuestion(command, folder, declaredFolder, key), context: APPROVAL_CONTEXT, artifacts: [".prism/workflow.md"], options: [
+      { id: ALLOW, label: "Allow this command", consequence: "Prism runs it now and on every later verification that uses this exact command in this folder." },
+      { id: DECLINE, label: "Decline", consequence: "Prism does not run it, and the slice stays unverified until the command changes or you allow it." }
+    ], recommended: APPROVAL_RECOMMENDATION }] });
     const gateId = opened.openedGates[0].id;
     store.requests[gateId] = { key, initiative, askedAt: new Date().toISOString() };
     return { approved: false, key, status: "approval_needed", gateId };
@@ -569,6 +576,7 @@ async function completeSlice(root, initiative, slice, design, run) {
 // A dependents' run checks, once a fit scope's leaves are done, every component of this repository that depends on the scope's components.
 // It runs other components' commands behind one approval gate, so the gate lists each command with the folder it runs in, and allowing it allows exactly the listed pairs.
 const GATE_QUESTION_LIMIT = 4000;
+const DEPENDENTS_CONTEXT = "Every slice of the scope passed its own tests. Before the initiative can ship, Prism runs the tests of the components that depend on the changed ones, so a break there shows now rather than after release. These commands come from `.prism/workflow.md`, and Prism has not run them in these folders before. Whatever they run, runs with your shell.";
 const DEPENDENT_TAILS = 5;
 
 // The commands of a dependents' run as the gate and its results name them: { command, folder, components } in run order.
@@ -639,7 +647,10 @@ async function dependentsApproval({ root, initiative, scope, pairs, approvalGate
       }
     }
     const key = digest(pending.map((pair) => pair.key).sort().join("\n"));
-    const opened = await gateChange(root, initiative, { gateOperations: [{ op: "ask", kind: "decision", slice: scope, question: dependentsQuestion(scope, pending, key), artifacts: [".prism/workflow.md"], options: [{ id: ALLOW, label: "Allow these commands" }, { id: DECLINE, label: "Decline" }] }] });
+    const opened = await gateChange(root, initiative, { gateOperations: [{ op: "ask", kind: "decision", slice: scope, question: dependentsQuestion(scope, pending, key), context: DEPENDENTS_CONTEXT, artifacts: [".prism/workflow.md"], options: [
+      { id: ALLOW, label: "Allow these commands", consequence: "Prism runs every listed command in its folder now and on later runs of the same commands there." },
+      { id: DECLINE, label: "Decline", consequence: "Prism runs none of them, and the components they test block shipping until a later run passes." }
+    ], recommended: APPROVAL_RECOMMENDATION }] });
     const gateId = opened.openedGates[0].id;
     store.requests[gateId] = { kind: "dependents", initiative, scope, pairs: pending.map(({ key: pairKey, command, folder }) => ({ key: pairKey, command, folder })), askedAt: new Date().toISOString() };
     return { approved: false, status: "approval_needed", gateId, pending };

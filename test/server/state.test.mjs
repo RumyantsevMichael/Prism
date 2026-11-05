@@ -185,10 +185,10 @@ test("records and resolves user gates beside legacy pending items", async (conte
   assert.equal(unknown.code, "unknown_gate");
   for (const operation of [
     { op: "ask", kind: "approval", question: "Approve?", artifacts: [] },
-    { op: "ask", kind: "decision", question: " ", artifacts: [] },
-    { op: "ask", kind: "decision", question: "Which store?", artifacts: ["../outside.md"] },
-    { op: "ask", kind: "decision", question: "Which store?", artifacts: ["/abs.md"] },
-    { op: "ask", kind: "decision", question: "Which store?", artifacts: [], id: "gate-abcdefabcdef" },
+    { op: "ask", kind: "decision", question: " ", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [], recommended: { reason: "It keeps the current behavior." } },
+    { op: "ask", kind: "decision", question: "Which store?", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: ["../outside.md"], recommended: { reason: "It keeps the current behavior." } },
+    { op: "ask", kind: "decision", question: "Which store?", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: ["/abs.md"], recommended: { reason: "It keeps the current behavior." } },
+    { op: "ask", kind: "decision", question: "Which store?", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [], id: "gate-abcdefabcdef", recommended: { reason: "It keeps the current behavior." } },
     { op: "close", id: gate.id }
   ]) {
     const rejected = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [operation] } }).catch(error => error);
@@ -215,13 +215,13 @@ test("records one browser answer per gate and keeps agents from forging answers"
   const fixture = await stateFixture(context);
   const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { gateOperations: [
     { op: "ask", kind: "visual-review", slice: "download", question: "Review the design.", artifacts: [] },
-    { op: "ask", kind: "decision", question: "Which store?", artifacts: [], options: [{ id: "postgres", label: "Postgres" }, { id: "sqlite", label: "SQLite" }] },
-    { op: "ask", kind: "assistance", question: "Run review in a separate task.", artifacts: [] }
+    { op: "ask", kind: "decision", question: "Which store?", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [], options: [{ id: "postgres", label: "Postgres", consequence: "The run continues with this choice." }, { id: "sqlite", label: "SQLite", consequence: "The run continues with this choice." }], recommended: { option: "postgres", reason: "It keeps the current behavior." } },
+    { op: "ask", kind: "assistance", question: "Run review in a separate task.", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [] }
   ] } });
   const [review, decision, assistance] = created.openedGates.map((gate) => gate.id);
   assert.deepEqual(created.state.pending[1].options.map((option) => option.id), ["postgres", "sqlite"]);
   for (const options of [[], [{ id: "Bad Id", label: "x" }], [{ id: "a", label: "A" }, { id: "a", label: "B" }]]) {
-    const rejected = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question: "Q", artifacts: [], options }] } }).catch(error => error);
+    const rejected = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question: "Q", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [], options }] } }).catch(error => error);
     assert.equal(rejected.code, "invalid_changes", JSON.stringify(options));
   }
   const reviewOptions = await updateCoordinationState({ ...fixture, expectedRevision: created.revision, changes: { gateOperations: [{ op: "ask", kind: "visual-review", question: "Q", artifacts: [], options: [{ id: "a", label: "A" }] }] } }).catch(error => error);
@@ -249,7 +249,7 @@ test("records one browser answer per gate and keeps agents from forging answers"
   assert.equal(resolved.state.pending.some((gate) => gate.id === decision), false);
   assert.equal((await answerUserGate({ ...fixture, id: decision, choice: "sqlite" }).catch(error => error)).code, "unknown_gate");
   // A browser answer changes the revision, and resolving a gate by its id still goes through.
-  const asked = await updateCoordinationState({ ...fixture, expectedRevision: resolved.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question: "Which cache?", artifacts: [], options: [{ id: "none", label: "None" }, { id: "lru", label: "LRU" }] }] } });
+  const asked = await updateCoordinationState({ ...fixture, expectedRevision: resolved.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question: "Which cache?", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [], options: [{ id: "none", label: "None", consequence: "The run continues with this choice." }, { id: "lru", label: "LRU", consequence: "The run continues with this choice." }], recommended: { option: "none", reason: "It keeps the current behavior." } }] } });
   const cache = asked.openedGates[0].id;
   await answerUserGate({ ...fixture, id: cache, choice: "lru" });
   const late = await updateCoordinationState({ ...fixture, expectedRevision: asked.revision, changes: { gateOperations: [{ op: "resolve", id: cache }] } });
@@ -260,4 +260,44 @@ test("records one browser answer per gate and keeps agents from forging answers"
   assert.deepEqual(replaced.state.closed.map((gate) => gate.id), [decision, cache, review], "an answered gate dropped from the pending list is kept too");
   const stale = await updateCoordinationState({ ...fixture, expectedRevision: asked.revision, changes: { next: ["Anything else"] } }).catch(error => error);
   assert.equal(stale.code, "revision_conflict", "any other change still needs the current revision");
+});
+
+test("asks a decision or assistance gate only with the context and guidance a person needs to decide", async (context) => {
+  const fixture = await stateFixture(context);
+  const situation = "The export slice found that two reports share one template; changing it changes both.";
+  const options = [{ id: "keep", label: "Keep the shared template", consequence: "Both reports change together." }, { id: "split", label: "Split the template", consequence: "The slice adds a second template file." }];
+  const ask = (gate) => updateCoordinationState({ ...fixture, expectedRevision: null, changes: { gateOperations: [{ op: "ask", question: "Keep one template?", artifacts: [], ...gate }] } }).catch((caught) => caught);
+  const refusals = [
+    [{ kind: "decision", options, recommended: { option: "keep", reason: "Fewer files." } }, /context is required/],
+    [{ kind: "assistance" }, /context is required/],
+    [{ kind: "decision", context: situation, options: [{ id: "keep", label: "Keep" }, options[1]], recommended: { option: "keep", reason: "Fewer files." } }, /missing for keep/],
+    [{ kind: "decision", context: situation, options }, /recommended is required: \{ option, reason \}/],
+    [{ kind: "decision", context: situation }, /recommended is required: \{ reason \}/]
+  ];
+  for (const [gate, message] of refusals) {
+    const refused = await ask(gate);
+    assert.equal(refused.code, "gate_context_missing", JSON.stringify(gate));
+    assert.match(refused.message, message);
+  }
+  const unknownOption = await ask({ kind: "decision", context: situation, options, recommended: { option: "merge", reason: "Fewer files." } });
+  assert.equal(unknownOption.code, "invalid_changes");
+  assert.match(unknownOption.message, /recommended\.option: must name one of the gate's options/);
+  const reviewRecommendation = await ask({ kind: "visual-review", recommended: { reason: "Looks right." } });
+  assert.match(reviewRecommendation.message, /recommended: is allowed only for decision gates/);
+
+  const created = await updateCoordinationState({ ...fixture, expectedRevision: null, changes: { gateOperations: [
+    { op: "ask", kind: "decision", question: "Keep one template?", context: situation, artifacts: [], options, recommended: { option: "split", reason: "The reports are owned by different teams." } },
+    { op: "ask", kind: "visual-review", question: "Review the design.", artifacts: [] }
+  ] } });
+  assert.deepEqual(created.state.pending[0].recommended, { option: "split", reason: "The reports are owned by different teams." });
+  assert.equal(created.state.pending[0].context, situation);
+  assert.equal(created.state.pending[0].options[1].consequence, "The slice adds a second template file.");
+
+  // A gate recorded before these fields existed stays valid and readable.
+  const stored = JSON.parse(await readFile(stateFile(fixture), "utf8"));
+  stored.pending.push({ id: "gate-0123456789ab", kind: "decision", question: "Old question?", artifacts: [], options: [{ id: "yes", label: "Yes" }], askedAt: "2026-10-01T00:00:00Z" });
+  await writeFile(stateFile(fixture), `${JSON.stringify(stored, null, 2)}\n`);
+  const loaded = await readCoordinationState(fixture);
+  assert.equal(loaded.valid, true);
+  assert.equal(loaded.state.pending.length, 3);
 });

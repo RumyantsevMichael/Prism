@@ -66,12 +66,34 @@ function gateHead(item, ctx, time) {
     <p class="attention-question">${escapeHtml(item.question)}</p>`;
 }
 
+// The situation the agent wrote for a person who has not followed the run, rendered as Markdown where the page can.
+function gateContext(item, ctx) {
+  if (!item.context) return "";
+  const body = ctx.renderMarkdown ? ctx.renderMarkdown(item.context) : `<p class="gate-context-plain">${escapeHtml(item.context)}</p>`;
+  return `<div class="gate-context">${body}</div>`;
+}
+
+// Each option's consequence and the agent's recommendation, so the choice reads without the conversation.
+function gateGuidance(item) {
+  const recommended = item.recommended ?? null;
+  const options = item.kind === "decision" ? (item.options ?? []) : [];
+  const consequences = options.filter((option) => option.consequence);
+  const list = consequences.length
+    ? `<ul class="gate-consequences">${consequences.map((option) => `<li${option.id === recommended?.option ? ' class="is-recommended"' : ""}><span class="gate-option-label">${escapeHtml(option.label)}</span><span class="gate-consequence">${escapeHtml(option.consequence)}</span></li>`).join("")}</ul>`
+    : "";
+  const pick = recommended?.option ? options.find((option) => option.id === recommended.option) : null;
+  const reason = recommended?.reason
+    ? `<p class="gate-recommendation"><span class="gate-tag">Recommended</span> ${pick ? `<span class="gate-option-label">${escapeHtml(pick.label)}</span>: ` : ""}${escapeHtml(recommended.reason)}</p>`
+    : "";
+  return list || reason ? `<div class="gate-guidance">${list}${reason}</div>` : "";
+}
+
 function answerForm(item, draft) {
   const options = choices(item);
   const state = answerState(item, draft);
   const key = escapeHtml(item.id);
   return `<div class="gate-answer" data-gate="${key}" data-initiative="${escapeHtml(item.initiative.id)}">
-    ${options.length ? `<div class="gate-choices" role="group" aria-label="Your answer">${options.map(([id, label]) => `<button type="button" class="choice-button${id === "request-changes" ? " is-negative" : id === "approve" ? " is-positive" : ""}" data-choice="${escapeHtml(id)}" aria-pressed="${state.choice === id}">${escapeHtml(label)}</button>`).join("")}</div>` : ""}
+    ${options.length ? `<div class="gate-choices" role="group" aria-label="Your answer">${options.map(([id, label]) => `<button type="button" class="choice-button${id === "request-changes" ? " is-negative" : id === "approve" ? " is-positive" : ""}${id === item.recommended?.option ? " is-recommended" : ""}" data-choice="${escapeHtml(id)}" aria-pressed="${state.choice === id}"${id === item.recommended?.option ? ' title="Recommended"' : ""}>${escapeHtml(label)}</button>`).join("")}</div>` : ""}
     <label class="gate-note"><span class="gate-note-label"><span data-note-label>${escapeHtml(state.noteLabel)}</span> <span class="gate-note-need${state.noteRequired ? " is-required" : ""}" data-note-need>${state.noteRequired ? "required" : "optional"}</span></span><textarea data-note rows="2" maxlength="4000" placeholder="${escapeHtml(state.notePlaceholder)}" aria-required="${state.noteRequired}">${escapeHtml(draft.note ?? "")}</textarea></label>
     <div class="gate-actions"><button type="button" class="tool-button primary${state.choice === "request-changes" ? " is-negative" : ""}" data-submit aria-describedby="gate-hint-${key} gate-error-${key}"${state.ready ? "" : " disabled"}>${escapeHtml(state.submitLabel)}</button><p class="gate-hint" id="gate-hint-${key}" aria-live="polite">${escapeHtml(state.hint)}</p></div>
     <p class="gate-error" id="gate-error-${key}" role="alert"${draft.error ? "" : " hidden"}>${escapeHtml(draft.error ?? "")}</p>
@@ -83,6 +105,8 @@ function gateCard(item, ctx, draft) {
   const missing = item.artifacts.filter((artifact) => !artifact.available);
   return `<li class="attention-card gate-${escapeHtml(item.kind)}">
     ${gateHead(item, ctx, item.askedAt)}
+    ${gateContext(item, ctx)}
+    ${gateGuidance(item)}
     ${available.length ? `<div class="attention-artifacts"><span class="muted">Inspect</span> ${available.map((artifact) => artifactChip(artifact.path, ctx, artifact.path.split("/").pop())).join(" ")}</div>` : ""}
     ${missing.length ? `<p class="muted">Not found: ${missing.map((artifact) => `<code>${escapeHtml(artifact.path)}</code>`).join(" ")}</p>` : ""}
     ${item.stale ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : ""}

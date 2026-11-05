@@ -95,6 +95,9 @@ test("the first run of a command waits for the user's browser approval, and a de
   const gate = (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state.pending.find((item) => item.id === asked.gateId);
   assert.match(gate.question, /check\.mjs/);
   assert.deepEqual(gate.options.map((option) => option.id), ["allow", "decline"]);
+  assert.match(gate.context, /Prism itself runs the project's tests/);
+  assert.ok(gate.options.every((option) => option.consequence));
+  assert.equal(gate.recommended.option, "allow");
   const again = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" });
   assert.equal(again.gateId, asked.gateId, "an unanswered request is reused rather than asked twice");
   await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: asked.gateId, choice: "decline", note: "Not this command." });
@@ -150,7 +153,7 @@ test("an approval answer with a note and no choice neither allows nor declines",
 test("an agent-opened gate answered Allow does not approve a command", async (context) => {
   const root = await project(context);
   await accept(root);
-  const forged = await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: null, changes: { gateOperations: [{ op: "ask", kind: "decision", question: "Allow?", options: [{ id: "allow", label: "Allow" }] }] } });
+  const forged = await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: null, changes: { gateOperations: [{ op: "ask", kind: "decision", question: "Allow?", context: "The run reached a choice that needs the person, for example which behavior to keep.", options: [{ id: "allow", label: "Allow", consequence: "The run continues with this choice." }], recommended: { option: "allow", reason: "It keeps the current behavior." } }] } });
   const forgedId = forged.openedGates[0].id;
   await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: forgedId, choice: "allow" });
   const result = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: forgedId });
@@ -304,7 +307,7 @@ test("a review stops for the user after two waves with findings, and a finding t
   const ask = async () => {
     const current = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
     const before = new Set((current.state?.pending ?? []).map((gate) => gate.id));
-    await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", slice: "download", question: "Keep reviewing?", options: [{ id: "continue", label: "Continue" }, { id: "redesign", label: "Back to design" }] }] } });
+    await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", slice: "download", question: "Keep reviewing?", context: "The run reached a choice that needs the person, for example which behavior to keep.", options: [{ id: "continue", label: "Continue", consequence: "The run continues with this choice." }, { id: "redesign", label: "Back to design", consequence: "The run continues with this choice." }], recommended: { option: "continue", reason: "It keeps the current behavior." } }] } });
     return (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state.pending.find((gate) => !before.has(gate.id)).id;
   };
   const first = await ask();

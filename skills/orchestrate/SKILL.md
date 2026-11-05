@@ -74,7 +74,7 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
   2. Return the defects to design with the scope.
   3. Accept design's revised proposal, then start the slice again with a fresh implementation session.
 - When the implementer returns `BLOCKED` on an approval gate that needs the user's chat approval, ask the user in chat whether Prism may run the exact command, then run a fresh implementation session with the gate id and their answer quoted word for word; on any other approval gate, wait for it as in [user gates](#6-user-gates), then run a fresh implementation session.
-- When triage, design, or implementation returns `BLOCKED` or a question, ask the user the exact question and continue with another eligible slice meanwhile.
+- When triage, design, or implementation returns `BLOCKED` or a question, ask the user with its blocker as the gate, never shortening it, and continue with another eligible slice meanwhile.
 
 On resume, continue an `in-progress` slice with a fresh implementation session before starting another slice.
 
@@ -89,7 +89,7 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 
 ## 6. User gates
 
-- Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, slice, question, artifacts, and options for a decision.
+- Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, slice, question, its context, artifacts, and for a decision its options with consequences and the recommended answer, written as a [blocker](../workflow/SKILL.md#common-terms).
 - Use `visual-review` for design gates, `decision` for choices, and `assistance` for actions the user must take.
 - After asking, call `wait_for_user_gate` once with the ids just recorded, and when it returns without an answer, end the turn.
 - Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it or as soon as it no longer applies, such as when its artifacts are gone, with a reason unless the browser recorded the answer.
