@@ -60,4 +60,13 @@ jobs:
           codex plugin list
 
       - name: Smoke-test Prism tools in real Claude Code and Codex
-        run: node scripts/host-smoke.mjs
+        run: node scripts/host-smoke.mjs claude codex
+
+      # The oldest supported Codex installs the plugin above; the model turn needs the current Codex and its code-mode models.
+      - name: Install current Codex for the model-turn smoke test
+        run: npm install --prefix "$RUNNER_TEMP/codex-current" @openai/codex@0.166.0
+
+      - name: Smoke-test a Codex model turn with Prism hooks
+        env:
+          CODEX_BIN: ${{ runner.temp }}/codex-current/node_modules/.bin/codex
+        run: node scripts/host-smoke.mjs codex-turn

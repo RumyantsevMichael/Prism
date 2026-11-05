@@ -80,10 +80,14 @@ Run both checks before opening a pull request.
 CI then calls a Prism record tool through real Claude Code and Codex CLIs, with a remote record store, and needs no model or API key:
 
 ```bash
-node scripts/host-smoke.mjs            # both hosts; pass claude or codex for one
+node scripts/host-smoke.mjs            # every check; pass claude, codex, or codex-turn for one
 ```
 
 Codex calls the tool through its app server, and Claude Code runs one print-mode turn against a scripted local Messages API.
+The `codex-turn` check runs one `codex exec` turn of a code-mode model against a scripted local Responses API, after trusting Prism's hooks with the hashes that the app server's `hooks/list` reports.
+It proves that the hooks run, that the first Prism call in a session resolves capacity, and that a Prism call naming an initiative is linked to that initiative's run cost.
+It needs a current Codex, so CI installs one separately and passes it as `CODEX_BIN`.
+Codex names Prism's tools `mcp__prism_review__<tool>`, with an underscore, in hook inputs and in a code-mode script.
 Codex gives a plugin's MCP server only a few basic environment variables and no plugin data directory, so forward any other variable the server reads through `env_vars` in `.codex-mcp.json`.
 
 Run the review-server tests after a server or UI change:
