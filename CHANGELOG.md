@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/RumyantsevMichael/Prism/compare/v0.18.0...v0.18.1) (2026-11-05)
+
+
+### Fixed
+
+* Codex run totals and context capacity on Codex 0.166 ([#124](https://github.com/RumyantsevMichael/Prism/issues/124)) ([042a276](https://github.com/RumyantsevMichael/Prism/commit/042a276f0717989e71ee2f18a392d747fe42db1f))
+
 ## [0.18.0](https://github.com/RumyantsevMichael/Prism/compare/v0.17.0...v0.18.0) (2026-11-05)
 
 
