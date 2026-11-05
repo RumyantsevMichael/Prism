@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { FILES, fakeRuntime, manifestPath, project, settled } from "./fixtures/component-indexes.mjs";
@@ -88,4 +89,22 @@ test("a component index reused between a baseline and the live project is as com
     return live.diagnostics.filter(item => item.component === "root/net").map(item => item.code);
   };
   assert.deepEqual(await search(true), await search(false));
+});
+
+test("a tracked ignored file above the per-file limit keeps a reused component index as incomplete as the live scan of its component", async (t) => {
+  const search = async (baselineFirst) => {
+    // The baseline drops a tracked ignored file from its omissions, while the live scan of net still enumerates it and stops at its size.
+    const { root, storage } = await project(t, { files: { ...FILES, ".gitignore": "packages/net/big.dat\n", "packages/net/big.dat": "x".repeat(3 * 1024 * 1024) } });
+    execFileSync("git", ["add", "-f", "packages/net/big.dat"], { cwd: root });
+    const { runtime } = await fakeRuntime(storage);
+    if (baselineFirst) {
+      const snapshotId = (await conservationStore.capture(root)).snapshotId;
+      assert.equal((await until(runtime, root, () => prepareAnalysis(root, snapshotId, { runtime }), result => result.status === "preparing")).status, "ready");
+    }
+    const live = await searchRepositoryConcepts({ projectRoot: root, query: "retry the request", filters: { paths: ["packages/net"] } }, { runtime, waitMs: 2000 });
+    return live.diagnostics.filter(item => item.component === "root/net").map(item => item.code);
+  };
+  const fresh = await search(false);
+  assert.ok(fresh.includes("resource_limit"));
+  assert.deepEqual(await search(true), fresh);
 });

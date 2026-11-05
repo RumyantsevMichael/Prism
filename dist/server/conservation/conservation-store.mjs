@@ -43,6 +43,12 @@ function withRenamedChangeMaps(outputs) {
   const siblings = outputs.filter((file) => names.includes(path.posix.basename(file))).flatMap((file) => names.map((name) => `${path.posix.dirname(file)}/${name}`));
   return [.../* @__PURE__ */ new Set([...outputs, ...siblings])].sort();
 }
+function componentComplete(snapshot, filter, { maxFiles, maxBytes }) {
+  if (snapshot.unknownOmissions !== false || !snapshot.ignored) return false;
+  const entries = [...snapshot.files, ...snapshot.omissions, ...snapshot.ignored].filter((entry) => filter(entry.file));
+  const bytes = entries.reduce((sum, entry) => sum + ("kind" in entry && entry.kind !== "opaque" ? entry.bytes : 0), 0);
+  return entries.length <= maxFiles && bytes <= maxBytes && entries.every((entry) => !("reason" in entry) || entry.reason === "binary");
+}
 class ConservationStore {
   directory;
   constructor(directory, env = process.env) {
@@ -201,6 +207,11 @@ class ConservationStore {
       throw conservationError("stale_snapshot", "Source changed during baseline capture.");
     }
     const files = selected.map(({ file, kind, hash, bytes, mode, target }) => ({ file, kind, hash, bytes, mode, ...target === void 0 ? {} : { target } }));
+    const trackedIgnoredFile = (file) => !exclusions.includes(file) && ignored.has(file);
+    const tracked = snapshot.complete ? {} : { ignored: [
+      ...snapshot.inventory.filter((entry) => trackedIgnoredFile(entry.file)).map(({ file, kind, bytes }) => ({ file, kind, bytes })),
+      ...snapshot.omissions.filter((item) => trackedIgnoredFile(item.file))
+    ] };
     const evidence = {
       kind: "snapshot",
       schemaVersion: 1,
@@ -213,6 +224,7 @@ class ConservationStore {
       omissions: snapshot.omissions.filter((item) => !exclusions.includes(item.file) && !ignored.has(item.file)),
       complete: snapshot.complete,
       unknownOmissions: snapshot.unknownOmissions,
+      ...tracked,
       diagnostics: snapshot.diagnostics
     };
     return { snapshotId: await this.put(root, evidence), snapshot: evidence };
@@ -238,7 +250,7 @@ class ConservationStore {
       ));
     }
     const retained = new NativeRepositoryIntelligence(snapshot.project);
-    const complete = !filter ? snapshot.complete : snapshot.complete || snapshot.unknownOmissions === false && !snapshot.omissions.some((item) => item.reason !== "binary" && filter(item.file));
+    const complete = !filter || snapshot.complete ? snapshot.complete : componentComplete(snapshot, filter, retained.options);
     const value = {
       root: snapshot.project,
       commit: snapshot.commit,

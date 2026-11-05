@@ -6,7 +6,10 @@ export interface Reference { path: string; selector?: Selector }
 export interface InventoryEntry { file: string; kind: "source" | "opaque" | "symlink"; hash: string; bytes: number; mode: number; target?: string }
 export interface SnapshotEvidence {
   kind: "snapshot"; schemaVersion: 1; project: string; commit: string; fingerprint: string; capturePolicy: "conservation-source-v1";
-  files: InventoryEntry[]; exclusions: string[]; omissions: { file: string; reason: string }[]; complete: boolean; unknownOmissions?: boolean; diagnostics: Diagnostic[];
+  files: InventoryEntry[]; exclusions: string[]; omissions: { file: string; reason: string }[]; complete: boolean; unknownOmissions?: boolean;
+  // Recorded by an incomplete baseline: the tracked ignored files its scan enumerated, which files and omissions leave out.
+  ignored?: ({ file: string; kind: InventoryEntry["kind"]; bytes: number } | { file: string; reason: string })[];
+  diagnostics: Diagnostic[];
 }
 export interface SearchReceipt {
   kind: "search"; schemaVersion: 1; project: string; snapshotId: string | null; snapshot: string; query: string;
