@@ -64,15 +64,9 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
 2. Call `update_initiative` with `set_status` `in-progress`, which puts its frozen tests in place.
 3. Run `implement` for the slice in one fresh session, passing the contract's `slice.md` and the slice folder; it verifies the slice through `verify_slice` itself.
 4. When it returns `DONE`, read the slice with `get_initiative`: when its review mark is `required`, review it through [review](#5-review), then call `update_initiative` with `set_status` `done`; when it is not done otherwise, call `set_status` `done`, which refuses without a fresh passing run.
-5. When the slice was the last leaf of its contract scope that was not done, run the scope's dependents' run.
+5. When the slice was the last leaf of its contract scope that was not done, call `verify_slice` with the scope as `slice` and `dependents` `true` for its dependents' run; call it again after `running`, after `approval_needed` get the user's answer as for an implementer's approval gate below and call it again with `approvalGate` and any `chatApproval`, and report a `failed` or `approval_unclear` scope to the user as blocked, with each `blocked` component.
 6. Accept the slice's Proposed ADRs, and push when push is on.
 7. When continuation is `stepwise`, pause and report the finished slice.
-
-- To run a scope's dependents' run:
-  1. Call `verify_slice` with the scope as `slice` and `dependents` `true`.
-  2. When it returns `approval_needed` with `chatApproval`, ask the user in chat whether Prism may run each exact command in the folder it names, then call it again with `approvalGate` and `chatApproval` quoting their answer word for word; on any other `approval_needed`, wait for its gate as in [user gates](#6-user-gates), then call it again with `approvalGate`.
-  3. When it returns `running`, call it again with the same arguments.
-  4. When it returns `failed` or `approval_unclear`, report the scope as blocked to the user, naming each `blocked` component and the note, and continue with another eligible slice meanwhile.
 
 - When the slice is `blocked` with contract defects, or its dependencies changed:
   1. Call `update_initiative` with `restore_tests` for the scope.
@@ -103,9 +97,8 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 
 - When every leaf is done:
   1. Run the dependents' run of each contract scope that has no `passed` entry in `get_initiative`'s `dependents`.
-  2. Call `update_roadmap` with a `ship` operation for the initiative.
-  3. When `ship` refuses with `dependents_blocked`, report each listed scope to the user with its `blocked` components and `reason`, and stop until a later dependents' run of that scope passes.
-  4. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
-  5. When the slice folders hold uncommitted files, ask a `decision` gate before deleting them.
-  6. Delete the slice folders and call `update_initiative` with a single `remove_records` operation.
+  2. Call `update_roadmap` with a `ship` operation for the initiative, and when it refuses with `dependents_blocked`, report each listed scope's `blocked` components and `reason` to the user and stop until a later dependents' run passes.
+  3. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
+  4. When the slice folders hold uncommitted files, ask a `decision` gate before deleting them.
+  5. Delete the slice folders and call `update_initiative` with a single `remove_records` operation.
 - When work must pause, call `checkpoint_pause` with the initiative, the current revision, the active slice, recovery content that names the next action, and the state changes.
