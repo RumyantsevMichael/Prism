@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 import os from "node:os";
 import { runGit } from "./record-store-sync.mjs";
@@ -13,10 +14,21 @@ const SETTINGS = { leaseMs: 30 * 60 * 1000, renewMs: 10 * 60 * 1000 };
  * Claude Code gives its MCP servers the session identifier, so a server it restarts in the same session holds the same claims; the record keeps only a digest of it.
  */
 export function sessionHolder(env = process.env) {
-  const id = typeof env.CLAUDE_CODE_SESSION_ID === "string" ? env.CLAUDE_CODE_SESSION_ID.trim() : "";
-  return id ? `session-${createHash("sha256").update(id).digest("hex").slice(0, 16)}` : null;
+  return digestHolder(env.CLAUDE_CODE_SESSION_ID);
 }
+const digestHolder = (value) => {
+  const id = typeof value === "string" ? value.trim() : "";
+  return id ? `session-${createHash("sha256").update(id).digest("hex").slice(0, 16)}` : null;
+};
 const identity = { holder: sessionHolder() ?? randomBytes(8).toString("hex"), label: null };
+// Codex names its root session, which its sub-agents share, in each tool call's metadata rather than in the server's environment.
+const callSession = new AsyncLocalStorage();
+
+/** Run one tool call as the host session its metadata names, so the claims it takes and renews belong to that session; without one, the server's own holder stays. */
+export function withCallSession(metadata, run) {
+  const holder = digestHolder(metadata?.sessionId);
+  return holder ? callSession.run(holder, run) : run();
+}
 const labels = new Map();
 // The claims this process took and still renews, by project root, initiative, and slice, and the ones it lost since a tool last reported them.
 const held = new Map();
@@ -32,8 +44,8 @@ export function configureClaims(settings = {}) {
   if (timer) { clearInterval(timer); timer = null; startTimer(); }
 }
 
-/** This server's claim holder identifier: its host session's, or its own process's. */
-export const claimHolder = () => identity.holder;
+/** The claim holder of the current tool call: the session its metadata names, else the server's host session, else the server process. */
+export const claimHolder = () => callSession.getStore() ?? identity.holder;
 
 /** Who and where, for people: the Git user name of the folder that holds the records, when set, and the host name without its domain. */
 export async function claimLabel(folder) {
@@ -125,12 +137,12 @@ export function holdClaim(root, initiative, claim) {
 }
 
 /**
- * Renew the live claims of this server's holder that it does not renew yet, which an earlier server of the same host session took before the host restarted it.
+ * Renew the live claims of the calling session that it does not renew yet, which an earlier server of the same host session took before the host restarted it.
  * Only a server that reports claims to an agent calls this, so a process that merely reads records, such as the review app, never renews a session's claims.
  */
 export function adoptClaims(root, initiative, claims, now = Date.now()) {
   for (const claim of claims.values()) {
-    if (claim.holder === identity.holder && isLive(claim, now) && !held.has(heldKey(root, initiative, claim.slug))) holdClaim(root, initiative, claim);
+    if (claim.holder === claimHolder() && isLive(claim, now) && !held.has(heldKey(root, initiative, claim.slug))) holdClaim(root, initiative, claim);
   }
 }
 

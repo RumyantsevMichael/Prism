@@ -20,7 +20,7 @@ const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore,
 const { forgetMigrations } = await import("../../dist/server/workflow/record-store.mjs");
 const CLAIM_FILE = (slug) => `initiatives/reports/claims/${slug}.json`;
 const { getInitiative, initiativeAcknowledgement, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
-const { claimHolder, configureClaims, heldClaims, renewHeldClaims, sessionHolder, stopClaimRenewals } = await import("../../dist/server/workflow/slice-claims.mjs");
+const { claimHolder, configureClaims, heldClaims, renewHeldClaims, sessionHolder, stopClaimRenewals, withCallSession } = await import("../../dist/server/workflow/slice-claims.mjs");
 const { verifySlice } = await import("../../dist/server/workflow/verification.mjs");
 const { withFileLock } = await import("../../dist/server/workflow/artifact-store.mjs");
 const { answerUserGate } = await import("../../dist/server/workflow/state.mjs");
@@ -201,6 +201,24 @@ test("a server the host restarts in the same session keeps and renews its claims
   as(B);
   await assert.rejects(start(value.b, "s1"), refusal("slice_claimed"), "another session is still refused");
   assert.equal(heldClaims().length, 1);
+});
+
+test("a session named in each call's metadata, as Codex names it, keeps its claims across server restarts", async (context) => {
+  const value = await worktrees(context);
+  const holder = sessionHolder({ CLAUDE_CODE_SESSION_ID: "019a-codex-session" });
+  const codex = { sessionId: " 019a-codex-session ", threadId: "019a-sub-agent-thread" };
+  as(A);
+  const taken = await withCallSession(codex, () => start(value.a, "s1"));
+  assert.equal(taken.record.slices.s1.claim.holder, holder, "the claim belongs to the session the call names, not to the server process");
+  assert.equal(claimHolder(), A.holder, "outside the call the server keeps its own holder");
+  stopClaimRenewals();
+  as({ ...B, label: "Ada on alpha" });
+  const restarted = await withCallSession(codex, () => read(value.a));
+  assert.equal(restarted.claims.s1.heldHere, true);
+  assert.deepEqual(heldClaims().map((entry) => [entry.slug, entry.holder]), [["s1", holder]], "the restarted server renews the session's claim after reading it");
+  assert.equal((await withCallSession(codex, () => start(value.a, "s1"))).record.slices.s1.claim.holder, holder, "the session starts its own slice again");
+  await assert.rejects(withCallSession({ sessionId: "019b-other-session" }, () => start(value.b, "s1")), refusal("slice_claimed"), "another session is refused");
+  await assert.rejects(start(value.b, "s1"), refusal("slice_claimed"), "a call that names no session is refused");
 });
 
 test("replaces an expired claim and names its holder", async (context) => {

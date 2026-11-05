@@ -14,6 +14,7 @@ import { createHostSessionFactRecord, writeHostSessionFacts } from "../../dist/s
 import { REPOSITORY_CONTEXT_INPUT_LIMITS } from "../../dist/server/repository-intelligence/repository-intelligence.mjs";
 import { createSessionTraceEvent } from "../../dist/server/session/session-trace.mjs";
 import { appendSessionTraceEvent } from "../../dist/server/session/session-trace-store.mjs";
+import { sessionHolder } from "../../dist/server/workflow/slice-claims.mjs";
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
 const execFileAsync = promisify(execFile);
@@ -983,6 +984,21 @@ test("verify_slice reports a missing design and asks for command approval throug
   const view = await callTool(mcp, 8, "update_design_view", { projectRoot: root, initiative: "reports", slice: "reports", examples: [{ clause: 1, file: "docs/acceptance.test.mjs", test: "frozen", example: "x" }] });
   assert.equal(view.error.data.code, "validation_failed");
   assert.match(view.error.message, /slice\.md does not exist/);
+});
+
+test("a claim belongs to the session that a call's metadata names, as Codex names it", async (context) => {
+  const root = await realpath(await projectFixture(context, "codex-claims", "notes.md"));
+  const data = await mkdtemp(path.join(os.tmpdir(), "codex-claims-data-"));
+  context.after(() => rm(data, { recursive: true, force: true }));
+  await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans: docs/plans\n");
+  const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: data, CLAUDE_CODE_SESSION_ID: "" });
+  await initialize(mcp);
+  await callTool(mcp, 2, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: null, operations: [{ op: "create", slug: "reports", title: "Signed reports", requirements: ["req.md#R1"] }] });
+  const current = await callTool(mcp, 3, "get_initiative", { projectRoot: root, initiative: "reports" });
+  mcp.send({ id: 4, method: "tools/call", params: { name: "update_initiative", arguments: { projectRoot: root, initiative: "reports", expectedRevision: current.result.structuredContent.revision, operations: [{ op: "set_status", slug: "reports", status: "in-progress" }] }, _meta: { sessionId: "019a-codex-session", threadId: "019a-codex-thread" } } });
+  assert.equal((await mcp.next()).error, undefined);
+  const claim = JSON.parse(await readFile(path.join(root, ".prism", "initiatives", "reports", "claims", "reports.json"), "utf8"));
+  assert.equal(claim.holder, sessionHolder({ CLAUDE_CODE_SESSION_ID: "019a-codex-session" }));
 });
 
 test("a read leaves legacy records in place, and the first write reports the files it moved", async (context) => {

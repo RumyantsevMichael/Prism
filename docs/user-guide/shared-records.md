@@ -186,8 +186,9 @@ A slice whose session ended without finishing frees itself that way, and the nex
 A server never renews a claim that expired, for example while its laptop slept, or that someone released or took over; its next `get_initiative` or `update_initiative` result for the initiative lists the claim under `lostClaims`.
 Claims are kept apart from the initiative record, so renewals never collide with someone else's edit of the slice.
 A claim ends when its slice is done, blocked, or back to not started, or when the design proposal of its scope is accepted.
-In Claude Code a claim belongs to the session, so a server that Claude Code restarts in the same session keeps its claims and renews them again after its first initiative read or update.
-On a host that gives the server no session identifier, such as Codex, a claim belongs to the server process, and a restarted server gets a new holder.
+In Claude Code and Codex a claim belongs to the session, so a server that the host restarts in the same session keeps its claims and renews them again after its first initiative read or update.
+Claude Code names the session in the server's environment, and Codex names it in each tool call, so sub-agents in Codex share their session's claims as subagents in Claude Code do.
+On a host that gives the server no session identifier, a claim belongs to the server process, and a restarted server gets a new holder.
 To free a slice sooner, for example after such a restart, ask your agent to send `update_initiative` with a `release_claim` operation for the slice.
 Anyone may release any claim, and the initiative's history records who released whose claim.
 

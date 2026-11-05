@@ -10,6 +10,7 @@ import path from "node:path";
 import { recordStoreOf, takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { takeSavedConflicts } from "./workflow/record-store-sync.mjs";
+import { withCallSession } from "./workflow/slice-claims.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -1212,7 +1213,8 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
-      const value = await withRecordNotes(await callTool(request.params?.name, request.params?.arguments, request.params?._meta, request.id));
+      const meta = request.params?._meta;
+      const value = await withRecordNotes(await withCallSession(meta, () => callTool(request.params?.name, request.params?.arguments, meta, request.id)));
       // A cancelled request gets no response, as the MCP cancellation rules require.
       if (value.structuredContent?.status !== "cancelled") {
         result(request.id, value);
