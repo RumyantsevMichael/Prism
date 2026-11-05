@@ -14,7 +14,7 @@ The [workflow](../workflow/SKILL.md) defines the terms.
 To run a skill in a child, start a fresh child agent whose prompt asks it to use that skill and passes the identifiers and folders below, and when no child agent can start, stop and ask the user to run the orchestration where child agents are available.
 
 - Don't
-  - Load or follow `design`, `implement`, `review`, `triage`, or `ideate` yourself; only their child agents do.
+  - Load or follow `setup`, `design`, `implement`, `review`, `triage`, or `ideate` yourself; only their child agents do.
   - Run git, hash files, or read code while slices run; children commit their own work and Prism checks the frozen tests.
   - Keep a child's transcript; keep its status.
 
@@ -38,7 +38,7 @@ A stored value stays authoritative on resume.
 
 ## 2. Start
 
-1. Read `.prism/workflow.md`, the settings, and the pending user gates, and act on every recorded answer.
+1. Read `.prism/workflow.md`, the settings, and the pending user gates, and act on every recorded answer; when `.prism/workflow.md` is missing, or a Prism tool or child reports a setting or record that `setup` owns, run `setup` in a fresh child agent while no slice is `in-progress`, asking its blockers as gates.
 2. When the initiative has no Approved requirements or no roadmap entry, run `triage` in a fresh child agent for a reported defect, and `ideate` for new intent or when triage returns `NOT_A_DEFECT`.
 3. Read the initiative record with `get_initiative`.
 4. When the record does not exist, call `update_initiative` with `expectedRevision: null` and a `create` operation for the root slice with its slug, title, outcome, and every Approved requirement of the initiative.

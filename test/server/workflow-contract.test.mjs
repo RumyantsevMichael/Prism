@@ -4,7 +4,7 @@ import test from "node:test";
 
 const productiveSkills = [
   "design", "ideate", "implement", "orchestrate", "refactor", "review", "triage",
-  "workflow-init", "workflow", "write-adr", "write-contracts", "write-feature",
+  "setup", "workflow", "write-adr", "write-contracts", "write-feature",
   "write-requirements", "write-step-definitions", "write-user-docs"
 ];
 const coreSkills = ["design", "implement", "orchestrate", "review", "workflow"];
@@ -115,7 +115,7 @@ test("review is one independent mode that records findings through MCP", async (
 test("ideation adds the roadmap entry that the removed roadmap skill used to add", async () => {
   const ideate = await skill("ideate");
   assert.match(ideate, /Call `update_roadmap` with an `add_initiative` operation that cites each Approved requirement section as `<file>.md§<number>`/);
-  assert.match(await skill("workflow-init"), /Call `update_roadmap` with `expectedRevision: null`, the accepted operations, and `replace_hand_written_projection`/);
+  assert.match(await skill("setup"), /Call `update_roadmap` with `expectedRevision: null`, the accepted operations, and `replace_hand_written_projection`/);
   assert.doesNotMatch(await skill("write-requirements"), /`roadmap`/);
 });
 
@@ -168,7 +168,7 @@ test("supports a continuous delivery benchmark phase", async () => {
 });
 
 test("writes review browser configuration with an adaptive default", async () => {
-  const workflowInit = await skill("workflow-init");
+  const workflowInit = await skill("setup");
   const benchHarness = await readFile(new URL("../../bench/harness/bench.py", import.meta.url), "utf8");
 
   assert.match(workflowInit, /- Review browser: auto/);
@@ -210,4 +210,19 @@ test("all local skill and README links resolve", async () => {
       assert.ok((await stat(resolve(dirname(path), target))).isFile(), path + ": " + target);
     }
   }
+});
+
+test("setup interviews the person, owns the configuration, and loads when Prism or the person needs it", async () => {
+  const setup = await skill("setup");
+  assert.doesNotMatch(setup, /disable-model-invocation/);
+  assert.doesNotMatch(await reference("setup", "../agents/openai.yaml"), /allow_implicit_invocation: false/);
+  for (const entry of ["**Onboard**", "**Migrate**", "**Amend**"]) assert.ok(setup.includes(entry), entry);
+  assert.match(setup, /Ask one topic per round, with each discovered value filled in and a recommended answer/);
+  assert.match(setup, /return `BLOCKED` with each open topic as a \[blocker\]/);
+  assert.match(setup, /uses `none yet` as its test command, never a no-op command/);
+  assert.match(setup, /`set_workspace_name` operation/);
+  assert.match(setup, /Repository/);
+  const orchestrate = await skill("orchestrate");
+  assert.match(orchestrate, /run `setup` in a fresh child agent while no slice is `in-progress`, asking its blockers as gates/);
+  assert.match(await skill("design"), /when the test command is `none yet`, put the test runner and the real `Test command` line in the first slice's \*\*Changes\*\*/);
 });

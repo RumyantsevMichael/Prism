@@ -45,7 +45,7 @@ The first code analysis downloads a pinned runtime and model from Prism's GitHub
 
 ## Quick start
 
-1. Run `/prism:workflow-init` once per project to write `.prism/workflow.md`.
+1. Run `/prism:setup` once per project: it asks a few questions and writes `.prism/workflow.md`. Run it again, or let the agent run it, when you add a tool or another repository, or after a Prism update that needs a migration.
 2. Start an initiative:
 
    ```text

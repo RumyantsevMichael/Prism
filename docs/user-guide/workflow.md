@@ -55,6 +55,10 @@ Configure the command in `.prism/workflow.md`:
 - Test command: npm test
 ```
 
+A project with no tests yet, such as a new project, sets `- Test command: none yet`.
+Verification then refuses with `test_command_placeholder` instead of passing, and design puts the test runner and the real `Test command` line into the first slice, whose verification runs that command once it is set and you allow it.
+A no-op command such as `true` would let every slice pass without running its tests, so Prism never suggests one.
+
 A slice that records a [component](#components) runs that component's own `Test command` in the component's folder, or the `Test command` under `## Stack` in the project root when the component declares none.
 The root component, and a slice accepted before components existed, run the `Test command` under `## Stack` in the project root.
 Each result names the command, the folder it runs in, as a project-relative path that is empty for the project root, and the slice's component.
@@ -172,7 +176,7 @@ For an invalid declaration, `declared` is empty and `problem` holds the refusal'
 ### Component proposal
 
 When `.prism/workflow.md` lists no component under `## Components`, `get_roadmap` proposes a `## Components` block from the workspace manifests at the project root, in `components.proposal`.
-Prism never writes the proposal to any file; `workflow-init` shows it to you and adds it only when you approve it, and design reports it as an open question.
+Prism never writes the proposal to any file; `setup` shows it to you and adds it only when you approve it, and design reports it as an open question.
 The proposal reads these workspace patterns:
 
 | Manifest | Patterns |
@@ -326,9 +330,20 @@ Records keep working locally when Git, the network, or the upstream is unavailab
 Without `Store sync: on`, Prism never runs Git in a path store.
 See [Share Prism state across worktrees and machines](shared-records.md) for setup, conflicts, sync status, and cloud sessions.
 
+## Set up a project
+
+`prism:setup` writes `.prism/workflow.md` by asking you one topic at a time, with what it found in the project filled in and a recommended answer, so you mostly confirm.
+It covers whether the project is new or existing, the stack and test command, a shared store with this repository's name and the workspace name, components, the tracker and commit conventions, how questions reach you, and project constraints.
+In Claude Code the questions use the structured question prompt; elsewhere they are numbered options in the message.
+
+Setup stays the owner of `.prism/workflow.md` after the first run.
+Run it again, or the agent runs it for you, when you add a test, lint, or BDD tool, when a project with no tests gets its first test runner, when you bring in another repository, or when Prism reports a setting or record from an earlier version.
+During an orchestrated run, the orchestrator runs setup between slices in a child agent and asks you its questions on Attention.
+Setup never adds a component declaration, store, or repository name that you did not approve.
+
 ## Migrate an older setup
 
-Prism no longer reads `.claude/workflow-config.md`, and `prism:workflow-init` migrates its values into `.prism/workflow.md` without changing the old file.
+Prism no longer reads `.claude/workflow-config.md`, and `prism:setup` migrates its values into `.prism/workflow.md` without changing the old file.
 On resume, orchestration imports a legacy `map.puml` into the initiative record.
-`prism:workflow-init` proposes a roadmap record from a legacy roadmap and replaces the hand-written roadmap Markdown only after you accept it.
+`prism:setup` proposes a roadmap record from a legacy roadmap and replaces the hand-written roadmap Markdown only after you accept it.
 See [Upgrading to managed records](upgrading-to-managed-records.md) for everything that changed in Prism 0.10.0.
