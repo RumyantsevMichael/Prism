@@ -238,11 +238,12 @@ class ConservationStore {
       ));
     }
     const retained = new NativeRepositoryIntelligence(snapshot.project);
+    const complete = !filter ? snapshot.complete : snapshot.complete || snapshot.unknownOmissions === false && !snapshot.omissions.some((item) => item.reason !== "binary" && filter(item.file));
     const value = {
       root: snapshot.project,
       commit: snapshot.commit,
       sourceFingerprint: filter ? contentFingerprint(files) : snapshot.fingerprint,
-      complete: snapshot.complete,
+      complete,
       files,
       filesByPath: new Map(files.map((file) => [file.file, file]))
     };

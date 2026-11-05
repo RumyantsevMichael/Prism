@@ -207,8 +207,12 @@ export class ConservationStore {
         { lineCount: (content.match(/[^\n]*\n|[^\n]+$/g) || [""]).length, bytes: entry.bytes, kind: "source" }));
     }
     const retained = new NativeRepositoryIntelligence(snapshot.project) as unknown as NativeSource;
+    // A filtered source is complete as the live scan of a component decides: unless the baseline's scan could have missed any file, only an omission
+    // of one of its own files other than a skipped binary file makes it incomplete, so an index built from it equals the one its live content builds.
+    const complete = !filter ? snapshot.complete : snapshot.complete
+      || (snapshot.unknownOmissions === false && !snapshot.omissions.some(item => item.reason !== "binary" && filter(item.file)));
     const value: SourceSnapshot = { root: snapshot.project, commit: snapshot.commit, sourceFingerprint: filter ? contentFingerprint(files) : snapshot.fingerprint,
-      complete: snapshot.complete, files, filesByPath: new Map(files.map(file => [file.file, file])) };
+      complete, files, filesByPath: new Map(files.map(file => [file.file, file])) };
     Object.assign(value, { diagnostics: snapshot.diagnostics, enumerator: "retained", totalBytes: held.reduce((sum, file) => sum + file.bytes, 0) });
     retained.snapshot = async () => value;
     retained.verifySnapshot = async () => {

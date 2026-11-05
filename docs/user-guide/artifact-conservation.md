@@ -31,8 +31,10 @@ In a repository that declares components, a baseline's analysis is prepared per 
 A comparison, a change map check, or a derived change map waits with `preparing` until no component of the baseline is waiting or preparing.
 The baseline's analysis then holds the units of every component whose index is ready, and holds each file of a component whose preparation failed without units and as not covered.
 Its diagnostics start with `components_missing`, which names each failed component and its failure, and a changed file without coverage needs an explicit manual check.
+A comparison over such an analysis compares the detector findings of the other components' files only and adds a `detector_diff_unknown` review check that names each failed component, because a new copy of a function can repeat one in a component the analysis left out.
+Change map readiness reports `duplication_check_unavailable` for the files of a failed component that its duplication check would compare, and checks the other files as usual.
 When every component failed, no analysis is kept, as when the one index of a repository without components fails.
-A later comparison or check prepares a failed component again, as a search does, and keeps the new analysis, so the component's files are covered once its preparation succeeds.
+A later comparison, change map readiness check, or derived change map prepares a failed component again, as a search does, and keeps the new analysis, so the component's files are covered once its preparation succeeds.
 Change map readiness fails when planned additions or modifications copy a change into functions that several files already repeat, until the change map or a change map named in `consolidations` consolidates them.
 Comparisons report only the analysis findings that the change adds: a new copy of a function is a failure, and new shared values, repeated key sets, complex units, cohesion splits, and unused exports need a review check.
 Known failures such as a retained deletion, scope escape, or stale source cannot be waived with a manual assessment.

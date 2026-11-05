@@ -170,6 +170,7 @@ A component's index does not resolve references into other components, so a repo
 A search or report with `snapshotId` splits the retained baseline's files into components by the current declaration and prepares one index per component from the baseline's content.
 It selects, prepares, and reads the baseline's components as a call on the current files does, and its result has the same `components`, `status`, and `components_missing` diagnostic.
 A component whose baseline files are the same as its current files, or as another baseline's, reuses that component's index without building it.
+A baseline's component counts as incompletely scanned only when the baseline's capture could have missed any file or left out one of that component's files, as a scan of the current files decides, so a reused index reports the same completeness for both.
 A search with `snapshotId` keeps the baseline's analysis for conservation checks only when it read every component of the baseline and included all of them, so a path-scoped or `partial` search keeps none.
 
 `plan_repository_context` prepares every component that holds a file and returns `preparing` while none of them is included.
