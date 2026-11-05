@@ -92,6 +92,7 @@ git clone git@github.com:you/prism-store.git ../prism-store
 ```markdown
 ## Workspace
 - Store: ../prism-store
+- Repository: api
 - Store sync: on
 ```
 

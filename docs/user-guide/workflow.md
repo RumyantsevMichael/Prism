@@ -234,6 +234,7 @@ To share records only between linked worktrees or clones on one machine, name a 
 ```markdown
 ## Workspace
 - Store: ../prism-store
+- Repository: api
 ```
 
 A `Store` path is relative to the project root or absolute, and it must neither resolve inside the project nor contain it.
