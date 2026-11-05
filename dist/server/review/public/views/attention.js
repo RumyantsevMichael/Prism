@@ -79,7 +79,7 @@ function gateGuidance(item) {
   const options = item.kind === "decision" ? (item.options ?? []) : [];
   const consequences = options.filter((option) => option.consequence);
   const list = consequences.length
-    ? `<ul class="gate-consequences">${consequences.map((option) => `<li${option.id === recommended?.option ? ' class="is-recommended"' : ""}><span class="gate-option-label">${escapeHtml(option.label)}</span>${option.id === recommended?.option ? ' <span class="gate-tag">Recommended</span>' : ""}<span class="gate-consequence">${escapeHtml(option.consequence)}</span></li>`).join("")}</ul>`
+    ? `<ul class="gate-consequences">${consequences.map((option) => `<li${option.id === recommended?.option ? ' class="is-recommended"' : ""}><span class="gate-option-label">${escapeHtml(option.label)}</span><span class="gate-consequence">${escapeHtml(option.consequence)}</span></li>`).join("")}</ul>`
     : "";
   const pick = recommended?.option ? options.find((option) => option.id === recommended.option) : null;
   const reason = recommended?.reason
