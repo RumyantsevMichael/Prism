@@ -139,7 +139,6 @@ async function build(args, progress) {
     structureComplete: !diagnostics.some((item) => !item.file),
     resources: { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 }
   };
-  if (!args.fragmentsOnly) current = { index, db: await database(index) };
   return index;
 }
 async function query(args) {

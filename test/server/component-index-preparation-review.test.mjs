@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { FILES, entry, fakeRuntime, manifestPath, project, settled, workflow } from "./fixtures/component-indexes.mjs";
@@ -128,6 +128,80 @@ test("a waiting job for content that changed is dropped and writes no failure af
   assert.deepEqual((await readdir(directory)).filter((name) => name.startsWith("progress-")), []);
   assert.equal(entry(await runtime.status(root), "root/net").status, "ready");
   assert.equal((await search(root, runtime, { filters: { paths: ["packages/net"] } })).status, "ready");
+});
+
+test("CC-4: a component whose lock is held and renewed is tried again without checking its assets again", async (t) => {
+  const { root, storage } = await project(t);
+  const { runtime } = await fakeRuntime(storage);
+  const { directory } = await runtime.location(root, NET);
+  await mkdir(path.dirname(directory), { recursive: true });
+  await writeFile(`${directory}.lock`, JSON.stringify({ pid: process.ppid, token: "other-session", renewable: true, at: new Date().toISOString() }));
+  const checks = [], attempts = [], assets = runtime.assets.bind(runtime), build = runtime.build.bind(runtime);
+  runtime.assets = (...args) => { checks.push(1); return assets(...args); };
+  runtime.build = (source, snapshot, location, job) => { if (location.directory === directory) attempts.push(job.id); return build(source, snapshot, location, job); };
+  await search(root, runtime, { filters: { paths: ["packages/net"] } }, 0);
+  await delay(4800);
+  assert.ok(attempts.length >= 2, `the held component was attempted ${attempts.length} times`);
+  assert.equal(new Set(attempts).size, 1);
+  assert.equal(checks.length, 1);
+  assert.equal(entry(await runtime.status(root), "root/net").status, "preparing");
+  await rm(`${directory}.lock`);
+  await settled(runtime, root);
+  assert.equal(entry(await runtime.status(root), "root/net").status, "ready");
+});
+
+test("CC-4: a component whose lock names a live process but is no longer renewed fails with a lock diagnostic", async (t) => {
+  const { root, storage } = await project(t);
+  const { runtime, control } = await fakeRuntime(storage);
+  const { directory } = await runtime.location(root, NET);
+  await mkdir(path.dirname(directory), { recursive: true });
+  // This process's own id stands for a process id reused after a restart; the lock has not been renewed for ten minutes.
+  await writeFile(`${directory}.lock`, JSON.stringify({ pid: process.pid, token: "crashed", renewable: true, at: new Date(Date.now() - 600000).toISOString() }));
+  const old = new Date(Date.now() - 600000);
+  await utimes(`${directory}.lock`, old, old);
+  const found = await search(root, runtime, {}, 3000);
+  assert.equal(found.status, "partial");
+  assert.deepEqual(found.components.map((item) => [item.component, item.status, item.failure?.code ?? null]), [["root/root", "included", null], ["root/net", "failed", "lock_timeout"], ["root/app", "included", null]]);
+  assert.deepEqual(control.builds.map((build) => build.files[0]), [".prism/workflow.md", "packages/app/client.ts"]);
+  const status = await runtime.status(root);
+  assert.equal(status.status, "degraded");
+  assert.equal(entry(status, "root/net").status, "degraded");
+  const [diagnostic] = status.diagnostics.filter((item) => item.component === "root/net");
+  assert.equal(diagnostic.code, "lock_timeout");
+  assert.match(diagnostic.message, /not been renewed/);
+  assert.ok(diagnostic.recovery.includes(`${directory}.lock`));
+  // The lock is reported, never removed, because the process it names is running.
+  await access(`${directory}.lock`);
+});
+
+test("CC-5: a running job that a newer read replaced is dropped when it finds the lock held, and leaves no failure after the newer index", async (t) => {
+  const { root, storage, write } = await project(t);
+  const { runtime, control } = await fakeRuntime(storage);
+  const { directory } = await runtime.location(root, NET);
+  await mkdir(path.dirname(directory), { recursive: true });
+  await writeFile(`${directory}.lock`, JSON.stringify({ pid: process.ppid, token: "other-session", renewable: true, at: new Date().toISOString() }));
+  let first, release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const build = runtime.build.bind(runtime);
+  // The first job waits, as for its asset check, until a newer read replaces it; the other session releases the lock as the newer job starts.
+  runtime.build = async (source, snapshot, location, job) => {
+    first ??= job;
+    if (job === first) await gate; else await rm(`${directory}.lock`, { force: true });
+    return build(source, snapshot, location, job);
+  };
+  const paths = { filters: { paths: ["packages/net"] } };
+  await search(root, runtime, paths, 0);
+  assert.equal(runtime.running, first);
+  await write("packages/net/retry.ts", `${FILES["packages/net/retry.ts"]}// changed\n`);
+  await search(root, runtime, paths, 0);
+  release();
+  await settled(runtime, root);
+  assert.equal(first.status, "degraded");
+  assert.equal(first.failure.code, "stale_snapshot");
+  assert.equal(control.builds.length, 1);
+  assert.deepEqual((await readdir(directory)).filter((name) => name.startsWith("progress-")), []);
+  assert.equal(entry(await runtime.status(root), "root/net").status, "ready");
+  assert.equal((await search(root, runtime, paths)).status, "ready");
 });
 
 // A project without Git, so its files come from the bounded filesystem scan.

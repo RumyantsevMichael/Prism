@@ -18,10 +18,12 @@ interface AssetManifest { schemaVersion: 1; identity: string; assetVersion: stri
 interface Options { directory?: string; manifestPath?: string; idleMs?: number; operationMs?: number }
 interface Coverage extends Counts { structurallyCoveredFiles: number; complete: boolean }
 // A job prepares one storage location: the whole project in a repository without components, otherwise one component.
-// `read` orders the jobs of one storage location by when their content was read, and `retry` is set while another session holds the component's lock.
+// `read` orders the jobs of one storage location by when their content was read, `retry` is set while another session holds the component's lock,
+// `superseded` is set when a newer read replaced the job while it ran, and `assets` keeps the checked assets for the job's next lock attempt.
 interface Job { id: string; directory: string; component?: IndexComponent; snapshot: string; status: "waiting" | "preparing" | "ready" | "degraded"; diagnostics: Diagnostic[]; failure: ComponentFailure | null;
   promise: Promise<void>; finish: () => void; run: () => Promise<void>; prepared?: PreparedIndex; revision?: string; builtAt?: string; progress?: Progress; coverage?: Coverage; recorder?: ProgressRecorder; freshness?: GitFingerprint | null;
-  live: boolean; read: number; retry?: NodeJS.Timeout }
+  live: boolean; read: number; retry?: NodeJS.Timeout; superseded?: boolean; assets?: Assets }
+interface Assets { runtime: string; modelDirectory: string; modelIdentity: string; assetIdentity: string }
 interface Location { root: string; directory: string }
 interface Entry { source: NativeSource; component?: IndexComponent }
 interface IndexPointer { snapshot?: string; revision?: string; chunkerVersion?: string; coverage?: Coverage; diagnostics?: Diagnostic[]; builtAt?: string }
@@ -38,6 +40,9 @@ const indexMetadata = ({ chunks: _chunks, ...metadata }: UnitIndex) => metadata;
 const busy = (job: Job | undefined) => job?.status === "waiting" || job?.status === "preparing";
 // A component whose lock another session holds is retried after this delay instead of holding the queue while that session builds it.
 const LOCK_RETRY_MS = 2000;
+// A writer renews its storage lock every five seconds, so a lock left unrenewed for longer than the lock stale period has no live writer,
+// even when the process it names is running, as a reused process id after a restart can be.
+const UNRENEWED_LOCK_MS = 30000;
 const heldError = (code: string, message: string) => Object.assign(semanticError(code, message), { held: code === "lock_timeout" });
 const stableFailure = (error: Error & { code?: string }) => ["invalid_path", "lock_timeout", "stale_snapshot", "unsupported_runtime", "corrupt_asset", "resource_limit", "validation_failed"].includes(error.code || "") ? error.code! : error.code === "snapshot-changed" ? "stale_snapshot" : "preparation_failed";
 
@@ -320,7 +325,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     const manifest = await this.manifest(), platform = `${process.platform}-${process.arch}`;
     return { supported: supported.has(platform), published: Boolean(manifest.bundles[platform]) };
   }
-  async assets(progress: (value: Progress) => void) {
+  async assets(progress: (value: Progress) => void): Promise<Assets> {
     const manifest = await this.manifest(), platform = `${process.platform}-${process.arch}`, asset = manifest.bundles[platform];
     if (!supported.has(platform)) throw semanticError("unsupported_runtime", `Native semantics does not support ${platform}.`);
     if (!asset) throw semanticError("unsupported_runtime", `No immutable native runtime asset is published for ${platform}.`);
@@ -416,14 +421,19 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   }
   // A live job that has not started is dropped when a newer read of the same location's live content needs another job, because its source
   // has changed and its build could only fail; it ends as failed with stale_snapshot, without running and without a progress record.
+  // The running job is marked instead, and is dropped the same way if it ends waiting for another session's lock, so it is not tried again.
   supersede(previous: Job | undefined, next: Job) {
-    if (!previous || previous === next || !previous.live || previous.read >= next.read || previous === this.running || !busy(previous)) return;
+    if (!previous || previous === next || !previous.live || previous.read >= next.read || !busy(previous)) return;
+    if (previous === this.running) { previous.superseded = true; return; }
     clearTimeout(previous.retry); previous.retry = undefined;
     this.queue = this.queue.filter(job => job !== previous);
-    const message = "The source changed before this preparation started, so a preparation of the newer content replaced it.";
-    previous.status = "degraded"; previous.failure = { code: "stale_snapshot", message };
-    previous.diagnostics = [{ code: "stale_snapshot", message, recovery: "Repeat the call to read the newer content." }];
+    this.stale(previous);
     previous.finish();
+  }
+  stale(job: Job) {
+    const message = "The source changed before this preparation started, so a preparation of the newer content replaced it.";
+    job.status = "degraded"; job.failure = { code: "stale_snapshot", message };
+    job.diagnostics = [{ code: "stale_snapshot", message, recovery: "Repeat the call to read the newer content." }];
   }
   job(source: NativeSource, snapshot: SourceSnapshot, location: Location, generationKey: string, id: string, freshness: GitFingerprint | null | undefined, component?: IndexComponent, live = true, read = 0): Job {
     let finish = () => {};
@@ -437,17 +447,25 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         if (job.freshness !== undefined) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started; await recorder.succeed();
       } catch (error) {
+        let recovery = "Retry preparation after correcting the reported runtime, network, or source problem.";
         if (component && error.held) {
-          // Another session is preparing this component, so it stays preparing here and is tried again later, while the queue moves on.
-          job.progress = { phase: "waiting" };
-          await started; await recorder.succeed();
-          job.retry = setTimeout(() => { job.retry = undefined; this.queue.push(job); this.pump(); }, LOCK_RETRY_MS);
-          job.retry.unref();
-          return;
+          // A job that a newer read replaced while it ran is dropped, as a waiting one is, and leaves no progress record.
+          if (job.superseded && this.jobs.get(location.directory) !== job) { this.stale(job); await started; await recorder.succeed(); return; }
+          const lock = `${location.directory}.lock`, info = await lstat(lock).catch(() => null);
+          if (!info || Date.now() - info.mtimeMs <= UNRENEWED_LOCK_MS) {
+            // Another session is preparing this component, so it stays preparing here and is tried again later, while the queue moves on.
+            job.progress = { phase: "waiting" };
+            await started; await recorder.succeed();
+            job.retry = setTimeout(() => { job.retry = undefined; this.queue.push(job); this.pump(); }, LOCK_RETRY_MS);
+            job.retry.unref();
+            return;
+          }
+          error = semanticError("lock_timeout", `The storage lock of this component has not been renewed for ${Math.round((Date.now() - info.mtimeMs) / 1000)} seconds, so no session is preparing it, but the process that the lock names is still running.`);
+          recovery = `If no session is preparing this component, delete ${lock} and repeat the call.`;
         }
         const code = stableFailure(error);
         job.status = "degraded"; job.failure = { code, message: error.message };
-        job.diagnostics = [{ code, message: error.message, recovery: "Retry preparation after correcting the reported runtime, network, or source problem." }];
+        job.diagnostics = [{ code, message: error.message, recovery }];
         if (component && code === "resource_limit") this.limited.set(generationKey, job);
         await started; await recorder.fail(job.diagnostics);
       } finally { job.recorder = undefined; }
@@ -473,7 +491,8 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   }
   async build(source: NativeSource, snapshot: SourceSnapshot, location: Location, job: Job): Promise<PreparedIndex> {
     await privateDirectory(this.directory);
-    const assets = await this.assets(value => this.report(job, value));
+    // A component that waits for another session's lock keeps the assets it checked, so a later attempt does not hash the model files again.
+    const assets = job.assets ??= await this.assets(value => this.report(job, value));
     const directory = await privateDirectory(location.directory);
     // Another session's build holds the project lock, so a wait longer than a moment is reported rather than shown as the last step.
     const waiting = setTimeout(() => this.report(job, { phase: "waiting" }), 1000);

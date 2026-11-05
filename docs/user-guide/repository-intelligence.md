@@ -127,6 +127,7 @@ Prism prepares one index at a time, in component order: the root component first
 The components that a later call needs move ahead of components that only an earlier call waits for, and the running preparation always finishes.
 A component is prepared again only when its own files change, and its new index reuses the embeddings of its unchanged fragments.
 A component that another session is preparing is reported `preparing`, and this server tries it again every few seconds while it prepares the other components.
+A component whose storage lock names a running process but has gone unrenewed for more than 30 seconds, as when a killed session's process id was reused, fails with `lock_timeout`, and its diagnostic names the lock file to delete when no session is preparing that component.
 Each component's index is reused across sessions and after the repository's name changes.
 
 Each result lists the components it read in `components`, in component order, with each one's identity `<repository>/<component>`, `folder`, `status`, `indexRevision`, and `failure`.

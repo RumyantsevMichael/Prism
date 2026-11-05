@@ -29,6 +29,7 @@ env.useFSCache = false;
 let tokenizer: Awaited<ReturnType<typeof AutoTokenizer.from_pretrained>>;
 let model: Awaited<ReturnType<typeof AutoModel.from_pretrained>> | undefined;
 let modelIdentity: string;
+// The index that the latest search read, with its database; a build keeps none, because searches go to a helper of their own.
 let current: { index: UnitIndex; db: Awaited<ReturnType<typeof database>> } | undefined;
 let boundaries: (text: string) => number[];
 
@@ -114,7 +115,6 @@ async function build(args: BuildArguments, progress: (value: Progress) => void):
     tokenCounts: Object.fromEntries(files.map(file => [file.file, tokenizer.encode(file.content, { add_special_tokens: false }).length])),
     counts: { files: files.length, units: units.length, fragments: chunks.length, searchExcludedFiles: excluded.size, ...embeddingCounts },
     structureComplete: !diagnostics.some(item => !item.file), resources: { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 } };
-  if (!args.fragmentsOnly) current = { index, db: await database(index) };
   return index;
 }
 
