@@ -411,8 +411,17 @@ async function initiativeSnapshot(projectRoot, config, id, roadmapItem) {
   };
 }
 
+// The newest question comes first, so the one just asked is on top; an unreadable time sorts last.
+function newestFirst(left, right) {
+  const time = (value) => {
+    const parsed = Date.parse(value ?? "");
+    return Number.isFinite(parsed) ? parsed : -Infinity;
+  };
+  return time(right) - time(left) || 0;
+}
+
 function gateOrder(left, right) {
-  return String(left.askedAt ?? "").localeCompare(String(right.askedAt ?? ""));
+  return newestFirst(left.askedAt, right.askedAt);
 }
 
 export function loadAttention(projectRoot) {
@@ -488,9 +497,9 @@ async function computeAttention(projectRoot) {
   for (const diagnostic of config.diagnostics) needsYou.push({ type: "config", code: diagnostic.code, message: diagnostic.message });
   const blockingOrder = (entry) => ({ "record-problem": 0, blocked: 1, findings: entry.blocking ? 2 : 3, "ready-to-ship": 4, active: 5 })[entry.type] ?? 6;
   watch.sort((left, right) => blockingOrder(left) - blockingOrder(right));
-  answered.sort((left, right) => String(left.answer.answeredAt).localeCompare(String(right.answer.answeredAt)));
+  answered.sort((left, right) => newestFirst(left.answer.answeredAt, right.answer.answeredAt));
   // The newest closed questions come first, across initiatives, so the list stays short.
-  earlier.sort((left, right) => String(right.closedAt).localeCompare(String(left.closedAt)));
+  earlier.sort((left, right) => newestFirst(left.closedAt, right.closedAt));
   return { needsYou, answered, earlier: earlier.slice(0, 20), watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
 }
 

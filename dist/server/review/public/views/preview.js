@@ -9,6 +9,9 @@ const CACHE_MS = 10000;
 const BLOCK_LIMIT = 8;
 const SOURCE_LINES = 14;
 const RANGE_LINES = 40;
+// A diagram shrinks to fit a preview larger than a text preview, within the window, and never grows past its drawn size.
+const DIAGRAM_WIDTH = 560;
+const DIAGRAM_HEIGHT = 400;
 
 function sectionOf(container, anchor) {
   const target = anchorTarget(container, anchor);
@@ -55,7 +58,35 @@ function sourceRange(data, start, end) {
   return `<p class="card-source">${escapeHtml(data.path)} · lines ${start}–${end}</p><ol class="source-lines preview-lines">${lines}</ol>${more}`;
 }
 
-function fileSummary(data, anchor, { renderMarkdown, kindLabel }) {
+function fittedDiagram(svg) {
+  const scratch = document.createElement("div");
+  scratch.innerHTML = svg;
+  const drawing = scratch.querySelector("svg");
+  if (!drawing) return svg;
+  const width = Number.parseFloat(drawing.getAttribute("width"));
+  const height = Number.parseFloat(drawing.getAttribute("height"));
+  if (width > 0 && height > 0) {
+    // A viewBox lets the drawing scale with its new size instead of being cropped.
+    if (!drawing.hasAttribute("viewBox")) drawing.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    const room = { width: Math.min(DIAGRAM_WIDTH, window.innerWidth - 56), height: Math.min(DIAGRAM_HEIGHT, window.innerHeight * 0.7 - 90) };
+    const scale = Math.max(0.05, Math.min(1, room.width / width, room.height / height));
+    drawing.setAttribute("width", String(Math.round(width * scale)));
+    drawing.setAttribute("height", String(Math.round(height * scale)));
+  }
+  drawing.removeAttribute("style");
+  drawing.setAttribute("aria-hidden", "true");
+  return scratch.innerHTML;
+}
+
+async function diagramSummary(head, source, drawDiagram) {
+  if (!drawDiagram) return `${head}<h3>PlantUML diagram</h3>`;
+  const drawn = await drawDiagram(source);
+  return drawn.error
+    ? `${head}<p class="error">${escapeHtml(drawn.error)}</p>`
+    : `${head}<div class="preview-diagram">${fittedDiagram(drawn.svg)}</div>`;
+}
+
+async function fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagram }) {
   const head = `<p class="card-source">${escapeHtml(data.path)}</p>`;
   if (data.kind === "source") {
     const range = anchor?.match(LINE_RANGE);
@@ -64,16 +95,16 @@ function fileSummary(data, anchor, { renderMarkdown, kindLabel }) {
     return `${head}<pre><code>${highlight(lines, languageOf(data.path))}</code></pre>`;
   }
   if (data.kind) return `${head}<h3>${escapeHtml(kindLabel(data.kind))}</h3>`;
-  if (data.path.toLowerCase().endsWith(".puml")) return `${head}<h3>PlantUML diagram</h3>`;
+  if (data.path.toLowerCase().endsWith(".puml")) return diagramSummary(head, data.content, drawDiagram);
   const scratch = document.createElement("div");
   scratch.innerHTML = renderMarkdown(data.path, data.content);
   const section = sectionOf(scratch, anchor);
   return `${head}<div class="document-content">${section || '<p class="muted">The document is empty.</p>'}</div>`;
 }
 
-// Hovering or focusing an internal link shows what it points to: an entity's summary, or the start of a file or the linked section.
+// Hovering or focusing an internal link shows what it points to: an entity's summary, the start of a file or the linked section, or a diagram drawn small.
 // A file's preview offers to show the whole file in the side panel when the page has one.
-export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath, onShowInPanel = null }) {
+export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath, drawDiagram = null, onShowInPanel = null }) {
   const popover = document.createElement("div");
   popover.className = "link-preview";
   popover.setAttribute("role", "tooltip");
@@ -99,7 +130,7 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
     if (cached && Date.now() - cached.at < CACHE_MS) return cached.html;
     const html = parseEntityRef(ref)
       ? entitySummary(await fetchJson(`./api/entity?ref=${encodeURIComponent(ref)}`))
-      : fileSummary(await fetchJson(`./api/artifact?path=${encodeURIComponent(ref)}`), anchor, { renderMarkdown, kindLabel });
+      : await fileSummary(await fetchJson(`./api/artifact?path=${encodeURIComponent(ref)}`), anchor, { renderMarkdown, kindLabel, drawDiagram });
     cache.set(key, { at: Date.now(), html });
     return html;
   }
