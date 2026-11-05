@@ -188,7 +188,7 @@ test("an invalid repository name is refused with a valid proposal", async (conte
   ok(await (await server(context, place, longest)).call("get_roadmap"), "64 characters is a valid name");
 });
 
-test("a checkout without a repository name keeps working and every record result says which line to add", async (context) => {
+test("a checkout without a repository name is refused on every record operation with the line to add", async (context) => {
   const place = await folder(context);
   const core = await repository(place.parent, "core", { remote: "https://github.com/acme/platform-core.git", repository: "core" });
   ok(await (await server(context, place, core)).call("get_roadmap"));
@@ -207,17 +207,17 @@ test("a checkout without a repository name keeps working and every record result
     // A remote without a path segment also falls back to the folder name.
     [await repository(place.parent, "bare-host", { remote: "https://git.example.com/" }), "bare-host"]
   ];
+  const before = await snapshot(place.store);
   for (const [checkout, proposed] of cases) {
     const unnamed = await server(context, place, checkout);
-    for (const response of [ok(await unnamed.call("get_roadmap")), ok(await createInitiative(unnamed, `work-${path.basename(checkout).replace(/\W/g, "").toLowerCase()}`))]) {
-      const note = notes(response);
-      assert.match(note, /names a record store but no repository name/, `${checkout}: ${note}`);
-      assert.ok(note.includes(`- Repository: ${proposed}`), `${checkout} proposes ${proposed}: ${note}`);
-      assert.match(note, /## Workspace/);
-      assert.match(note, /later Prism release will refuse/);
-      assert.equal(JSON.stringify(response.result.structuredContent).includes("Repository"), false, "the structured result keeps its shape");
+    for (const response of [await unnamed.call("get_roadmap"), await createInitiative(unnamed, `work-${path.basename(checkout).replace(/\W/g, "").toLowerCase()}`)]) {
+      const error = refused(response, "repository_name_missing");
+      assert.equal(error.data.proposed, proposed, `${checkout} proposes ${proposed}`);
+      assert.ok(error.message.includes(`- Repository: ${proposed}`), error.message);
+      assert.match(error.message, /## Workspace/);
     }
   }
+  assert.deepEqual(await snapshot(place.store), before, "an unnamed checkout writes nothing to the store");
   assert.deepEqual((await readdir(path.join(place.store, "repositories"))).sort(), ["core.json"], "an unnamed checkout registers nothing");
   assert.equal(notes(ok(await (await server(context, place, core)).call("get_roadmap"))), "", "a named checkout gets no warning");
 });
@@ -238,7 +238,7 @@ const runEntries = async (store) => {
   return Promise.all((await readdir(folder)).sort().map(async (name) => JSON.parse(await readFile(path.join(folder, name), "utf8"))));
 };
 
-test("a named checkout records its name as the repository of its runs, and an unnamed one its root commit", async (context) => {
+test("a named checkout records its name as the repository of its runs, and an unnamed one records nothing", async (context) => {
   const place = await folder(context);
   const api = await repository(place.parent, "api", { remote: "https://github.com/acme/api.git", repository: "api" });
   const named = await server(context, place, api);
@@ -252,35 +252,32 @@ test("a named checkout records its name as the repository of its runs, and an un
   const other = await folder(context);
   const unnamedCheckout = await repository(other.parent, "web", { remote: "https://github.com/acme/web.git" });
   const unnamed = await server(context, other, unnamedCheckout);
-  await startedSlice(unnamed, unnamedCheckout);
-  ok(await unnamed.call("verify_slice", { initiative: "reports", slice: "download", contractDefects: [{ clause: "§1", reason: "unnamed" }] }));
-  assert.equal((await runEntries(other.store))[0].checkout.repository, root(unnamedCheckout));
+  refused(await createInitiative(unnamed), "repository_name_missing");
+  refused(await unnamed.call("verify_slice", { initiative: "reports", slice: "download", contractDefects: [{ clause: "§1", reason: "unnamed" }] }), "repository_name_missing");
+  assert.deepEqual(await snapshot(other.store), {}, "the store holds no run, record, or registration");
 });
 
-test("naming a repository keeps every record, ledger entry, and run of its store unchanged and readable", async (context) => {
+test("naming a refused repository moves its in-repo records into the store and adds only them, its ledger entry, and its registration", async (context) => {
   const place = await folder(context);
   const api = await repository(place.parent, "api", { remote: "https://github.com/acme/api.git" });
-  // An M1 checkout: its in-repo record moves into the store on first access, and it records a run.
+  // An M1 checkout: its in-repo record stays where it is while the checkout names no repository.
   await mkdir(path.join(api, ".prism", "initiatives", "legacy"), { recursive: true });
   await writeFile(path.join(api, ".prism", "initiatives", "legacy", "initiative.json"), "{\"legacy\":true}\n");
   const before = await server(context, place, api);
-  await startedSlice(before, api);
-  ok(await before.call("verify_slice", { initiative: "reports", slice: "download", contractDefects: [{ clause: "§1", reason: "before names" }] }));
-  const initiativeBefore = ok(await before.call("get_initiative", { initiative: "reports" })).result.structuredContent;
+  refused(await before.call("get_roadmap"), "repository_name_missing");
+  refused(await createInitiative(before), "repository_name_missing");
   await before.close();
-  const stored = await snapshot(place.store);
-  assert.ok(Object.keys(stored).some((file) => file.startsWith("migrations/")), "the M1 checkout wrote a ledger entry");
-  assert.equal(stored["initiatives/legacy/initiative.json"], "{\"legacy\":true}\n");
+  assert.deepEqual(await snapshot(place.store), {}, "the refused checkout wrote nothing to the store");
+  assert.ok(await exists(path.join(api, ".prism", "initiatives", "legacy", "initiative.json")), "the refused checkout kept its in-repo record");
 
   await configure(api, { repository: "api" });
   const after = await server(context, place, api);
-  const initiativeAfter = ok(await after.call("get_initiative", { initiative: "reports" })).result.structuredContent;
-  assert.equal(initiativeAfter.revision, initiativeBefore.revision);
-  assert.deepEqual(initiativeAfter.record, initiativeBefore.record);
+  ok(await createInitiative(after));
   const now = await snapshot(place.store);
-  for (const [file, bytes] of Object.entries(stored)) assert.equal(now[file], bytes, `${file} is unchanged`);
-  assert.deepEqual(Object.keys(now).filter((file) => !(file in stored)), ["repositories/api.json"], "naming adds only the registration");
-  assert.equal((await runEntries(place.store))[0].checkout.repository, root(api), "a run from before the name keeps its root-commit identity");
+  assert.equal(now["initiatives/legacy/initiative.json"], "{\"legacy\":true}\n", "the in-repo record moved into the store");
+  assert.ok(Object.keys(now).some((file) => file.startsWith("migrations/")), "the migration wrote a ledger entry");
+  assert.ok("repositories/api.json" in now);
+  assert.ok("initiatives/reports/initiative.json" in now);
 });
 
 test("a migration marker from before the ledger keeps covering its repository after the repository is named", async (context) => {

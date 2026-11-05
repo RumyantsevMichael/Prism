@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, rmdir, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
@@ -33,7 +32,6 @@ const pendingMoves = new Map();
 const unreportedMoves = [];
 // A repository name check is trusted as briefly as a migration check, so a changed Repository line or origin applies within that time.
 const nameChecks = new Map();
-const callScope = new AsyncLocalStorage();
 
 export { repositoryId };
 
@@ -113,7 +111,7 @@ const physical = (store, relative) => path.join(store.base, relative.slice(RECOR
  * base holds what .prism holds in the project, and contain is the folder no record may resolve outside.
  * A configured store is never created or replaced by a fallback, because either would split the records of checkouts that share it.
  * A store named by its remote resolves to the clone Prism keeps of it, which the first access clones, and is then an external store like any other.
- * A checkout of an external store passes its repository name check first: repository is its accepted name, or null when it names none, and a refused checkout throws.
+ * A checkout of an external store passes its repository name check first: repository is its accepted name, and a refused checkout, including one that names no repository, throws.
  */
 export async function recordStoreOf(projectRootPath) {
   const store = await resolveStore(projectRootPath);
@@ -161,24 +159,12 @@ async function checkedRepository(store) {
     pending.catch((error) => { if ((!REPOSITORY_REFUSALS.includes(error?.code) || error?.pending === true) && nameChecks.get(key)?.pending === pending) nameChecks.delete(key); });
     nameChecks.set(key, { at: Date.now(), pending });
   }
-  const checked = await pending;
-  if (checked.repository === null) callScope.getStore()?.set(store.root, checked.proposed);
-  return checked.repository;
+  return (await pending).repository;
 }
 
 /** Whether an error means a project's records cannot be used, as an unavailable store, a refused repository name, or a registrations entry that is no folder of the store does, so a view hides only the records. */
 export function recordsUnavailable(error) {
   return error?.code === "store_unavailable" || REPOSITORY_REFUSALS.includes(error?.code) || (error?.code === "invalid_path" && error.storeLayout === true);
-}
-
-/**
- * Run one tool call and collect the warnings of the checkouts without a repository name whose record stores it opened: { value, unnamed: [{ root, proposed }] }.
- * Only operations inside the call count, so a view or background work never adds a warning to an unrelated result.
- */
-export async function collectUnnamedCheckouts(action) {
-  const unnamed = new Map();
-  const value = await callScope.run(unnamed, action);
-  return { value, unnamed: [...unnamed].map(([root, proposed]) => ({ root, proposed })) };
 }
 
 /** The latest sync outcome of a project's record store, or null when the store does not sync or has not synced yet. */

@@ -16,8 +16,8 @@ export const REPOSITORIES = "repositories";
 export const REPOSITORY_NAME = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
 const NAME_MAX = 64;
 const REGISTRATION_MAX_BYTES = 64 * 1024;
-// The refusals of a named checkout, which every record operation reports while the checkout stays refused.
-export const REPOSITORY_REFUSALS = Object.freeze(["repository_name_invalid", "repository_remote_registered", "repository_name_taken", "repository_unconfirmed"]);
+// The refusals of a checkout's repository name, which every record operation reports while the checkout stays refused.
+export const REPOSITORY_REFUSALS = Object.freeze(["repository_name_missing", "repository_name_invalid", "repository_remote_registered", "repository_name_taken", "repository_unconfirmed"]);
 // The sync outcomes after which the store holds the registration that won, or holds it only locally because nothing else shares the store's remote.
 const CONFIRMING = new Set(["ok", "conflicts", "no_upstream", "not_a_repository"]);
 
@@ -347,8 +347,8 @@ async function confirmRegistration(base, name, facts, fail, contents, mark) {
 
 /**
  * Check a checkout's repository name against its record store before any record operation touches the store.
- * Resolves to { repository, created } for an accepted name, where created says this check wrote a new registration,
- * or to { repository: null, proposed } for a checkout that names no repository; refuses with fail(code, message, { proposed }).
+ * Resolves to { repository, created } for an accepted name, where created says this check wrote a new registration; refuses with fail(code, message, { proposed }),
+ * which a checkout that names no repository is too, with repository_name_missing.
  * beforeWrite runs before the first file this check writes, which only an accepted check does.
  * A decision that a pending registration would change refuses with repository_unconfirmed and pending: true, whatever the checkout's own sync setting.
  * In a synced store, a new registration is pending until a sync confirms it before the check accepts, and a remote or root added to a registration is synced later.
@@ -377,7 +377,10 @@ async function checkName({ root, base, name, fail, beforeWrite = async () => {},
   const facts = await checkoutFacts(root);
   // A proposal is advice, so registrations Prism cannot read leave it derived from the remote or folder alone rather than failing the operation.
   const proposal = async () => proposedName(await readRegistrations(base, fail).catch(() => []), facts);
-  if (name === null || name === undefined) return { repository: null, proposed: await proposal() };
+  if (name === null || name === undefined) {
+    const proposed = await proposal();
+    throw refusal(fail, "repository_name_missing", `This checkout names a record store under \`## Workspace\` in .prism/workflow.md but no repository name, so Prism refuses its record operations and writes nothing to the store. Add \`${line(proposed)}\` under \`## Workspace\` in .prism/workflow.md and commit it.`, proposed);
+  }
   if (!REPOSITORY_NAME.test(name)) {
     const proposed = await proposal();
     throw refusal(fail, "repository_name_invalid", `The repository name ${name} under \`## Workspace\` in .prism/workflow.md is invalid: a repository name must use lowercase letters, digits, hyphens, or underscores, starting and ending with a letter or digit, with at most ${NAME_MAX} characters. Use \`${line(proposed)}\`.`, proposed);

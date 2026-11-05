@@ -34,7 +34,7 @@ test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive:
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
 const exists = (target) => access(target).then(() => true, () => false);
-const remoteConfig = (store, sync) => `## Paths\n- Plans (scratch): docs/plans/\n\n## Workspace\n- Store: ${store}\n${sync === undefined ? "" : `- Store sync: ${sync}\n`}`;
+const remoteConfig = (store, sync) => `## Paths\n- Plans (scratch): docs/plans/\n\n## Workspace\n- Store: ${store}\n- Repository: project\n${sync === undefined ? "" : `- Store sync: ${sync}\n`}`;
 const create = (projectRoot, slug = "reports") => updateInitiative({ projectRoot, initiative: slug, expectedRevision: null, operations: [{ op: "create", slug, title: "Reports", requirements: ["r.md#1"] }] });
 // The clone path the contract defines, computed independently of Prism: SHA-256 of the normalized remote, first 16 hex characters, under the app folder.
 const cloneId = (normalized) => createHash("sha256").update(normalized).digest("hex").slice(0, 16);
@@ -154,7 +154,9 @@ test("a clone Prism 0.16 kept under plugin data moves to the app folder with its
   const root = await project(parent, "project", remoteConfig(url));
   assert.deepEqual(await listInitiatives(root), []);
   assert.equal(await exists(legacy), false);
-  assert.equal(git(clone, "rev-parse", "HEAD"), head);
+  // The first access registers the repository name, which the store's sync commits on top of the unpushed commit.
+  assert.equal(git(clone, "rev-list", "--count", `${head}..HEAD`), "1");
+  assert.equal(git(clone, "merge-base", "--is-ancestor", head, "HEAD"), "");
   assert.equal(await readFile(path.join(clone, "local.txt"), "utf8"), "not pushed\n");
 });
 
@@ -244,7 +246,7 @@ test("a path store without an upstream still reports no_upstream", async (contex
   const store = path.join(parent, "store");
   await mkdir(store);
   git(store, "init", "-q", "-b", "main");
-  const root = await project(parent, "project", "## Paths\n- Plans (scratch): docs/plans/\n\n## Workspace\n- Store: ../store\n- Store sync: on\n");
+  const root = await project(parent, "project", "## Paths\n- Plans (scratch): docs/plans/\n\n## Workspace\n- Store: ../store\n- Repository: project\n- Store sync: on\n");
   await create(root);
   assert.equal((await syncRecordStore(store)).state, "no_upstream");
 });

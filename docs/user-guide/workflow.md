@@ -247,7 +247,8 @@ A name has 1 to 64 lowercase letters, digits, hyphens, or underscores, and start
 The first record operation that uses a name registers it in the store with the checkout's `origin` remote and root commit.
 A name registered for another remote is refused with `repository_name_taken` unless the checkout's root commit proves it is the same repository, and a remote already registered under another name is refused with `repository_remote_registered`.
 Each refusal proposes a name that the store accepts.
-A checkout that names a store but no repository keeps working, and each tool result that opened its store warns with the `- Repository: <name>` line to add, because a later Prism release will refuse record operations without it.
+A checkout that names a store but no repository is refused on every record operation with `repository_name_missing`, whose message shows the `- Repository: <name>` line to add under `## Workspace`, and Prism writes nothing to the store until the line is committed.
+A checkout that names no store needs no `Repository` line.
 
 To sync a path store between machines yourself, make it a Git checkout whose branch has an upstream, and add `- Store sync: on` under `Store`.
 Prism then commits record changes a few seconds after each write, merges the upstream without rebasing, and pushes, and a record read fetches in the background when the last fetch is older than 30 seconds.

@@ -16,7 +16,7 @@ const { getInitiative, updateInitiative } = await import("../../dist/server/work
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
-const STORE_CONFIG = "## Paths\n- Plans (scratch): docs/plans/\n- Roadmap: docs/roadmap.md\n\n## Workspace\n- Store: ../store\n";
+const STORE_CONFIG = "## Paths\n- Plans (scratch): docs/plans/\n- Roadmap: docs/roadmap.md\n\n## Workspace\n- Store: ../store\n- Repository: project\n";
 const exists = (target) => access(target).then(() => true, () => false);
 
 // A parent folder holding a project and, beside it, the store its config names.

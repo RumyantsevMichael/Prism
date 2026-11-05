@@ -79,7 +79,10 @@ test("refused and unnamed checkouts stay off the list, and paths never reach the
   const taken = await repository(place.parent, "taken", { remote: "https://github.com/beta/api.git", repository: "api" });
   const invalid = await repository(place.parent, "invalid", { remote: "https://github.com/acme/invalid.git", repository: "Not Valid" });
   const unnamed = await repository(place.parent, "unnamed", { remote: "https://github.com/acme/unnamed.git" });
-  for (const checkout of [taken, invalid, unnamed]) await (await prismServer(context, checkout, { appFolder: place.app, hostRoot: false })).call("get_roadmap");
+  for (const [checkout, code] of [[taken, "repository_name_taken"], [invalid, "repository_name_invalid"], [unnamed, "repository_name_missing"]]) {
+    const response = await (await prismServer(context, checkout, { appFolder: place.app, hostRoot: false })).call("get_roadmap");
+    assert.equal(response.error?.data?.code, code, `${checkout} is refused`);
+  }
   assert.deepEqual(await entries(place), [{ store: place.store, repository: "api", path: api }]);
   const stored = JSON.stringify(await snapshot(place.store));
   for (const checkout of [api, taken, invalid, unnamed]) assert.equal(stored.includes(checkout), false, `${checkout} does not appear in the store`);
