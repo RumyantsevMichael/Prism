@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.19.0](https://github.com/RumyantsevMichael/Prism/compare/v0.18.0...v0.19.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* the workflow-init skill is now setup.
+* update_coordination_state no longer accepts settings.agentFlow; a stored value is dropped when coordination state is read.
+
+### Added
+
+* draw diagrams in previews, name workspaces, and open a whole workspace ([#121](https://github.com/RumyantsevMichael/Prism/issues/121)) ([7075e85](https://github.com/RumyantsevMichael/Prism/commit/7075e8542094497502e08c16709cef380f563826))
+* keep the orchestrator out of child skills and remove mono flow ([#125](https://github.com/RumyantsevMichael/Prism/issues/125)) ([4729690](https://github.com/RumyantsevMichael/Prism/commit/472969053a97f30fab94336ddc2972877fbd6315))
+* make every decision and action question explain itself ([#127](https://github.com/RumyantsevMichael/Prism/issues/127)) ([1d79c84](https://github.com/RumyantsevMichael/Prism/commit/1d79c84cbb77fdfab367041917b31c06e9ca0a9b))
+* replace workflow-init with a setup skill that onboards, amends, and migrates ([#128](https://github.com/RumyantsevMichael/Prism/issues/128)) ([b7fe598](https://github.com/RumyantsevMichael/Prism/commit/b7fe59834d1f4035ac9b24bf2ac5e84f6199b83b)), closes [#59](https://github.com/RumyantsevMichael/Prism/issues/59)
+
+
+### Fixed
+
+* attribute Codex subagent cost and smoke-test a real Codex turn in CI ([#129](https://github.com/RumyantsevMichael/Prism/issues/129)) ([f41e02b](https://github.com/RumyantsevMichael/Prism/commit/f41e02b0bf25ecb0fdccab97d72a03e176d7e4bc)), closes [#85](https://github.com/RumyantsevMichael/Prism/issues/85)
+* Codex run totals and context capacity on Codex 0.166 ([#124](https://github.com/RumyantsevMichael/Prism/issues/124)) ([042a276](https://github.com/RumyantsevMichael/Prism/commit/042a276f0717989e71ee2f18a392d747fe42db1f))
+* keep Codex slice claims across server restarts ([#123](https://github.com/RumyantsevMichael/Prism/issues/123)) ([f9f697e](https://github.com/RumyantsevMichael/Prism/commit/f9f697effc5130e373c348a1efd5976aaacbae65)), closes [#122](https://github.com/RumyantsevMichael/Prism/issues/122)
+
 ## [0.18.0](https://github.com/RumyantsevMichael/Prism/compare/v0.17.0...v0.18.0) (2026-11-05)
 
 
