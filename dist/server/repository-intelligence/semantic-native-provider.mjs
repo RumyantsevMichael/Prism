@@ -407,6 +407,7 @@ function validateComplexUnits(value) {
   validateAnalysis(value, ["includeTests"]);
 }
 async function preparedAnalysis(input, options) {
+  if (!options.nativeSource) await indexComponents(input.projectRoot);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
   const identity = { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot, snapshotId: input.snapshotId || null };

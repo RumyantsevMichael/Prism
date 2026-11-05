@@ -15,11 +15,13 @@ import type { NativeSource, SourceSnapshot, UnitIndex, IndexMetadata, PreparedIn
 
 interface Asset { url: string; bytes: number; sha256: string; unpackedBytes?: number }
 interface AssetManifest { schemaVersion: 1; identity: string; assetVersion: string; bundles: Record<string, Asset>; modelMirror?: string; model: { id: string; revision: string; files: (Omit<Asset, "url"> & { path: string; url?: string })[] } }
-interface Options { directory?: string; manifestPath?: string; idleMs?: number }
+interface Options { directory?: string; manifestPath?: string; idleMs?: number; operationMs?: number }
 interface Coverage extends Counts { structurallyCoveredFiles: number; complete: boolean }
 // A job prepares one storage location: the whole project in a repository without components, otherwise one component.
+// `read` orders the jobs of one storage location by when their content was read, and `retry` is set while another session holds the component's lock.
 interface Job { id: string; directory: string; component?: IndexComponent; snapshot: string; status: "waiting" | "preparing" | "ready" | "degraded"; diagnostics: Diagnostic[]; failure: ComponentFailure | null;
-  promise: Promise<void>; finish: () => void; run: () => Promise<void>; prepared?: PreparedIndex; revision?: string; builtAt?: string; progress?: Progress; coverage?: Coverage; recorder?: ProgressRecorder; freshness?: GitFingerprint | null }
+  promise: Promise<void>; finish: () => void; run: () => Promise<void>; prepared?: PreparedIndex; revision?: string; builtAt?: string; progress?: Progress; coverage?: Coverage; recorder?: ProgressRecorder; freshness?: GitFingerprint | null;
+  live: boolean; read: number; retry?: NodeJS.Timeout }
 interface Location { root: string; directory: string }
 interface Entry { source: NativeSource; component?: IndexComponent }
 interface IndexPointer { snapshot?: string; revision?: string; chunkerVersion?: string; coverage?: Coverage; diagnostics?: Diagnostic[]; builtAt?: string }
@@ -34,6 +36,9 @@ const boundedWait = (promise: Promise<void>, ms: number) => new Promise<void>((r
 const inside = (root: string, file: string) => { const relative = path.relative(root, file); return !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`); };
 const indexMetadata = ({ chunks: _chunks, ...metadata }: UnitIndex) => metadata;
 const busy = (job: Job | undefined) => job?.status === "waiting" || job?.status === "preparing";
+// A component whose lock another session holds is retried after this delay instead of holding the queue while that session builds it.
+const LOCK_RETRY_MS = 2000;
+const heldError = (code: string, message: string) => Object.assign(semanticError(code, message), { held: code === "lock_timeout" });
 const stableFailure = (error: Error & { code?: string }) => ["invalid_path", "lock_timeout", "stale_snapshot", "unsupported_runtime", "corrupt_asset", "resource_limit", "validation_failed"].includes(error.code || "") ? error.code! : error.code === "snapshot-changed" ? "stale_snapshot" : "preparation_failed";
 
 export async function privateDirectory(directory: string): Promise<string> {
@@ -205,7 +210,7 @@ class Helper {
     clearTimeout(this.idle); this.start();
     return new Promise((resolve, reject) => {
       const id = ++this.counter;
-      const timeout = setTimeout(() => this.stop(semanticError("resource_limit", "Native preparation exceeded its 30 minute operation limit.")), 30 * 60 * 1000);
+      const timeout = setTimeout(() => this.stop(semanticError("resource_limit", "Native preparation exceeded its 30 minute operation limit.")), this.options.operationMs ?? 30 * 60 * 1000);
       timeout.unref(); this.requests.set(id, { resolve: value => resolve(value as WorkerMethods[K]["output"]), reject, timeout, progress });
       this.child!.stdin.write(`${JSON.stringify({ id, method, args })}\n`, error => { if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed.")); });
     });
@@ -232,7 +237,11 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   sequence: Promise<void> = Promise.resolve();
   idle?: () => void;
   pinned?: AssetManifest;
-  process?: Helper;
+  // Builds and searches have a helper each, because a helper answers one request at a time and a build can run for many minutes,
+  // while a search of a component that is ready must answer within its call's bound and must not fail when another component's build times out.
+  processes = new Map<"build" | "search", Helper>();
+  // Counts snapshot reads, so a newer read of a location's live content can replace a job for content read before it.
+  reads = 0;
   verifiedRuntime?: string;
   constructor(private options: Options = {}) {
     const hostData = process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA;
@@ -381,19 +390,21 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     for (const { source, component } of entries) {
       // The Git fingerprint is read before the snapshot, so a concurrent edit can only make the index look stale, never fresh.
       const projectRoot = (source as { projectRoot?: unknown }).projectRoot, fingerprint = typeof projectRoot === "string" ? await gitFingerprint(projectRoot) : null;
-      const snapshot = await source.snapshot(), location = await this.location(snapshot.root, component);
+      const read = ++this.reads, snapshot = await source.snapshot(), location = await this.location(snapshot.root, component);
       // A retained baseline is not the working tree, so its index records no freshness.
       const live = (snapshot as { enumerator?: string }).enumerator !== "retained";
       if (expectedSnapshot && expectedSnapshot !== snapshot.sourceFingerprint) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
       const generationKey = `${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`;
       let job = this.limited.get(generationKey) ?? this.generations.get(generationKey);
       if (!job || (job.status === "degraded" && !this.limited.has(generationKey))) {
-        job = this.job(source, snapshot, location, generationKey, component ? sha(`${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : undefined, component);
+        job = this.job(source, snapshot, location, generationKey, component ? sha(`${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : undefined, component, live, read);
       } else if (live && fingerprint && job.status === "ready" && !sameFingerprint(job.freshness ?? null, fingerprint)) {
         // A commit or checkout that leaves indexed content unchanged reuses the index, so only its freshness record moves forward.
         job.freshness = fingerprint;
         await writeFreshness(location.directory, job.snapshot, fingerprint);
       }
+      job.read = Math.max(job.read, read);
+      if (live) this.supersede(this.jobs.get(location.directory), job);
       this.jobs.set(location.directory, job);
       jobs.push(job);
     }
@@ -403,10 +414,21 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     this.pump();
     return jobs;
   }
-  job(source: NativeSource, snapshot: SourceSnapshot, location: Location, generationKey: string, id: string, freshness: GitFingerprint | null | undefined, component?: IndexComponent): Job {
+  // A live job that has not started is dropped when a newer read of the same location's live content needs another job, because its source
+  // has changed and its build could only fail; it ends as failed with stale_snapshot, without running and without a progress record.
+  supersede(previous: Job | undefined, next: Job) {
+    if (!previous || previous === next || !previous.live || previous.read >= next.read || previous === this.running || !busy(previous)) return;
+    clearTimeout(previous.retry); previous.retry = undefined;
+    this.queue = this.queue.filter(job => job !== previous);
+    const message = "The source changed before this preparation started, so a preparation of the newer content replaced it.";
+    previous.status = "degraded"; previous.failure = { code: "stale_snapshot", message };
+    previous.diagnostics = [{ code: "stale_snapshot", message, recovery: "Repeat the call to read the newer content." }];
+    previous.finish();
+  }
+  job(source: NativeSource, snapshot: SourceSnapshot, location: Location, generationKey: string, id: string, freshness: GitFingerprint | null | undefined, component?: IndexComponent, live = true, read = 0): Job {
     let finish = () => {};
     const promise = new Promise<void>(resolve => { finish = resolve; });
-    const job: Job = { id, directory: location.directory, component, snapshot: snapshot.sourceFingerprint, status: "waiting", diagnostics: [], failure: null, promise, finish, freshness, run: async () => {
+    const job: Job = { id, directory: location.directory, component, snapshot: snapshot.sourceFingerprint, status: "waiting", diagnostics: [], failure: null, promise, finish, freshness, live, read, run: async () => {
       // Progress is reported to a file beside the index, so the review app can show builds that run in any session's process.
       const recorder = job.recorder = new ProgressRecorder(location.directory, job.id);
       const started = privateDirectory(location.directory).then(() => recorder.start()).catch(() => {});
@@ -415,6 +437,14 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         if (job.freshness !== undefined) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started; await recorder.succeed();
       } catch (error) {
+        if (component && error.held) {
+          // Another session is preparing this component, so it stays preparing here and is tried again later, while the queue moves on.
+          job.progress = { phase: "waiting" };
+          await started; await recorder.succeed();
+          job.retry = setTimeout(() => { job.retry = undefined; this.queue.push(job); this.pump(); }, LOCK_RETRY_MS);
+          job.retry.unref();
+          return;
+        }
         const code = stableFailure(error);
         job.status = "degraded"; job.failure = { code, message: error.message };
         job.diagnostics = [{ code, message: error.message, recovery: "Retry preparation after correcting the reported runtime, network, or source problem." }];
@@ -435,7 +465,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     if (!job) { this.idle?.(); this.idle = undefined; return; }
     if (!this.idle) this.sequence = new Promise<void>(resolve => { this.idle = resolve; });
     this.running = job; job.status = "preparing";
-    void job.run().catch(() => {}).finally(() => { this.running = null; job.finish(); this.pump(); });
+    void job.run().catch(() => {}).finally(() => { this.running = null; if (!job.retry) job.finish(); this.pump(); });
   }
   report(job: Job, progress: Progress) {
     job.progress = progress;
@@ -507,26 +537,30 @@ export class NativeSemanticRuntime implements ComponentRuntime {
           await pruneIndexes(directory, revision).catch(() => {});
           return { ...assets, index: indexMetadata(index), indexPath, revision };
         } finally { await rm(mirror, { recursive: true, force: true }); }
-      }, semanticError, { renew: true, timeoutMs: 120000 }));
+      }, job.component ? heldError : semanticError, { renew: true, timeoutMs: job.component ? 250 : 120000 }));
     } finally { clearTimeout(waiting); }
   }
-  helper(runtime: string): Helper {
-    if (this.process?.runtime !== runtime) { this.process?.stop(); this.process = new Helper(runtime, { ...this.options, directory: this.directory }); }
-    return this.process;
+  helper(runtime: string, role: "build" | "search" = "build"): Helper {
+    let helper = this.processes.get(role);
+    if (helper?.runtime !== runtime) { helper?.stop(); helper = new Helper(runtime, { ...this.options, directory: this.directory }); this.processes.set(role, helper); }
+    return helper;
   }
   async search(prepared: PreparedIndex, source: NativeSource, query: string, filters: SearchFilters | undefined, limit: number) {
     await source.verifySnapshot();
-    const results = await this.helper(prepared.runtime).request("search", { query, filters, limit, snapshot: prepared.index.snapshot,
+    const results = await this.helper(prepared.runtime, "search").request("search", { query, filters, limit, snapshot: prepared.index.snapshot,
       indexPath: prepared.indexPath, modelDirectory: prepared.modelDirectory, modelIdentity: prepared.modelIdentity });
     await source.verifySnapshot();
     return results;
   }
-  // Resolves once the helper process has exited, so a caller that exits next leaves no helper holding the runtime's files open.
+  // Resolves once the helper processes have exited, so a caller that exits next leaves no helper holding the runtime's files open.
   close(): Promise<void> {
-    const child = this.process?.child;
-    this.process?.stop();
-    if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-    return new Promise(resolve => child.once("exit", () => resolve()));
+    const exits = [...this.processes.values()].map(helper => {
+      const child = helper.child;
+      helper.stop();
+      if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+      return new Promise<void>(resolve => child.once("exit", () => resolve()));
+    });
+    return Promise.all(exits).then(() => {});
   }
 }
 

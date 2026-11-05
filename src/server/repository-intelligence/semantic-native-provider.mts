@@ -317,6 +317,8 @@ export function validateComplexUnits(value: unknown): asserts value is ScopedAna
 
 // Prepare the snapshot that an analysis reads: the retained baseline when the caller names one, or the live project.
 async function preparedAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string }, options: ProviderOptions) {
+  // A retained baseline is split by the current declaration, so an invalid one refuses it too, as it refuses the live project.
+  if (!options.nativeSource) await indexComponents(input.projectRoot);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
   const identity = { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot, snapshotId: input.snapshotId || null };

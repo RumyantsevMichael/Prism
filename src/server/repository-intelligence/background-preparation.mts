@@ -2,6 +2,7 @@ import { prepareNativeProvider } from "./semantic-native-provider.mjs";
 import { nativeSemanticRuntime, privateDirectory } from "./native-semantic-runtime.mjs";
 import { ProgressRecorder } from "./index-progress.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { indexComponents } from "./component-indexes.mjs";
 
 interface Options {
   prepare?: (projectRoot: string) => Promise<unknown>;
@@ -11,6 +12,13 @@ interface Options {
 }
 
 const started = new Map<string, Promise<void>>();
+
+// A repository that declares components has no whole-repository index for a tool to read, so this preparation queues no build of the whole
+// repository there; an invalid declaration refuses here, as it refuses the native tools, and so prepares nothing.
+async function prepareProject(projectRoot: string) {
+  if (await indexComponents(projectRoot)) return;
+  await prepareNativeProvider(projectRoot, { waitMs: 0 });
+}
 
 // A project opts out with "- Background indexing: off" under "## Repository intelligence" in .prism/workflow.md.
 export async function backgroundIndexingEnabled(projectRoot: string) {
@@ -40,7 +48,7 @@ async function recordFailure(projectRoot: string, error: Error & { code?: unknow
 export function startBackgroundPreparation(projectRoot: string, options: Options = {}): Promise<void> {
   const existing = started.get(projectRoot);
   if (existing) return existing;
-  const { prepare = (root: string) => prepareNativeProvider(root, { waitMs: 0 }), enabled = backgroundIndexingEnabled, available = runtimeAvailable, record = recordFailure } = options;
+  const { prepare = prepareProject, enabled = backgroundIndexingEnabled, available = runtimeAvailable, record = recordFailure } = options;
   const run = (async () => {
     if (!await enabled(projectRoot) || !await available()) return;
     try { await prepare(projectRoot); } catch (error) { await record(projectRoot, error); }
@@ -56,7 +64,7 @@ const rebuilding = new Map<string, Promise<void>>();
 export function startIndexRebuild(projectRoot: string, options: Omit<Options, "enabled"> = {}): Promise<void> {
   const existing = rebuilding.get(projectRoot);
   if (existing) return existing;
-  const { prepare = (root: string) => prepareNativeProvider(root, { waitMs: 0 }), available = runtimeAvailable, record = recordFailure } = options;
+  const { prepare = prepareProject, available = runtimeAvailable, record = recordFailure } = options;
   const run = (async () => {
     if (!await available()) return;
     try { await prepare(projectRoot); } catch (error) { await record(projectRoot, error); }

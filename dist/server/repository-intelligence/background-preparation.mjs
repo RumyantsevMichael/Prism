@@ -3,7 +3,12 @@ import { prepareNativeProvider } from "./semantic-native-provider.mjs";
 import { nativeSemanticRuntime, privateDirectory } from "./native-semantic-runtime.mjs";
 import { ProgressRecorder } from "./index-progress.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { indexComponents } from "./component-indexes.mjs";
 const started = /* @__PURE__ */ new Map();
+async function prepareProject(projectRoot) {
+  if (await indexComponents(projectRoot)) return;
+  await prepareNativeProvider(projectRoot, { waitMs: 0 });
+}
 async function backgroundIndexingEnabled(projectRoot) {
   const config = await readWorkflowConfig(projectRoot).catch(() => null);
   const value = config?.sections?.["Repository intelligence"]?.["Background indexing"];
@@ -26,7 +31,7 @@ async function recordFailure(projectRoot, error) {
 function startBackgroundPreparation(projectRoot, options = {}) {
   const existing = started.get(projectRoot);
   if (existing) return existing;
-  const { prepare = (root) => prepareNativeProvider(root, { waitMs: 0 }), enabled = backgroundIndexingEnabled, available = runtimeAvailable, record = recordFailure } = options;
+  const { prepare = prepareProject, enabled = backgroundIndexingEnabled, available = runtimeAvailable, record = recordFailure } = options;
   const run = (async () => {
     if (!await enabled(projectRoot) || !await available()) return;
     try {
@@ -43,7 +48,7 @@ const rebuilding = /* @__PURE__ */ new Map();
 function startIndexRebuild(projectRoot, options = {}) {
   const existing = rebuilding.get(projectRoot);
   if (existing) return existing;
-  const { prepare = (root) => prepareNativeProvider(root, { waitMs: 0 }), available = runtimeAvailable, record = recordFailure } = options;
+  const { prepare = prepareProject, available = runtimeAvailable, record = recordFailure } = options;
   const run = (async () => {
     if (!await available()) return;
     try {

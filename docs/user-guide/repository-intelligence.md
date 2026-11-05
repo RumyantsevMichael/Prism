@@ -126,6 +126,7 @@ A search without paths prepares and reads every component that holds a file.
 Prism prepares one index at a time, in component order: the root component first, then the declared components in declaration order.
 The components that a later call needs move ahead of components that only an earlier call waits for, and the running preparation always finishes.
 A component is prepared again only when its own files change, and its new index reuses the embeddings of its unchanged fragments.
+A component that another session is preparing is reported `preparing`, and this server tries it again every few seconds while it prepares the other components.
 Each component's index is reused across sessions and after the repository's name changes.
 
 Each result lists the components it read in `components`, in component order, with each one's identity `<repository>/<component>`, `folder`, `status`, `indexRevision`, and `failure`.
@@ -144,6 +145,7 @@ Each entry gives the component's `status`, `preparationId`, `snapshot`, `indexRe
 The top-level `status` is `preparing` while a component waits or prepares, else `degraded` when a component's latest preparation in this server failed, else `indexed` when a component has an index, else `unprepared`.
 The top-level `progress` is the running preparation's progress with its `component`, and each diagnostic names its `component`.
 An invalid `## Components` declaration refuses the native index and status tools before any preparation, with the declaration's error code.
+Background preparation at startup and the review browser's rebuild do not build any index in a repository with components yet, so a search builds the components it reads; refreshing each component's index in the background is Planned.
 
 #### Watch an index build in the review browser
 

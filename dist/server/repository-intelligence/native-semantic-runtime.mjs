@@ -29,6 +29,8 @@ const inside = (root, file) => {
 };
 const indexMetadata = ({ chunks: _chunks, ...metadata }) => metadata;
 const busy = (job) => job?.status === "waiting" || job?.status === "preparing";
+const LOCK_RETRY_MS = 2e3;
+const heldError = (code, message) => Object.assign(semanticError(code, message), { held: code === "lock_timeout" });
 const stableFailure = (error) => ["invalid_path", "lock_timeout", "stale_snapshot", "unsupported_runtime", "corrupt_asset", "resource_limit", "validation_failed"].includes(error.code || "") ? error.code : error.code === "snapshot-changed" ? "stale_snapshot" : "preparation_failed";
 async function privateDirectory(directory) {
   const parent = path.dirname(directory);
@@ -243,7 +245,7 @@ class Helper {
     this.start();
     return new Promise((resolve, reject) => {
       const id = ++this.counter;
-      const timeout = setTimeout(() => this.stop(semanticError("resource_limit", "Native preparation exceeded its 30 minute operation limit.")), 30 * 60 * 1e3);
+      const timeout = setTimeout(() => this.stop(semanticError("resource_limit", "Native preparation exceeded its 30 minute operation limit.")), this.options.operationMs ?? 30 * 60 * 1e3);
       timeout.unref();
       this.requests.set(id, { resolve: (value) => resolve(value), reject, timeout, progress });
       this.child.stdin.write(`${JSON.stringify({ id, method, args })}
@@ -284,7 +286,11 @@ class NativeSemanticRuntime {
   sequence = Promise.resolve();
   idle;
   pinned;
-  process;
+  // Builds and searches have a helper each, because a helper answers one request at a time and a build can run for many minutes,
+  // while a search of a component that is ready must answer within its call's bound and must not fail when another component's build times out.
+  processes = /* @__PURE__ */ new Map();
+  // Counts snapshot reads, so a newer read of a location's live content can replace a job for content read before it.
+  reads = 0;
   verifiedRuntime;
   async manifest() {
     if (!this.pinned) {
@@ -479,17 +485,19 @@ class NativeSemanticRuntime {
     const manifest = await this.manifest(), jobs = [];
     for (const { source, component } of entries) {
       const projectRoot = source.projectRoot, fingerprint = typeof projectRoot === "string" ? await gitFingerprint(projectRoot) : null;
-      const snapshot = await source.snapshot(), location = await this.location(snapshot.root, component);
+      const read = ++this.reads, snapshot = await source.snapshot(), location = await this.location(snapshot.root, component);
       const live = snapshot.enumerator !== "retained";
       if (expectedSnapshot && expectedSnapshot !== snapshot.sourceFingerprint) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
       const generationKey = `${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`;
       let job = this.limited.get(generationKey) ?? this.generations.get(generationKey);
       if (!job || job.status === "degraded" && !this.limited.has(generationKey)) {
-        job = this.job(source, snapshot, location, generationKey, component ? sha(`${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : void 0, component);
+        job = this.job(source, snapshot, location, generationKey, component ? sha(`${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : void 0, component, live, read);
       } else if (live && fingerprint && job.status === "ready" && !sameFingerprint(job.freshness ?? null, fingerprint)) {
         job.freshness = fingerprint;
         await writeFreshness(location.directory, job.snapshot, fingerprint);
       }
+      job.read = Math.max(job.read, read);
+      if (live) this.supersede(this.jobs.get(location.directory), job);
       this.jobs.set(location.directory, job);
       jobs.push(job);
     }
@@ -498,13 +506,26 @@ class NativeSemanticRuntime {
     this.pump();
     return jobs;
   }
-  job(source, snapshot, location, generationKey, id, freshness, component) {
+  // A live job that has not started is dropped when a newer read of the same location's live content needs another job, because its source
+  // has changed and its build could only fail; it ends as failed with stale_snapshot, without running and without a progress record.
+  supersede(previous, next) {
+    if (!previous || previous === next || !previous.live || previous.read >= next.read || previous === this.running || !busy(previous)) return;
+    clearTimeout(previous.retry);
+    previous.retry = void 0;
+    this.queue = this.queue.filter((job) => job !== previous);
+    const message = "The source changed before this preparation started, so a preparation of the newer content replaced it.";
+    previous.status = "degraded";
+    previous.failure = { code: "stale_snapshot", message };
+    previous.diagnostics = [{ code: "stale_snapshot", message, recovery: "Repeat the call to read the newer content." }];
+    previous.finish();
+  }
+  job(source, snapshot, location, generationKey, id, freshness, component, live = true, read = 0) {
     let finish = () => {
     };
     const promise = new Promise((resolve) => {
       finish = resolve;
     });
-    const job = { id, directory: location.directory, component, snapshot: snapshot.sourceFingerprint, status: "waiting", diagnostics: [], failure: null, promise, finish, freshness, run: async () => {
+    const job = { id, directory: location.directory, component, snapshot: snapshot.sourceFingerprint, status: "waiting", diagnostics: [], failure: null, promise, finish, freshness, live, read, run: async () => {
       const recorder = job.recorder = new ProgressRecorder(location.directory, job.id);
       const started = privateDirectory(location.directory).then(() => recorder.start()).catch(() => {
       });
@@ -515,6 +536,18 @@ class NativeSemanticRuntime {
         await started;
         await recorder.succeed();
       } catch (error) {
+        if (component && error.held) {
+          job.progress = { phase: "waiting" };
+          await started;
+          await recorder.succeed();
+          job.retry = setTimeout(() => {
+            job.retry = void 0;
+            this.queue.push(job);
+            this.pump();
+          }, LOCK_RETRY_MS);
+          job.retry.unref();
+          return;
+        }
         const code = stableFailure(error);
         job.status = "degraded";
         job.failure = { code, message: error.message };
@@ -551,7 +584,7 @@ class NativeSemanticRuntime {
     void job.run().catch(() => {
     }).finally(() => {
       this.running = null;
-      job.finish();
+      if (!job.retry) job.finish();
       this.pump();
     });
   }
@@ -651,21 +684,23 @@ class NativeSemanticRuntime {
         } finally {
           await rm(mirror, { recursive: true, force: true });
         }
-      }, semanticError, { renew: true, timeoutMs: 12e4 }));
+      }, job.component ? heldError : semanticError, { renew: true, timeoutMs: job.component ? 250 : 12e4 }));
     } finally {
       clearTimeout(waiting);
     }
   }
-  helper(runtime) {
-    if (this.process?.runtime !== runtime) {
-      this.process?.stop();
-      this.process = new Helper(runtime, { ...this.options, directory: this.directory });
+  helper(runtime, role = "build") {
+    let helper = this.processes.get(role);
+    if (helper?.runtime !== runtime) {
+      helper?.stop();
+      helper = new Helper(runtime, { ...this.options, directory: this.directory });
+      this.processes.set(role, helper);
     }
-    return this.process;
+    return helper;
   }
   async search(prepared, source, query, filters, limit) {
     await source.verifySnapshot();
-    const results = await this.helper(prepared.runtime).request("search", {
+    const results = await this.helper(prepared.runtime, "search").request("search", {
       query,
       filters,
       limit,
@@ -677,12 +712,16 @@ class NativeSemanticRuntime {
     await source.verifySnapshot();
     return results;
   }
-  // Resolves once the helper process has exited, so a caller that exits next leaves no helper holding the runtime's files open.
+  // Resolves once the helper processes have exited, so a caller that exits next leaves no helper holding the runtime's files open.
   close() {
-    const child = this.process?.child;
-    this.process?.stop();
-    if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-    return new Promise((resolve) => child.once("exit", () => resolve()));
+    const exits = [...this.processes.values()].map((helper) => {
+      const child = helper.child;
+      helper.stop();
+      if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+      return new Promise((resolve) => child.once("exit", () => resolve()));
+    });
+    return Promise.all(exits).then(() => {
+    });
   }
 }
 const nativeSemanticRuntime = new NativeSemanticRuntime();

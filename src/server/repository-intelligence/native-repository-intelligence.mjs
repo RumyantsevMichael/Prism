@@ -232,7 +232,8 @@ async function gitCommit(root, options) {
   }
 }
 
-async function filesystemFiles(root, maxFiles) {
+// A filter keeps only the files it accepts, and only those count toward maxFiles, so a component's scan never stops in another component's files.
+async function filesystemFiles(root, maxFiles, filter = null) {
   const files = [];
   let unreadableDirectories = 0;
   let truncated = false;
@@ -246,20 +247,20 @@ async function filesystemFiles(root, maxFiles) {
     }
     entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
-      if (files.length >= maxFiles) {
+      if (truncated || (!filter && files.length >= maxFiles)) {
         truncated = true;
         return;
       }
       const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
-      if (entry.isSymbolicLink()) {
-        files.push(relativePath);
-      } else if (entry.isDirectory()) {
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
         if (!FALLBACK_EXCLUDED_DIRECTORIES.has(entry.name)) {
           await visit(path.join(directory, entry.name), relativePath);
         }
-      } else if (entry.isFile()) {
-        files.push(relativePath);
-      } else {
+      } else if (!filter || filter(relativePath)) {
+        if (files.length >= maxFiles) {
+          truncated = true;
+          return;
+        }
         files.push(relativePath);
       }
     }
@@ -272,7 +273,7 @@ async function enumerateFiles(root, options) {
   try {
     return { ...(await gitFiles(root, options)), enumerator: "git", diagnostics: [] };
   } catch {
-    const fallback = await filesystemFiles(root, options.maxFiles);
+    const fallback = await filesystemFiles(root, options.maxFiles, options.filter);
     return {
       ...fallback,
       enumerator: "filesystem",
