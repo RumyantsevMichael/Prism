@@ -257,7 +257,7 @@ test("a named checkout records its name as the repository of its runs, and an un
   assert.deepEqual(await snapshot(other.store), {}, "the store holds no run, record, or registration");
 });
 
-test("naming a refused repository moves its in-repo records into the store and adds only them, its ledger entry, and its registration", async (context) => {
+test("naming a refused repository moves its in-repo records into the store and adds only them, its ledger entry, the store's housekeeping files, and its registration", async (context) => {
   const place = await folder(context);
   const api = await repository(place.parent, "api", { remote: "https://github.com/acme/api.git" });
   // An M1 checkout: its in-repo record stays where it is while the checkout names no repository.
@@ -271,13 +271,52 @@ test("naming a refused repository moves its in-repo records into the store and a
   assert.ok(await exists(path.join(api, ".prism", "initiatives", "legacy", "initiative.json")), "the refused checkout kept its in-repo record");
 
   await configure(api, { repository: "api" });
-  const after = await server(context, place, api);
-  ok(await createInitiative(after));
+  ok(await (await server(context, place, api)).call("get_roadmap"));
   const now = await snapshot(place.store);
   assert.equal(now["initiatives/legacy/initiative.json"], "{\"legacy\":true}\n", "the in-repo record moved into the store");
-  assert.ok(Object.keys(now).some((file) => file.startsWith("migrations/")), "the migration wrote a ledger entry");
-  assert.ok("repositories/api.json" in now);
-  assert.ok("initiatives/reports/initiative.json" in now);
+  const ledger = Object.keys(now).filter((file) => file.startsWith("migrations/"));
+  assert.equal(ledger.length, 1, "the migration wrote one ledger entry");
+  assert.deepEqual(JSON.parse(now[ledger[0]]).records, [".prism/initiatives/legacy/initiative.json"]);
+  assert.deepEqual(Object.keys(now).sort(), [".gitattributes", ".gitignore", "initiatives/legacy/initiative.json", ledger[0], "repositories/api.json"].sort(), "naming adds nothing else");
+  assert.equal(await exists(path.join(api, ".prism", "initiatives", "legacy")), false, "the moved record left the checkout");
+});
+
+test("naming a repository keeps every record, ledger entry, and run that an earlier release's unnamed checkout left in its store unchanged and readable, and adds only the registration", async (context) => {
+  const place = await folder(context);
+  const api = await repository(place.parent, "api", { remote: "https://github.com/acme/api.git" });
+  // Records and a run written without a store, then moved into the store with a ledger entry, as an earlier release's unnamed checkout left them.
+  await writeFile(path.join(api, ".prism", "workflow.md"), `## Paths\n- Plans: docs/plans\n\n## Stack\n- Test command: ${process.execPath} check.mjs\n`);
+  git(api, "add", "-A");
+  git(api, "commit", "-q", "-m", "use no store");
+  const storeless = await server(context, place, api);
+  await startedSlice(storeless, api);
+  ok(await storeless.call("verify_slice", { initiative: "reports", slice: "download", contractDefects: [{ clause: "§1", reason: "before names" }] }));
+  const initiativeBefore = ok(await storeless.call("get_initiative", { initiative: "reports" })).result.structuredContent;
+  await storeless.close();
+  const inRepo = await snapshot(path.join(api, ".prism", "initiatives"));
+  const records = Object.keys(inRepo).sort().map((file) => `.prism/initiatives/${file}`);
+  assert.ok(records.some((file) => file.includes("/runs/")), "the seeded records hold a run");
+  for (const [file, bytes] of Object.entries(inRepo)) {
+    await mkdir(path.dirname(path.join(place.store, "initiatives", file)), { recursive: true });
+    await writeFile(path.join(place.store, "initiatives", file), bytes);
+  }
+  await rm(path.join(api, ".prism", "initiatives"), { recursive: true, force: true });
+  await mkdir(path.join(place.store, "migrations"), { recursive: true });
+  await writeFile(path.join(place.store, "migrations", "2026-10-31T10-00-00-000Z-0a1b2c3d.json"), `${JSON.stringify({ schemaVersion: 2, repository: root(api), migratedAt: "2026-10-31T10:00:00.000Z", moved: records.length, records, conflicts: [] }, null, 2)}\n`);
+  await writeFile(path.join(place.store, ".gitattributes"), "/initiatives/** linguist-generated=true\n");
+  await writeFile(path.join(place.store, ".gitignore"), "*.lock\n");
+  const stored = await snapshot(place.store);
+  assert.equal((await runEntries(place.store))[0].checkout.repository, root(api), "the seeded run names its repository by root commit");
+
+  await configure(api, { repository: "api" });
+  const after = await server(context, place, api);
+  const initiativeAfter = ok(await after.call("get_initiative", { initiative: "reports" })).result.structuredContent;
+  assert.equal(initiativeAfter.revision, initiativeBefore.revision);
+  assert.deepEqual(initiativeAfter.record, initiativeBefore.record);
+  const now = await snapshot(place.store);
+  for (const [file, bytes] of Object.entries(stored)) assert.equal(now[file], bytes, `${file} is unchanged`);
+  assert.deepEqual(Object.keys(now).filter((file) => !(file in stored)), ["repositories/api.json"], "naming adds only the registration");
+  assert.equal((await runEntries(place.store))[0].checkout.repository, root(api), "a run from before the name keeps its root-commit repository");
 });
 
 test("a migration marker from before the ledger keeps covering its repository after the repository is named", async (context) => {
