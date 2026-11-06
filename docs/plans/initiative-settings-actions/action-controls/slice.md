@@ -6,7 +6,7 @@ The initiative, slice, and index pages render every action generically as compac
 
 ## Changes
 
-- add `src/server/review/public/views/actions.js`: `actionFormState` and the generic renderer that draws an action listing with the existing segmented group, text input, card, and status pill components, opens the confirmation dialog, and handles refusals (§39, §41, §43-§45)
+- add `src/server/review/public/views/actions.js`: `actionFormState` and the generic renderer that draws an action listing with the existing segmented group, text input, card, and status pill components, showing an action's context, each option's consequence, and the recommended option where present, opens the confirmation dialog, and handles refusals (§39, §41, §43-§45)
 - change `src/server/review/public/views/initiative.js`, `src/server/review/public/views/slice.js`: the `Initiative settings` card on the initiative page and on every slice page, naming the initiative (§41)
 - change `src/server/review/public/views/indexing.js`: one rebuild control per index target through the generic renderer, labeled with its component and state (§42)
 - change `src/server/review/public/views/attention.js`: `Recent changes` from `recentChanges` with each author and checkout, updated by `action` events (§48)

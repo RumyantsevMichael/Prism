@@ -3,7 +3,8 @@ title action-registry - code
 component "workflow/actions.mjs\nlistActionTargets, listActions,\napplyAction, action definitions" as Registry
 component "workflow/state.mjs\nsettings, personSettings,\nhistory, gate answer" as State
 component "workflow/index-history.mjs\ncheckout's index history" as IndexHistory
-component "workflow/initiative.mjs\nslices, claims" as Initiative
+component "background-preparation.mjs\nstartIndexRebuild per component" as Rebuild
+component "index-status.mjs\ncomponent states" as Status
 component "workflow/components.mjs\nreadComponents" as Components
 component "workspace-identity.mjs\ncheckoutLabel" as Identity
 component "review-server.mjs\napi/actions, targets, apply" as Routes
@@ -13,7 +14,8 @@ component "public/review.js\ngate answer form" as Page
 component "views/indexing.js\nrebuild controls" as Indexing
 Registry --> State : writes settings, answers, history
 Registry --> IndexHistory : index.rebuild entries
-Registry ..> Initiative : reads work started
+Registry ..> Status : component state
+Registry ..> Rebuild : rebuild one component
 Registry ..> Components : index targets
 Registry ..> Identity : author
 Routes --> Registry
