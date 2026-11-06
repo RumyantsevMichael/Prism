@@ -34,7 +34,7 @@
     "action-registry": {
       "title": "Apply actions through one registry",
       "outcome": "The review app lists and applies revision-checked actions from one transport-independent registry, with the seven initiative settings, gate answers, and each component's index rebuild as its actions, and records each with its author in history.",
-      "status": "not-started",
+      "status": "blocked",
       "parent": "initiative-settings-actions",
       "requirements": [
         "docs/requirements/initiative-settings.md#1",
@@ -66,8 +66,32 @@
           }
         ],
         "review": "required",
-        "staged": true
-      }
+        "baselineId": "e66d55457e6984c2c2557c56f74f3bca1f609f64d55f687e5806a5ab5081ae9d",
+        "startTree": "9a48887c93689ce959205cfa9575ff7a04ea03e5",
+        "startRecordedAt": "2026-11-05T23:07:28.136Z",
+        "startDeclaration": {
+          "root": "root/root",
+          "sharedPaths": [],
+          "components": []
+        }
+      },
+      "contractDefects": [
+        {
+          "clause": "4",
+          "reason": "Main removed the agentFlow setting in #125 (4729690): update_coordination_state refuses settings.agentFlow and a stored value is dropped on read, so the contract lists a setting action for a setting that no longer exists. Clauses 4, 6, 8 (and the initiative-settings requirements 1 and 2) must drop agentFlow.",
+          "reportedAt": "2026-11-06T00:21:00.259Z"
+        },
+        {
+          "clause": "32",
+          "reason": "Main now prepares one native index per component (#131, 8637963), so the assumption that every index target of a checkout shares one index and rebuilding any rebuilds all is stale; index.rebuild must start the rebuild of the named component index through the per-component indexer.",
+          "reportedAt": "2026-11-06T00:21:00.259Z"
+        },
+        {
+          "clause": "22",
+          "reason": "Main changed user gate records in #127 (1d79c84): gates now carry context, options with consequences, and a recommendation; gate.answer fields and the merge of pending gates must account for the new gate keys.",
+          "reportedAt": "2026-11-06T00:21:00.259Z"
+        }
+      ]
     },
     "agent-change-notices": {
       "title": "Agents act on the person's changes",
@@ -207,6 +231,24 @@
       "operation": "accept_proposal",
       "slug": "initiative-settings-actions",
       "at": "2026-11-05T23:07:14.138Z"
+    },
+    {
+      "actor": "orchestrator",
+      "operation": "set_status",
+      "slug": "action-registry",
+      "at": "2026-11-05T23:07:28.136Z"
+    },
+    {
+      "actor": "verify_slice",
+      "operation": "report_contract_defects",
+      "slug": "action-registry",
+      "at": "2026-11-06T00:21:00.260Z"
+    },
+    {
+      "actor": "orchestrator",
+      "operation": "restore_tests",
+      "slug": "initiative-settings-actions",
+      "at": "2026-11-06T00:21:22.546Z"
     }
   ]
 }

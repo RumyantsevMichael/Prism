@@ -10,7 +10,28 @@
     "models": "host defaults"
   },
   "active": [],
-  "pending": [],
+  "pending": [
+    {
+      "id": "gate-809825490a35",
+      "kind": "decision",
+      "slice": "action-registry",
+      "question": "Allow Prism to run this test command to verify slices in this project?\n\nnpm test && python3 bench/harness/bench.py selfcheck\n\nPrism runs it with your shell in the project root. A changed command, or the same command in another folder, asks again.\nApproval key: 1eae4d7a2a4b",
+      "artifacts": [
+        ".prism/workflow.md"
+      ],
+      "options": [
+        {
+          "id": "allow",
+          "label": "Allow this command"
+        },
+        {
+          "id": "decline",
+          "label": "Decline"
+        }
+      ],
+      "askedAt": "2026-11-05T23:20:47.675Z"
+    }
+  ],
   "next": [],
   "evidence": [],
   "closed": [
