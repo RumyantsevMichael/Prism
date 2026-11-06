@@ -1,0 +1,18 @@
+@startuml
+title component-reports - units
+package "repository-intelligence" {
+  component "semantic-native-provider.mts" as Provider
+  component "component-indexes.mts" as Indexes
+  component "repository-intelligence.mjs" as Plan
+  component "report modules" as Reports
+}
+package "conservation" {
+  component "conservation-types.mts" as Types
+}
+component "mcp.mjs" as Mcp
+Mcp --> Provider : six reports, plan_repository_context
+Provider --> Indexes : unionIndex, component provider
+Provider --> Reports : run over the union
+Plan --> Indexes : search and neighbors of the component provider
+Provider ..> Types : AnalysisReceipt with components
+@enduml

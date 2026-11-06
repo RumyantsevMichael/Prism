@@ -2,7 +2,7 @@ export type Domain = "code" | "instruction" | "documentation" | "configuration";
 export interface SourceRange { startLine: number; endLine: number }
 export interface SourceFile { file: string; absolutePath: string; content: string; hash: string }
 export interface SourceSnapshot { root: string; sourceFingerprint: string; commit: string; files: SourceFile[]; filesByPath: Map<string, SourceFile>; complete: boolean }
-export interface Diagnostic { code: string; message: string; file?: string; count?: number; denied?: { path: string; write: boolean }[]; recovery?: string }
+export interface Diagnostic { code: string; message: string; file?: string; count?: number; denied?: { path: string; write: boolean }[]; recovery?: string; component?: string; components?: string[] }
 export interface SourceUnit { id: string; file: string; kind: string; name: string; selector?: string; domain?: Domain; range: SourceRange; sourceHash?: string; rangeComplete: boolean; qualifiedName?: string; signature?: string; docstring?: string; depth?: number; span?: { start: number; end: number }; contentHash?: string; isExported?: boolean; visibility?: string; containerId?: string }
 export interface Relationship { source: string; target: string; kind: string; provenance?: string; line?: number; column?: number; metadata?: Record<string, unknown> }
 export interface UnresolvedReference { source: string; name: string; kind: string }
@@ -17,7 +17,13 @@ export interface PublishedUnit { id: string; file: string; kind: string; name: s
 export interface PublishedUnits { schemaVersion: 1; snapshot: string; revision: string; units: PublishedUnit[]; edges: [string, string][] }
 export interface RuntimeAssets { runtime: string; modelDirectory: string; modelIdentity: string; assetIdentity: string }
 export interface PreparedIndex extends RuntimeAssets { index: IndexMetadata; indexPath: string; revision: string }
-export interface Preparation { status: "preparing" | "ready" | "degraded"; preparationId: string; snapshot: string; diagnostics: Diagnostic[]; prepared?: PreparedIndex }
+// A component preparation names its component's identity, may wait in the queue, and records why it failed.
+export interface Preparation { status: "waiting" | "preparing" | "ready" | "degraded"; preparationId: string; snapshot: string; diagnostics: Diagnostic[]; prepared?: PreparedIndex; component?: string; failure?: ComponentFailure | null }
+export interface ComponentFailure { code: string; message: string }
+// The component a runtime preparation indexes: its name, its identity <repository>/<component>, and its folder, "" for the root component.
+export interface IndexComponent { name: string; identity: string; folder: string }
+// How a component took part in a result: its up-to-date index answered, it waits or prepares, or its preparation failed.
+export interface ComponentState { component: string; folder: string; status: "included" | "waiting" | "preparing" | "failed"; indexRevision: string | null; failure: ComponentFailure | null }
 export interface Progress { phase: string; current?: number; total?: number; file?: string; unit?: "bytes" | "files"; item?: number; items?: number }
 export interface BuildArguments { mirror: string; files: Pick<SourceFile, "file" | "hash">[]; snapshot: string; modelDirectory: string; modelIdentity: string; previousEmbeddings?: Record<string, number[]>; fragmentsOnly?: boolean }
 export interface SearchArguments { query: string; filters?: SearchFilters; limit: number; mode?: "lexical"; snapshot: string; modelDirectory: string; modelIdentity: string; indexPath: string }
@@ -41,4 +47,7 @@ export interface NativeSource {
 export interface SemanticRuntime {
   prepare(source: NativeSource, expectedSnapshot?: string, waitMs?: number): Promise<Preparation>;
   search(prepared: PreparedIndex, source: NativeSource, query: string, filters: SearchFilters | undefined, limit: number): Promise<SearchResult[]>;
+}
+export interface ComponentRuntime extends SemanticRuntime {
+  prepareComponents(entries: { source: NativeSource; component: IndexComponent }[], waitMs?: number, options?: { retryLimited?: boolean }): Promise<Preparation[]>;
 }

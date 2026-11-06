@@ -35,7 +35,7 @@ export function render(container, entity, ctx) {
   if (entity.kind === "glossary") {
     container.innerHTML = data.exists
       ? `<section class="document-card"><div class="document-content">${ctx.renderMarkdown(data.content, data.path)}</div></section>`
-      : card("No glossary yet", data.path ? `<p>The configured glossary <code>${escapeHtml(data.path)}</code> does not exist.</p><p class="muted">Run <code>workflow-init</code> or <code>ideate</code> to create it.</p>` : "<p>The workflow config disables the glossary.</p>", { eyebrow: "Glossary" });
+      : card("No glossary yet", data.path ? `<p>The configured glossary <code>${escapeHtml(data.path)}</code> does not exist.</p><p class="muted">Run <code>setup</code> or <code>ideate</code> to create it.</p>` : "<p>The workflow config disables the glossary.</p>", { eyebrow: "Glossary" });
     return;
   }
   container.innerHTML = entity.kind === "requirements" ? requirements(data, ctx) : decisions(data, ctx);

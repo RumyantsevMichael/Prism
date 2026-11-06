@@ -328,8 +328,8 @@ function segmentIndexAt(segments, at) {
  * agent per execution hash, whose root thread hashes to `sessionDigest`. Optional `contextEvents`, the execution's events
  * before `events`, only place segments, so the target current at the first counted event carries into it, and a target
  * whose segments all end by that event gets no entry.
- * Cost before an agent's first segment is unattributed, except that a Claude subagent inherits the root segment current at
- * its start link.
+ * Cost before an agent's first segment is unattributed, except that a subagent inherits the root segment current at its
+ * start link.
  * `counted`, when given, names the execution digests whose cost is returned; the others only provide context.
  * An item may instead be a replay `{ executions, counted }`, replayed with only its own executions as context and summed
  * into the same result, so each run keeps exactly the context it is replayed with.
@@ -387,18 +387,26 @@ export function attributeRunCost(executions, { host, sessionDigest = null, count
         }
         return grouped;
       };
-      const agents = byAgent(events);
       const context = byAgent(costEvents(execution.contextEvents ?? []));
+      // A Codex execution's root thread goes first, so its segments are placed before any spawned thread inherits one.
+      const agents = [...byAgent(events)].sort(([left], [right]) => (left === sessionDigest ? 0 : 1) - (right === sessionDigest ? 0 : 1));
+      if (codex && sessionDigest !== null && !agents.some(([key]) => key === sessionDigest) && context.has(sessionDigest)) {
+        rootSegments = agentSegments(context.get(sessionDigest), { root: true, codex });
+      }
       const seenCalls = new Set();
       for (const [agentKey, agentEvents] of agents) {
         const root = codex ? agentKey === sessionDigest : execution.kind === "root";
         const placed = [...(context.get(agentKey) ?? []), ...agentEvents].sort((left, right) => time(left) - time(right));
         const segments = agentSegments(placed, { root, codex });
-        if (!codex && execution === rootExecution) rootSegments = segments;
+        if (codex ? root : execution === rootExecution) rootSegments = segments;
 
-        // A Claude subagent's cost before its own first Prism call belongs to the root segment current at its start link.
+        // A subagent's cost before its own first Prism call belongs to the root segment current at its start link.
         let inherited = null;
-        if (!codex && execution.kind !== "root") {
+        if (codex && !root) {
+          const link = placed.find((event) => event.eventType === "subagent_start");
+          const index = link ? segmentIndexAt(rootSegments, time(link)) : -1;
+          inherited = index === -1 ? null : rootSegments[index];
+        } else if (!codex && execution.kind !== "root") {
           const isLink = (event) => event.eventType === "subagent_start";
           const link = costEvents(rootExecution?.events ?? []).find((event) => isLink(event) && event.hashes.execution === execution.digest)
             ?? agentEvents.find(isLink);

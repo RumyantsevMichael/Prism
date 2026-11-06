@@ -26,13 +26,13 @@ const add = (id, band, extra = {}) => ({ op: "add_initiative", id, title: `Title
 test("keeps one workspace name in the roadmap record and clears it with an empty name", async (context) => {
   const projectRoot = await project(context);
   assert.equal(await readWorkspaceName(projectRoot), null);
-  const named = await updateRoadmap({ projectRoot, expectedRevision: null, actor: "workflow-init", operations: [{ op: "set_workspace_name", name: "  Platform   team  " }] });
+  const named = await updateRoadmap({ projectRoot, expectedRevision: null, actor: "setup", operations: [{ op: "set_workspace_name", name: "  Platform   team  " }] });
   assert.equal(named.record.workspaceName, "Platform team");
   assert.equal(await readWorkspaceName(projectRoot), "Platform team");
   assert.match(await readFile(path.join(projectRoot, "product/roadmap.md"), "utf8"), /^Workspace: Platform team$/m);
-  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: named.revision, actor: "workflow-init", operations: [{ op: "set_workspace_name", name: "x".repeat(65) }] }), (error) => error.code === "validation_failed");
-  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: named.revision, actor: "workflow-init", operations: [{ op: "set_workspace_name", name: "bell\u0007" }] }), (error) => error.code === "validation_failed");
-  const cleared = await updateRoadmap({ projectRoot, expectedRevision: named.revision, actor: "workflow-init", operations: [{ op: "set_workspace_name", name: "" }] });
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: named.revision, actor: "setup", operations: [{ op: "set_workspace_name", name: "x".repeat(65) }] }), (error) => error.code === "validation_failed");
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: named.revision, actor: "setup", operations: [{ op: "set_workspace_name", name: "bell\u0007" }] }), (error) => error.code === "validation_failed");
+  const cleared = await updateRoadmap({ projectRoot, expectedRevision: named.revision, actor: "setup", operations: [{ op: "set_workspace_name", name: "" }] });
   assert.equal(Object.hasOwn(cleared.record, "workspaceName"), false);
   assert.equal(await readWorkspaceName(projectRoot), null);
 });

@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Run or resume an initiative: design one contract per scope, gate it, start each planned slice, implement and verify it in a fresh session, review it only when marked, and keep the user's gates. Use only when the user or a coordinating agent asks to run or resume a named initiative, issue, or idea through Prism."
+description: "Run or resume an initiative: design one contract per scope, gate it, start each planned slice, implement and verify it in a fresh session, review it only when marked, and keep the user's gates. Use when the user asks, or agrees when offered, to run or resume an initiative, issue, or idea through Prism, or when a coordinating agent asks."
 argument-hint: '[initiative]'
 sdm: "0.3"
 ---
@@ -11,20 +11,21 @@ The orchestrator coordinates; it judges order, contract defects, and gates, and 
 Design, implementation, review, and example writer sessions get identifiers and folders from it and return a short status.
 Prism records progress from `update_initiative` calls and from the `verify_slice` calls of implementers, so the orchestrator makes no other bookkeeping calls.
 The [workflow](../workflow/SKILL.md) defines the terms.
+To run a skill in a child, start a fresh child agent whose prompt asks it to use that skill and passes the identifiers and folders below, and when no child agent can start, stop and ask the user to run the orchestration where child agents are available.
 
 - Don't
+  - Load or follow `setup`, `design`, `implement`, `review`, `triage`, or `ideate` yourself; only their child agents do.
   - Run git, hash files, or read code while slices run; children commit their own work and Prism checks the frozen tests.
   - Keep a child's transcript; keep its status.
 
 ## 1. Settings
 
 Settings live in the initiative's coordination state, read with `get_coordination_state` and written once before active work with `update_coordination_state` and the current revision.
-A stored value stays authoritative on resume, and `agentFlow` is fixed once work starts.
+A stored value stays authoritative on resume.
 
 | Setting | Values | Default | Effect |
 | --- | --- | --- | --- |
 | `autonomy` | `conservative`, `broad`, `full` | `conservative` | Which gates wait for the user. |
-| `agentFlow` | `multi`, `mono` | `multi` | `multi` runs every child in a fresh agent; `mono` runs design and implementation inline. |
 | `commit` | `on`, `off` | `on` under `full`, otherwise `off` | Whether design and implementation commit their changes. |
 | `push` | `on`, `off` | `off` | Whether finished slices are pushed; autonomy never turns it on. |
 | `continuation` | `auto`, `stepwise` | `auto` | Whether the next slice starts without the user. |
@@ -37,7 +38,7 @@ A stored value stays authoritative on resume, and `agentFlow` is fixed once work
 
 ## 2. Start
 
-1. Read `.prism/workflow.md`, the settings, and the pending user gates, and act on every recorded answer.
+1. Read `.prism/workflow.md`, the settings, and the pending user gates, and act on every recorded answer; when `.prism/workflow.md` is missing, or a Prism tool or child reports a setting or record that `setup` owns, run `setup` in a fresh child agent while no slice is `in-progress`, asking its blockers as gates.
 2. When the initiative has no Approved requirements or no roadmap entry, run `triage` in a fresh child agent for a reported defect, and `ideate` for new intent or when triage returns `NOT_A_DEFECT`.
 3. Read the initiative record with `get_initiative`.
 4. When the record does not exist, call `update_initiative` with `expectedRevision: null` and a `create` operation for the root slice with its slug, title, outcome, and every Approved requirement of the initiative.
@@ -62,7 +63,7 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
 
 1. Read the slice's state with `get_initiative`.
 2. Call `update_initiative` with `set_status` `in-progress`, which puts its frozen tests in place.
-3. Run `implement` for the slice in one fresh session, passing the contract's `slice.md` and the slice folder; it verifies the slice through `verify_slice` itself.
+3. Run `implement` for the slice in one fresh child agent, passing the contract's `slice.md` and the slice folder; it verifies the slice through `verify_slice` itself.
 4. When it returns `DONE`, read the slice with `get_initiative`: when its review mark is `required`, review it through [review](#5-review), then call `update_initiative` with `set_status` `done`; when it is not done otherwise, call `set_status` `done`, which refuses without a fresh passing run.
 5. When the slice was the last leaf of its contract scope that was not done, call `verify_slice` with the scope as `slice` and `dependents` `true` for its dependents' run; call it again after `running`, after `approval_needed` get the user's answer as for an implementer's approval gate below and call it again with `approvalGate` and any `chatApproval`, and report a `failed` or `approval_unclear` scope to the user as blocked, with each `blocked` component.
 6. Accept the slice's Proposed ADRs, and push when push is on.
@@ -73,7 +74,7 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
   2. Return the defects to design with the scope.
   3. Accept design's revised proposal, then start the slice again with a fresh implementation session.
 - When the implementer returns `BLOCKED` on an approval gate that needs the user's chat approval, ask the user in chat whether Prism may run the exact command, then run a fresh implementation session with the gate id and their answer quoted word for word; on any other approval gate, wait for it as in [user gates](#6-user-gates), then run a fresh implementation session.
-- When triage, design, or implementation returns `BLOCKED` or a question, ask the user the exact question and continue with another eligible slice meanwhile.
+- When triage, design, or implementation returns `BLOCKED` or a question, ask the user with its blocker as the gate, never shortening it, and continue with another eligible slice meanwhile.
 
 On resume, continue an `in-progress` slice with a fresh implementation session before starting another slice.
 
@@ -88,7 +89,7 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 
 ## 6. User gates
 
-- Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, slice, question, artifacts, and options for a decision.
+- Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, slice, question, its context, artifacts, and for a decision its options with consequences and the recommended answer, written as a [blocker](../workflow/SKILL.md#common-terms).
 - Use `visual-review` for design gates, `decision` for choices, and `assistance` for actions the user must take.
 - After asking, call `wait_for_user_gate` once with the ids just recorded, and when it returns without an answer, end the turn.
 - Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it or as soon as it no longer applies, such as when its artifacts are gone, with a reason unless the browser recorded the answer.

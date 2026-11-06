@@ -464,7 +464,7 @@ const tools = [
   },
   {
     name: "list_repository_intelligence_providers",
-    description: "List registered repository intelligence providers and their current availability for a project. This tool does not create, synchronize, or update provider indexes.",
+    description: "List registered repository intelligence providers and their current availability for a project. This tool does not create, synchronize, or update provider indexes. In a repository that declares components, native.components lists each component's native index status.",
     inputSchema: {
       type: "object",
       properties: {
@@ -477,7 +477,7 @@ const tools = [
   },
   {
     name: "plan_repository_context",
-    description: "Plan bounded repository source context. Auto prepares bundled native semantic analysis, downloading pinned assets and writing private caches as needed. Returns preparing after ten seconds or source ranges with token estimates. Explicit external providers remain available. This tool does not decide session fit.",
+    description: "Plan bounded repository source context. Auto prepares bundled native semantic analysis, downloading pinned assets and writing private caches as needed. Returns preparing after ten seconds or source ranges with token estimates. Explicit external providers remain available. In a repository that declares components, it reads every component that holds a file, returns preparing while none is ready, and while one is not ready, the components_missing diagnostic names it and every token estimate is null. This tool does not decide session fit.",
     inputSchema: {
       type: "object",
       properties: {
@@ -727,7 +727,6 @@ const tools = [
               additionalProperties: false,
               properties: {
                 autonomy: { type: "string", enum: ["conservative", "broad", "full"] },
-                agentFlow: { type: "string", enum: ["mono", "multi"] },
                 commit: { type: "string", enum: ["on", "off"] },
                 push: { type: "string", enum: ["on", "off"] },
                 continuation: { type: "string", enum: ["auto", "stepwise"] },
@@ -780,14 +779,22 @@ const tools = [
                       op: { const: "ask" },
                       kind: { type: "string", enum: ["visual-review", "correctness", "decision", "assistance"] },
                       slice: { type: "string", minLength: 1 },
-                      question: { type: "string", minLength: 1, maxLength: 4000 },
+                      question: { type: "string", minLength: 1, maxLength: 4000, description: "The question itself, one or two plain sentences." },
+                      context: { type: "string", minLength: 1, maxLength: 8000, description: "Markdown the person reads before answering: what happened, what was tried, what the choice changes, and a concrete example. Required for decision and assistance gates, so a person who has not followed the run can decide from the gate alone." },
                       artifacts: { type: "array", maxItems: 50, items: { type: "string", minLength: 1 } },
                       options: {
                         type: "array",
                         minItems: 1,
                         maxItems: 8,
-                        description: "Choices the user can pick in the review browser; decision gates only.",
-                        items: { type: "object", required: ["id", "label"], additionalProperties: false, properties: { id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, label: { type: "string", minLength: 1, maxLength: 200 } } }
+                        description: "Choices the user can pick in the review browser; decision gates only, each with the consequence of picking it.",
+                        items: { type: "object", required: ["id", "label", "consequence"], additionalProperties: false, properties: { id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, label: { type: "string", minLength: 1, maxLength: 200 }, consequence: { type: "string", minLength: 1, maxLength: 300, description: "One sentence on what happens if the person picks this option." } } }
+                      },
+                      recommended: {
+                        type: "object",
+                        required: ["reason"],
+                        additionalProperties: false,
+                        description: "Required for decision gates: the answer you recommend, as one of the options when the gate has options, and why.",
+                        properties: { option: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }, reason: { type: "string", minLength: 1, maxLength: 500 } }
                       }
                     }
                   },

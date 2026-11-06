@@ -67,7 +67,8 @@ export function chipState(status) {
   if (!status || status.state === "unavailable") return null;
   if (status.state === "preparing") {
     const step = stepIndex(status.progress?.phase), share = percent(status.progress);
-    return { tone: "busy", label: `Indexing ${step + 1}/${STEPS.length}`, detail: share === null ? STEPS[step].label : `${STEPS[step].label} ${share}%`, meter: share };
+    // In a repository with components, the chip names the component whose index is being built.
+    return { tone: "busy", label: `Indexing ${step + 1}/${STEPS.length}`, detail: share === null ? STEPS[step].label : `${STEPS[step].label} ${share}%`, meter: share, component: status.progress?.component ?? "" };
   }
   if (changedDuringBuild(status)) return { tone: "warn", label: "Index rebuild pending", detail: "" };
   if (status.state === "failed") return { tone: "danger", label: "Indexing failed", detail: "" };
@@ -93,15 +94,28 @@ function indexHtml(status) {
   const index = status.index;
   if (!index) return "";
   const coverage = index.coverage ?? {};
+  // With components, the facts describe the most recently built component index.
   const facts = [
+    index.component ? ["Latest index", index.component] : null,
     ["Built", `${relativeTime(index.builtAt)} (${new Date(index.builtAt).toLocaleString()})`],
     Number.isFinite(coverage.files) ? ["Files", String(coverage.files)] : null,
     Number.isFinite(coverage.fragments) ? ["Fragments", String(coverage.fragments)] : null,
     coverage.complete === false ? ["Coverage", "Partial: some files were skipped or not fully parsed"] : null,
     index.diagnostics ? ["Diagnostics", String(index.diagnostics)] : null
   ].filter(Boolean);
-  return `<dl class="indexing-facts">${facts.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}</dl>`;
+  return `<dl class="indexing-facts">${facts.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd title="${escapeHtml(value)}">${escapeHtml(value)}</dd>`).join("")}</dl>`;
 }
+
+const COMPONENT_STATES = { preparing: "Building", failed: "Failed", interrupted: "Stopped", ready: "Indexed" };
+
+// Each component with an index or a recorded build, in component order; a long identity ends in an ellipsis and its tooltip gives it whole.
+function componentsHtml(status) {
+  if (!status.components?.length) return "";
+  return `<p class="indexing-panel-title">Components</p><ul class="indexing-components">${status.components.map(({ component, state }) =>
+    `<li class="indexing-component-row" data-state="${escapeHtml(state)}" title="${escapeHtml(`${component}: ${COMPONENT_STATES[state] ?? state}`)}"><span class="indexing-dot" aria-hidden="true"></span><span class="indexing-component-name">${escapeHtml(component)}</span><span class="indexing-component-state">${escapeHtml(COMPONENT_STATES[state] ?? state)}</span></li>`).join("")}</ul>`;
+}
+
+const componentPrefix = (item) => item.component ? `<span class="indexing-diagnostic-component" title="${escapeHtml(item.component)}">${escapeHtml(item.component)}</span> ` : "";
 
 function rebuildWhen(status) {
   return status.autoRebuild ? "This page rebuilds it once the files stay unchanged for a minute." : "The next agent search or Rebuild index updates it.";
@@ -113,21 +127,26 @@ function rebuildButton(status) {
 }
 
 function summaryHtml(status) {
-  if (status.state === "preparing") return `<p>Started ${escapeHtml(relativeTime(status.startedAt))}.${status.index ? " Searches use the previous index until this build finishes." : ""}</p>${stepsHtml(status.progress)}`;
+  if (status.state === "preparing") {
+    const component = status.progress?.component;
+    const building = component ? `<p class="indexing-building" title="${escapeHtml(component)}">Building <code>${escapeHtml(component)}</code></p>` : "";
+    return `${building}<p>Started ${escapeHtml(relativeTime(status.startedAt))}.${status.index ? ` Searches use the previous index${component ? " of each component" : ""} until this build finishes.` : ""}</p>${stepsHtml(status.progress)}`;
+  }
   if (changedDuringBuild(status)) return `<p>Files changed while the index was being built. ${rebuildWhen(status)}</p>`;
   if (status.state === "failed") {
-    return `<p>The last build failed ${escapeHtml(relativeTime(status.endedAt))}. The next agent search tries again.</p>
-      <ul class="indexing-diagnostics">${status.diagnostics.map((item) => `<li><code>${escapeHtml(item.code)}</code> ${escapeHtml(item.message)}${item.recovery ? `<br><span>${escapeHtml(item.recovery)}</span>` : ""}</li>`).join("")}</ul>`;
+    const retry = status.components ? "Rebuild index retries each failed component, and an agent search that reads one tries again unless it reached a native limit." : "The next agent search tries again.";
+    return `<p>The last build${status.components ? " of a component" : ""} failed ${escapeHtml(relativeTime(status.endedAt))}. ${retry}</p>
+      <ul class="indexing-diagnostics">${status.diagnostics.map((item) => `<li>${componentPrefix(item)}<code>${escapeHtml(item.code)}</code> ${escapeHtml(item.message)}${item.recovery ? `<br><span>${escapeHtml(item.recovery)}</span>` : ""}</li>`).join("")}</ul>`;
   }
   if (status.state === "interrupted") return `<p>A build stopped ${escapeHtml(relativeTime(status.endedAt))} before it finished, usually because its agent session ended. The next agent search starts it again.</p>`;
   if (status.state === "none") return "<p>This project has no index yet. Prism builds it the first time an agent searches the repository.</p>";
-  if (status.stale) return `<p>Files or commits changed since the index was built. ${rebuildWhen(status)}</p>`;
+  if (status.stale) return `<p>Files or commits changed since ${status.components ? "a component's index" : "the index"} was built. ${rebuildWhen(status)}</p>`;
   if (status.stale === null) return "<p>The index is ready. This page cannot tell whether files changed since the build, because the folder is not a Git working tree or the index predates change tracking.</p>";
   return "<p>The index matches the current files.</p>";
 }
 
 export function panelHtml(status) {
-  return `<p class="indexing-panel-title">Repository index</p>${summaryHtml(status)}${rebuildButton(status)}${indexHtml(status)}
+  return `<p class="indexing-panel-title">Repository index</p>${summaryHtml(status)}${rebuildButton(status)}${indexHtml(status)}${componentsHtml(status)}
     <p class="indexing-panel-note">Agents also build and update the index when they search.${status.autoRebuild ? "" : " Background indexing is off for this project, so this page rebuilds it only when you ask."}</p>`;
 }
 
@@ -138,7 +157,7 @@ export function currentIndexStatus() {
   return latest;
 }
 
-export function createIndexingStatus({ root, button, label, detail, meter, panel, fetchJson }) {
+export function createIndexingStatus({ root, button, label, detail, meter, panel, fetchJson, component = root.querySelector(".indexing-component") }) {
   let status = null;
   let timer = null;
   let rendered = "";
@@ -154,10 +173,14 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
     label.textContent = chip.label;
     detail.textContent = chip.detail;
     detail.hidden = !chip.detail;
+    if (component) {
+      component.textContent = chip.component ?? "";
+      component.hidden = !chip.component;
+    }
     meter.hidden = chip.tone !== "busy";
     meter.classList.toggle("indeterminate", chip.meter === null || chip.meter === undefined);
     meter.firstElementChild.style.width = `${chip.meter ?? 100}%`;
-    button.title = [chip.label, chip.detail].filter(Boolean).join(": ");
+    button.title = [chip.label, [chip.component, chip.detail].filter(Boolean).join(" · ")].filter(Boolean).join(": ");
     // The panel is rebuilt only when its content changes, so an open panel keeps its scroll position between polls.
     const html = panelHtml(status);
     if (html !== rendered) {

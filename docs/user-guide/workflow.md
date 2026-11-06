@@ -55,6 +55,10 @@ Configure the command in `.prism/workflow.md`:
 - Test command: npm test
 ```
 
+A project with no tests yet, such as a new project, sets `- Test command: none yet`.
+Verification then refuses with `test_command_placeholder` instead of passing, and design puts the test runner and the real `Test command` line into the first slice, whose verification runs that command once it is set and you allow it.
+A no-op command such as `true` would let every slice pass without running its tests, so Prism never suggests one.
+
 A slice that records a [component](#components) runs that component's own `Test command` in the component's folder, or the `Test command` under `## Stack` in the project root when the component declares none.
 The root component, and a slice accepted before components existed, run the `Test command` under `## Stack` in the project root.
 Each result names the command, the folder it runs in, as a project-relative path that is empty for the project root, and the slice's component.
@@ -172,7 +176,7 @@ For an invalid declaration, `declared` is empty and `problem` holds the refusal'
 ### Component proposal
 
 When `.prism/workflow.md` lists no component under `## Components`, `get_roadmap` proposes a `## Components` block from the workspace manifests at the project root, in `components.proposal`.
-Prism never writes the proposal to any file; `workflow-init` shows it to you and adds it only when you approve it, and design reports it as an open question.
+Prism never writes the proposal to any file; `setup` shows it to you and adds it only when you approve it, and design reports it as an open question.
 The proposal reads these workspace patterns:
 
 | Manifest | Patterns |
@@ -235,12 +239,15 @@ Each question that waits on you is recorded, and the review browser's Attention 
 You can answer there instead of in the conversation.
 See [Review browser](review-browser.md#attention) for how the agent receives the answer.
 
-## Autonomy and agent flow
+## Autonomy
 
-`orchestrate` stores decision autonomy and agent flow per initiative.
-Autonomy is `conservative`, `broad`, or `full`, and agent flow is `multi` or `mono`.
+`orchestrate` stores decision autonomy per initiative.
+Autonomy is `conservative`, `broad`, or `full`.
 Conservative autonomy waits for you at every design gate, broad autonomy accepts a design unless it changes requirements, adds an ADR, or reports an open question, and full autonomy accepts every design.
-Multi flow runs design, each implementation step, and review in fresh child agents, while mono flow runs design and implementation in the orchestrator's context.
+The orchestrator runs triage, ideation, design, each implementation step, and review in fresh child agents, and never in its own context.
+In Claude Code, a Prism hook refuses the orchestrating session's own load of those skills and tells it to start a child agent instead.
+When no child agent can start, the orchestrator stops and asks you to run it where child agents are available.
+An `agentFlow` setting stored by an earlier Prism is dropped when the initiative's coordination state is next read.
 Full autonomy turns commits on when you have not set them, while explicit commit, continuation, and push settings always apply.
 
 ## Defects
@@ -323,9 +330,31 @@ Records keep working locally when Git, the network, or the upstream is unavailab
 Without `Store sync: on`, Prism never runs Git in a path store.
 See [Share Prism state across worktrees and machines](shared-records.md) for setup, conflicts, sync status, and cloud sessions.
 
+## Set up a project
+
+`prism:setup` writes `.prism/workflow.md` by asking you one topic at a time, with what it found in the project filled in and a recommended answer, so you mostly confirm.
+It covers whether the project is new or existing, the stack and test command, a shared store with this repository's name and the workspace name, components, the tracker and commit conventions, how questions reach you, and project constraints.
+In Claude Code the questions use the structured question prompt; elsewhere they are numbered options in the message.
+
+Setup stays the owner of `.prism/workflow.md` after the first run.
+Run it again, or the agent runs it for you, when you add a test, lint, or BDD tool, when a project with no tests gets its first test runner, when you bring in another repository, or when Prism reports a setting or record from an earlier version.
+During an orchestrated run, the orchestrator runs setup between slices in a child agent and asks you its questions on Attention.
+Setup never adds a component declaration, store, or repository name that you did not approve.
+
+## Offer at the start of a conversation
+
+When you start a new conversation, or clear one, Prism tells the agent it is available.
+If your first request asks for code that adds or changes behavior your requirements, ADRs, or feature files describe, the agent asks once whether to run it through Prism, and on yes it starts `prism:orchestrate` with your request.
+In a project without `.prism/workflow.md`, it offers `prism:setup` instead.
+It does not ask about a question on the code, a change that no requirement or ADR covers, such as a color or a typo, or a request that already names a Prism skill.
+When questions already wait on you in an initiative, it offers to resume that initiative.
+A resumed conversation and a child agent get no offer.
+Set `- Session offer: off` under `## Interaction` in `.prism/workflow.md`, or the environment variable `PRISM_SESSION_OFFER=off`, to turn the offer off.
+In Codex the offer needs Prism's hooks to be trusted through `/hooks`, like gate answers and run totals.
+
 ## Migrate an older setup
 
-Prism no longer reads `.claude/workflow-config.md`, and `prism:workflow-init` migrates its values into `.prism/workflow.md` without changing the old file.
+Prism no longer reads `.claude/workflow-config.md`, and `prism:setup` migrates its values into `.prism/workflow.md` without changing the old file.
 On resume, orchestration imports a legacy `map.puml` into the initiative record.
-`prism:workflow-init` proposes a roadmap record from a legacy roadmap and replaces the hand-written roadmap Markdown only after you accept it.
+`prism:setup` proposes a roadmap record from a legacy roadmap and replaces the hand-written roadmap Markdown only after you accept it.
 See [Upgrading to managed records](upgrading-to-managed-records.md) for everything that changed in Prism 0.10.0.

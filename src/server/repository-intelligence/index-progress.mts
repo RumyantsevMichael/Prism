@@ -126,3 +126,6 @@ export async function writeFreshness(directory: string, snapshot: string, finger
 }
 
 export const projectStorageKey = (root: string) => sha(root);
+// A component's index has storage of its own beside the project's. The root component is keyed by an empty name, because its name is the
+// repository's name, and renaming the repository must not discard its index; a declared component's name is never empty.
+export const componentStorageKey = (root: string, name: string) => sha(`${root}\0${name}`);

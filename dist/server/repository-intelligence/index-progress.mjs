@@ -127,9 +127,11 @@ async function writeFreshness(directory, snapshot, fingerprint) {
   });
 }
 const projectStorageKey = (root) => sha(root);
+const componentStorageKey = (root, name) => sha(`${root}\0${name}`);
 export {
   HEARTBEAT_MS,
   ProgressRecorder,
+  componentStorageKey,
   freshnessFile,
   gitFingerprint,
   processAlive,

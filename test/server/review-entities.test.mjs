@@ -266,8 +266,8 @@ test("accepts a decision answered by a note alone and an assistance gate marked 
   const current = await readCoordinationState({ projectRoot, initiative: "reports" });
   await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: {
     gateOperations: [
-      { op: "ask", kind: "decision", question: "Keep the old export format?", artifacts: [], options: [{ id: "keep", label: "Keep" }, { id: "drop", label: "Drop" }] },
-      { op: "ask", kind: "assistance", question: "Install the signing key.", artifacts: [] }
+      { op: "ask", kind: "decision", question: "Keep the old export format?", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [], options: [{ id: "keep", label: "Keep", consequence: "The run continues with this choice." }, { id: "drop", label: "Drop", consequence: "The run continues with this choice." }], recommended: { option: "keep", reason: "It keeps the current behavior." } },
+      { op: "ask", kind: "assistance", question: "Install the signing key.", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [] }
     ]
   } });
   const review = await startReviewServer({ projectRoot });
@@ -293,7 +293,7 @@ test("lists the newest open question and the newest answer first", async (contex
   const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
   for (const question of ["Asked first?", "Asked second?"]) {
     const current = await readCoordinationState({ projectRoot, initiative: "reports" });
-    await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question, artifacts: [], options: [{ id: "yes", label: "Yes" }] }] } });
+    await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question, context: "The run reached a choice that needs the person.", artifacts: [], options: [{ id: "yes", label: "Yes", consequence: "The run continues with this choice." }], recommended: { option: "yes", reason: "It keeps the current behavior." } }] } });
     await new Promise((resolve) => setTimeout(resolve, 15));
   }
   const review = await startReviewServer({ projectRoot });
@@ -337,7 +337,7 @@ test("flags an open question whose every attached file is gone", async (context)
   const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
   const current = await readCoordinationState({ projectRoot, initiative: "reports" });
   await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: {
-    gateOperations: [{ op: "ask", kind: "decision", question: "Keep the dropped attribution file?", artifacts: ["docs/requirements/dropped.md"], options: [{ id: "keep", label: "Keep" }, { id: "drop", label: "Drop" }] }]
+    gateOperations: [{ op: "ask", kind: "decision", question: "Keep the dropped attribution file?", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: ["docs/requirements/dropped.md"], options: [{ id: "keep", label: "Keep", consequence: "The run continues with this choice." }, { id: "drop", label: "Drop", consequence: "The run continues with this choice." }], recommended: { option: "keep", reason: "It keeps the current behavior." } }]
   } });
   const review = await startReviewServer({ projectRoot });
   try {

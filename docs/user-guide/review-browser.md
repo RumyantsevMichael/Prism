@@ -47,6 +47,9 @@ The page keeps checking and recovers on its own when the same app or its upgrade
 Attention lists the questions that an agent recorded for you, with the artifacts to inspect, including read-only source files.
 The newest question comes first, and so does the newest answer that still waits for the agent.
 Answer a question on Attention or in the conversation.
+Each decision and action request explains itself so you can answer without having followed the run: below the question it shows what happened, what was tried, and an example, and a decision lists what each option leads to and which option the agent recommends and why.
+Prism refuses to record a decision or action request without that explanation, or a decision without a consequence for each option and a recommendation, so a question always reaches you with them.
+Questions recorded by an earlier Prism version show only their question.
 A design or correctness review needs Approve or Request changes, and Request changes also needs a note that says what should change.
 A decision takes one of its options, a note in your own words, or both.
 An action request needs only Mark as done, with an optional note.
@@ -125,6 +128,7 @@ A colored badge after the file name says whether the file is added, changed, or 
 For a changed or removed file, the card names each function or type involved with the lines it spans in the project's code index.
 Hover one to see those lines, or click it to open the file with them marked.
 Line numbers come from the latest published index, so they can drift if the file changed after that build, and they are missing until the first build finishes.
+In a repository with [components](workflow.md#components), they come from each component's latest index, so a file of a component that has no index yet has no line numbers.
 Below the file, the card gives the reason for the change, then the contract clauses it serves and the tests cited for those clauses.
 A change that names no clause supports the slice as a whole.
 After a passing verification run, each card also says what the verified result actually changed, and marks each file "as planned", "partly as planned", or "planned but untouched".
@@ -179,6 +183,8 @@ In the palette, Enter opens the result in the preview tab, Ctrl+Enter keeps it o
 ## Index status
 
 The index item at the right of the status bar shows the open project's native index, and its panel lists every build step.
+In a repository with components, the item combines every component's index and names the component being built, and its panel lists each component with its state.
+A long component identity ends in an ellipsis, and the item's tooltip names it whole.
 See [Watch an index build in the review browser](repository-intelligence.md#watch-an-index-build-in-the-review-browser) for what each state means.
 
 ## Several projects

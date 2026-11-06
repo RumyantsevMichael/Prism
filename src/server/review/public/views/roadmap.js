@@ -111,7 +111,7 @@ export async function render(container, entity, ctx) {
   const missing = data.error
     ? `<p class="error">${escapeHtml(data.error)}</p>`
     : !data.exists
-      ? `<p>No roadmap record exists yet at <code>${escapeHtml(data.recordPath)}</code>.</p><p class="muted">Run <code>roadmap</code> to create or migrate it, or <code>workflow-init</code> for a new project.</p>`
+      ? `<p>No roadmap record exists yet at <code>${escapeHtml(data.recordPath)}</code>.</p><p class="muted">Run <code>setup</code> to create or migrate it.</p>`
       : !data.valid
         ? `<p class="error">The roadmap record is invalid: ${escapeHtml(data.errors.join(" "))}</p>`
         : "";

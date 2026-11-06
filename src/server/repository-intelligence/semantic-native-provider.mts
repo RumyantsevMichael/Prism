@@ -1,5 +1,7 @@
-import { openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
+import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
+import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectComponents, selectedComponents, unionIndex, unionSnapshot } from "./component-indexes.mjs";
+import type { ComponentResult, ComponentSource, Declaration, OpenSource } from "./component-indexes.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { moduleInterfaceReport } from "./module-interfaces.mjs";
@@ -11,34 +13,38 @@ import { complexUnits } from "./complex-units.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
 import type { AnalysisReceipt, SearchReceipt } from "../conservation/conservation-types.mjs";
-import type { SourceUnit, Domain, NativeSource, Neighbor, Preparation, PreparedIndex, RetrievalEvidence, SearchFilters, SearchHints, SearchHit, SearchResult, SemanticRuntime, SourceRange, StructuralEvidence } from "./repository-unit-types.mjs";
+import type { SourceUnit, Domain, NativeSource, Neighbor, Preparation, PreparedIndex, RetrievalEvidence, SearchFilters, SearchHints, SearchHit, SearchResult, SemanticRuntime, ComponentRuntime, ComponentState, Diagnostic, SourceRange, SourceSnapshot, StructuralEvidence } from "./repository-unit-types.mjs";
 
 interface ConceptSearchInput { projectRoot: string; query: string; filters?: SearchFilters; expectedSnapshot?: string; snapshotId?: string; limit?: number }
 interface SharedDependencyInput { projectRoot: string; filters?: { paths?: string[] }; includeTests?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number }
 interface ModuleInterfaceInput { projectRoot: string; filters?: { paths?: string[] }; allModules?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number; offset?: number }
 interface ScopedAnalysisInput { projectRoot: string; filters?: { paths?: string[] }; includeTests?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number }
 interface ProviderOptions { source?: Record<string, unknown>; nativeSource?: NativeSource; runtime?: SemanticRuntime; expectedSnapshot?: string; waitMs?: number }
+// The preparation of a call in a repository with components: the result's status and components, with no preparation id of its own, and the union of the included components' indexes.
+interface ComponentPreparation { status: ComponentResult["status"]; preparationId: null; snapshot: string; diagnostics: Diagnostic[]; components: ComponentState[]; prepared?: PreparedIndex }
 
 const domains = new Set(["code", "instruction", "documentation", "configuration"]);
 const exact = (node: SourceUnit, value: string) => [node.name, node.qualifiedName, node.selector].includes(value);
 const pinned = (hit: SearchHit) => hit.reasons?.some(reason => ["explicit-design-reference", "expected-modification-target", "exact-symbol"].includes(reason));
+// The six structural reports read components as the search does.
+const COMPONENT_REPORT = " In a repository that declares components, filters.paths selects the components that the report reads, and a report without paths reads every component that holds a file, as one index: groups keep members and module reports count importers only in the selected components, so matches in other components appear only in an unscoped report. components gives each read component's status, and the components_missing diagnostic names each one that is not included.";
 
 export const NATIVE_INTELLIGENCE_TOOLS = [
   {
     name: "discover_repository_intelligence",
-    description: "Read native runtime, model, index, and structural capability status without downloads or index preparation.",
+    description: "Read native runtime, model, index, and structural capability status without downloads or index preparation. In a repository that declares components, components lists each component's index status in component order.",
     inputSchema: { type: "object", properties: { projectRoot: { type: "string" } }, required: ["projectRoot"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "get_repository_intelligence_status",
-    description: "Read native preparation progress, versions, coverage, and diagnostics. Optionally wait up to thirty seconds for an existing preparation.",
+    description: "Read native preparation progress, versions, coverage, and diagnostics. Optionally wait up to thirty seconds for an existing preparation. In a repository that declares components, each component has its own index and components lists each one's status, progress, coverage, and failure in component order.",
     inputSchema: { type: "object", properties: { projectRoot: { type: "string" }, waitMs: { type: "integer", minimum: 0, maximum: 30000, default: 0 }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }, required: ["projectRoot"], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "search_repository_concepts",
-    description: "Search code, instructions, documentation, and configuration for reusable concepts. Downloads pinned runtime/model assets on first use and writes only private caches. Similarity ranks candidates and does not establish conceptual equivalence.",
+    description: "Search code, instructions, documentation, and configuration for reusable concepts. Downloads pinned runtime/model assets on first use and writes only private caches. Similarity ranks candidates and does not establish conceptual equivalence. In a repository that declares components, each component has its own index: filters.paths reads only the components that hold those paths, and a search without paths reads every component that holds a file. components gives each read component's status; partial means some of them are not included, and the components_missing diagnostic names each one with why.",
     inputSchema: { type: "object", required: ["projectRoot", "query"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, query: { type: "string", minLength: 1, maxLength: 4096 },
       expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
@@ -52,7 +58,7 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
   },
   {
     name: "find_shared_dependencies",
-    description: "Group functions and methods in different files that call the same rare set of operations, such as a repeated safety check, write protocol, or copied helper. Uses the same prepared index as search_repository_concepts. A shared dependency set identifies candidates for investigation and does not establish equivalent behavior.",
+    description: "Group functions and methods in different files that call the same rare set of operations, such as a repeated safety check, write protocol, or copied helper. Uses the same prepared index as search_repository_concepts. A shared dependency set identifies candidates for investigation and does not establish equivalent behavior." + COMPONENT_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
@@ -64,19 +70,19 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
   },
   {
     name: "report_module_interfaces",
-    description: "Report JavaScript and TypeScript module exports with the modules that import each one, exports that no other module imports, exports that only tests import, and classes that forward most public methods to one field. Uses the same prepared index as search_repository_concepts. The report gives facts for interface design review and does not decide whether an interface is too shallow.",
+    description: "Report JavaScript and TypeScript module exports with the modules that import each one, exports that no other module imports, exports that only tests import, and classes that forward most public methods to one field. Uses the same prepared index as search_repository_concepts. The report gives facts for interface design review and does not decide whether an interface is too shallow." + COMPONENT_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 }, offset: { type: "integer", minimum: 0, default: 0 },
       allModules: { type: "boolean", default: false, description: "Report every exporting module, not only modules with unused or test-only exports." },
       filters: { type: "object", additionalProperties: false, properties: {
-        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the modules and classes to report. Importers anywhere in the project still count.", items: { type: "string", minLength: 1, maxLength: 512 } }
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the modules and classes to report. Importers anywhere in the project still count, or in a repository that declares components, anywhere in the components that hold these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   },
   {
     name: "find_shared_literals",
-    description: "Group functions, methods, classes, constants, and instruction list items or paragraphs in different files that spell the same rare set of identifier-like literals, such as ids, states, keys, event names, method names, or tool names in backticks. Also report key sets that several objects, interfaces, or schemas repeat. Uses the same prepared index as search_repository_concepts. A shared literal set or shape shows names that several places must know and does not establish that one owner is better.",
+    description: "Group functions, methods, classes, constants, and instruction list items or paragraphs in different files that spell the same rare set of identifier-like literals, such as ids, states, keys, event names, method names, or tool names in backticks. Also report key sets that several objects, interfaces, or schemas repeat. Uses the same prepared index as search_repository_concepts. A shared literal set or shape shows names that several places must know and does not establish that one owner is better." + COMPONENT_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
@@ -88,7 +94,7 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
   },
   {
     name: "report_cohesion_clusters",
-    description: "Report large classes, Rust and Go types, and modules whose members fall into separate clusters of shared state and calls, with the members and state of each cluster. Uses the same prepared index as search_repository_concepts. Clusters identify candidate responsibilities for investigation and do not decide whether a split is better.",
+    description: "Report large classes, Rust and Go types, and modules whose members fall into separate clusters of shared state and calls, with the members and state of each cluster. Uses the same prepared index as search_repository_concepts. Clusters identify candidate responsibilities for investigation and do not decide whether a split is better." + COMPONENT_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
@@ -100,7 +106,7 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
   },
   {
     name: "find_same_name_units",
-    description: "Group functions in different files that have the same name: identical copies, and diverged variants with the dependencies that only each variant uses and its throw count. Uses the same prepared index as search_repository_concepts. A diverged name shows candidates for one contract and does not establish that the variants should behave alike.",
+    description: "Group functions in different files that have the same name: identical copies, and diverged variants with the dependencies that only each variant uses and its throw count. Uses the same prepared index as search_repository_concepts. A diverged name shows candidates for one contract and does not establish that the variants should behave alike." + COMPONENT_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
@@ -112,7 +118,7 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
   },
   {
     name: "report_complex_units",
-    description: "Report long or branchy functions and methods with their lines, branches, nesting depth, parameters, nested functions, and the expression that they compare with the most literal values. Uses the same prepared index as search_repository_concepts. The facts identify candidates for a split and do not decide that a unit is too complex.",
+    description: "Report long or branchy functions and methods with their lines, branches, nesting depth, parameters, nested functions, and the expression that they compare with the most literal values. Uses the same prepared index as search_repository_concepts. The facts identify candidates for a split and do not decide that a unit is too complex." + COMPONENT_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
@@ -148,14 +154,11 @@ export function validateConceptSearch(value: unknown): asserts value is ConceptS
 
 export class SemanticNativeRepositoryIntelligence {
   prepared?: PreparedIndex;
-  constructor(public source: NativeSource, public preparation: Preparation, public runtime: SemanticRuntime = nativeSemanticRuntime) { this.prepared = preparation.prepared; }
+  constructor(public source: NativeSource, public preparation: Preparation | ComponentPreparation, public runtime: SemanticRuntime = nativeSemanticRuntime) { this.prepared = preparation.prepared; }
   snapshot() { return this.source.snapshot(); }
   read(range: { file: string; range: SourceRange }) { return this.source.read(range); }
   validateSourceRange(range: { file: string; range: SourceRange }) { return this.source.validateSourceRange(range); }
-  async verifySnapshot() {
-    try { return await this.source.verifySnapshot(); }
-    catch (error) { if (error.code === "snapshot-changed") throw semanticError("stale_snapshot", "The repository changed during semantic analysis. Repeat the request."); throw error; }
-  }
+  verifySnapshot() { return verifySource(this.source); }
   async describe() {
     const description = await this.source.describe();
     return { ...description, preparation: { ...this.preparation, prepared: undefined },
@@ -210,7 +213,77 @@ export class SemanticNativeRepositoryIntelligence {
   }
 }
 
+async function verifySource(source: NativeSource) {
+  try { return await source.verifySnapshot(); }
+  catch (error) { if (error.code === "snapshot-changed") throw semanticError("stale_snapshot", "The repository changed during semantic analysis. Repeat the request."); throw error; }
+}
+
+interface ComponentParts { selected: ComponentSource[]; preparations: Preparation[]; states: ComponentState[]; snapshot: string }
+
+function componentPreparation(result: ComponentResult, parts: ComponentParts): ComponentPreparation {
+  const included = result.components.flatMap((state, index) => state.status === "included" ? [{ component: state.component, prepared: parts.preparations[index].prepared! }] : []);
+  return { status: result.status, preparationId: null, snapshot: parts.snapshot, diagnostics: componentDiagnostics(result, parts.preparations), components: result.components,
+    prepared: included.length ? unionIndex(included, parts.snapshot, result.indexRevision!) : undefined };
+}
+
+// The provider of a context plan in a repository with components, which selects every component that holds a file. The whole project's source,
+// which holds exactly those files, answers describe, reads, and lexical search, so an external provider still matches its snapshot identity.
+// Semantic search merges the answers of the included components' indexes as the search tool does, and the graph expands within their union.
+// While a selected component is not included, the evidence names it with the components_missing diagnostic and is not estimate-eligible.
+export class ComponentRepositoryIntelligence extends SemanticNativeRepositoryIntelligence {
+  result: ComponentResult;
+  members: { index: number; provider: SemanticNativeRepositoryIntelligence }[];
+  constructor(source: NativeSource, public parts: ComponentParts, runtime: SemanticRuntime) {
+    const result = componentResult(parts.states, parts.snapshot);
+    super(source, componentPreparation(result, parts), runtime);
+    this.result = result;
+    this.members = parts.states.flatMap((state, index) => state.status === "included" ? [{ index, provider: new SemanticNativeRepositoryIntelligence(parts.selected[index].source, parts.preparations[index], runtime) }] : []);
+  }
+  async semanticSearch(query: string, filters: SearchFilters | undefined, limit: number): Promise<SearchResult[] | null> {
+    if (!this.prepared) return null;
+    const searched = await searchComponents(this.members.map(({ index, provider }) => ({ component: this.parts.selected[index].component, search: () => provider.semanticSearch(query, filters, limit) })), limit);
+    // An index that fails to answer leaves the result, and the union, as in the search tool.
+    const failed = this.members.filter((_, position) => searched.answers[position] === null);
+    if (failed.length) {
+      for (const { index, provider } of failed) {
+        const [failure] = provider.preparation.diagnostics.slice(-1);
+        this.parts.states[index] = { ...this.parts.states[index], status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } };
+      }
+      this.members = this.members.filter(member => !failed.includes(member));
+      this.result = componentResult(this.parts.states, this.parts.snapshot);
+      this.preparation = componentPreparation(this.result, this.parts);
+      this.prepared = this.preparation.prepared;
+    }
+    return this.prepared ? searched.results : null;
+  }
+  async search(task: string, hints: SearchHints = {}, options: { topK?: number; budget?: string } = {}): Promise<RetrievalEvidence> {
+    const evidence = await super.search(task, hints, options);
+    if (this.result.status === "ready") return evidence;
+    return { ...evidence, estimateEligible: false, diagnostics: [...this.result.diagnostics, ...evidence.diagnostics.filter(item => item.code !== "components_missing")] };
+  }
+  async neighbors(nodes: SourceUnit[], options: { maxNodes?: number } = {}): Promise<StructuralEvidence> {
+    const evidence = await super.neighbors(nodes, options);
+    return this.result.status === "ready" ? evidence : { ...evidence, estimateEligible: false };
+  }
+}
+
+// A context plan in a repository with components prepares every component that holds a file, and answers preparing while none of them is included.
+// Its expectedSnapshot may be the snapshot of that selection, which an unscoped search returns, or the plan's own sourceFingerprint of the whole project.
+async function prepareComponentProvider(projectRoot: string, declaration: Declaration, options: ProviderOptions) {
+  const runtime = (options.runtime || nativeSemanticRuntime) as ComponentRuntime;
+  const { root, selected, snapshot } = await selectedComponents(projectRoot, declaration, undefined);
+  const source = new NativeRepositoryIntelligence(root, options.source) as unknown as NativeSource;
+  if (options.expectedSnapshot && options.expectedSnapshot !== snapshot && options.expectedSnapshot !== (await source.snapshot()).sourceFingerprint)
+    throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
+  const preparations = await prepareComponents(runtime, selected, options.waitMs);
+  const provider = new ComponentRepositoryIntelligence(source, { selected, preparations, states: componentStates(selected, preparations), snapshot }, runtime);
+  return { provider, preparation: provider.preparation };
+}
+
 export async function prepareNativeProvider(projectRoot: string, options: ProviderOptions = {}) {
+  // An invalid component declaration refuses every native index tool before any preparation.
+  const declaration = options.nativeSource ? null : await indexComponents(projectRoot);
+  if (declaration) return prepareComponentProvider(projectRoot, declaration, options);
   const source = options.nativeSource || await openNativeRepositoryIntelligence(projectRoot, options.source) as unknown as NativeSource;
   const runtime = options.runtime || nativeSemanticRuntime;
   const preparation = await runtime.prepare(source, options.expectedSnapshot, options.waitMs);
@@ -219,20 +292,13 @@ export async function prepareNativeProvider(projectRoot: string, options: Provid
 
 export async function searchRepositoryConcepts(input: ConceptSearchInput, options: ProviderOptions = {}) {
   validateConceptSearch(input);
+  const declaration = options.nativeSource ? null : await indexComponents(input.projectRoot);
+  if (declaration) return searchComponentIndexes(input, declaration, options);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, results: [] };
   let results = await provider.semanticSearch(input.query, input.filters, input.limit || 10);
-  if (results === null) {
-    const { hits } = await provider.source.search(input.query, {}, { topK: input.limit || 10, filters: input.filters });
-    results = [];
-    for (const { node, score } of hits) {
-      const domain = domainFor(node.file);
-      const source = await provider.source.read({ file: node.file, range: node.range });
-      results.push({ ...node, domain, selector: node.name, sourceHash: (await provider.snapshot()).filesByPath.get(node.file)!.hash, excerpt: source.content.slice(0, 600), lexicalScore: score, cosineSimilarity: null, fusedRank: results.length + 1 });
-      if (results.length >= (input.limit || 10)) break;
-    }
-  }
+  if (results === null) results = await lexicalResults([provider.source], input, input.limit || 10);
   await provider.verifySnapshot();
   if (input.snapshotId && provider.prepared) await retainAnalysis(input.projectRoot, input.snapshotId, provider.prepared);
   const capabilities = (await provider.describe()).capabilities;
@@ -247,6 +313,65 @@ export async function searchRepositoryConcepts(input: ConceptSearchInput, option
     snapshotId: input.snapshotId || null, receiptId,
     indexRevision: provider.prepared?.revision || null, modelIdentity: provider.prepared?.modelIdentity || null,
     capabilities, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, results };
+}
+
+// Today's lexical fallback over the files of one or more sources: the sources' file matches by score from highest to lowest and then by path,
+// as one search over all of their files would rank them, since a file's lexical score depends only on that file and the query.
+async function lexicalResults(sources: NativeSource[], input: ConceptSearchInput, limit: number, components: string[] = []) {
+  const hits = [];
+  for (const [index, source] of sources.entries()) for (const hit of (await source.search(input.query, {}, { topK: limit, filters: input.filters })).hits) hits.push({ ...hit, source, component: components[index] });
+  hits.sort((left, right) => right.score - left.score || left.node.file.localeCompare(right.node.file));
+  const results: (SearchResult & { component?: string })[] = [];
+  for (const { node, score, source, component } of hits.slice(0, limit)) {
+    const read = await source.read({ file: node.file, range: node.range });
+    results.push({ ...node, domain: domainFor(node.file), selector: node.name, sourceHash: (await source.snapshot()).filesByPath.get(node.file)!.hash, excerpt: read.content.slice(0, 600),
+      lexicalScore: score, cosineSimilarity: null, fusedRank: results.length + 1, ...(component ? { component } : {}) });
+  }
+  return results;
+}
+
+// A retained baseline's source of the files that a filter accepts, for a call with snapshotId in a repository with components.
+const retainedSources = (projectRoot: string, snapshotId?: string): OpenSource | undefined => snapshotId ? filter => conservationStore.source(projectRoot, snapshotId, filter) : undefined;
+
+// In a repository with components, the search prepares the components that its paths select, or every component that holds a file, and answers
+// from the indexes of those that are ready, merged across components and naming each component it left out. When every selected component
+// failed, it answers with the lexical fallback over the selected components' files. A call with snapshotId splits the retained baseline into
+// components and reads them the same way, and it retains the baseline's analysis only when it selected and included every component of the baseline.
+async function searchComponentIndexes(input: ConceptSearchInput, declaration: Declaration, options: ProviderOptions) {
+  const runtime = (options.runtime || nativeSemanticRuntime) as ComponentRuntime, limit = input.limit || 10;
+  const { sources, selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot, retainedSources(input.projectRoot, input.snapshotId));
+  const preparations = await prepareComponents(runtime, selected, options.waitMs);
+  const states = componentStates(selected, preparations);
+  const preparing = () => ({ status: "preparing", preparationId: null, snapshot, diagnostics: componentResult(states, snapshot).diagnostics, components: states, results: [] });
+  if (componentResult(states, snapshot).status === "preparing") return preparing();
+  const included = states.flatMap((state, index) => state.status === "included" ? [{ index, provider: new SemanticNativeRepositoryIntelligence(selected[index].source, preparations[index], runtime) }] : []);
+  const searched = await searchComponents(included.map(({ index, provider }) => ({ component: selected[index].component, search: () => provider.semanticSearch(input.query, input.filters, limit) })), limit);
+  // An index that fails to answer is not part of the result.
+  for (const [position, { index, provider }] of included.entries()) {
+    if (searched.answers[position] !== null) continue;
+    const [failure] = provider.preparation.diagnostics.slice(-1);
+    states[index] = { ...states[index], status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } };
+  }
+  const providers = included.filter((_, position) => searched.answers[position] !== null).map(entry => entry.provider);
+  const result = componentResult(states, snapshot);
+  if (result.status === "preparing") return preparing();
+  const candidates = result.status === "degraded" ? await lexicalResults(selected.map(entry => entry.source), input, limit, selected.map(entry => entry.component)) : searched.results;
+  const verified = result.status === "degraded" ? selected.map((entry, index) => new SemanticNativeRepositoryIntelligence(entry.source, preparations[index], runtime)) : providers;
+  for (const provider of verified) await provider.verifySnapshot();
+  if (input.snapshotId && result.status === "ready" && selected.length === (await selectComponents(declaration, sources)).length)
+    await retainAnalysis(input.projectRoot, input.snapshotId, await baselineIndex(selected, preparations, result));
+  const prepared = providers.map(provider => provider.prepared!);
+  const diagnostics = componentDiagnostics(result, preparations);
+  const capabilities = { lexicalSearch: true, semanticSearch: prepared.length > 0, hybridSearch: prepared.length > 0, symbolGraph: prepared.length > 0, verifiedSource: true, documentGraph: prepared.length > 0 };
+  const first = prepared[0];
+  const receipt: SearchReceipt = { kind: "search", schemaVersion: 1, project: (await conservationStore.location(input.projectRoot)).root,
+    snapshotId: input.snapshotId || null, snapshot, query: input.query, filters: input.filters || null, limit, status: result.status, capabilities, modelIdentity: first?.modelIdentity || null, indexRevision: result.indexRevision,
+    versions: { graph: "1.6.0", extractor: first?.index.chunkerVersion || "unavailable", tokenizer: first?.modelIdentity || "unavailable", runtime: first?.assetIdentity || "unavailable" },
+    coverage: prepared.length ? { files: Object.assign({}, ...prepared.map(item => item.index.fileCoverage)), counts: prepared.map(item => item.index.counts) } : null,
+    diagnostics, components: result.components, candidates };
+  const receiptId = await conservationStore.put(input.projectRoot, receipt);
+  return { status: result.status, preparationId: null, snapshot, snapshotId: input.snapshotId || null, receiptId, indexRevision: result.indexRevision, modelIdentity: first?.modelIdentity || null,
+    capabilities, diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, components: result.components, results: candidates };
 }
 
 // Both repository analyses take a snapshot, an optional path filter, a result limit, and their own boolean switches.
@@ -274,48 +399,77 @@ export function validateCohesion(value: unknown): asserts value is ScopedAnalysi
 export function validateSameNameUnits(value: unknown): asserts value is ScopedAnalysisInput { validateAnalysis(value, ["includeTests"]); }
 export function validateComplexUnits(value: unknown): asserts value is ScopedAnalysisInput { validateAnalysis(value, ["includeTests"]); }
 
+// What a structural report reads: its preparation, the fields that identify its result, the index, the diagnostics of its preparation,
+// and the source files that the index holds, which it verifies again before it answers.
+interface Analysis {
+  preparation: Preparation | ComponentPreparation; identity: Record<string, unknown>; prepared?: PreparedIndex; diagnostics: Diagnostic[]; components?: ComponentState[];
+  snapshot(): Promise<SourceSnapshot>; verifySnapshot(): Promise<unknown>;
+}
+
 // Prepare the snapshot that an analysis reads: the retained baseline when the caller names one, or the live project.
-async function preparedAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string }, options: ProviderOptions) {
+async function preparedAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string; filters?: { paths?: string[] } }, options: ProviderOptions): Promise<Analysis> {
+  // A retained baseline is split by the current declaration, so an invalid one refuses it too, as it refuses the live project.
+  const declaration = options.nativeSource ? null : await indexComponents(input.projectRoot);
+  if (declaration) return componentAnalysis(input, declaration, options);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
   const identity = { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot, snapshotId: input.snapshotId || null };
-  return { provider, preparation, identity };
+  return { preparation, identity, prepared: provider.prepared, diagnostics: provider.preparation.diagnostics, snapshot: () => provider.snapshot(), verifySnapshot: () => provider.verifySnapshot() };
 }
+
+// In a repository with components, an analysis reads the components that its paths select, or every component that holds a file, as one index
+// over the included components, so its file contents, such as the importers a module report counts, come only from those components.
+// A call with snapshotId reads the retained baseline's components the same way.
+async function componentAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string; filters?: { paths?: string[] } }, declaration: Declaration, options: ProviderOptions): Promise<Analysis> {
+  const runtime = (options.runtime || nativeSemanticRuntime) as ComponentRuntime;
+  const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot, retainedSources(input.projectRoot, input.snapshotId));
+  const preparations = await prepareComponents(runtime, selected, options.waitMs);
+  const parts = { selected, preparations, states: componentStates(selected, preparations), snapshot };
+  const result = componentResult(parts.states, snapshot), preparation = componentPreparation(result, parts);
+  const sources = selected.filter((_, index) => result.components[index].status === "included").map(entry => entry.source);
+  let files: Promise<SourceSnapshot> | undefined;
+  return { preparation, identity: { status: result.status, preparationId: null, snapshot, snapshotId: input.snapshotId || null, components: result.components }, prepared: preparation.prepared,
+    diagnostics: preparation.diagnostics, components: result.components, snapshot: () => files ??= unionSnapshot(sources, snapshot),
+    verifySnapshot: async () => { for (const entry of selected) await verifySource(entry.source); } };
+}
+
+// A result that leaves out a selected component starts its diagnostics with the components_missing diagnostic that names it.
+const missingFirst = (diagnostics: Diagnostic[]) => [...diagnostics.filter(item => item.code === "components_missing"), ...diagnostics.filter(item => item.code !== "components_missing")];
 
 export async function findSharedDependencies(input: SharedDependencyInput, options: ProviderOptions = {}) {
   validateSharedDependencies(input);
-  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  const analysis = await preparedAnalysis(input, options), { preparation, identity, prepared } = analysis;
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, groups: [] };
-  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
-  const { index } = provider.prepared, contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
+  if (!prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: analysis.diagnostics.slice(0, 20), diagnosticCount: analysis.diagnostics.length, groups: [] };
+  const { index } = prepared, contents = new Map((await analysis.snapshot()).files.map(file => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
   const result = sharedDependencyGroups(index, { include, limit: 100 });
   const groups = result.groups.filter(group => group.members.some(member => inside(member.file)));
-  await provider.verifySnapshot();
-  const diagnostics = [...(index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a group can miss members." }]),
+  await analysis.verifySnapshot();
+  const diagnostics = missingFirst([...(index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a group can miss members." }]),
     ...(result.coverage.unresolvedNames ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so groups use project calls only.", recovery: "Prepare the index again with the current native runtime." }]),
-    ...provider.preparation.diagnostics];
-  const receiptId = await retainResult(input, provider, "find_shared_dependencies", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
-  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: result.coverage,
+    ...analysis.diagnostics]);
+  const receiptId = await retainResult(input, analysis, "find_shared_dependencies", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
+  return { ...identity, receiptId, indexRevision: prepared.revision, coverage: result.coverage,
     diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalGroups: groups.length, groups: groups.slice(0, input.limit || 20) };
 }
 
 export async function reportModuleInterfaces(input: ModuleInterfaceInput, options: ProviderOptions = {}) {
   validateModuleInterfaces(input);
-  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  const analysis = await preparedAnalysis(input, options), { preparation, identity, prepared } = analysis;
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, modules: [], delegatingClasses: [] };
-  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, modules: [], delegatingClasses: [] };
-  const contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
+  if (!prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: analysis.diagnostics.slice(0, 20), diagnosticCount: analysis.diagnostics.length, modules: [], delegatingClasses: [] };
+  const contents = new Map((await analysis.snapshot()).files.map(file => [file.file, file.content]));
   const { inside } = analysisScope(input, contents);
-  const report = moduleInterfaceReport(provider.prepared.index, contents, { include: inside, allModules: input.allModules });
-  await provider.verifySnapshot();
+  const report = moduleInterfaceReport(prepared.index, contents, { include: inside, allModules: input.allModules });
+  await analysis.verifySnapshot();
   const offset = input.offset || 0, limit = input.limit || 20;
-  const diagnostics = [...(report.coverage.unresolvedLocalImports ? [{ code: "unresolved_imports", count: report.coverage.unresolvedLocalImports, message: "Some local imports did not resolve, so an export can look unused although a module imports it." }] : []),
+  const diagnostics = missingFirst([...(report.coverage.unresolvedLocalImports ? [{ code: "unresolved_imports", count: report.coverage.unresolvedLocalImports, message: "Some local imports did not resolve, so an export can look unused although a module imports it." }] : []),
     ...(report.coverage.importAnalysisSkipped.length ? [{ code: "unsupported_language", message: `Import analysis covers JavaScript and TypeScript, not ${report.coverage.importAnalysisSkipped.join(", ")} files.` }] : []),
-    ...provider.preparation.diagnostics];
-  const receiptId = await retainResult(input, provider, "report_module_interfaces", { paths: input.filters?.paths || [], allModules: Boolean(input.allModules) }, report.coverage, diagnostics,
+    ...analysis.diagnostics]);
+  const receiptId = await retainResult(input, analysis, "report_module_interfaces", { paths: input.filters?.paths || [], allModules: Boolean(input.allModules) }, report.coverage, diagnostics,
     { modules: report.modules, delegatingClasses: report.delegatingClasses });
-  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: report.coverage,
+  return { ...identity, receiptId, indexRevision: prepared.revision, coverage: report.coverage,
     diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length,
     totalModules: report.modules.length, nextOffset: offset + limit < report.modules.length ? offset + limit : null,
     modules: report.modules.slice(offset, offset + limit), delegatingClasses: report.delegatingClasses.slice(0, 50) };
@@ -323,9 +477,9 @@ export async function reportModuleInterfaces(input: ModuleInterfaceInput, option
 
 // Retain the complete result of an analysis, before the response limit, so that a report or a review view can cite it by receiptId.
 // The hash of each file that the result names lets a reader detect results that a later edit made stale.
-async function retainResult(input: { projectRoot: string; snapshotId?: string }, provider: SemanticNativeRepositoryIntelligence, tool: AnalysisReceipt["tool"],
+async function retainResult(input: { projectRoot: string; snapshotId?: string }, analysis: Analysis, tool: AnalysisReceipt["tool"],
   scope: Record<string, unknown>, coverage: unknown, diagnostics: AnalysisReceipt["diagnostics"], results: Pick<AnalysisReceipt, "groups" | "modules" | "delegatingClasses" | "containers" | "units" | "shapes">) {
-  const snapshot = await provider.snapshot(), prepared = provider.prepared!, named = new Set<string>();
+  const snapshot = await analysis.snapshot(), prepared = analysis.prepared!, named = new Set<string>();
   const collect = (value: unknown) => {
     if (Array.isArray(value)) value.forEach(collect);
     else if (value && typeof value === "object") for (const [key, item] of Object.entries(value)) key === "file" && typeof item === "string" ? named.add(item) : collect(item);
@@ -333,9 +487,9 @@ async function retainResult(input: { projectRoot: string; snapshotId?: string },
   collect(results);
   const files = [...named].sort().flatMap(file => snapshot.filesByPath.has(file) ? [{ file, hash: snapshot.filesByPath.get(file)!.hash }] : []);
   const receipt: AnalysisReceipt = { kind: "repository-analysis", schemaVersion: 1, project: (await conservationStore.location(input.projectRoot)).root, tool,
-    snapshotId: input.snapshotId || null, snapshot: provider.preparation.snapshot, indexRevision: prepared.revision,
+    snapshotId: input.snapshotId || null, snapshot: analysis.preparation.snapshot, indexRevision: prepared.revision,
     versions: { extractor: prepared.index.chunkerVersion || "unavailable", runtime: prepared.assetIdentity || "unavailable" },
-    scope, coverage, diagnostics, files, ...results };
+    scope, coverage, diagnostics, files, ...(analysis.components ? { components: analysis.components } : {}), ...results };
   return conservationStore.put(input.projectRoot, receipt);
 }
 
@@ -349,68 +503,68 @@ function analysisScope(input: { includeTests?: boolean; filters?: { paths?: stri
 
 export async function findSharedLiterals(input: SharedDependencyInput, options: ProviderOptions = {}) {
   validateSharedLiterals(input);
-  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  const analysis = await preparedAnalysis(input, options), { preparation, identity, prepared } = analysis;
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, groups: [], shapes: [] };
-  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [], shapes: [] };
-  const contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
+  if (!prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: analysis.diagnostics.slice(0, 20), diagnosticCount: analysis.diagnostics.length, groups: [], shapes: [] };
+  const contents = new Map((await analysis.snapshot()).files.map(file => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
-  const result = sharedLiteralGroups(provider.prepared.index, contents, { include, limit: 100 });
+  const result = sharedLiteralGroups(prepared.index, contents, { include, limit: 100 });
   const groups = result.groups.filter(group => [...group.members, ...group.clients].some(member => inside(member.file)));
-  const shaped = sharedShapes(provider.prepared.index, contents, { include, limit: 100 });
+  const shaped = sharedShapes(prepared.index, contents, { include, limit: 100 });
   const shapes = shaped.shapes.filter(shape => shape.locations.some(location => inside(location.file)));
-  await provider.verifySnapshot();
-  const diagnostics = provider.preparation.diagnostics, coverage = { ...result.coverage, objects: shaped.coverage.objects };
-  const receiptId = await retainResult(input, provider, "find_shared_literals", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, coverage, diagnostics, { groups, shapes });
+  await analysis.verifySnapshot();
+  const diagnostics = missingFirst(analysis.diagnostics), coverage = { ...result.coverage, objects: shaped.coverage.objects };
+  const receiptId = await retainResult(input, analysis, "find_shared_literals", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, coverage, diagnostics, { groups, shapes });
   // A host can move a long tool result out of the conversation, so the response keeps the strongest facts and the receipt keeps all of them.
   const brief = groups.slice(0, input.limit || 20).map(group => ({ ...group, literals: group.literals.slice(0, 10), literalCount: group.literals.length }));
   const briefShapes = shapes.slice(0, Math.min(input.limit || 20, 8)).map(shape => ({ ...shape, locations: shape.locations.slice(0, 4) }));
-  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage,
+  return { ...identity, receiptId, indexRevision: prepared.revision, coverage,
     diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalGroups: groups.length, groups: brief, totalShapes: shapes.length, shapes: briefShapes };
 }
 
 export async function reportCohesionClusters(input: ScopedAnalysisInput, options: ProviderOptions = {}) {
   validateCohesion(input);
-  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  const analysis = await preparedAnalysis(input, options), { preparation, identity, prepared } = analysis;
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, containers: [] };
-  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, containers: [] };
-  const contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
+  if (!prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: analysis.diagnostics.slice(0, 20), diagnosticCount: analysis.diagnostics.length, containers: [] };
+  const contents = new Map((await analysis.snapshot()).files.map(file => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
-  const report = cohesionReport(provider.prepared.index, contents, { include: unit => include(unit) && inside(unit.file) });
-  await provider.verifySnapshot();
-  const { index } = provider.prepared;
-  const diagnostics = [...(index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a cluster can miss members or calls." }]), ...provider.preparation.diagnostics];
-  const receiptId = await retainResult(input, provider, "report_cohesion_clusters", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, report.coverage, diagnostics, { containers: report.containers });
-  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: report.coverage,
+  const report = cohesionReport(prepared.index, contents, { include: unit => include(unit) && inside(unit.file) });
+  await analysis.verifySnapshot();
+  const { index } = prepared;
+  const diagnostics = missingFirst([...(index.structureComplete ? [] : [{ code: "incomplete_structure", message: "Some code structure is incomplete, so a cluster can miss members or calls." }]), ...analysis.diagnostics]);
+  const receiptId = await retainResult(input, analysis, "report_cohesion_clusters", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, report.coverage, diagnostics, { containers: report.containers });
+  return { ...identity, receiptId, indexRevision: prepared.revision, coverage: report.coverage,
     diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalContainers: report.containers.length, containers: report.containers.slice(0, input.limit || 20) };
 }
 
 export async function findSameNameUnits(input: ScopedAnalysisInput, options: ProviderOptions = {}) {
   validateSameNameUnits(input);
-  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  const analysis = await preparedAnalysis(input, options), { preparation, identity, prepared } = analysis;
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, groups: [] };
-  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, groups: [] };
-  const contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
+  if (!prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: analysis.diagnostics.slice(0, 20), diagnosticCount: analysis.diagnostics.length, groups: [] };
+  const contents = new Map((await analysis.snapshot()).files.map(file => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
-  const result = sameNameGroups(provider.prepared.index, contents, { include });
+  const result = sameNameGroups(prepared.index, contents, { include });
   const groups = result.groups.filter(group => group.variants.some(variant => variant.members.some(member => inside(member.file))));
-  await provider.verifySnapshot();
-  const diagnostics = [...(provider.prepared.index.unresolvedReferences ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so variants compare project calls only.", recovery: "Prepare the index again with the current native runtime." }]), ...provider.preparation.diagnostics];
-  const receiptId = await retainResult(input, provider, "find_same_name_units", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
-  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: result.coverage,
+  await analysis.verifySnapshot();
+  const diagnostics = missingFirst([...(prepared.index.unresolvedReferences ? [] : [{ code: "dependency_names_unavailable", message: "The index has no library call names, so variants compare project calls only.", recovery: "Prepare the index again with the current native runtime." }]), ...analysis.diagnostics]);
+  const receiptId = await retainResult(input, analysis, "find_same_name_units", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { groups });
+  return { ...identity, receiptId, indexRevision: prepared.revision, coverage: result.coverage,
     diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalGroups: groups.length, groups: groups.slice(0, input.limit || 20) };
 }
 
 export async function reportComplexUnits(input: ScopedAnalysisInput, options: ProviderOptions = {}) {
   validateComplexUnits(input);
-  const { provider, preparation, identity } = await preparedAnalysis(input, options);
+  const analysis = await preparedAnalysis(input, options), { preparation, identity, prepared } = analysis;
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, units: [] };
-  if (!provider.prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, units: [] };
-  const contents = new Map((await provider.snapshot()).files.map(file => [file.file, file.content]));
+  if (!prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: analysis.diagnostics.slice(0, 20), diagnosticCount: analysis.diagnostics.length, units: [] };
+  const contents = new Map((await analysis.snapshot()).files.map(file => [file.file, file.content]));
   const { include, inside } = analysisScope(input, contents);
-  const result = complexUnits(provider.prepared.index, contents, { include: unit => include(unit) && inside(unit.file) });
-  await provider.verifySnapshot();
-  const diagnostics = provider.preparation.diagnostics;
-  const receiptId = await retainResult(input, provider, "report_complex_units", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { units: result.units });
-  return { ...identity, receiptId, indexRevision: provider.prepared.revision, coverage: result.coverage,
+  const result = complexUnits(prepared.index, contents, { include: unit => include(unit) && inside(unit.file) });
+  await analysis.verifySnapshot();
+  const diagnostics = missingFirst(analysis.diagnostics);
+  const receiptId = await retainResult(input, analysis, "report_complex_units", { paths: input.filters?.paths || [], includeTests: Boolean(input.includeTests) }, result.coverage, diagnostics, { units: result.units });
+  return { ...identity, receiptId, indexRevision: prepared.revision, coverage: result.coverage,
     diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, totalUnits: result.units.length, units: result.units.slice(0, input.limit || 20) };
 }
