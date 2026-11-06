@@ -207,6 +207,98 @@
       }
     }
   },
+  "proposals": {
+    "initiative-settings-actions": {
+      "operations": [
+        {
+          "op": "update_slice",
+          "slug": "action-registry",
+          "outcome": "The review app lists and applies revision-checked actions from one transport-independent registry, with the six initiative settings, gate answers, and each component's own index rebuild as its actions, and records each with its author in history."
+        },
+        {
+          "op": "set_dependencies",
+          "slug": "action-registry",
+          "dependencies": []
+        },
+        {
+          "op": "set_dependencies",
+          "slug": "state-merge",
+          "dependencies": [
+            "action-registry"
+          ]
+        },
+        {
+          "op": "set_dependencies",
+          "slug": "write-credential",
+          "dependencies": [
+            "action-registry"
+          ]
+        },
+        {
+          "op": "set_dependencies",
+          "slug": "action-controls",
+          "dependencies": [
+            "write-credential"
+          ]
+        },
+        {
+          "op": "set_dependencies",
+          "slug": "agent-change-notices",
+          "dependencies": [
+            "action-registry"
+          ]
+        },
+        {
+          "op": "accept_design",
+          "slug": "action-registry",
+          "frozenTests": [
+            "test/server/fixtures/review-actions.mjs",
+            "test/server/review-actions.test.mjs",
+            "test/server/component-index-rebuild.test.mjs"
+          ],
+          "review": "required",
+          "component": "root"
+        },
+        {
+          "op": "accept_design",
+          "slug": "state-merge",
+          "frozenTests": [
+            "test/server/coordination-state-merge.test.mjs"
+          ],
+          "review": "required",
+          "component": "root"
+        },
+        {
+          "op": "accept_design",
+          "slug": "write-credential",
+          "frozenTests": [
+            "test/server/review-write-credential.test.mjs"
+          ],
+          "review": "required",
+          "component": "root"
+        },
+        {
+          "op": "accept_design",
+          "slug": "action-controls",
+          "frozenTests": [
+            "test/server/review-action-controls.test.mjs"
+          ],
+          "review": "none",
+          "component": "root"
+        },
+        {
+          "op": "accept_design",
+          "slug": "agent-change-notices",
+          "frozenTests": [
+            "test/server/agent-change-notices.test.mjs"
+          ],
+          "review": "required",
+          "component": "root"
+        }
+      ],
+      "proposedAt": "2026-11-06T00:44:41.697Z"
+    }
+  },
   "history": [
     {
       "actor": "orchestrator",
@@ -249,6 +341,12 @@
       "operation": "restore_tests",
       "slug": "initiative-settings-actions",
       "at": "2026-11-06T00:21:22.546Z"
+    },
+    {
+      "actor": "agent",
+      "operation": "propose_design",
+      "slug": "initiative-settings-actions",
+      "at": "2026-11-06T00:44:41.697Z"
     }
   ]
 }
