@@ -5,7 +5,7 @@ import test from "node:test";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
 import { browserRequest, checkout, commitFiles, exists, isolateGit, ok, refused, reviewBrowser, server, text, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Contract clauses 19, 22, and 23 of the workspace-artifacts design: Prism's own design, pause, and view files, and the review browser, use the store, and a slug that would name a malformed plan folder is refused.
+// Contract clauses 19, 22, and 23 of the workspace-artifacts design: Prism's own design, pause, and view files, and the review browser, use the store, and a slug that would name a malformed, colliding, or too long plan folder is refused.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -75,6 +75,53 @@ test("clause 22: with a store, a slug that would name a malformed plan folder is
   ok(await createInitiative(prism, "Reports_2-b"));
   assert.match(await text(path.join(place.store, "artifacts", "plans", "Reports_2-b", "initiative.md")) ?? "", /Reports/, "a well-formed slug's view is generated in the store");
   assert.equal(await exists(path.join(api, "docs", "plans")), false);
+});
+
+test("clause 22: with a store, a slug whose plan folder collides in letter case or whose plan files' locations would be too long is refused and changes no record", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  const conflict = (response, expected) => {
+    const error = refused(response, "artifact_name_conflict");
+    if (Array.isArray(expected)) assert.ok(expected.includes(error.data.path), `data.path ${error.data.path} is one of ${expected.join(", ")}`);
+    else assert.equal(error.data.path, expected);
+    return error;
+  };
+  const tooLong = (response, location) => {
+    const error = refused(response, "artifact_path_too_long");
+    assert.equal(error.data.location, location);
+    return error;
+  };
+  ok(await createInitiative(prism, "reports"));
+  // Initiative ids name plan folders side by side, so one that differs only in letter case is refused.
+  conflict(await createInitiative(prism, "Reports"), "docs/plans/reports");
+  assert.equal(ok(await prism.call("get_initiative", { initiative: "Reports" })).exists, false, "no record was created");
+  // A plan folder may not collide with a folder of artifacts that a seen scope holds.
+  await writeArtifact(prism, "docs/plans/Billing/notes.md", "# Notes\n", { scope: "repository" });
+  conflict(await createInitiative(prism, "billing"), "docs/plans/Billing/notes.md");
+  assert.equal(ok(await prism.call("get_initiative", { initiative: "billing" })).exists, false);
+  // "plans/" and "/initiative.md" take 20 characters of the location, so a 100-character id fits and a 101-character one does not.
+  const fitting = `r${"e".repeat(99)}`;
+  ok(await createInitiative(prism, fitting));
+  assert.match(await text(path.join(place.store, "artifacts", "plans", fitting, "initiative.md")) ?? "", /Reports/);
+  const longer = `r${"e".repeat(100)}`;
+  tooLong(await createInitiative(prism, longer), `plans/${longer}/initiative.md`);
+  assert.equal(ok(await prism.call("get_initiative", { initiative: longer })).exists, false);
+
+  // Slice slugs name folders inside their initiative's plan folder.
+  await writeArtifact(prism, "docs/plans/reports/slice.md", "# Reports\n\n## Assumptions\n- Unprobed: the audit store keeps download order; listings sort by time.\n");
+  await writeArtifact(prism, "docs/plans/reports/Audit/notes.md", "# Audit notes\n");
+  const before = ok(await prism.call("get_initiative", { initiative: "reports" }));
+  const split = (children) => prism.call("update_initiative", { initiative: "reports", expectedRevision: before.revision, operations: [{ op: "split", parent: "reports", children: children.map((slug) => ({ slug, title: `Part ${slug}`, requirements: ["r.md#1"] })), evidence: { kind: "unfrozen", assumption: "the audit store keeps download order", settledBy: children[0] } }] });
+  conflict(await split(["download", "Download"]), ["docs/plans/reports/download", "docs/plans/reports/Download"]);
+  conflict(await split(["download", "audit"]), "docs/plans/reports/Audit/notes.md");
+  // "plans/reports/" and "/initiative.md" take 28 characters, so a 93-character slice slug is too long.
+  const longSlice = `d${"o".repeat(92)}`;
+  tooLong(await split(["download", longSlice]), `plans/reports/${longSlice}/initiative.md`);
+  const after = ok(await prism.call("get_initiative", { initiative: "reports" }));
+  assert.equal(after.revision, before.revision, "no refused split changed the record");
+  assert.deepEqual(Object.keys(after.record.slices), ["reports"]);
+  ok(await split(["download", "export"]));
 });
 
 test("clause 19: a frozen test cannot be an artifact path", async (context) => {

@@ -392,6 +392,46 @@ test("clause 14: an update never creates a path that collides in letter case wit
   assert.equal(await text(path.join(place.store, "artifacts", "requirements", "Totals.md")), "# Totals, rewritten\n");
 });
 
+test("clause 16: a created or moved artifact's location holds at most 120 characters, and a longer stored one stays usable", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  // "plans/" and "long/" take 11 characters of the location, so a 109-character name makes it 120.
+  const named = (length) => `docs/plans/long/${"x".repeat(length - 3)}.md`;
+  const location = (file, scope = "") => `${scope}${file.replace(/^docs\//, "")}`;
+  const tooLong = (response, expected) => {
+    const error = refused(response, "artifact_path_too_long");
+    assert.equal(error.data.location, expected);
+    assert.equal(error.data.limit, 120);
+    return error;
+  };
+  const fits = await writeArtifact(prism, named(109), "# Fits\n");
+  assert.equal(location(named(109)).length, 120);
+  assert.equal(await text(path.join(place.store, "artifacts", location(named(109)))), "# Fits\n");
+  tooLong(await prism.call("update_artifact", { operations: [{ op: "write", path: named(110), content: "# Long\n", expectedVersion: null }] }), location(named(110)));
+  // The limit holds for the location in the scope the artifact would take, whose folder adds to it.
+  tooLong(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/long/other.md", content: "# Fits\n", expectedVersion: null }, { op: "write", path: named(100), content: "# Long here\n", expectedVersion: null, scope: "repository" }] }), location(named(100), "repositories/api/"));
+  assert.equal(await exists(path.join(place.store, "artifacts", "plans", "long", "other.md")), false, "a refused update changes no file");
+  tooLong(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: named(109), expectedVersion: fits.version, scope: "repository" }] }), location(named(109), "repositories/api/"));
+  await writeArtifact(prism, "docs/plans/deep/slice.md", "# Deep\n", { scope: "repository" });
+  const inFolder = `docs/plans/deep/${"y".repeat(100)}.md`;
+  tooLong(await prism.call("update_artifact", { operations: [{ op: "write", path: inFolder, content: "# Deep file\n", expectedVersion: null }] }), location(inFolder, "repositories/api/"));
+  assert.deepEqual(ok(await prism.call("get_artifact", {})).artifacts.map((entry) => entry.path), ["docs/plans/deep/slice.md", named(109)]);
+
+  // A longer location that the store already holds, as another tool may have left it, is listed and used by its path.
+  const stored = named(130);
+  await writeFile(path.join(place.store, "artifacts", location(stored)), "# Stored long\n");
+  const listed = ok(await prism.call("get_artifact", { path: "docs/plans/long" })).artifacts.map((entry) => entry.path);
+  assert.deepEqual(listed, [named(109), stored].sort());
+  const read = ok(await prism.call("get_artifact", { path: stored }));
+  assert.equal(read.content, "# Stored long\n");
+  const written = ok(await prism.call("update_artifact", { operations: [{ op: "write", path: stored, content: "# Stored long, changed\n", expectedVersion: read.version }] })).artifacts[0];
+  const edited = ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: stored, expectedVersion: written.version, edits: [{ oldText: "changed", newText: "edited" }] }] })).artifacts[0];
+  assert.equal(await text(path.join(place.store, "artifacts", location(stored))), "# Stored long, edited\n");
+  ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: stored, expectedVersion: edited.version }] }));
+  assert.equal(await exists(path.join(place.store, "artifacts", location(stored))), false);
+});
+
 test("clause 17: a write whose location is a folder of artifacts, lies below a stored file, or lies below another write of the update is refused with invalid_path before any file changes", async (context) => {
   const place = await workspace(context);
   const api = await checkout(place, "api");

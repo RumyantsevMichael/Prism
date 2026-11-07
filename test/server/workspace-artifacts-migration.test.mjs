@@ -185,3 +185,24 @@ test("clause 28: a checkout file whose path collides in letter case with a store
   const stored = await readdir(path.join(place.store, "artifacts"), { recursive: true });
   assert.deepEqual(stored.filter((entry) => /notes\.md$|shared\.md$/i.test(entry)), ["requirements/Shared.md"], "no colliding path reached the store");
 });
+
+test("clause 28: a checkout file whose location in the repository's scope would hold more than 120 characters stays in the checkout and is reported as path_too_long", async (context) => {
+  const place = await workspace(context);
+  // "repositories/api/plans/reports/" takes 31 characters of the location, so an 89-character name makes it 120.
+  const fits = `docs/plans/reports/${"f".repeat(86)}.md`;
+  const long = `docs/plans/reports/${"l".repeat(87)}.md`;
+  const api = await checkout(place, "api", { files: { [fits]: "# Fits\n", [long]: "# Long\n" } });
+  const prism = await server(context, place, api);
+  const access = await prism.call("get_artifact", {});
+  assert.deepEqual(ok(access).artifacts.map((entry) => entry.path), [fits]);
+  assert.equal(await text(scoped(place.store, fits.replace(/^docs\//, ""))), "# Fits\n", "a file whose location holds 120 characters moves");
+  assert.equal(await exists(path.join(api, fits)), false);
+  assert.equal(await text(path.join(api, long)), "# Long\n", "the longer file stays in the checkout with its bytes");
+  assert.equal(await exists(scoped(place.store, long.replace(/^docs\//, ""))), false);
+  const report = notes(access);
+  assert.match(report, /path_too_long/);
+  assert.ok(report.includes(long), "the report names the checkout path");
+  assert.ok(report.includes(`repositories/api/${long.replace(/^docs\//, "")}`), "the report names the location it would take");
+  const [ledger] = await ledgerFiles(place.store);
+  assert.ok(JSON.stringify(ledger).includes(long), "the ledger lists the file as kept");
+});
