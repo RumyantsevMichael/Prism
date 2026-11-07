@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.20.0](https://github.com/RumyantsevMichael/Prism/compare/v0.19.0...v0.20.0) (2026-11-07)
+
+
+### Added
+
+* keep an initiative's plan folders and records after it ships ([#133](https://github.com/RumyantsevMichael/Prism/issues/133)) ([f189f6b](https://github.com/RumyantsevMichael/Prism/commit/f189f6b4c61054a59c450c7869c78cfcbe2e1d5a))
+
+
+### Documentation
+
+* add approved requirements for workspace artifacts in the store ([#138](https://github.com/RumyantsevMichael/Prism/issues/138)) ([15e583d](https://github.com/RumyantsevMichael/Prism/commit/15e583dc5405c67bb19d36efd53a8cc57996cd09))
+* mark the components initiative shipped on the roadmap ([#136](https://github.com/RumyantsevMichael/Prism/issues/136)) ([1bb22f9](https://github.com/RumyantsevMichael/Prism/commit/1bb22f9ed70e09d4b1fe1fa93c0a9b184841331e)), closes [#48](https://github.com/RumyantsevMichael/Prism/issues/48)
+
 ## [0.19.0](https://github.com/RumyantsevMichael/Prism/compare/v0.18.0...v0.19.0) (2026-11-06)
 
 
