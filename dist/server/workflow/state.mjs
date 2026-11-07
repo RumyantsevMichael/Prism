@@ -6,6 +6,7 @@ import path from "node:path";
 import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { locateRecord, moveLegacyRecords, sliceDocumentFolder, writeRecord } from "./record-store.mjs";
+import { canonicalJson, mergeOrder, mergeScalars, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 
@@ -39,6 +40,7 @@ export const HISTORY_LIMIT = 200;
 const CLOSED_LIMIT = 20;
 const REASON_LIMIT = 1000;
 const REVIEW_CHOICES = new Set(["approve", "request-changes"]);
+const STATE_MAX_BYTES = 1024 * 1024;
 const SETTING_VALUES = {
   autonomy: new Set(["conservative", "broad", "full"]),
   commit: new Set(["on", "off"]),
@@ -724,6 +726,141 @@ function publicStateResult(resolved, loaded) {
 
 function changedFields(before, after) {
   return ["settings", "active", "pending", "next", "evidence", "closed"].filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after[key]));
+}
+
+const ABSENT = Symbol("absent");
+const sameJson = (left, right) => (left === ABSENT ? "\0absent" : canonicalJson(left)) === (right === ABSENT ? "\0absent" : canonicalJson(right));
+const valueOf = (record, key) => isRecord(record) && Object.hasOwn(record, key) ? record[key] : ABSENT;
+
+// A person's mark orders by its time and then by its entry id; a side without a mark comes before any mark.
+function laterMark(left, right) {
+  if (left === ABSENT || right === ABSENT) return left === ABSENT ? (right === ABSENT ? 0 : -1) : 1;
+  if (left.at !== right.at) return left.at < right.at ? -1 : 1;
+  return left.entry < right.entry ? -1 : left.entry > right.entry ? 1 : 0;
+}
+
+// Each setting merges with its person mark: a setting both sides changed differently takes the side the person changed later.
+function mergeSettings(base, local, upstream) {
+  const names = [...new Set([...Object.keys(upstream.settings), ...Object.keys(local.settings), ...Object.keys(base.settings)])];
+  const settings = {};
+  const marks = {};
+  const marksOf = (state) => isRecord(state.personSettings) ? state.personSettings : {};
+  const [baseMarks, localMarks, upstreamMarks] = [base, local, upstream].map(marksOf);
+  for (const name of [...new Set([...names, ...Object.keys(upstreamMarks), ...Object.keys(localMarks), ...Object.keys(baseMarks)])]) {
+    const pair = (state, stateMarks) => ({ value: valueOf(state.settings, name), mark: valueOf(stateMarks, name) });
+    const [b, l, u] = [pair(base, baseMarks), pair(local, localMarks), pair(upstream, upstreamMarks)];
+    const same = (left, right) => sameJson(left.value, right.value) && sameJson(left.mark, right.mark);
+    let chosen;
+    if (same(l, u) || same(u, b)) chosen = l;
+    else if (same(l, b)) chosen = u;
+    else if (!sameJson(l.mark, b.mark) || !sameJson(u.mark, b.mark)) {
+      const order = laterMark(l.mark, u.mark);
+      if (order === 0) throw new MergeConflict(`The setting ${name} changed differently on both sides.`);
+      chosen = order > 0 ? l : u;
+    } else {
+      throw new MergeConflict(`The setting ${name} changed differently on both sides.`);
+    }
+    if (chosen.value !== ABSENT) settings[name] = chosen.value;
+    if (chosen.mark !== ABSENT) marks[name] = chosen.mark;
+  }
+  return { settings, personSettings: marks };
+}
+
+const gateKey = (item) => isRecord(item) ? item.id : item;
+const askedPart = (gate) => {
+  if (!isRecord(gate)) return gate;
+  const { answer, ...asked } = gate;
+  return asked;
+};
+
+// A gate keeps what it was asked with; answers on both sides keep the earlier one, and the upstream's on equal times.
+function mergeGate(id, base, local, upstream) {
+  if (!sameJson(askedPart(local), askedPart(upstream))) throw new MergeConflict(`The user gate ${id} differs between the sides.`);
+  if (!isRecord(local)) return local;
+  const [b, l, u] = [base, local, upstream].map((gate) => valueOf(gate, "answer"));
+  let answer;
+  if (sameJson(l, u) || sameJson(u, b)) answer = l;
+  else if (sameJson(l, b)) answer = u;
+  else if (isRecord(l) && isRecord(u)) answer = String(l.answeredAt) < String(u.answeredAt) ? l : u;
+  else throw new MergeConflict(`The user gate ${id} changed differently on both sides.`);
+  const { answer: _, ...asked } = local;
+  return answer === ABSENT ? asked : { ...asked, answer };
+}
+
+// Merge a list of items keyed by id: an item one side removed stays removed, and the merged order follows mergeOrder with upstream additions first.
+function mergeList(label, base, local, upstream, keyOf, mergeItem) {
+  const index = (list) => new Map(list.map((item) => [keyOf(item), item]));
+  const [b, l, u] = [base, local, upstream].map(index);
+  const merged = new Map();
+  for (const key of new Set([...u.keys(), ...l.keys(), ...b.keys()])) {
+    const inBase = b.has(key);
+    if (inBase && (!l.has(key) || !u.has(key))) continue;
+    if (!l.has(key)) merged.set(key, u.get(key));
+    else if (!u.has(key)) merged.set(key, l.get(key));
+    else merged.set(key, mergeItem(key, inBase ? b.get(key) : ABSENT, l.get(key), u.get(key)));
+  }
+  const ids = (map) => [...map.keys()];
+  return mergeOrder(label, ids(b), ids(l), ids(u), new Set(merged.keys()), { upstreamFirst: true }).map((key) => merged.get(key));
+}
+
+// Entries of either side once by id, ordered by `order` and cut to the newest `limit`.
+function mergeUnion(local, upstream, keyOf, order, limit) {
+  const entries = new Map(local.map((item) => [keyOf(item), item]));
+  for (const item of upstream) entries.set(keyOf(item), item);
+  return [...entries.values()].sort(order).slice(-limit);
+}
+
+const closedOrder = (left, right) => {
+  if (left.closedAt !== right.closedAt) return String(left.closedAt) < String(right.closedAt) ? -1 : 1;
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+};
+
+const STRUCTURED = ["settings", "personSettings", "pending", "history", "active", "closed", "evidence"];
+
+/**
+ * The structural merge of a coordination state that changed on two machines: { path, base, local, upstream } as UTF-8 text,
+ * base null for a state new on both sides, answering { contents } or { conflict }.
+ */
+export function mergeCoordinationState(versions) {
+  try {
+    const parsed = parseVersions(versions, defaultState);
+    if (Object.values(parsed).some((state) => !isRecord(state))) throw new MergeConflict("A version of the coordination state is not a JSON object.");
+    const [base, local, upstream] = [parsed.base, parsed.local, parsed.upstream].map(normalizeState);
+    for (const state of [base, local, upstream]) {
+      if (!isRecord(state.settings) || (state.personSettings !== undefined && !isRecord(state.personSettings))) throw new MergeConflict("A version of the coordination state has malformed settings.");
+      for (const key of ["active", "pending", "evidence", "closed", "history"]) {
+        if (state[key] !== undefined && !Array.isArray(state[key])) throw new MergeConflict(`A version of the coordination state has a malformed ${key}.`);
+      }
+    }
+    const list = (state, key) => state[key] ?? [];
+    const has = (key) => [base, local, upstream].some((state) => state[key] !== undefined);
+    const { settings, personSettings } = mergeSettings(base, local, upstream);
+    const pending = mergeList("The pending user gates", base.pending, local.pending, upstream.pending, gateKey, mergeGate);
+    const active = mergeList("The active work", base.active, local.active, upstream.active, (item) => isRecord(item) ? item.slice : item,
+      (slice, b, l, u) => mergeUnit(`The active work of ${slice}`, b, l, u));
+    const history = mergeUnion(list(local, "history"), list(upstream, "history"), (item) => item?.id, historyOrder, HISTORY_LIMIT);
+    const closed = mergeUnion(list(local, "closed"), list(upstream, "closed"), (item) => item?.id, closedOrder, CLOSED_LIMIT);
+    const removed = new Set(base.evidence.filter((item) => !local.evidence.includes(item) || !upstream.evidence.includes(item)));
+    const evidence = [...upstream.evidence.filter((item) => !removed.has(item)), ...local.evidence.filter((item) => !removed.has(item) && !upstream.evidence.includes(item))];
+    const rest = mergeScalars(base, local, upstream, STRUCTURED);
+    const merged = normalizeState({
+      ...rest,
+      settings,
+      active,
+      pending,
+      evidence,
+      ...(has("closed") || closed.length ? { closed } : {}),
+      ...(has("history") ? { history } : {}),
+      ...(has("personSettings") || Object.keys(personSettings).length ? { personSettings } : {})
+    });
+    const contents = `${JSON.stringify(merged, null, 2)}\n`;
+    if (Buffer.byteLength(contents) > STATE_MAX_BYTES) return { conflict: "The merged coordination state exceeds 1 MiB." };
+    const { errors } = validateStateValue(JSON.parse(contents));
+    if (errors.length) return { conflict: `The merged coordination state is invalid: ${errors[0]}` };
+    return { contents };
+  } catch (caught) {
+    return { conflict: caught instanceof MergeConflict ? caught.message : `The coordination state versions could not be merged: ${caught.message}` };
+  }
 }
 
 export async function readCoordinationState({ projectRoot, initiative }) {
