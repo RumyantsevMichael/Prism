@@ -1,8 +1,8 @@
 # Workspace artifacts
 
-Status: Draft
+Status: Approved
 Created: 2026-11-07
-Approved: n/a
+Approved: 2026-11-07
 
 ## Problem
 
