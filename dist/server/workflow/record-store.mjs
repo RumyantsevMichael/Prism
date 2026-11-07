@@ -8,7 +8,9 @@ import { listSavedConflicts, pullRecordStoreIfStale, readSavedConflict, readSync
 import { managedRecordStore } from "./record-store-remote.mjs";
 import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 import { checkRepositoryName, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
-import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
+import { ARTIFACTS, componentScope, repositoryScope, scopeFolder, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
+import { COMPONENT_NAME } from "./components.mjs";
+import { artifactKinds, initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
 // Machine records live under .prism beside the workflow config, or in the record store the workflow config names; human documents and generated views stay under the configured paths.
 // A record keeps its .prism path as its address in both cases: only recordStoreOf and resolveRecordFile know where its file lives.
@@ -692,4 +694,58 @@ export async function sameRecord(projectRootPath, left, right) {
   if (left === right) return true;
   const [a, b] = await Promise.all([keyOfPath(projectRootPath, left), keyOfPath(projectRootPath, right)]);
   return Boolean(a && b) && recordPath(a) === recordPath(b);
+}
+
+/**
+ * The store artifacts a checkout sees: { root, config, kinds, store, base, repository, scopes }, where base is the store's artifacts folder and scopes lists
+ * the workspace scope, the repository's scope under its accepted name, and the scope of each component folder of the repository that the store holds.
+ * It refuses with store_not_configured without a store, and with the store's own refusal when the store is unavailable or the repository name is refused, before it reads or writes anything else.
+ */
+export async function seenScopes(projectRootPath) {
+  const root = await projectRoot(projectRootPath);
+  const config = await readWorkflowConfig(root);
+  if ((config.workspace?.store ?? null) === null) throw fail("store_not_configured", "This project's .prism/workflow.md names no record store under ## Workspace, so its descriptive artifacts stay in the checkout: read and edit them there with your own file tools.");
+  const store = await recordStoreOf(root);
+  await ensureRecords(store.root);
+  await synced(store);
+  const base = path.join(store.base, ARTIFACTS);
+  const own = repositoryScope(store.repository);
+  const components = path.join(base, scopeFolder(own), "components");
+  await assertUnlinked(store.base, path.join(components, "x"));
+  let names = [];
+  try { names = (await readdir(components, { withFileTypes: true })).filter((entry) => entry.isDirectory() && COMPONENT_NAME.test(entry.name)).map((entry) => entry.name).sort(); }
+  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
+  return { root, config, kinds: artifactKinds(config), store, base, repository: store.repository, scopes: [WORKSPACE_SCOPE, own, ...names.map((name) => componentScope(store.repository, name))] };
+}
+
+// No folder between the store and an artifact may be a symbolic link, so a link placed in the store cannot redirect a read or write elsewhere.
+async function assertUnlinked(base, target) {
+  const relative = path.relative(base, target);
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) throw fail("invalid_path", "The artifact location resolves outside the record store.");
+  let current = base;
+  for (const part of relative.split(path.sep)) {
+    current = path.join(current, part);
+    let info;
+    try { info = await lstat(current); }
+    catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return; throw error; }
+    if (info.isSymbolicLink()) throw fail("invalid_path", "An artifact location in the record store passes through a symbolic link, which Prism does not follow.");
+  }
+}
+
+/** The file of an artifact location below artifacts/ in a seen store, after checking that it stays inside the store and passes through no symbolic link. */
+export async function resolveArtifactFile(seen, location) {
+  const target = path.join(seen.base, ...location.split("/"));
+  if (!inside(seen.base, target) || target === seen.base) throw fail("invalid_path", "The artifact location resolves outside the store's artifacts folder.");
+  await assertUnlinked(seen.store.base, target);
+  await assertContained(seen.store.contain, target, "the record store");
+  return target;
+}
+
+/** Run an action that changes a seen store's artifacts while holding the store's artifact lock, so each update checks and changes the files it touches alone. */
+export async function withArtifactStoreLock(seen, action) {
+  const lock = path.join(seen.store.base, ARTIFACTS);
+  return withArtifactLock(lock, () => withFileLock(lock, async () => {
+    await ensureHousekeeping(seen.store);
+    return action();
+  }, fail));
 }
