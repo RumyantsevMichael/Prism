@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
-import { checkout, commitFiles, exists, git, isolateGit, ok, refused, server, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { checkout, commitFiles, exists, git, isolateGit, ok, refused, remoteFile, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 1-18, 20, and 21 of the workspace-artifacts design: agents read, list, and write store artifacts by path and scope.
 const environment = await isolateGit();
@@ -220,6 +221,197 @@ test("clauses 16 and 17: content above 1 MiB is refused, and a refused update ch
   assert.deepEqual((await readdir(path.join(place.store, "artifacts", "requirements"))).sort(), ["kept.md"]);
 });
 
+test("clause 9: a read's text is the stored bytes decoded exactly, with a byte order mark and carriage returns, so writing it back and editing it keep them", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
+  const file = "docs/requirements/marked.md";
+  const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("# Marked\r\nLine one.\r\nLine two.\r\n")]);
+  await writeFile(path.join(place.store, "artifacts", "requirements", "marked.md"), bytes);
+  const read = ok(await prism.call("get_artifact", { path: file }));
+  assert.equal(read.content, "﻿# Marked\r\nLine one.\r\nLine two.\r\n");
+  assert.equal(read.version, version(bytes));
+  assert.equal(read.bytes, bytes.length);
+  assert.equal(read.totalLines, 3);
+  const pages = [];
+  for (let offset = 1; offset !== null;) {
+    const page = ok(await prism.call("get_artifact", { path: file, offset, limit: 1 }));
+    pages.push(page.content);
+    offset = page.nextOffset;
+  }
+  assert.deepEqual(Buffer.from(pages.join(""), "utf8"), bytes, "the pages join to the stored bytes");
+  const rewritten = ok(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: pages.join(""), expectedVersion: read.version }] })).artifacts[0];
+  assert.equal(rewritten.version, read.version, "writing the text back stores the same bytes");
+  assert.deepEqual(await readFile(path.join(place.store, "artifacts", "requirements", "marked.md")), bytes);
+  const edited = ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: file, expectedVersion: read.version, edits: [{ oldText: "Line one.", newText: "Edited." }] }] })).artifacts[0];
+  const stored = await readFile(path.join(place.store, "artifacts", "requirements", "marked.md"));
+  assert.deepEqual(stored, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("# Marked\r\nEdited.\r\nLine two.\r\n")]), "an edit changes only the text it replaces");
+  assert.equal(edited.version, version(stored));
+});
+
+test("clause 11: a symbolic link or special file in the store is never followed or opened, listings leave it out, and every read and operation of it is refused with invalid_path", { skip: process.platform === "win32" }, async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  const first = await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
+  const outside = await mkdtemp(path.join(place.parent, "outside-"));
+  await writeFile(path.join(outside, "secret.md"), "# Secret\n");
+  const folder = path.join(place.store, "artifacts", "requirements");
+  await symlink(outside, path.join(folder, "linked"));
+  await symlink(path.join(outside, "secret.md"), path.join(folder, "file-link.md"));
+  execFileSync("mkfifo", [path.join(folder, "pipe.md")]);
+  // A pipe blocks whoever opens it until a writer comes, so every call must answer without waiting for one.
+  const prompt = async (call) => {
+    let timer;
+    const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("the call did not answer within 5 seconds")), 5000); });
+    try { return await Promise.race([call, late]); } finally { clearTimeout(timer); }
+  };
+  const secret = version("# Secret\n");
+  for (const [file, current] of [["docs/requirements/linked/secret.md", secret], ["docs/requirements/file-link.md", secret], ["docs/requirements/pipe.md", version("")]]) {
+    refused(await prompt(prism.call("get_artifact", { path: file })), "invalid_path");
+    for (const operation of [
+      { op: "write", path: file, content: "# Changed\n", expectedVersion: current },
+      { op: "write", path: file, content: "# Changed\n", expectedVersion: null },
+      { op: "edit", path: file, expectedVersion: current, edits: [{ oldText: "Secret", newText: "Changed" }] },
+      { op: "remove", path: file, expectedVersion: current },
+      { op: "move_scope", path: file, expectedVersion: current, scope: "repository" }
+    ]) refused(await prompt(prism.call("update_artifact", { operations: [operation] })), "invalid_path");
+  }
+  refused(await prompt(prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/linked/new.md", content: "# New\n", expectedVersion: null }] })), "invalid_path");
+  assert.deepEqual(await readdir(outside), ["secret.md"], "nothing was written through the link");
+  assert.equal(await text(path.join(outside, "secret.md")), "# Secret\n");
+  assert.deepEqual(ok(await prompt(prism.call("get_artifact", { path: "docs/requirements" }))).artifacts.map((entry) => [entry.path, entry.version]), [["docs/requirements/first.md", first.version]], "a listing leaves out links and special files");
+  assert.deepEqual(ok(await prompt(prism.call("get_artifact", {}))).artifacts.map((entry) => entry.path), ["docs/requirements/first.md"]);
+  await prompt(writeArtifact(prism, "docs/requirements/next.md", "# Next\n"));
+  assert.equal(await text(path.join(folder, "next.md")), "# Next\n", "a later update is not held behind the pipe");
+});
+
+test("clause 13: store sync replaces no artifact between an update's version checks and its last write, so an upstream change never vanishes under the update", async (context) => {
+  // Store sync runs in the background of a server; here the test runs it on demand, while the checkout's server, whose path store has no Store sync line, never syncs.
+  const { syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  const file = "docs/requirements/billing.md";
+  const location = "artifacts/requirements/billing.md";
+  // A sync started while an update writes reaches its own writes only by chance, so the race runs in several fresh workspaces.
+  for (let round = 1; round <= 3; round += 1) {
+    const place = await syncedWorkspace(context);
+    const machine = { ...place.a, sync: undefined };
+    const prism = await server(context, machine, await checkout(machine, "api"));
+    const base = await writeArtifact(prism, file, "# Billing\n\nThe base sentence.\n");
+    assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+    assert.equal(remoteFile(place.remote, location), "# Billing\n\nThe base sentence.");
+    // Another machine changes the same line upstream.
+    git(place.storeB, "pull", "-q");
+    await writeFile(path.join(place.storeB, location), "# Billing\n\nThe upstream sentence.\n");
+    git(place.storeB, "add", "-A");
+    git(place.storeB, "commit", "-q", "-m", "change the artifact upstream");
+    git(place.storeB, "push", "-q");
+
+    // A long update: many large new artifacts, then the artifact that changed upstream, written over the base version it read.
+    const large = Array.from({ length: 49 }, (_, index) => ({ op: "write", path: `docs/plans/bulk/part-${String(index).padStart(2, "0")}.md`, content: `${String(index).padStart(2, "0")}${"z".repeat(1024 * 1024 - 8)}\n`, expectedVersion: null }));
+    const update = prism.call("update_artifact", { operations: [...large, { op: "write", path: file, content: "# Billing\n\nThe local sentence.\n", expectedVersion: base.version }] });
+    // Once any new artifact is in the store, the update has checked every version, and a sync runs while it writes the rest.
+    const bulk = path.join(place.storeA, "artifacts", "plans", "bulk");
+    const deadline = Date.now() + 60000;
+    while (!(await readdir(bulk).catch(() => [])).some((name) => name.endsWith(".md"))) {
+      assert.ok(Date.now() < deadline, "the update wrote no artifact within 60 seconds");
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await syncRecordStore(place.storeA);
+    ok(await update);
+    assert.equal(await text(path.join(place.storeA, location)), "# Billing\n\nThe local sentence.\n", `round ${round}: the update wrote its change`);
+    // The local change and the upstream one changed one line concurrently, so the store keeps the upstream text rather than publishing the update's write over it.
+    await syncRecordStore(place.storeA);
+    assert.equal(remoteFile(place.remote, location), "# Billing\n\nThe upstream sentence.", `round ${round}: the upstream change survives`);
+  }
+});
+
+test("clause 14: an update never creates a path that collides in letter case with one the checkout sees, and a pair the store already holds stays usable by each path", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  const plan = await writeArtifact(prism, "docs/plans/x/Plan.md", "# Plan\n");
+  const conflict = (response, other) => {
+    const error = refused(response, "artifact_name_conflict");
+    assert.equal(error.data.path, other, "data.path names the path it collides with");
+    return error;
+  };
+  const create = (file, extra = {}) => prism.call("update_artifact", { operations: [{ op: "write", path: file, content: `# ${file}\n`, expectedVersion: null, ...extra }] });
+  conflict(await create("docs/plans/x/plan.md"), "docs/plans/x/Plan.md");
+  conflict(await create("docs/plans/x/PLAN.md", { scope: "repository" }), "docs/plans/x/Plan.md");
+  conflict(await create("docs/plans/X/notes.md"), "docs/plans/x/Plan.md");
+  conflict(await create("docs/plans/X/notes.md", { scope: "repository" }), "docs/plans/x/Plan.md");
+  assert.deepEqual(await readdir(path.join(place.store, "artifacts", "plans")), ["x"], "the store's files are unchanged");
+  assert.deepEqual(await readdir(path.join(place.store, "artifacts", "plans", "x")), ["Plan.md"]);
+  assert.equal(await exists(path.join(place.store, "artifacts", "repositories")), false);
+  // Names that differ in more than letter case, and a folder in its own letter case, collide with nothing.
+  await writeArtifact(prism, "docs/plans/x/plan-2.md", "# Plan 2\n");
+  await writeArtifact(prism, "docs/plans/x/notes.md", "# Notes\n");
+  await writeArtifact(prism, "docs/requirements/plan.md", "# Another kind\n");
+
+  // Two writes of one update collide with each other, and neither is written.
+  const pair = refused(await prism.call("update_artifact", { operations: [
+    { op: "write", path: "docs/plans/y/Notes.md", content: "# A\n", expectedVersion: null },
+    { op: "write", path: "docs/plans/y/notes.md", content: "# B\n", expectedVersion: null }
+  ] }), "artifact_name_conflict");
+  assert.ok(["docs/plans/y/Notes.md", "docs/plans/y/notes.md"].includes(pair.data.path));
+  assert.equal(await exists(path.join(place.store, "artifacts", "plans", "y")), false);
+
+  // A path held before the update counts even when the update removes it, so a rename that changes only letter case takes two updates.
+  conflict(await prism.call("update_artifact", { operations: [
+    { op: "remove", path: "docs/plans/x/Plan.md", expectedVersion: plan.version },
+    { op: "write", path: "docs/plans/x/plan.md", content: "# Plan\n", expectedVersion: null }
+  ] }), "docs/plans/x/Plan.md");
+  assert.equal(await text(path.join(place.store, "artifacts", "plans", "x", "Plan.md")), "# Plan\n");
+  ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/plans/x/Plan.md", expectedVersion: plan.version }] }));
+  assert.equal((await writeArtifact(prism, "docs/plans/x/plan.md", "# Plan\n")).version, plan.version);
+  assert.deepEqual((await readdir(path.join(place.store, "artifacts", "plans", "x"))).sort(), ["notes.md", "plan-2.md", "plan.md"]);
+
+  // Two machines that created one name in two letter cases before either synced leave the store holding both.
+  const repositoryCopy = await writeArtifact(prism, "docs/requirements/Totals.md", "# Totals of the repository\n", { scope: "repository" });
+  await writeFile(path.join(place.store, "artifacts", "requirements", "totals.md"), "# Totals of the workspace\n");
+  const workspaceVersion = version("# Totals of the workspace\n");
+  const totals = (listing) => listing.artifacts.filter((entry) => /totals/i.test(entry.path)).map((entry) => [entry.path, entry.scope.label, entry.version]);
+  assert.deepEqual(totals(ok(await prism.call("get_artifact", { path: "docs/requirements" }))), [
+    ["docs/requirements/Totals.md", "api", repositoryCopy.version],
+    ["docs/requirements/totals.md", "workspace", workspaceVersion]
+  ], "a listing shows both paths");
+  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/Totals.md" })).content, "# Totals of the repository\n");
+  assert.equal(ok(await prism.call("get_artifact", { path: "docs/requirements/totals.md" })).content, "# Totals of the workspace\n");
+  const editedWorkspace = ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: "docs/requirements/totals.md", expectedVersion: workspaceVersion, edits: [{ oldText: "workspace", newText: "whole workspace" }] }] })).artifacts[0];
+  const writtenRepository = ok(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/Totals.md", content: "# Totals, rewritten\n", expectedVersion: repositoryCopy.version }] })).artifacts[0];
+  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "totals.md")), "# Totals of the whole workspace\n");
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "requirements", "Totals.md")), "# Totals, rewritten\n");
+  conflict(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: "docs/requirements/Totals.md", expectedVersion: writtenRepository.version, scope: "workspace" }] }), "docs/requirements/totals.md");
+  const third = refused(await create("docs/requirements/TOTALS.md"), "artifact_name_conflict");
+  assert.ok(["docs/requirements/Totals.md", "docs/requirements/totals.md"].includes(third.data.path));
+  // Removing one path resolves the pair, after which the other moves freely.
+  ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/requirements/totals.md", expectedVersion: editedWorkspace.version }] }));
+  const moved = ok(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: "docs/requirements/Totals.md", expectedVersion: writtenRepository.version, scope: "workspace" }] })).artifacts[0];
+  assert.equal(moved.scope.label, "workspace");
+  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "Totals.md")), "# Totals, rewritten\n");
+});
+
+test("clause 17: a write whose location is a folder of artifacts, lies below a stored file, or lies below another write of the update is refused with invalid_path before any file changes", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  const slice = await writeArtifact(prism, "docs/plans/reports/slice.md", "# Reports\n");
+  const attempts = [
+    [{ op: "write", path: "docs/requirements/new.md", content: "# New\n", expectedVersion: null }, { op: "write", path: "docs/plans/reports", content: "# Folder\n", expectedVersion: null }],
+    [{ op: "write", path: "docs/plans/a", content: "# A\n", expectedVersion: null }, { op: "write", path: "docs/plans/a/b.md", content: "# B\n", expectedVersion: null }],
+    [{ op: "write", path: "docs/plans/a/b.md", content: "# B\n", expectedVersion: null }, { op: "write", path: "docs/plans/a", content: "# A\n", expectedVersion: null }],
+    [{ op: "write", path: "docs/requirements/new.md", content: "# New\n", expectedVersion: null }, { op: "write", path: "docs/plans/reports/slice.md/notes.md", content: "# Notes\n", expectedVersion: null }]
+  ];
+  for (const operations of attempts) {
+    refused(await prism.call("update_artifact", { operations }), "invalid_path");
+    assert.equal(await exists(path.join(place.store, "artifacts", "requirements")), false, "the other write did not land");
+    assert.equal(await exists(path.join(place.store, "artifacts", "plans", "a")), false, "neither write landed");
+    assert.equal(await text(path.join(place.store, "artifacts", "plans", "reports", "slice.md")), "# Reports\n");
+  }
+  assert.deepEqual(ok(await prism.call("get_artifact", {})).artifacts.map((entry) => [entry.path, entry.version]), [["docs/plans/reports/slice.md", slice.version]]);
+});
+
 test("clause 18: executable artifacts and other project files are not artifact paths and stay in the checkout", async (context) => {
   const place = await workspace(context);
   const api = await checkout(place, "api", { files: { "docs/Features/download.feature": "Feature: Download\n", "docs/user-guide/start.md": "# Start\n" } });
@@ -234,7 +426,7 @@ test("clause 18: executable artifacts and other project files are not artifact p
   assert.equal(await exists(path.join(place.store, "artifacts")), false, "nothing reached the store");
 });
 
-// The artifact name form: every name below a configured folder begins with an ASCII letter or digit, holds only ASCII letters, digits, ".", "_", and "-", and does not end in ".lock".
+// The artifact name form: every name below a configured folder begins with an ASCII letter or digit, holds only ASCII letters, digits, ".", "_", and "-", does not end in "." or ".lock", and is no Windows device name.
 // Each malformed path inside a configured folder is listed with the first name that breaks the form.
 const malformedPaths = [
   ["docs/plans/y/.git/HEAD", ".git"], ["docs/plans/y/.git", ".git"], ["docs/plans/y/.GIT/config", ".GIT"], ["docs/plans/y/.git./HEAD", ".git."], ["docs/plans/y/.git /HEAD", ".git "],
@@ -243,13 +435,16 @@ const malformedPaths = [
   ["docs/requirements/first.md.lock", "first.md.lock"], ["docs/requirements/first.md.LOCK", "first.md.LOCK"], ["docs/plans/a.lock/slice.md", "a.lock"],
   ["docs/plans/x/.slice.md.123.abc.tmp", ".slice.md.123.abc.tmp"], ["docs/plans/x/.notes.TMP", ".notes.TMP"], ["docs/plans/ok/.hidden/notes.md", ".hidden"],
   ["docs/plans/my notes.md", "my notes.md"], ["docs/requirements/résumé.md", "résumé.md"], ["docs/plans/y/a​b.md", "a​b.md"], ["docs/plans/_drafts/x.md", "_drafts"],
-  ["docs/plans/y/-rf.md", "-rf.md"], ["docs/plans/y/a~b.md", "a~b.md"], ["docs/plans/y/a:b.md", "a:b.md"], ["docs/ADRs/payments/ledger$.md", "ledger$.md"]
+  ["docs/plans/y/-rf.md", "-rf.md"], ["docs/plans/y/a~b.md", "a~b.md"], ["docs/plans/y/a:b.md", "a:b.md"], ["docs/ADRs/payments/ledger$.md", "ledger$.md"],
+  ["docs/plans/x/aux.md", "aux.md"], ["docs/plans/x/NUL.txt", "NUL.txt"], ["docs/plans/x/con", "con"], ["docs/plans/x/PRN", "PRN"], ["docs/plans/Com1/slice.md", "Com1"], ["docs/plans/x/com0.md", "com0.md"],
+  ["docs/plans/x/COM9.md", "COM9.md"], ["docs/plans/x/lpt0", "lpt0"], ["docs/plans/x/Lpt9.tar.gz", "Lpt9.tar.gz"], ["docs/requirements/nul.d/x.md", "nul.d"],
+  ["docs/plans/x/notes.", "notes."], ["docs/plans/y./slice.md", "y."], ["docs/requirements/a..", "a.."], ["docs/plans/x/aux./b.md", "aux."]
 ];
 
 function refusedAsMalformed(response, file, name) {
   const error = refused(response, "artifact_name_invalid");
   assert.equal(error.data.invalidName, name, `${JSON.stringify(file)}: data.invalidName holds the first malformed name`);
-  for (const part of [/ASCII/, /letter/i, /digit/i, /\.lock/]) assert.match(error.message, part, `${JSON.stringify(file)}: the message states the allowed name form`);
+  for (const part of [/ASCII/, /letter/i, /digit/i, /\.lock/, /device/i]) assert.match(error.message, part, `${JSON.stringify(file)}: the message states the allowed name form`);
   assert.doesNotMatch(error.message, /checkout/i, `${JSON.stringify(file)}: the message does not send the file to the checkout`);
   return error;
 }
@@ -260,7 +455,8 @@ test("clauses 1 and 18: only a path whose names follow the artifact name form is
   const prism = await server(context, place, api);
   const kept = [
     "docs/plans/digit/slice.md", "docs/plans/my.git/slice.md", "docs/plans/y/notes.tmp", "docs/plans/y/lock.md", "docs/plans/y/file.lockfile", "docs/plans/y/gitignore",
-    "docs/requirements/locks.md", "docs/plans/Report_2/v1.0-draft.md", "docs/plans/9lives/x...y", "docs/ADRs/0001-Use-Git.md", "docs/Glossary.md", "docs/roadmap.md"
+    "docs/requirements/locks.md", "docs/plans/Report_2/v1.0-draft.md", "docs/plans/9lives/x...y", "docs/ADRs/0001-Use-Git.md", "docs/Glossary.md", "docs/roadmap.md",
+    "docs/plans/x/auxiliary.md", "docs/plans/x/console", "docs/plans/x/com10.md", "docs/plans/x/lpt.md", "docs/plans/x/nul-results.md", "docs/plans/x/my.con.md", "docs/plans/x/x.aux"
   ];
   for (const file of kept) await writeArtifact(prism, file, `# ${file}\n`);
   for (const [file, name] of malformedPaths) {
@@ -315,6 +511,8 @@ test("clauses 1 and 18: files with malformed names that the store holds are left
     "plans/y/my notes.md": ["docs/plans/y/my notes.md", "my notes.md"],
     "plans/_drafts/slice.md": ["docs/plans/_drafts/slice.md", "_drafts"],
     "requirements/.gitignore": ["docs/requirements/.gitignore", ".gitignore"],
+    "plans/y/aux.md": ["docs/plans/y/aux.md", "aux.md"],
+    "plans/y/notes.": ["docs/plans/y/notes.", "notes."],
     "repositories/api/requirements/first.md.lock": ["docs/requirements/first.md.lock", "first.md.lock"]
   };
   for (const location of Object.keys(planted)) {

@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { checkout, cloneOf, commitFiles, git, exists, isolateGit, notes, ok, requirementFile, server, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing artifacts move into the store once, and files with malformed names stay in the checkout.
+// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing artifacts move into the store once, and files with malformed or colliding names stay in the checkout.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -133,7 +133,9 @@ test("clause 28: a checkout file whose path breaks the artifact name form stays 
     "docs/plans/_drafts/slice.md": "# Draft\n",
     "docs/requirements/.gitignore": "*.tmp\n",
     "docs/requirements/résumé.md": "# Resume\n",
-    "docs/ADRs/payments/ledger.md.lock": "locked\n"
+    "docs/ADRs/payments/ledger.md.lock": "locked\n",
+    "docs/plans/reports/aux.md": "# Device name\n",
+    "docs/plans/reports/notes.": "# Trailing dot\n"
   };
   const api = await checkout(place, "api", { files: { "docs/plans/reports/slice.md": "# Reports\n", ...malformed } });
   const prism = await server(context, place, api);
@@ -151,5 +153,35 @@ test("clause 28: a checkout file whose path breaks the artifact name form stays 
     assert.ok(JSON.stringify(ledger).includes(JSON.stringify(file).slice(1, -1)), `the ledger lists ${file} as kept`);
   }
   const stored = await readdir(path.join(place.store, "artifacts"), { recursive: true });
-  assert.deepEqual(stored.filter((entry) => /\.DS_Store|my notes|_drafts|\.gitignore|résum|\.lock$/.test(entry)), [], "no malformed name reached the store");
+  assert.deepEqual(stored.filter((entry) => /\.DS_Store|my notes|_drafts|\.gitignore|résum|\.lock$|aux\.md|notes\.$/.test(entry)), [], "no malformed name reached the store");
+});
+
+test("clause 28: a checkout file whose path collides in letter case with a stored path or another checkout file stays in the checkout and is reported as name_conflict", async (context) => {
+  const place = await workspace(context);
+  const web = await checkout(place, "web");
+  await writeArtifact(await server(context, place, web), "docs/requirements/Shared.md", "# Shared for the workspace\n");
+  const colliding = {
+    "docs/requirements/shared.md": "# Shared in api\n",
+    "docs/plans/reports/Notes.md": "# Notes in one case\n",
+    "docs/plans/reports/notes.md": "# Notes in another case\n"
+  };
+  const api = await checkout(place, "api", { files: { "docs/plans/reports/slice.md": "# Reports\n", ...colliding } });
+  const prism = await server(context, place, api);
+  const access = await prism.call("get_artifact", {});
+  assert.deepEqual(ok(access).artifacts.map((entry) => [entry.path, entry.scope.label]), [["docs/plans/reports/slice.md", "api"], ["docs/requirements/Shared.md", "workspace"]]);
+  assert.equal(await text(scoped(place.store, "plans/reports/slice.md")), "# Reports\n", "a file beside them that collides with nothing still moves");
+  assert.equal(await exists(path.join(api, "docs/plans/reports/slice.md")), false);
+  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "Shared.md")), "# Shared for the workspace\n");
+
+  const report = notes(access);
+  assert.match(report, /name_conflict/);
+  assert.ok(report.includes("docs/requirements/Shared.md"), "the report names the stored path a checkout file collides with");
+  const ledger = (await ledgerFiles(place.store)).find((entry) => entry.repository === "api");
+  for (const [file, contents] of Object.entries(colliding)) {
+    assert.equal(await text(path.join(api, file)), contents, `${file} stays in the checkout with its bytes`);
+    assert.ok(report.includes(file), `the report names ${file}`);
+    assert.ok(JSON.stringify(ledger).includes(file), `the ledger lists ${file} as kept`);
+  }
+  const stored = await readdir(path.join(place.store, "artifacts"), { recursive: true });
+  assert.deepEqual(stored.filter((entry) => /notes\.md$|shared\.md$/i.test(entry)), ["requirements/Shared.md"], "no colliding path reached the store");
 });
