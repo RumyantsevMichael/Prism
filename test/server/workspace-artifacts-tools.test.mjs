@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
-import { checkout, commitFiles, exists, git, isolateGit, ok, refused, remoteFile, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { artifactConfig, checkout, commitFiles, exists, git, isolateGit, ok, refused, remoteFile, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 1-18, 20, and 21 of the workspace-artifacts design: agents read, list, and write store artifacts by path and scope.
 const environment = await isolateGit();
@@ -58,6 +58,84 @@ test("clauses 2, 4, and 7: repository and component scopes have folders of their
   refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/web.md", content: "# Web\n", expectedVersion: null, scope: "component", component: "web" }] }), "component_unknown");
   refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/web.md", content: "# Web\n", expectedVersion: null, scope: "galaxy" }] }), "scope_invalid");
   assert.equal(await exists(path.join(place.store, "artifacts", "requirements", "web.md")), false);
+});
+
+test("clause 2: a repository name that is a Windows device name is refused before anything is written, and a registration under one holds no remote", async (context) => {
+  const place = await workspace(context);
+  const portable = (name) => /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/.test(name) && !/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(name);
+  for (const name of ["aux", "nul", "com1", "lpt9"]) {
+    // The checkout's folder and remote carry the name too, so a proposal derived from them must still be portable.
+    const prism = await server(context, place, await checkout(place, name));
+    for (const response of [
+      await prism.call("get_artifact", {}),
+      await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/api.md", content: "# API\n", expectedVersion: null, scope: "repository" }] }),
+      await prism.call("get_roadmap", {})
+    ]) {
+      const error = refused(response, "repository_name_invalid");
+      assert.ok(portable(error.data.proposed), `${name}: the proposal ${error.data.proposed} is a portable name`);
+    }
+    assert.equal(await exists(path.join(place.store, "repositories", `${name}.json`)), false, `${name} is not registered`);
+  }
+  assert.equal(await exists(path.join(place.store, "artifacts")), false, "no artifact folder is written");
+
+  // A registration that the store already holds under such a name, as an earlier version wrote it, refuses its checkout and lets it move to the proposed name.
+  await mkdir(path.join(place.store, "repositories"), { recursive: true });
+  await writeFile(path.join(place.store, "repositories", "con.json"), `${JSON.stringify({ schemaVersion: 1, name: "con", remotes: ["https://github.com/acme/con.git"], root: null, registeredAt: "2026-11-01T00:00:00.000Z" }, null, 2)}\n`);
+  const con = await checkout(place, "con");
+  const error = refused(await (await server(context, place, con)).call("get_artifact", {}), "repository_name_invalid");
+  const proposed = error.data.proposed;
+  assert.ok(portable(proposed), `the proposal ${proposed} is a portable name`);
+  await commitFiles(con, { ".prism/workflow.md": artifactConfig({ repository: proposed }) }, "rename the repository");
+  const renamed = await server(context, place, con);
+  const entry = await writeArtifact(renamed, "docs/requirements/con.md", "# Con\n", { scope: "repository" });
+  assert.deepEqual(entry.scope, { kind: "repository", repository: proposed, label: proposed });
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", proposed, "requirements", "con.md")), "# Con\n");
+  assert.ok(await exists(path.join(place.store, "repositories", `${proposed}.json`)), "the proposed name registers");
+});
+
+test("clause 2: no update creates a component folder whose name is a Windows device name, while one the store already holds stays usable", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api", { components: ["- aux: src/aux", "- com1: src/com1", "- nul: src/nul", "- billing: src/billing"] });
+  const prism = await server(context, place, api);
+  const components = path.join(place.store, "artifacts", "repositories", "api", "components");
+  const nameRefused = (response, component) => {
+    const error = refused(response, "component_name_invalid");
+    assert.equal(error.data.component, component);
+    return error;
+  };
+  for (const component of ["aux", "com1", "nul"]) {
+    nameRefused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/x/slice.md", content: "# X\n", expectedVersion: null, scope: "component", component }] }), component);
+  }
+  const moving = await writeArtifact(prism, "docs/plans/y/slice.md", "# Y\n", { scope: "repository" });
+  nameRefused(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: "docs/plans/y/slice.md", expectedVersion: moving.version, scope: "component", component: "aux" }] }), "aux");
+  nameRefused(await prism.call("update_artifact", { operations: [
+    { op: "write", path: "docs/plans/z/slice.md", content: "# Z\n", expectedVersion: null, scope: "component", component: "billing" },
+    { op: "write", path: "docs/plans/x/slice.md", content: "# X\n", expectedVersion: null, scope: "component", component: "nul" }
+  ] }), "nul");
+  assert.equal(await exists(components), false, "a refused update creates no component folder");
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "plans", "y", "slice.md")), "# Y\n");
+  await writeArtifact(prism, "docs/plans/z/slice.md", "# Z\n", { scope: "component", component: "billing" });
+  assert.deepEqual(await readdir(components), ["billing"]);
+
+  // A component folder of such a name that the store already holds, as an earlier version wrote it, stays seen, and its artifacts can be moved out.
+  const held = path.join(components, "aux", "plans", "old");
+  await mkdir(held, { recursive: true });
+  await writeFile(path.join(held, "a.md"), "# A\n");
+  await writeFile(path.join(held, "b.md"), "# B\n");
+  const auxScope = { kind: "component", repository: "api", component: "aux", label: "api/aux" };
+  const listed = ok(await prism.call("get_artifact", { path: "docs/plans/old" })).artifacts;
+  assert.deepEqual(listed.map((entry) => [entry.path, entry.scope]), [["docs/plans/old/a.md", auxScope], ["docs/plans/old/b.md", auxScope]]);
+  nameRefused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/old/c.md", content: "# C\n", expectedVersion: null }] }), "aux");
+  assert.equal(await exists(path.join(held, "c.md")), false);
+  const a = ok(await prism.call("get_artifact", { path: "docs/plans/old/a.md" }));
+  assert.deepEqual([a.scope, a.content], [auxScope, "# A\n"]);
+  const b = ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: "docs/plans/old/b.md", expectedVersion: version("# B\n"), edits: [{ oldText: "# B", newText: "# B, edited" }] }] })).artifacts[0];
+  assert.equal(await text(path.join(held, "b.md")), "# B, edited\n");
+  ok(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: "docs/plans/old/a.md", expectedVersion: a.version, scope: "repository" }] }));
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "plans", "old", "a.md")), "# A\n");
+  assert.equal(await exists(path.join(held, "a.md")), false);
+  ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/plans/old/b.md", expectedVersion: b.version }] }));
+  assert.equal(await exists(path.join(held, "b.md")), false);
 });
 
 test("clauses 5 and 10: a checkout lists the workspace's artifacts and its own repository's, sorted and labeled, without other repositories' ones", async (context) => {
@@ -323,6 +401,50 @@ test("clause 13: store sync replaces no artifact between an update's version che
     // The local change and the upstream one changed one line concurrently, so the store keeps the upstream text rather than publishing the update's write over it.
     await syncRecordStore(place.storeA);
     assert.equal(remoteFile(place.remote, location), "# Billing\n\nThe upstream sentence.", `round ${round}: the upstream change survives`);
+  }
+});
+
+test("clause 13: an update's changes reach the store's history together, so no store commit holds part of one update", async (context) => {
+  // As above, the test runs store sync on demand while the checkout's server never syncs.
+  const { syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  const before = "artifacts/requirements/billing.md";
+  const after = "artifacts/repositories/api/requirements/billing.md";
+  const parts = Array.from({ length: 49 }, (_, index) => `artifacts/plans/bulk/part-${String(index).padStart(2, "0")}.md`);
+  // What one commit holds of the update: none of it, with the moved artifact still at its first location, or all of it.
+  const holds = (store, commit) => {
+    const files = new Set(git(store, "ls-tree", "-r", "--name-only", commit, "artifacts").split("\n").filter(Boolean));
+    const present = parts.filter((file) => files.has(file)).length;
+    return `${present} parts, ${[before, after].filter((file) => files.has(file)).join(" and ") || "no billing"}`;
+  };
+  const none = `0 parts, ${before}`;
+  const whole = `49 parts, ${after}`;
+  for (let round = 1; round <= 2; round += 1) {
+    const place = await syncedWorkspace(context);
+    const machine = { ...place.a, sync: undefined };
+    const prism = await server(context, machine, await checkout(machine, "api"));
+    const moving = await writeArtifact(prism, "docs/requirements/billing.md", "# Billing\n");
+    assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+    const base = git(place.storeA, "rev-parse", "HEAD");
+    assert.equal(holds(place.storeA, base), none);
+
+    // A long update: many large new artifacts and a move of the stored one, which removes one location and writes another.
+    const large = parts.map((file, index) => ({ op: "write", path: `docs/${file.slice("artifacts/".length)}`, content: `${String(index).padStart(2, "0")}${"z".repeat(1024 * 1024 - 8)}\n`, expectedVersion: null }));
+    const update = prism.call("update_artifact", { operations: [...large, { op: "move_scope", path: "docs/requirements/billing.md", expectedVersion: moving.version, scope: "repository" }] });
+    // Once any new artifact is in the store, the update is writing, and a sync runs while it writes the rest.
+    const bulk = path.join(place.storeA, "artifacts", "plans", "bulk");
+    const deadline = Date.now() + 60000;
+    while (!(await readdir(bulk).catch(() => [])).some((name) => name.endsWith(".md"))) {
+      assert.ok(Date.now() < deadline, "the update wrote no artifact within 60 seconds");
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await syncRecordStore(place.storeA);
+    ok(await update);
+    assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+    const commits = git(place.storeA, "rev-list", `${base}..HEAD`).split("\n").filter(Boolean);
+    assert.ok(commits.length > 0, `round ${round}: the update was committed`);
+    for (const commit of commits) assert.ok([none, whole].includes(holds(place.storeA, commit)), `round ${round}: commit ${commit} holds ${holds(place.storeA, commit)}, part of the update`);
+    assert.equal(holds(place.storeA, "HEAD"), whole, `round ${round}: the store's history ends with the whole update`);
+    assert.equal(holds(place.remote, "main"), whole, `round ${round}: the remote holds the whole update`);
   }
 });
 
