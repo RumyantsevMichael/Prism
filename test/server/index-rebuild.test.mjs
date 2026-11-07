@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createProjectReview } from "../../dist/server/review/review-server.mjs";
+import { createWriteSessions } from "../../dist/server/review/write-sessions.mjs";
 import { panelHtml } from "../../dist/server/review/public/views/indexing.js";
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -42,9 +43,9 @@ async function serve(context, review) {
   };
 }
 
-function reviewOf(root, storage, { auto = true } = {}) {
+function reviewOf(root, storage, { auto = true, writeSessions = null } = {}) {
   const calls = [];
-  const review = createProjectReview({ projectRoot: root, baseUrl: "http://127.0.0.1/", intelligenceDirectories: () => [storage],
+  const review = createProjectReview({ projectRoot: root, baseUrl: "http://127.0.0.1/", intelligenceDirectories: () => [storage], writeSessions,
     rebuildIndex: async (projectRoot) => { calls.push(projectRoot); }, autoRebuild: async () => auto, rebuildTiming: { quietMs: 300, gapMs: 1500, freshnessMs: 0 } });
   return { review, calls };
 }
@@ -67,8 +68,10 @@ test("an open page rebuilds an out-of-date index once the files stay unchanged, 
 
 test("background indexing off leaves rebuilding to the person, whose request must come from the page as JSON", async (context) => {
   const { root, storage } = await staleProject(context);
-  const { review, calls } = reviewOf(root, storage, { auto: false });
+  const writeSessions = await createWriteSessions();
+  const { review, calls } = reviewOf(root, storage, { auto: false, writeSessions });
   const call = await serve(context, review);
+  const token = { "X-Prism-Write": await writeSessions.exchange(writeSessions.issueGrant()) };
   await call("/api/indexing");
   await pause(350);
   const status = JSON.parse((await call("/api/indexing")).body);
@@ -86,9 +89,10 @@ test("background indexing off leaves rebuilding to the person, whose request mus
     return rm(appFolder, { recursive: true, force: true });
   });
   const body = JSON.stringify({ action: "index.rebuild", target: "index:root/root", input: {}, revision: null });
-  assert.equal((await call("/api/actions/apply", { method: "POST", body })).status, 403);
-  assert.equal((await call("/api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", Origin: "http://evil.example" }, body })).status, 403);
-  assert.equal((await call("/api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body })).status, 200);
+  assert.equal((await call("/api/actions/apply", { method: "POST", headers: token, body })).status, 403);
+  assert.equal((await call("/api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", Origin: "http://evil.example", ...token }, body })).status, 403);
+  assert.equal((await call("/api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body })).status, 403, "a request without a write session is refused");
+  assert.equal((await call("/api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...token }, body })).status, 200);
   assert.deepEqual(calls, [root]);
   assert.doesNotMatch(panelHtml({ ...status, state: "preparing", progress: { phase: "embedding", current: 1, total: 2 } }), /Rebuild index/, "a running build has no rebuild button");
 });

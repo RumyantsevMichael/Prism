@@ -158,7 +158,7 @@ export function currentIndexStatus() {
   return latest;
 }
 
-export function createIndexingStatus({ root, button, label, detail, meter, panel, fetchJson, component = root.querySelector(".indexing-component") }) {
+export function createIndexingStatus({ root, button, label, detail, meter, panel, fetchJson, writeHeaders = () => ({}), component = root.querySelector(".indexing-component") }) {
   let status = null;
   let timer = null;
   let rendered = "";
@@ -217,7 +217,7 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
       const target = rebuild.dataset.rebuildIndex || (await fetchJson("./api/actions/targets?kind=index")).targets[0];
       const listing = await fetchJson(`./api/actions?target=${encodeURIComponent(target)}`);
       const action = listing.actions.find((item) => item.id === "index.rebuild");
-      await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "index.rebuild", target, input: {}, revision: action?.revision ?? null }) });
+      await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "index.rebuild", target, input: {}, revision: action?.revision ?? null }) });
     } catch {
     }
     await refresh();

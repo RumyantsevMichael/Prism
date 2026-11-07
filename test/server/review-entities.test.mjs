@@ -79,11 +79,22 @@ function post(url, body, headers = { "Content-Type": "application/json" }) {
   });
 }
 
-// Answers a gate through the review app's apply route with the revision that the gate's action listing shows.
-async function answerGate(baseUrl, initiative, id, input, headers) {
-  const listed = await get(`${baseUrl}/api/actions?target=${encodeURIComponent(`gate:${initiative}/${id}`)}`);
+// A review server whose page Prism opened, so it holds the write session that the opened URL's grant gives.
+async function startWritableReview(projectRoot) {
+  const opened = [];
+  const review = await startReviewServer({ projectRoot, openBrowser: (url) => { opened.push(url); return true; } });
+  await review.open([]);
+  const grant = new URLSearchParams(new URL(opened.at(-1)).hash.slice(1)).get("write");
+  const exchanged = await post(`${review.baseUrl}/api/write-session`, { grant });
+  review.writeHeaders = { "X-Prism-Write": JSON.parse(exchanged.text).token };
+  return review;
+}
+
+// Answers a gate through the review app's apply route, with the page's write session, against the revision that the gate's action listing shows.
+async function answerGate(review, initiative, id, input, headers = { "Content-Type": "application/json" }) {
+  const listed = await get(`${review.baseUrl}/api/actions?target=${encodeURIComponent(`gate:${initiative}/${id}`)}`);
   const revision = listed.status === 200 ? listed.json().actions[0].revision : null;
-  return post(`${baseUrl}/api/actions/apply`, { action: "gate.answer", target: `gate:${initiative}/${id}`, input, revision }, headers);
+  return post(`${review.baseUrl}/api/actions/apply`, { action: "gate.answer", target: `gate:${initiative}/${id}`, input, revision }, { ...headers, ...review.writeHeaders });
 }
 
 function put(url, body) {
@@ -231,11 +242,11 @@ test("keeps the preview and the human's tabs when an agent presents artifacts", 
 
 test("records a browser answer and lists it apart from open questions", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot });
+  const review = await startWritableReview(projectRoot);
   try {
     const before = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
     const gate = before.needsYou.find((item) => item.type === "gate");
-    const answer = (initiative, id, input, headers) => answerGate(review.baseUrl, initiative, id, input, headers);
+    const answer = (initiative, id, input, headers) => answerGate(review, initiative, id, input, headers);
     assert.equal((await answer("reports", gate.id, { choice: "approve" }, { "Content-Type": "text/plain" })).status, 403);
     assert.equal((await answer("reports", gate.id, { choice: "approve" }, { "Content-Type": "application/json", Origin: "https://attacker.example" })).status, 403);
     assert.equal((await answer("../reports", gate.id, { choice: "approve" })).status, 404);
@@ -270,17 +281,17 @@ test("accepts a decision answered by a note alone and an assistance gate marked 
       { op: "ask", kind: "assistance", question: "Install the signing key.", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [] }
     ]
   } });
-  const review = await startReviewServer({ projectRoot });
+  const review = await startWritableReview(projectRoot);
   try {
     const gates = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data.needsYou.filter((item) => item.type === "gate");
     const decision = gates.find((item) => item.kind === "decision");
     const assistance = gates.find((item) => item.kind === "assistance");
-    const empty = await answerGate(review.baseUrl, "reports", decision.id, { choice: null, note: "  " });
+    const empty = await answerGate(review, "reports", decision.id, { choice: null, note: "  " });
     assert.deepEqual([empty.status, JSON.parse(empty.text).code, JSON.parse(empty.text).field], [400, "invalid_input", "note"]);
-    const free = await answerGate(review.baseUrl, "reports", decision.id, { choice: null, note: "Keep it for one release." });
+    const free = await answerGate(review, "reports", decision.id, { choice: null, note: "Keep it for one release." });
     assert.equal(free.status, 200, free.text);
     assert.deepEqual(JSON.parse(free.text).applied.after.choice, null);
-    const done = await answerGate(review.baseUrl, "reports", assistance.id, { choice: "done", note: "" });
+    const done = await answerGate(review, "reports", assistance.id, { choice: "done", note: "" });
     assert.equal(done.status, 200, done.text);
     assert.deepEqual(JSON.parse(done.text).applied.after, { choice: "done", note: null });
   } finally {
@@ -296,7 +307,7 @@ test("lists the newest open question and the newest answer first", async (contex
     await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question, context: "The run reached a choice that needs the person.", artifacts: [], options: [{ id: "yes", label: "Yes", consequence: "The run continues with this choice." }], recommended: { option: "yes", reason: "It keeps the current behavior." } }] } });
     await new Promise((resolve) => setTimeout(resolve, 15));
   }
-  const review = await startReviewServer({ projectRoot });
+  const review = await startWritableReview(projectRoot);
   try {
     const attention = async () => (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
     const gates = (await attention()).needsYou.filter((item) => item.type === "gate");
@@ -304,7 +315,7 @@ test("lists the newest open question and the newest answer first", async (contex
     assert.deepEqual(asked.map((item) => item.question), ["Asked second?", "Asked first?"]);
     for (const item of gates) assert.ok(gates.indexOf(item) === 0 || Date.parse(gates[gates.indexOf(item) - 1].askedAt) >= Date.parse(item.askedAt));
     for (const item of [asked[1], asked[0]]) {
-      const answer = await answerGate(review.baseUrl, "reports", item.id, { choice: "yes", note: "" });
+      const answer = await answerGate(review, "reports", item.id, { choice: "yes", note: "" });
       assert.equal(answer.status, 200, answer.text);
       await new Promise((resolve) => setTimeout(resolve, 15));
     }

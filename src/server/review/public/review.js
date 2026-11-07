@@ -100,6 +100,36 @@ function welcome() {
   </div>`;
 }
 
+// A tab writes only with the write session it took from the one-time grant in the URL Prism opened; the tab's session storage keeps it,
+// which no other tab shares, so a tab opened from a link an agent handed over stays read-only.
+const WRITE_SESSION_KEY = "prism-write-session";
+
+function writeSession() {
+  try {
+    return sessionStorage.getItem(WRITE_SESSION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeHeaders() {
+  const token = writeSession();
+  return token ? { "X-Prism-Write": token } : {};
+}
+
+// Exchanges a grant in the address fragment once, and removes the fragment without a new history entry so a reload or a copied address holds no grant.
+async function takeWriteGrant() {
+  const grant = new URLSearchParams(location.hash.slice(1)).get("write");
+  if (!grant) return;
+  history.replaceState(history.state, "", `${location.pathname}${location.search}`);
+  try {
+    const response = await fetch("./api/write-session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant }) });
+    const answer = await response.json().catch(() => ({}));
+    if (response.ok && typeof answer.token === "string") sessionStorage.setItem(WRITE_SESSION_KEY, answer.token);
+  } catch {
+  }
+}
+
 function updateLocation(path, push = false) {
   const url = new URL(location.href);
   if (path) {
@@ -581,7 +611,8 @@ function renderNotices() {
 }
 
 function connectSessionEvents() {
-  sessionStream = new EventSource("./api/events");
+  const token = writeSession();
+  sessionStream = new EventSource(token ? `./api/events?write=${encodeURIComponent(token)}` : "./api/events");
   sessionStream.onopen = () => {
     sessionConnected = true;
     reportRefresh(true);
@@ -1316,13 +1347,13 @@ function viewContext(path, state) {
       const unanswered = () => {
         throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
       };
-      const listed = await fetch(`./api/actions?target=${encodeURIComponent(target)}`).catch(unanswered);
+      const listed = await fetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
       const listing = await listed.json().catch(() => ({}));
       if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
       const action = (listing.actions ?? []).find((item) => item.id === "gate.answer");
       const names = new Set((action?.fields ?? []).map((field) => field.name));
       const input = Object.fromEntries([["choice", choice], ["note", note]].filter(([name, value]) => names.has(name) && value !== null && value !== undefined && value !== ""));
-      const response = await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
+      const response = await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
       const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
       if (!response.ok) {
         // The answer form names an answered or withdrawn question as it always has.
@@ -1360,6 +1391,7 @@ function renderStoreSync(data) {
 }
 
 async function initialize() {
+  await takeWriteGrant();
   const data = await fetchJson("./api/index");
   recordStoreStatus = createRecordStoreStatus({
     storeButton: document.getElementById("store-status"),
@@ -1411,7 +1443,8 @@ async function initialize() {
     detail: document.getElementById("indexing-detail"),
     meter: document.getElementById("indexing-meter"),
     panel: document.getElementById("indexing-panel"),
-    fetchJson
+    fetchJson,
+    writeHeaders
   });
   availableArtifacts = new Set([...data.artifacts, ...(data.sources ?? [])]);
   missingTabs = new Set(data.missingTabs ?? []);
