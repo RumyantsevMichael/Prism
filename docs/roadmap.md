@@ -16,6 +16,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 ### Next
 
 - **Agent execution evidence and continuity** (`agent-execution-evidence`): Report observed context ranges, keep pause checkpoints current and recoverable, and assess diagram readability.
+- **Workspace artifacts in the store** (`workspace-artifacts`): Keep a workspace's requirements, ADRs and plans in its shared store, reviewed in Prism and changed in status only at gates, while executable artifacts stay with the code.
 
 ### Shipped
 
@@ -28,6 +29,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Single review app**: Now, because Michael asked for it on 2026-10-17 and approved the design direction in the project thread; it builds on the plain-HTTP review server from PR #25.
 - **Repository intelligence**: Kept in Now while repository-intelligence work continues on main.
 - **Agent execution evidence and continuity**: Next, because observed-range reporting consumes verified ranges from repository context planning, while pause checkpoints and diagram-readability assessment can proceed independently after design. The new work stays together until design shows that its outcomes need separate sequencing.
+- **Workspace artifacts in the store**: Next, because Michael decided on 7 November 2026 that descriptive artifacts move to the store so every session's progress is visible in one place, and that Prism's own documents leave its public repository.
 
 ## Open questions
 
