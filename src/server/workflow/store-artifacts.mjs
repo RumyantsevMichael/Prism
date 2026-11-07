@@ -123,10 +123,31 @@ function checkKindScope(kind, input) {
   if (input && !kindInScope(kind, { kind: input.kind })) throw fail("scope_invalid", "The roadmap view lives only in the workspace scope.");
 }
 
-// A file read without following a final symbolic link, or null when it does not exist.
+const notRegular = () => fail("invalid_path", "An artifact in the record store must be a regular file, and this location holds a special file such as a pipe or device, which Prism does not open.");
+
+/**
+ * What a store location holds, found without opening it or following a symbolic link: "missing", "folder", "file",
+ * or "under_file" when a folder above it is a file; a link or special file is refused with invalid_path.
+ */
+async function locationKind(target) {
+  let info;
+  try { info = await lstat(target); }
+  catch (error) {
+    if (error.code === "ENOENT") return "missing";
+    if (error.code === "ENOTDIR") return "under_file";
+    throw error;
+  }
+  if (info.isSymbolicLink()) throw fail("invalid_path", "An artifact in the record store is a symbolic link, which Prism does not follow.");
+  if (info.isDirectory()) return "folder";
+  if (!info.isFile()) throw notRegular();
+  return "file";
+}
+
+// A file's bytes, or null when no file is there; the location is checked before it is opened, and opened without blocking, so a pipe never holds a read or the store's lock.
 async function readArtifactBytes(target) {
+  if ((await locationKind(target)) !== "file") return null;
   let handle;
-  try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0)); }
+  try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
   catch (error) {
     if (["ENOENT", "ENOTDIR"].includes(error.code)) return null;
     if (error.code === "ELOOP") throw fail("invalid_path", "An artifact in the record store is a symbolic link, which Prism does not follow.");
@@ -135,7 +156,7 @@ async function readArtifactBytes(target) {
   try {
     const info = await handle.stat();
     if (info.isDirectory()) return null;
-    if (!info.isFile()) throw fail("invalid_path", "An artifact must be a regular file.");
+    if (!info.isFile()) throw notRegular();
     if (info.size > READ_MAX) throw fail("artifact_too_large", `The artifact exceeds ${READ_MAX} bytes.`);
     return await handle.readFile();
   } finally { await handle.close(); }
@@ -146,7 +167,8 @@ async function isFolder(target) {
   catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return false; throw error; }
 }
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
+// A leading byte order mark is part of the stored text, so pages join to the file's text and an edit keeps it.
+const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 function decode(bytes, file) {
   try { return decoder.decode(bytes); }
   catch { throw fail("artifact_not_text", `${file} in the record store is not UTF-8 text, so the artifact tools cannot read or edit it.`); }
@@ -302,6 +324,19 @@ function applyEdits(file, content, edits) {
   return result;
 }
 
+// Every location an update writes must be able to hold a file, checked before any file changes: it is no folder, lies below no file the store holds, and lies below no other file the update writes.
+async function checkLayout(seen, writes, state, names) {
+  for (const [target] of writes) {
+    const file = names.get(target);
+    for (let folder = path.dirname(target); folder !== seen.base && folder.startsWith(`${seen.base}${path.sep}`); folder = path.dirname(folder)) {
+      if (state.get(folder)) throw fail("invalid_path", `${file} lies below ${names.get(folder)}, which this update writes as a file, so the two cannot both exist; nothing changed.`);
+    }
+    const kind = await locationKind(target);
+    if (kind === "folder") throw fail("invalid_path", `${file} is a folder of artifacts in the record store, so no file can be written in its place; nothing changed.`);
+    if (kind === "under_file") throw fail("invalid_path", `${file} lies below a file that the record store holds, so it cannot be written; nothing changed.`);
+  }
+}
+
 // Remove the folders that a removal left empty, up to the artifacts folder.
 async function pruneParents(base, target) {
   for (let folder = path.dirname(target); folder !== base && folder.startsWith(`${base}${path.sep}`); folder = path.dirname(folder)) {
@@ -320,6 +355,8 @@ export async function updateArtifact(input) {
       // Each file's bytes as the earlier operations of this update leave them, so later operations see their effect.
       const original = new Map();
       const state = new Map();
+      // The artifact path each written location belongs to, for refusals that name it.
+      const names = new Map();
       const read = async (target) => {
         if (!state.has(target)) {
           const bytes = await readArtifactBytes(target);
@@ -356,6 +393,7 @@ export async function updateArtifact(input) {
           checkVersion(file, operation.expectedVersion, bytes);
           const next = Buffer.from(operation.content, "utf8");
           state.set(target, next);
+          names.set(target, file);
           artifacts.push({ path: file, scope, version: artifactVersion(next) });
           continue;
         }
@@ -369,6 +407,7 @@ export async function updateArtifact(input) {
           const next = Buffer.from(applyEdits(file, decode(source.bytes, file), operation.edits), "utf8");
           tooLarge(file, next.length);
           state.set(source.target, next);
+          names.set(source.target, file);
           artifacts.push({ path: file, scope: source.scope, version: artifactVersion(next) });
         } else if (operation.op === "remove") {
           state.set(source.target, null);
@@ -379,6 +418,7 @@ export async function updateArtifact(input) {
             const target = await resolveArtifactFile(seen, artifactLocation(scope, address));
             if ((await read(target)) !== null) throw fail("artifact_exists", `${file} already exists in scope ${scope.label}, so it cannot move there from scope ${source.scope.label}.`, { scope });
             state.set(target, source.bytes);
+            names.set(target, file);
             state.set(source.target, null);
           }
           artifacts.push({ path: file, scope, version: artifactVersion(source.bytes) });
@@ -386,6 +426,7 @@ export async function updateArtifact(input) {
       }
       // New bytes are written before removals, so a move interrupted midway leaves the artifact in both scopes rather than in neither.
       const changed = [...state].filter(([target, bytes]) => !(bytes === null ? original.get(target) === null : original.get(target)?.equals(bytes)));
+      await checkLayout(seen, changed.filter(([, bytes]) => bytes !== null), state, names);
       for (const [target, bytes] of changed.filter(([, bytes]) => bytes !== null)) {
         await mkdir(path.dirname(target), { recursive: true });
         await resolveArtifactFile(seen, path.relative(seen.base, target).split(path.sep).join("/"));

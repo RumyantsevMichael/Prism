@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { checkout, exists, isolateGit, ok, refused, server, text, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { checkout, exists, isolateGit, ok, refused, server, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Edge cases of the store artifact tools beyond the design's acceptance tests: links in the store, lock names, nested kinds, the roadmap's scope, layout collisions, byte order marks, special files, and the lock that store sync shares.
 const environment = await isolateGit();
@@ -60,4 +61,65 @@ test("a removal leaves no empty folders behind", async (context) => {
   const first = await writeArtifact(prism, "docs/plans/reports/deep/slice.md", "# Deep\n");
   ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/plans/reports/deep/slice.md", expectedVersion: first.version }] }));
   assert.equal(await exists(path.join(place.store, "artifacts", "plans", "reports")), false);
+});
+
+test("an update whose write lands on a folder, below a stored file, or below another of its writes is refused before any file changes", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  const slice = await writeArtifact(prism, "docs/plans/reports/slice.md", "# Reports\n");
+  const attempts = [
+    [{ op: "write", path: "docs/requirements/new.md", content: "# New\n", expectedVersion: null }, { op: "write", path: "docs/plans/reports", content: "# Folder\n", expectedVersion: null }],
+    [{ op: "write", path: "docs/plans/a", content: "# A\n", expectedVersion: null }, { op: "write", path: "docs/plans/a/b.md", content: "# B\n", expectedVersion: null }],
+    [{ op: "write", path: "docs/plans/a/b.md", content: "# B\n", expectedVersion: null }, { op: "write", path: "docs/plans/a", content: "# A\n", expectedVersion: null }],
+    [{ op: "write", path: "docs/requirements/new.md", content: "# New\n", expectedVersion: null }, { op: "write", path: "docs/plans/reports/slice.md/notes.md", content: "# Notes\n", expectedVersion: null }]
+  ];
+  for (const operations of attempts) {
+    refused(await prism.call("update_artifact", { operations }), "invalid_path");
+    assert.equal(await exists(path.join(place.store, "artifacts", "requirements")), false, "the earlier write did not land");
+    assert.equal(await exists(path.join(place.store, "artifacts", "plans", "a")), false, "neither write landed");
+    assert.equal(await text(path.join(place.store, "artifacts", "plans", "reports", "slice.md")), "# Reports\n");
+  }
+  assert.deepEqual(ok(await prism.call("get_artifact", {})).artifacts.map((entry) => [entry.path, entry.version]), [["docs/plans/reports/slice.md", slice.version]]);
+});
+
+test("a stored byte order mark is part of the artifact's text, so pages join to the file and an edit keeps it", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
+  const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("# Marked\nLine.\n")]);
+  await writeFile(path.join(place.store, "artifacts", "requirements", "marked.md"), bytes);
+  const read = ok(await prism.call("get_artifact", { path: "docs/requirements/marked.md" }));
+  assert.equal(read.content, "﻿# Marked\nLine.\n");
+  assert.equal(read.bytes, bytes.length);
+  const pages = [];
+  for (let offset = 1; offset !== null;) {
+    const page = ok(await prism.call("get_artifact", { path: "docs/requirements/marked.md", offset, limit: 1 }));
+    pages.push(page.content);
+    offset = page.nextOffset;
+  }
+  assert.deepEqual(Buffer.from(pages.join(""), "utf8"), bytes);
+  const edited = ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: "docs/requirements/marked.md", expectedVersion: read.version, edits: [{ oldText: "Line.", newText: "Edited." }] }] })).artifacts[0];
+  const stored = await readFile(path.join(place.store, "artifacts", "requirements", "marked.md"));
+  assert.deepEqual(stored, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("# Marked\nEdited.\n")]));
+  assert.equal(edited.version, version(stored));
+});
+
+test("a pipe at an artifact location is refused at once, and later updates are not held behind it", { skip: process.platform === "win32" }, async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  await writeArtifact(prism, "docs/plans/a/slice.md", "# A\n");
+  execFileSync("mkfifo", [path.join(place.store, "artifacts", "plans", "a", "pipe.md")]);
+  const prompt = async (call) => {
+    let timer;
+    const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("the call did not answer within 5 seconds")), 5000); });
+    try { return await Promise.race([call, late]); } finally { clearTimeout(timer); }
+  };
+  refused(await prompt(prism.call("get_artifact", { path: "docs/plans/a/pipe.md" })), "invalid_path");
+  refused(await prompt(prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/a/pipe.md", content: "# Pipe\n", expectedVersion: null }] })), "invalid_path");
+  assert.deepEqual(ok(await prompt(prism.call("get_artifact", { path: "docs/plans/a" }))).artifacts.map((entry) => entry.path), ["docs/plans/a/slice.md"], "a listing skips the pipe");
+  await prompt(writeArtifact(prism, "docs/plans/a/next.md", "# Next\n"));
+  assert.equal(await text(path.join(place.store, "artifacts", "plans", "a", "next.md")), "# Next\n");
 });
