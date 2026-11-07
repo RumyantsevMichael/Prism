@@ -1,0 +1,16 @@
+@startuml
+title artifact-tools
+
+component "workflow-config\nartifactKinds" as kinds
+component "artifact-paths\nartifactAddress, scopeFolder, artifactLocation" as paths
+component "record-store\nresolveArtifactFile, seenScopes" as store
+component "store-artifacts\ngetArtifact, updateArtifact" as tools
+component "mcp\nget_artifact, update_artifact" as mcp
+component "artifact-store\nfile locks, atomic writes" as locks
+
+paths --> kinds
+store --> paths
+tools --> store
+tools --> locks
+mcp --> tools
+@enduml

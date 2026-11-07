@@ -1,0 +1,20 @@
+@startuml
+title artifact-status
+
+component "artifact-status\nwrittenStatus, askApproval, answerApproval, accepted bytes" as status
+component "store-artifacts\nstatus fields, ask_approval, accepted reads" as tools
+component "initiative\naccept_proposal accepted versions" as initiative
+component "workspace-model\nAttention, answerGate, libraries" as model
+component "review-server\n409 answers" as server
+component "attention view" as view
+component "gate-wait and wait-for-gate-answers hook" as wait
+component "mcp\nwait_for_user_gate artifact" as mcp
+
+tools --> status
+initiative --> status
+model --> status
+server --> model
+view --> server
+mcp --> wait
+wait --> status
+@enduml

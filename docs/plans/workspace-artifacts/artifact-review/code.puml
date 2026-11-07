@@ -1,0 +1,18 @@
+@startuml
+title artifact-review
+
+component "artifact-comments\naddComment, listComments" as comments
+component "review-server\n/api/artifact, POST /api/artifact/comments" as server
+component "artifact-review view\nscope, diff, comments" as view
+component "line-diff\ndiffHtml" as diff
+component "preview view" as preview
+component "store-artifacts\nget_artifact comments" as tools
+component "artifact-status\naccepted bytes" as status
+
+server --> comments
+server --> status
+tools --> comments
+preview --> view
+view --> diff
+view --> server
+@enduml

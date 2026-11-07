@@ -1,0 +1,14 @@
+@startuml
+title artifact-migration
+
+component "record-store\nfirst access" as store
+component "artifact-migration\nmigrateArtifacts, reference scan" as migration
+component "artifact-paths" as paths
+component "artifact-status\nrecorded status of moved files" as status
+component "mcp\nmigration note" as mcp
+
+store --> migration
+migration --> paths
+migration --> status
+mcp --> store
+@enduml
