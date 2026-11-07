@@ -724,6 +724,13 @@ function publicStateResult(resolved, loaded) {
   };
 }
 
+// Every coordination state write and merge serializes through here, so no state that a writer accepts exceeds the limit a merge applies.
+function stateContents(state) {
+  const contents = `${JSON.stringify(state, null, 2)}\n`;
+  if (Buffer.byteLength(contents) > STATE_MAX_BYTES) throw error("artifact_too_large", "The coordination state exceeds 1 MiB and was not written.");
+  return contents;
+}
+
 function changedFields(before, after) {
   return ["settings", "active", "pending", "next", "evidence", "closed"].filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after[key]));
 }
@@ -918,7 +925,7 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     if (validation.errors.length > 0) {
       throw error("invalid_state", "The proposed state is invalid and was not written.", { errors: validation.errors, warnings: validation.warnings });
     }
-    const contents = `${JSON.stringify(candidate, null, 2)}\n`;
+    const contents = stateContents(candidate);
     if (!current.exists || contents !== current.contents) {
       await writeRecord(resolved.root, { kind: "state", initiative: resolved.initiative }, contents);
     }
@@ -963,7 +970,7 @@ export async function answerUserGate({ projectRoot, initiative, id, choice = nul
     if (validation.errors.length > 0) {
       throw error("invalid_state", "The answered state is invalid and was not written.", { errors: validation.errors });
     }
-    await write(resolved.root, { kind: "state", initiative: resolved.initiative }, `${JSON.stringify(candidate, null, 2)}\n`);
+    await write(resolved.root, { kind: "state", initiative: resolved.initiative }, stateContents(candidate));
     const updated = await loadState(resolved.path);
     return { ...publicStateResult(resolved, updated), gate: pending[position] };
   }, error));
@@ -1018,7 +1025,7 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }) {
     if (validation.errors.length > 0) {
       throw error("invalid_state", "The changed state is invalid and was not written.", { errors: validation.errors });
     }
-    await writeRecord(resolved.root, { kind: "state", initiative: resolved.initiative }, `${JSON.stringify(normalized, null, 2)}\n`);
+    await writeRecord(resolved.root, { kind: "state", initiative: resolved.initiative }, stateContents(normalized));
     return { ...publicStateResult(resolved, await loadState(resolved.path)), created: !current.exists, entry };
   }, error));
 }
