@@ -839,16 +839,24 @@ export async function answerUserGate({ projectRoot, initiative, id, choice = nul
  * and the entry joins history at its place, in the same write.
  */
 export async function recordPersonAction({ projectRoot, initiative, prepare }) {
+  const decide = async (resolved, current) => {
+    const change = await prepare({ exists: current.exists, revision: current.revision, state: current.state, valid: current.valid });
+    if (change !== null && current.exists && !current.valid) {
+      throw error("invalid_state", "The existing state is invalid and was not changed.", { validation: publicStateResult(resolved, current) });
+    }
+    return change;
+  };
+  // The checks run first on the state as it is read, so a refused or unchanged action moves no legacy record and creates no folder.
+  const preview = await resolveState(projectRoot, initiative);
+  const previewed = await loadState(preview.path);
+  if (await decide(preview, previewed) === null) return { ...publicStateResult(preview, previewed), entry: null };
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     const current = await loadState(resolved.path);
-    const change = await prepare({ exists: current.exists, revision: current.revision, state: current.state, valid: current.valid });
+    const change = await decide(resolved, current);
     if (change === null) return { ...publicStateResult(resolved, current), entry: null };
-    if (current.exists && !current.valid) {
-      throw error("invalid_state", "The existing state is invalid and was not changed.", { validation: publicStateResult(resolved, current) });
-    }
     const { entry, setting, answer } = change;
     const problem = historyEntryProblem(entry);
     if (problem) throw error("invalid_changes", `The history entry is invalid: ${problem}.`);

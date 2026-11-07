@@ -417,7 +417,7 @@ function sendActionError(response, error) {
 // A write comes from the review page itself: JSON, and an Origin, when the browser sends one, of the same host.
 function fromPage(request) {
   const origin = request.headers.origin;
-  if (!String(request.headers["content-type"] ?? "").startsWith("application/json")) return false;
+  if (String(request.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase() !== "application/json") return false;
   if (!origin) return true;
   try {
     return new URL(origin).host === request.headers.host;
