@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "settings": {
     "autonomy": "conservative",
-    "agentFlow": "multi",
     "commit": "on",
     "push": "off",
     "continuation": "auto",
@@ -30,6 +29,17 @@
         }
       ],
       "askedAt": "2026-11-05T23:20:47.675Z"
+    },
+    {
+      "id": "gate-4eb94fea3bea",
+      "kind": "visual-review",
+      "slice": "initiative-settings-actions",
+      "question": "Approve the design revised for main (six settings, per-component index rebuild, gate context) and the requirement amendment dropping agentFlow from initiative-settings §1 and withdrawing §2?",
+      "artifacts": [
+        "docs/plans/initiative-settings-actions/slice.md",
+        "docs/requirements/initiative-settings.md"
+      ],
+      "askedAt": "2026-11-06T00:46:09.357Z"
     }
   ],
   "next": [],
