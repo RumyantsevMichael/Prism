@@ -19,7 +19,7 @@ This file is a generated view of initiative.json.
     - Requirements: docs/requirements/initiative-settings.md#3, docs/requirements/initiative-settings.md#4, docs/requirements/initiative-settings.md#5, docs/requirements/initiative-settings.md#6, docs/requirements/initiative-settings.md#7, docs/requirements/initiative-settings.md#8, docs/requirements/review-app-actions.md#13, docs/requirements/review-app-actions.md#14
     - Depends on: `action-registry`
     - Design accepted 2026-11-07: 1 frozen test files staged until the slice starts, review required
-  - **Merge coordination state across machines** (`state-merge`): blocked
+  - **Merge coordination state across machines** (`state-merge`): in-progress
     - Outcome: A coordination state changed on two machines within one sync window merges by its structure, so the person's changes, agents' writes, and both histories survive without a saved conflict.
     - Requirements: docs/requirements/initiative-settings.md#7, docs/requirements/review-app-actions.md#7
     - Depends on: `action-registry`
