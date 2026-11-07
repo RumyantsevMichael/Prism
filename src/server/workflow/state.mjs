@@ -14,7 +14,9 @@ const SCHEMA_VERSION = 1;
 const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed", "history", "personSettings"]);
 // Only the review app's action registry writes the person's history and setting marks, so agents' state changes never carry them.
 const REGISTRY_KEYS = new Set(["history", "personSettings"]);
-const SETTING_KEYS = new Set(["autonomy", "commit", "push", "continuation", "review", "models"]);
+// The initiative settings that coordination state accepts, in the order the review app lists their actions.
+export const INITIATIVE_SETTINGS = Object.freeze(["autonomy", "commit", "push", "continuation", "review", "models"]);
+const SETTING_KEYS = new Set(INITIATIVE_SETTINGS);
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
 const GATE_KEYS = new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "answer"]);

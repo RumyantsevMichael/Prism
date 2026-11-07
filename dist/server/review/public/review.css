@@ -1028,6 +1028,10 @@ a.code-link:hover {
   flex: 0 0 auto;
 }
 
+.indexing-component-row .tool-button {
+  flex: 0 0 auto;
+}
+
 .indexing-component-row[data-state="ready"] .indexing-dot { background: var(--good); }
 .indexing-component-row[data-state="interrupted"] .indexing-dot { background: #e0a030; }
 .indexing-component-row[data-state="failed"] .indexing-dot { background: var(--danger); }

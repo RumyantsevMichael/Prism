@@ -15,7 +15,7 @@ import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
-import { applyAction, listActions, listActionTargets } from "../workflow/actions.mjs";
+import { applyAction, componentIndexingStatus, listActions, listActionTargets } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -438,7 +438,7 @@ async function readJson(request) {
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
 export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null,
-  rebuildIndex = (root, _component) => backgroundPreparation().then((module) => module.startIndexRebuild(root)), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
+  rebuildIndex = (root, component) => backgroundPreparation().then((module) => module.startIndexRebuild(root, component ? { component: { identity: component.identity, folder: component.folder } } : {})), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
   let fingerprint = null;
   function currentFingerprint() {
     if (!fingerprint || Date.now() - fingerprint.at >= rebuildTiming.freshnessMs) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
@@ -462,10 +462,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     }
     return { ...status, autoRebuild: auto };
   }
-  // The registry's indexer: this checkout prepares one index, so every component's target shows its status and rebuilds it.
-  // A person's request starts at once and ignores the background opt-out, because it is not in the background.
+  // The registry's indexer serves each component's own index: with declared components, a target shows its component's entry in the status, or none
+  // while that component has neither an index nor a preparation, and without them the root target shows the checkout's one index.
+  // A person's request rebuilds only its own component, starts at once, and ignores the background opt-out, because it is not in the background.
   const indexer = {
-    status: () => indexingStatus(),
+    status: async (_root, component) => componentIndexingStatus(await indexingStatus(), component),
     rebuild: (root, component) => {
       rebuild.startedAt = Date.now();
       Promise.resolve(rebuildIndex(root, component)).catch(() => {});

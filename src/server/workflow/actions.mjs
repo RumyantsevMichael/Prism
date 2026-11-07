@@ -6,8 +6,7 @@ import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
-import { isLive } from "./slice-claims.mjs";
-import { readCoordinationState, recordPersonAction } from "./state.mjs";
+import { INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction } from "./state.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
 
@@ -29,14 +28,14 @@ export class ActionError extends Error {
 
 const fail = (code, message, details) => new ActionError(code, message, details);
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-const option = (value, label) => ({ value, label });
+const option = (value, label, consequence = null) => ({ value, label, consequence });
 
 function field(name, kind, label, extra = {}) {
   return { name, kind, label, options: null, required: false, requiredWhen: null, maxLength: null, multiline: null, ...extra };
 }
 
 const choice = (name, label, options, extra = {}) => field(name, "choice", label, { options, ...extra });
-const toggle = (name, label) => field(name, "toggle", label, { options: [option("off", "Off"), option("on", "On")], required: true });
+const toggle = (name, label, off, on) => field(name, "toggle", label, { options: [option("off", "Off", off), option("on", "On", on)], required: true });
 const text = (name, label, maxLength, extra = {}) => field(name, "text", label, { maxLength, multiline: false, ...extra });
 
 // ---- Targets ----
@@ -104,14 +103,7 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined) {
 
 const settingsOf = (context) => (context.coordination.valid ? context.coordination.state?.settings : null) ?? {};
 
-// Work has started once a slice left not-started, a slice holds a live claim, or the coordination state lists active work, as this checkout's records show them.
-function workStarted(context) {
-  const slices = Object.values(context.record?.slices ?? {});
-  if (slices.some((slice) => slice?.status !== "not-started" || (slice?.claim && isLive(slice.claim)))) return true;
-  return (context.coordination.state?.active ?? []).length > 0;
-}
-
-function setting({ name, label, fields, effect, confirm = null, value, after = (values) => values.value, unavailable = () => null }) {
+function setting({ name, label, fields, effect, confirm = null, value, after = (values) => values.value }) {
   return {
     id: `initiative.${name}`,
     kinds: ["initiative", "slice"],
@@ -121,9 +113,11 @@ function setting({ name, label, fields, effect, confirm = null, value, after = (
     target: (context) => context.initiativeTarget,
     fields: () => fields,
     value,
+    context: () => null,
+    recommended: () => null,
     confirm: () => confirm,
     revision: (context) => context.coordination.revision,
-    unavailable,
+    unavailable: () => null,
     after,
     change: (context, after) => ({ setting: { name, value: after } })
   };
@@ -137,7 +131,7 @@ const modelsOf = (context) => {
 };
 const whenCustom = { field: "mode", values: ["custom"] };
 
-const SETTING_ACTIONS = [
+const SETTING_DEFINITIONS = [
   setting({
     name: "autonomy",
     label: "Autonomy",
@@ -147,17 +141,9 @@ const SETTING_ACTIONS = [
     value: autonomyOf
   }),
   setting({
-    name: "agentFlow",
-    label: "Agent flow",
-    fields: [choice("value", "Agent flow", [option("multi", "Multi-agent"), option("mono", "Single agent")], { required: true })],
-    effect: "Applies when work on the initiative starts.",
-    value: (context) => settingsOf(context).agentFlow ?? "multi",
-    unavailable: (context) => workStarted(context) ? "Agent flow is fixed once work on the initiative starts." : null
-  }),
-  setting({
     name: "commit",
     label: "Commit",
-    fields: [toggle("value", "Commit")],
+    fields: [toggle("value", "Commit", "Agents leave their changes uncommitted.", "Agents commit their changes to Git history.")],
     effect: NEXT_CHILD,
     confirm: { field: "value", values: ["on"], message: "Agents will commit their changes to Git history." },
     value: (context) => settingsOf(context).commit ?? (autonomyOf(context) === "full" ? "on" : "off")
@@ -165,7 +151,7 @@ const SETTING_ACTIONS = [
   setting({
     name: "push",
     label: "Push",
-    fields: [toggle("value", "Push")],
+    fields: [toggle("value", "Push", "Finished slices stay on this machine.", "Agents push finished slices beyond this machine.")],
     effect: NEXT_CHILD,
     confirm: { field: "value", values: ["on"], message: "Agents will push finished slices beyond this machine." },
     value: (context) => settingsOf(context).push ?? "off"
@@ -202,6 +188,9 @@ const SETTING_ACTIONS = [
   })
 ];
 
+// Only the settings that coordination state accepts have actions, so a setting Prism retires loses its action with it.
+const SETTING_ACTIONS = SETTING_DEFINITIONS.filter((definition) => INITIATIVE_SETTINGS.includes(definition.id.slice("initiative.".length)));
+
 // A gate's answer fields follow its kind: a review approves or asks for changes with a reason, a decision picks an option or explains, and assistance is done.
 function gateFields(gate) {
   const note = (extra) => text("note", "Note", NOTE_LIMIT, { multiline: true, ...extra });
@@ -209,10 +198,17 @@ function gateFields(gate) {
     return [choice("choice", "Answer", [option("approve", "Approve"), option("request-changes", "Request changes")], { required: true }), note({ requiredWhen: { field: "choice", values: ["request-changes"] } })];
   }
   if (gate.kind === "decision" && Array.isArray(gate.options) && gate.options.length) {
-    return [choice("choice", "Answer", gate.options.map((item) => option(item.id, item.label))), note({ requiredWhen: { field: "choice", values: [null] } })];
+    return [choice("choice", "Answer", gate.options.map((item) => option(item.id, item.label, typeof item.consequence === "string" ? item.consequence : null))), note({ requiredWhen: { field: "choice", values: [null] } })];
   }
   if (gate.kind === "decision") return [note({ required: true })];
   return [choice("choice", "Answer", [option("done", "Done")], { required: true }), note()];
+}
+
+// A gate's recommendation as the page shows it: the recommended option, or null when it names none, and why.
+function gateRecommendation(gate) {
+  const recommended = gate.recommended;
+  if (!isRecord(recommended) || typeof recommended.reason !== "string") return null;
+  return { value: typeof recommended.option === "string" ? recommended.option : null, reason: recommended.reason };
 }
 
 const GATE_ANSWER = {
@@ -224,6 +220,8 @@ const GATE_ANSWER = {
   target: (context) => context.reference,
   fields: (context) => gateFields(context.gateRecord),
   value: () => null,
+  context: (context) => typeof context.gateRecord.context === "string" && context.gateRecord.context ? context.gateRecord.context : null,
+  recommended: (context) => gateRecommendation(context.gateRecord),
   confirm: () => null,
   revision: (context) => context.coordination.revision,
   unavailable: (context) => context.gateRecord.answer ? "The question already has an answer." : null,
@@ -240,6 +238,8 @@ const INDEX_REBUILD = {
   target: (context) => context.reference,
   fields: () => [],
   value: () => null,
+  context: () => null,
+  recommended: () => null,
   confirm: () => null,
   revision: () => null,
   unavailable: (context) => context.indexState === "preparing" ? "An index build is already running." : null,
@@ -259,6 +259,8 @@ function view(definition, context) {
     value: definition.value(context),
     fields: definition.fields(context),
     effect: definition.effect,
+    context: definition.context(context),
+    recommended: definition.recommended(context),
     available: reason === null,
     reason,
     confirm: definition.confirm(context),
@@ -270,15 +272,24 @@ const definitionsFor = (kind) => ACTIONS.filter((definition) => definition.kinds
 
 // ---- The default indexer ----
 
-/** Prism's own indexer, which prepares one index for the whole checkout and so serves it as every component's index. */
+/** One component's indexing status from a checkout's index status: its own entry with declared components, or the status itself without them. */
+export function componentIndexingStatus(status, component) {
+  if (!Array.isArray(status?.components)) return status;
+  return { state: status.components.find((entry) => entry.component === component?.identity)?.state ?? "none" };
+}
+
+/**
+ * Prism's own indexer, which serves each component's own index: in a repository that declares components, a component's state is its entry in the
+ * index status, or none while it has neither an index nor a preparation, and without declared components the root component's state is the status's own.
+ */
 export const prismIndexer = Object.freeze({
-  async status(projectRoot) {
+  async status(projectRoot, component) {
     const [{ readIndexingStatus }, { nativeSemanticRuntime }] = await Promise.all([import("../repository-intelligence/index-status.mjs"), import("../repository-intelligence/native-semantic-runtime.mjs")]);
-    return readIndexingStatus(projectRoot, [nativeSemanticRuntime.directory]);
+    return componentIndexingStatus(await readIndexingStatus(projectRoot, [nativeSemanticRuntime.directory]), component);
   },
-  async rebuild(projectRoot) {
+  async rebuild(projectRoot, component) {
     const { startIndexRebuild } = await import("../repository-intelligence/background-preparation.mjs");
-    void startIndexRebuild(projectRoot);
+    void startIndexRebuild(projectRoot, { component: { identity: component.identity, folder: component.folder } });
   }
 });
 

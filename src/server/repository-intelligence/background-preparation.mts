@@ -7,6 +7,8 @@ import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { componentSources, indexComponents } from "./component-indexes.mjs";
 import type { Declaration } from "./component-indexes.mjs";
 
+interface RebuildComponent { identity: string; folder: string }
+
 interface Options {
   prepare?: (projectRoot: string) => Promise<unknown>;
   enabled?: (projectRoot: string) => Promise<boolean>;
@@ -21,9 +23,11 @@ const time = (value: string | undefined) => { const parsed = Date.parse(value ??
 // In a repository that declares components, the start refreshes only the components that already have an index in this storage and are out of
 // date, so a component that no tool has needed yet is never built in the background. The rebuild also prepares each component whose latest
 // preparation failed, with or without an index, including one that reached a native limit in this process.
-async function prepareComponentIndexes(projectRoot: string, declaration: Declaration, runtime: NativeSemanticRuntime, rebuild: boolean) {
+// A rebuild of one component prepares only that component, also when it has no index yet, and reuses its index while it is up to date.
+async function prepareComponentIndexes(projectRoot: string, declaration: Declaration, runtime: NativeSemanticRuntime, rebuild: boolean, only: string | null = null) {
   const root = await realpath(projectRoot), chosen = [];
   for (const entry of componentSources(root, declaration)) {
+    if (only !== null && entry.component !== only) continue;
     const snapshot = await entry.source.snapshot();
     if (!snapshot.files.length) continue;
     const component = { name: entry.name, identity: entry.component, folder: entry.folder };
@@ -33,16 +37,16 @@ async function prepareComponentIndexes(projectRoot: string, declaration: Declara
     // A failure counts only when it ended after the component's latest index; a job of this process that failed counts as recorded too.
     const failed = rebuild && (runtime.jobs.get(directory)?.status === "degraded"
       || (await readProgressRecords(directory)).some(record => record.state === "failed" && (!indexed || time(record.finishedAt ?? record.updatedAt) > time(published!.builtAt))));
-    if (outOfDate || failed) chosen.push({ source: entry.source, component });
+    if (outOfDate || failed || (only !== null && !indexed)) chosen.push({ source: entry.source, component });
   }
   if (chosen.length) await runtime.prepareComponents(chosen, 0, { retryLimited: rebuild });
 }
 
 // A repository without components prepares its one index; an invalid declaration refuses here, as it refuses the native tools, and so prepares nothing.
-function preparation(runtime: NativeSemanticRuntime, rebuild: boolean) {
+function preparation(runtime: NativeSemanticRuntime, rebuild: boolean, component: RebuildComponent | null = null) {
   return async (projectRoot: string) => {
     const declaration = await indexComponents(projectRoot);
-    if (declaration) return prepareComponentIndexes(projectRoot, declaration, runtime, rebuild);
+    if (declaration) return prepareComponentIndexes(projectRoot, declaration, runtime, rebuild, component?.identity ?? null);
     await prepareNativeProvider(projectRoot, { waitMs: 0, runtime });
   };
 }
@@ -88,20 +92,31 @@ export function startBackgroundPreparation(projectRoot: string, options: Options
 }
 
 const rebuilding = new Map<string, Promise<void>>();
+// Component rebuilds of one project choose and queue their work in the order they were asked, so a later request queues behind an earlier one.
+const queued = new Map<string, Promise<void>>();
 
 // Starts one rebuild of a project's index and returns at once; a call while one runs in this process joins it, and a later call starts another.
 // The review browser uses it when the index went out of date or the person asks, so the line ranges it shows catch up without an agent search.
-export function startIndexRebuild(projectRoot: string, options: Omit<Options, "enabled"> = {}): Promise<void> {
-  const existing = rebuilding.get(projectRoot);
+// With `component`, it rebuilds only that component's index and joins only a running rebuild of the same component; the runtime queues it
+// behind a preparation of another component without interrupting that one. Without it, every out-of-date or failed component is rebuilt.
+export function startIndexRebuild(projectRoot: string, options: Omit<Options, "enabled"> & { component?: RebuildComponent } = {}): Promise<void> {
+  const component = options.component ?? null;
+  const key = component ? `${projectRoot}\0${component.identity}` : projectRoot;
+  const existing = rebuilding.get(key);
   if (existing) return existing;
   const { runtime = nativeSemanticRuntime } = options;
-  const { prepare = preparation(runtime, true), available = runtimeAvailable(runtime), record = recordFailure(runtime) } = options;
-  const run = (async () => {
+  const { prepare = preparation(runtime, true, component), available = runtimeAvailable(runtime), record = recordFailure(runtime) } = options;
+  const previous = component ? queued.get(projectRoot) ?? Promise.resolve() : Promise.resolve();
+  const run = previous.then(async () => {
     if (!await available()) return;
     try { await prepare(projectRoot); } catch (error) { await record(projectRoot, error); }
-  })().catch(() => {}).finally(() => { rebuilding.delete(projectRoot); });
-  rebuilding.set(projectRoot, run);
+  }).catch(() => {}).finally(() => {
+    rebuilding.delete(key);
+    if (queued.get(projectRoot) === run) queued.delete(projectRoot);
+  });
+  rebuilding.set(key, run);
+  if (component) queued.set(projectRoot, run);
   return run;
 }
 
-export function resetBackgroundPreparation() { started.clear(); rebuilding.clear(); }
+export function resetBackgroundPreparation() { started.clear(); rebuilding.clear(); queued.clear(); }

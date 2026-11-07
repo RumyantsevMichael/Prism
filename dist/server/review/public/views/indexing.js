@@ -109,21 +109,22 @@ function indexHtml(status) {
 const COMPONENT_STATES = { preparing: "Building", failed: "Failed", interrupted: "Stopped", ready: "Indexed" };
 
 // Each component with an index or a recorded build, in component order; a long identity ends in an ellipsis and its tooltip gives it whole.
+// Each row's rebuild control rebuilds only that component's index, through the index target that names it.
 function componentsHtml(status) {
   if (!status.components?.length) return "";
   return `<p class="indexing-panel-title">Components</p><ul class="indexing-components">${status.components.map(({ component, state }) =>
-    `<li class="indexing-component-row" data-state="${escapeHtml(state)}" title="${escapeHtml(`${component}: ${COMPONENT_STATES[state] ?? state}`)}"><span class="indexing-dot" aria-hidden="true"></span><span class="indexing-component-name">${escapeHtml(component)}</span><span class="indexing-component-state">${escapeHtml(COMPONENT_STATES[state] ?? state)}</span></li>`).join("")}</ul>`;
+    `<li class="indexing-component-row" data-state="${escapeHtml(state)}" title="${escapeHtml(`${component}: ${COMPONENT_STATES[state] ?? state}`)}"><span class="indexing-dot" aria-hidden="true"></span><span class="indexing-component-name">${escapeHtml(component)}</span><span class="indexing-component-state">${escapeHtml(COMPONENT_STATES[state] ?? state)}</span>${state === "preparing" ? "" : `<button type="button" class="tool-button" data-rebuild-index="${escapeHtml(`index:${component}`)}" aria-label="${escapeHtml(`Rebuild the index of ${component}`)}">Rebuild</button>`}</li>`).join("")}</ul>`;
 }
 
 const componentPrefix = (item) => item.component ? `<span class="indexing-diagnostic-component" title="${escapeHtml(item.component)}">${escapeHtml(item.component)}</span> ` : "";
 
 function rebuildWhen(status) {
-  return status.autoRebuild ? "This page rebuilds it once the files stay unchanged for a minute." : "The next agent search or Rebuild index updates it.";
+  return status.autoRebuild ? "This page rebuilds it once the files stay unchanged for a minute." : `The next agent search or ${status.components ? "a component's Rebuild" : "Rebuild index"} updates it.`;
 }
 
-// Any state but a running build can be rebuilt by hand, including a project that has no index yet.
+// Any state but a running build can be rebuilt by hand, including a project that has no index yet; with components, each component's row rebuilds it.
 function rebuildButton(status) {
-  return status.state === "preparing" ? "" : '<p class="indexing-actions"><button type="button" class="tool-button" data-rebuild-index>Rebuild index</button></p>';
+  return status.state === "preparing" || status.components ? "" : '<p class="indexing-actions"><button type="button" class="tool-button" data-rebuild-index>Rebuild index</button></p>';
 }
 
 function summaryHtml(status) {
@@ -134,7 +135,7 @@ function summaryHtml(status) {
   }
   if (changedDuringBuild(status)) return `<p>Files changed while the index was being built. ${rebuildWhen(status)}</p>`;
   if (status.state === "failed") {
-    const retry = status.components ? "Rebuild index retries each failed component, and an agent search that reads one tries again unless it reached a native limit." : "The next agent search tries again.";
+    const retry = status.components ? "A failed component's Rebuild retries it, and an agent search that reads one tries again unless it reached a native limit." : "The next agent search tries again.";
     return `<p>The last build${status.components ? " of a component" : ""} failed ${escapeHtml(relativeTime(status.endedAt))}. ${retry}</p>
       <ul class="indexing-diagnostics">${status.diagnostics.map((item) => `<li>${componentPrefix(item)}<code>${escapeHtml(item.code)}</code> ${escapeHtml(item.message)}${item.recovery ? `<br><span>${escapeHtml(item.recovery)}</span>` : ""}</li>`).join("")}</ul>`;
   }
@@ -211,12 +212,12 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
     const rebuild = event.target.closest?.("[data-rebuild-index]");
     if (!rebuild) return;
     rebuild.disabled = true;
-    // The rebuild is the index rebuild action of the checkout's root component, whose index this checkout's one index serves.
+    // A component's control names its own index target; the checkout-wide control rebuilds the root component, whose index is the checkout's one index.
     try {
-      const { targets } = await fetchJson("./api/actions/targets?kind=index");
-      const listing = await fetchJson(`./api/actions?target=${encodeURIComponent(targets[0])}`);
+      const target = rebuild.dataset.rebuildIndex || (await fetchJson("./api/actions/targets?kind=index")).targets[0];
+      const listing = await fetchJson(`./api/actions?target=${encodeURIComponent(target)}`);
       const action = listing.actions.find((item) => item.id === "index.rebuild");
-      await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "index.rebuild", target: targets[0], input: {}, revision: action?.revision ?? null }) });
+      await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "index.rebuild", target, input: {}, revision: action?.revision ?? null }) });
     } catch {
     }
     await refresh();
