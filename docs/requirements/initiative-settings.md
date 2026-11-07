@@ -6,7 +6,7 @@ Approved: 2026-11-05
 
 ## Problem
 
-An initiative's orchestration settings, `autonomy`, `agentFlow`, `commit`, `push`, `continuation`, `review`, and `models`, are written by the orchestrator and can be changed only by asking an agent.
+An initiative's orchestration settings, `autonomy`, `commit`, `push`, `continuation`, `review`, and `models`, are written by the orchestrator and can be changed only by asking an agent.
 The person who watches a run in the review app cannot turn push off, lower autonomy, or switch to stepwise continuation where they see the work, and does not know when a change would take effect.
 
 ## Goals
@@ -32,7 +32,7 @@ Pattern: Event-driven
 
 Disposition: Active
 
-Requirement: When the review app shows an initiative or one of its slices, Prism shall offer an action for each of the initiative's `autonomy`, `agentFlow`, `commit`, `push`, `continuation`, `review`, and `models` settings, labeled as a setting of the initiative.
+Requirement: When the review app shows an initiative or one of its slices, Prism shall offer an action for each of the initiative's `autonomy`, `commit`, `push`, `continuation`, `review`, and `models` settings, labeled as a setting of the initiative.
 
 Rationale: The person changes a run where they watch it, and a slice page does not suggest that the setting applies to that slice alone.
 
@@ -43,7 +43,7 @@ Related: [review-app-actions.md§1](review-app-actions.md#1)
 
 Pattern: State-driven
 
-Disposition: Active
+Disposition: Withdrawn 2026-11-07: the agent flow setting was retired and every child session now runs in a fresh agent.
 
 Requirement: While work on the initiative has started, Prism shall show the `agentFlow` action as unavailable with the reason that agent flow is fixed once work starts.
 
