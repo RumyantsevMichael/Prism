@@ -724,11 +724,53 @@ function publicStateResult(resolved, loaded) {
   };
 }
 
-// Every coordination state write and merge serializes through here, so no state that a writer accepts exceeds the limit a merge applies.
-function stateContents(state) {
-  const contents = `${JSON.stringify(state, null, 2)}\n`;
-  if (Buffer.byteLength(contents) > STATE_MAX_BYTES) throw error("artifact_too_large", "The coordination state exceeds 1 MiB and was not written.");
-  return contents;
+const serialize = (state) => `${JSON.stringify(state, null, 2)}\n`;
+const fits = (contents) => Buffer.byteLength(contents) <= STATE_MAX_BYTES;
+
+// The smallest count in [0, max] whose drop makes the state fit, or null when even max does not; a larger drop never grows the state.
+function fewestDrops(max, contentsAfter) {
+  if (!fits(contentsAfter(max))) return null;
+  let [low, high] = [0, max];
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (fits(contentsAfter(middle))) high = middle;
+    else low = middle + 1;
+  }
+  return low;
+}
+
+/**
+ * A coordination state fitted to 1 MiB: the oldest history entries other than `keep` give way first, and then the oldest closed gates,
+ * so pending gates, settings, the person's marks, and every other part stay. Null when the state exceeds the limit with both dropped.
+ */
+function fitState(state, keep = null) {
+  const contents = serialize(state);
+  if (fits(contents)) return { state, contents };
+  const history = Array.isArray(state.history) ? state.history : [];
+  const droppable = history.filter((item) => item?.id !== keep);
+  const withoutHistory = (count) => {
+    const gone = new Set(droppable.slice(0, count));
+    return { ...state, ...(state.history === undefined ? {} : { history: history.filter((item) => !gone.has(item)) }) };
+  };
+  const historyDrops = fewestDrops(droppable.length, (count) => serialize(withoutHistory(count)));
+  if (historyDrops !== null) {
+    const fitted = withoutHistory(historyDrops);
+    return { state: fitted, contents: serialize(fitted) };
+  }
+  const trimmed = withoutHistory(droppable.length);
+  const closed = Array.isArray(state.closed) ? state.closed : [];
+  const withoutClosed = (count) => ({ ...trimmed, ...(state.closed === undefined ? {} : { closed: closed.slice(count) }) });
+  const closedDrops = fewestDrops(closed.length, (count) => serialize(withoutClosed(count)));
+  if (closedDrops === null) return null;
+  const fitted = withoutClosed(closedDrops);
+  return { state: fitted, contents: serialize(fitted) };
+}
+
+// Every coordination state write serializes through here, so no state that a writer accepts exceeds the limit a merge applies.
+function stateContents(state, keep = null) {
+  const fitted = fitState(state, keep);
+  if (fitted === null) throw error("artifact_too_large", "The coordination state exceeds 1 MiB with its history and closed gates dropped and was not written.");
+  return fitted.contents;
 }
 
 function changedFields(before, after) {
@@ -810,10 +852,13 @@ function mergeList(label, base, local, upstream, keyOf, mergeItem) {
   return mergeOrder(label, ids(b), ids(l), ids(u), new Set(merged.keys()), { upstreamFirst: true }).map((key) => merged.get(key));
 }
 
-// Entries of either side once by id, ordered by `order` and cut to the newest `limit`.
-function mergeUnion(local, upstream, keyOf, order, limit) {
-  const entries = new Map(local.map((item) => [keyOf(item), item]));
-  for (const item of upstream) entries.set(keyOf(item), item);
+// Entries of either side once by id, except a base entry that either side dropped, ordered by `order` and cut to the newest `limit`.
+function mergeUnion(base, local, upstream, keyOf, order, limit) {
+  const held = (list) => new Set(list.map(keyOf));
+  const [inLocal, inUpstream] = [held(local), held(upstream)];
+  const dropped = new Set(base.map(keyOf).filter((key) => !inLocal.has(key) || !inUpstream.has(key)));
+  const entries = new Map();
+  for (const item of [...local, ...upstream]) if (!dropped.has(keyOf(item))) entries.set(keyOf(item), item);
   return [...entries.values()].sort(order).slice(-limit);
 }
 
@@ -845,8 +890,8 @@ export function mergeCoordinationState(versions) {
     const pending = mergeList("The pending user gates", base.pending, local.pending, upstream.pending, gateKey, mergeGate);
     const active = mergeList("The active work", base.active, local.active, upstream.active, (item) => isRecord(item) ? item.slice : item,
       (slice, b, l, u) => mergeUnit(`The active work of ${slice}`, b, l, u));
-    const history = mergeUnion(list(local, "history"), list(upstream, "history"), (item) => item?.id, historyOrder, HISTORY_LIMIT);
-    const closed = mergeUnion(list(local, "closed"), list(upstream, "closed"), (item) => item?.id, closedOrder, CLOSED_LIMIT);
+    const history = mergeUnion(list(base, "history"), list(local, "history"), list(upstream, "history"), (item) => item?.id, historyOrder, HISTORY_LIMIT);
+    const closed = mergeUnion(list(base, "closed"), list(local, "closed"), list(upstream, "closed"), (item) => item?.id, closedOrder, CLOSED_LIMIT);
     const removed = new Set(base.evidence.filter((item) => !local.evidence.includes(item) || !upstream.evidence.includes(item)));
     const evidence = [...upstream.evidence.filter((item) => !removed.has(item)), ...local.evidence.filter((item) => !removed.has(item) && !upstream.evidence.includes(item))];
     const rest = mergeScalars(base, local, upstream, STRUCTURED);
@@ -860,8 +905,10 @@ export function mergeCoordinationState(versions) {
       ...(has("history") ? { history } : {}),
       ...(has("personSettings") || Object.keys(personSettings).length ? { personSettings } : {})
     });
-    const contents = `${JSON.stringify(merged, null, 2)}\n`;
-    if (Buffer.byteLength(contents) > STATE_MAX_BYTES) return { conflict: "The merged coordination state exceeds 1 MiB." };
+    // No entry is protected here, so both machines fit the same three versions to the same bytes.
+    const fitted = fitState(merged);
+    if (fitted === null) return { conflict: "The merged coordination state exceeds 1 MiB with its history and closed gates dropped." };
+    const { contents } = fitted;
     const { errors } = validateStateValue(JSON.parse(contents));
     if (errors.length) return { conflict: `The merged coordination state is invalid: ${errors[0]}` };
     return { contents };
@@ -1025,7 +1072,7 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }) {
     if (validation.errors.length > 0) {
       throw error("invalid_state", "The changed state is invalid and was not written.", { errors: validation.errors });
     }
-    await writeRecord(resolved.root, { kind: "state", initiative: resolved.initiative }, stateContents(normalized));
+    await writeRecord(resolved.root, { kind: "state", initiative: resolved.initiative }, stateContents(normalized, entry.id));
     return { ...publicStateResult(resolved, await loadState(resolved.path)), created: !current.exists, entry };
   }, error));
 }
