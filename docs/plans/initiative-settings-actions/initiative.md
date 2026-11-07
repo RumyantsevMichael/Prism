@@ -10,7 +10,7 @@ This file is a generated view of initiative.json.
     - Requirements: docs/requirements/initiative-settings.md#1, docs/requirements/initiative-settings.md#9, docs/requirements/review-app-actions.md#1, docs/requirements/review-app-actions.md#2, docs/requirements/review-app-actions.md#5, docs/requirements/review-app-actions.md#8
     - Depends on: `write-credential`
     - Design accepted 2026-11-07: 1 frozen test files staged until the slice starts, review not required
-  - **Apply actions through one registry** (`action-registry`): blocked
+  - **Apply actions through one registry** (`action-registry`): done
     - Outcome: The review app lists and applies revision-checked actions from one transport-independent registry, with the six initiative settings, gate answers, and each component's own index rebuild as its actions, and records each with its author in history.
     - Requirements: docs/requirements/initiative-settings.md#1, docs/requirements/initiative-settings.md#2, docs/requirements/initiative-settings.md#3, docs/requirements/initiative-settings.md#9, docs/requirements/review-app-actions.md#1, docs/requirements/review-app-actions.md#10, docs/requirements/review-app-actions.md#2, docs/requirements/review-app-actions.md#3, docs/requirements/review-app-actions.md#4, docs/requirements/review-app-actions.md#5, docs/requirements/review-app-actions.md#6, docs/requirements/review-app-actions.md#7, docs/requirements/review-app-actions.md#9
     - Design accepted 2026-11-07: 3 frozen test files, review required
