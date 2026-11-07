@@ -308,9 +308,9 @@ function stateErrorData(error) {
   if (error?.name === "RecordStoreError" && REPOSITORY_REFUSALS.includes(error.code)) {
     return { code: error.code, proposed: error.proposed ?? null };
   }
-  // A refused artifact read or update names the current version, the scopes that hold a path, the scope that already holds it, the edit that did not apply, or the declared components.
+  // A refused artifact read or update names the current version, the scopes that hold a path, the scope that already holds it, the edit that did not apply, the name that breaks the artifact name form, or the declared components.
   if (error?.name === "ArtifactError") {
-    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "components", "proposed"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
+    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "components", "proposed"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
   }
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };

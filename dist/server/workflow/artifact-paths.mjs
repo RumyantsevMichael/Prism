@@ -10,8 +10,14 @@ export const repositoryScope = (repository) => ({ kind: "repository", repository
 export const componentScope = (repository, component) => ({ kind: "component", repository, component, label: `${repository}/${component}` });
 
 const contains = (folder, file) => folder === "" || file === folder || file.startsWith(`${folder}/`);
-// The store's lock and temporary files sit beside the file they guard, so no artifact may take such a name.
-const RESERVED = /(\.lock|^\..*\.tmp)$/;
+// An artifact name begins with an ASCII letter or digit and holds only ASCII letters, digits, ".", "_", and "-", so no Git control name, dotfile, temporary file, or invisible character reaches the store's Git.
+// Store sync's lock beside a store file is the file's name with ".lock" added, which the store's ignore file leaves out, so no name ends in ".lock", in any letter case.
+const NAME_FORM = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const LOCK_ENDING = /\.lock$/i;
+export const ARTIFACT_NAME_FORM = "an artifact name begins with an ASCII letter or digit, holds only ASCII letters, digits, \".\", \"_\", and \"-\", and does not end in \".lock\" in any letter case";
+
+/** Whether one path component follows the artifact name form. */
+export const wellFormedName = (name) => NAME_FORM.test(name) && !LOCK_ENDING.test(name);
 
 /** A project-relative path written with forward slashes and without a trailing slash, "" for the project root, or null when it is absolute or leaves the project. */
 export function normalizeArtifactPath(value) {
@@ -36,8 +42,14 @@ export function artifactAddress({ kinds, excluded }, file) {
   return { path: file, kind: match.kind, rest };
 }
 
-/** Whether a normalized path names a store lock or temporary file, which no artifact may be. */
-export const reservedArtifactName = (file) => RESERVED.test(path.posix.basename(file));
+/**
+ * The first name of an artifact address that breaks the artifact name form, or null when every name follows it:
+ * each component below the configured folder, or the file name of a configured glossary or roadmap path.
+ */
+export function malformedArtifactName({ path: file, rest }) {
+  const names = rest === null ? [path.posix.basename(file)] : rest === "" ? [] : rest.split("/");
+  return names.find((name) => !wellFormedName(name)) ?? null;
+}
 
 /** Whether a normalized path that is no artifact path is a folder that holds a configured artifact path, so a listing below it shows artifacts. */
 export function holdsArtifactPaths({ kinds, excluded }, folder) {

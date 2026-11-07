@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { checkout, exists, isolateGit, ok, refused, server, text, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Edge cases of the store artifact tools beyond the design's acceptance tests: links in the store, reserved names, nested kinds, and the roadmap's scope.
+// Edge cases of the store artifact tools beyond the design's acceptance tests: links in the store, lock names, nested kinds, the roadmap's scope, layout collisions, byte order marks, special files, and the lock that store sync shares.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -26,12 +26,12 @@ test("a symbolic link inside the store's artifacts folder is never followed for 
   assert.deepEqual(listed.artifacts.map((entry) => entry.path), ["docs/requirements/first.md"], "a listing skips links");
 });
 
-test("lock and temporary file names are not artifacts, and a listing hides them", async (context) => {
+test("lock and temporary file names break the artifact name form, and a listing hides them", async (context) => {
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
   await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
-  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/first.md.lock", content: "x\n", expectedVersion: null }] }), "not_an_artifact");
+  refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/first.md.lock", content: "x\n", expectedVersion: null }] }), "artifact_name_invalid");
   await writeFile(path.join(place.store, "artifacts", "requirements", ".first.md.1.abc.tmp"), "partial");
   assert.deepEqual(ok(await prism.call("get_artifact", {})).artifacts.map((entry) => entry.path), ["docs/requirements/first.md"]);
 });

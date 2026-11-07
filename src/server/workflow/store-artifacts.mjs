@@ -4,7 +4,7 @@ import { lstat, mkdir, open, readdir, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
-import { artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, kindInScope, normalizeArtifactPath, repositoryScope, reservedArtifactName, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
+import { ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, kindInScope, malformedArtifactName, normalizeArtifactPath, repositoryScope, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { resolveArtifactFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
@@ -59,13 +59,13 @@ const SCOPE_TEXT = "scope is \"workspace\", \"repository\" for this checkout's r
 export const ARTIFACT_TOOLS = Object.freeze([
   {
     name: "get_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
+    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", and not end in ".lock"; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
     inputSchema: GET_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), and move_scope (path, expectedVersion, and the scope to move it to). expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
+    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), and move_scope (path, expectedVersion, and the scope to move it to). expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. A name that breaks the artifact name form that get_artifact describes is refused with artifact_name_invalid and data.invalidName, so choose another name. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
     inputSchema: UPDATE_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
   }
@@ -78,6 +78,15 @@ async function refusing(action) {
     if (error?.name === "RecordStoreError" || error instanceof ComponentError) throw fail(error.code, error.message, Object.fromEntries(["proposed", "store"].filter((key) => error[key] !== undefined).map((key) => [key, error[key]])));
     throw error;
   }
+}
+
+// A malformed name inside a configured folder is still the store's to refuse: the agent picks another name rather than writing the file elsewhere.
+const nameInvalid = (given, name) => fail("artifact_name_invalid", `${JSON.stringify(given)} has the name ${JSON.stringify(name)}, which the record store does not accept: ${ARTIFACT_NAME_FORM}. Choose a name of that form for the artifact.`, { invalidName: name });
+
+/** Refuse an artifact address with a name that breaks the artifact name form. */
+function checkName(given, address) {
+  const name = malformedArtifactName(address);
+  if (name !== null) throw nameInvalid(given, name);
 }
 
 const notAnArtifact = (given) => fail("not_an_artifact", `${JSON.stringify(given)} is not a descriptive artifact path: only files under the Requirements, ADRs, and Plans folders and the Glossary and Roadmap files configured in .prism/workflow.md live in the record store, while feature files, the user guide, tests, code, and every other file stay in the checkout. Read and edit this file in the checkout with your own file tools.`);
@@ -163,15 +172,16 @@ const scopesFor = (seen, kind, given) => given ? [scopeOf(seen, given)] : seen.s
 const sortEntries = (entries) => entries.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : left.scope.label < right.scope.label ? -1 : left.scope.label > right.scope.label ? 1 : 0);
 const below = (folder, file) => folder === "" || file === folder || file.startsWith(`${folder}/`);
 
-// Every artifact file under one kind folder of one scope, as rests below the kind folder, skipping links and the store's lock and temporary files.
+// Every artifact file under one kind folder of one scope, as rests below the kind folder, skipping links, special files, and every name that breaks the artifact name form, such as the store's lock and temporary files.
 async function walk(directory, prefix, found) {
   let entries;
   try { entries = await readdir(directory, { withFileTypes: true }); }
   catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return; throw error; }
   for (const entry of entries) {
+    if (!wellFormedName(entry.name)) continue;
     const rest = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
     if (entry.isDirectory()) await walk(path.join(directory, entry.name), rest, found);
-    else if (entry.isFile() && !reservedArtifactName(entry.name)) found.push(rest);
+    else if (entry.isFile()) found.push(rest);
   }
 }
 
@@ -181,7 +191,7 @@ async function listing(seen, folder, given) {
     for (const entry of seen.kinds.kinds) {
       if (!kindInScope(entry.kind, scope)) continue;
       if (!entry.folder) {
-        if (!below(folder, entry.path)) continue;
+        if (!below(folder, entry.path) || malformedArtifactName({ path: entry.path, rest: null }) !== null) continue;
         const target = await resolveArtifactFile(seen, artifactLocation(scope, { kind: entry.kind, rest: null }));
         if ((await lstat(target).catch(() => null))?.isFile()) found.push({ path: entry.path, scope, kind: entry.kind, target });
         continue;
@@ -234,7 +244,7 @@ export async function getArtifact(input) {
     if (file === null) throw notAnArtifact(input.path);
     const address = file === "" ? null : artifactAddress(kinds, file);
     if (!address && !holdsArtifactPaths(kinds, file)) throw notAnArtifact(input.path);
-    if (address && reservedArtifactName(file)) throw notAnArtifact(input.path);
+    if (address) checkName(input.path, address);
     const given = scopeInput(config, input);
     if (address) checkKindScope(address.kind, given);
     const seen = await seenScopes(input.projectRoot);
@@ -259,7 +269,8 @@ export async function getArtifact(input) {
 function checkOperation(config, kinds, operation) {
   const file = normalizeArtifactPath(operation.path);
   const address = file === null || file === "" ? null : artifactAddress(kinds, file);
-  if (!address || reservedArtifactName(file)) throw notAnArtifact(operation.path);
+  if (!address) throw notAnArtifact(operation.path);
+  checkName(operation.path, address);
   if (address.rest === "") throw fail("invalid_path", `${file} is the configured folder itself; name a file inside it.`);
   const given = scopeInput(config, operation, operation.op === "move_scope");
   checkKindScope(address.kind, given);
