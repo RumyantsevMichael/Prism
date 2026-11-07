@@ -16,6 +16,13 @@ Base: 6069fce
 
 - data-integrity: FINDINGS (reviewer-sm-integrity-2)
 
+## implementation-review: wave-3
+
+Verified tree: 82e451ccb66388a4d31304aeee0f51d1a2e14927
+Base: 6069fce
+
+- data-integrity: CLEAN (reviewer-sm-integrity-3)
+
 ## implementation-review/data-integrity/adr-fallback-rule: ADR decision still requires a whole-file fallback for every unit changed differently on both sides
 
 - Status: VERIFIED
@@ -34,9 +41,9 @@ Base: 6069fce
 
 ## implementation-review/data-integrity/state-limit-below-caps: The 1 MiB coordination state limit is below what history and closed-gate caps admit, so valid gate answers get refused and nothing can trim them
 
-- Status: OPEN
+- Status: VERIFIED
 - Severity: medium
 - Evidence: stateContents refuses a state over 1 MiB, but validation admits 200 history entries whose gate.answer after holds a note of up to 4000 characters, plus 20 closed gates each with question 4000, context 8000, options, and an answered note; history is written only by the person's actions and closed only by resolves, and validateChanges rejects history while closed cannot be changed, so no tool can shrink them. Probe through the public writers (ask, person answer with a 4000-character note, resolve, repeated): the 63rd answer is refused with artifact_too_large at 1025318 bytes with history 62, and from then on every such answer in the browser is refused for that initiative while history is far below its 200 cap; ASCII notes reach the limit too (200 x ~4.3 KB history + 20 x ~17 KB closed). Before 62a6b2c these writes succeeded (record read limit 64 MiB). Failing test: test/server/coordination-state-size-history.test.mjs.
 - Condition to close: test/server/coordination-state-size-history.test.mjs passes, and the coordination state limit that writers and the merge share admits a state holding 200 maximal history entries and 20 maximal closed gates, or the history and answer limits are bounded so that such a state fits, with the ADR naming the same limit.
-- Implementer evidence: none
+- Implementer evidence: Design revised clauses 21/26/27/50 (64d3d33, approved by Michael); 6e698c4 fits every written and merged state to 1 MiB by dropping the oldest history then closed gates; frozen merge tests cover 70 answers with 4000-character notes.
 
