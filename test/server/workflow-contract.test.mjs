@@ -98,7 +98,8 @@ test("orchestration designs one contract per scope, starts each slice, and compl
   assert.match(orchestrate, /`start_wave` operation in `implementation-review` mode/);
   assert.match(orchestrate, /Record every question to the user before asking it/);
   assert.match(orchestrate, /call `checkpoint_pause` with the initiative, the current revision, the active slice/);
-  assert.match(orchestrate, /a single `remove_records` operation/);
+  assert.match(orchestrate, /Keep the slice folders and the initiative's records/);
+  assert.doesNotMatch(orchestrate, /remove_records/);
   assert.match(orchestrate, /`update_roadmap` with a `ship` operation/);
   assert.match(orchestrate, /1\. Call `update_initiative` with a `claim` operation for the scope, so no other agent starts it/);
   assert.match(await skill("workflow"), /\| Claim \| .*`slice_claimed`.*`release_claim`/);
