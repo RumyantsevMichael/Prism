@@ -66,7 +66,6 @@ A Git identity is what Prism can name without accounts, and it is a claim becaus
 - Browser changes now also change the history in the coordination state, so an agent's next state write may need one more re-read.
 - Where a host gives child agents the session identity of their orchestrator, a child may receive a notice first, so the orchestrator also reads the current settings whenever it claims a scope or starts a slice.
 - A change made on another machine reaches agents and tabs only after the store syncs, and tabs see it when Attention next loads, not as an event.
-- Whether agent flow may still change is decided on the records this checkout holds, so work started elsewhere since the last sync does not lock it yet, and work already started keeps its flow.
 - History order follows each machine's clock, so a machine with a wrong clock places its entries out of real-time order, while notices and waits, which follow ids, still show every entry once.
 - A history entry's author can be wrong or forged by anyone who can write the store, so it informs people and is never used to decide authority.
 
@@ -78,6 +77,7 @@ When Prism opens a browser, for a presentation, a session start, or the person's
 The page exchanges the grant once for a token, keeps the token in its tab, sends it with each write and with its event stream, and Prism counts only tabs with a token when it decides whether to open a browser.
 Each applied action inserts a history entry beside the change, and the server or app sends it as an event to every tab of each checkout's page whose records resolve to the same store, or only the applying checkout's tabs for an index rebuild.
 An index rebuild's entry goes to a file of the checkout in Prism's application folder, beside the machine's checkout list.
+An index rebuild prepares only its own component's index, and reuses that index without a build while it is up to date.
 Store sync merges a coordination state that changed on both sides through the record merge registry, as it merges the roadmap and initiative records.
 Prism keeps, per agent session and initiative in the private plugin data folder, the ids of the history entries it has shown that session, and adds every other entry to the session's next successful result that names the initiative.
 

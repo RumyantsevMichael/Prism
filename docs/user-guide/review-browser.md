@@ -85,7 +85,6 @@ An initiative has these settings, each with its default and the moment an agent 
 | Setting | Values | Default | Takes effect |
 | --- | --- | --- | --- |
 | Autonomy | `conservative`, `broad`, `full` | `conservative` | Decides which later gates wait for you; a gate already open keeps waiting for you. |
-| Agent flow | `multi`, `mono` | `multi` | When work on the initiative starts; it cannot change once a slice has started, is claimed, or has active work. |
 | Commit | `off`, `on` | `on` with `full` autonomy, otherwise `off` | For child sessions started after the change. |
 | Push | `off`, `on` | `off` | For child sessions started after the change. |
 | Continuation | `auto`, `stepwise` | `auto` | When the slice in progress finishes. |
@@ -94,8 +93,13 @@ An initiative has these settings, each with its default and the moment an agent 
 
 Turning autonomy to `full`, commit on, or push on asks you to confirm first, because it lets agents act further without you.
 
+Every setting can change at any time, including after work on the initiative started.
+A question's answer shows the situation the agent described, what each option does, and the option the agent recommends with its reason, when the agent gave them.
+
 Each component that `## Components` declares has its own index target, named `<repository>/<component>`, after the root component of the checkout.
-Prism's indexer builds one index for the whole checkout, so rebuilding any component's index rebuilds that index, and a rebuild is refused while a build is already running.
+Rebuilding a component's index prepares only that component, also one that has no index yet, retries it when its last build failed, and reuses its index without a build while it is up to date.
+A rebuild is refused while that component's index is already being built, and a rebuild of another component waits for the running build without stopping it.
+In a repository without components, the root component's rebuild prepares the checkout's one index.
 
 ## Roadmap, initiatives, and slices
 
@@ -183,7 +187,7 @@ In the palette, Enter opens the result in the preview tab, Ctrl+Enter keeps it o
 ## Index status
 
 The index item at the right of the status bar shows the open project's native index, and its panel lists every build step.
-In a repository with components, the item combines every component's index and names the component being built, and its panel lists each component with its state.
+In a repository with components, the item combines every component's index and names the component being built, and its panel lists each component with its state and a Rebuild button for that component's index.
 A long component identity ends in an ellipsis, and the item's tooltip names it whole.
 See [Watch an index build in the review browser](repository-intelligence.md#watch-an-index-build-in-the-review-browser) for what each state means.
 
