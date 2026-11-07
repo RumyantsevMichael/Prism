@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { checkout, exists, git, isolateGit, ok, refused, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Edge cases of the store artifact tools beyond the design's acceptance tests: links in the store, lock names, nested kinds, the roadmap's scope, layout collisions, byte order marks, special files, the lock that store sync shares, large store files, and copies that two scopes hold.
+// Edge cases of the store artifact tools beyond the design's acceptance tests: links in the store, lock names, nested kinds, the roadmap's scope, layout collisions, byte order marks, special files, the lock that store sync shares, large store files, copies that two scopes hold, the person's own Git excludes, and file systems that ignore letter case.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -264,4 +264,64 @@ test("store sync makes and removes folders under artifacts only while it holds t
   assert.equal((await syncRecordStore(place.storeA)).state, "ok");
   assert.equal(await text(path.join(plans, "fresh", "slice.md")), "# fresh\n");
   assert.equal(await text(path.join(plans, "shared", "slice.md")), "# shared\n");
+});
+
+test("store sync shares only artifacts and record files that the person's own excludes match, never their dotfiles or tool folders", async (context) => {
+  const { cancelRecordSyncs, configureRecordSync, syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  const { updateArtifact } = await import("../../dist/server/workflow/store-artifacts.mjs");
+  configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 });
+  const excludes = path.join(environment, "personal-excludes");
+  await writeFile(excludes, "*.log\nbuild/\n.env\n.idea/\n.DS_Store\n");
+  await writeFile(process.env.GIT_CONFIG_GLOBAL, `[core]\n\texcludesFile = ${excludes.replaceAll("\\", "/")}\n`);
+  context.after(async () => { cancelRecordSyncs(); configureRecordSync({ debounceMs: 5000, pullIntervalMs: 30000 }); await writeFile(process.env.GIT_CONFIG_GLOBAL, ""); });
+  const place = await syncedWorkspace(context);
+  const api = await checkout(place.a, "api");
+  const files = { "docs/plans/x/run.log": "# Run log\n", "docs/plans/x/build/notes.md": "# Build notes\n" };
+  await updateArtifact({ projectRoot: api, operations: Object.entries(files).map(([file, content]) => ({ op: "write", path: file, content, expectedVersion: null })) });
+  // Files that an editor, a file manager, or the person left in the store, which only the person's excludes keep out of its history.
+  const local = [".env", ".idea/workspace.xml", ".DS_Store", "artifacts/plans/x/.DS_Store"];
+  for (const file of local) {
+    await mkdir(path.dirname(path.join(place.storeA, file)), { recursive: true });
+    await writeFile(path.join(place.storeA, file), file === ".env" ? "TOKEN=abc\n" : "local\n");
+  }
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  for (const [file, content] of Object.entries(files)) {
+    assert.equal(git(place.remote, "show", `main:artifacts/${file.replace(/^docs\//, "")}`), content.trimEnd(), `${file} reached the remote`);
+  }
+  const pushed = git(place.remote, "ls-tree", "-r", "--name-only", "main").split("\n");
+  assert.ok(pushed.some((file) => file.startsWith("repositories/")), "the repository's registration reached the remote");
+  for (const file of local) assert.equal(pushed.includes(file), false, `${file} stays out of the store's history`);
+});
+
+test("on a file system that ignores letter case, a variant of a stored path in another letter case is no artifact and never opens the stored one", async (context) => {
+  // This host's file system tells letter case apart, so the server runs with a preload that makes its file calls below the store's artifacts folder ignore letter case, while listings keep each stored name.
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const marker = path.join(place.parent, "case-insensitive.loaded");
+  const prism = await server(context, place, api, { env: {
+    NODE_OPTIONS: `--import=${new URL("./fixtures/case-insensitive-store.mjs", import.meta.url).href}`,
+    PRISM_TEST_CASE_INSENSITIVE: path.join(place.store, "artifacts"),
+    PRISM_TEST_CASE_INSENSITIVE_MARKER: marker
+  } });
+  const stored = await writeArtifact(prism, "docs/plans/x/Plan.md", "# Plan\n");
+  assert.ok(await exists(marker), "the server ignores letter case below the artifacts folder");
+  const folder = path.join(place.store, "artifacts", "plans", "x");
+
+  refused(await prism.call("get_artifact", { path: "docs/plans/x/plan.md" }), "artifact_not_found");
+  refused(await prism.call("get_artifact", { path: "docs/plans/X/Plan.md" }), "artifact_not_found");
+  const conflict = refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/x/plan.md", content: "# Other\n", expectedVersion: null }] }), "artifact_name_conflict");
+  assert.equal(conflict.data.path, "docs/plans/x/Plan.md");
+  for (const operation of [
+    { op: "write", path: "docs/plans/x/plan.md", content: "# Other\n", expectedVersion: stored.version },
+    { op: "edit", path: "docs/plans/x/plan.md", expectedVersion: stored.version, edits: [{ oldText: "# Plan", newText: "# Other" }] },
+    { op: "remove", path: "docs/plans/x/plan.md", expectedVersion: stored.version },
+    { op: "move_scope", path: "docs/plans/x/plan.md", expectedVersion: stored.version, scope: "repository" }
+  ]) {
+    const error = refused(await prism.call("update_artifact", { operations: [operation] }), "version_conflict");
+    assert.equal(error.data.version, null, `${operation.op} finds no artifact at the variant`);
+  }
+  assert.deepEqual(await readdir(folder), ["Plan.md"]);
+  assert.equal(await text(path.join(folder, "Plan.md")), "# Plan\n");
+  assert.equal(ok(await prism.call("get_artifact", { path: "docs/plans/x/Plan.md" })).content, "# Plan\n");
+  assert.equal(await exists(path.join(place.store, "artifacts", "repositories")), false, "no variant moved to another scope");
 });

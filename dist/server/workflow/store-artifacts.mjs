@@ -130,10 +130,27 @@ function checkKindScope(kind, input) {
 const notRegular = () => fail("invalid_path", "An artifact in the record store must be a regular file, and this location holds a special file such as a pipe or device, which Prism does not open.");
 
 /**
+ * Whether every name of a location below the artifacts folder equals the name of an entry of its folder exactly.
+ * A case-insensitive file system, the default on macOS and Windows, opens a stored Plan.md for plan.md, so only a location whose names all match counts as found.
+ */
+async function exactLocation(base, target) {
+  let folder = base;
+  for (const name of path.relative(base, target).split(path.sep)) {
+    let names;
+    try { names = await readdir(folder); }
+    catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return false; throw error; }
+    if (!names.includes(name)) return false;
+    folder = path.join(folder, name);
+  }
+  return true;
+}
+
+/**
  * What a store location holds, found without opening it or following a symbolic link: "missing", "folder", "file",
  * or "under_file" when a folder above it is a file; a link or special file is refused with invalid_path.
+ * With base, the artifacts folder, a location that some name matches only in letter case is "missing".
  */
-async function locationKind(target) {
+async function locationKind(target, base = null) {
   let info;
   try { info = await lstat(target); }
   catch (error) {
@@ -141,6 +158,7 @@ async function locationKind(target) {
     if (error.code === "ENOTDIR") return "under_file";
     throw error;
   }
+  if (base !== null && !(await exactLocation(base, target))) return "missing";
   if (info.isSymbolicLink()) throw fail("invalid_path", "An artifact in the record store is a symbolic link, which Prism does not follow.");
   if (info.isDirectory()) return "folder";
   if (!info.isFile()) throw notRegular();
@@ -150,9 +168,10 @@ async function locationKind(target) {
 /**
  * A stored file as { bytes, size, version }, or null when no file is there; bytes is null for a file above the bound a read takes.
  * The location is checked before it is opened, and opened without blocking, so a pipe never holds a read or the store's lock.
+ * With base, the artifacts folder, a location that some name matches only in letter case holds no file; a listing's locations come from folder entries and need no base.
  */
-async function readStored(target) {
-  if ((await locationKind(target)) !== "file") return null;
+async function readStored(target, base = null) {
+  if ((await locationKind(target, base)) !== "file") return null;
   let handle;
   try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
   catch (error) {
@@ -181,9 +200,10 @@ function contentOf(file, record) {
   return record.bytes;
 }
 
-async function isFolder(target) {
-  try { const info = await lstat(target); return info.isDirectory(); }
+async function isFolder(target, base) {
+  try { if (!(await lstat(target)).isDirectory()) return false; }
   catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return false; throw error; }
+  return exactLocation(base, target);
 }
 
 // A leading byte order mark is part of the stored text, so pages join to the file's text and an edit keeps it.
@@ -235,7 +255,7 @@ async function holdings(seen, folder, given) {
       if (!entry.folder) {
         if (!below(folder, entry.path) || malformedArtifactName({ path: entry.path, rest: null }) !== null) continue;
         const target = await resolveArtifactFile(seen, artifactLocation(scope, { kind: entry.kind, rest: null }));
-        if ((await lstat(target).catch(() => null))?.isFile()) found.push({ path: entry.path, scope, kind: entry.kind, target });
+        if ((await locationKind(target, seen.base).catch(() => null)) === "file") found.push({ path: entry.path, scope, kind: entry.kind, target });
         continue;
       }
       // Only a kind folder that the listed folder holds, or that holds it, can hold artifacts below it.
@@ -244,7 +264,9 @@ async function holdings(seen, folder, given) {
       else if (below(entry.path, folder)) start = entry.path === "" ? folder : folder.slice(entry.path.length + 1);
       else continue;
       const rests = [];
-      await walk(await resolveArtifactFile(seen, artifactLocation(scope, { kind: entry.kind, rest: start })), start, rests);
+      const folderTarget = await resolveArtifactFile(seen, artifactLocation(scope, { kind: entry.kind, rest: start }));
+      // Below the folder the walk takes names from folder entries, so only the folder it starts in needs its names matched exactly.
+      if (await exactLocation(seen.base, folderTarget)) await walk(folderTarget, start, rests);
       for (const rest of rests) {
         const file = artifactPathOf(seen.kinds, entry.kind, rest);
         // A stored file whose path another configured kind or an excluded folder claims is not this checkout's artifact.
@@ -268,7 +290,7 @@ async function listing(seen, folder, given) {
 }
 
 // The scopes among candidates whose store holds the artifact, with its file and its stored record.
-async function holders(seen, address, scopes, read = readStored) {
+async function holders(seen, address, scopes, read = (target) => readStored(target, seen.base)) {
   const held = [];
   for (const scope of scopes) {
     const target = await resolveArtifactFile(seen, artifactLocation(scope, address));
@@ -299,7 +321,7 @@ export async function getArtifact(input) {
     if (held.length > 1) throw ambiguous(file, held);
     if (held.length === 0) {
       for (const scope of scopesFor(seen, address.kind, given)) {
-        if (await isFolder(await resolveArtifactFile(seen, artifactLocation(scope, address)))) return listing(seen, file, given);
+        if (await isFolder(await resolveArtifactFile(seen, artifactLocation(scope, address)), seen.base)) return listing(seen, file, given);
       }
       throw notFound(file);
     }
@@ -356,7 +378,7 @@ async function checkLayout(seen, writes, state, names) {
     for (let folder = path.dirname(target); folder !== seen.base && folder.startsWith(`${seen.base}${path.sep}`); folder = path.dirname(folder)) {
       if (state.get(folder)) throw fail("invalid_path", `${file} lies below ${names.get(folder)}, which this update writes as a file, so the two cannot both exist; nothing changed.`);
     }
-    const kind = await locationKind(target);
+    const kind = await locationKind(target, seen.base);
     if (kind === "folder") throw fail("invalid_path", `${file} is a folder of artifacts in the record store, so no file can be written in its place; nothing changed.`);
     if (kind === "under_file") throw fail("invalid_path", `${file} lies below a file that the record store holds, so it cannot be written; nothing changed.`);
   }
@@ -424,7 +446,7 @@ export async function updateArtifact(input) {
       const names = new Map();
       const read = async (target) => {
         if (!state.has(target)) {
-          const record = await readStored(target);
+          const record = await readStored(target, seen.base);
           original.set(target, record);
           state.set(target, record);
         }
@@ -528,7 +550,7 @@ async function creationScope(seen, address, scopes, state) {
     for (const scope of scopes) {
       const target = await resolveArtifactFile(seen, artifactLocation(scope, folder));
       const written = [...state].some(([file, bytes]) => bytes !== null && file.startsWith(`${target}${path.sep}`));
-      if (written || await isFolder(target)) holding.push(scope);
+      if (written || await isFolder(target, seen.base)) holding.push(scope);
     }
     if (holding.length === 1) return holding[0];
     if (holding.length > 1) break;

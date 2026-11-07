@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
-import { ARTIFACTS } from "./artifact-paths.mjs";
+import { ARTIFACTS, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
 import { withoutCredentials } from "./remote-url.mjs";
@@ -253,13 +253,24 @@ async function identity(base) {
   return args;
 }
 
-// Stage the store's changes, with or without artifacts/, so that only the store's own ignore files decide what it tracks.
+// The files that every machine of a store shares, which a commit adds even where the person's own excludes match them: Prism's ignore and attributes files,
+// its record files, whose names never begin with ".", and the artifacts under artifacts/, whose every name follows the artifact name form.
+// A dotfile or a tool's folder, such as .env, .idea/, or .DS_Store, is none of these, so it stays out of the shared history as the person's excludes keep it.
+const RECORD_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+export function isSharedStoreFile(relative) {
+  if (relative === ".gitignore" || relative === ".gitattributes") return true;
+  const names = relative.split("/");
+  if (names[0] === ARTIFACTS) return names.length > 1 && names.slice(1).every(wellFormedName);
+  return isRecordFile(relative) && names.every((name) => RECORD_NAME.test(name));
+}
+
+// Stage the store's changes, with or without artifacts/, so that only the store's own ignore files decide what it tracks among the files it shares.
 async function stage(base, artifacts) {
   const scope = artifacts ? ["."] : [".", `:(exclude)${ARTIFACTS}`];
   await required(base, ["add", "-A", "--", ...scope]);
-  // The person's core.excludesFile and the store's info/exclude would leave files that other machines share uncommitted.
+  // The person's core.excludesFile and the store's info/exclude would leave files that other machines share uncommitted, so those are added anyway, and nothing else.
   const leftOut = (await required(base, ["ls-files", "-z", "--others", "--exclude-per-directory=.gitignore", "--", ...scope])).stdout.toString("utf8").split("\0").filter(Boolean)
-    .filter((file) => artifacts || !file.startsWith(`${ARTIFACTS}/`));
+    .filter((file) => isSharedStoreFile(file) && (artifacts || !file.startsWith(`${ARTIFACTS}/`)));
   if (leftOut.length) await required(base, ["--literal-pathspecs", "add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], { input: `${leftOut.join("\0")}\0` });
 }
 
