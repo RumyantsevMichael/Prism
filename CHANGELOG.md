@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/RumyantsevMichael/Prism/compare/v0.19.0...v0.20.0) (2026-11-07)
+
+
+### Added
+
+* keep an initiative's plan folders and records after it ships ([#133](https://github.com/RumyantsevMichael/Prism/issues/133)) ([f189f6b](https://github.com/RumyantsevMichael/Prism/commit/f189f6b4c61054a59c450c7869c78cfcbe2e1d5a))
+
 ## [0.19.0](https://github.com/RumyantsevMichael/Prism/compare/v0.18.0...v0.19.0) (2026-11-06)
 
 

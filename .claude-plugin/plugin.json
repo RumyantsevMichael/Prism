@@ -3,7 +3,7 @@
   "name": "prism",
   "displayName": "Prism",
   "description": "Prism designs each slice as a frozen contract with failing acceptance tests, implements it in fresh sessions, and completes it on a passing run of your tests, with EARS requirements, ADRs, and Gherkin features.",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "author": {
     "name": "Michael Rumyantsev",
     "url": "https://github.com/RumyantsevMichael"
