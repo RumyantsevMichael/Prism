@@ -103,7 +103,7 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined) {
 
 const settingsOf = (context) => (context.coordination.valid ? context.coordination.state?.settings : null) ?? {};
 
-function setting({ name, label, fields, effect, confirm = null, value, after = (values) => values.value }) {
+function setting({ name, label, fields, effect, confirm = null, value, after = (values) => values.value, ignores = () => [] }) {
   return {
     id: `initiative.${name}`,
     kinds: ["initiative", "slice"],
@@ -118,6 +118,7 @@ function setting({ name, label, fields, effect, confirm = null, value, after = (
     confirm: () => confirm,
     revision: (context) => context.coordination.revision,
     unavailable: () => null,
+    ignores,
     after,
     change: (context, after) => ({ setting: { name, value: after } })
   };
@@ -182,6 +183,8 @@ const SETTING_DEFINITIONS = [
     ],
     effect: NEXT_CHILD,
     value: modelsOf,
+    // Host defaults store no model names, so the text fields are neither checked nor kept.
+    ignores: (values) => values.mode === "host defaults" ? ["delivery", "review", "securityReview", "examples"] : [],
     after: (values) => values.mode === "host defaults"
       ? "host defaults"
       : { delivery: values.delivery, review: values.review, securityReview: values.securityReview, ...(values.examples === null ? {} : { examples: values.examples }) }
@@ -309,16 +312,24 @@ const optionValues = (item) => item.options.map((entry) => entry.value);
 const invalid = (name, accepted, message) => fail("invalid_input", message, { field: name, accepted });
 
 // Reads an input against the fields: every value is a listed option, a text within its limit, or empty as null, and every required field is filled.
-function readInput(fields, input) {
+// The options are read first, so a field that the chosen options make irrelevant is read as null without a check.
+function readInput(fields, input, ignores = () => []) {
   if (!isRecord(input)) throw invalid(null, `The input maps field names to values: ${fields.map((item) => item.name).join(", ") || "none"}.`, "The input must be an object of field values.");
   const names = new Set(fields.map((item) => item.name));
   for (const name of Object.keys(input)) {
     if (!names.has(name)) throw invalid(name, fields.length ? `The action has no field ${name}; its fields are ${fields.map((item) => item.name).join(", ")}.` : `The action has no field ${name}; it takes no fields.`, `The action has no field ${name}.`);
   }
   const values = {};
-  for (const item of fields) {
+  const ordered = [...fields.filter((item) => item.kind !== "text"), ...fields.filter((item) => item.kind === "text")];
+  let ignored = null;
+  for (const item of ordered) {
     const raw = input[item.name];
     if (item.kind === "text") {
+      ignored ??= new Set(ignores(values));
+      if (ignored.has(item.name)) {
+        values[item.name] = null;
+        continue;
+      }
       const accepted = `Text of at most ${item.maxLength} characters.`;
       if (raw !== undefined && raw !== null && typeof raw !== "string") throw invalid(item.name, accepted, `${item.label} must be text.`);
       if (typeof raw === "string" && raw.length > item.maxLength) throw invalid(item.name, accepted, `${item.label} takes at most ${item.maxLength} characters.`);
@@ -345,6 +356,18 @@ function readInput(fields, input) {
 
 // ---- Applying ----
 
+// Two values are the same when they hold the same data, whatever order an object's keys were stored in.
+function sameValue(left, right) {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((item, index) => sameValue(item, right[index]));
+  }
+  if (isRecord(left) && isRecord(right)) {
+    const keys = Object.keys(left);
+    return keys.length === Object.keys(right).length && keys.every((key) => Object.hasOwn(right, key) && sameValue(left[key], right[key]));
+  }
+  return left === right;
+}
+
 // The author is what the applying checkout's Git configuration claims, with the checkout's label on this host; nothing checks it.
 async function authorOf(projectRoot) {
   const read = async (key) => {
@@ -362,9 +385,9 @@ function check(definition, context, { revision, input, confirmed }) {
   const current = view(definition, context);
   if ((revision ?? null) !== current.revision) throw fail("stale_revision", "The record changed since the page read it.", { current });
   if (!current.available) throw fail("action_unavailable", current.reason, { reason: current.reason, current });
-  const values = readInput(current.fields, input);
+  const values = readInput(current.fields, input, definition.ignores ?? (() => []));
   const after = definition.after(values, context);
-  if (current.value !== null && JSON.stringify(after) === JSON.stringify(current.value)) return null;
+  if (current.value !== null && sameValue(after, current.value)) return null;
   if (current.confirm && current.confirm.values.includes(values[current.confirm.field] ?? null) && confirmed !== true) {
     throw fail("confirmation_required", current.confirm.message, { confirm: current.confirm });
   }
