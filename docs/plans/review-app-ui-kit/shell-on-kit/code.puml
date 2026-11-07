@@ -1,0 +1,27 @@
+@startuml
+title shell-on-kit
+component "review.html" as html
+component "review.js" as app
+component "styles/shell.css" as css
+component "side-panel.js" as side
+component "palette.js" as palette
+component "record-store.js" as store
+component "indexing.js" as indexing
+component "entities.js / registry.js" as nav
+component "connection.js / missing-tab.js / attention-signal.js" as misc
+component "kit elements" as kit
+html --> css
+html --> app
+app --> side
+app --> palette
+app --> store
+app --> indexing
+app --> nav
+app --> misc
+side --> kit
+palette --> kit
+store --> kit
+indexing --> kit
+nav --> kit
+misc --> kit
+@enduml

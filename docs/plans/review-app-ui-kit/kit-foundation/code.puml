@@ -1,0 +1,23 @@
+@startuml
+title kit-foundation
+component "review.html" as html
+component "kit/boot.js" as boot
+component "kit/preferences.js" as prefs
+component "kit/tokens.css" as tokens
+component "kit/kit.css" as kitcss
+component "kit/kit.js" as kitjs
+component "review.css" as legacy
+component "review-server.mjs\ncreateProjectReview" as server
+component "review-preferences.mjs" as store
+component "kit-guard.mjs" as guard
+html --> boot
+html --> tokens
+html --> kitcss
+html --> kitjs
+kitjs --> prefs
+prefs --> server : GET/PUT /api/preferences
+server --> store
+legacy --> tokens
+kitcss --> tokens
+guard ..> tokens : exempt
+@enduml

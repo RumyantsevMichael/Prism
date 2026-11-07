@@ -1,0 +1,26 @@
+@startuml
+title workflow-views-on-kit
+component "util.js" as util
+component "attention.js" as attention
+component "roadmap.js" as roadmap
+component "initiative.js" as initiative
+component "slice.js" as slice
+component "library.js" as library
+component "claims.js / components.js" as chips
+component "run-totals.js / code-location.js" as stats
+component "styles/workflow-views.css" as css
+component "kit elements" as kit
+attention --> util
+roadmap --> util
+initiative --> util
+slice --> util
+library --> util
+slice --> chips
+slice --> stats
+initiative --> stats
+util --> kit
+chips --> kit
+stats --> kit
+attention --> kit
+css ..> kit : layout only
+@enduml

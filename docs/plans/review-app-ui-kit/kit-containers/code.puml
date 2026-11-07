@@ -1,0 +1,28 @@
+@startuml
+title kit-containers
+component "kit/kit.js" as kit
+component "prism-panel" as panel
+component "prism-tree / item" as tree
+component "prism-listbox / item" as listbox
+component "prism-dialog" as dialog
+component "prism-disclosure" as disclosure
+component "prism-empty-state / banner / toast" as states
+component "prism-stat / meter / spinner" as stats
+component "prism-doc / prism-code" as content
+component "catalog.js" as catalog
+component "prism-button" as button
+component "prism-field" as field
+kit --> panel
+kit --> tree
+kit --> listbox
+kit --> dialog
+kit --> disclosure
+kit --> states
+kit --> stats
+kit --> content
+panel --> button
+dialog --> button
+states --> button
+listbox ..> field : for
+catalog --> kit
+@enduml

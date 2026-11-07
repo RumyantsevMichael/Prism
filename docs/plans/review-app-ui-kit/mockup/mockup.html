@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en" data-density="compact">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review app UI kit mockup</title>
+  <link rel="stylesheet" href="./tokens.css">
+  <style>
+    /* Mockup-only layout. Every value comes from tokens.css; the real kit draws these parts with prism-* elements. */
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--prism-color-line-strong); font: var(--prism-font-size-md)/var(--prism-line-height) var(--prism-font-ui); }
+    .page-note { margin: 0; padding: var(--prism-space-5) var(--prism-space-6); background: var(--prism-color-surface); color: var(--prism-color-ink); }
+    .page-note code { font-family: var(--prism-font-code); }
+    .frames { display: grid; gap: var(--prism-space-6); grid-template-columns: repeat(auto-fit, minmax(min(100%, 760px), 1fr)); padding: var(--prism-space-6); }
+    .frame { background: var(--prism-color-bg); border-radius: var(--prism-radius-lg); box-shadow: var(--prism-shadow-dialog); color: var(--prism-color-ink); display: grid; grid-template-rows: auto auto 1fr auto; height: 820px; overflow: hidden; }
+    .frame-label { background: var(--prism-color-sunken); color: var(--prism-color-ink-muted); font-size: var(--prism-font-size-xs); padding: var(--prism-space-2) var(--prism-space-5); text-transform: uppercase; letter-spacing: 0.06em; }
+
+    /* Top bar: chrome surface in both themes, one hairline under it, tabs as an editor strip. */
+    .topbar { align-items: stretch; background: var(--prism-color-chrome); border-bottom: 1px solid var(--prism-color-line); display: flex; gap: var(--prism-space-4); height: calc(var(--prism-control-height) + var(--prism-space-4)); padding: 0 var(--prism-space-4); }
+    .mark { align-self: center; background: linear-gradient(135deg, var(--prism-color-accent), var(--prism-color-brand)); border-radius: var(--prism-radius-sm); height: 16px; width: 16px; }
+    .project { align-self: center; align-items: center; border: 1px solid var(--prism-color-line-control); border-radius: var(--prism-radius-md); display: inline-flex; gap: var(--prism-space-3); height: var(--prism-control-height); max-width: 220px; padding: 0 var(--prism-space-4); }
+    .ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .count { background: var(--prism-color-danger-soft); border-radius: var(--prism-radius-round); color: var(--prism-color-danger); font-size: var(--prism-font-size-xs); font-weight: var(--prism-font-weight-semibold); padding: 0 var(--prism-space-3); }
+    .tabs { display: flex; min-width: 0; overflow: hidden; }
+    .tab { align-items: center; border-bottom: 2px solid transparent; color: var(--prism-color-ink-muted); display: flex; gap: var(--prism-space-3); max-width: 200px; padding: 0 var(--prism-space-5); }
+    .tab.is-selected { background: var(--prism-color-surface); border-bottom-color: var(--prism-color-accent); color: var(--prism-color-ink); }
+    .tab.is-preview .ellipsis { font-style: italic; }
+    .tab-close { color: var(--prism-color-ink-muted); }
+
+    .body { display: grid; grid-template-columns: 220px 1fr 300px; min-height: 0; }
+    .sidebar { background: var(--prism-color-chrome); border-right: 1px solid var(--prism-color-line); display: flex; flex-direction: column; gap: var(--prism-space-2); min-width: 0; padding: var(--prism-space-4) 0; }
+    .jump { align-items: center; border: 1px solid var(--prism-color-line-control); border-radius: var(--prism-radius-md); color: var(--prism-color-ink-muted); display: flex; height: var(--prism-control-height); justify-content: space-between; margin: 0 var(--prism-space-4) var(--prism-space-4); padding: 0 var(--prism-space-4); }
+    kbd { background: var(--prism-color-surface); border: 1px solid var(--prism-color-line-strong); border-radius: var(--prism-radius-sm); font: var(--prism-font-size-xs) var(--prism-font-code); padding: 0 var(--prism-space-2); }
+    .tree-head { color: var(--prism-color-ink-muted); font-size: var(--prism-font-size-xs); font-weight: var(--prism-font-weight-semibold); letter-spacing: 0.06em; padding: var(--prism-space-4) var(--prism-space-5) var(--prism-space-2); text-transform: uppercase; }
+    .row { align-items: center; display: flex; gap: var(--prism-space-3); height: var(--prism-row-height); padding: 0 var(--prism-space-5); }
+    .row.l2 { padding-left: calc(var(--prism-space-5) + var(--prism-space-6)); }
+    .row.l3 { padding-left: calc(var(--prism-space-5) + 2 * var(--prism-space-6)); }
+    .row.is-selected { background: var(--prism-color-selected); box-shadow: inset 2px 0 0 var(--prism-color-accent); }
+    .row .end { color: var(--prism-color-ink-muted); font-size: var(--prism-font-size-xs); margin-left: auto; }
+    .twisty { color: var(--prism-color-ink-muted); width: 10px; }
+
+    .workspace { background: var(--prism-color-surface); display: flex; flex-direction: column; gap: var(--prism-space-5); min-width: 0; overflow: hidden; padding: var(--prism-space-6); }
+    .crumbs { color: var(--prism-color-ink-muted); font-size: var(--prism-font-size-sm); }
+    h1 { font-size: var(--prism-font-size-xl); font-weight: var(--prism-font-weight-semibold); line-height: var(--prism-line-height-tight); margin: 0; }
+    h2 { font-size: var(--prism-font-size-md); font-weight: var(--prism-font-weight-semibold); margin: 0; }
+    .panel { border: 1px solid var(--prism-color-line); border-radius: var(--prism-radius-lg); }
+    .panel-head { align-items: center; border-bottom: 1px solid var(--prism-color-line); display: flex; gap: var(--prism-space-4); padding: var(--prism-space-4) var(--prism-space-5); }
+    .panel-head .source { color: var(--prism-color-ink-muted); font-family: var(--prism-font-code); font-size: var(--prism-font-size-xs); }
+    .panel-head .tools { display: flex; gap: var(--prism-space-2); margin-left: auto; }
+    .panel-body { display: grid; gap: var(--prism-space-4); padding: var(--prism-space-5); }
+    .muted { color: var(--prism-color-ink-muted); }
+    .chips { display: flex; flex-wrap: wrap; gap: var(--prism-space-3); }
+    .chip { align-items: center; background: var(--prism-color-sunken); border: 1px solid var(--prism-color-line-control); border-radius: var(--prism-radius-sm); display: inline-flex; font-size: var(--prism-font-size-sm); gap: var(--prism-space-3); max-width: 100%; padding: 0 var(--prism-space-3); }
+    .chip code { color: var(--prism-color-ink-muted); font-family: var(--prism-font-code); font-size: var(--prism-font-size-xs); }
+    .badge { border-radius: var(--prism-radius-sm); font-size: var(--prism-font-size-xs); font-weight: var(--prism-font-weight-semibold); padding: 0 var(--prism-space-3); }
+    .tone-warning { background: var(--prism-color-warning-soft); color: var(--prism-color-warning); }
+    .tone-success { background: var(--prism-color-success-soft); color: var(--prism-color-success); }
+    .tone-info { background: var(--prism-color-info-soft); color: var(--prism-color-info); }
+    .tone-accent { background: var(--prism-color-accent-soft); color: var(--prism-color-accent-text); }
+    .choice { align-items: flex-start; border: 1px solid var(--prism-color-line-control); border-radius: var(--prism-radius-md); display: flex; gap: var(--prism-space-4); padding: var(--prism-space-4) var(--prism-space-5); }
+    .choice.is-checked { background: var(--prism-color-accent-soft); border-color: var(--prism-color-accent); }
+    .radio { border: 1px solid var(--prism-color-line-control); border-radius: var(--prism-radius-round); flex: none; height: 12px; margin-top: var(--prism-space-1); width: 12px; }
+    .is-checked .radio { border: 4px solid var(--prism-color-accent); }
+    .field { display: grid; gap: var(--prism-space-2); }
+    .field label { font-size: var(--prism-font-size-sm); font-weight: var(--prism-font-weight-medium); }
+    .input { background: var(--prism-color-surface); border: 1px solid var(--prism-color-line-control); border-radius: var(--prism-radius-md); color: var(--prism-color-ink-muted); min-height: calc(2 * var(--prism-control-height)); padding: var(--prism-space-3) var(--prism-space-4); }
+    .actions { display: flex; gap: var(--prism-space-3); justify-content: flex-end; }
+    .button { align-items: center; background: var(--prism-color-surface); border: 1px solid var(--prism-color-line-control); border-radius: var(--prism-radius-md); color: var(--prism-color-ink); display: inline-flex; font-weight: var(--prism-font-weight-medium); height: var(--prism-control-height); padding: 0 var(--prism-space-5); }
+    .button.primary { background: var(--prism-color-accent); border-color: var(--prism-color-accent); color: var(--prism-color-on-accent); }
+    .button.ghost { background: transparent; border-color: transparent; color: var(--prism-color-ink-muted); padding: 0 var(--prism-space-3); }
+    .button.focused { outline: 2px solid var(--prism-color-focus); outline-offset: 1px; }
+
+    .side { background: var(--prism-color-surface); border-left: 1px solid var(--prism-color-line); display: flex; flex-direction: column; min-width: 0; }
+    .side-head { border-bottom: 1px solid var(--prism-color-line); padding: var(--prism-space-4) var(--prism-space-5); }
+    .eyebrow { color: var(--prism-color-ink-muted); font-size: var(--prism-font-size-xs); letter-spacing: 0.06em; margin: 0; text-transform: uppercase; }
+    .doc { display: grid; gap: var(--prism-space-4); padding: var(--prism-space-5); }
+    .doc p { margin: 0; }
+    pre { background: var(--prism-color-sunken); border: 1px solid var(--prism-color-line); border-radius: var(--prism-radius-md); font: var(--prism-font-size-sm)/var(--prism-line-height) var(--prism-font-code); margin: 0; overflow: auto; padding: var(--prism-space-4); }
+    .k { color: var(--prism-color-syntax-keyword); } .s { color: var(--prism-color-syntax-string); } .c { color: var(--prism-color-syntax-comment); font-style: italic; } .n { color: var(--prism-color-syntax-number); } .f { color: var(--prism-color-syntax-function); }
+
+    .statusbar { align-items: center; background: var(--prism-color-chrome); border-top: 1px solid var(--prism-color-line); color: var(--prism-color-ink-muted); display: flex; font-size: var(--prism-font-size-sm); gap: var(--prism-space-5); height: calc(var(--prism-row-height) + var(--prism-space-1)); padding: 0 var(--prism-space-4); position: relative; }
+    .status-item { align-items: center; display: inline-flex; gap: var(--prism-space-3); }
+    .dot { background: var(--prism-color-success); border-radius: var(--prism-radius-round); height: 7px; width: 7px; }
+    .spacer { flex: 1; }
+    .status-item.is-open { background: var(--prism-color-hover); border-radius: var(--prism-radius-sm); color: var(--prism-color-ink); padding: 0 var(--prism-space-3); }
+    .menu { background: var(--prism-color-raised); border: 1px solid var(--prism-color-line-strong); border-radius: var(--prism-radius-md); bottom: calc(100% + var(--prism-space-2)); box-shadow: var(--prism-shadow-popup); color: var(--prism-color-ink); padding: var(--prism-space-2) 0; position: absolute; right: var(--prism-space-4); width: 200px; z-index: var(--prism-layer-popup); }
+    .menu-group { color: var(--prism-color-ink-muted); font-size: var(--prism-font-size-xs); font-weight: var(--prism-font-weight-semibold); padding: var(--prism-space-3) var(--prism-space-5) var(--prism-space-1); }
+    .menu-item { align-items: center; display: flex; gap: var(--prism-space-4); height: var(--prism-row-height); padding: 0 var(--prism-space-5); }
+    .menu-item.is-active { background: var(--prism-color-selected); }
+    .check { color: var(--prism-color-accent-text); width: 12px; }
+    .menu hr { border: 0; border-top: 1px solid var(--prism-color-line); margin: var(--prism-space-2) 0; }
+    .tooltip { background: var(--prism-color-ink); border-radius: var(--prism-radius-sm); color: var(--prism-color-surface); font-size: var(--prism-font-size-sm); max-width: 260px; padding: var(--prism-space-2) var(--prism-space-4); position: absolute; z-index: var(--prism-layer-tooltip); }
+    .tip-anchor { position: relative; }
+    .tip-anchor .tooltip { left: 0; top: calc(100% + var(--prism-space-2)); }
+  </style>
+</head>
+<body>
+  <p class="page-note">Static mockup of the review app on the proposed kit: Attention with an open gate, the Jump-to field, a document in the side panel, and the Appearance menu open in the status bar, in the light theme and the dark theme at compact density. Values come from <code>tokens.css</code> beside this file; the fonts fall back to the system font here because the mockup does not ship the font files.</p>
+  <div class="frames">
+    <section class="frame" data-theme="light" aria-label="Light theme">
+      <div class="frame-label">Light · compact</div>
+      <header class="topbar">
+        <span class="mark" aria-hidden="true"></span>
+        <span class="project"><span class="ellipsis">payments-api · feature/retry-deadline-with-a-long-branch-name</span><span class="count">2</span></span>
+        <nav class="tabs" aria-label="Open artifacts">
+          <span class="tab is-selected"><span class="ellipsis">Attention</span></span>
+          <span class="tab"><span class="ellipsis">Roadmap</span><span class="tab-close">×</span></span>
+          <span class="tab is-preview"><span class="ellipsis">timeout-retries/slice.md</span><span class="tab-close">×</span></span>
+        </nav>
+      </header>
+      <div class="body">
+        <aside class="sidebar">
+          <span class="jump"><span>Jump to…</span><kbd>Ctrl K</kbd></span>
+          <div class="row is-selected"><span class="twisty"></span><span class="ellipsis">Attention</span><span class="count">2</span></div>
+          <div class="row"><span class="twisty"></span><span class="ellipsis">Roadmap</span></div>
+          <div class="tree-head">Initiatives</div>
+          <div class="row"><span class="twisty">▾</span><span class="ellipsis">Harden request retries</span><span class="end">3/5</span></div>
+          <div class="row l2"><span class="twisty">▸</span><span class="ellipsis">Retry timed-out requests until a total deadline</span></div>
+          <div class="row l2"><span class="twisty"></span><span class="ellipsis">Observe retry behavior</span></div>
+          <div class="row l3"><span class="twisty"></span><span class="ellipsis">dashboard-for-every-retry-outcome-without-spaces</span></div>
+          <div class="tree-head">Library</div>
+          <div class="row"><span class="twisty"></span><span class="ellipsis">Requirements</span><span class="end">4</span></div>
+          <div class="row"><span class="twisty"></span><span class="ellipsis">Decisions</span><span class="end">3</span></div>
+        </aside>
+        <main class="workspace">
+          <div class="crumbs">Attention › Design gate</div>
+          <h1>2 gates wait for you</h1>
+          <section class="panel">
+            <div class="panel-head"><h2 class="ellipsis">Accept the design of Harden request retries</h2><span class="badge tone-warning">Design gate</span><span class="tools"><span class="button ghost">Open slice</span></span></div>
+            <div class="panel-body">
+              <p class="muted">The design splits retries into timeout retries and observability; timeout retries waits for nothing and runs first.</p>
+              <div class="chips"><span class="chip">slice.md<code>docs/plans/retry-hardening</code></span><span class="chip">retries.md §1</span><span class="badge tone-accent">review required</span><span class="badge tone-success">3 tests frozen</span></div>
+              <div class="choice is-checked"><span class="radio"></span><span><strong>Accept</strong><br><span class="muted">The slices start in order; timeout retries is implemented next.</span></span></div>
+              <div class="choice"><span class="radio"></span><span><strong>Request changes</strong><br><span class="muted">Design revises the contract with your note before anything starts.</span></span></div>
+              <div class="field"><label>Note for the agent</label><div class="input">Optional unless you request changes</div></div>
+              <div class="actions"><span class="button">Later</span><span class="button primary focused">Send answer</span></div>
+            </div>
+          </section>
+        </main>
+        <aside class="side">
+          <div class="side-head"><p class="eyebrow">Document</p><h2 class="ellipsis">Retry timed-out requests until a total deadline</h2></div>
+          <div class="doc">
+            <p>The existing strategy owns timeout retries, and a total deadline bounds every retry sequence.</p>
+            <pre><span class="c">// Bounded by the total deadline</span>
+<span class="k">export class</span> RequestRetryStrategy {
+  <span class="f">shouldRetry</span>(error, attempt) {
+    <span class="k">return</span> attempt &lt; <span class="n">3</span> &amp;&amp; error.name === <span class="s">"TimeoutError"</span>;
+  }
+}</pre>
+            <span class="tip-anchor"><span class="chip"><span class="ellipsis">src/retry/a-very-long-file-name-that-does-not-fit.ts</span></span><span class="tooltip" role="tooltip">src/retry/a-very-long-file-name-that-does-not-fit.ts</span></span>
+          </div>
+        </aside>
+      </div>
+      <footer class="statusbar">
+        <span class="status-item"><span class="dot"></span>prism-state · synced</span>
+        <span class="spacer"></span>
+        <span class="status-item">Index ready</span>
+        <span class="status-item is-open">Appearance</span>
+        <div class="menu" role="menu">
+          <div class="menu-group">Theme</div>
+          <div class="menu-item is-active"><span class="check">✓</span>System</div>
+          <div class="menu-item"><span class="check"></span>Light</div>
+          <div class="menu-item"><span class="check"></span>Dark</div>
+          <hr>
+          <div class="menu-group">Density</div>
+          <div class="menu-item"><span class="check">✓</span>Compact</div>
+          <div class="menu-item"><span class="check"></span>Comfortable</div>
+          <hr>
+          <div class="menu-item"><span class="check"></span>Component catalog</div>
+        </div>
+      </footer>
+    </section>
+
+    <section class="frame" data-theme="dark" aria-label="Dark theme">
+      <div class="frame-label">Dark · compact</div>
+      <header class="topbar">
+        <span class="mark" aria-hidden="true"></span>
+        <span class="project"><span class="ellipsis">payments-api · feature/retry-deadline-with-a-long-branch-name</span><span class="count">2</span></span>
+        <nav class="tabs" aria-label="Open artifacts">
+          <span class="tab"><span class="ellipsis">Attention</span><span class="tab-close">×</span></span>
+          <span class="tab is-selected"><span class="ellipsis">Roadmap</span><span class="tab-close">×</span></span>
+          <span class="tab is-preview"><span class="ellipsis">timeout-retries/slice.md</span><span class="tab-close">×</span></span>
+        </nav>
+      </header>
+      <div class="body">
+        <aside class="sidebar">
+          <span class="jump"><span>Jump to…</span><kbd>Ctrl K</kbd></span>
+          <div class="row"><span class="twisty"></span><span class="ellipsis">Attention</span><span class="count">2</span></div>
+          <div class="row is-selected"><span class="twisty"></span><span class="ellipsis">Roadmap</span></div>
+          <div class="tree-head">Initiatives</div>
+          <div class="row"><span class="twisty">▾</span><span class="ellipsis">Harden request retries</span><span class="end">3/5</span></div>
+          <div class="row l2"><span class="twisty">▸</span><span class="ellipsis">Retry timed-out requests until a total deadline</span></div>
+          <div class="row l2"><span class="twisty"></span><span class="ellipsis">Observe retry behavior</span></div>
+          <div class="tree-head">Library</div>
+          <div class="row"><span class="twisty"></span><span class="ellipsis">Requirements</span><span class="end">4</span></div>
+        </aside>
+        <main class="workspace">
+          <div class="crumbs">Roadmap</div>
+          <h1>Roadmap</h1>
+          <section class="panel">
+            <div class="panel-head"><h2>Now</h2><span class="badge tone-info">2 initiatives</span></div>
+            <div class="panel-body">
+              <div class="chips"><span class="chip">Harden request retries</span><span class="badge tone-warning">in progress</span><span class="badge tone-success">3/5 done</span></div>
+              <p class="muted">Retries stop at a total deadline; observability follows once timeout retries land.</p>
+              <div class="chips"><span class="chip">Export activity reports</span><span class="badge tone-accent">planned</span></div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Next</h2><span class="source">docs/roadmap.md</span><span class="tools"><span class="button ghost">Maximize</span></span></div>
+            <div class="panel-body"><p class="muted">Search indexing · waits for its requirements to be approved.</p><div class="actions"><span class="button">Open archive</span><span class="button primary">Answer gate</span></div></div>
+          </section>
+        </main>
+        <aside class="side">
+          <div class="side-head"><p class="eyebrow">Source</p><h2>src/retry/strategy.ts</h2></div>
+          <div class="doc">
+            <pre><span class="c">// Bounded by the total deadline</span>
+<span class="k">export class</span> RequestRetryStrategy {
+  <span class="f">shouldRetry</span>(error, attempt) {
+    <span class="k">return</span> attempt &lt; <span class="n">3</span> &amp;&amp; error.name === <span class="s">"TimeoutError"</span>;
+  }
+}</pre>
+            <p class="muted">PlantUML diagrams keep their light sheet in this theme, framed by a hairline.</p>
+          </div>
+        </aside>
+      </div>
+      <footer class="statusbar">
+        <span class="status-item"><span class="dot"></span>prism-state · synced</span>
+        <span class="spacer"></span>
+        <span class="status-item">Index ready</span>
+        <span class="status-item">Appearance</span>
+      </footer>
+    </section>
+  </div>
+</body>
+</html>

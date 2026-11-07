@@ -1,0 +1,26 @@
+@startuml
+title Review app UI kit: slices and shared interfaces
+package "kit-foundation" as F
+package "kit-controls" as C
+package "kit-containers" as K
+package "shell-on-kit" as S
+package "workflow-views-on-kit" as W
+package "record-views-on-kit" as R
+package "kit-everywhere" as E
+interface "design values\n(kit/tokens.css)" as T
+interface "/api/preferences" as P
+interface "checkKitUsage" as G
+interface "KIT_ELEMENTS + catalog" as KE
+interface "checkCatalog" as L
+F -- T
+F -- P
+F -- G
+C -- KE
+C -- L
+C ..> F
+K ..> C
+S ..> K
+W ..> S
+R ..> W
+E ..> R
+@enduml

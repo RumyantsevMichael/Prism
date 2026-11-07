@@ -1,0 +1,200 @@
+/* Proposed design values for the review app UI kit.
+   The implementation copies this file to kit/tokens.css; a shade may change only when the contrast test requires it, and its hue stays.
+   A theme is one rule that gives every --prism-color-* and --prism-shadow-* value under [data-theme="<name>"]; light and dark are the two shipped themes, and light is also the root default. */
+
+@font-face {
+  font-display: swap;
+  font-family: "Prism UI";
+  font-style: normal;
+  font-weight: 100 900;
+  src: url("./fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-display: swap;
+  font-family: "Prism Code";
+  font-style: normal;
+  font-weight: 100 800;
+  src: url("./fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2-variations");
+}
+
+:root {
+  --prism-font-ui: "Prism UI", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --prism-font-code: "Prism Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --prism-font-weight-regular: 400;
+  --prism-font-weight-medium: 500;
+  --prism-font-weight-semibold: 600;
+  --prism-line-height: 1.45;
+  --prism-line-height-tight: 1.25;
+
+  --prism-font-size-xs: 11px;
+  --prism-font-size-sm: 12px;
+  --prism-font-size-md: 13px;
+  --prism-font-size-lg: 15px;
+  --prism-font-size-xl: 18px;
+  --prism-font-size-xxl: 22px;
+
+  --prism-space-1: 2px;
+  --prism-space-2: 4px;
+  --prism-space-3: 6px;
+  --prism-space-4: 8px;
+  --prism-space-5: 12px;
+  --prism-space-6: 16px;
+  --prism-space-7: 24px;
+  --prism-space-8: 32px;
+  --prism-control-height: 24px;
+  --prism-row-height: 22px;
+
+  --prism-radius-sm: 3px;
+  --prism-radius-md: 4px;
+  --prism-radius-lg: 6px;
+  --prism-radius-round: 999px;
+
+  --prism-duration-fast: 90ms;
+  --prism-duration-normal: 160ms;
+  --prism-duration-slow: 240ms;
+  --prism-duration-spin: 900ms;
+  --prism-tooltip-delay: 400ms;
+  --prism-easing: cubic-bezier(0.2, 0, 0, 1);
+
+  --prism-layer-raised: 1;
+  --prism-layer-sticky: 10;
+  --prism-layer-bar: 20;
+  --prism-layer-panel: 30;
+  --prism-layer-drawer: 40;
+  --prism-layer-popup: 50;
+  --prism-layer-dialog: 60;
+  --prism-layer-toast: 70;
+  --prism-layer-tooltip: 80;
+}
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --prism-color-bg: #f4f3f8;
+  --prism-color-chrome: #efedf5;
+  --prism-color-surface: #ffffff;
+  --prism-color-sunken: #f8f7fb;
+  --prism-color-raised: #ffffff;
+  --prism-color-hover: #e9e6f1;
+  --prism-color-selected: #e6e1fb;
+  --prism-color-ink: #242137;
+  --prism-color-ink-muted: #5f5a71;
+  --prism-color-line: #e3e0eb;
+  --prism-color-line-strong: #d2cedd;
+  --prism-color-line-control: #7f7a93;
+  --prism-color-accent: #6752d8;
+  --prism-color-accent-text: #5038c2;
+  --prism-color-accent-soft: #eeeafd;
+  --prism-color-on-accent: #ffffff;
+  --prism-color-focus: #6752d8;
+  --prism-color-danger: #b42f48;
+  --prism-color-danger-soft: #fbeaed;
+  --prism-color-warning: #8a5600;
+  --prism-color-warning-soft: #fbf0dc;
+  --prism-color-success: #127556;
+  --prism-color-success-soft: #e3f4ed;
+  --prism-color-info: #2264b8;
+  --prism-color-info-soft: #e6effb;
+  --prism-color-scrim: rgb(23 21 43 / 0.32);
+  --prism-shadow-popup: 0 4px 14px rgb(36 33 55 / 0.14);
+  --prism-shadow-dialog: 0 12px 40px rgb(36 33 55 / 0.22);
+  --prism-color-brand: #52c7a5;
+  --prism-color-diagram-paper: #f8f7fb;
+  --prism-color-diff-added: #127556;
+  --prism-color-diff-added-soft: #e3f4ed;
+  --prism-color-diff-removed: #b42f48;
+  --prism-color-diff-removed-soft: #fbeaed;
+  --prism-color-syntax-comment: #6e6984;
+  --prism-color-syntax-keyword: #7136d6;
+  --prism-color-syntax-string: #0c7a50;
+  --prism-color-syntax-number: #a14c05;
+  --prism-color-syntax-literal: #b03e0e;
+  --prism-color-syntax-type: #0b66a3;
+  --prism-color-syntax-function: #3644c0;
+  --prism-color-syntax-attr: #9a2867;
+  --prism-color-syntax-meta: #7f5900;
+  --prism-color-syntax-variable: #a81f73;
+  --prism-color-syntax-tag: #1b6ab0;
+  --prism-color-syntax-inserted: #127556;
+  --prism-color-syntax-deleted: #b42f48;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --prism-color-bg: #11101a;
+  --prism-color-chrome: #15141f;
+  --prism-color-surface: #191824;
+  --prism-color-sunken: #14131d;
+  --prism-color-raised: #211f2e;
+  --prism-color-hover: #272538;
+  --prism-color-selected: #2d284c;
+  --prism-color-ink: #eeebf7;
+  --prism-color-ink-muted: #a29dae;
+  --prism-color-line: #302e3d;
+  --prism-color-line-strong: #444052;
+  --prism-color-line-control: #7c7791;
+  --prism-color-accent: #a392ff;
+  --prism-color-accent-text: #c1b6ff;
+  --prism-color-accent-soft: #2d284c;
+  --prism-color-on-accent: #17152b;
+  --prism-color-focus: #a392ff;
+  --prism-color-danger: #ff8d9c;
+  --prism-color-danger-soft: #3a1f29;
+  --prism-color-warning: #e0a030;
+  --prism-color-warning-soft: #33281a;
+  --prism-color-success: #3fbf8f;
+  --prism-color-success-soft: #16302a;
+  --prism-color-info: #6aa8f0;
+  --prism-color-info-soft: #1a2740;
+  --prism-color-scrim: rgb(0 0 0 / 0.55);
+  --prism-shadow-popup: 0 4px 14px rgb(0 0 0 / 0.4);
+  --prism-shadow-dialog: 0 12px 40px rgb(0 0 0 / 0.5);
+  --prism-color-brand: #52c7a5;
+  --prism-color-diagram-paper: #f8f7fb;
+  --prism-color-diff-added: #3fbf8f;
+  --prism-color-diff-added-soft: #16302a;
+  --prism-color-diff-removed: #ff8d9c;
+  --prism-color-diff-removed-soft: #3a1f29;
+  --prism-color-syntax-comment: #8e89a8;
+  --prism-color-syntax-keyword: #c6a8ff;
+  --prism-color-syntax-string: #8fd6aa;
+  --prism-color-syntax-number: #f3b97c;
+  --prism-color-syntax-literal: #ffa47e;
+  --prism-color-syntax-type: #7fc8ff;
+  --prism-color-syntax-function: #aab5ff;
+  --prism-color-syntax-attr: #f39cc9;
+  --prism-color-syntax-meta: #e3c17e;
+  --prism-color-syntax-variable: #ff9fd0;
+  --prism-color-syntax-tag: #80baff;
+  --prism-color-syntax-inserted: #72d4a7;
+  --prism-color-syntax-deleted: #ff8d9c;
+}
+
+[data-density="comfortable"] {
+  --prism-font-size-xs: 11.5px;
+  --prism-font-size-sm: 12.5px;
+  --prism-font-size-md: 14px;
+  --prism-font-size-lg: 16px;
+  --prism-font-size-xl: 19px;
+  --prism-font-size-xxl: 24px;
+  --prism-space-1: 3px;
+  --prism-space-2: 5px;
+  --prism-space-3: 8px;
+  --prism-space-4: 10px;
+  --prism-space-5: 14px;
+  --prism-space-6: 20px;
+  --prism-space-7: 28px;
+  --prism-space-8: 40px;
+  --prism-control-height: 30px;
+  --prism-row-height: 28px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --prism-duration-fast: 0ms;
+    --prism-duration-normal: 0ms;
+    --prism-duration-slow: 0ms;
+    --prism-duration-spin: 0ms;
+  }
+}
