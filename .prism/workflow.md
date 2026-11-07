@@ -15,6 +15,10 @@
 - User guide: docs/user-guide/
 - Product strategy: n/a
 
+## Workspace
+- Store: https://github.com/RumyantsevMichael/prism-state.git
+- Repository: prism
+
 ## Stack
 - Languages: Markdown prompts and Python benchmark tooling
 - Test command: npm test && python3 bench/harness/bench.py selfcheck
