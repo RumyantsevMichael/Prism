@@ -87,9 +87,9 @@ test("clause 2: a repository name that is a Windows device name is refused befor
   assert.ok(portable(proposed), `the proposal ${proposed} is a portable name`);
   await commitFiles(con, { ".prism/workflow.md": artifactConfig({ repository: proposed }) }, "rename the repository");
   const renamed = await server(context, place, con);
-  const entry = await writeArtifact(renamed, "docs/requirements/con.md", "# Con\n", { scope: "repository" });
+  const entry = await writeArtifact(renamed, "docs/requirements/conf.md", "# Conf\n", { scope: "repository" });
   assert.deepEqual(entry.scope, { kind: "repository", repository: proposed, label: proposed });
-  assert.equal(await text(path.join(place.store, "artifacts", "repositories", proposed, "requirements", "con.md")), "# Con\n");
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", proposed, "requirements", "conf.md")), "# Conf\n");
   assert.ok(await exists(path.join(place.store, "repositories", `${proposed}.json`)), "the proposed name registers");
 });
 
