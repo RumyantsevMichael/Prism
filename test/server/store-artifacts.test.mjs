@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { checkout, exists, isolateGit, ok, refused, server, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { checkout, exists, git, isolateGit, ok, refused, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Edge cases of the store artifact tools beyond the design's acceptance tests: links in the store, lock names, nested kinds, the roadmap's scope, layout collisions, byte order marks, special files, and the lock that store sync shares.
 const environment = await isolateGit();
@@ -122,4 +122,38 @@ test("a pipe at an artifact location is refused at once, and later updates are n
   assert.deepEqual(ok(await prompt(prism.call("get_artifact", { path: "docs/plans/a" }))).artifacts.map((entry) => entry.path), ["docs/plans/a/slice.md"], "a listing skips the pipe");
   await prompt(writeArtifact(prism, "docs/plans/a/next.md", "# Next\n"));
   assert.equal(await text(path.join(place.store, "artifacts", "plans", "a", "next.md")), "# Next\n");
+});
+
+test("a store sync waits for an artifact update's lock, so it never lands between the update's version check and its write", async (context) => {
+  const { cancelRecordSyncs, configureRecordSync, syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  const { seenScopes, withArtifactStoreLock } = await import("../../dist/server/workflow/record-store.mjs");
+  const { updateArtifact } = await import("../../dist/server/workflow/store-artifacts.mjs");
+  configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15, applyLockMs: 100 });
+  context.after(() => { cancelRecordSyncs(); configureRecordSync({ debounceMs: 5000, pullIntervalMs: 30000, applyLockMs: 2000 }); });
+  const place = await syncedWorkspace(context);
+  const api = await checkout(place.a, "api");
+  const file = "docs/requirements/first.md";
+  const first = (await updateArtifact({ projectRoot: api, operations: [{ op: "write", path: file, content: "# Base\n", expectedVersion: null }] })).artifacts[0];
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  // Another machine changes the artifact upstream.
+  git(place.storeB, "pull", "-q");
+  await writeFile(path.join(place.storeB, "artifacts", "requirements", "first.md"), "# Upstream\n");
+  git(place.storeB, "add", "-A");
+  git(place.storeB, "commit", "-q", "-m", "change the artifact upstream");
+  git(place.storeB, "push", "-q");
+
+  const head = git(place.storeA, "rev-parse", "HEAD");
+  const stored = path.join(place.storeA, "artifacts", "requirements", "first.md");
+  let during;
+  // An update holds this lock from its version checks until its last write.
+  await withArtifactStoreLock(await seenScopes(api), async () => {
+    during = await syncRecordStore(place.storeA);
+    assert.equal(await text(stored), "# Base\n", "the sync did not replace the artifact while an update held the lock");
+  });
+  assert.notEqual(during.state, "ok");
+  assert.equal(git(place.storeA, "rev-parse", "HEAD"), head, "the branch stayed until the merge could be applied");
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  assert.equal(await text(stored), "# Upstream\n");
+  await assert.rejects(updateArtifact({ projectRoot: api, operations: [{ op: "write", path: file, content: "# Mine\n", expectedVersion: first.version }] }),
+    (error) => error.code === "version_conflict" && error.version === version("# Upstream\n"));
 });

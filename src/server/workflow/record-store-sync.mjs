@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
+import { ARTIFACTS } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
 import { withoutCredentials } from "./remote-url.mjs";
@@ -440,6 +441,7 @@ const fileBytes = (target) => readFile(target).catch((error) => { if (error.code
 const sameBytes = (left, right) => left === null || right === null ? left === right : left.equals(right);
 
 // Every changed file's record lock is held from the first check until the branch moves, so no locked record write lands in between.
+// When an artifact changes, the store's artifact lock, which an artifact update holds from its version checks to its writes, is taken first, so neither lands between the other's check and write.
 async function holdLocks(targets, action) {
   if (!targets.length) return action();
   return withFileLock(targets[0], () => holdLocks(targets.slice(1), action), undefined, { timeoutMs: SETTINGS.applyLockMs });
@@ -459,7 +461,8 @@ async function apply(base, from, to, options) {
     files = from ? await changedPaths(base, from, to) : (await required(base, ["ls-tree", "-r", "--name-only", "-z", to])).stdout.toString("utf8").split("\0").filter(Boolean);
     const targets = files.map((file) => path.join(base, file));
     for (const target of targets) await mkdir(path.dirname(target), { recursive: true });
-    return await holdLocks(targets, async () => {
+    const artifactLock = files.some((file) => file.startsWith(`${ARTIFACTS}/`)) ? [path.join(base, ARTIFACTS)] : [];
+    return await holdLocks([...artifactLock, ...targets], async () => {
       const next = [];
       for (const [index, file] of files.entries()) {
         if (!sameBytes(await fileBytes(targets[index]), await blob(base, from, file))) return false;
