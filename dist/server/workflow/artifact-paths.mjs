@@ -12,12 +12,27 @@ export const componentScope = (repository, component) => ({ kind: "component", r
 const contains = (folder, file) => folder === "" || file === folder || file.startsWith(`${folder}/`);
 // An artifact name begins with an ASCII letter or digit and holds only ASCII letters, digits, ".", "_", and "-", so no Git control name, dotfile, temporary file, or invisible character reaches the store's Git.
 // Store sync's lock beside a store file is the file's name with ".lock" added, which the store's ignore file leaves out, so no name ends in ".lock", in any letter case.
+// Git for Windows refuses to check out a name that ends in "." or is a Windows device name before its first ".", so one such name would stop the store on every Windows machine.
 const NAME_FORM = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const LOCK_ENDING = /\.lock$/i;
-export const ARTIFACT_NAME_FORM = "an artifact name begins with an ASCII letter or digit, holds only ASCII letters, digits, \".\", \"_\", and \"-\", and does not end in \".lock\" in any letter case";
+const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i;
+export const ARTIFACT_NAME_FORM = "an artifact name begins with an ASCII letter or digit, holds only ASCII letters, digits, \".\", \"_\", and \"-\", does not end in \".\" or in \".lock\" in any letter case, and is no Windows device name, which is con, prn, aux, nul, com0 to com9, or lpt0 to lpt9 in any letter case before the name's first \".\" or as the whole name, such as aux.md or NUL.txt";
 
 /** Whether one path component follows the artifact name form. */
-export const wellFormedName = (name) => NAME_FORM.test(name) && !LOCK_ENDING.test(name);
+export const wellFormedName = (name) => NAME_FORM.test(name) && !name.endsWith(".") && !LOCK_ENDING.test(name) && !DEVICE_NAME.test(name);
+
+// Names follow the name form, so they hold only ASCII letters, and comparing them without letter case needs only ASCII folding.
+const folded = (name) => name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+
+/**
+ * Whether two artifact paths of one kind collide in letter case: some folder or file of one, taken with the folders above it,
+ * equals the same part of the other only when ASCII letter case is ignored, so a case-insensitive file system makes them one file or folder.
+ */
+export function collideInLetterCase(left, right) {
+  const a = left.split("/"), b = right.split("/");
+  const index = a.findIndex((name, at) => name !== b[at]);
+  return index >= 0 && index < b.length && folded(a[index]) === folded(b[index]);
+}
 
 /** A project-relative path written with forward slashes and without a trailing slash, "" for the project root, or null when it is absolute or leaves the project. */
 export function normalizeArtifactPath(value) {

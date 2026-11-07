@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { checkout, exists, git, isolateGit, ok, refused, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Edge cases of the store artifact tools beyond the design's acceptance tests: links in the store, lock names, nested kinds, the roadmap's scope, layout collisions, byte order marks, special files, and the lock that store sync shares.
+// Edge cases of the store artifact tools beyond the design's acceptance tests: links in the store, lock names, nested kinds, the roadmap's scope, layout collisions, byte order marks, special files, the lock that store sync shares, large store files, and copies that two scopes hold.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -156,4 +156,48 @@ test("a store sync waits for an artifact update's lock, so it never lands betwee
   assert.equal(await text(stored), "# Upstream\n");
   await assert.rejects(updateArtifact({ projectRoot: api, operations: [{ op: "write", path: file, content: "# Mine\n", expectedVersion: first.version }] }),
     (error) => error.code === "version_conflict" && error.version === version("# Upstream\n"));
+});
+
+test("a store file above the bound a read takes stays listed with its version, blocks no other artifact, and can be removed", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  const first = await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
+  const big = Buffer.alloc(17 * 1024 * 1024, "a");
+  await writeFile(path.join(place.store, "artifacts", "requirements", "big.md"), big);
+  const expected = [["docs/requirements/big.md", version(big), big.length], ["docs/requirements/first.md", first.version, 8]];
+  const entries = (listing) => listing.artifacts.map((entry) => [entry.path, entry.version, entry.bytes]);
+  assert.deepEqual(entries(ok(await prism.call("get_artifact", {}))), expected);
+  assert.deepEqual(entries(ok(await prism.call("get_artifact", { path: "docs/requirements" }))), expected);
+  refused(await prism.call("get_artifact", { path: "docs/requirements/big.md" }), "artifact_too_large");
+  refused(await prism.call("update_artifact", { operations: [{ op: "edit", path: "docs/requirements/big.md", expectedVersion: version(big), edits: [{ oldText: "a", newText: "b" }] }] }), "artifact_too_large");
+  const taken = refused(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/big.md", content: "# Small\n", expectedVersion: null, scope: "repository" }] }), "artifact_exists");
+  assert.equal(taken.data.scope.label, "workspace");
+  refused(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/requirements/big.md", expectedVersion: first.version }] }), "version_conflict");
+  ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/requirements/big.md", expectedVersion: version(big) }] }));
+  assert.deepEqual(entries(ok(await prism.call("get_artifact", {}))), [expected[1]]);
+});
+
+test("move_scope of a path that two seen scopes hold moves the one copy whose version is expectedVersion", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api", { components: ["- web: src/web"] });
+  const prism = await server(context, place, api);
+  const component = await writeArtifact(prism, "docs/plans/dup.md", "# Component copy\n", { scope: "component", component: "web" });
+  await mkdir(path.join(place.store, "artifacts", "plans"), { recursive: true });
+  await writeFile(path.join(place.store, "artifacts", "plans", "dup.md"), "# Workspace copy\n");
+  const workspaceVersion = version("# Workspace copy\n");
+  const moved = ok(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: "docs/plans/dup.md", expectedVersion: workspaceVersion, scope: "repository" }] })).artifacts[0];
+  assert.deepEqual([moved.scope.label, moved.version], ["api", workspaceVersion]);
+  assert.equal(await exists(path.join(place.store, "artifacts", "plans", "dup.md")), false);
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "plans", "dup.md")), "# Workspace copy\n");
+  assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "components", "web", "plans", "dup.md")), "# Component copy\n");
+  // With no copy, or both copies, at expectedVersion the refusal says how to resolve the pair rather than asking for a scope.
+  await writeFile(path.join(place.store, "artifacts", "repositories", "api", "components", "web", "plans", "dup.md"), "# Workspace copy\n");
+  for (const expectedVersion of [component.version, workspaceVersion]) {
+    const error = refused(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: "docs/plans/dup.md", expectedVersion, scope: "workspace" }] }), "artifact_ambiguous");
+    assert.deepEqual(error.data.scopes, ["api", "api/web"]);
+    assert.match(error.message, /remove/);
+    assert.doesNotMatch(error.message, /pass scope/);
+  }
+  assert.equal(await exists(path.join(place.store, "artifacts", "plans", "dup.md")), false, "a refused move changes nothing");
 });

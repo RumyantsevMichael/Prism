@@ -4,7 +4,7 @@ import { lstat, mkdir, open, readdir, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
-import { ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, kindInScope, malformedArtifactName, normalizeArtifactPath, repositoryScope, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, artifactPathOf, collideInLetterCase, componentScope, holdsArtifactPaths, kindInScope, malformedArtifactName, normalizeArtifactPath, repositoryScope, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { resolveArtifactFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
@@ -15,7 +15,11 @@ const PAGE_BYTES = 64 * 1024;
 const LIST_MAX = 2000;
 const CONTENT_MAX = 1024 * 1024;
 // A file someone placed in the store by hand can exceed what a write accepts, so reads take a larger file, up to this bound.
+// A larger file is still listed, checked by version, and removed: its version is hashed in chunks, so it never blocks the other artifacts.
 const READ_MAX = 16 * 1024 * 1024;
+const HASH_CHUNK = 1024 * 1024;
+// Locations stay short enough for a store's managed clone on Windows to check out without Git's core.longpaths.
+const LOCATION_MAX = 120;
 const SCOPE_KINDS = new Set(["workspace", "repository", "component"]);
 
 export class ArtifactError extends Error {
@@ -59,13 +63,13 @@ const SCOPE_TEXT = "scope is \"workspace\", \"repository\" for this checkout's r
 export const ARTIFACT_TOOLS = Object.freeze([
   {
     name: "get_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", and not end in ".lock"; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
+    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", not end in "." or ".lock", and be no Windows device name such as con, aux, nul, com1, or lpt1 before its first "."; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
     inputSchema: GET_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), and move_scope (path, expectedVersion, and the scope to move it to). expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. A name that breaks the artifact name form that get_artifact describes is refused with artifact_name_invalid and data.invalidName, so choose another name. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
+    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), and move_scope (path, expectedVersion, and the scope to move it to). expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. A write that creates an artifact, and a move_scope, whose path differs only in letter case from an artifact path a seen scope holds, or from another write of the update, is refused with artifact_name_conflict and data.path holding that path, so change only the letter case by a remove and then a write in a later update. Such a write or move_scope whose location in the store, the path below artifacts/ in the scope it would take, holds more than 120 characters is refused with artifact_path_too_long and data.location, so choose a shorter path or a scope with a shorter folder. move_scope of a path that several scopes hold moves the one copy whose version is expectedVersion. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. A name that breaks the artifact name form that get_artifact describes is refused with artifact_name_invalid and data.invalidName, so choose another name. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
     inputSchema: UPDATE_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
   }
@@ -143,8 +147,11 @@ async function locationKind(target) {
   return "file";
 }
 
-// A file's bytes, or null when no file is there; the location is checked before it is opened, and opened without blocking, so a pipe never holds a read or the store's lock.
-async function readArtifactBytes(target) {
+/**
+ * A stored file as { bytes, size, version }, or null when no file is there; bytes is null for a file above the bound a read takes.
+ * The location is checked before it is opened, and opened without blocking, so a pipe never holds a read or the store's lock.
+ */
+async function readStored(target) {
   if ((await locationKind(target)) !== "file") return null;
   let handle;
   try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
@@ -157,9 +164,21 @@ async function readArtifactBytes(target) {
     const info = await handle.stat();
     if (info.isDirectory()) return null;
     if (!info.isFile()) throw notRegular();
-    if (info.size > READ_MAX) throw fail("artifact_too_large", `The artifact exceeds ${READ_MAX} bytes.`);
-    return await handle.readFile();
+    if (info.size <= READ_MAX) return stored(await handle.readFile());
+    const hash = createHash("sha256");
+    const chunk = Buffer.alloc(HASH_CHUNK);
+    let size = 0;
+    for (let read; (read = (await handle.read(chunk, 0, HASH_CHUNK, null)).bytesRead) > 0;) { hash.update(chunk.subarray(0, read)); size += read; }
+    return { bytes: null, size, version: `sha256:${hash.digest("hex")}` };
   } finally { await handle.close(); }
+}
+
+const stored = (bytes) => ({ bytes, size: bytes.length, version: artifactVersion(bytes) });
+
+// The bytes of a stored file that a read, an edit, or a move needs, refused for a file above the bound a read takes.
+function contentOf(file, record) {
+  if (record.bytes === null) throw fail("artifact_too_large", `${file} in the record store is ${record.size} bytes, above the ${READ_MAX} bytes that Prism reads, so it cannot be read, edited, or moved; it can be removed with its version from a listing, or replaced by a write.`);
+  return record.bytes;
 }
 
 async function isFolder(target) {
@@ -207,7 +226,8 @@ async function walk(directory, prefix, found) {
   }
 }
 
-async function listing(seen, folder, given) {
+// The artifacts that the given scope, or every seen scope, holds below a folder, as { path, scope, kind, target }, sorted by path and then scope label, without reading them.
+async function holdings(seen, folder, given) {
   const found = [];
   for (const scope of seen.scopes.filter((candidate) => !given || candidate.label === scopeOf(seen, given).label)) {
     for (const entry of seen.kinds.kinds) {
@@ -234,22 +254,26 @@ async function listing(seen, folder, given) {
       }
     }
   }
-  sortEntries(found);
+  return sortEntries(found);
+}
+
+async function listing(seen, folder, given) {
+  const found = await holdings(seen, folder, given);
   const artifacts = [];
   for (const entry of found.slice(0, LIST_MAX)) {
-    const bytes = await readArtifactBytes(entry.target);
-    if (bytes !== null) artifacts.push({ path: entry.path, scope: entry.scope, kind: entry.kind, version: artifactVersion(bytes), bytes: bytes.length });
+    const record = await readStored(entry.target);
+    if (record !== null) artifacts.push({ path: entry.path, scope: entry.scope, kind: entry.kind, version: record.version, bytes: record.size });
   }
   return { artifacts, truncated: found.length > LIST_MAX };
 }
 
-// The scopes among candidates whose store holds the artifact, with its file and bytes.
-async function holders(seen, address, scopes, read = readArtifactBytes) {
+// The scopes among candidates whose store holds the artifact, with its file and its stored record.
+async function holders(seen, address, scopes, read = readStored) {
   const held = [];
   for (const scope of scopes) {
     const target = await resolveArtifactFile(seen, artifactLocation(scope, address));
-    const bytes = await read(target);
-    if (bytes !== null) held.push({ scope, target, bytes });
+    const record = await read(target);
+    if (record !== null) held.push({ scope, target, record });
   }
   return held;
 }
@@ -279,7 +303,8 @@ export async function getArtifact(input) {
       }
       throw notFound(file);
     }
-    const [{ scope, bytes }] = held;
+    const [{ scope, record }] = held;
+    const bytes = contentOf(file, record);
     const content = decode(bytes, file);
     const offset = input.offset ?? 1;
     const read = page(content, offset, input.limit ?? PAGE_LINES);
@@ -304,8 +329,8 @@ function tooLarge(file, size) {
   if (size > CONTENT_MAX) throw fail("artifact_too_large", `The content of ${file} is ${size} bytes, above the 1 MiB that an artifact may hold.`);
 }
 
-function checkVersion(file, expected, bytes) {
-  const current = bytes === null ? null : artifactVersion(bytes);
+function checkVersion(file, expected, record) {
+  const current = record?.version ?? null;
   if (expected === current) return;
   throw fail("version_conflict", current === null
     ? `${file} does not exist in that scope of the record store, so it can only be created, with expectedVersion null.`
@@ -344,6 +369,40 @@ async function pruneParents(base, target) {
   }
 }
 
+/**
+ * The copy a move_scope moves: the one seen scope that holds the path, or, when several do, the one copy whose version is expectedVersion,
+ * since move_scope's scope names where the artifact goes rather than which copy it comes from.
+ */
+function moveSource({ file, operation }, held) {
+  if (held.length <= 1) return held[0] ?? null;
+  const matching = held.filter((entry) => entry.record.version === operation.expectedVersion);
+  if (matching.length === 1) return matching[0];
+  const labels = held.map((entry) => entry.scope.label);
+  throw fail("artifact_ambiguous", `${file} is held by more than one scope this checkout sees (${labels.join(", ")}), and ${matching.length ? "more than one copy has" : "no copy has"} the version given as expectedVersion, so move_scope cannot tell which copy to move; nothing changed. Read each copy with get_artifact and its scope, remove the copy you do not keep with remove and that scope, and then move the other.`, { scopes: labels });
+}
+
+// A created or moved location stays within the limit; a longer one that the store already holds stays usable by its path.
+function checkLocationLength(scope, address) {
+  const location = artifactLocation(scope, address);
+  if (location.length <= LOCATION_MAX) return;
+  throw fail("artifact_path_too_long", `${location}, the location of ${address.path} in scope ${scope.label} of the record store, holds ${location.length} characters, above the ${LOCATION_MAX} that a location may hold so that every machine can check the store out; nothing changed. Choose a shorter path, or a scope with a shorter folder.`, { location, limit: LOCATION_MAX });
+}
+
+/**
+ * Refuse a created or moved path that collides in letter case with an artifact path of its kind that a seen scope held before the update,
+ * or with the path of another write of the update, since a case-insensitive file system makes the two one file.
+ */
+function checkLetterCase(item, held, checked) {
+  const { file, address } = item;
+  const others = [
+    ...held.filter((entry) => entry.kind === address.kind).map((entry) => entry.path),
+    ...checked.filter((other) => other !== item && other.operation.op === "write" && other.address.kind === address.kind).map((other) => other.file)
+  ];
+  const other = others.find((candidate) => collideInLetterCase(file, candidate));
+  if (other === undefined) return;
+  throw fail("artifact_name_conflict", `${file} differs only in letter case from ${other}, which ${held.some((entry) => entry.path === other) ? "the record store holds" : "this update also writes"}, and the two would be one file on a file system that ignores letter case, as macOS and Windows do by default; nothing changed. Choose another name, or change the letter case of an artifact by removing it in one update and writing it in the next.`, { path: other });
+}
+
 /** Apply checked artifact operations to the store as one update: every operation is checked against the store before any file changes. */
 export async function updateArtifact(input) {
   return refusing(async () => {
@@ -359,12 +418,15 @@ export async function updateArtifact(input) {
       const names = new Map();
       const read = async (target) => {
         if (!state.has(target)) {
-          const bytes = await readArtifactBytes(target);
-          original.set(target, bytes);
-          state.set(target, bytes);
+          const record = await readStored(target);
+          original.set(target, record);
+          state.set(target, record);
         }
         return state.get(target);
       };
+      // The artifact paths every seen scope held before the update, found once when a write creates an artifact or a move_scope runs.
+      let before;
+      const heldBefore = async () => before ??= await holdings(seen, "", null);
       const one = async ({ file, address }, scopes) => {
         const held = await holders(seen, address, scopes, read);
         if (held.length > 1) throw ambiguous(file, held);
@@ -375,12 +437,12 @@ export async function updateArtifact(input) {
         const { operation, file, address, given } = item;
         if (operation.op === "write") {
           const all = scopesFor(seen, address.kind, null);
-          let scope, target, bytes;
+          let scope, target, current;
           if (given) {
             scope = scopeOf(seen, given);
             target = await resolveArtifactFile(seen, artifactLocation(scope, address));
-            bytes = await read(target);
-            if (bytes === null && operation.expectedVersion === null) {
+            current = await read(target);
+            if (current === null && operation.expectedVersion === null) {
               const other = (await holders(seen, address, all.filter((candidate) => candidate.label !== scope.label), read))[0];
               if (other) throw fail("artifact_exists", `${file} already exists in scope ${other.scope.label}, which this checkout sees, so it cannot also be created in scope ${scope.label}. Read and change that artifact, or move it with move_scope.`, { scope: other.scope });
             }
@@ -388,25 +450,29 @@ export async function updateArtifact(input) {
             const held = await one(item, all);
             scope = held?.scope ?? (operation.expectedVersion === null ? await creationScope(seen, address, all, state) : WORKSPACE_SCOPE);
             target = held?.target ?? await resolveArtifactFile(seen, artifactLocation(scope, address));
-            bytes = held?.bytes ?? null;
+            current = held?.record ?? null;
           }
-          checkVersion(file, operation.expectedVersion, bytes);
+          checkVersion(file, operation.expectedVersion, current);
+          if (current === null) {
+            checkLetterCase(item, await heldBefore(), checked);
+            checkLocationLength(scope, address);
+          }
           const next = Buffer.from(operation.content, "utf8");
-          state.set(target, next);
+          state.set(target, stored(next));
           names.set(target, file);
           artifacts.push({ path: file, scope, version: artifactVersion(next) });
           continue;
         }
-        const source = operation.op === "move_scope" ? await one(item, scopesFor(seen, address.kind, null)) : await one(item, scopesFor(seen, address.kind, given));
+        const source = operation.op === "move_scope" ? await moveSource(item, await holders(seen, address, scopesFor(seen, address.kind, null), read)) : await one(item, scopesFor(seen, address.kind, given));
         if (!source) {
           if (operation.expectedVersion !== null) checkVersion(file, operation.expectedVersion, null);
           throw notFound(file);
         }
-        checkVersion(file, operation.expectedVersion, source.bytes);
+        checkVersion(file, operation.expectedVersion, source.record);
         if (operation.op === "edit") {
-          const next = Buffer.from(applyEdits(file, decode(source.bytes, file), operation.edits), "utf8");
+          const next = Buffer.from(applyEdits(file, decode(contentOf(file, source.record), file), operation.edits), "utf8");
           tooLarge(file, next.length);
-          state.set(source.target, next);
+          state.set(source.target, stored(next));
           names.set(source.target, file);
           artifacts.push({ path: file, scope: source.scope, version: artifactVersion(next) });
         } else if (operation.op === "remove") {
@@ -414,25 +480,27 @@ export async function updateArtifact(input) {
           artifacts.push({ path: file, scope: source.scope, removed: true });
         } else {
           const scope = scopeOf(seen, given);
+          checkLetterCase(item, await heldBefore(), checked);
+          checkLocationLength(scope, address);
           if (scope.label !== source.scope.label) {
             const target = await resolveArtifactFile(seen, artifactLocation(scope, address));
             if ((await read(target)) !== null) throw fail("artifact_exists", `${file} already exists in scope ${scope.label}, so it cannot move there from scope ${source.scope.label}.`, { scope });
-            state.set(target, source.bytes);
+            state.set(target, stored(contentOf(file, source.record)));
             names.set(target, file);
             state.set(source.target, null);
           }
-          artifacts.push({ path: file, scope, version: artifactVersion(source.bytes) });
+          artifacts.push({ path: file, scope, version: source.record.version });
         }
       }
       // New bytes are written before removals, so a move interrupted midway leaves the artifact in both scopes rather than in neither.
-      const changed = [...state].filter(([target, bytes]) => !(bytes === null ? original.get(target) === null : original.get(target)?.equals(bytes)));
-      await checkLayout(seen, changed.filter(([, bytes]) => bytes !== null), state, names);
-      for (const [target, bytes] of changed.filter(([, bytes]) => bytes !== null)) {
+      const changed = [...state].filter(([target, record]) => (record?.version ?? null) !== (original.get(target)?.version ?? null));
+      await checkLayout(seen, changed.filter(([, record]) => record !== null), state, names);
+      for (const [target, record] of changed.filter(([, record]) => record !== null)) {
         await mkdir(path.dirname(target), { recursive: true });
         await resolveArtifactFile(seen, path.relative(seen.base, target).split(path.sep).join("/"));
-        await writeAtomically(target, bytes);
+        await writeAtomically(target, record.bytes);
       }
-      for (const [target] of changed.filter(([, bytes]) => bytes === null)) {
+      for (const [target] of changed.filter(([, record]) => record === null)) {
         await rm(target, { force: true });
         await pruneParents(seen.base, target);
       }

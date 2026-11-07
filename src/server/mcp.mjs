@@ -310,7 +310,7 @@ function stateErrorData(error) {
   }
   // A refused artifact read or update names the current version, the scopes that hold a path, the scope that already holds it, the edit that did not apply, the name that breaks the artifact name form, or the declared components.
   if (error?.name === "ArtifactError") {
-    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "components", "proposed"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
+    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "components", "proposed"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
   }
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
