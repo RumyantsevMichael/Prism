@@ -10,8 +10,8 @@ const time = (value) => {
   const parsed = Date.parse(value ?? "");
   return Number.isFinite(parsed) ? parsed : 0;
 };
-async function prepareComponentIndexes(projectRoot, declaration, runtime, rebuild) {
-  const root = await realpath(projectRoot), chosen = [];
+async function prepareComponentIndexes(projectRoot, declaration, runtime, rebuild, retryLimited = rebuild) {
+  const root = await realpath(projectRoot), chosen = [], identity = rebuild && !retryLimited ? (await runtime.manifest()).identity : "";
   for (const entry of componentSources(root, declaration)) {
     const snapshot = await entry.source.snapshot();
     if (!snapshot.files.length) continue;
@@ -19,15 +19,18 @@ async function prepareComponentIndexes(projectRoot, declaration, runtime, rebuil
     const { directory } = await runtime.location(root, component);
     const published = await runtime.published(directory), indexed = Boolean(published?.snapshot);
     const outOfDate = indexed && published.snapshot !== snapshot.sourceFingerprint;
-    const failed = rebuild && (runtime.jobs.get(directory)?.status === "degraded" || (await readProgressRecords(directory)).some((record) => record.state === "failed" && (!indexed || time(record.finishedAt ?? record.updatedAt) > time(published.builtAt))));
-    if (outOfDate || failed) chosen.push({ source: entry.source, component });
+    const records = rebuild ? await readProgressRecords(directory) : [];
+    const failed = rebuild && (runtime.jobs.get(directory)?.status === "degraded" || records.some((record) => record.state === "failed" && (!indexed || time(record.finishedAt ?? record.updatedAt) > time(published.builtAt))));
+    const id = identity && runtime.componentPreparationId(directory, snapshot.sourceFingerprint, identity);
+    const limited = Boolean(id) && (runtime.jobs.get(directory)?.failure?.code === "resource_limit" && runtime.jobs.get(directory)?.snapshot === snapshot.sourceFingerprint || records.some((record) => record.state === "failed" && record.preparationId === id && record.diagnostics.some((item) => item.code === "resource_limit")));
+    if ((outOfDate || failed) && !limited) chosen.push({ source: entry.source, component });
   }
-  if (chosen.length) await runtime.prepareComponents(chosen, 0, { retryLimited: rebuild });
+  if (chosen.length) await runtime.prepareComponents(chosen, 0, { retryLimited });
 }
-function preparation(runtime, rebuild) {
+function preparation(runtime, rebuild, retryLimited = rebuild) {
   return async (projectRoot) => {
     const declaration = await indexComponents(projectRoot);
-    if (declaration) return prepareComponentIndexes(projectRoot, declaration, runtime, rebuild);
+    if (declaration) return prepareComponentIndexes(projectRoot, declaration, runtime, rebuild, retryLimited);
     await prepareNativeProvider(projectRoot, { waitMs: 0, runtime });
   };
 }
@@ -74,7 +77,7 @@ function startIndexRebuild(projectRoot, options = {}) {
   const existing = rebuilding.get(projectRoot);
   if (existing) return existing;
   const { runtime = nativeSemanticRuntime } = options;
-  const { prepare = preparation(runtime, true), available = runtimeAvailable(runtime), record = recordFailure(runtime) } = options;
+  const { prepare = preparation(runtime, true, !options.automatic), available = runtimeAvailable(runtime), record = recordFailure(runtime) } = options;
   const run = (async () => {
     if (!await available()) return;
     try {

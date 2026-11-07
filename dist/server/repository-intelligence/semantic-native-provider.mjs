@@ -1,7 +1,7 @@
 // Generated from src/server/repository-intelligence/semantic-native-provider.mts by scripts/native-build/compile.mjs.
 import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
-import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectComponents, selectedComponents, unionIndex, unionSnapshot } from "./component-indexes.mjs";
+import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectComponents, selectedComponents, unionIndex, unionSnapshot, verifyComponents } from "./component-indexes.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
 import { moduleInterfaceReport } from "./module-interfaces.mjs";
@@ -405,8 +405,8 @@ async function searchComponentIndexes(input, declaration, options) {
   const result = componentResult(states, snapshot);
   if (result.status === "preparing") return preparing();
   const candidates = result.status === "degraded" ? await lexicalResults(selected.map((entry) => entry.source), input, limit, selected.map((entry) => entry.component)) : searched.results;
-  const verified = result.status === "degraded" ? selected.map((entry, index) => new SemanticNativeRepositoryIntelligence(entry.source, preparations[index], runtime)) : providers;
-  for (const provider of verified) await provider.verifySnapshot();
+  const verified = result.status === "degraded" ? selected : included.filter((_, position) => searched.answers[position] !== null).map(({ index }) => selected[index]);
+  await verifyComponents(verified, verifySource);
   if (input.snapshotId && result.status === "ready" && selected.length === (await selectComponents(declaration, sources)).length)
     await retainAnalysis(input.projectRoot, input.snapshotId, await baselineIndex(selected, preparations, result));
   const prepared = providers.map((provider) => provider.prepared);
@@ -505,9 +505,7 @@ async function componentAnalysis(input, declaration, options) {
     diagnostics: preparation.diagnostics,
     components: result.components,
     snapshot: () => files ??= unionSnapshot(sources, snapshot),
-    verifySnapshot: async () => {
-      for (const entry of selected) await verifySource(entry.source);
-    }
+    verifySnapshot: () => verifyComponents(selected, verifySource)
   };
 }
 const missingFirst = (diagnostics) => [...diagnostics.filter((item) => item.code === "components_missing"), ...diagnostics.filter((item) => item.code !== "components_missing")];

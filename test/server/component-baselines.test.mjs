@@ -25,7 +25,7 @@ test("clause 22: a retained baseline is indexed per component and reuses a compo
   const { runtime, control } = await fakeRuntime(storage);
   const before = await capture(root);
   const retained = await search(root, runtime, { snapshotId: before });
-  assert.deepEqual(control.builds.map((build) => build.files), [ROOT_FILES, NET_FILES, APP_FILES]);
+  assert.deepEqual(control.builds.map((build) => build.files), [NET_FILES, APP_FILES, ROOT_FILES]);
   assert.deepEqual((retained.components ?? []).map((item) => [item.component, item.status]), [["root/root", "included"], ["root/net", "included"], ["root/app", "included"]]);
   assert.equal(retained.snapshotId, before);
   // The live project has the same content, so its components reuse the baseline's indexes.
@@ -69,7 +69,7 @@ test("clause 24: a baseline analysis waits for every component and then retains 
   assert.equal(prepared.status, "ready");
   assert.deepEqual(functions(prepared.analysis), ["fetchUser", "retryRequest", "timeoutAfter"]);
   assert.deepEqual(Object.keys(prepared.analysis.fileCoverage).sort(), [...ROOT_FILES, ...APP_FILES, ...NET_FILES].sort());
-  assert.deepEqual(control.builds.map((build) => build.files), [ROOT_FILES, NET_FILES, APP_FILES]);
+  assert.deepEqual(control.builds.map((build) => build.files), [NET_FILES, APP_FILES, ROOT_FILES]);
 });
 
 test("clause 24: a failed component's files are retained without units and as not covered, and the analysis names it", async (t) => {

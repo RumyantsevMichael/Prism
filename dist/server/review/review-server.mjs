@@ -411,7 +411,7 @@ async function readJson(request) {
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
 export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null,
-  rebuildIndex = (root) => backgroundPreparation().then((module) => module.startIndexRebuild(root)), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
+  rebuildIndex = (root, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, options)), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
   let fingerprint = null;
   function currentFingerprint() {
     if (!fingerprint || Date.now() - fingerprint.at >= rebuildTiming.freshnessMs) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
@@ -431,7 +431,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const now = Date.now();
     if (auto && outOfDate && now - rebuild.changedAt >= rebuildTiming.quietMs && now - rebuild.startedAt >= rebuildTiming.gapMs) {
       rebuild.startedAt = now;
-      void rebuildIndex(projectRoot);
+      void rebuildIndex(projectRoot, { automatic: true });
     }
     return { ...status, autoRebuild: auto };
   }
