@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,7 +17,7 @@ delete process.env.CLAUDE_PLUGIN_DATA;
 const { recordMergeFor, hasRecordMerge } = await import("../../dist/server/workflow/record-merge.mjs");
 const { cancelRecordSyncs, configureRecordSync, syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
 const { forgetMigrations } = await import("../../dist/server/workflow/record-store.mjs");
-const { readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+const { readCoordinationState, recordPersonAction, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 const { updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 });
 test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive: true, force: true }); });
@@ -192,4 +193,119 @@ test("a person's change on one machine and an agent's state write on another wit
   assert.deepEqual(state.history.find((item) => item.id === applied.id).by.name, "Ada");
   assert.deepEqual(state.history.find((item) => item.id === fromB.id).by.name, "Grace", "each entry names the machine's own author");
   assert.deepEqual(Object.keys(state.personSettings).sort(), ["continuation", "models"]);
+});
+
+// History and closed gates are the only parts that give way to the 1 MiB limit, oldest first, so a valid answer is never refused for good.
+const LIMIT = 1024 * 1024;
+const stateFile = (target) => path.join(target.projectRoot, ".prism/initiatives", target.initiative, "state.json");
+const bytes = (value) => Buffer.byteLength(typeof value === "string" ? value : text(value));
+
+async function project(context) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "prism-state-fit-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  return { projectRoot: root, initiative: "demo" };
+}
+
+const asked = (extra = {}) => ({ op: "ask", kind: "decision", question: "Pick?", context: "Why.", options: [{ id: "a", label: "A", consequence: "A happens." }, { id: "b", label: "B", consequence: "B happens." }], recommended: { option: "a", reason: "Simpler." }, ...extra });
+const personEntry = (target, action, after, index) => ({ id: randomBytes(16).toString("hex"), action, target, before: null, after, at: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(), by: { name: "Ada", email: null, checkout: "demo/main on a" }, via: "review-app" });
+const revisionOf = async (target) => (await readCoordinationState(target)).revision;
+
+test("a person's answers with notes at the note limit keep being accepted while the oldest history entries give way to 1 MiB", async (context) => {
+  const target = await project(context);
+  await updateCoordinationState({ ...target, expectedRevision: null, changes: { evidence: ["e"] } });
+  const note = "中".repeat(4000);
+  const ids = [];
+  for (let index = 0; index < 70; index += 1) {
+    const result = await updateCoordinationState({ ...target, expectedRevision: await revisionOf(target), changes: { gateOperations: [asked()] } });
+    const gate = result.state.pending.at(-1);
+    const entry = personEntry(`gate:demo/${gate.id}`, "gate.answer", { choice: "a", note }, index);
+    const applied = await recordPersonAction({ ...target, prepare: () => ({ entry, answer: { id: gate.id, choice: "a", note } }) });
+    assert.equal(applied.state.history.at(-1).id, entry.id, `answer ${index + 1} is accepted with its entry`);
+    ids.push(entry.id);
+    await updateCoordinationState({ ...target, expectedRevision: await revisionOf(target), changes: { gateOperations: [{ op: "resolve", id: gate.id }] } });
+  }
+  const { state } = await readCoordinationState(target);
+  assert.ok(bytes(await readFile(stateFile(target), "utf8")) <= LIMIT);
+  assert.ok(state.history.length > 0 && state.history.length < 70, "the oldest entries gave way");
+  assert.deepEqual(state.history.map((item) => item.id), ids.slice(-state.history.length), "the newest entries stay, in order");
+  assert.equal(state.closed.length, 20, "closed gates give way only after history");
+});
+
+test("a state write drops the oldest history entries, then the oldest closed gates, and never pending gates, settings, or the person's marks", async (context) => {
+  const target = await project(context);
+  await updateCoordinationState({ ...target, expectedRevision: null, changes: { evidence: ["x"] } });
+  for (let index = 0; index < 4; index += 1) await updateCoordinationState({ ...target, expectedRevision: await revisionOf(target), changes: { gateOperations: [asked({ question: `Pick ${index}?` })] } });
+  const gates = (await readCoordinationState(target)).state.pending.map((item) => item.id);
+  for (const id of gates.slice(0, 3)) await updateCoordinationState({ ...target, expectedRevision: await revisionOf(target), changes: { gateOperations: [{ op: "resolve", id, reason: "No longer needed." }] } });
+  const entries = [];
+  for (const [index, [name, value]] of [["continuation", "stepwise"], ["push", "on"], ["commit", "on"]].entries()) {
+    const entry = personEntry("initiative:demo", `initiative.${name}`, value, index);
+    entries.push(entry.id);
+    await recordPersonAction({ ...target, prepare: () => ({ entry, setting: { name, value } }) });
+  }
+  const kept = (state) => ({ pending: state.pending, settings: state.settings, personSettings: state.personSettings });
+  const start = JSON.parse(await readFile(stateFile(target), "utf8"));
+  assert.deepEqual(start.closed.map((item) => item.id), gates.slice(0, 3));
+  // Grows the state to `over` bytes past the limit as it would be with the given history.
+  const grow = async (history, over = 100) => {
+    const current = JSON.parse(await readFile(stateFile(target), "utf8"));
+    const length = current.evidence[0].length + LIMIT + over - bytes({ ...current, history });
+    return updateCoordinationState({ ...target, expectedRevision: await revisionOf(target), changes: { evidence: ["x".repeat(length)] } });
+  };
+  await grow(start.history);
+  let state = JSON.parse(await readFile(stateFile(target), "utf8"));
+  assert.ok(bytes(state) <= LIMIT);
+  assert.deepEqual(state.history.map((item) => item.id), entries.slice(1), "only the oldest entry gave way");
+  assert.deepEqual(state.closed.map((item) => item.id), gates.slice(0, 3));
+  assert.deepEqual(kept(state), kept(start));
+  await grow([]);
+  state = JSON.parse(await readFile(stateFile(target), "utf8"));
+  assert.ok(bytes(state) <= LIMIT);
+  assert.deepEqual(state.history ?? [], [], "every history entry gave way before a closed gate");
+  assert.deepEqual(state.closed.map((item) => item.id), gates.slice(1, 3), "then the oldest closed gate");
+  assert.deepEqual(kept(state), kept(start), "a person's mark keeps the id of its dropped entry");
+  await grow([], -10);
+  assert.deepEqual(JSON.parse(await readFile(stateFile(target), "utf8")).closed.map((item) => item.id), gates.slice(1, 3), "a state that fits drops nothing");
+  const added = personEntry("initiative:demo", "initiative.continuation", "auto", 10);
+  const applied = await recordPersonAction({ ...target, prepare: () => ({ entry: added, setting: { name: "continuation", value: "auto" } }) });
+  assert.deepEqual(applied.state.history.map((item) => item.id), [added.id], "the entry a write adds never gives way");
+  assert.deepEqual(applied.state.closed.map((item) => item.id), gates.slice(2, 3));
+  assert.ok(bytes(await readFile(stateFile(target), "utf8")) <= LIMIT);
+  const before = await readFile(stateFile(target), "utf8");
+  await assert.rejects(
+    updateCoordinationState({ ...target, expectedRevision: await revisionOf(target), changes: { evidence: ["x".repeat(LIMIT)] } }),
+    (caught) => caught.code === "artifact_too_large",
+    "a state over the limit without anything droppable is refused"
+  );
+  assert.equal(await readFile(stateFile(target), "utf8"), before, "a refused write drops nothing");
+});
+
+test("a merged state drops the oldest history entries to fit 1 MiB, the same from either side, and keeps what either side dropped dropped", async () => {
+  const big = (id, at) => entry(id, at, "gate.answer", { before: null, after: { choice: "keep", note: "n".repeat(10000) } });
+  const [h0, h1, h2] = ["d0", "d1", "d2"].map((id, index) => big(id, `2026-11-05T0${index}:00:00.000Z`));
+  const a = big("aa", "2026-11-05T10:00:00.000Z");
+  const c = big("cc", "2026-11-05T09:00:00.000Z");
+  const pad = (state, size) => ({ ...state, evidence: ["p".repeat(size - bytes({ ...state, evidence: [""] }))] });
+  const start = pad(base({ pending: [gate("gate-00000001")], history: [h0, h1, h2] }), LIMIT - 5000);
+  const local = { ...start, history: [h1, h2, a] };
+  const upstream = { ...start, history: [h1, h2, c] };
+  const result = await merge(start, local, upstream);
+  assert.equal(result.conflict, undefined, result.conflict);
+  assert.ok(Buffer.byteLength(result.contents) <= LIMIT);
+  const fitted = JSON.parse(result.contents);
+  assert.deepEqual(fitted.history.map((item) => item.id), [h2.id, c.id, a.id], "h0 stays dropped and h1 gives way");
+  assert.deepEqual(fitted.pending, start.pending);
+  assert.equal((await merge(start, upstream, local)).contents, result.contents, "both machines compute the same state");
+
+  const closedGate = (id, closedAt) => ({ ...gate(id), closedAt });
+  const [k0, k1] = [closedGate("gate-0000000a", "2026-11-05T01:00:00.000Z"), closedGate("gate-0000000b", "2026-11-05T02:00:00.000Z")];
+  const shared = base({ history: [h0, h1, h2], closed: [k0, k1], evidence: ["p".repeat(1000)] });
+  const kept = await merged(shared, { ...shared, history: [a], closed: [k1] }, { ...shared, evidence: [] });
+  assert.deepEqual(kept.history.map((item) => item.id), [a.id], "entries one side dropped do not come back although they would fit");
+  assert.deepEqual(kept.closed.map((item) => item.id), [k1.id], "a closed gate one side dropped does not come back");
+
+  const half = "q".repeat(600 * 1024);
+  const small = base({ history: [h0] });
+  const tooLarge = await merge(small, { ...small, evidence: [half] }, { ...small, evidence: [`${half}r`] });
+  assert.equal(typeof tooLarge.conflict, "string", "a merged state over 1 MiB without its history and closed gates is a conflict");
 });
