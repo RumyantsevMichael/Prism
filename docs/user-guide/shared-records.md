@@ -166,7 +166,11 @@ Naming a repository changes no record, migration entry, or run that the store al
 Changes to different initiatives in the roadmap, or to different slices or proposals of one initiative, merge, and both history entries are kept.
 A roadmap reordered on one machine keeps that order, and an initiative added on the other machine lands after the initiative it followed there.
 Two changes collide when they change the same initiative or slice differently, reorder the roadmap differently, or merge into a record that fails validation, such as a dependency cycle between two slices.
-Other records, such as coordination state, collide whenever Git cannot merge their lines.
+An initiative's coordination state merges as well, so a setting you change in the review app on one machine and an agent's state write on another both survive, and both machines' history entries are kept.
+In coordination state, different settings, gates, active slices, closed gates, and evidence paths merge, and a gate or active slice ended on one machine stays ended.
+A setting changed differently on both machines keeps your later change from the review app, and a gate answered differently on both machines keeps the earlier answer.
+Coordination state collides when two agents set one setting differently, when a gate's question or options differ between the machines, when one slice's active work or another field such as `next` changed differently on both, or when the merged state fails validation.
+Other records, such as slice claims, collide whenever Git cannot merge their lines.
 In a collision the first push wins.
 The machine whose push lost keeps the upstream version and saves its own version under `.prism-sync/conflicts/<time>/` in the store, so no bytes are lost.
 The next Prism tool result on that machine names the record and the saved file, so the agent that made the change learns of it.
