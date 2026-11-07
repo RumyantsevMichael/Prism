@@ -201,3 +201,67 @@ test("move_scope of a path that two seen scopes hold moves the one copy whose ve
   }
   assert.equal(await exists(path.join(place.store, "artifacts", "plans", "dup.md")), false, "a refused move changes nothing");
 });
+
+test("store sync commits artifacts that the person's own Git ignore rules match, since only the store's ignore file decides what it tracks", async (context) => {
+  const { cancelRecordSyncs, configureRecordSync, syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  const { updateArtifact } = await import("../../dist/server/workflow/store-artifacts.mjs");
+  configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 });
+  const excludes = path.join(environment, "personal-excludes");
+  await writeFile(excludes, "*.log\nbuild/\n");
+  await writeFile(process.env.GIT_CONFIG_GLOBAL, `[core]\n\texcludesFile = ${excludes.replaceAll("\\", "/")}\n`);
+  context.after(async () => { cancelRecordSyncs(); configureRecordSync({ debounceMs: 5000, pullIntervalMs: 30000 }); await writeFile(process.env.GIT_CONFIG_GLOBAL, ""); });
+  const place = await syncedWorkspace(context);
+  await writeFile(path.join(place.storeA, ".git", "info", "exclude"), "*.bak\n");
+  const api = await checkout(place.a, "api");
+  const files = { "docs/plans/x/run.log": "# Run log\n", "docs/plans/x/build/notes.md": "# Build notes\n", "docs/plans/x/old.bak": "# Old\n" };
+  await updateArtifact({ projectRoot: api, operations: Object.entries(files).map(([file, content]) => ({ op: "write", path: file, content, expectedVersion: null })) });
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  for (const [file, content] of Object.entries(files)) {
+    assert.equal(git(place.remote, "show", `main:artifacts/${file.replace(/^docs\//, "")}`), content.trimEnd(), `${file} reached the remote`);
+  }
+  // The store's own ignore file still keeps its lock and temporary files out.
+  await writeFile(path.join(place.storeA, "artifacts", "plans", "x", "slice.md.lock"), "");
+  await syncRecordStore(place.storeA);
+  assert.equal(git(place.storeA, "ls-files", "--", "artifacts/plans/x/slice.md.lock"), "");
+});
+
+test("store sync makes and removes folders under artifacts only while it holds the artifact lock", async (context) => {
+  const { cancelRecordSyncs, configureRecordSync, syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  const { seenScopes, withArtifactStoreLock } = await import("../../dist/server/workflow/record-store.mjs");
+  const { updateArtifact } = await import("../../dist/server/workflow/store-artifacts.mjs");
+  configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15, applyLockMs: 1500 });
+  context.after(() => { cancelRecordSyncs(); configureRecordSync({ debounceMs: 5000, pullIntervalMs: 30000, applyLockMs: 2000 }); });
+  const place = await syncedWorkspace(context);
+  const api = await checkout(place.a, "api");
+  await updateArtifact({ projectRoot: api, operations: [{ op: "write", path: "docs/requirements/first.md", content: "# First\n", expectedVersion: null }] });
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  // Another machine adds artifacts in two new folders.
+  git(place.storeB, "pull", "-q");
+  for (const folder of ["fresh", "shared"]) {
+    await mkdir(path.join(place.storeB, "artifacts", "plans", folder), { recursive: true });
+    await writeFile(path.join(place.storeB, "artifacts", "plans", folder, "slice.md"), `# ${folder}\n`);
+  }
+  git(place.storeB, "add", "-A");
+  git(place.storeB, "commit", "-q", "-m", "add plans upstream");
+  git(place.storeB, "push", "-q");
+
+  const plans = path.join(place.storeA, "artifacts", "plans");
+  await withArtifactStoreLock(await seenScopes(api), async () => {
+    // An update holding the lock has made a folder for its own write and not yet written into it.
+    await mkdir(path.join(plans, "shared"), { recursive: true });
+    let madeFresh = false;
+    const syncing = syncRecordStore(place.storeA);
+    let done = false;
+    syncing.finally(() => { done = true; });
+    while (!done) {
+      if (await exists(path.join(plans, "fresh"))) madeFresh = true;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.notEqual((await syncing).state, "ok");
+    assert.equal(madeFresh, false, "the sync made no folder while the update held the lock");
+    assert.equal(await exists(path.join(plans, "shared")), true, "the sync removed no folder while the update held the lock");
+  });
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  assert.equal(await text(path.join(plans, "fresh", "slice.md")), "# fresh\n");
+  assert.equal(await text(path.join(plans, "shared", "slice.md")), "# shared\n");
+});

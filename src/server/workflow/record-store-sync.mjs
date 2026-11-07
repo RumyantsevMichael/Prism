@@ -255,6 +255,9 @@ async function identity(base) {
 
 async function commitLocal(base, author) {
   await required(base, ["add", "-A", "--", "."]);
+  // Only the store's own ignore files decide what it tracks: the person's core.excludesFile and the store's info/exclude would leave files that other machines share uncommitted.
+  const leftOut = (await required(base, ["ls-files", "-z", "--others", "--exclude-per-directory=.gitignore", "--", "."])).stdout;
+  if (leftOut.length) await required(base, ["--literal-pathspecs", "add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], { input: leftOut });
   // A store whose ignore file predates the sync folder, or lists no lock files, still never commits the sync folder or the registration lock.
   await required(base, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", SYNC_DIRECTORY, "repositories.lock"]);
   const staged = (await required(base, ["diff", "--cached", "--name-only", "-z"])).stdout.toString("utf8").split("\0").filter(Boolean);
@@ -460,26 +463,32 @@ async function apply(base, from, to, options) {
     await options.beforeApply?.();
     files = from ? await changedPaths(base, from, to) : (await required(base, ["ls-tree", "-r", "--name-only", "-z", to])).stdout.toString("utf8").split("\0").filter(Boolean);
     const targets = files.map((file) => path.join(base, file));
-    for (const target of targets) await mkdir(path.dirname(target), { recursive: true });
     const artifactLock = files.some((file) => file.startsWith(`${ARTIFACTS}/`)) ? [path.join(base, ARTIFACTS)] : [];
-    return await holdLocks([...artifactLock, ...targets], async () => {
-      const next = [];
-      for (const [index, file] of files.entries()) {
-        if (!sameBytes(await fileBytes(targets[index]), await blob(base, from, file))) return false;
-        next.push(await blob(base, to, file));
+    // Folders under artifacts/ are made and removed only while the artifact lock is held, so none appears or vanishes between an update's layout check and its last write.
+    return await holdLocks(artifactLock, async () => {
+      try {
+        for (const target of targets) await mkdir(path.dirname(target), { recursive: true });
+        return await holdLocks(targets, async () => {
+          const next = [];
+          for (const [index, file] of files.entries()) {
+            if (!sameBytes(await fileBytes(targets[index]), await blob(base, from, file))) return false;
+            next.push(await blob(base, to, file));
+          }
+          for (const [index, bytes] of next.entries()) {
+            if (bytes === null) await rm(targets[index], { force: true });
+            else await writeAtomically(targets[index], bytes);
+          }
+          for (const [index, bytes] of next.entries()) if (!sameBytes(await fileBytes(targets[index]), bytes)) return false;
+          await required(base, ["update-ref", "-m", "prism: sync records", "HEAD", to, ...(from ? [from] : [])]);
+          await required(base, ["read-tree", to]);
+          return true;
+        });
+      } finally {
+        // A removed record, or a folder made only for a lock, leaves no empty folder behind, so listings never show it; the per-file locks are released by now.
+        for (const file of files) for (let folder = path.dirname(path.join(base, file)); folder !== base; folder = path.dirname(folder)) if (!(await rmdir(folder).then(() => true, () => false))) break;
       }
-      for (const [index, bytes] of next.entries()) {
-        if (bytes === null) await rm(targets[index], { force: true });
-        else await writeAtomically(targets[index], bytes);
-      }
-      for (const [index, bytes] of next.entries()) if (!sameBytes(await fileBytes(targets[index]), bytes)) return false;
-      await required(base, ["update-ref", "-m", "prism: sync records", "HEAD", to, ...(from ? [from] : [])]);
-      await required(base, ["read-tree", to]);
-      return true;
     }).catch((error) => { if (error.code === "lock_timeout") return false; throw error; });
   } finally {
-    // A removed record, or a folder made only for a lock, leaves no empty folder behind, so listings never show it.
-    for (const file of files) for (let folder = path.dirname(path.join(base, file)); folder !== base; folder = path.dirname(folder)) if (!(await rmdir(folder).then(() => true, () => false))) break;
     await rm(marker, { force: true });
   }
 }
