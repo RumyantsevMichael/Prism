@@ -253,13 +253,26 @@ async function identity(base) {
   return args;
 }
 
+// Stage the store's changes, with or without artifacts/, so that only the store's own ignore files decide what it tracks.
+async function stage(base, artifacts) {
+  const scope = artifacts ? ["."] : [".", `:(exclude)${ARTIFACTS}`];
+  await required(base, ["add", "-A", "--", ...scope]);
+  // The person's core.excludesFile and the store's info/exclude would leave files that other machines share uncommitted.
+  const leftOut = (await required(base, ["ls-files", "-z", "--others", "--exclude-per-directory=.gitignore", "--", ...scope])).stdout.toString("utf8").split("\0").filter(Boolean)
+    .filter((file) => artifacts || !file.startsWith(`${ARTIFACTS}/`));
+  if (leftOut.length) await required(base, ["--literal-pathspecs", "add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], { input: `${leftOut.join("\0")}\0` });
+}
+
 async function commitLocal(base, author) {
-  await required(base, ["add", "-A", "--", "."]);
-  // Only the store's own ignore files decide what it tracks: the person's core.excludesFile and the store's info/exclude would leave files that other machines share uncommitted.
-  const leftOut = (await required(base, ["ls-files", "-z", "--others", "--exclude-per-directory=.gitignore", "--", "."])).stdout;
-  if (leftOut.length) await required(base, ["--literal-pathspecs", "add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], { input: leftOut });
-  // A store whose ignore file predates the sync folder, or lists no lock files, still never commits the sync folder or the registration lock.
-  await required(base, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", SYNC_DIRECTORY, "repositories.lock"]);
+  // An artifact update holds the store's artifact lock from its version checks to its last write, so staging under that lock never commits part of an update.
+  // While an update holds the lock longer than a merge waits for it, this commit leaves artifacts/ as committed and a later sync commits the whole update.
+  await holdLocks([path.join(base, ARTIFACTS)], () => stage(base, true)).catch(async (error) => {
+    if (error.code !== "lock_timeout") throw error;
+    scheduleRecordSync(base);
+    await stage(base, false);
+  });
+  // A store whose ignore file predates the sync folder, or lists no lock files, still never commits the sync folder, the registration lock, or the artifact lock this commit holds.
+  await required(base, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", SYNC_DIRECTORY, "repositories.lock", `${ARTIFACTS}.lock`]);
   const staged = (await required(base, ["diff", "--cached", "--name-only", "-z"])).stdout.toString("utf8").split("\0").filter(Boolean);
   if (!staged.length) return false;
   const listed = staged.slice(0, COMMIT_LIST).join("\n") + (staged.length > COMMIT_LIST ? `\n… and ${staged.length - COMMIT_LIST} more` : "");

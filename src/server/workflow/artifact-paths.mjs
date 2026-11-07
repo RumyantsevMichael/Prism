@@ -18,6 +18,9 @@ const LOCK_ENDING = /\.lock$/i;
 const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i;
 export const ARTIFACT_NAME_FORM = "an artifact name begins with an ASCII letter or digit, holds only ASCII letters, digits, \".\", \"_\", and \"-\", does not end in \".\" or in \".lock\" in any letter case, and is no Windows device name, which is con, prn, aux, nul, com0 to com9, or lpt0 to lpt9 in any letter case before the name's first \".\" or as the whole name, such as aux.md or NUL.txt";
 
+/** Whether a name, before its first ".", is a Windows device name, which Git for Windows refuses as any component of a path. */
+export const windowsDeviceName = (name) => DEVICE_NAME.test(name);
+
 /** Whether one path component follows the artifact name form. */
 export const wellFormedName = (name) => NAME_FORM.test(name) && !name.endsWith(".") && !LOCK_ENDING.test(name) && !DEVICE_NAME.test(name);
 

@@ -315,7 +315,7 @@ Record files that other checkouts still hold under `.prism` are then ignored, an
 Every checkout whose configuration names the same store reads and writes the same records.
 
 `Repository` names the repository to its store, so one store can hold the records of several repositories, and record operations ignore it without `Store`, where it only names the repository's [components](#components).
-A name has 1 to 64 lowercase letters, digits, hyphens, or underscores, and starts and ends with a letter or digit, or every record operation fails with `repository_name_invalid`.
+A name has 1 to 64 lowercase letters, digits, hyphens, or underscores, starts and ends with a letter or digit, and is no Windows device name, `con`, `prn`, `aux`, `nul`, `com0` to `com9`, or `lpt0` to `lpt9`, or every record operation fails with `repository_name_invalid`, whose message proposes a name the store accepts.
 The first record operation that uses a name registers it in the store with the checkout's `origin` remote and root commit.
 A name registered for another remote is refused with `repository_name_taken` unless the checkout's root commit proves it is the same repository, and a remote already registered under another name is refused with `repository_remote_registered`.
 Each refusal proposes a name that the store accepts.

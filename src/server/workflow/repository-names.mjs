@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { lstat, mkdir, open, readdir, readFile, rm, utimes } from "node:fs/promises";
 import { hostname } from "node:os";
 import path from "node:path";
+import { windowsDeviceName } from "./artifact-paths.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { recordCheckout } from "./machine-checkouts.mjs";
 import { scheduleRecordSync, SYNC_DIRECTORY, syncRecordStoreNow } from "./record-store-sync.mjs";
@@ -15,6 +16,8 @@ export const REPOSITORIES = "repositories";
 // No name holds "/", which a later increment uses in <repository>/<component>.
 export const REPOSITORY_NAME = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
 const NAME_MAX = 64;
+// A name also names the store folder of the repository's artifacts and its registration file, so it is no Windows device name, which Git for Windows refuses to check out.
+export const portableRepositoryName = (name) => typeof name === "string" && REPOSITORY_NAME.test(name) && !windowsDeviceName(name);
 const REGISTRATION_MAX_BYTES = 64 * 1024;
 // The refusals of a checkout's repository name, which every record operation reports while the checkout stays refused.
 export const REPOSITORY_REFUSALS = Object.freeze(["repository_name_missing", "repository_name_invalid", "repository_remote_registered", "repository_name_taken", "repository_unconfirmed"]);
@@ -120,6 +123,8 @@ async function readRegistrations(base, fail) {
   const registrations = [];
   for (const file of names) {
     const name = file.slice(0, -".json".length);
+    // A registration under a Windows device name, which an earlier version wrote, holds its name but accepts no checkout and owns no remote, so its repository moves to a portable name.
+    if (!portableRepositoryName(name)) { registrations.push({ name, remotes: [], root: null, unreadable: true }); continue; }
     let parsed = null;
     try {
       const bytes = await registrationBytes(path.join(folder, file));
@@ -158,7 +163,8 @@ function proposedName(registrations, facts) {
   const accepting = registrations.find((registration) => acceptance(registration, facts, registrations));
   if (accepting) return accepting.name;
   const source = (facts.remote && lastSegment(facts.remote)) || facts.folder;
-  const base = trimName(trimName(source.toLowerCase().replace(/[^a-z0-9_-]+/g, "-")).slice(0, NAME_MAX)) || "repository";
+  const derived = trimName(trimName(source.toLowerCase().replace(/[^a-z0-9_-]+/g, "-")).slice(0, NAME_MAX)) || "repository";
+  const base = windowsDeviceName(derived) ? `${derived}-repository` : derived;
   const taken = new Set(registrations.map((registration) => registration.name));
   if (!taken.has(base)) return base;
   for (let suffix = 2; ; suffix += 1) {
@@ -381,9 +387,9 @@ async function checkName({ root, base, name, fail, beforeWrite = async () => {},
     const proposed = await proposal();
     throw refusal(fail, "repository_name_missing", `This checkout names a record store under \`## Workspace\` in .prism/workflow.md but no repository name, so Prism refuses its record operations and writes nothing to the store. Add \`${line(proposed)}\` under \`## Workspace\` in .prism/workflow.md and commit it.`, proposed);
   }
-  if (!REPOSITORY_NAME.test(name)) {
+  if (!portableRepositoryName(name)) {
     const proposed = await proposal();
-    throw refusal(fail, "repository_name_invalid", `The repository name ${name} under \`## Workspace\` in .prism/workflow.md is invalid: a repository name must use lowercase letters, digits, hyphens, or underscores, starting and ending with a letter or digit, with at most ${NAME_MAX} characters. Use \`${line(proposed)}\`.`, proposed);
+    throw refusal(fail, "repository_name_invalid", `The repository name ${name} under \`## Workspace\` in .prism/workflow.md is invalid: a repository name must use lowercase letters, digits, hyphens, or underscores, starting and ending with a letter or digit, with at most ${NAME_MAX} characters, and must be no Windows device name, which is con, prn, aux, nul, com0 to com9, or lpt0 to lpt9, because it names folders in the record store that every machine checks out. Use \`${line(proposed)}\`.`, proposed);
   }
   // A registration that accepts as it stands, and is not pending, needs no lock.
   const first = decideSettled(name, await readView(base, fail), facts, fail);

@@ -4,7 +4,7 @@ import { lstat, mkdir, open, readdir, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
-import { ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, artifactPathOf, collideInLetterCase, componentScope, holdsArtifactPaths, kindInScope, malformedArtifactName, normalizeArtifactPath, repositoryScope, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, artifactPathOf, collideInLetterCase, componentScope, holdsArtifactPaths, kindInScope, malformedArtifactName, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { resolveArtifactFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
@@ -69,7 +69,7 @@ export const ARTIFACT_TOOLS = Object.freeze([
   },
   {
     name: "update_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), and move_scope (path, expectedVersion, and the scope to move it to). expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. A write that creates an artifact, and a move_scope, whose path differs only in letter case from an artifact path a seen scope holds, or from another write of the update, is refused with artifact_name_conflict and data.path holding that path, so change only the letter case by a remove and then a write in a later update. Such a write or move_scope whose location in the store, the path below artifacts/ in the scope it would take, holds more than 120 characters is refused with artifact_path_too_long and data.location, so choose a shorter path or a scope with a shorter folder. move_scope of a path that several scopes hold moves the one copy whose version is expectedVersion. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. A name that breaks the artifact name form that get_artifact describes is refused with artifact_name_invalid and data.invalidName, so choose another name. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
+    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), and move_scope (path, expectedVersion, and the scope to move it to). expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. A write that creates an artifact, and a move_scope, whose path differs only in letter case from an artifact path a seen scope holds, or from another write of the update, is refused with artifact_name_conflict and data.path holding that path, so change only the letter case by a remove and then a write in a later update. Such a write or move_scope whose location in the store, the path below artifacts/ in the scope it would take, holds more than 120 characters is refused with artifact_path_too_long and data.location, so choose a shorter path or a scope with a shorter folder. Such a write or move_scope in a component scope whose component name is a Windows device name, such as aux, nul, or com1, is refused with component_name_invalid and data.component, so rename the component under ## Components in .prism/workflow.md or choose another scope. move_scope of a path that several scopes hold moves the one copy whose version is expectedVersion. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. A name that breaks the artifact name form that get_artifact describes is refused with artifact_name_invalid and data.invalidName, so choose another name. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
     inputSchema: UPDATE_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
   }
@@ -388,6 +388,12 @@ function checkLocationLength(scope, address) {
   throw fail("artifact_path_too_long", `${location}, the location of ${address.path} in scope ${scope.label} of the record store, holds ${location.length} characters, above the ${LOCATION_MAX} that a location may hold so that every machine can check the store out; nothing changed. Choose a shorter path, or a scope with a shorter folder.`, { location, limit: LOCATION_MAX });
 }
 
+// No created or moved artifact makes a component folder that Git for Windows refuses to check out; the artifacts of such a folder already stored stay usable by their paths.
+function checkComponentName(file, scope) {
+  if (scope.kind !== "component" || !windowsDeviceName(scope.component)) return;
+  throw fail("component_name_invalid", `${file} would live in scope ${scope.label}, whose component name ${scope.component} is a Windows device name (con, prn, aux, nul, com0 to com9, or lpt0 to lpt9), so its folder in the record store would stop the store on every Windows machine; nothing changed. Rename the component under ## Components in .prism/workflow.md to a name that is no device name, or choose another scope.`, { component: scope.component });
+}
+
 /**
  * Refuse a created or moved path that collides in letter case with an artifact path of its kind that a seen scope held before the update,
  * or with the path of another write of the update, since a case-insensitive file system makes the two one file.
@@ -452,9 +458,11 @@ export async function updateArtifact(input) {
             target = held?.target ?? await resolveArtifactFile(seen, artifactLocation(scope, address));
             current = held?.record ?? null;
           }
+          // A create always runs the letter-case check, whatever the location's lookup found, since a case-insensitive file system finds a stored variant there.
+          if (operation.expectedVersion === null) checkLetterCase(item, await heldBefore(), checked);
           checkVersion(file, operation.expectedVersion, current);
           if (current === null) {
-            checkLetterCase(item, await heldBefore(), checked);
+            checkComponentName(file, scope);
             checkLocationLength(scope, address);
           }
           const next = Buffer.from(operation.content, "utf8");
@@ -480,6 +488,7 @@ export async function updateArtifact(input) {
           artifacts.push({ path: file, scope: source.scope, removed: true });
         } else {
           const scope = scopeOf(seen, given);
+          checkComponentName(file, scope);
           checkLetterCase(item, await heldBefore(), checked);
           checkLocationLength(scope, address);
           if (scope.label !== source.scope.label) {
