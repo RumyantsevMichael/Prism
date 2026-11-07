@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { checkout, cloneOf, commitFiles, git, exists, isolateGit, notes, ok, requirementFile, server, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing artifacts move into the store once.
+// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing artifacts move into the store once, and files with malformed names stay in the checkout.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -123,4 +123,33 @@ test("clause 28: a checkout file whose path the workspace scope holds stays in t
   assert.equal(await text(path.join(api, "docs/requirements/shared.md")), "# Shared in api\n");
   assert.equal(await exists(scoped(place.store, "requirements/shared.md")), false);
   assert.match(notes(access), /workspace_holds/);
+});
+
+test("clause 28: a checkout file whose path breaks the artifact name form stays in the checkout and is reported as name_invalid", async (context) => {
+  const place = await workspace(context);
+  const malformed = {
+    "docs/plans/reports/.DS_Store": "finder\n",
+    "docs/plans/reports/my notes.md": "# Notes\n",
+    "docs/plans/_drafts/slice.md": "# Draft\n",
+    "docs/requirements/.gitignore": "*.tmp\n",
+    "docs/requirements/résumé.md": "# Resume\n",
+    "docs/ADRs/payments/ledger.md.lock": "locked\n"
+  };
+  const api = await checkout(place, "api", { files: { "docs/plans/reports/slice.md": "# Reports\n", ...malformed } });
+  const prism = await server(context, place, api);
+  const access = await prism.call("get_artifact", {});
+  assert.deepEqual(ok(access).artifacts.map((entry) => entry.path), ["docs/plans/reports/slice.md"]);
+  assert.equal(await text(scoped(place.store, "plans/reports/slice.md")), "# Reports\n", "a well-formed file beside them still moves");
+  assert.equal(await exists(path.join(api, "docs/plans/reports/slice.md")), false);
+
+  const report = notes(access);
+  assert.match(report, /name_invalid/);
+  const [ledger] = await ledgerFiles(place.store);
+  for (const [file, contents] of Object.entries(malformed)) {
+    assert.equal(await text(path.join(api, file)), contents, `${file} stays in the checkout with its bytes`);
+    assert.ok(report.includes(file), `the report names ${file}`);
+    assert.ok(JSON.stringify(ledger).includes(JSON.stringify(file).slice(1, -1)), `the ledger lists ${file} as kept`);
+  }
+  const stored = await readdir(path.join(place.store, "artifacts"), { recursive: true });
+  assert.deepEqual(stored.filter((entry) => /\.DS_Store|my notes|_drafts|\.gitignore|résum|\.lock$/.test(entry)), [], "no malformed name reached the store");
 });

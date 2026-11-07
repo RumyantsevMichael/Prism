@@ -2,7 +2,7 @@
 
 ## Changes
 - change `src/server/workflow/record-store.mjs`, `dist/server/workflow/record-store.mjs`: `readArtifactText` and `writeArtifactText`, which read and write a slice folder's files through `resolveArtifactFile`, writing a generated view in the scope that holds its folder (§22).
-- change `src/server/workflow/initiative.mjs`, `dist/server/workflow/initiative.mjs`: reads `slice.md` for the Changes check, unfrozen split evidence, and design text through the store, refuses frozen tests that are artifact paths with `frozen_test_in_store`, and writes `initiative.md` there (§19, §22).
+- change `src/server/workflow/initiative.mjs`, `dist/server/workflow/initiative.mjs`: reads `slice.md` for the Changes check, unfrozen split evidence, and design text through the store, refuses frozen tests that are artifact paths with `frozen_test_in_store`, writes `initiative.md` there, and with a store refuses slugs beginning with `-` or `_` and the design of such a slice with `artifact_name_invalid` (§19, §22).
 - change `src/server/workflow/slice-design.mjs`, `dist/server/workflow/slice-design.mjs`: `measureContract` measures `slice.md` from the store (§22).
 - change `src/server/workflow/diagram-check.mjs`, `dist/server/workflow/diagram-check.mjs`: lists and parses PlantUML files of a slice folder in the store (§22).
 - change `src/server/workflow/design-view.mjs`, `dist/server/workflow/design-view.mjs`: reads `slice.md` from the store (§22).

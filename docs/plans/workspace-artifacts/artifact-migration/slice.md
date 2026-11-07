@@ -1,6 +1,6 @@
 # Move existing artifacts into the store
 
 ## Changes
-- add `src/server/workflow/artifact-migration.mjs`, `dist/server/workflow/artifact-migration.mjs`: `migrateArtifacts`, which moves, removes, or keeps each descriptive file of a checkout, records the moved file's written status, writes one `artifact-migrations/` ledger file, and scans tracked files for moved paths (§26-§29, §31).
+- add `src/server/workflow/artifact-migration.mjs`, `dist/server/workflow/artifact-migration.mjs`: `migrateArtifacts`, which moves, removes, or keeps each descriptive file of a checkout, keeping each file with a malformed name as `name_invalid`, records the moved file's written status, writes one `artifact-migrations/` ledger file, and scans tracked files for moved paths (§26-§29, §31).
 - change `src/server/workflow/record-store.mjs`, `dist/server/workflow/record-store.mjs`: the first access of a checkout in a server process runs `migrateArtifacts` after the record move and keeps its report (§26).
-- change `src/server/mcp.mjs`, `dist/server/mcp.mjs`: the migration note lists moved files from checkout path to store location, kept files with both locations and their reason, and references as `<file>:<line>` (§28, §29).
+- change `src/server/mcp.mjs`, `dist/server/mcp.mjs`: the migration note lists moved files from checkout path to store location, kept files with both locations, or the checkout path alone for `name_invalid`, and their reason, and references as `<file>:<line>` (§28, §29).

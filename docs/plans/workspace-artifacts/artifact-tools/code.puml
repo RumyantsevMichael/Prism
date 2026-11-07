@@ -2,7 +2,7 @@
 title artifact-tools
 
 component "workflow-config\nartifactKinds" as kinds
-component "artifact-paths\nartifactAddress, scopeFolder, artifactLocation" as paths
+component "artifact-paths\nartifactAddress, malformedArtifactName,\nscopeFolder, artifactLocation" as paths
 component "record-store\nresolveArtifactFile, seenScopes" as store
 component "store-artifacts\ngetArtifact, updateArtifact" as tools
 component "mcp\nget_artifact, update_artifact" as mcp

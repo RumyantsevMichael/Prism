@@ -234,63 +234,88 @@ test("clause 18: executable artifacts and other project files are not artifact p
   assert.equal(await exists(path.join(place.store, "artifacts")), false, "nothing reached the store");
 });
 
-// Names the store's Git reads, or that Prism's own lock and temporary files take beside store files, inside configured folders.
-const reservedPaths = [
-  "docs/plans/y/.git/HEAD", "docs/plans/y/.git", "docs/plans/y/.GIT/config", "docs/plans/y/.git./HEAD", "docs/plans/y/.git /HEAD",
-  "docs/plans/y/git~1/HEAD", "docs/plans/y/GIT~1/HEAD", "docs/plans/y/.g\u200cit/HEAD", "docs/plans/y/\ufeff.git/HEAD", "docs/plans/y/.git\u202e/HEAD",
-  "docs/plans/.gitignore", "docs/plans/y/.gitattributes", "docs/requirements/.gitmodules", "docs/ADRs/.GitIgnore", "docs/plans/y/.gitkeep",
-  "docs/requirements/first.md.lock", "docs/requirements/first.md.LOCK", "docs/plans/x/.slice.md.123.abc.tmp", "docs/plans/x/.notes.TMP"
+// The artifact name form: every name below a configured folder begins with an ASCII letter or digit, holds only ASCII letters, digits, ".", "_", and "-", and does not end in ".lock".
+// Each malformed path inside a configured folder is listed with the first name that breaks the form.
+const malformedPaths = [
+  ["docs/plans/y/.git/HEAD", ".git"], ["docs/plans/y/.git", ".git"], ["docs/plans/y/.GIT/config", ".GIT"], ["docs/plans/y/.git./HEAD", ".git."], ["docs/plans/y/.git /HEAD", ".git "],
+  ["docs/plans/y/git~1/HEAD", "git~1"], ["docs/plans/y/GIT~1/HEAD", "GIT~1"], ["docs/plans/y/.g‌it/HEAD", ".g‌it"], ["docs/plans/y/﻿.git/HEAD", "﻿.git"], ["docs/plans/y/.git‮/HEAD", ".git‮"],
+  ["docs/plans/.gitignore", ".gitignore"], ["docs/plans/y/.gitattributes", ".gitattributes"], ["docs/requirements/.gitmodules", ".gitmodules"], ["docs/ADRs/.GitIgnore", ".GitIgnore"], ["docs/plans/y/.gitkeep", ".gitkeep"],
+  ["docs/requirements/first.md.lock", "first.md.lock"], ["docs/requirements/first.md.LOCK", "first.md.LOCK"], ["docs/plans/a.lock/slice.md", "a.lock"],
+  ["docs/plans/x/.slice.md.123.abc.tmp", ".slice.md.123.abc.tmp"], ["docs/plans/x/.notes.TMP", ".notes.TMP"], ["docs/plans/ok/.hidden/notes.md", ".hidden"],
+  ["docs/plans/my notes.md", "my notes.md"], ["docs/requirements/résumé.md", "résumé.md"], ["docs/plans/y/a​b.md", "a​b.md"], ["docs/plans/_drafts/x.md", "_drafts"],
+  ["docs/plans/y/-rf.md", "-rf.md"], ["docs/plans/y/a~b.md", "a~b.md"], ["docs/plans/y/a:b.md", "a:b.md"], ["docs/ADRs/payments/ledger$.md", "ledger$.md"]
 ];
 
-function refusedAsReserved(response, file) {
-  const error = refused(response, "not_an_artifact");
-  assert.match(error.message, /reserve/i, `${JSON.stringify(file)}: the message says the store reserves the name`);
+function refusedAsMalformed(response, file, name) {
+  const error = refused(response, "artifact_name_invalid");
+  assert.equal(error.data.invalidName, name, `${JSON.stringify(file)}: data.invalidName holds the first malformed name`);
+  for (const part of [/ASCII/, /letter/i, /digit/i, /\.lock/]) assert.match(error.message, part, `${JSON.stringify(file)}: the message states the allowed name form`);
   assert.doesNotMatch(error.message, /checkout/i, `${JSON.stringify(file)}: the message does not send the file to the checkout`);
   return error;
 }
 
-test("clauses 1 and 18: a reserved name inside a configured folder is no artifact path, is refused as reserved, and never reaches the store's Git", async (context) => {
+test("clauses 1 and 18: only a path whose names follow the artifact name form is an artifact path, a malformed one is refused with the form, and none reaches the store's Git", async (context) => {
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
-  const kept = ["docs/plans/digit/slice.md", "docs/plans/my.git/slice.md", "docs/plans/y/notes.tmp", "docs/plans/y/lock.md", "docs/requirements/locks.md"];
+  const kept = [
+    "docs/plans/digit/slice.md", "docs/plans/my.git/slice.md", "docs/plans/y/notes.tmp", "docs/plans/y/lock.md", "docs/plans/y/file.lockfile", "docs/plans/y/gitignore",
+    "docs/requirements/locks.md", "docs/plans/Report_2/v1.0-draft.md", "docs/plans/9lives/x...y", "docs/ADRs/0001-Use-Git.md", "docs/Glossary.md", "docs/roadmap.md"
+  ];
   for (const file of kept) await writeArtifact(prism, file, `# ${file}\n`);
-  for (const file of reservedPaths) {
-    refusedAsReserved(await prism.call("get_artifact", { path: file }), file);
-    refusedAsReserved(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: "*\n", expectedVersion: null }] }), file);
+  for (const [file, name] of malformedPaths) {
+    refusedAsMalformed(await prism.call("get_artifact", { path: file }), file, name);
+    refusedAsMalformed(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: "*\n", expectedVersion: null }] }), file, name);
   }
-  // One reserved name refuses the whole update, so the artifact beside it is not written either.
-  refusedAsReserved(await prism.call("update_artifact", { operations: [
+  refusedAsMalformed(await prism.call("get_artifact", { path: "docs/plans/_drafts" }), "docs/plans/_drafts", "_drafts");
+  // One malformed name refuses the whole update, so the artifact beside it is not written either.
+  refusedAsMalformed(await prism.call("update_artifact", { operations: [
     { op: "write", path: "docs/plans/y/extra.md", content: "# Extra\n", expectedVersion: null },
     { op: "write", path: "docs/plans/.gitignore", content: "*\n", expectedVersion: null }
-  ] }), "docs/plans/.gitignore");
+  ] }), "docs/plans/.gitignore", ".gitignore");
   assert.equal(await exists(path.join(place.store, "artifacts", "plans", "y", "extra.md")), false);
-  // A reserved name outside the configured folders is an ordinary project file, which stays in the checkout.
-  for (const file of [".gitignore", "src/.gitattributes", "README.md.lock"]) {
+  // A malformed name outside the configured folders is an ordinary project file, which stays in the checkout.
+  for (const file of [".gitignore", "src/.gitattributes", "README.md.lock", "notes/my notes.md"]) {
     assert.match(refused(await prism.call("get_artifact", { path: file }), "not_an_artifact").message, /checkout/i, `${file}: the message says the file stays in the checkout`);
   }
 
   assert.deepEqual(ok(await prism.call("get_artifact", {})).artifacts.map((entry) => entry.path), [...kept].sort());
-  // The store's Git adds every file Prism wrote, and no rule file of its own changes what it tracks.
+  // The store's Git, with the ignore file Prism writes into a store, adds every file Prism wrote, and no rule file of its own changes what it tracks.
+  await writeFile(path.join(place.store, ".gitignore"), "*.lock\n.*.tmp\n/.prism-sync/\n");
   git(place.store, "init", "-q", "-b", "main");
   git(place.store, "add", "-A", "--", ".");
-  assert.deepEqual(git(place.store, "ls-files", "--", "artifacts").split("\n").sort(), ["artifacts/plans/digit/slice.md", "artifacts/plans/my.git/slice.md", "artifacts/plans/y/lock.md", "artifacts/plans/y/notes.tmp", "artifacts/requirements/locks.md"]);
+  const location = (file) => `artifacts/${file.replace(/^docs\/plans\//, "plans/").replace(/^docs\/requirements\//, "requirements/").replace(/^docs\/ADRs\//, "adrs/").replace(/^docs\/Glossary\.md$/, "glossary.md").replace(/^docs\/roadmap\.md$/, "roadmap.md")}`;
+  assert.deepEqual(git(place.store, "ls-files", "--", "artifacts").split("\n").filter(Boolean).sort(), kept.map(location).sort());
 });
 
-test("clauses 1 and 18: files with reserved names that the store holds are left out of listings and refused by every operation", async (context) => {
+test("clauses 1 and 18: the configured glossary and roadmap file names follow the artifact name form", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api", { paths: ["- Plans: docs/plans", "- Glossary: docs/_glossary.md", "- Roadmap: docs/.roadmap.md"] });
+  const prism = await server(context, place, api);
+  for (const [file, name] of [["docs/_glossary.md", "_glossary.md"], ["docs/.roadmap.md", ".roadmap.md"]]) {
+    refusedAsMalformed(await prism.call("get_artifact", { path: file }), file, name);
+    refusedAsMalformed(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: "# Glossary\n", expectedVersion: null }] }), file, name);
+  }
+  assert.equal(await exists(path.join(place.store, "artifacts", "glossary.md")), false);
+  assert.equal(await exists(path.join(place.store, "artifacts", "roadmap.md")), false);
+});
+
+test("clauses 1 and 18: files with malformed names that the store holds are left out of listings and refused by every operation", async (context) => {
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
   const slice = await writeArtifact(prism, "docs/plans/y/slice.md", "# Slice\n");
   const requirement = await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
-  // Store sync leaves lock and temporary files beside a store file while it writes, and an older Prism or another tool may have left Git files.
+  // Store sync leaves lock and temporary files beside a store file while it writes, and an older Prism or another tool may have left other names.
   const planted = {
-    "plans/y/slice.md.lock": "docs/plans/y/slice.md.lock",
-    "plans/y/.slice.md.4242.0a1b2c3d.tmp": "docs/plans/y/.slice.md.4242.0a1b2c3d.tmp",
-    "plans/y/.gitattributes": "docs/plans/y/.gitattributes",
-    "plans/y/.git/HEAD": "docs/plans/y/.git/HEAD",
-    "requirements/.gitignore": "docs/requirements/.gitignore",
-    "repositories/api/requirements/first.md.lock": "docs/requirements/first.md.lock"
+    "plans/y/slice.md.lock": ["docs/plans/y/slice.md.lock", "slice.md.lock"],
+    "plans/y/.slice.md.4242.0a1b2c3d.tmp": ["docs/plans/y/.slice.md.4242.0a1b2c3d.tmp", ".slice.md.4242.0a1b2c3d.tmp"],
+    "plans/y/.gitattributes": ["docs/plans/y/.gitattributes", ".gitattributes"],
+    "plans/y/.git/HEAD": ["docs/plans/y/.git/HEAD", ".git"],
+    "plans/y/my notes.md": ["docs/plans/y/my notes.md", "my notes.md"],
+    "plans/_drafts/slice.md": ["docs/plans/_drafts/slice.md", "_drafts"],
+    "requirements/.gitignore": ["docs/requirements/.gitignore", ".gitignore"],
+    "repositories/api/requirements/first.md.lock": ["docs/requirements/first.md.lock", "first.md.lock"]
   };
   for (const location of Object.keys(planted)) {
     await mkdir(path.dirname(path.join(place.store, "artifacts", location)), { recursive: true });
@@ -299,17 +324,18 @@ test("clauses 1 and 18: files with reserved names that the store holds are left 
   const expected = [["docs/plans/y/slice.md", slice.version], ["docs/requirements/first.md", requirement.version]];
   const entries = (listing) => listing.artifacts.map((entry) => [entry.path, entry.version]);
   assert.deepEqual(entries(ok(await prism.call("get_artifact", {}))), expected);
+  assert.deepEqual(entries(ok(await prism.call("get_artifact", { path: "docs/plans" }))), [expected[0]]);
   assert.deepEqual(entries(ok(await prism.call("get_artifact", { path: "docs/plans/y" }))), [expected[0]]);
   assert.deepEqual(entries(ok(await prism.call("get_artifact", { path: "docs/requirements" }))), [expected[1]]);
-  for (const file of new Set(Object.values(planted))) {
-    refusedAsReserved(await prism.call("get_artifact", { path: file }), file);
-    refusedAsReserved(await prism.call("get_artifact", { path: file, scope: "repository" }), file);
+  for (const [file, name] of new Map(Object.values(planted))) {
+    refusedAsMalformed(await prism.call("get_artifact", { path: file }), file, name);
+    refusedAsMalformed(await prism.call("get_artifact", { path: file, scope: "repository" }), file, name);
     for (const operation of [
       { op: "write", path: file, content: "changed\n", expectedVersion: version("planted\n") },
       { op: "edit", path: file, expectedVersion: version("planted\n"), edits: [{ oldText: "planted", newText: "changed" }] },
       { op: "remove", path: file, expectedVersion: version("planted\n") },
       { op: "move_scope", path: file, expectedVersion: version("planted\n"), scope: "repository" }
-    ]) refusedAsReserved(await prism.call("update_artifact", { operations: [operation] }), `${operation.op} ${file}`);
+    ]) refusedAsMalformed(await prism.call("update_artifact", { operations: [operation] }), `${operation.op} ${file}`, name);
   }
   for (const location of Object.keys(planted)) assert.equal(await text(path.join(place.store, "artifacts", location)), "planted\n", `${location} is left as it was`);
 });

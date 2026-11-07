@@ -5,7 +5,7 @@ import test from "node:test";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
 import { browserRequest, checkout, commitFiles, exists, isolateGit, ok, refused, reviewBrowser, server, text, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Contract clauses 19, 22, and 23 of the workspace-artifacts design: Prism's own design, pause, and view files, and the review browser, use the store.
+// Contract clauses 19, 22, and 23 of the workspace-artifacts design: Prism's own design, pause, and view files, and the review browser, use the store, and a slug that would name a malformed plan folder is refused.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -61,6 +61,20 @@ test("clause 22: a slice.md that only the checkout holds is not read", async (co
   const response = await prism.call("update_initiative", { initiative: "reports", expectedRevision: await revision(prism), operations: [{ op: "accept_design", slug: "reports", frozenTests: [TEST_FILE], review: "none" }] });
   assert.ok(response.error, "acceptance does not fall back to the checkout's slice.md");
   assert.equal(ok(await prism.call("get_initiative", { initiative: "reports" })).record.slices.reports.design, undefined);
+});
+
+test("clause 22: with a store, a slug that would name a malformed plan folder is refused and creates no record", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  for (const slug of ["_reports", "-reports"]) {
+    const error = refused(await createInitiative(prism, slug), "artifact_name_invalid");
+    assert.doesNotMatch(error.message, /checkout/i, `${slug}: the message does not send the plans to the checkout`);
+    assert.equal(ok(await prism.call("get_initiative", { initiative: slug })).exists, false, `${slug}: no record was created`);
+  }
+  ok(await createInitiative(prism, "Reports_2-b"));
+  assert.match(await text(path.join(place.store, "artifacts", "plans", "Reports_2-b", "initiative.md")) ?? "", /Reports/, "a well-formed slug's view is generated in the store");
+  assert.equal(await exists(path.join(api, "docs", "plans")), false);
 });
 
 test("clause 19: a frozen test cannot be an artifact path", async (context) => {
