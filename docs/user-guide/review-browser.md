@@ -65,7 +65,7 @@ Elsewhere, or after the 55 minutes, the agent receives the answer with your next
 Attention also lists blocked slices, open findings, and active work.
 Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
 
-Anyone who can open the review page's URL can answer for you, so do not share that URL.
+Only a tab that Prism opened can answer; see [Which tabs can make changes](#which-tabs-can-make-changes).
 See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-the-browser) for the tool timeout that the Claude Code wait needs.
 
 ## Changes you make in the page
@@ -73,6 +73,17 @@ See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-
 Every change that the review page makes to Prism's records is an action: answering a question, changing an initiative setting, or rebuilding an index.
 The page sends each action with the version of the record it showed you, so when an agent or another tab changed that record in the meantime, Prism refuses your action and changes nothing.
 An action changes only Prism's records, and apart from a rebuild starting Prism's own indexer, it never runs a command, changes a project file, or writes to Git.
+
+### Which tabs can make changes
+
+Only a tab that Prism opened for you can make changes.
+When Prism opens the browser, for a presentation, a session start, or `prism review`, the address it opens carries a one-time grant after `#write=`, which the tab exchanges for a write session as it loads and then removes from its address.
+The grant works once and only within two minutes, and the write session stays with that one browser tab, also across reloads and when you switch it to another checkout of the same review app.
+A review URL that an agent prints, or that a tool returns, carries no grant, so a tab opened from it, a second tab on the same address, or a bookmark can only read.
+A read-only tab says `This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.`, and its controls are disabled.
+To get a tab that can make changes, run `prism review` in the project, or ask the agent to present the review while no tab that can make changes is open.
+The review app keeps the write sessions it issued when a newer session replaces it on the same port, and accepts none after it exits and starts again, so after such a restart open the review again the same way.
+Only a tab that can make changes counts as an open review tab, so a read-only tab never stops Prism from opening a tab that can.
 
 Prism records each action with when it happened and who made it.
 The author is the `user.name` and `user.email` that Git reports in the checkout whose page you used, with that checkout's `repository/branch` label and this machine's host name.
@@ -207,7 +218,7 @@ The app starts with the MCP server of the first Prism session, outlives that ses
 A session of a newer Prism release replaces an app of an older release on the same port, and open tabs reload into the new version.
 A session never replaces a newer app.
 
-A new session opens the review browser on its project when no review tab of any project is open.
+A new session opens the review browser on its project when no review tab of any project that can make changes is open.
 Starting several sessions at once opens at most one window.
 Cloud, CI, print-mode, and display-less sessions open nothing.
 Add `- Review browser on start: off` under `## Interaction` in `.prism/workflow.md` to turn this off for a project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every project you work on.

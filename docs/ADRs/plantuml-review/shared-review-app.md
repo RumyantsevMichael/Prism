@@ -94,3 +94,5 @@ The app exits after an idle period with no live lease and no viewer, and removes
 ## Decision Log
 
 2026-10-22: Added plugin-release replacement and the browser opened at session start, because an app of an older release kept serving its old pages while any session lived, and nothing showed the user that the app was running.
+
+2026-11-07: Added the write session that a handoff keeps, because the viewer credential stopped being enough to change records: the `present` answer that tells a session to open a browser carries a one-time grant for the URL it opens, the app keeps only digests of its newest 100 write session tokens in a private file of its directory, a successor that reuses the viewer credential accepts them, and an app that starts any other way accepts none, as [review-app-actions.md](../workflow-records/review-app-actions.md) decides.

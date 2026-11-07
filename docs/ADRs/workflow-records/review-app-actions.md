@@ -75,6 +75,7 @@ The registry holds one definition per action and offers two operations: list the
 The review server and the shared app expose those operations as two routes under each project's page, and a desktop shell would expose them over its own channel.
 When Prism opens a browser, for a presentation, a session start, or the person's review command, it asks its server or the shared app for a grant and adds it to the fragment of the URL it opens; the tool result returns the URL without it.
 The page exchanges the grant once for a token, keeps the token in its tab, sends it with each write and with its event stream, and Prism counts only tabs with a token when it decides whether to open a browser.
+In the shared app the grant comes with the `present` answer that tells the presenting process to open a browser, one store of write sessions serves every checkout's page, and the app saves the digests of its newest 100 tokens in a file of its private directory, which only a successor that reuses the viewer credential reads.
 Each applied action inserts a history entry beside the change, and the server or app sends it as an event to every tab of each checkout's page whose records resolve to the same store, or only the applying checkout's tabs for an index rebuild.
 An index rebuild's entry goes to a file of the checkout in Prism's application folder, beside the machine's checkout list.
 An index rebuild prepares only its own component's index, and reuses that index without a build while it is up to date.
