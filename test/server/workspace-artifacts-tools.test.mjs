@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { checkout, commitFiles, exists, isolateGit, ok, refused, server, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { checkout, commitFiles, exists, git, isolateGit, ok, refused, server, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 1-18, 20, and 21 of the workspace-artifacts design: agents read, list, and write store artifacts by path and scope.
 const environment = await isolateGit();
@@ -232,6 +232,86 @@ test("clause 18: executable artifacts and other project files are not artifact p
   assert.equal(await text(path.join(api, "docs", "Features", "download.feature")), "Feature: Download\n");
   assert.equal(await text(path.join(api, "README.md")), "# api\n");
   assert.equal(await exists(path.join(place.store, "artifacts")), false, "nothing reached the store");
+});
+
+// Names the store's Git reads, or that Prism's own lock and temporary files take beside store files, inside configured folders.
+const reservedPaths = [
+  "docs/plans/y/.git/HEAD", "docs/plans/y/.git", "docs/plans/y/.GIT/config", "docs/plans/y/.git./HEAD", "docs/plans/y/.git /HEAD",
+  "docs/plans/y/git~1/HEAD", "docs/plans/y/GIT~1/HEAD", "docs/plans/y/.g\u200cit/HEAD", "docs/plans/y/\ufeff.git/HEAD", "docs/plans/y/.git\u202e/HEAD",
+  "docs/plans/.gitignore", "docs/plans/y/.gitattributes", "docs/requirements/.gitmodules", "docs/ADRs/.GitIgnore", "docs/plans/y/.gitkeep",
+  "docs/requirements/first.md.lock", "docs/requirements/first.md.LOCK", "docs/plans/x/.slice.md.123.abc.tmp", "docs/plans/x/.notes.TMP"
+];
+
+function refusedAsReserved(response, file) {
+  const error = refused(response, "not_an_artifact");
+  assert.match(error.message, /reserve/i, `${JSON.stringify(file)}: the message says the store reserves the name`);
+  assert.doesNotMatch(error.message, /checkout/i, `${JSON.stringify(file)}: the message does not send the file to the checkout`);
+  return error;
+}
+
+test("clauses 1 and 18: a reserved name inside a configured folder is no artifact path, is refused as reserved, and never reaches the store's Git", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  const kept = ["docs/plans/digit/slice.md", "docs/plans/my.git/slice.md", "docs/plans/y/notes.tmp", "docs/plans/y/lock.md", "docs/requirements/locks.md"];
+  for (const file of kept) await writeArtifact(prism, file, `# ${file}\n`);
+  for (const file of reservedPaths) {
+    refusedAsReserved(await prism.call("get_artifact", { path: file }), file);
+    refusedAsReserved(await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: "*\n", expectedVersion: null }] }), file);
+  }
+  // One reserved name refuses the whole update, so the artifact beside it is not written either.
+  refusedAsReserved(await prism.call("update_artifact", { operations: [
+    { op: "write", path: "docs/plans/y/extra.md", content: "# Extra\n", expectedVersion: null },
+    { op: "write", path: "docs/plans/.gitignore", content: "*\n", expectedVersion: null }
+  ] }), "docs/plans/.gitignore");
+  assert.equal(await exists(path.join(place.store, "artifacts", "plans", "y", "extra.md")), false);
+  // A reserved name outside the configured folders is an ordinary project file, which stays in the checkout.
+  for (const file of [".gitignore", "src/.gitattributes", "README.md.lock"]) {
+    assert.match(refused(await prism.call("get_artifact", { path: file }), "not_an_artifact").message, /checkout/i, `${file}: the message says the file stays in the checkout`);
+  }
+
+  assert.deepEqual(ok(await prism.call("get_artifact", {})).artifacts.map((entry) => entry.path), [...kept].sort());
+  // The store's Git adds every file Prism wrote, and no rule file of its own changes what it tracks.
+  git(place.store, "init", "-q", "-b", "main");
+  git(place.store, "add", "-A", "--", ".");
+  assert.deepEqual(git(place.store, "ls-files", "--", "artifacts").split("\n").sort(), ["artifacts/plans/digit/slice.md", "artifacts/plans/my.git/slice.md", "artifacts/plans/y/lock.md", "artifacts/plans/y/notes.tmp", "artifacts/requirements/locks.md"]);
+});
+
+test("clauses 1 and 18: files with reserved names that the store holds are left out of listings and refused by every operation", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  const slice = await writeArtifact(prism, "docs/plans/y/slice.md", "# Slice\n");
+  const requirement = await writeArtifact(prism, "docs/requirements/first.md", "# First\n");
+  // Store sync leaves lock and temporary files beside a store file while it writes, and an older Prism or another tool may have left Git files.
+  const planted = {
+    "plans/y/slice.md.lock": "docs/plans/y/slice.md.lock",
+    "plans/y/.slice.md.4242.0a1b2c3d.tmp": "docs/plans/y/.slice.md.4242.0a1b2c3d.tmp",
+    "plans/y/.gitattributes": "docs/plans/y/.gitattributes",
+    "plans/y/.git/HEAD": "docs/plans/y/.git/HEAD",
+    "requirements/.gitignore": "docs/requirements/.gitignore",
+    "repositories/api/requirements/first.md.lock": "docs/requirements/first.md.lock"
+  };
+  for (const location of Object.keys(planted)) {
+    await mkdir(path.dirname(path.join(place.store, "artifacts", location)), { recursive: true });
+    await writeFile(path.join(place.store, "artifacts", location), "planted\n");
+  }
+  const expected = [["docs/plans/y/slice.md", slice.version], ["docs/requirements/first.md", requirement.version]];
+  const entries = (listing) => listing.artifacts.map((entry) => [entry.path, entry.version]);
+  assert.deepEqual(entries(ok(await prism.call("get_artifact", {}))), expected);
+  assert.deepEqual(entries(ok(await prism.call("get_artifact", { path: "docs/plans/y" }))), [expected[0]]);
+  assert.deepEqual(entries(ok(await prism.call("get_artifact", { path: "docs/requirements" }))), [expected[1]]);
+  for (const file of new Set(Object.values(planted))) {
+    refusedAsReserved(await prism.call("get_artifact", { path: file }), file);
+    refusedAsReserved(await prism.call("get_artifact", { path: file, scope: "repository" }), file);
+    for (const operation of [
+      { op: "write", path: file, content: "changed\n", expectedVersion: version("planted\n") },
+      { op: "edit", path: file, expectedVersion: version("planted\n"), edits: [{ oldText: "planted", newText: "changed" }] },
+      { op: "remove", path: file, expectedVersion: version("planted\n") },
+      { op: "move_scope", path: file, expectedVersion: version("planted\n"), scope: "repository" }
+    ]) refusedAsReserved(await prism.call("update_artifact", { operations: [operation] }), `${operation.op} ${file}`);
+  }
+  for (const location of Object.keys(planted)) assert.equal(await text(path.join(place.store, "artifacts", location)), "planted\n", `${location} is left as it was`);
 });
 
 test("clause 20: a project without a store keeps its artifacts in the checkout and the artifact tools refuse", async (context) => {
