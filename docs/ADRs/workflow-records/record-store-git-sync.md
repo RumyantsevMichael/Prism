@@ -23,7 +23,9 @@ A record read MUST NOT wait for the network.
 Record reads and writes MUST NOT see a partially written record file while a merge updates the store.
 A roadmap, initiative, or coordination state record that changed on both sides since the merge base MUST be merged by its structure, whether or not Git's line merge conflicts, and every other record kind MUST keep Git's line merge.
 A structural merge MUST take each unit from the side that changed it, MUST keep the history entries of both sides, and MUST write the result with the serializer of the record's tools.
-A structural merge whose unit changed differently on both sides, or whose result fails the record's own validation, MUST fall back to the whole-file rule.
+A coordination state merge MUST resolve three units that changed differently on both sides without that fallback: a setting whose person mark either side changed MUST take the side whose mark is later, a gate answered on both sides MUST keep the answer with the earlier `answeredAt`, and a gate or active slice that one side removed MUST stay removed.
+Every coordination state writer MUST refuse a state larger than 1 MiB, and a merged coordination state larger than 1 MiB MUST fall back to the whole-file rule, so a state any writer accepted can merge.
+Any other structural merge whose unit changed differently on both sides, or whose result fails the record's own validation, MUST fall back to the whole-file rule.
 Under the whole-file rule, a merge conflict on a record MUST keep the upstream version in the store and save the local version beside it, and a conflict on any other file MUST leave the store unchanged.
 Every Prism server that uses the store MUST report each saved local version once, on its next tool result, so the agent whose change lost learns of it.
 A sync problem MUST NOT fail a record operation, and the store MUST report the latest sync outcome for the review browser.
@@ -76,7 +78,7 @@ A coordination state merges each setting together with the person's mark of it, 
 Its pending gates merge by gate id and its active work by slice, in the order rule of the roadmap with the upstream's addition first after a shared predecessor, and a gate or slice that one side removed stays removed.
 A gate keeps the fields it was asked with, so asked fields that differ between the sides conflict, and answers that differ keep the one with the earlier `answeredAt`, the upstream's on equal times.
 Its history keeps every entry of either side once by id, ordered by time and then id, with the newest 200, its closed gates keep every gate of either side once by id, ordered by closing time and then id, with the newest 20, and its evidence keeps the upstream's paths that neither side removed followed by the local side's additions.
-A merged coordination state passes coordination state validation, where the rules that a new question must meet do not apply to a merged gate, and stays within 1 MiB.
+A merged coordination state passes coordination state validation, where the rules that a new question must meet do not apply to a merged gate, and stays within the 1 MiB that every coordination state write enforces.
 History keeps the base entries both sides still hold, then the entries one side added in time order with local first on a tie, and then its last 500 entries.
 A merged record passes its kind's validation, including the initiative graph analysis, and its blob replaces Git's line merge in a temporary index, from which the merge tree is written.
 A record removed on either side keeps Git's whole-file handling.
@@ -97,3 +99,4 @@ Each server remembers the stores it synced or pulled, and on every tool result i
 2026-11-02: A store cloned from an empty remote reported `ok` without pushing, because its upstream branch did not exist yet; a sync now pushes a branch whose upstream the remote lacks, a managed clone without an upstream pushes its branch with the upstream set, and status messages drop the user information of any URL.
 2026-11-03: An update that takes or releases a [slice claim](slice-claims.md) syncs at once and waits for the outcome instead of the debounced sync; claim records have no structural merge, so the upstream version wins, and a claim record saved aside is reported through the claim's refusal or its holder's lost-claim notice instead of as a saved record.
 2026-11-07: The review app's actions write the person's settings and history into coordination state while agents keep writing it on other machines, so coordination state now merges by structure as well.
+2026-11-07: Review found the Decision still required a whole-file fallback for every unit changed on both sides, which the coordination state merge does not apply to settings, answers, or removals, and a 1 MiB merge limit that no coordination state writer enforced; the Decision now states those three resolutions and the writers refuse a state over 1 MiB.
