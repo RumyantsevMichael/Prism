@@ -1,5 +1,5 @@
 // Read a Bun workspace's packages as components would see them: folder, name, test script, and workspace dependencies.
-// Usage: node lumen-components.mjs <repository root>
+// Usage: node workspace-components.mjs <repository root>
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 

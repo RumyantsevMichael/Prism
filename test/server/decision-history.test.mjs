@@ -107,7 +107,7 @@ test("labels inactive parent recovery as historical and detects active recovery 
   assert.equal(history.recovery[1].status, "stale");
 });
 
-test("keeps the reconstructed Lumen probe after the earlier fit decision", async (context) => {
+test("keeps the reconstructed monorepo probe after the earlier fit decision", async (context) => {
   const options = await fixture(context);
   await setDecisionRecording({ ...options, enabled: true });
   const earlier = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString();
