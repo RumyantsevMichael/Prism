@@ -9,7 +9,7 @@ Approved: n/a
 A monorepo holds many packages with their own tests, but Prism treats a repository as one unit, so every slice runs the whole repository's test command and nothing keeps a slice inside the package it was planned for.
 A change in one package can break the packages that use it, and today nothing runs their tests when the work that changed it finishes.
 Prism prepares one native index for the whole repository, and issue #14 reports that a large monorepo reaches its limits of 30 minutes of preparation, a 512 MiB index file, and 100,000 fragments, while a preparation that times out publishes nothing, so each retry starts again from zero.
-Lumen, a Bun and TypeScript monorepo with about 60 packages, holds about 21 MB of indexable source and about 45,000 fragments, right at today's practical limit, with its largest areas, `docs/` and `packages/lumend`, at about 8,800 and 8,300 fragments.
+A Bun and TypeScript monorepo with about 60 packages can hold enough indexable source to reach today's practical limit as one index, while each of its packages and areas stays far below it.
 Prism 0.17.0 also only warns a checkout whose configuration names a record store but no repository name, and Michael decided on 3 November 2026 that a later release refuses it.
 
 ## Goals
@@ -20,7 +20,7 @@ Prism 0.17.0 also only warns a checkout whose configuration names a record store
 - Prepare the native index per component, only for the components a tool needs, so a large monorepo fits within the native limits.
 - Keep every repository that declares no components, and every slice recorded before components existed, working as today.
 - Refuse a checkout whose configuration names a record store but no repository name.
-- Prove it with one real Lumen initiative that changes two or more packages and runs end to end, with each slice verified by its package's test command, the dependents' tests run at scope end, and every needed package indexed within the limits.
+- Prove it with one real initiative in a large monorepo that changes two or more packages and runs end to end, with each slice verified by its package's test command, the dependents' tests run at scope end, and every needed package indexed within the limits.
 
 ## Non-goals
 
@@ -298,7 +298,7 @@ Disposition: Active
 
 Requirement: Where a repository declares components, Prism shall prepare a separate native index for each component that holds only that component's files.
 
-Rationale: Issue #14 shows that one index of a large monorepo reaches the native limits, while each Lumen package and area is far below them, and Michael accepted on 4 November 2026 that an index holds no copies of the components it depends on, so structural reports see each component alone, as a default he can revisit.
+Rationale: Issue #14 shows that one index of a large monorepo reaches the native limits, while each package and area of such a monorepo is far below them, and Michael accepted on 4 November 2026 that an index holds no copies of the components it depends on, so structural reports see each component alone, as a default he can revisit.
 
 Related: [§21](#21), [§22](#22)
 

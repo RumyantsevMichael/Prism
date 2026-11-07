@@ -18,19 +18,19 @@ const components = async (root) => (await getRoadmap({ projectRoot: root })).com
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const plain = (context, files) => componentProject(context, { config: workflow({ components: null }), files });
 
-// Shaped like Lumen: Bun workspaces over packages/*, one bun.lock, packages whose package.json names match their folders,
+// Shaped like a large Bun monorepo: Bun workspaces over packages/*, one bun.lock, packages whose package.json names match their folders,
 // a Rust package and a Swift package without a package.json, and folders that are no packages.
-const LUMEN = {
-  "package.json": json({ private: true, name: "lumen", workspaces: ["packages/*"], devDependencies: { lantern: "workspace:*" } }),
+const MONOREPO = {
+  "package.json": json({ private: true, name: "monorepo", workspaces: ["packages/*"], devDependencies: { launcher: "workspace:*" } }),
   "bun.lock": "{}\n",
   "packages/messages/package.json": json({ name: "messages", scripts: { test: "bun test --isolate --parallel" } }),
   "packages/messages/bunfig.toml": "[test]\npreload = [\"../../tests/preload.ts\"]\n",
   "packages/di/package.json": json({ name: "di", scripts: { test: "bun test" }, dependencies: { messages: "workspace:*", zod: "^3.0.0" } }),
-  "packages/lumend/package.json": json({ name: "lumend", devDependencies: { messages: "workspace:*" }, peerDependencies: { di: "workspace:*" } }),
-  "packages/lantern/package.json": json({ name: "lantern", scripts: { build: "bun build" } }),
-  "packages/logging-rs/Cargo.toml": "[package]\nname = \"logging-rs\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"src/lib.rs\"\n",
-  "packages/logging-rs/Cargo.lock": "# lock\n",
-  "packages/audio-runtime-apple/Package.swift": "// swift-tools-version:5.9\n",
+  "packages/mailer/package.json": json({ name: "mailer", devDependencies: { messages: "workspace:*" }, peerDependencies: { di: "workspace:*" } }),
+  "packages/launcher/package.json": json({ name: "launcher", scripts: { build: "bun build" } }),
+  "packages/log-native/Cargo.toml": "[package]\nname = \"log-native\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+  "packages/log-native/Cargo.lock": "# lock\n",
+  "packages/audio-swift/Package.swift": "// swift-tools-version:5.9\n",
   "packages/notes/README.md": "# Not a package\n",
   "packages/.cache/package.json": json({ name: "cache" }),
   "packages/README.md": "# Packages\n"
@@ -57,18 +57,18 @@ test("clause 40: get_roadmap lists the declared components by identity, and repo
   assert.equal(typeof reported.problem.message, "string");
 });
 
-test("clauses 41 and 42: a Lumen-shaped Bun workspace gets a proposal of every package folder, which Prism never writes", async (context) => {
-  const root = await plain(context, LUMEN);
+test("clauses 41 and 42: a monorepo-shaped Bun workspace gets a proposal of every package folder, which Prism never writes", async (context) => {
+  const root = await plain(context, MONOREPO);
   const before = await readFile(path.join(root, ".prism/workflow.md"), "utf8");
   const listed = await components(root);
   assert.deepEqual(listed.declared, [{ component: "root/root", folder: "", testCommand: command("root", 0), dependsOn: [] }]);
   const proposal = listed.proposal;
   assert.deepEqual(proposal.components, [
-    { name: "audio-runtime-apple", folder: "packages/audio-runtime-apple", testCommand: null, dependsOn: [] },
+    { name: "audio-swift", folder: "packages/audio-swift", testCommand: null, dependsOn: [] },
     { name: "di", folder: "packages/di", testCommand: "bun run test", dependsOn: ["messages"] },
-    { name: "lantern", folder: "packages/lantern", testCommand: null, dependsOn: [] },
-    { name: "logging-rs", folder: "packages/logging-rs", testCommand: null, dependsOn: [] },
-    { name: "lumend", folder: "packages/lumend", testCommand: null, dependsOn: ["di", "messages"] },
+    { name: "launcher", folder: "packages/launcher", testCommand: null, dependsOn: [] },
+    { name: "log-native", folder: "packages/log-native", testCommand: null, dependsOn: [] },
+    { name: "mailer", folder: "packages/mailer", testCommand: null, dependsOn: ["di", "messages"] },
     { name: "messages", folder: "packages/messages", testCommand: "bun run test", dependsOn: [] }
   ]);
   assert.deepEqual(proposal.sharedPaths, ["bun.lock"]);
@@ -76,13 +76,13 @@ test("clauses 41 and 42: a Lumen-shaped Bun workspace gets a proposal of every p
   assert.equal(proposal.problem, undefined);
   assert.equal(proposal.markdown, [
     "## Components",
-    "- audio-runtime-apple: packages/audio-runtime-apple",
+    "- audio-swift: packages/audio-swift",
     "- di: packages/di",
     "  - Test command: bun run test",
     "  - Depends on: messages",
-    "- lantern: packages/lantern",
-    "- logging-rs: packages/logging-rs",
-    "- lumend: packages/lumend",
+    "- launcher: packages/launcher",
+    "- log-native: packages/log-native",
+    "- mailer: packages/mailer",
     "  - Depends on: di, messages",
     "- messages: packages/messages",
     "  - Test command: bun run test",
@@ -94,7 +94,7 @@ test("clauses 41 and 42: a Lumen-shaped Bun workspace gets a proposal of every p
   await write(root, { ".prism/workflow.md": workflow({ components: proposal.markdown }) });
   const adopted = await components(root);
   assert.equal(adopted.problem, undefined, "the proposed block is a valid declaration");
-  assert.deepEqual(adopted.declared.map((item) => item.component), ["root/root", "root/audio-runtime-apple", "root/di", "root/lantern", "root/logging-rs", "root/lumend", "root/messages"]);
+  assert.deepEqual(adopted.declared.map((item) => item.component), ["root/root", "root/audio-swift", "root/di", "root/launcher", "root/log-native", "root/mailer", "root/messages"]);
 });
 
 test("clause 41: pnpm, Cargo, and Go workspaces give patterns, exclusions, and their own dependencies", async (context) => {
