@@ -217,12 +217,16 @@ test("a managed clone checks the objects it receives, so a tree with a .. entry 
 });
 
 // A remote whose branch holds an entry that no store shares, pushed by a teammate: the first clone refuses it as a whole, writes no file, and leaves no folder.
+// Add a file to a seed's index by its contents alone, so the commit holds a name that the host's file system could not.
+const stage = (seed, file, contents) => git(seed, "update-index", "--add", "--cacheinfo", `100644,${execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: seed, input: contents }).toString().trim()},${file}`);
+
 async function refusedClone(context, plant) {
   const parent = await folder(context);
   const { remote, url, clone } = bareRemote(parent);
   const seed = seedOf(parent, remote);
   await plant(seed, parent);
-  git(seed, "add", "-f", ".");
+  // A file staged without one on disk stays staged.
+  git(seed, "add", "-f", "--ignore-removal", ".");
   git(seed, "commit", "-q", "-m", "planted");
   git(seed, "push", "-q", "origin", "main");
   const root = await project(parent, "project", remoteConfig(url));
@@ -265,9 +269,10 @@ for (const [label, plant, named] of [
   ["a file below a record's path", async (seed) => { await mkdir(path.join(seed, "roadmap.json")); await writeFile(path.join(seed, "roadmap.json", "x"), "{}\n"); }, "roadmap.json/x"],
   ["a submodule link", async (seed) => { await mkdir(path.join(seed, "artifacts", "plans", "sub"), { recursive: true }); execFileSync("git", ["update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},artifacts/plans/sub`], { cwd: seed }); }, "artifacts/plans/sub"],
   // Git for Windows refuses these names in its index, so a Windows machine could not even record the clone's tree.
-  ["a Windows device name", async (seed) => { await mkdir(path.join(seed, "notes"), { recursive: true }); await writeFile(path.join(seed, "notes", "aux.md"), "carried\n"); }, "notes/aux.md"],
-  ["a name ending in a space", async (seed) => { await mkdir(path.join(seed, "notes"), { recursive: true }); await writeFile(path.join(seed, "notes", "trailing "), "carried\n"); }, "notes/trailing "],
-  ["two paths that differ only in letter case", async (seed) => { await mkdir(path.join(seed, "notes"), { recursive: true }); await writeFile(path.join(seed, "notes", "Plan.md"), "one\n"); await writeFile(path.join(seed, "notes", "plan.md"), "two\n"); }, ["notes/Plan.md", "notes/plan.md"]]
+  // Windows, and macOS for two spellings of one name, cannot hold these files on disk, so they go into the seed's index without one.
+  ["a Windows device name", (seed) => { stage(seed, "notes/aux.md", "carried\n"); }, "notes/aux.md"],
+  ["a name ending in a space", (seed) => { stage(seed, "notes/trailing ", "carried\n"); }, "notes/trailing "],
+  ["two paths that differ only in letter case", (seed) => { stage(seed, "notes/Plan.md", "one\n"); stage(seed, "notes/plan.md", "two\n"); }, ["notes/Plan.md", "notes/plan.md"]]
 ]) {
   test(`a managed clone refuses a remote whose branch holds ${label}, and leaves no folder`, async (context) => {
     const { refusal } = await refusedClone(context, plant);

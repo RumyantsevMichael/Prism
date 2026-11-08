@@ -83,7 +83,9 @@ for (const [label, from, to] of [["folder", "initiatives/Reports", "initiatives/
   test(`on a file system that ignores letter case, a sync takes another machine's change of a ${label}'s letter case and keeps that spelling`, async (context) => {
     const files = { [`${from}/state.json`]: "{\"v\":1}\n", [`${from}/initiative.json`]: "{}\n" };
     const { storeA, storeB } = await stores(context, files);
-    git(storeA, ["mv", from, to]);
+    // On a file system that ignores letter case, git mv can refuse a move to another spelling of the same name, as macOS does for a folder, so the change goes through a temporary name.
+    git(storeA, ["mv", from, `${to}.renaming`]);
+    git(storeA, ["mv", `${to}.renaming`, to]);
     git(storeA, ["commit", "-q", "-m", "rename"]);
     git(storeA, ["push", "-q", "origin", "main"]);
     // A file the store does not share keeps the old folder alive, so the sync gives the folder its new spelling instead of writing into the old one.
