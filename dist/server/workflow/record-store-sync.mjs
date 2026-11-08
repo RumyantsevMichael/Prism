@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ARTIFACTS, letterCaseKey, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
@@ -816,6 +816,15 @@ function localPath(url) {
   return process.platform === "win32" && /^\/[A-Za-z]:/.test(local) ? local.slice(1) : local;
 }
 
+// Whether a path is what receive-pack takes for a Git directory: a .git file that names one, or a folder with a HEAD and an object or common folder.
+async function gitDirectory(candidate) {
+  const found = await stat(candidate).catch(() => null);
+  if (!found) return false;
+  if (found.isFile()) return true;
+  const [head, objects, common] = await Promise.all(["HEAD", "objects", "commondir"].map((name) => stat(path.join(candidate, name)).catch(() => null)));
+  return Boolean(head && (objects || common));
+}
+
 /**
  * The names of the hooks that hook.<name> settings configure for the repository a local remote URL names, read as receive-pack reads them, with each Git directory it tries for a path.
  * Git 2.55 turns off a hook event by its name only while no hook.<event>.command or hook.<event>.parallel makes that name a hook's, and Git 2.54 has no event switch, so each named hook is also turned off by name.
@@ -824,7 +833,8 @@ async function configuredHooks(base, url) {
   const local = localPath(url);
   for (const suffix of ["/.git", "", ".git/.git", ".git"]) {
     const gitDir = `${local}${suffix}`;
-    if (!(await git(base, [`--git-dir=${gitDir}`, "rev-parse", "--git-dir"])).ok) continue;
+    if (!(await gitDirectory(path.resolve(base, gitDir)))) continue;
+    // Git exits with 1 when no key matches.
     const listed = await git(base, [`--git-dir=${gitDir}`, "config", "--null", "--get-regexp", "^hook\\."]);
     const names = new Set();
     for (const entry of listed.ok ? listed.stdout.toString("utf8").split("\0") : []) {
