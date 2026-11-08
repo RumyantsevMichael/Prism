@@ -1,0 +1,335 @@
+/* The component catalog's page: a toolbar on the canvas and one island per entry. Every value comes from tokens.css. */
+
+.catalog-page {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--prism-color-chrome) var(--prism-gradient-canvas) no-repeat;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-md);
+  line-height: var(--prism-line-height);
+}
+
+.catalog-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-4) var(--prism-space-6);
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--prism-space-6) var(--prism-space-6) var(--prism-space-4);
+}
+
+.catalog-title {
+  min-width: 0;
+}
+
+.catalog-title h1 {
+  margin: 0;
+  font-size: var(--prism-font-size-xxl);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-heading);
+  line-height: var(--prism-line-height-tight);
+}
+
+.catalog-title p {
+  margin: var(--prism-space-2) 0 0;
+  color: var(--prism-color-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.catalog-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-3) var(--prism-space-5);
+  min-width: 0;
+}
+
+.catalog-tool {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-1);
+  min-width: 0;
+}
+
+.catalog-tool-label {
+  margin-inline-end: var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.catalog-scope {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-island-gap);
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--prism-space-6) var(--prism-space-8);
+}
+
+.catalog-scope[data-width="narrow"] {
+  max-width: 320px;
+  padding-inline: 0;
+}
+
+.catalog-entry {
+  min-width: 0;
+  padding: var(--prism-space-6);
+  border: var(--prism-stroke) solid var(--prism-color-island-edge);
+  border-radius: var(--prism-radius-island);
+  background: var(--prism-color-surface);
+  box-shadow: var(--prism-shadow-island);
+}
+
+.catalog-entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  min-width: 0;
+}
+
+.catalog-entry h2 {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--prism-font-size-xl);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-heading);
+  overflow-wrap: anywhere;
+}
+
+.catalog-entry h3 {
+  margin: var(--prism-space-5) 0 var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-caps);
+  text-transform: uppercase;
+}
+
+.catalog-purpose {
+  max-width: var(--prism-measure);
+  margin: var(--prism-space-3) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.catalog-quiet,
+.catalog-note {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+.catalog-note {
+  margin: 0;
+}
+
+.catalog-docs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 0 var(--prism-space-7);
+  min-width: 0;
+}
+
+.catalog-doc {
+  min-width: 0;
+}
+
+.catalog-doc ul,
+.catalog-motion {
+  margin: 0;
+  padding-inline-start: var(--prism-space-6);
+}
+
+.catalog-doc li,
+.catalog-doc dd,
+.catalog-doc p {
+  overflow-wrap: anywhere;
+}
+
+.catalog-doc p {
+  margin: 0;
+}
+
+.catalog-options {
+  display: grid;
+  gap: var(--prism-space-3);
+  margin: 0;
+}
+
+.catalog-option {
+  min-width: 0;
+}
+
+.catalog-option dt {
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.catalog-option dd {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+}
+
+.catalog-values {
+  color: var(--prism-color-ink);
+}
+
+.catalog-states {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  list-style: none;
+  padding: 0;
+}
+
+.catalog-states.catalog-states {
+  padding-inline-start: 0;
+}
+
+.catalog-entry code {
+  font-size: var(--prism-font-size-code);
+  overflow-wrap: anywhere;
+}
+
+.catalog-specimens {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  gap: var(--prism-space-4);
+  min-width: 0;
+  margin-top: var(--prism-space-6);
+}
+
+.catalog-specimen {
+  min-width: 0;
+  margin: 0;
+  padding: var(--prism-space-4);
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  background: var(--prism-color-sunken);
+}
+
+.catalog-specimen figcaption {
+  margin-bottom: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.catalog-stage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.catalog-stage > :is(prism-tabs, prism-menu, prism-field, prism-choice, prism-panel, prism-tree, prism-listbox, prism-stepper, prism-banner, prism-empty-state, prism-meter, prism-doc, prism-code, prism-disclosure, prism-breadcrumbs, .catalog-narrow) {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.catalog-stage > prism-menu:not([popover]) {
+  flex: 0 1 auto;
+}
+
+.catalog-narrow {
+  max-width: 12rem;
+}
+
+/* Design values */
+
+.catalog-tokens {
+  display: grid;
+  min-width: 0;
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.catalog-token {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  min-width: 0;
+  padding: var(--prism-space-2) 0;
+  border-bottom: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.catalog-token.is-head {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.catalog-token-name,
+.catalog-token-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.catalog-token-value {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+}
+
+.catalog-token-value code {
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+}
+
+.catalog-swatch {
+  display: inline-block;
+  flex: none;
+  width: var(--prism-icon-size);
+  height: var(--prism-icon-size);
+}
+
+.catalog-swatch svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.catalog-swatch-fill {
+  fill: var(--catalog-swatch);
+  stroke: var(--prism-color-line-control);
+  stroke-width: 1;
+}
+
+.catalog-swatch.is-shadow {
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-sm);
+  box-shadow: var(--catalog-swatch);
+}
+
+.catalog-swatch.is-gradient {
+  border: var(--prism-stroke) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-sm);
+  background-image: var(--catalog-swatch);
+}
+
+@media (max-width: 720px) {
+  .catalog-bar,
+  .catalog-scope {
+    padding-inline: var(--prism-space-4);
+  }
+
+  .catalog-entry {
+    padding: var(--prism-space-5);
+  }
+
+  .catalog-token {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .catalog-token-name {
+    grid-column: 1 / -1;
+  }
+
+  .catalog-token.is-head > :first-child {
+    display: none;
+  }
+}

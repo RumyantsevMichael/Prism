@@ -9,13 +9,18 @@
   <script src="./boot.js"></script>
   <link rel="stylesheet" href="./tokens.css">
   <link rel="stylesheet" href="./kit.css">
+  <link rel="stylesheet" href="./catalog.css">
 </head>
-<body>
-  <main>
-    <h1>Component catalog</h1>
-    <p>The kit's elements are listed here once they are registered.</p>
-  </main>
+<body class="catalog-page">
+  <header class="catalog-bar" id="catalog-bar">
+    <div class="catalog-title">
+      <h1>Component catalog</h1>
+      <p>Every element of the review app's kit, with its options, states, keys, and live specimens.</p>
+    </div>
+    <div class="catalog-tools" id="catalog-tools"></div>
+  </header>
+  <main class="catalog-scope" id="catalog" aria-busy="true"></main>
   <script type="module" src="./kit.js"></script>
-  <script type="module" src="./appearance.js"></script>
+  <script type="module" src="./catalog.js"></script>
 </body>
 </html>
