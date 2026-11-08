@@ -446,37 +446,63 @@ async function merge(base, author, options) {
  * Merge the merge base, the local commit, and the upstream path by path into the index at env, and return the paths that conflict, which the index no longer holds.
  * Git's own merge pairs a removed file with a similar added one as a move, even when told not to, and then names a conflict only at the moved path,
  * so a file that one side moved, to another scope or within its folder, merges as a removal and an addition, and each path keeps the upstream file and saves the local one by itself.
- * A path changed on one side takes that side's file, a file changed on both sides takes Git's line merge of it, and any other path changed on both sides, such as a file that one side removed
- * or one side's file in the place of the other side's folder, conflicts.
+ * Each path that Git leaves unmerged is judged at its outermost part that is a file on any side, so one side's folder in the place of the other side's file is one path:
+ * a path changed on one side only takes that side's file or folder, a file changed on both sides takes Git's line merge of it, and any other path changed on both sides,
+ * such as a file that one side removed or one side's file in the place of the other side's folder, conflicts.
  */
 async function mergePaths(base, env, mergeBase, head, theirs) {
   await required(base, ["read-tree", "-m", "-i", "--aggressive", mergeBase, head, theirs], { env });
-  const unmerged = new Map();
-  for (const line of (await required(base, ["ls-files", "-u", "-z"], { env })).stdout.toString("utf8").split("\0").filter(Boolean)) {
-    const [meta, ...name] = line.split("\t");
-    const [mode, object, stage] = meta.split(" ");
-    const file = name.join("\t");
-    if (!unmerged.has(file)) unmerged.set(file, {});
-    unmerged.get(file)[stage] = { mode, object };
-  }
+  const unmerged = [...new Set((await required(base, ["ls-files", "-u", "-z"], { env })).stdout.toString("utf8").split("\0").filter(Boolean).map((line) => line.split("\t").slice(1).join("\t")))];
+  if (!unmerged.length) return [];
+  // Every unmerged entry leaves the index first, so each path is resolved by itself below.
+  await required(base, ["update-index", "-z", "--index-info"], { env, input: unmerged.map((file) => `0 ${"0".repeat(40)}\t${file}\0`).join("") });
+  const files = await filePrefixes(base, [mergeBase, head, theirs], unmerged);
+  const found = [...new Set(unmerged.map((file) => prefixes(file).find((prefix) => files.has(prefix)) ?? file))];
+  const tops = found.filter((file) => !found.some((other) => file.startsWith(`${other}/`)));
   const conflicts = [];
-  const merged = [];
-  for (const [file, stages] of unmerged) {
-    const object = await lineMerge(base, stages);
-    if (object) merged.push(`${stages[2].mode} ${object}\t${file}\0`);
-    else conflicts.push(file);
+  for (const top of tops) {
+    const [original, local, upstream] = await Promise.all([mergeBase, head, theirs].map((commit) => treeEntries(base, commit, top)));
+    const same = (left, right) => entryList(left) === entryList(right);
+    if (same(original, local)) await takeSide(base, env, upstream, top);
+    else if (same(original, upstream) || same(local, upstream)) await takeSide(base, env, local, top);
+    else {
+      const object = await lineMerge(base, fileAt(original, top), fileAt(local, top), fileAt(upstream, top));
+      if (object) await takeSide(base, env, [{ ...fileAt(local, top), object }], top);
+      else conflicts.push(top);
+    }
   }
-  // Every unmerged entry leaves the index first, so a line-merged file is held once and a conflicted path is left for its resolution.
-  const input = [...[...unmerged.keys()].map((file) => `0 ${"0".repeat(40)}\t${file}\0`), ...merged].join("");
+  return conflicts;
+}
+
+// The path itself and each folder above it, outermost first.
+const prefixes = (file) => file.split("/").map((_, index, parts) => parts.slice(0, index + 1).join("/"));
+const entryList = (entries) => entries.map((entry) => `${entry.mode} ${entry.object}\t${entry.path}`).sort().join("\0");
+// A side's entry when it holds a single file at the path, and no folder there.
+const fileAt = (entries, file) => entries.length === 1 && entries[0].path === file && entries[0].type === "blob" ? entries[0] : undefined;
+
+// The paths, among the given paths and the folders above them, that are a file or link in any of the commits.
+async function filePrefixes(base, commits, files) {
+  const asked = new Set(files.flatMap(prefixes));
+  const found = new Set();
+  for (const commit of commits) {
+    for (const line of (await required(base, ["ls-tree", "-z", commit, "--", ...asked])).stdout.toString("utf8").split("\0").filter(Boolean)) {
+      const [meta, ...name] = line.split("\t");
+      if (meta.split(" ")[1] === "blob" && asked.has(name.join("\t"))) found.add(name.join("\t"));
+    }
+  }
+  return found;
+}
+
+// Give a path in the merge index exactly the given entries: every entry at the path or below it is replaced.
+async function takeSide(base, env, entries, file) {
+  const held = (await required(base, ["--literal-pathspecs", "ls-files", "-z", "--", file], { env })).stdout.toString("utf8").split("\0").filter(Boolean);
+  const input = [...held.map((entry) => `0 ${"0".repeat(40)}\t${entry}\0`), ...entries.map((entry) => `${entry.mode} ${entry.object}\t${entry.path}\0`)].join("");
   if (input) await required(base, ["update-index", "-z", "--index-info"], { env, input });
-  // A file below a conflicted path is one side's folder in the place of the other side's file, so it conflicts as part of that path.
-  return conflicts.filter((file) => !conflicts.some((other) => file.startsWith(`${other}/`)));
 }
 
 // The object of Git's clean line merge of a file that both sides changed and kept as a regular file of one mode, or null when it conflicts or is no such file.
 // A file that both sides added merges against an empty file, as Git's own merge does.
-async function lineMerge(base, stages) {
-  const [original, local, upstream] = [stages[1], stages[2], stages[3]];
+async function lineMerge(base, original, local, upstream) {
   if (!local || !upstream || local.mode !== upstream.mode || !["100644", "100755"].includes(local.mode)) return null;
   const folder = syncPath(base, "merge-files");
   await rm(folder, { recursive: true, force: true });
@@ -506,11 +532,7 @@ async function treeEntries(base, tree, file) {
  * so a file on one side and a folder on the other resolve as a changed line does.
  */
 async function takeUpstream(base, env, theirs, file) {
-  const held = new Set((await required(base, ["--literal-pathspecs", "ls-files", "-z", "--", file], { env })).stdout.toString("utf8").split("\0").filter(Boolean));
-  const removed = [...held].map((entry) => `0 ${"0".repeat(40)}\t${entry}\0`);
-  const upstream = (await treeEntries(base, theirs, file)).map((entry) => `${entry.mode} ${entry.object}\t${entry.path}\0`);
-  const input = [...removed, ...upstream].join("");
-  if (input) await required(base, ["update-index", "-z", "--index-info"], { env, input });
+  await takeSide(base, env, await treeEntries(base, theirs, file), file);
 }
 
 /**

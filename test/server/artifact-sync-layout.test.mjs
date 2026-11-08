@@ -60,6 +60,61 @@ for (const [upstreamShape, localShape] of [["file", "folder"], ["folder", "file"
   });
 }
 
+// A file replaced by a folder of the same name, or the reverse, by one machine only, while the other machine edits another artifact.
+const SHAPES = { file: { path: "docs/plans/foo/notes", stored: "artifacts/plans/foo/notes", text: "# Notes as one file\n" }, folder: { path: "docs/plans/foo/notes/today.md", stored: "artifacts/plans/foo/notes/today.md", text: "# Today\n" } };
+
+async function replaced(context, from) {
+  const { place, onA, onB } = await machines(context);
+  const slice = await writeArtifact(onA, "docs/plans/foo/slice.md", "# Foo\n\nLine one.\n");
+  const first = await writeArtifact(onA, SHAPES[from].path, SHAPES[from].text);
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  assert.equal((await syncRecordStore(place.storeB)).state, "ok");
+  const replace = async (prism) => {
+    ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: SHAPES[from].path, expectedVersion: first.version }] }));
+    await writeArtifact(prism, SHAPES[from === "file" ? "folder" : "file"].path, SHAPES[from === "file" ? "folder" : "file"].text);
+  };
+  const edit = (prism) => prism.call("update_artifact", { operations: [{ op: "edit", path: "docs/plans/foo/slice.md", expectedVersion: slice.version, edits: [{ oldText: "Line one.", newText: "Line one, edited." }] }] }).then(ok);
+  return { place, onA, onB, replace, edit };
+}
+
+for (const from of ["file", "folder"]) {
+  const to = from === "file" ? "folder" : "file";
+  for (const replacer of ["this machine", "the upstream"]) {
+    test(`a ${from} that only ${replacer} replaced with a ${to} of the same name merges cleanly with an edit elsewhere and reaches both stores and the remote`, async (context) => {
+      const { place, onA, onB, replace, edit } = await replaced(context, from);
+      await replace(replacer === "this machine" ? onB : onA);
+      await edit(replacer === "this machine" ? onA : onB);
+      assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+      const merged = await syncRecordStore(place.storeB);
+      assert.equal(merged.state, "ok", merged.message);
+      assert.deepEqual(merged.conflicts, []);
+      assert.deepEqual(await saved(place.storeB), {});
+      assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+      for (const store of [place.storeA, place.storeB]) {
+        assert.equal(await text(path.join(store, SHAPES[to].stored)), SHAPES[to].text);
+        assert.equal(await text(path.join(store, SHAPES[from].stored)), null);
+        assert.equal(await text(path.join(store, "artifacts/plans/foo/slice.md")), "# Foo\n\nLine one, edited.\n");
+      }
+      assert.equal(remoteFile(place.remote, SHAPES[to].stored), SHAPES[to].text.trim());
+      assert.notEqual(remoteFile(place.remote, SHAPES[from].stored), SHAPES[from].text.trim());
+    });
+  }
+}
+
+test("a file that the upstream edited and this machine replaced with a folder of the same name keeps the upstream file and saves the folder's file", async (context) => {
+  const { place, onA, onB, replace } = await replaced(context, "file");
+  const current = ok(await onA.call("get_artifact", { path: SHAPES.file.path }));
+  ok(await onA.call("update_artifact", { operations: [{ op: "edit", path: SHAPES.file.path, expectedVersion: current.version, edits: [{ oldText: "one file", newText: "one edited file" }] }] }));
+  await replace(onB);
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  const merged = await syncRecordStore(place.storeB);
+  assert.equal(merged.state, "conflicts", merged.message);
+  assert.deepEqual(merged.conflicts.map((conflict) => conflict.path), [SHAPES.folder.stored]);
+  assert.equal(await text(path.join(place.storeB, SHAPES.file.stored)), "# Notes as one edited file\n");
+  assert.deepEqual(await saved(place.storeB), { [SHAPES.folder.stored]: SHAPES.folder.text });
+  assert.equal(remoteFile(place.remote, SHAPES.file.stored), "# Notes as one edited file");
+});
+
 test("a sync that removes the last artifact of a folder holding only Finder's .DS_Store removes the folder, so a folder in another letter case is made anew", async (context) => {
   const { place, onA } = await machines(context);
   const first = await writeArtifact(onA, "docs/plans/X/a.md", "# In upper case\n");
