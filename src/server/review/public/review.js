@@ -100,31 +100,62 @@ function welcome() {
 const HISTORY_KEY = "prism.review.history";
 const pages = { index: 0, top: 0 };
 
+// The highest page the tab may move forward to is kept for this tab, with the page it was on when the tab last left the app.
 function readHistoryTop() {
   try {
-    return Number(sessionStorage.getItem(HISTORY_KEY)) || 0;
+    const stored = JSON.parse(sessionStorage.getItem(HISTORY_KEY) ?? "null");
+    return { top: Number(stored?.top) || 0, left: Number.isInteger(stored?.left) ? stored.left : null };
   } catch {
-    return 0;
+    return { top: 0, left: null };
   }
 }
 
-function storeHistoryTop() {
+function storeHistoryTop(left = null) {
   try {
-    sessionStorage.setItem(HISTORY_KEY, String(pages.top));
+    sessionStorage.setItem(HISTORY_KEY, JSON.stringify({ top: pages.top, left }));
   } catch {
   }
+}
+
+// When the browser lists this tab's entries, the app's own pages after the current one are exactly the pages Forward can reach.
+function forwardEntries() {
+  const entries = window.navigation?.entries?.();
+  const current = window.navigation?.currentEntry;
+  if (!Array.isArray(entries) || !current || !Number.isInteger(current.index) || current.index < 0) return null;
+  return entries.length - 1 - current.index;
+}
+
+// The browser drops the pages after the current one when the tab opens another page from it, so a tab that left the app may move forward only to the page it left from, unless it only reloaded.
+function settleHistoryTop(index, stored) {
+  const ahead = forwardEntries();
+  if (ahead !== null) return index + ahead;
+  const reloaded = performance.getEntriesByType?.("navigation")?.[0]?.type === "reload";
+  if (reloaded || stored.left === null) return Math.max(index, stored.top);
+  return Math.max(index, Math.min(stored.top, stored.left));
 }
 
 function startHistory() {
   const index = history.state?.index;
   if (Number.isInteger(index)) {
     pages.index = index;
-    pages.top = Math.max(index, readHistoryTop());
+    pages.top = settleHistoryTop(index, readHistoryTop());
   } else {
     pages.index = 0;
     pages.top = 0;
   }
   storeHistoryTop();
+}
+
+// A page the browser kept while the tab was away resumes with the same check as a page it loads again.
+function watchHistoryLeave() {
+  window.addEventListener("pagehide", () => storeHistoryTop(pages.index));
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    const ahead = forwardEntries();
+    pages.top = ahead === null ? pages.index : pages.index + ahead;
+    storeHistoryTop();
+    showHistory();
+  });
 }
 
 // Back and Forward, and Alt+arrows, move only through the pages visited in this tab, so they never leave the review app.
@@ -1306,10 +1337,16 @@ function renderStoreSync(data) {
 startAppearanceMenu();
 
 // The sidebar moves into the drawer while the drawer is open, so one set of trees serves both.
-function openDrawer() {
+function focusTrees() {
+  (navRoot.querySelector("prism-tree-item[selected]") ?? navRoot.querySelector("prism-tree-item"))?.focus();
+}
+
+// The drawer places its children in its body a microtask after they arrive, so the trees take focus once they sit inside the open drawer.
+async function openDrawer() {
   navDrawer.append(navRoot);
   navDrawer.show();
-  (navRoot.querySelector("prism-tree-item[selected]") ?? navRoot.querySelector("prism-tree-item"))?.focus();
+  await Promise.resolve();
+  if (navDrawer.isOpen && navDrawer.contains(navRoot)) focusTrees();
 }
 
 function closeDrawer() {
@@ -1324,14 +1361,16 @@ function watchDrawerWidth() {
     if (!navDrawer.isOpen) return closeDrawer();
     navDrawer.close();
     closeDrawer();
-    // The Navigation button that opened the drawer is hidden now, so focus stays in the trees.
-    if (document.activeElement === document.body) (navRoot.querySelector("prism-tree-item[selected]") ?? navRoot.querySelector("prism-tree-item"))?.focus();
+    // The drawer returns focus to the Navigation button that opened it, which is hidden now, so focus moves to the trees.
+    const active = document.activeElement;
+    if (!active || active === document.body || active.closest("#nav-button, .topbar-navigation") || active.getClientRects().length === 0) focusTrees();
   });
 }
 
 async function initialize() {
   const data = await fetchJson("./api/index");
   startHistory();
+  watchHistoryLeave();
   pageBar = createPageBar({
     root: document.getElementById("page-bar"),
     onBack: goBack,
