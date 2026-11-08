@@ -10,6 +10,8 @@ const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
 const workspaceScope = { kind: "workspace", label: "workspace" };
+// The named fields of a result, so a check of one clause leaves the fields that later clauses add to it alone.
+const pick = (value, names) => Object.fromEntries(names.map((name) => [name, value[name]]));
 
 test("clauses 1, 3, and 8: each configured kind maps to its folder of the workspace scope, and a read returns the file with its version", async (context) => {
   const place = await workspace(context);
@@ -24,12 +26,13 @@ test("clauses 1, 3, and 8: each configured kind maps to its folder of the worksp
   };
   for (const [file, [kind, location]] of Object.entries(files)) {
     const content = `# ${file}\n\nOne line.\n`;
+    // Only the fields that clauses 8 and 12 name: a requirement or ADR also carries the status fields of clause 32.
     const written = await writeArtifact(prism, file, content);
-    assert.deepEqual(written, { path: file, scope: workspaceScope, version: version(content) });
+    assert.deepEqual(pick(written, ["path", "scope", "version"]), { path: file, scope: workspaceScope, version: version(content) });
     assert.equal(await text(path.join(place.store, "artifacts", location)), content, `${file} is stored at artifacts/${location}`);
     assert.equal(await exists(path.join(api, file)), false, `${file} is not written into the checkout`);
     const read = ok(await prism.call("get_artifact", { path: file }));
-    assert.deepEqual(read, { path: file, scope: workspaceScope, kind, version: version(content), bytes: Buffer.byteLength(content), totalLines: 3, offset: 1, content, nextOffset: null });
+    assert.deepEqual(pick(read, ["path", "scope", "kind", "version", "bytes", "totalLines", "offset", "content", "nextOffset"]), { path: file, scope: workspaceScope, kind, version: version(content), bytes: Buffer.byteLength(content), totalLines: 3, offset: 1, content, nextOffset: null });
   }
 });
 

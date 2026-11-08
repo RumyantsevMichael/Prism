@@ -12,11 +12,14 @@ test.after(() => rm(environment, { recursive: true, force: true }));
 
 const FILE = "docs/requirements/billing.md";
 
-async function project(context, { named = true } = {}) {
+// A Claude Code host that moves long tool calls to the background, with none of the settings that stop it, so a gate wait waits.
+const BACKGROUND_HOST = { client: { name: "claude-code", version: "2.1.296" }, env: { MCP_TOOL_TIMEOUT: undefined, CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: undefined, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: undefined } };
+
+async function project(context, { named = true, host = {} } = {}) {
   const place = await workspace(context);
   const api = await checkout(place, "api");
   if (named) git(api, "config", "user.name", "Ada Reviewer");
-  const prism = await server(context, place, api);
+  const prism = await server(context, place, api, host);
   return { place, api, prism };
 }
 
@@ -141,7 +144,7 @@ test("clause 36: an answer is refused when the artifact changed since the gate w
 });
 
 test("clause 37: waiting on an artifact's approval gate returns the person's answer", async (context) => {
-  const { api, prism } = await project(context);
+  const { api, prism } = await project(context, { host: BACKGROUND_HOST });
   await writeArtifact(prism, FILE, requirementFile("Billing"));
   const asked = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: FILE, context: "Billing." }] }));
   const gate = asked.artifacts[0].gate;

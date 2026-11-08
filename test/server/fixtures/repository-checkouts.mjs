@@ -96,9 +96,10 @@ export async function registration(store, name) {
 /**
  * A Prism server over stdio for one checkout, with this machine's Prism application folder.
  * hostRoot names the checkout at start as Claude Code does; without it the server learns the checkout from its first tool call, as in Codex.
+ * client is the clientInfo the server is initialized with, such as a Claude Code version that moves long tool calls to the background.
  * call(name, args) resolves to the JSON-RPC response: { result } or { error }.
  */
-export async function prismServer(context, root, { appFolder, hostRoot = true, env = {} } = {}) {
+export async function prismServer(context, root, { appFolder, hostRoot = true, env = {}, client = { name: "repository-names-test", version: "1" } } = {}) {
   const environment = isolatedEnv({ PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: NO_NATIVE_ASSETS, ...(appFolder ? { PRISM_REVIEW_APP_DIR: appFolder } : {}), ...env });
   if (hostRoot) environment.CLAUDE_PROJECT_DIR = root;
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env: environment, stdio: ["pipe", "pipe", "pipe"] });
@@ -129,7 +130,7 @@ export async function prismServer(context, root, { appFolder, hostRoot = true, e
     exited.then((code) => reject(new Error(`The Prism server exited with code ${code}: ${stderr}`)));
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
   });
-  await request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "repository-names-test", version: "1" } });
+  await request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: client });
   return {
     root,
     call: (name, args = {}) => request("tools/call", { name, arguments: { projectRoot: root, ...args } }),
