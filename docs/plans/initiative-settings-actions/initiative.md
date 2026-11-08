@@ -14,11 +14,11 @@ This file is a generated view of initiative.json.
     - Outcome: The review app lists and applies revision-checked actions from one transport-independent registry, with the six initiative settings, gate answers, and each component's own index rebuild as its actions, and records each with its author in history.
     - Requirements: docs/requirements/initiative-settings.md#1, docs/requirements/initiative-settings.md#2, docs/requirements/initiative-settings.md#3, docs/requirements/initiative-settings.md#9, docs/requirements/review-app-actions.md#1, docs/requirements/review-app-actions.md#10, docs/requirements/review-app-actions.md#2, docs/requirements/review-app-actions.md#3, docs/requirements/review-app-actions.md#4, docs/requirements/review-app-actions.md#5, docs/requirements/review-app-actions.md#6, docs/requirements/review-app-actions.md#7, docs/requirements/review-app-actions.md#9
     - Design accepted 2026-11-07: 3 frozen test files, review required
-  - **Agents act on the person's changes** (`agent-change-notices`): not-started
+  - **Agents act on the person's changes** (`agent-change-notices`): done
     - Outcome: Running agents learn of the person's changes and who made them once per session, from this machine or through store sync, in Prism's tool results and gate waits, keep the person's settings over their own, and apply the review policy at design acceptance.
     - Requirements: docs/requirements/initiative-settings.md#3, docs/requirements/initiative-settings.md#4, docs/requirements/initiative-settings.md#5, docs/requirements/initiative-settings.md#6, docs/requirements/initiative-settings.md#7, docs/requirements/initiative-settings.md#8, docs/requirements/review-app-actions.md#13, docs/requirements/review-app-actions.md#14
     - Depends on: `action-registry`
-    - Design accepted 2026-11-07: 1 frozen test files staged until the slice starts, review required
+    - Design accepted 2026-11-08: 1 frozen test files, review required
   - **Merge coordination state across machines** (`state-merge`): done
     - Outcome: A coordination state changed on two machines within one sync window merges by its structure, so the person's changes, agents' writes, and both histories survive without a saved conflict.
     - Requirements: docs/requirements/initiative-settings.md#7, docs/requirements/review-app-actions.md#7
