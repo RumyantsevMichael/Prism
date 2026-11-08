@@ -85,7 +85,8 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
       // Git checks every object the remote sends, so a tree that a teammate built with a name such as ".." or ".git" fails the clone,
       // and the clone writes no file until the remote's whole tree holds no entry that a store may not hold, as every sync checks an upstream's tree.
       // The files are written from their blobs' bytes, never checked out, so no line-ending setting or attributes file makes a file differ from what every sync expects.
-      const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--no-checkout", "--config", "core.longpaths=true", "--config", "core.symlinks=false", "--", configured, temporary]);
+      // The remote is named origin, as every sync of a managed clone expects, whatever the person's clone.defaultRemoteName.
+      const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--no-checkout", "--origin", "origin", "--config", "core.longpaths=true", "--config", "core.symlinks=false", "--", configured, temporary]);
       if (cloned.missing) throw unavailable("Git is not available, so the remote store cannot be cloned.");
       if (!cloned.ok) throw unavailable(`Git could not clone it: ${withoutCredentials(cloned.stderr) || `git clone exited with code ${cloned.code}.`}`);
       const head = await runGit(temporary, ["rev-parse", "--verify", "--quiet", "HEAD"]);

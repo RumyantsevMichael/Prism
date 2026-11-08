@@ -3,7 +3,7 @@ import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "n
 import path from "node:path";
 import { ARTIFACTS, letterCaseKey, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
-import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, treeEntries, treeProblems } from "./git-objects.mjs";
+import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
 import { withoutCredentials } from "./remote-url.mjs";
 
@@ -24,8 +24,9 @@ const watched = new Set();
 const reported = new Set();
 // Clones that Prism made of a remote store, whose branch may publish itself to an empty origin.
 const managed = new Set();
-// Variables that could point Git at another repository, index, or object store than the store's own.
-const REDIRECTING = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE)$/;
+// Variables that could point Git at another repository, index, or object store than the store's own, read pathspecs or attributes another way, or send its output elsewhere,
+// which the parent process may hold, as when a Git hook starts the server, so no store command inherits them.
+const INHERITED_OUT = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE|LITERAL_PATHSPECS|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|ATTR_SOURCE|REDIRECT_STDIN|REDIRECT_STDOUT|REDIRECT_STDERR)$/;
 
 /** Change the debounce, pull interval, or torn-read wait; tests shorten them. */
 export function configureRecordSync(settings = {}) {
@@ -56,17 +57,25 @@ const syncPath = (base, ...parts) => path.join(base, SYNC_DIRECTORY, ...parts);
 const NOTICES = "notices";
 
 function gitEnvironment(extra = {}) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !REDIRECTING.test(name)));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !INHERITED_OUT.test(name)));
   // An SSH password or host-key prompt would hang a sync that holds the store lock, so SSH never asks unless the user configured it.
   const ssh = env.GIT_SSH_COMMAND || env.GIT_SSH ? {} : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };
   // The system attributes file, like the person's own and the store's, never decides which bytes a store command hands over.
-  return { ...env, ...ssh, GIT_TERMINAL_PROMPT: "0", GIT_MERGE_AUTOEDIT: "no", GIT_ATTR_NOSYSTEM: "1", LC_ALL: "C", ...extra };
+  // A replace ref, which pack-objects and push ignore, would make the checks read other objects than the push sends, and a grafts file other parents than every other machine reads,
+  // so every store command reads the real objects and parents instead: /dev/null, which Git for Windows also opens, holds no graft,
+  // and FIXED_CONFIG turns off the advice Git gives about any grafts file it opens.
+  return { ...env, ...ssh, GIT_TERMINAL_PROMPT: "0", GIT_MERGE_AUTOEDIT: "no", GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: "/dev/null", LC_ALL: "C", ...extra };
 }
 
 // The sync uses Git only as an object store: it hashes a file's bytes with no filters, writes a blob's bytes as they are, and never runs add, checkout, reset, or status, so no ignore or attributes rule applies.
 // These settings of the person's configuration would convert line endings or add ignore and attributes rules wherever Git still reads them, so every store command runs with them fixed instead.
 // Git for Windows also refuses a path longer than Windows' old 260-character limit unless core.longpaths is on, so every store command turns it on, as a managed clone does.
-const FIXED_CONFIG = ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.safecrlf=false", "-c", "core.attributesFile=", "-c", "core.excludesFile=", "-c", "core.longpaths=true"];
+// A replace ref, the commit-graph file, or a reachability bitmap could make one command read other objects, parents, or sets of objects than another, as push does,
+// so every store command reads the objects themselves, and what the checks read is what a push sends.
+// Every store command walks trees as deep as Git 2.43 and later allow by default, whatever the person's core.maxTreeDepth, so this machine refuses what every other machine's fetch refuses.
+// A setting given with -c is read after every configuration file and variable, so it wins over the person's for that command only.
+const FIXED_CONFIG = ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.safecrlf=false", "-c", "core.attributesFile=", "-c", "core.excludesFile=", "-c", "core.longpaths=true",
+  "-c", "core.useReplaceRefs=false", "-c", "core.commitGraph=false", "-c", "pack.useBitmaps=false", "-c", `core.maxTreeDepth=${TREE_DEPTH_MAX}`, "-c", "advice.graftFileDeprecated=false"];
 
 /** The Git timeout that every store command, including a managed clone, runs within. */
 export const gitTimeoutMs = () => SETTINGS.gitTimeoutMs;
@@ -610,7 +619,11 @@ const ATTRIBUTES_BYTES_MAX = 100 * 1024 * 1024;
  * such as a folder named .gitattributes, a link, a .gitmodules, or one in a folder, is a reason too, so no Git that checks less than 2.43 lets such a history be pushed.
  */
 async function refusedHistory(base, revisions, pushing) {
-  const output = (await required(base, ["rev-list", "--objects", "--stdin"], { input: revisions, maxBuffer: PACK_BYTES_MAX })).stdout;
+  const listed = await git(base, ["rev-list", "--objects", "--stdin"], { input: revisions, maxBuffer: PACK_BYTES_MAX });
+  // Git 2.43 and later stop the walk at a tree deeper than core.maxTreeDepth, which every store command sets to Git's default, as every other machine's fetch would.
+  if (!listed.ok && listed.stderr.includes(TREE_DEPTH_TEXT)) return { reasons: [deepTreeReason()], places: new Map() };
+  if (!listed.ok) throw Object.assign(new Error(listed.stderr || "git rev-list failed."), { git: listed });
+  const output = listed.stdout;
   // Each line is an object id, followed for a tree or a blob by a space and the path it was first found at.
   const where = new Map();
   for (let at = 0; at < output.length;) {
@@ -639,7 +652,14 @@ async function refusedHistory(base, revisions, pushing) {
   const found = new Map();
   const misnamed = new Map();
   const links = new Map();
-  for (const [tree, contents] of await objectContents(base, trees)) {
+  const treeContents = await objectContents(base, trees);
+  // Git before 2.43 walks a tree of any depth, so the depth that later releases allow is checked here too.
+  const deep = tooDeepTree(roots, treeContents);
+  if (deep) {
+    const shown = deep.names.slice(0, 3).map(pathOfBytes).join("/");
+    refuse(deep.root, deepTreeReason(), [`${shown}/…`]);
+  }
+  for (const [tree, contents] of treeContents) {
     const size = tree.length / 2;
     for (const problem of treeProblems(contents, size)) {
       // A name too long for Git is shown by its first characters only.
@@ -688,6 +708,9 @@ async function refusedHistory(base, revisions, pushing) {
   }
   return { reasons, places };
 }
+
+// The reason a history whose trees nest deeper than Git 2.43 and later walk is refused, in Git's words.
+const deepTreeReason = () => `maxTreeDepth: ${TREE_DEPTH_TEXT}, since a folder is nested more than ${TREE_DEPTH_MAX} folders deep`;
 
 // The type and size of each object the store holds: Map(object, { type, size }), without the ones it lacks.
 async function objectInfo(base, objects) {
@@ -749,7 +772,21 @@ async function unpublished(base) {
 
 // Git checks every object a fetch receives, so a tree that a teammate built with a name such as "..", ".git", or an empty one fails the fetch, and the sync's own check of the upstream's tree still guards every write.
 // Only the objects new to the store are checked, so a history that this machine already holds never stops its syncs.
-const CHECKED_FETCH = ["-c", "fetch.fsckObjects=true"];
+// Whatever the person's fetch settings, the fetch removes the remote-tracking branches that the remote no longer holds, so the commits the push check takes as known are ones the remote still has,
+// and it fetches no tag, removes no tag, writes no commit-graph file, and fetches no submodule.
+const fetchCommand = (remote) => ["-c", "fetch.fsckObjects=true", "fetch", "--quiet", "--prune", "--no-prune-tags", "--no-tags", "--no-recurse-submodules", "--no-write-commit-graph", remote];
+
+// A remote named in the store's configuration, whose remote.<name>.mirror setting would make Git refuse a push of one refspec, rather than a URL, which has no such setting.
+const REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * The push of one branch that every sync runs: the refspec names the branch on both sides, and the push sends no tag, as push.followTags would, and no submodule, as push.recurseSubmodules would,
+ * so it sends only the objects of the branch's history, which the push check walked; remote.<name>.push is never read when a refspec is given.
+ */
+const pushCommand = (remote, refspec, options = []) => [
+  "-c", "push.followTags=false", ...(REMOTE_NAME.test(remote) ? ["-c", `remote.${remote}.mirror=false`] : []),
+  "push", "--quiet", "--no-follow-tags", "--no-recurse-submodules", ...options, remote, refspec
+];
 
 async function sync(base, options) {
   const top = await git(base, ["rev-parse", "--show-toplevel"]);
@@ -775,7 +812,7 @@ async function sync(base, options) {
   for (let attempt = 1; attempt <= PUSH_ATTEMPTS; attempt++) {
     // A merge left unapplied keeps the branch where it was, so files it replaced and local writes are committed and merged again.
     if (attempt > 1) await commitLocal(base, author, run);
-    const fetched = await git(base, [...CHECKED_FETCH, "fetch", "--quiet", upstream.remote]);
+    const fetched = await git(base, fetchCommand(upstream.remote));
     if (!fetched.ok) return report({ state: "fetch_failed", message: fetched.stderr, ...await counts(base) });
     lastFetch.set(base, Date.now());
     const merged = await merge(base, author, options, run);
@@ -789,7 +826,7 @@ async function sync(base, options) {
     const refused = await unpushable(base, upstream.remote);
     if (refused) return report({ state: "merge_failed", message: refused, ...await counts(base) });
     await options.beforePush?.();
-    const pushed = await git(base, ["push", "--quiet", upstream.remote, `HEAD:${upstream.merge}`]);
+    const pushed = await git(base, pushCommand(upstream.remote, `HEAD:${upstream.merge}`));
     if (pushed.ok) return report({ ...settled([]), ...await counts(base) });
     if (!/rejected|fetch first|non-fast-forward/i.test(pushed.stderr)) return report({ state: "push_rejected", message: pushed.stderr, ...await counts(base) });
   }
@@ -821,7 +858,7 @@ function withheldIn(status, withheld) {
 async function publishBranch(base, author, options) {
   const branch = (await git(base, ["symbolic-ref", "--quiet", "--short", "HEAD"])).text;
   if (!branch || !(await git(base, ["config", "--local", "--get", "remote.origin.url"])).ok) return { upstream: null };
-  const fetched = await git(base, [...CHECKED_FETCH, "fetch", "--quiet", "origin"]);
+  const fetched = await git(base, fetchCommand("origin"));
   if (!fetched.ok) return { status: { state: "fetch_failed", message: fetched.stderr } };
   lastFetch.set(base, Date.now());
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
@@ -838,7 +875,7 @@ async function publishBranch(base, author, options) {
   const refused = await unpushable(base, "origin");
   if (refused) return { status: { state: "merge_failed", message: refused } };
   await options.beforePush?.();
-  const pushed = await git(base, ["push", "--quiet", "-u", "origin", "HEAD"]);
+  const pushed = await git(base, pushCommand("origin", `HEAD:refs/heads/${branch}`, ["--set-upstream"]));
   if (!pushed.ok) return { status: { state: "push_rejected", message: pushed.stderr } };
   return { upstream: await upstreamOf(base) };
 }

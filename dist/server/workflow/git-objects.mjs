@@ -234,6 +234,56 @@ export function treeProblems(contents, hashSize) {
   return [...found].map(([id, names]) => ({ id, text: TREE_TEXT[id], names }));
 }
 
+// The deepest that Git 2.43 and later walk trees, the default of core.maxTreeDepth (environment.c in 2.43, repo-settings.c's DEFAULT_MAX_ALLOWED_TREE_DEPTH later).
+export const TREE_DEPTH_MAX = 2048;
+// Git's words when a walk goes deeper, as list-objects.c's process_tree dies with them.
+export const TREE_DEPTH_TEXT = "exceeded maximum allowed tree depth";
+
+/**
+ * The first root below which a tree sits deeper than TREE_DEPTH_MAX, as Git 2.43's process_tree in list-objects.c counts depth: a commit's root tree is at depth 0,
+ * each folder is one deeper than the tree that holds it, and the walk stops at a tree deeper than 2048, so every Git 2.43 or later fetch whose walk reaches it fails, as Git 2.25 to 2.42 never do.
+ * Git counts the path on which its walk first reaches a tree, and another machine's walk starts from other commits, so every path through the given trees counts here.
+ * trees holds the bytes of the trees a walk would reach, as Map(object, bytes); a folder whose tree it lacks does not count, as Git skips a tree that the fetching machine already holds before it counts it.
+ * Returns { root, depth, names }, where names are the bytes of the folder names on the deepest path from that root, or null.
+ */
+export function tooDeepTree(roots, trees) {
+  const deepest = new Map();
+  const folders = (tree) => treeEntries(trees.get(tree), tree.length / 2).filter((entry) => isTreeMode(entry.mode) && trees.has(entry.object));
+  for (const root of roots) {
+    if (!trees.has(root)) continue;
+    // Each tree's depth below it is found once, without recursion, so a chain of any length fits the stack.
+    const walking = new Set([root]);
+    const stack = [{ tree: root, folders: folders(root), next: 0 }];
+    while (stack.length) {
+      const top = stack[stack.length - 1];
+      const folder = top.folders[top.next];
+      if (folder) {
+        top.next += 1;
+        if (!deepest.has(folder.object) && !walking.has(folder.object)) {
+          walking.add(folder.object);
+          stack.push({ tree: folder.object, folders: folders(folder.object), next: 0 });
+        }
+        continue;
+      }
+      let best = { depth: 0, via: null };
+      for (const entry of top.folders) {
+        const below = (deepest.get(entry.object)?.depth ?? 0) + 1;
+        if (below > best.depth) best = { depth: below, via: entry };
+      }
+      deepest.set(top.tree, best);
+      walking.delete(top.tree);
+      stack.pop();
+    }
+    const found = deepest.get(root);
+    if (found.depth > TREE_DEPTH_MAX) {
+      const names = [];
+      for (let step = found; step.via; step = deepest.get(step.via.object)) names.push(step.via.name);
+      return { root, depth: found.depth, names };
+    }
+  }
+  return null;
+}
+
 // Git 2.43's words for each tree message, as fsck_tree reports it.
 const TREE_TEXT = {
   badTree: "cannot be parsed as a tree", nullSha1: "contains entries pointing to null sha1", fullPathname: "contains full pathnames", emptyName: "contains empty pathname",

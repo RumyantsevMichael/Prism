@@ -21,6 +21,7 @@ const git = (cwd, args, input) => execFileSync("git", ["-C", cwd, ...args], { in
 // A git that behaves as an older release: --version reports FAKE_GIT_VERSION when it is set, pack-objects refuses --filter without --stdout as Git up to 2.42 does,
 // and index-pack --strict leaves out the .gitattributes checks, which Git before 2.39.1 does not have, the .gitmodules URL check, which Git before 2.30.1 makes of fewer URLs,
 // the check of a tree entry name over 4096 bytes, which Git before 2.43 does not have, and any further checks that IGNORE_CHECKS lists, as an older release lacks them.
+// It also walks trees of any depth, as Git before 2.43, which has no core.maxTreeDepth, does, whatever limit the sync sets.
 const realGit = execFileSync("sh", ["-c", "command -v git"]).toString().trim();
 const wrapper = path.join(environment, "bin", "git");
 await mkdir(path.dirname(wrapper), { recursive: true });
@@ -28,6 +29,7 @@ await writeFile(wrapper, `#!/bin/bash
 if [[ "$1" == "--version" && -n "$FAKE_GIT_VERSION" ]]; then echo "git version $FAKE_GIT_VERSION"; exit 0; fi
 if [[ " $* " == *" pack-objects "* && " $* " == *" --filter="* && " $* " != *" --stdout "* ]]; then echo "fatal: cannot use --filter without --stdout" >&2; exit 128; fi
 args=("$@")
+for i in "\${!args[@]}"; do [[ "\${args[$i]}" == core.maxTreeDepth=* ]] && args[$i]="core.maxTreeDepth=1000000"; done
 if [[ " $* " == *" index-pack "* ]]; then
   for i in "\${!args[@]}"; do [[ "\${args[$i]}" == "--strict" ]] && args[$i]="--strict=gitattributesLineLength=ignore,gitattributesLarge=ignore,gitattributesMissing=ignore,gitattributesBlob=ignore,gitmodulesUrl=ignore,largePathname=ignore\${IGNORE_CHECKS:+,$IGNORE_CHECKS}"; done
 fi
@@ -160,7 +162,15 @@ function longNameTree(store) {
   return run(["write-tree"]);
 }
 
+// A tree whose deepest folder sits the given number of folders below the root, as notes/d/d/…/note.md, which Git 2.43 and later walk only to 2048 folders deep.
+function deepTree(store, depth) {
+  let tree = git(store, ["mktree"], `100644 blob ${git(store, ["hash-object", "-w", "--no-filters", "--stdin"], "deep\n")}\tnote.md\n`);
+  for (let level = 1; level < depth; level++) tree = git(store, ["mktree"], `040000 tree ${tree}\td\n`);
+  return git(store, ["mktree"], `${git(store, ["ls-tree", "HEAD"])}\n040000 tree ${tree}\tnotes\n`);
+}
+
 const STRICTER = [
+  ["a folder nested 2049 folders deep in its history, which Git 2.43 refuses to walk", (store) => handCommit(store, deepTree(store, 2049)), "maxTreeDepth", ""],
   ["a tree entry name over 4096 bytes in its history, which Git 2.43 refuses", (store) => handCommit(store, longNameTree(store)), "largePathname", ""],
   ["a tree entry name over 4096 bytes at its tip, which Git 2.43 refuses", (store) => handCommit(store, longNameTree(store), { kept: true }), "largePathname", ""],
   ["a file and a folder of one name that are not adjacent, which Git 2.27 refuses", (store) => handCommit(store, fileAndFolderTree(store)), "duplicateEntries", "duplicateEntries=ignore"],
@@ -177,10 +187,29 @@ for (const [label, make, reason, ignored] of STRICTER) {
     assert.equal(status.state, "merge_failed", JSON.stringify(status).slice(0, 2000));
     assert.ok(status.message.includes("not pushed") && status.message.includes(reason), status.message.slice(0, 2000));
     assert.ok(status.message.length < 4000, "a long name is shown by its first characters only");
+    if (reason === "maxTreeDepth") assert.ok(status.message.includes("\"notes/d/d/…\""), status.message);
     assert.equal(git(remote, ["rev-parse", "main"]), before, "nothing was pushed");
     checkedClone(remote, path.join(parent, "fresh"));
   });
 }
+
+test("a sync pushes a history whose deepest folder sits exactly 2048 folders deep, which Git 2.43 walks, and refuses one 2049 deep on Git 2.43 itself", async (context) => {
+  const { parent, remote, storeA, storeB } = await stores(context);
+  handCommit(storeB, deepTree(storeB, 2048));
+  await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
+  const pushed = syncWithOldGit(storeB);
+  assert.equal(pushed.state, "ok", JSON.stringify(pushed).slice(0, 2000));
+  checkedClone(remote, path.join(parent, "fresh"));
+  const before = git(remote, ["rev-parse", "main"]);
+  handCommit(storeA, deepTree(storeA, 2049));
+  await writeFile(path.join(storeA, "roadmap.json"), "{\"a\":true}\n");
+  const { syncRecordStoreNow, configureRecordSync } = await import(SYNC);
+  configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 });
+  const refused = await syncRecordStoreNow(storeA);
+  assert.equal(refused.state, "merge_failed", JSON.stringify(refused).slice(0, 2000));
+  assert.ok(refused.message.includes("not pushed") && refused.message.includes("maxTreeDepth"), refused.message);
+  assert.equal(git(remote, ["rev-parse", "main"]), before, "nothing was pushed");
+});
 
 // Git 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, and 2.45.1 refuse a link whose target leads into Git's folder or is longer than 260 bytes, which no other release checks.
 for (const [label, target, reason] of [["into Git's folder", "../.git/hooks/post-checkout", "symlinkPointsToGitDir"], ["into Git's folder by a Windows short name", "sub\\GIT~1\\hooks", "symlinkPointsToGitDir"], ["longer than 260 bytes", `${"t".repeat(300)}.md`, "symlinkTargetLength"]]) {

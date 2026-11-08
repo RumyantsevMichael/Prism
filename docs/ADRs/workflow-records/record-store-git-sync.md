@@ -60,6 +60,8 @@ A record that stays locked through every attempt delays the merge to a later syn
 A leftover Git lock in the store stops syncing with `git_failed` until a person removes it, because Prism never deletes Git's locks.
 The sync and the first clone of a remote store use only commands and options that Git 2.25 has, and on an older Git every record operation of a store that syncs, or of a remote store, fails with `store_unavailable`, naming both versions.
 A push MUST NOT send a commit or a tree that the checked fetch of any supported Git release refuses, so the sync applies Git's own commit and tree checks itself, ported from Git's source, rather than relying on how much this machine's Git checks.
+Every Git command in a store MUST run with the same settings whatever the user's Git configuration, the variables the server inherits, or the store's local refs say, so a check MUST read the objects that the push sends, and a push MUST send the store's branch and nothing else.
+Only settings that choose how Git reaches the remote or who the user is, such as credentials, URL rewriting, the SSH command, and hooks, stay the user's.
 
 ## Mechanism
 
@@ -97,3 +99,4 @@ A call that the host cancels before its result is written gets no response, as M
 2026-11-03: An update that takes or releases a [slice claim](slice-claims.md) syncs at once and waits for the outcome instead of the debounced sync; claim records have no structural merge, so the upstream version wins, and a claim record saved aside is reported through the claim's refusal or its holder's lost-claim notice instead of as a saved record.
 2026-11-08: A server that stopped before naming a saved version, or a cancelled call that took the notes it never sent, left that version named by no tool result; saved versions now stay pending under `.prism-sync/notices/` until a result written to the host names them.
 2026-11-08: A push from an older Git sent objects that a newer Git's checked fetch refuses, such as a tree entry name over 4096 bytes, and a cancelled call other than a wait still wrote a result that the host ignores; the sync now applies Git's own commit and tree checks itself, and no cancelled call gets a response.
+2026-11-08: The user's `push.followTags` made a sync push unchecked tags, a replace ref made the checks read other objects than the push sent, and a push from Git before 2.43 could send a tree nested deeper than later releases walk; every store command now reads the real objects with fixed settings, a push sends only the branch, and the sync refuses a tree nested more than 2048 folders deep.
