@@ -263,11 +263,15 @@ for (const [label, plant, named] of [
   ["a lookalike of the sync folder", async (seed) => { await mkdir(path.join(seed, "PRISM-~1")); await writeFile(path.join(seed, "PRISM-~1", "status.json"), "{}\n"); }, "PRISM-~1/status.json"],
   ["a file where Prism keeps a folder", async (seed) => { await mkdir(path.join(seed, "initiatives", "reports"), { recursive: true }); await writeFile(path.join(seed, "initiatives", "reports", "slices"), "{}\n"); }, "initiatives/reports/slices"],
   ["a file below a record's path", async (seed) => { await mkdir(path.join(seed, "roadmap.json")); await writeFile(path.join(seed, "roadmap.json", "x"), "{}\n"); }, "roadmap.json/x"],
-  ["a submodule link", async (seed) => { await mkdir(path.join(seed, "artifacts", "plans", "sub"), { recursive: true }); execFileSync("git", ["update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},artifacts/plans/sub`], { cwd: seed }); }, "artifacts/plans/sub"]
+  ["a submodule link", async (seed) => { await mkdir(path.join(seed, "artifacts", "plans", "sub"), { recursive: true }); execFileSync("git", ["update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},artifacts/plans/sub`], { cwd: seed }); }, "artifacts/plans/sub"],
+  // Git for Windows refuses these names in its index, so a Windows machine could not even record the clone's tree.
+  ["a Windows device name", async (seed) => { await mkdir(path.join(seed, "notes"), { recursive: true }); await writeFile(path.join(seed, "notes", "aux.md"), "carried\n"); }, "notes/aux.md"],
+  ["a name ending in a space", async (seed) => { await mkdir(path.join(seed, "notes"), { recursive: true }); await writeFile(path.join(seed, "notes", "trailing "), "carried\n"); }, "notes/trailing "],
+  ["two paths that differ only in letter case", async (seed) => { await mkdir(path.join(seed, "notes"), { recursive: true }); await writeFile(path.join(seed, "notes", "Plan.md"), "one\n"); await writeFile(path.join(seed, "notes", "plan.md"), "two\n"); }, ["notes/Plan.md", "notes/plan.md"]]
 ]) {
   test(`a managed clone refuses a remote whose branch holds ${label}, and leaves no folder`, async (context) => {
     const { refusal } = await refusedClone(context, plant);
-    assert.ok(refusal.message.includes(JSON.stringify(named)), refusal.message);
+    for (const place of [named].flat()) assert.ok(refusal.message.includes(JSON.stringify(place)), refusal.message);
   });
 }
 
@@ -275,7 +279,7 @@ test("a managed clone keeps files Prism does not write in Git only, and its sync
   const parent = await folder(context);
   const { remote, url, clone } = bareRemote(parent);
   const seed = seedOf(parent, remote);
-  const planted = { "NOTES.md": "# Store\n", "Readme.md": "# Store\n", "initiatives/README.md": "# Store\n", "initiatives/reports/initiative.json.lock": "{}\n", "artifacts/plans/x/.DS_Store": "finder\n" };
+  const planted = { "NOTES.md": "# Store\n", "Readme.txt": "# Store\n", "initiatives/README.md": "# Store\n", "initiatives/reports/initiative.json.lock": "{}\n", "artifacts/plans/x/.DS_Store": "finder\n" };
   for (const [file, contents] of Object.entries(planted)) {
     await mkdir(path.dirname(path.join(seed, file)), { recursive: true });
     await writeFile(path.join(seed, file), contents);

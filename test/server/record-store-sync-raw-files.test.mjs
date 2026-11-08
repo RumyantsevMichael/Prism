@@ -13,7 +13,7 @@ Object.assign(process.env, {
   HOME: environment, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: "1", PLUGIN_DATA: environment,
   GIT_AUTHOR_NAME: "Prism Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Prism Test", GIT_COMMITTER_EMAIL: "test@example.invalid"
 });
-const { cancelRecordSyncs, configureRecordSync, syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
+const { cancelRecordSyncs, configureRecordSync, prepareStoreFiles, syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
 configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 });
 test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive: true, force: true }); });
 
@@ -167,4 +167,43 @@ test("a file that an earlier first clone checked out with CR LF line endings is 
   pushFiles(storeA, { "roadmap.json": "{\"later\":true}\n" });
   await ok(storeB);
   assert.equal(await readFile(path.join(storeB, "roadmap.json"), "utf8"), "{\"later\":true}\n");
+});
+
+test("a clone whose files an earlier Prism checked out with CR LF line endings is migrated once, and a later change of line endings alone is pushed", async (context) => {
+  const { remote, storeB } = await stores(context);
+  // Git's line-ending conversion wrote every text file with CR LF; one file also holds a real local change.
+  await writeFile(path.join(storeB, "roadmap.json"), "{}\r\n");
+  await writeFile(path.join(storeB, "artifacts", "plans", "slice.md"), "# Slice\r\n");
+  await writeFile(path.join(storeB, "artifacts", "plans", "bar", "slice.md"), "# Bar, changed\r\n");
+  await prepareStoreFiles(storeB);
+  assert.deepEqual(await readFile(path.join(storeB, "roadmap.json")), Buffer.from("{}\n"), "a converted copy gets its blob's bytes again");
+  assert.deepEqual(await readFile(path.join(storeB, "artifacts", "plans", "slice.md")), Buffer.from("# Slice\n"));
+  assert.deepEqual(await readFile(path.join(storeB, "artifacts", "plans", "bar", "slice.md")), Buffer.from("# Bar, changed\r\n"), "a real change stays as written");
+  assert.equal(await exists(path.join(storeB, ".prism-sync", "raw-files.json")), true, "the clone records that it is migrated");
+  const status = await ok(storeB);
+  assert.equal(status.ahead, 0);
+  assert.deepEqual(remoteBytes(remote, "roadmap.json"), Buffer.from("{}\n"), "no converted copy is pushed");
+  assert.deepEqual(remoteBytes(remote, "artifacts/plans/bar/slice.md"), Buffer.from("# Bar, changed\r\n"));
+  // From now on a file whose only change is its line endings is a change like any other.
+  await writeFile(path.join(storeB, "artifacts", "plans", "slice.md"), "# Slice\r\n");
+  await ok(storeB);
+  assert.deepEqual(remoteBytes(remote, "artifacts/plans/slice.md"), Buffer.from("# Slice\r\n"), "a line-ending change reaches the remote");
+});
+
+test("a branch whose remote branch was deleted publishes it again without a link or a file Prism does not write that only its own commits hold", async (context) => {
+  const { parent, remote, storeA, storeB } = await stores(context);
+  await writeFile(path.join(storeB, ".DS_Store"), "finder\n");
+  await symlink(path.join(parent, "outside.md"), path.join(storeB, "artifacts", "plans", "link.md"));
+  git(storeB, ["add", "-f", ".DS_Store", "artifacts/plans/link.md"]);
+  git(storeB, ["commit", "-q", "-m", "by hand"]);
+  git(remote, ["update-ref", "-d", "refs/heads/main"]);
+  git(storeB, ["fetch", "-q", "--prune", "origin"]);
+  await writeFile(path.join(storeB, "roadmap.json"), "{\"local\":true}\n");
+  await ok(storeB);
+  const tree = remoteTree(remote);
+  assert.equal(tree["artifacts/plans/link.md"], undefined, "no link reaches the remote's branch");
+  assert.equal(tree[".DS_Store"], undefined, "no file Prism does not write reaches the remote's branch");
+  assert.equal(remoteBytes(remote, "roadmap.json").toString(), "{\"local\":true}\n");
+  await ok(storeA);
+  assert.equal(await readFile(path.join(storeA, "roadmap.json"), "utf8"), "{\"local\":true}\n", "another machine takes the published branch");
 });

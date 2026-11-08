@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { cp, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
-import { gitTimeoutMs, markManagedStore, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
+import { describeUnsafeEntry, gitTimeoutMs, markManagedStore, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
 import { legacyStoresDirectory, managedStoreId, managedStoresDirectory, normalizeRemote, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 
 // A record store named by its remote lives in a clone Prism keeps in its application folder, one per remote, shared by every checkout and host that names it.
@@ -91,7 +91,7 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
       const head = await runGit(temporary, ["rev-parse", "--verify", "--quiet", "HEAD"]);
       if (head.ok) {
         const unsafe = await unsafeStoreEntry(temporary, head.text);
-        if (unsafe) throw unavailable(`Its branch holds ${unsafe.kind} at ${JSON.stringify(unsafe.path)}, which no store may hold, since a link, a path that some file system reads as Git's folder, the sync folder, or a place outside the store, or an entry where Prism keeps its own files would make the store unsafe or stuck, so it was not cloned. Remove that path from the remote's branch.`);
+        if (unsafe) throw unavailable(`Its branch holds ${describeUnsafeEntry(unsafe)}, so it was not cloned. Remove that path from the remote's branch.`);
         await writeCommitFiles(temporary, head.text).catch((error) => { throw unavailable(`Git could not write its files: ${withoutCredentials(error.message)}`); });
       }
       await rename(temporary, target);

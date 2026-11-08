@@ -15,17 +15,30 @@ const contains = (folder, file) => folder === "" || file === folder || file.star
 // Git for Windows refuses to check out a name that ends in "." or is a Windows device name before its first ".", so one such name would stop the store on every Windows machine.
 const NAME_FORM = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const LOCK_ENDING = /\.lock$/i;
-const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i;
+// Git for Windows reads a device name followed only by spaces before the first "." as the device too, and also refuses CONIN$ and CONOUT$.
+const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9]|conin\$|conout\$) *(\.|$)/i;
+// Windows refuses these characters in a name, and Git for Windows refuses a path that holds one in its index as well as on disk.
+const WINDOWS_REFUSED = /[<>:"|?*\\\x00-\x1f]/;
 export const ARTIFACT_NAME_FORM = "an artifact name begins with an ASCII letter or digit, holds only ASCII letters, digits, \".\", \"_\", and \"-\", does not end in \".\" or in \".lock\" in any letter case, and is no Windows device name, which is con, prn, aux, nul, com0 to com9, or lpt0 to lpt9 in any letter case before the name's first \".\" or as the whole name, such as aux.md or NUL.txt";
 
 /** Whether a name, before its first ".", is a Windows device name, which Git for Windows refuses as any component of a path. */
 export const windowsDeviceName = (name) => DEVICE_NAME.test(name);
 
-/** Whether one path component follows the artifact name form. */
-export const wellFormedName = (name) => NAME_FORM.test(name) && !name.endsWith(".") && !LOCK_ENDING.test(name) && !DEVICE_NAME.test(name);
+/**
+ * Whether one path component can be a file or folder name on every machine Prism supports: Windows, and Git for Windows in its index as on disk,
+ * refuses a Windows device name, a name that ends in "." or " ", and any of < > : " | ? * \\ or a control character.
+ */
+export const portableName = (name) => typeof name === "string" && name !== "" && !WINDOWS_REFUSED.test(name) && !/[. ]$/.test(name) && !DEVICE_NAME.test(name);
 
-// Names follow the name form, so they hold only ASCII letters, and comparing them without letter case needs only ASCII folding.
-const folded = (name) => name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+/** Whether one path component follows the artifact name form. */
+export const wellFormedName = (name) => NAME_FORM.test(name) && portableName(name) && !LOCK_ENDING.test(name);
+
+/**
+ * The key under which macOS and Windows file systems, which ignore letter case and Unicode normalization by default, read a path or name, so two paths with one key are one file or folder there.
+ * An artifact name holds only ASCII letters, where this is plain ASCII folding.
+ */
+export const letterCaseKey = (name) => name.normalize("NFC").toLowerCase();
+const folded = letterCaseKey;
 
 /**
  * Whether two artifact paths of one kind collide in letter case: some folder or file of one, taken with the folders above it,

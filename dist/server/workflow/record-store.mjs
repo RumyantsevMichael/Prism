@@ -4,7 +4,7 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { listSavedConflicts, pullRecordStoreIfStale, readSavedConflict, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
+import { listSavedConflicts, prepareStoreFiles, pullRecordStoreIfStale, readSavedConflict, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
 import { managedRecordStore } from "./record-store-remote.mjs";
 import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 import { checkRepositoryName, portableRepositoryName, REPOSITORIES, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
@@ -518,9 +518,11 @@ export function forgetMigrations() {
 
 const storeLabel = (store) => store.external ? "the record store" : "the project root";
 
-// A synced store pulls in the background when its last fetch is old, and record access waits while a merge replaces record files.
+// A synced store prepares its files for syncing before any record or artifact access, pulls in the background when its last fetch is old, and record access waits while a merge replaces record files.
+// A preparation that fails is tried again by the next access and by every sync, which runs it first.
 async function synced(store) {
   if (!store.sync) return;
+  await prepareStoreFiles(store.base).catch(() => {});
   pullRecordStoreIfStale(store.base);
   await waitForStableStore(store.base);
 }

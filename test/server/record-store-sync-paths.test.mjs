@@ -74,7 +74,15 @@ const CRAFTED = [
   { label: "a submodule link", names: ["artifacts", "plans", "sub"], mode: "160000", target: (store) => path.join(store, "artifacts", "plans", "sub") },
   // An entry where Prism keeps a folder, or below a file it keeps, would clash with Prism's own files on every machine.
   { label: "a file where Prism keeps a slice's folders", names: ["initiatives", "reports", "slices"], target: (store) => path.join(store, "initiatives", "reports", "slices") },
-  { label: "a file below the roadmap record's path", names: ["roadmap.json", "x"], target: (store) => path.join(store, "roadmap.json", "x") }
+  { label: "a file below the roadmap record's path", names: ["roadmap.json", "x"], target: (store) => path.join(store, "roadmap.json", "x") },
+  // Git for Windows refuses each of these in its index, even for an entry no sync writes to disk, so a Windows machine could never take or build a tree that holds one.
+  { label: "a Windows device name", names: ["notes", "aux.md"], target: (store) => path.join(store, "notes", "aux.md") },
+  { label: "a Windows device name with spaces before its extension", names: ["repositories", "con .json"], target: (store) => path.join(store, "repositories", "con .json") },
+  { label: "a Windows device name as a folder", names: ["notes", "LPT1", "x.md"], target: (store) => path.join(store, "notes", "LPT1", "x.md") },
+  { label: "a name ending in a dot", names: ["artifacts", "plans", "end."], target: (store) => path.join(store, "artifacts", "plans", "end.") },
+  { label: "a name ending in a space", names: ["notes", "trailing "], target: (store) => path.join(store, "notes", "trailing ") },
+  { label: "a character Windows refuses", names: ["notes", "what?.md"], target: (store) => path.join(store, "notes", "what?.md") },
+  { label: "a control character", names: ["notes", "bell\u0007.md"], target: (store) => path.join(store, "notes", "bell\u0007.md") }
 ];
 
 // Regular files at safe paths that Prism does not write, as an earlier Prism or a Git host may have left them: a sync carries them in Git and never writes them.
@@ -259,4 +267,55 @@ test("a sync never shares a file Prism does not write or a link, so no other mac
   assert.equal(await exists(path.join(storeB, "notes.md")), true, "the file stays on disk");
   git(storeA, ["pull", "-q", "origin", "main"]);
   assert.equal((await syncRecordStore(storeA)).state, "ok");
+});
+
+// macOS and Windows read two paths that differ only in letter case as one file or folder, so no machine there could hold both.
+for (const [label, names, pair] of [
+  ["a file", ["Roadmap.json"], ["Roadmap.json", "roadmap.json"]],
+  ["a folder", ["Artifacts", "notes.md"], ["Artifacts", "artifacts"]]
+]) {
+  test(`a sync refuses an upstream that holds ${label} whose path differs from another only in letter case, and the branch stays`, async (context) => {
+    const { storeA, storeB } = await stores(context);
+    const crafted = pushCrafted(storeA, names);
+    const status = await syncRecordStore(storeB);
+    assert.equal(status.state, "merge_failed", JSON.stringify(status));
+    for (const place of pair) assert.ok(status.message.includes(JSON.stringify(place)), status.message);
+    assert.equal(isAncestor(storeB, crafted), false, "the branch stays where it was");
+    assert.equal(await exists(path.join(storeB, ...names)), false);
+  });
+}
+
+test("two machines that write artifacts whose paths differ only in letter case keep the first push's and save the other", async (context) => {
+  const { storeA, storeB } = await stores(context);
+  await writeFile(path.join(storeB, "artifacts", "plans", "Notes.md"), "# Notes from b\n");
+  pushCrafted(storeA, ["artifacts", "plans", "notes.md"], "# Notes from a\n");
+  const status = await syncRecordStore(storeB);
+  assert.equal(status.state, "conflicts", JSON.stringify(status));
+  assert.deepEqual(status.conflicts.map((conflict) => conflict.path), ["artifacts/plans/Notes.md"]);
+  assert.equal(await readFile(path.join(storeB, status.conflicts[0].savedAs), "utf8"), "# Notes from b\n", "the local file is saved");
+  const tree = git(storeB, ["ls-tree", "-r", "--name-only", "origin/main"]).split("\n");
+  assert.ok(tree.includes("artifacts/plans/notes.md") && !tree.includes("artifacts/plans/Notes.md"), tree.join(", "));
+  assert.equal(await readFile(path.join(storeB, "artifacts", "plans", "notes.md"), "utf8"), "# Notes from a\n");
+  assert.equal(await exists(path.join(storeB, "artifacts", "plans", "Notes.md")), false);
+  assert.equal((await syncRecordStore(storeA)).state, "ok", "the other machine takes the result");
+});
+
+test("a branch that took an unportable upstream entry by hand pushes nothing until the remote drops it", async (context) => {
+  const { storeA, storeB } = await stores(context);
+  const crafted = pushCrafted(storeA, ["notes", "aux.md"]);
+  // A person pulls the upstream by hand on a machine whose Git accepts the name.
+  git(storeB, ["pull", "-q", "origin", "main"]);
+  await writeFile(path.join(storeB, "roadmap.json"), "{\"local\":true}\n");
+  const refused = await syncRecordStore(storeB);
+  assert.equal(refused.state, "merge_failed", JSON.stringify(refused));
+  assert.ok(refused.message.includes("\"notes/aux.md\""), refused.message);
+  assert.equal(git(storeA, ["ls-remote", "origin", "main"]).split("\t")[0], crafted, "nothing was pushed");
+  git(storeA, ["fetch", "-q", "origin"]);
+  git(storeA, ["reset", "-q", "--hard", "origin/main"]);
+  git(storeA, ["rm", "-q", "notes/aux.md"]);
+  git(storeA, ["commit", "-q", "-m", "drop it"]);
+  git(storeA, ["push", "-q", "origin", "main"]);
+  const status = await syncRecordStore(storeB);
+  assert.equal(status.state, "ok", JSON.stringify(status));
+  assert.equal(git(storeB, ["show", "origin/main:roadmap.json"]), "{\"local\":true}");
 });
