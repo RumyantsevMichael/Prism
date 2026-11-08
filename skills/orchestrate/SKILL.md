@@ -22,6 +22,7 @@ To run a skill in a child, start a fresh child agent whose prompt asks it to use
 
 Settings live in the initiative's coordination state, read with `get_coordination_state` and written once before active work with `update_coordination_state` and the current revision.
 A stored value stays authoritative on resume.
+When a Prism result carries a [person change notice](../workflow/SKILL.md#common-terms) or `keptSettings`, or a gate wait returns `changed`, apply each change at the effect point its action names before the next step, and name its author when you report it to the user.
 
 | Setting | Values | Default | Effect |
 | --- | --- | --- | --- |
@@ -52,10 +53,8 @@ A scope is the root slice, or a part that a split design created; design it when
 3. When design returns `PROPOSED`, read the proposal with `get_initiative`.
 4. When autonomy requires the design gate, or the proposal splits the scope with `user_gate` evidence, ask the gate with the scope's `slice.md`, its diagrams, and the frozen tests as artifacts, offering to mark slices for review; for a fit design, first write the design view through the [example writer](references/example-writer.md) in a fresh child agent with the `examples` model.
 5. When the user asks for changes, return the note to design and repeat from step 3.
-6. Call `update_initiative` with one `accept_proposal` operation for the scope, the slugs whose review mark is `required`, and, for `user_gate` evidence, the gate where the person approved the split.
+6. Call `update_initiative` with one `accept_proposal` operation for the scope, the slugs whose review mark is `required`, and, for `user_gate` evidence, the gate where the person approved the split; Prism adds the review marks that the `review` setting gives.
 7. When acceptance is refused, return the refusal to design.
-
-A slice's review mark is `required` when the user marked it, when `review` is `recommended` and design recommended it, or when `review` is `all`; otherwise it is `none`.
 
 ## 4. Run each slice
 

@@ -1,6 +1,6 @@
 import { escapeHtml } from "./util.js";
 
-const KIND_ORDER = ["place", "initiative", "slice", "requirement", "decision", "term", "file"];
+const KIND_ORDER = ["action", "place", "initiative", "slice", "requirement", "decision", "term", "file"];
 const RESULT_LIMIT = 40;
 
 function rank(entry, query, tokens) {
@@ -37,7 +37,7 @@ export function createPalette({ dialog, input, results, entries, onOpen, search 
     const all = entries();
     matches = query
       ? all.map((entry) => ({ entry, rank: rank(entry, query, tokens) })).filter((item) => item.rank).sort(compare).slice(0, RESULT_LIMIT).map((item) => item.entry)
-      : all.filter((entry) => entry.kind === "place" || entry.kind === "initiative").slice(0, RESULT_LIMIT);
+      : all.filter((entry) => entry.kind === "action" || entry.kind === "place" || entry.kind === "initiative").slice(0, RESULT_LIMIT);
     active = 0;
     textMatches = [];
     clearTimeout(searchTimer);
@@ -87,7 +87,9 @@ export function createPalette({ dialog, input, results, entries, onOpen, search 
     const entry = all()[index];
     if (!entry) return;
     hide();
-    onOpen(entry.ref, { keep, find: entry.find ?? null });
+    // An action entry of the shown page moves focus to that action's control instead of opening anything.
+    if (entry.run) entry.run();
+    else onOpen(entry.ref, { keep, find: entry.find ?? null });
   }
 
   function show() {

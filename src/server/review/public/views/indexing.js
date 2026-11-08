@@ -1,4 +1,5 @@
 import { escapeHtml } from "./util.js";
+import { createActionList } from "./actions.js";
 
 // The index build reports unrelated totals per step, so the chip shows the current step and its own percentage, never an overall one.
 const STEPS = [
@@ -106,7 +107,14 @@ function indexHtml(status) {
   return `<dl class="indexing-facts">${facts.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd title="${escapeHtml(value)}">${escapeHtml(value)}</dd>`).join("")}</dl>`;
 }
 
-const COMPONENT_STATES = { preparing: "Building", failed: "Failed", interrupted: "Stopped", ready: "Indexed" };
+const COMPONENT_STATES = { preparing: "Building", failed: "Failed", interrupted: "Stopped", ready: "Indexed", none: "Not indexed" };
+
+/** The indexing state of one index target's component, as the registry reads it: its own entry with declared components, or the checkout's state. */
+export function componentState(status, identity) {
+  if (!status) return null;
+  if (!Array.isArray(status.components)) return status.state ?? null;
+  return status.components.find((entry) => entry.component === identity)?.state ?? "none";
+}
 
 // Each component with an index or a recorded build, in component order; a long identity ends in an ellipsis and its tooltip gives it whole.
 function componentsHtml(status) {
@@ -118,12 +126,7 @@ function componentsHtml(status) {
 const componentPrefix = (item) => item.component ? `<span class="indexing-diagnostic-component" title="${escapeHtml(item.component)}">${escapeHtml(item.component)}</span> ` : "";
 
 function rebuildWhen(status) {
-  return status.autoRebuild ? "This page rebuilds it once the files stay unchanged for a minute." : "The next agent search or Rebuild index updates it.";
-}
-
-// Any state but a running build can be rebuilt by hand, including a project that has no index yet.
-function rebuildButton(status) {
-  return status.state === "preparing" ? "" : '<p class="indexing-actions"><button type="button" class="tool-button" data-rebuild-index>Rebuild index</button></p>';
+  return status.autoRebuild ? "This page rebuilds it once the files stay unchanged for a minute." : `The next agent search or ${status.components ? "a component's Rebuild" : "Rebuild index"} updates it.`;
 }
 
 function summaryHtml(status) {
@@ -134,7 +137,7 @@ function summaryHtml(status) {
   }
   if (changedDuringBuild(status)) return `<p>Files changed while the index was being built. ${rebuildWhen(status)}</p>`;
   if (status.state === "failed") {
-    const retry = status.components ? "Rebuild index retries each failed component, and an agent search that reads one tries again unless it reached a native limit." : "The next agent search tries again.";
+    const retry = status.components ? "A failed component's Rebuild retries it, and an agent search that reads one tries again unless it reached a native limit." : "The next agent search tries again.";
     return `<p>The last build${status.components ? " of a component" : ""} failed ${escapeHtml(relativeTime(status.endedAt))}. ${retry}</p>
       <ul class="indexing-diagnostics">${status.diagnostics.map((item) => `<li>${componentPrefix(item)}<code>${escapeHtml(item.code)}</code> ${escapeHtml(item.message)}${item.recovery ? `<br><span>${escapeHtml(item.recovery)}</span>` : ""}</li>`).join("")}</ul>`;
   }
@@ -145,10 +148,13 @@ function summaryHtml(status) {
   return "<p>The index matches the current files.</p>";
 }
 
-export function panelHtml(status) {
-  return `<p class="indexing-panel-title">Repository index</p>${summaryHtml(status)}${rebuildButton(status)}${indexHtml(status)}${componentsHtml(status)}
+// The summary of the index status; the page's panel lists each component with its rebuild control in place of the component list.
+export function panelHtml(status, { components = true } = {}) {
+  return `<p class="indexing-panel-title">Repository index</p>${summaryHtml(status)}${indexHtml(status)}${components ? componentsHtml(status) : ""}
     <p class="indexing-panel-note">Agents also build and update the index when they search.${status.autoRebuild ? "" : " Background indexing is off for this project, so this page rebuilds it only when you ask."}</p>`;
 }
+
+const STATE_TONES = { ready: "is-good", preparing: "is-info", failed: "is-bad", interrupted: "is-warn", none: "is-unknown" };
 
 let latest = null;
 
@@ -157,10 +163,32 @@ export function currentIndexStatus() {
   return latest;
 }
 
-export function createIndexingStatus({ root, button, label, detail, meter, panel, fetchJson, component = root.querySelector(".indexing-component") }) {
+export function createIndexingStatus({ root, button, label, detail, meter, panel, fetchJson, actionApi = null, component = root.querySelector(".indexing-component") }) {
   let status = null;
   let timer = null;
   let rendered = "";
+  panel.innerHTML = '<div data-index-summary></div><div class="index-actions" data-index-actions></div>';
+  const summary = panel.querySelector("[data-index-summary]");
+  const actionsRoot = panel.querySelector("[data-index-actions]");
+  let controls = null;
+  // Each index target of this checkout gets one rebuild control from its listing, labeled with its component and that component's indexing state.
+  const heading = (action) => {
+    const identity = action.target.slice("index:".length);
+    const state = componentState(status, identity);
+    return { label: `<code class="indexing-component-name" title="${escapeHtml(identity)}">${escapeHtml(identity)}</code>`, detail: state ? `<span class="status-pill ${STATE_TONES[state] ?? "is-unknown"}">${escapeHtml(COMPONENT_STATES[state] ?? state)}</span>` : "" };
+  };
+  async function refreshControls() {
+    if (!actionApi || panel.hidden) return;
+    let targets;
+    try {
+      targets = (await fetchJson("./api/actions/targets?kind=index")).targets;
+    } catch {
+      return;
+    }
+    controls ??= createActionList({ root: actionsRoot, targets, api: { ...actionApi, toast: () => {} }, heading, submitLabel: () => "Rebuild", compact: true,
+      onRender: () => {}, emptyText: "This checkout has no index to rebuild." });
+    await controls.setTargets(targets);
+  }
 
   function render() {
     const chip = chipState(status);
@@ -182,16 +210,19 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
     meter.firstElementChild.style.width = `${chip.meter ?? 100}%`;
     button.title = [chip.label, [chip.component, chip.detail].filter(Boolean).join(" · ")].filter(Boolean).join(": ");
     // The panel is rebuilt only when its content changes, so an open panel keeps its scroll position between polls.
-    const html = panelHtml(status);
+    const html = panelHtml(status, { components: !actionApi });
     if (html !== rendered) {
       rendered = html;
-      panel.innerHTML = html;
+      summary.innerHTML = html;
     }
+    controls?.render();
   }
 
   function setOpen(open) {
+    const opening = open && panel.hidden;
     panel.hidden = !open;
     button.setAttribute("aria-expanded", String(open));
+    if (opening) void refreshControls();
   }
 
   async function refresh() {
@@ -202,20 +233,19 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
     }
     latest = status;
     render();
+    void refreshControls();
     document.dispatchEvent(new CustomEvent("prism:indexing", { detail: status }));
     timer = setTimeout(refresh, status?.state === "preparing" ? ACTIVE_POLL_MS : IDLE_POLL_MS);
   }
 
   button.addEventListener("click", () => setOpen(panel.hidden));
-  panel.addEventListener("click", async (event) => {
-    const rebuild = event.target.closest?.("[data-rebuild-index]");
-    if (!rebuild) return;
-    rebuild.disabled = true;
-    await fetch("./api/indexing/rebuild", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
-    await refresh();
+  // An applied rebuild shows as a running build at once.
+  document.addEventListener("prism:action", (event) => {
+    if (event.detail?.action === "index.rebuild") void refresh();
   });
   document.addEventListener("click", (event) => {
-    if (!panel.hidden && !root.contains(event.target)) setOpen(false);
+    // The path is read at dispatch, so a control that a re-render replaced still counts as inside the panel.
+    if (!panel.hidden && !event.composedPath().includes(root)) setOpen(false);
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !panel.hidden) {

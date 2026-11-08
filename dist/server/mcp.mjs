@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import readline from "node:readline";
 import { pluginURL } from "./plugin-root.mjs";
 import { ACTIVE_OPERATIONS_SCHEMA } from "./workflow/active-operations.mjs";
@@ -41,7 +42,9 @@ import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
 import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
-import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
+import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
+import { endGateWait, keptSettingsText, personChangesText, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
+import { callAgent, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
@@ -699,7 +702,7 @@ const tools = [
   },
   {
     name: "wait_for_user_gate",
-    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn.",
+    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, changed with the person's new history entries when the person changes the initiative in the review app, whether here or through a store sync, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn.",
     inputSchema: {
       type: "object",
       properties: {
@@ -833,6 +836,10 @@ const BACKGROUND_WAIT_CLIENTS = /claude/i;
 const FIRST_BACKGROUND_VERSION = [2, 1, 212];
 const DEFAULT_BACKGROUND_MS = 120000;
 const pendingWaits = new Map();
+// The gate waits that run, so closing awaits each one letting go of its gates.
+const endingWaits = new Set();
+// A deferred wait's gates stay held this long for the Stop hook's wait to start and renew them.
+const DEFERRED_HOLD_MS = 2 * 60000;
 let clientName = null;
 let clientVersion = null;
 
@@ -869,12 +876,26 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   let value;
   const unsupported = waitUnsupportedReason();
   const hookSession = typeof metadata?.sessionId === "string" && metadata.sessionId ? metadata.sessionId : null;
+  // Only the initiative's coordinator when the wait starts has it end on the person's changes; one step of the session tells whether it coordinates and which entries it holds at its start.
+  // Every wait that names an initiative holds its gates in the session's notice record while it runs, so their answers reach the agent once, in its result, whichever agent waited.
+  const initiative = argumentsValue.initiative;
+  const notices = typeof initiative === "string" ? {} : null;
+  const start = notices && !(unsupported && !hookSession)
+    ? await startGateWait({ projectRoot, initiative, agent: currentCallAgent() }).catch(() => ({ coordinates: false, known: null }))
+    : { coordinates: false, known: null };
+  const coordinates = start.coordinates;
+  const knownEntries = Array.isArray(start.known) ? start.known : undefined;
   if (unsupported && hookSession) {
     // Codex names its session in the call's metadata, and its Stop hook for that session waits once this turn ends.
-    value = await waitForUserGates({ projectRoot, initiative: argumentsValue.initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0 });
+    // The gates stay held for a short lease, which the polls of the hook's wait, under the same wait id, renew.
+    const waitId = randomBytes(16).toString("hex");
+    const held = notices && { ...notices, waitId, hold: Date.now() + DEFERRED_HOLD_MS };
+    value = await waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
-      await recordWaitRequest({ sessionId: hookSession, projectRoot, initiative: argumentsValue.initiative, gateIds: value.gateIds, maxWaitMinutes });
+      const { replaced } = await recordWaitRequest({ sessionId: hookSession, projectRoot, initiative, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates, waitId });
+      // The request this one replaced never reaches the hook, so its wait lets go of its gates.
+      if (replaced) await endGateWait({ ...replaced, cancelled: true }).catch(() => {});
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
     }
   } else if (unsupported) {
@@ -884,22 +905,32 @@ async function callGateWait(argumentsValue, metadata, requestId) {
     if (requestId !== undefined) pendingWaits.set(requestId, controller);
     const progressToken = metadata?.progressToken;
     try {
-      value = await waitForUserGates({
+      const running = waitForUserGates({
         projectRoot,
         initiative: argumentsValue.initiative,
         gateIds,
         maxWaitMinutes: argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES,
         signal: controller.signal,
+        knownEntries,
+        notices,
+        watchChanges: coordinates,
         heartbeatMs: Number(process.env.PRISM_GATE_WAIT_HEARTBEAT_MS) || 60000,
         settleMs: process.env.PRISM_GATE_WAIT_SETTLE_MS === undefined ? undefined : Number(process.env.PRISM_GATE_WAIT_SETTLE_MS),
         onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, "Waiting for the user's answer in the review browser")
       });
+      endingWaits.add(running);
+      try {
+        value = await running;
+      } finally {
+        endingWaits.delete(running);
+      }
     } finally {
       pendingWaits.delete(requestId);
     }
   }
   const list = value.gateIds.join(", ");
   const text = {
+    changed: () => changedText(value),
     answered: () => [...value.answered.map(answerText), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n"),
     resolved: () => `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
     timeout: () => `No answer arrived for user gates ${list} before the wait ended.`,
@@ -939,7 +970,9 @@ async function callStateTool(name, argumentsValue) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
   }
-  return { content: [{ type: "text", text: stateContent(resultValue) }], structuredContent: resultValue };
+  const content = [{ type: "text", text: stateContent(resultValue) }];
+  if (Array.isArray(resultValue?.keptSettings) && resultValue.keptSettings.length) content.push({ type: "text", text: keptSettingsText(resultValue.keptSettings) });
+  return { content, structuredContent: resultValue };
 }
 
 async function callRepositoryTool(name, argumentsValue) {
@@ -1148,6 +1181,23 @@ async function withRecordNotes(value) {
   };
 }
 
+// A successful claim, or start of a slice, makes its agent the initiative's coordinator in the session.
+const coordinatingCall = (name, argumentsValue) => name === "update_initiative" && Array.isArray(argumentsValue?.operations)
+  && argumentsValue.operations.some((operation) => operation?.op === "claim" || (operation?.op === "set_status" && operation.status === "in-progress"));
+
+// A successful call that names an initiative tells the initiative's coordinator in the session, once, of the person's changes in the review app that the session has not been shown.
+async function withPersonChanges(name, argumentsValue, value) {
+  if (typeof argumentsValue?.initiative !== "string" || !Array.isArray(value?.content) || value.structuredContent?.status === "cancelled") return value;
+  let changes;
+  try {
+    changes = await takePersonChanges({ projectRoot: await requestedProjectRoot(argumentsValue), initiative: argumentsValue.initiative, agent: currentCallAgent(), coordinates: coordinatingCall(name, argumentsValue) });
+  } catch {
+    return value;
+  }
+  if (!changes.length) return value;
+  return { ...value, content: [...value.content, { type: "text", text: personChangesText(changes) }], structuredContent: { ...value.structuredContent, personChanges: changes } };
+}
+
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
@@ -1246,7 +1296,11 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/call") {
       callsInProgress.add(request.id);
       const meta = request.params?._meta;
-      const value = await withCallSession(meta, () => callTool(request.params?.name, request.params?.arguments, meta, request.id));
+      const { name, arguments: argumentsValue } = request.params ?? {};
+      const value = await withCallSession(meta, async () => {
+        const agent = await callAgent(meta).catch(() => undefined);
+        return withCallAgent(agent, async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id)));
+      });
       // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
       if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;
       if (closing) { await result(request.id, value); return; }
@@ -1288,7 +1342,7 @@ input.on("close", async () => {
     cancelVerifications();
     cancelRecordSyncs();
     stopClaimRenewals();
-    await Promise.all([nativeSemanticRuntime.close(), reviewServers.close()]);
+    await Promise.all([nativeSemanticRuntime.close(), reviewServers.close(), Promise.allSettled([...endingWaits])]);
   } finally {
     process.exit(0);
   }
