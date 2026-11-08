@@ -27,6 +27,39 @@ const tabsOf = (labels, selected = 0, extra = "") => `<prism-tabs label="Specime
 const choiceOf = (options, { label = "Your answer", value = "" } = {}) => `<prism-choice label="${html(label)}" name="${id("catalog-choice")}"${value ? ` value="${value}"` : ""}>${options}</prism-choice>`;
 const answers = `<prism-choice-option value="accept">Accept<span slot="detail">The slices start in order.</span></prism-choice-option><prism-choice-option value="changes" tone="danger">Request changes<span slot="detail">Design revises the contract.</span></prism-choice-option>`;
 
+const PHASES = ["requirements", "design", "frozen", "build", "review", "shipped"];
+const PHASE_NAMES = ["Requirements", "Design", "Frozen", "Build", "Review", "Shipped"];
+
+// A kit button that opens the dialog after it, through the catalog's data-opens wiring.
+function opener(caption, dialog) {
+  const target = id("catalog-dialog");
+  return `<prism-button data-opens="${target}">${caption}</prism-button>${dialog.replace("<prism-dialog ", `<prism-dialog id="${target}" `)}`;
+}
+
+// A kit button and the popover it opens.
+function popoverFor(caption, body, { heading }) {
+  const trigger = id("catalog-popover-button");
+  return `<prism-button id="${trigger}">${caption}</prism-button><prism-popover for="${trigger}" heading="${heading}">${body}</prism-popover>`;
+}
+
+// A kit button that shows a message in the page's toast.
+function toastButton(caption, message, tone) {
+  return `<prism-button data-toast="${html(message)}" data-tone="${tone}">${html(caption)}</prism-button>`;
+}
+
+// A claim whose times are set from now: `left` minutes left, or lapsed that many minutes ago when negative, on a lease of 30 minutes.
+function claimOf({ variant, label = "Claude on build-2", activity = "implementation", left = 41 }) {
+  const at = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
+  return `<prism-claim variant="${variant}" label="${html(label)}" activity="${activity}" claimed-at="${at(left - 90)}" renewed-at="${at(left - 30)}" expires-at="${at(left)}"></prism-claim>`;
+}
+
+// The six phases with the first `reached` done and the next one current.
+function stepper(reached) {
+  return `<prism-stepper label="Lifecycle">${PHASES.map((phase, index) => `<prism-step phase="${phase}" state="${index < reached ? "done" : index === reached ? "current" : "upcoming"}">${PHASE_NAMES[index]}</prism-step>`).join("")}</prism-stepper>`;
+}
+
+const crumbs = (labels) => `<prism-breadcrumbs>${labels.map((label, index) => `<a href="#entry-prism-breadcrumbs">${label}</a>`).join("")}</prism-breadcrumbs>`;
+
 // Each element's specimens by state; every entry also shows long text and an unbroken name, and an element that holds items shows many.
 const SPECIMENS = {
   "prism-button": {
@@ -144,52 +177,167 @@ const SPECIMENS = {
   },
   "prism-stat": {
     default: `<prism-stat label="Open findings" value="3" hint="2 high"></prism-stat>`,
-    tone: `<prism-stat label="Failing tests" value="12" tone="danger"></prism-stat>`
+    tone: `<prism-stat label="Failing tests" value="12" tone="danger"></prism-stat><prism-stat label="Passing" value="48" tone="success"></prism-stat>`,
+    "long-text": `<prism-stat label="${LONG}" value="1284" hint="${LONG}"></prism-stat>`,
+    "unbroken-name": `<prism-stat label="${UNBROKEN}" value="${UNBROKEN}"></prism-stat>`
   },
   "prism-meter": {
     empty: `<prism-meter label="Lease left" value="0"></prism-meter>`,
     partial: `<prism-meter label="Lease left" value="42"></prism-meter>`,
     full: `<prism-meter label="Lease left" value="100" tone="success"></prism-meter>`,
-    unknown: `<prism-meter label="Indexing"></prism-meter>`
+    unknown: `<prism-meter label="Indexing"></prism-meter>`,
+    "long-text": `<prism-meter label="${LONG}" value="64" tone="warning"></prism-meter>`,
+    "unbroken-name": `<prism-meter label="${UNBROKEN}" value="12" tone="danger"></prism-meter>`
   },
-  "prism-spinner": { default: `<prism-spinner label="Loading the workspace"></prism-spinner>` },
+  "prism-spinner": {
+    default: `<prism-spinner label="Loading the workspace"></prism-spinner>`,
+    "long-text": `<prism-spinner label="${LONG}"></prism-spinner>`,
+    "unbroken-name": `<prism-spinner label="${UNBROKEN}"></prism-spinner>`
+  },
   "prism-avatar": {
-    agent: `<prism-avatar kind="agent" name="Claude on build-2"></prism-avatar>`,
-    person: `<prism-avatar kind="person" name="Ada Lovelace" hue="2"></prism-avatar>`,
-    live: `<prism-avatar kind="agent" name="Claude on build-2" live></prism-avatar>`,
-    expired: `<prism-avatar kind="agent" name="Claude on build-2" expired></prism-avatar>`
+    agent: `<prism-avatar kind="agent" name="Claude on build-2"></prism-avatar><prism-avatar kind="agent" name="Codex on ci" size="sm"></prism-avatar><prism-avatar kind="agent" name="Claude on vm" size="lg"></prism-avatar>`,
+    person: repeat(4, (index) => `<prism-avatar kind="person" name="Ada Lovelace" hue="${index + 1}"></prism-avatar>`) + `<prism-avatar kind="person" name="Grace Hopper" hue="3" size="lg"></prism-avatar>`,
+    live: `<prism-avatar kind="agent" name="Claude on build-2" live></prism-avatar><prism-avatar kind="agent" name="Codex on ci" live breathing></prism-avatar>`,
+    expired: `<prism-avatar kind="agent" name="Claude on build-2" expired></prism-avatar><prism-avatar kind="agent" name="Codex on ci" size="lg" expired></prism-avatar>`,
+    "long-text": `<prism-avatar kind="person" name="${LONG}" hue="1"></prism-avatar><prism-avatar kind="agent" name="${LONG}" live></prism-avatar>`,
+    "unbroken-name": `<prism-avatar kind="person" name="${UNBROKEN}" hue="4"></prism-avatar><prism-avatar kind="agent" name="${UNBROKEN}" expired></prism-avatar>`
   },
   "prism-panel": {
-    card: `<prism-panel heading="Design" variant="card"><p>The contract and its frozen tests.</p></prism-panel>`,
+    card: `<prism-panel heading="Design" eyebrow="Slice"><p>The contract and its frozen tests.</p></prism-panel>`,
     plain: `<prism-panel heading="Diagram" variant="plain"><p>The slice's components.</p></prism-panel>`,
     inset: `<prism-panel heading="Verification" variant="inset"><p>The last passing run.</p></prism-panel>`,
-    island: `<prism-panel heading="Change map" variant="island"><p>Planned changes.</p></prism-panel>`
+    island: `<prism-panel heading="Change map" variant="island"><p>Planned changes.</p></prism-panel>`,
+    "tools-and-footer": `<prism-panel heading="Review ledger" level="3"><prism-button slot="tools" size="sm" variant="ghost">Copy link</prism-button><p>Two open findings.</p><span slot="footer"><prism-button size="sm" variant="primary">Answer</prism-button></span></prism-panel>`,
+    maximizable: `<prism-panel heading="Diagram" eyebrow="Slice" maximizable><p>Maximize fills the window; Restore or Escape brings it back.</p></prism-panel>`,
+    "many-items": `<prism-panel heading="Planned changes"><prism-button slot="tools" size="sm" variant="ghost">Filter</prism-button><prism-button slot="tools" size="sm" variant="ghost">Sort</prism-button><prism-button slot="tools" size="sm" variant="ghost">Copy</prism-button>${repeat(14, (index) => `<p>Change ${index + 1} of the slice.</p>`)}</prism-panel>`,
+    "long-text": `<prism-panel heading="${LONG}" eyebrow="${LONG}" maximizable><prism-button slot="tools" size="sm" variant="ghost">${LONG}</prism-button><p>${LONG}</p><p slot="footer">${LONG}</p></prism-panel>`,
+    "unbroken-name": `<prism-panel heading="${UNBROKEN}" eyebrow="${UNBROKEN}" variant="island"><prism-button slot="tools" size="sm" variant="ghost">${UNBROKEN}</prism-button><p>${UNBROKEN}</p></prism-panel>`
   },
-  "prism-tree": { default: `<prism-tree label="Specimen tree"><prism-tree-item label="Roadmap" value="roadmap"></prism-tree-item></prism-tree>` },
-  "prism-tree-item": { default: `<prism-tree label="Specimen tree"><prism-tree-item label="Attention" value="attention"></prism-tree-item></prism-tree>` },
-  "prism-listbox": { default: `<prism-listbox label="Specimen results"><prism-list-item value="a">Review app UI kit</prism-list-item></prism-listbox>` },
-  "prism-list-item": { default: `<prism-listbox label="Specimen results"><prism-list-item value="a" selected>Kit controls</prism-list-item></prism-listbox>` },
-  "prism-dialog": { closed: `<prism-dialog heading="Command palette"><p>Search the workspace.</p></prism-dialog><p class="catalog-note">A closed dialog shows nothing.</p>` },
-  "prism-popover": { closed: `<prism-popover heading="Who's working"><p>Live claims.</p></prism-popover><p class="catalog-note">A closed popover shows nothing.</p>` },
-  "prism-disclosure": { closed: `<prism-disclosure summary="Earlier runs"><p>Three runs.</p></prism-disclosure>` },
-  "prism-empty-state": { default: `<prism-empty-state heading="No change map yet"><p>The slice records one when it starts.</p></prism-empty-state>` },
+  "prism-tree": {
+    default: `<prism-tree label="Places"><prism-tree-item label="Attention" value="attention" selected><prism-badge slot="end">2</prism-badge></prism-tree-item><prism-tree-item label="Roadmap" value="roadmap"></prism-tree-item></prism-tree>`,
+    nested: `<prism-tree label="Initiatives"><prism-tree-item label="Review app UI kit" value="kit" expanded><prism-tree-item label="Kit foundation" value="foundation"></prism-tree-item><prism-tree-item label="Kit containers" value="containers"><prism-tree-item label="Claims" value="claims"></prism-tree-item></prism-tree-item></prism-tree-item><prism-tree-item label="Harden request retries" value="retries"><prism-tree-item label="Timeout retries" value="timeout"></prism-tree-item></prism-tree-item></prism-tree>`,
+    selected: `<prism-tree label="Library"><prism-tree-item label="Decisions" value="decisions"></prism-tree-item><prism-tree-item label="Requirements" value="requirements" selected><prism-badge slot="end">14</prism-badge></prism-tree-item></prism-tree>`,
+    "many-items": `<prism-tree label="Many initiatives">${repeat(30, (index) => `<prism-tree-item label="${index % 5 ? `Initiative ${index + 1}` : `${UNBROKEN}-${index + 1}`}" value="i${index}"${index === 2 ? " expanded" : ""}><prism-badge slot="end">${index * 3}</prism-badge>${index === 2 ? repeat(6, (child) => `<prism-tree-item label="Slice ${child + 1} of a long initiative" value="i${index}-${child}"></prism-tree-item>`) : ""}</prism-tree-item>`)}</prism-tree>`,
+    "long-text": `<prism-tree label="Long"><prism-tree-item label="${LONG}" value="long" expanded><prism-badge slot="end">128</prism-badge><prism-tree-item label="${LONG}" value="long-child"></prism-tree-item></prism-tree-item></prism-tree>`,
+    "unbroken-name": `<prism-tree label="Unbroken"><prism-tree-item label="${UNBROKEN}" value="unbroken" expanded><prism-tree-item label="${UNBROKEN}" value="unbroken-child"><prism-badge slot="end">${UNBROKEN}</prism-badge></prism-tree-item></prism-tree-item></prism-tree>`
+  },
+  "prism-tree-item": {
+    leaf: `<prism-tree label="Leaf"><prism-tree-item label="Roadmap" value="roadmap"></prism-tree-item></prism-tree>`,
+    collapsed: `<prism-tree label="Collapsed"><prism-tree-item label="Harden request retries" value="retries"><prism-tree-item label="Timeout retries" value="timeout"></prism-tree-item></prism-tree-item></prism-tree>`,
+    expanded: `<prism-tree label="Expanded"><prism-tree-item label="Harden request retries" value="retries" expanded><prism-tree-item label="Timeout retries" value="timeout"></prism-tree-item></prism-tree-item></prism-tree>`,
+    selected: `<prism-tree label="Selected"><prism-tree-item label="Attention" value="attention" selected><prism-badge slot="end">3</prism-badge></prism-tree-item></prism-tree>`,
+    "long-text": `<prism-tree label="Long item"><prism-tree-item label="${LONG}" value="long"><prism-badge slot="end">7</prism-badge></prism-tree-item></prism-tree>`,
+    "unbroken-name": `<prism-tree label="Unbroken item"><prism-tree-item label="${UNBROKEN}" value="unbroken"></prism-tree-item></prism-tree>`
+  },
+  "prism-listbox": {
+    default: `<prism-listbox label="Results"><prism-list-item value="kit">Review app UI kit<span slot="meta">Initiative</span></prism-list-item><prism-list-item value="containers">Kit containers<span slot="meta">Slice</span></prism-list-item></prism-listbox>`,
+    active: `<prism-listbox label="Active result"><prism-list-item value="a" active>Roadmap<span slot="meta">Place</span></prism-list-item><prism-list-item value="b">Attention<span slot="meta">Place</span></prism-list-item></prism-listbox>`,
+    selected: `<prism-listbox label="Selected result"><prism-list-item value="a">Design</prism-list-item><prism-list-item value="b" selected>Diagram</prism-list-item></prism-listbox>`,
+    "with-field": `<prism-field id="catalog-listbox-field" type="search" label="Jump to" name="jump" placeholder="Type, then ArrowDown"></prism-field><prism-listbox label="Matches" for="catalog-listbox-field"><prism-list-item value="r">Roadmap<span slot="meta">Place</span></prism-list-item><prism-list-item value="t">Timeout retries<span slot="meta">Slice</span></prism-list-item></prism-listbox>`,
+    "many-items": `<prism-listbox label="Many results">${repeat(40, (index) => `<prism-list-item value="r${index}">${index % 4 ? `Result ${index + 1}` : `${UNBROKEN}-${index + 1}`}<span slot="meta">${index % 3 ? "Slice" : "Decision · Proposed"}</span></prism-list-item>`)}</prism-listbox>`,
+    "long-text": `<prism-listbox label="Long results"><prism-list-item value="l">${LONG}<span slot="meta">${LONG}</span></prism-list-item></prism-listbox>`,
+    "unbroken-name": `<prism-listbox label="Unbroken results"><prism-list-item value="u">${UNBROKEN}<span slot="meta">${UNBROKEN}</span></prism-list-item></prism-listbox>`
+  },
+  "prism-list-item": {
+    default: `<prism-listbox label="One result"><prism-list-item value="a">Kit controls</prism-list-item></prism-listbox>`,
+    active: `<prism-listbox label="Active option"><prism-list-item value="a" active>Kit controls</prism-list-item></prism-listbox>`,
+    selected: `<prism-listbox label="Selected option"><prism-list-item value="a" selected>Kit controls</prism-list-item></prism-listbox>`,
+    meta: `<prism-listbox label="Option with kind"><prism-list-item value="a">Retry with a deadline<span slot="meta">Decision · Accepted</span></prism-list-item></prism-listbox>`,
+    "long-text": `<prism-listbox label="Long option"><prism-list-item value="a">${LONG}<span slot="meta">Slice</span></prism-list-item></prism-listbox>`,
+    "unbroken-name": `<prism-listbox label="Unbroken option"><prism-list-item value="a">${UNBROKEN}</prism-list-item></prism-listbox>`
+  },
+  "prism-dialog": {
+    closed: opener("Open the record store", `<prism-dialog heading="Record store"><p>Records live in a shared store.</p><prism-field type="text" label="Filter" name="filter"></prism-field><prism-button slot="footer" variant="primary">Copy location</prism-button></prism-dialog>`),
+    center: opener("Open a small dialog", `<prism-dialog heading="Switch project" size="sm"><p>Pick the project this page shows.</p></prism-dialog>`),
+    start: opener("Open the navigation drawer", `<prism-dialog heading="Navigation" placement="start"><prism-tree label="Drawer places"><prism-tree-item label="Attention" value="attention" selected></prism-tree-item><prism-tree-item label="Roadmap" value="roadmap"></prism-tree-item></prism-tree></prism-dialog>`),
+    bottom: opener("Open the bottom sheet", `<prism-dialog heading="Diagram" placement="bottom"><p>The slice's diagram on a phone.</p></prism-dialog>`),
+    "long-content": opener("Open a long dialog", `<prism-dialog heading="Command palette" size="lg">${repeat(30, (index) => `<p>Paragraph ${index + 1} of a body that scrolls inside the dialog.</p>`)}</prism-dialog>`),
+    "long-text": opener(LONG, `<prism-dialog heading="${LONG}"><p>${LONG} ${LONG}</p></prism-dialog>`),
+    "unbroken-name": opener(UNBROKEN, `<prism-dialog heading="${UNBROKEN}"><p>${UNBROKEN}</p></prism-dialog>`)
+  },
+  "prism-popover": {
+    closed: popoverFor("Show the working agents", `<p>Claude on build-2 · Agent · implementation · 41 min left</p>`, { heading: "Agents at work" }),
+    open: popoverFor("Show the record", `<p>Opens anchored to its button and stays inside the window.</p><prism-button size="sm">Copy link</prism-button>`, { heading: "Record" }),
+    "long-content": popoverFor("Show many lines", repeat(30, (index) => `<p>Line ${index + 1} of a popover that scrolls inside itself.</p>`), { heading: "Many lines" }),
+    "long-text": popoverFor(LONG, `<p>${LONG} ${LONG}</p>`, { heading: LONG }),
+    "unbroken-name": popoverFor(UNBROKEN, `<p>${UNBROKEN}</p>`, { heading: UNBROKEN })
+  },
+  "prism-disclosure": {
+    closed: `<prism-disclosure summary="Earlier runs"><p>Three runs.</p></prism-disclosure>`,
+    open: `<prism-disclosure summary="Raw record" open><prism-code><pre><code>{ "status": "passing" }</code></pre></prism-code></prism-disclosure>`,
+    "long-text": `<prism-disclosure summary="${LONG}" open><p>${LONG}</p></prism-disclosure>`,
+    "unbroken-name": `<prism-disclosure summary="${UNBROKEN}" open><p>${UNBROKEN}</p></prism-disclosure>`
+  },
+  "prism-empty-state": {
+    default: `<prism-empty-state heading="No change map yet"><p>The slice records one when it starts.</p></prism-empty-state>`,
+    "with-action": `<prism-empty-state heading="Nothing waits for you"><p>Answered gates move to Earlier.</p><prism-button size="sm">Open the roadmap</prism-button></prism-empty-state>`,
+    "long-text": `<prism-empty-state heading="${LONG}"><p>${LONG}</p></prism-empty-state>`,
+    "unbroken-name": `<prism-empty-state heading="${UNBROKEN}"><p>${UNBROKEN}</p></prism-empty-state>`
+  },
   "prism-banner": {
     info: `<prism-banner tone="info" heading="The review app restarted"><p>This page reconnected.</p></prism-banner>`,
     warning: `<prism-banner tone="warning" heading="The claim expired"><p>Nobody holds the slice.</p></prism-banner>`,
     danger: `<prism-banner tone="danger" heading="The review app stopped"><p>This page is no longer live.</p></prism-banner>`,
-    success: `<prism-banner tone="success" heading="Verification passed"><p>The slice is done.</p></prism-banner>`
+    success: `<prism-banner tone="success" heading="Verification passed"><p>The slice is done.</p></prism-banner>`,
+    dismissible: `<prism-banner tone="warning" heading="This page belongs to one session" dismissible><p>Another session may show this project elsewhere.</p></prism-banner>`,
+    "long-text": `<prism-banner tone="info" heading="${LONG}" dismissible><p>${LONG} ${LONG}</p></prism-banner>`,
+    "unbroken-name": `<prism-banner tone="danger" heading="${UNBROKEN}"><p>${UNBROKEN}</p></prism-banner>`
   },
-  "prism-toast": { hidden: `<prism-toast></prism-toast><p class="catalog-note">A toast shows a message for a few seconds.</p>` },
-  "prism-claim": { inline: `<prism-claim label="Claude on build-2" activity="implementation"></prism-claim>` },
-  "prism-stepper": { default: `<prism-stepper label="Lifecycle"><prism-step phase="requirements" state="done">Requirements</prism-step><prism-step phase="design" state="current">Design</prism-step></prism-stepper>` },
+  "prism-toast": {
+    hidden: `<prism-toast></prism-toast><p class="catalog-note">The page's one toast shows a message at the bottom of the window for five seconds.</p>`,
+    shown: toastButton("Show a message", "Answer sent", "success"),
+    "long-text": toastButton("Show a long message", LONG, "info"),
+    "unbroken-name": toastButton("Show an unbroken message", UNBROKEN, "warning")
+  },
+  "prism-claim": {
+    avatar: claimOf({ variant: "avatar" }),
+    inline: claimOf({ variant: "inline" }) + claimOf({ variant: "inline", label: "Codex on ci", activity: "design", left: 180 }),
+    strip: claimOf({ variant: "strip" }),
+    expired: claimOf({ variant: "inline", label: "Claude on vm", activity: "design", left: -4 }) + claimOf({ variant: "avatar", label: "Claude on vm", left: -4 }),
+    "expired-strip": claimOf({ variant: "strip", label: "Claude on vm", left: -95 }),
+    "long-text": claimOf({ variant: "inline", label: LONG }) + claimOf({ variant: "strip", label: LONG, left: 3000 }),
+    "unbroken-name": claimOf({ variant: "inline", label: UNBROKEN }) + claimOf({ variant: "strip", label: UNBROKEN, left: -3000 })
+  },
+  "prism-stepper": {
+    default: stepper(3),
+    early: stepper(1),
+    shipped: stepper(6),
+    "many-items": `<prism-stepper label="Many steps">${repeat(18, (index) => `<prism-step phase="${PHASES[index % 6]}" state="${index < 7 ? "done" : index === 7 ? "current" : "upcoming"}">Step ${index + 1}</prism-step>`)}</prism-stepper>`,
+    "long-text": `<prism-stepper label="Long steps">${PHASES.map((phase, index) => `<prism-step phase="${phase}" state="${index < 2 ? "done" : index === 2 ? "current" : "upcoming"}">${LONG}</prism-step>`).join("")}</prism-stepper>`,
+    "unbroken-name": `<prism-stepper label="Unbroken steps">${PHASES.map((phase, index) => `<prism-step phase="${phase}" state="${index < 4 ? "done" : index === 4 ? "current" : "upcoming"}">${UNBROKEN}</prism-step>`).join("")}</prism-stepper>`
+  },
   "prism-step": {
-    done: `<prism-stepper label="Lifecycle"><prism-step phase="requirements" state="done">Requirements</prism-step></prism-stepper>`,
-    current: `<prism-stepper label="Lifecycle"><prism-step phase="build" state="current">Build</prism-step></prism-stepper>`,
-    upcoming: `<prism-stepper label="Lifecycle"><prism-step phase="shipped" state="upcoming">Shipped</prism-step></prism-stepper>`
+    done: `<prism-stepper label="Done step"><prism-step phase="requirements" state="done">Requirements</prism-step></prism-stepper>`,
+    current: `<prism-stepper label="Current step"><prism-step phase="build" state="current">Build</prism-step></prism-stepper>`,
+    upcoming: `<prism-stepper label="Upcoming step"><prism-step phase="shipped" state="upcoming">Shipped</prism-step></prism-stepper>`,
+    "long-text": `<prism-stepper label="Long step"><prism-step phase="design" state="current">${LONG}</prism-step></prism-stepper>`,
+    "unbroken-name": `<prism-stepper label="Unbroken step"><prism-step phase="review" state="done">${UNBROKEN}</prism-step></prism-stepper>`
   },
-  "prism-breadcrumbs": { default: `<prism-breadcrumbs><a href="#entry-prism-breadcrumbs">Roadmap</a> <a href="#entry-prism-breadcrumbs">Review app UI kit</a></prism-breadcrumbs>` },
-  "prism-doc": { default: `<prism-doc><h3>Contract</h3><p>The review server serves every file under the kit folder.</p></prism-doc>` },
-  "prism-code": { default: `<prism-code language="js"><pre><code>export const KIT_ELEMENTS = [];</code></pre></prism-code>` }
+  "prism-breadcrumbs": {
+    default: crumbs(["Roadmap", "Review app UI kit", "Kit containers"]),
+    "one-crumb": crumbs(["Attention"]),
+    "many-items": crumbs(Array.from({ length: 12 }, (_, index) => `Level ${index + 1}`)),
+    "long-text": crumbs(["Roadmap", LONG, LONG]),
+    "unbroken-name": crumbs(["Roadmap", UNBROKEN, "Retry timed-out requests until a total deadline"])
+  },
+  "prism-doc": {
+    default: `<prism-doc><h3>Contract</h3><p>The review server serves every file under the kit folder.</p></prism-doc>`,
+    rich: `<prism-doc><h2>Retries</h2><p>A request retries with <code>backoff</code> until <a href="#entry-prism-doc">a total deadline</a>.</p><ul><li>Each retry waits longer.</li><li>No retry outlives the deadline.</li></ul><blockquote><p>Retries never hide a failure.</p></blockquote><table><tr><th>Term</th><th>Meaning</th></tr><tr><td>Deadline</td><td>The time the last retry must end by.</td></tr></table><pre><code><span class="tok-keyword">const</span> deadline = <span class="tok-number">30</span>;</code></pre></prism-doc>`,
+    "long-text": `<prism-doc><h3>${LONG}</h3><p>${LONG} ${LONG}</p></prism-doc>`,
+    "unbroken-name": `<prism-doc><h3>${UNBROKEN}</h3><p><code>${UNBROKEN}</code></p><table><tr><th>${UNBROKEN}</th><td>${UNBROKEN}</td></tr></table></prism-doc>`
+  },
+  "prism-code": {
+    default: `<prism-code language="js"><pre><code>export const KIT_ELEMENTS = [];</code></pre></prism-code>`,
+    numbers: `<prism-code language="js" numbers start="7"><pre><code>const first = 1;
+const second = 2;
+const third = 3;</code></pre></prism-code>`,
+    syntax: `<prism-code language="js" numbers><pre><code><span class="tok-comment">// Retry until the deadline.</span>
+<span class="tok-keyword">export function</span> <span class="tok-function">retry</span>(<span class="tok-attr">task</span>: <span class="tok-type">Task</span>) {
+  <span class="tok-keyword">return</span> <span class="tok-string">"done"</span> + <span class="tok-number">42</span> + <span class="tok-unknown">other</span>;
+}</code></pre></prism-code>`,
+    "long-text": `<prism-code numbers><pre><code>${LONG} ${LONG} ${LONG}</code></pre></prism-code>`,
+    "unbroken-name": `<prism-code><pre><code>${UNBROKEN}${UNBROKEN}</code></pre></prism-code>`
+  }
 };
 
 // Long text and an unbroken name for an element whose specimens do not give their own.
@@ -331,4 +479,11 @@ await loadPreferences();
 apply();
 scope.innerHTML = [designValues(), ...KIT_ELEMENTS.map(entryMarkup)].join("");
 paintSwatches(scope);
+// Specimen buttons open their dialog or show a toast message.
+scope.addEventListener("click", (event) => {
+  const button = event.target.closest?.("prism-button[data-opens], prism-button[data-toast]");
+  if (!button) return;
+  if (button.dataset.opens) document.getElementById(button.dataset.opens)?.show();
+  else document.querySelector("prism-toast")?.show(button.dataset.toast, { tone: button.dataset.tone });
+});
 scope.setAttribute("aria-busy", "false");

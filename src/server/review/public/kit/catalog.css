@@ -101,7 +101,7 @@
   overflow-wrap: anywhere;
 }
 
-.catalog-entry h3 {
+.catalog-entry h3:not(.catalog-stage *) {
   margin: var(--prism-space-5) 0 var(--prism-space-2);
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-xs);
@@ -226,7 +226,7 @@
   min-width: 0;
 }
 
-.catalog-stage > :is(prism-tabs, prism-menu, prism-field, prism-choice, prism-panel, prism-tree, prism-listbox, prism-stepper, prism-banner, prism-empty-state, prism-meter, prism-doc, prism-code, prism-disclosure, prism-breadcrumbs, .catalog-narrow) {
+.catalog-stage > :is(prism-tabs, prism-menu, prism-field, prism-choice, prism-panel, prism-tree, prism-listbox, prism-stepper, prism-banner, prism-empty-state, prism-meter, prism-doc, prism-code, prism-disclosure, prism-breadcrumbs, prism-claim[variant="strip"], .catalog-narrow) {
   flex: 1 1 100%;
   min-width: 0;
 }
