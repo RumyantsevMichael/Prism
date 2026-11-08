@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import readline from "node:readline";
+import { jsonLine, readJsonLines } from "./json-lines.mjs";
 import { pluginURL } from "./plugin-root.mjs";
 import { ACTIVE_OPERATIONS_SCHEMA } from "./workflow/active-operations.mjs";
 import { assertInput } from "./workflow/artifact-schema.mjs";
@@ -147,7 +147,7 @@ async function server(argumentsValue, metadata) {
 function result(id, value) {
   return new Promise((resolve) => {
     try {
-      process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result: value })}\n`, (error) => resolve(!error));
+      process.stdout.write(jsonLine({ jsonrpc: "2.0", id, result: value }), (error) => resolve(!error));
     } catch {
       resolve(false);
     }
@@ -309,7 +309,7 @@ function failure(id, code, message, data) {
   if (data !== undefined) {
     response.error.data = data;
   }
-  process.stdout.write(`${JSON.stringify(response)}\n`);
+  process.stdout.write(jsonLine(response));
 }
 
 function stateErrorData(error) {
@@ -864,7 +864,7 @@ function waitUnsupportedReason() {
 }
 
 function progress(progressToken, value, message) {
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: value, message } })}\n`);
+  process.stdout.write(jsonLine({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: value, message } }));
 }
 
 async function callGateWait(argumentsValue, metadata, requestId) {
@@ -1275,7 +1275,7 @@ if (process.env.CLAUDE_PROJECT_DIR) {
 const callsInProgress = new Set();
 const cancelledCalls = new Set();
 
-const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+const input = readJsonLines(process.stdin);
 input.on("line", async (line) => {
   if (!line.trim()) {
     return;
