@@ -1,7 +1,8 @@
 import path from "node:path";
 import { realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { deliveredAnswers, gateWaitDirectory, markAnswersDelivered } from "../server/workflow/gate-wait-requests.mjs";
+import { askedGates, forgetAskedGates } from "../server/workflow/approval-deliveries.mjs";
+import { gateWaitDirectory } from "../server/workflow/gate-wait-requests.mjs";
 import { listInitiatives } from "../server/workflow/record-store.mjs";
 import { readCoordinationState } from "../server/workflow/state.mjs";
 import { readWorkflowConfig } from "../server/workflow/workflow-config.mjs";
@@ -58,31 +59,31 @@ export async function openGates(projectRoot) {
   return gates;
 }
 
-// An approval answer older than this is no longer a reply to the user's next message, so a machine that first syncs a store is not handed every past approval.
-const APPROVAL_ANSWER_DAYS = 7;
-
-// The approval gates of the requirements and ADRs this checkout sees in its record store: each unanswered one, and the latest answer of each artifact
-// that no later question replaced and that no agent of this machine has seen, from a wait or an earlier prompt.
-async function approvalGates(projectRoot, environment, now = Date.now()) {
-  const config = await readWorkflowConfig(projectRoot);
-  if (!config.exists || !config.workspace?.store) return [];
-  let gates;
-  try {
-    const { openApprovalGates } = await import("../server/workflow/store-artifacts.mjs");
-    gates = await openApprovalGates(projectRoot);
-  } catch {
-    return [];
-  }
+// The approval gates that this checkout asked and has not received the answer of, as this machine remembers them, each with its artifact:
+// unanswered ones without an answer and answered ones with it. A gate that is gone, replaced by a later question or with its artifact, is forgotten.
+// Another checkout, on this machine or another, sees the same records but asked none of these gates, so it is handed none of them.
+async function approvalGates(projectRoot, environment) {
   const directory = gateWaitDirectory(environment);
-  const delivered = await deliveredAnswers({ directory });
-  const recent = (gate) => now - Date.parse(gate.answer.answeredAt ?? "") <= APPROVAL_ANSWER_DAYS * 86400000;
-  return gates.filter(({ gate }) => !gate.answer || (recent(gate) && !delivered.has(gate.id))).map((item) => ({ ...item, directory }));
+  let ids;
+  try {
+    ids = await askedGates(projectRoot, { directory });
+  } catch {
+    return { items: [], receive: async () => {} };
+  }
+  if (!ids.size) return { items: [], receive: async () => {} };
+  let items;
+  try {
+    const { approvalGatesWithIds } = await import("../server/workflow/store-artifacts.mjs");
+    items = await approvalGatesWithIds(projectRoot, [...ids]);
+  } catch {
+    // An unreadable store forgets nothing, so the answers arrive once it can be read again.
+    return { items: [], receive: async () => {} };
+  }
+  const found = new Set(items.map(({ gate }) => gate.id));
+  const gone = [...ids].filter((id) => !found.has(id));
+  const receive = (received) => forgetAskedGates(projectRoot, [...gone, ...received.map(({ gate }) => gate.id)], { directory }).catch(() => {});
+  return { items, receive };
 }
-
-const markDelivered = async (items) => {
-  const answered = items.filter(({ gate }) => gate.answer);
-  if (answered.length) await markAnswersDelivered(answered.map(({ gate }) => gate.id), { directory: answered[0].directory }).catch(() => {});
-};
 
 const scopeName = (scope) => scope?.label ?? scope?.kind ?? "workspace";
 const approvalLine = ({ artifact, gate }) => `- Approval gate ${gate.id} (${artifact.path}, scope ${scopeName(artifact.scope)}, status ${gate.status}): "${gate.question}"`;
@@ -96,35 +97,49 @@ function bounded(lines) {
   return text.length > MAX_CONTEXT_CHARACTERS ? `${text.slice(0, MAX_CONTEXT_CHARACTERS - 120)}\n… More gates are recorded; read them with get_coordination_state.` : text;
 }
 
+// The answers whose whole line the bounded text kept, which are the ones the agent received.
+const kept = (text, answers) => answers.filter((item) => text.includes(approvalAnswer(item)));
+
 // A resumed session no longer waits on the gates it opened before, so it learns which are open and waits on them again.
-async function resumedGates(projectRoot, environment) {
-  const gates = await openGates(projectRoot);
+// A session that starts or resumes in a checkout also learns the approval gates that checkout asked: the unanswered ones to wait on, and the answers it has not received.
+async function startedGates(projectRoot, environment, resumed) {
+  const gates = resumed ? await openGates(projectRoot) : [];
   const approvals = await approvalGates(projectRoot, environment);
-  if (!gates.length && !approvals.length) return null;
+  if (!gates.length && !approvals.items.length) {
+    await approvals.receive([]);
+    return null;
+  }
   const waiting = gates.filter(({ gate }) => !gate.answer), answered = gates.filter(({ gate }) => gate.answer);
-  const asked = approvals.filter(({ gate }) => !gate.answer), approved = approvals.filter(({ gate }) => gate.answer);
-  const lines = ["This session resumed while Prism user gates are open in this project, and nothing waits on them now."];
+  const asked = approvals.items.filter(({ gate }) => !gate.answer), approved = approvals.items.filter(({ gate }) => gate.answer);
+  const lines = [resumed ? "This session resumed while Prism user gates are open in this project, and nothing waits on them now." : "This session started while Prism approval gates that this checkout asked are open, and nothing waits on them now."];
   if (waiting.length) lines.push("For each unanswered gate this session asked, call wait_for_user_gate with its id once you have handled the user's message, so a browser answer reaches you without another message.", ...waiting.map(gateLine));
-  if (asked.length) lines.push("For each unanswered approval gate this session asked, call wait_for_user_gate with its id and the artifact's path as artifact once you have handled the user's message.", ...asked.map(approvalLine));
+  if (asked.length) lines.push("This checkout asked these approval gates, which the user has not answered; call wait_for_user_gate with each id and the artifact's path as artifact once you have handled the user's message.", ...asked.map(approvalLine));
   if (answered.length) lines.push("The user already answered these gates in the review browser; act on each answer, then remove the gate with an update_coordination_state resolve operation for its id.", ...answered.map((item) => `${gateLine(item)} Answer: ${choiceText(item.gate)}${item.gate.answer.note ? `. Note: ${item.gate.answer.note}` : ""}.`));
-  if (approved.length) lines.push("The user already answered these approval gates in the review browser.", ...approved.map(approvalAnswer), APPROVAL_ACT);
-  await markDelivered(approved);
-  return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: bounded(lines) } };
+  if (approved.length) lines.push("The user already answered these approval gates that this checkout asked, in the review browser.", ...approved.map(approvalAnswer), APPROVAL_ACT);
+  const text = bounded(lines);
+  await approvals.receive(kept(text, approved));
+  return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: text } };
 }
 
-// Answers recorded in the review browser reach the agent with the user's next prompt, until the agent resolves each gate.
+// Answers recorded in the review browser reach the agent with the user's next prompt, until the agent resolves each gate,
+// and an approval answer reaches the checkout that asked its gate with the next prompt of any session there, once.
 export async function deliverGateAnswers({ input = process.stdin, environment = process.env } = {}) {
   const hookInput = JSON.parse(await readHookInput(input));
   const event = hookInput.hook_event_name ?? "UserPromptSubmit";
-  // Only a resumed session lost a wait; a new session did not open the project's gates, and compaction keeps a running wait.
-  if (event === "SessionStart" ? hookInput.source !== "resume" : event !== "UserPromptSubmit") return null;
+  // A resumed session lost a wait, and a new one never had it; compaction keeps a running wait.
+  const start = event === "SessionStart" && ["resume", "startup", "clear"].includes(hookInput.source);
+  if (!start && event !== "UserPromptSubmit") return null;
   const directory = typeof hookInput.cwd === "string" && path.isAbsolute(hookInput.cwd) ? hookInput.cwd : environment.CLAUDE_PROJECT_DIR;
   if (!directory) return null;
   const projectRoot = await realpath(directory);
-  if (event === "SessionStart") return resumedGates(projectRoot, environment);
+  if (start) return startedGates(projectRoot, environment, hookInput.source === "resume");
   const gates = await answeredGates(projectRoot);
-  const approved = (await approvalGates(projectRoot, environment)).filter(({ gate }) => gate.answer);
-  if (!gates.length && !approved.length) return null;
+  const approvals = await approvalGates(projectRoot, environment);
+  const approved = approvals.items.filter(({ gate }) => gate.answer);
+  if (!gates.length && !approved.length) {
+    await approvals.receive([]);
+    return null;
+  }
   const lines = ["The user answered these Prism user gates in the review browser."];
   if (gates.length) {
     lines.push("Treat each answer as the user's reply to that question, act on it, then remove the gate with an update_coordination_state resolve operation for its id.");
@@ -132,9 +147,10 @@ export async function deliverGateAnswers({ input = process.stdin, environment = 
       lines.push(`${gateLine(item)} Answer: ${choiceText(item.gate)}${item.gate.answer.note ? `. Note: ${item.gate.answer.note}` : ""}.`);
     }
   }
-  if (approved.length) lines.push(...approved.map(approvalAnswer), APPROVAL_ACT);
-  await markDelivered(approved);
-  return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: bounded(lines) } };
+  if (approved.length) lines.push("This checkout asked these approval gates.", ...approved.map(approvalAnswer), APPROVAL_ACT);
+  const text = bounded(lines);
+  await approvals.receive(kept(text, approved));
+  return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: text } };
 }
 
 async function main() {

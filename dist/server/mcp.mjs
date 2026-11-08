@@ -36,6 +36,7 @@ import { checkpointPause, readCoordinationState, updateCoordinationState, valida
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
+import { forgetAskedGates, recordAskedGates } from "./workflow/approval-deliveries.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
 import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
 import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
@@ -868,6 +869,16 @@ function progress(progressToken, value, message) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: value, message } })}\n`);
 }
 
+// An approval answer reaches only the checkout whose ask_approval recorded its gate, which this machine remembers; a get_artifact read that returns the answer
+// as latestAnswer is one way that checkout receives it. Failing to remember never fails the call, whose store change already happened.
+async function noteApprovalDelivery(name, projectRoot, value) {
+  try {
+    if (name === "update_artifact") await recordAskedGates(projectRoot, (value.artifacts ?? []).map((entry) => entry.gate).filter((gate) => typeof gate === "string"));
+    else if (typeof value.latestAnswer?.gate === "string") await forgetAskedGates(projectRoot, [value.latestAnswer.gate]);
+  } catch {
+  }
+}
+
 async function callGateWait(argumentsValue, metadata, requestId) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   const gateIds = argumentsValue.gateIds ?? (argumentsValue.gateId === undefined ? undefined : [argumentsValue.gateId]);
@@ -1215,6 +1226,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (name === "get_artifact" || name === "update_artifact") {
     const input = { ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) };
     const value = name === "get_artifact" ? await getArtifact(input) : await updateArtifact(input);
+    await noteApprovalDelivery(name, input.projectRoot, value);
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (repositoryTools.has(name)) {

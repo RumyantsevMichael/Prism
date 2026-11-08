@@ -1,4 +1,4 @@
-import { markAnswersDelivered } from "./gate-wait-requests.mjs";
+import { forgetAskedGates } from "./approval-deliveries.mjs";
 import { readCoordinationState } from "./state.mjs";
 
 export const DEFAULT_WAIT_MINUTES = 720;
@@ -66,11 +66,11 @@ function outcome(gateIds, pending, first) {
 
 // The wait reads the coordination state record, or an artifact's status record, rather than server memory, so an answer recorded by any review server process ends it.
 // After the first answer it keeps polling briefly, because a user often answers several gates in one visit.
-// An artifact wait that returns answers notes them as delivered, so the prompt hook does not deliver them again.
+// An artifact wait that returns answers is how the checkout that asked them receives them, so the prompt hook does not hand them to it again.
 export async function waitForUserGates(input) {
   const result = await waitOnGates(input);
   if (result.status === "answered" && typeof input.artifact === "string" && input.artifact) {
-    await markAnswersDelivered(result.answered.map((gate) => gate.id), input.deliveredDirectory ? { directory: input.deliveredDirectory } : {}).catch(() => {});
+    await forgetAskedGates(input.projectRoot, result.answered.map((gate) => gate.id), input.deliveredDirectory ? { directory: input.deliveredDirectory } : {}).catch(() => {});
   }
   return result;
 }

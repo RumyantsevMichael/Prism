@@ -126,12 +126,12 @@ test("a wait on an artifact's approval gate ends as resolved when the artifact i
 
 const hook = (event, cwd, app, source) => deliverGateAnswers({ input: Readable.from([JSON.stringify({ hook_event_name: event, cwd, ...(source ? { source } : {}) })]), environment: { PRISM_REVIEW_APP_DIR: app } });
 
-test("an approval answer reaches the agent with the next message once, and get_artifact returns it", async (context) => {
+test("an approval answer reaches the asking checkout with the next message once, and get_artifact returns it", async (context) => {
   const { place, api, prism } = await project(context);
   await writeArtifact(prism, FILE, requirementFile("Billing"));
   const gate = await askApproval(prism);
   const resumed = (await hook("SessionStart", api, place.app, "resume")).hookSpecificOutput.additionalContext;
-  assert.match(resumed, new RegExp(`call wait_for_user_gate with its id and the artifact's path as artifact[\\s\\S]*Approval gate ${gate} \\(${FILE}, scope workspace, status Approved\\)`));
+  assert.match(resumed, new RegExp(`call wait_for_user_gate with each id and the artifact's path as artifact[\\s\\S]*Approval gate ${gate} \\(${FILE}, scope workspace, status Approved\\)`));
   assert.equal(await hook("UserPromptSubmit", api, place.app), null, "an unanswered gate is no answer");
 
   const review = await reviewBrowser(context, api);
@@ -152,6 +152,32 @@ test("an approval answer reaches the agent with the next message once, and get_a
   assert.equal((await answer(review, { artifact: FILE, scope: "workspace", id: again, choice: "approve", note: null })).status, 200);
   assert.match((await hook("UserPromptSubmit", api, place.app)).hookSpecificOutput.additionalContext, new RegExp(`Approval gate ${again} .* Answer: Approve\\. Prism recorded Approved`));
   assert.equal(ok(await prism.call("get_artifact", { path: FILE })).latestAnswer.choice, "approve");
+});
+
+test("a new session is told the approval gates its checkout asked, and a replaced gate is forgotten", async (context) => {
+  const { place, api, prism } = await project(context);
+  await writeArtifact(prism, FILE, requirementFile("Billing"));
+  const first = await askApproval(prism);
+  const second = await askApproval(prism);
+  const started = (await hook("SessionStart", api, place.app, "startup")).hookSpecificOutput.additionalContext;
+  assert.match(started, new RegExp(`Approval gate ${second} \\(${FILE}`), "a new session waits on the gate its checkout asked");
+  assert.doesNotMatch(started, new RegExp(first), "a gate that a later question replaced is no longer open");
+  assert.equal(await hook("SessionStart", api, place.app, "compact"), null, "compaction keeps a running wait");
+  const asked = JSON.parse(await readFile(path.join(place.app, "gate-waits", "asked-approval-gates.json"), "utf8")).gates.map((entry) => entry.gate);
+  assert.deepEqual(asked, [second], "the machine forgets the replaced gate and keeps no answer in the store");
+});
+
+test("an answer the checkout has not received still reaches it after it asks again", async (context) => {
+  const { place, api, prism } = await project(context);
+  await writeArtifact(prism, FILE, requirementFile("Billing"));
+  const first = await askApproval(prism);
+  const review = await reviewBrowser(context, api);
+  assert.equal((await answer(review, { artifact: FILE, scope: "workspace", id: first, choice: "request-changes", note: "Name the currency." })).status, 200);
+  const second = await askApproval(prism);
+  const delivered = (await hook("UserPromptSubmit", api, place.app)).hookSpecificOutput.additionalContext;
+  assert.match(delivered, new RegExp(`Approval gate ${first} .* Note: Name the currency\\.`));
+  assert.doesNotMatch(delivered, new RegExp(second), "the new question has no answer yet");
+  assert.equal(await hook("UserPromptSubmit", api, place.app), null);
 });
 
 test("an approval answer that a wait returned is not delivered again with the next message", async (context) => {

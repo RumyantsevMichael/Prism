@@ -17,33 +17,12 @@ function requestFile(directory, sessionId) {
   return path.join(directory, `${createHash("sha256").update(sessionId, "utf8").digest("hex").slice(0, 32)}.json`);
 }
 
-// The approval answers that already reached an agent of this machine, by gate id, so the prompt hook delivers each one once.
-// An approval gate needs no resolve, so this list, not the record, says which answers the agent has seen.
-const DELIVERED = "delivered-approval-answers.json";
-const DELIVERED_KEPT = 500;
-
-export async function deliveredAnswers({ directory = gateWaitDirectory() } = {}) {
-  try {
-    const value = JSON.parse(await readFile(path.join(directory, DELIVERED), "utf8"));
-    return new Set(Array.isArray(value?.gates) ? value.gates.filter((id) => typeof id === "string") : []);
-  } catch {
-    return new Set();
-  }
-}
-
-export async function markAnswersDelivered(gateIds, { directory = gateWaitDirectory() } = {}) {
-  if (!gateIds.length) return;
-  const known = [...await deliveredAnswers({ directory })].filter((id) => !gateIds.includes(id));
-  await mkdir(directory, { recursive: true });
-  const file = path.join(directory, DELIVERED);
-  const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ gates: [...known, ...gateIds].slice(-DELIVERED_KEPT) })}\n`);
-  await rename(temporary, file);
-}
+// The approval gates that this machine's checkouts asked live beside the requests, kept until each answer reaches its checkout, so expiry passes them by.
+export const ASKED_GATES_FILE = "asked-approval-gates.json";
 
 async function removeExpired(directory, now) {
   for (const name of await readdir(directory).catch(() => [])) {
-    if (name === DELIVERED) continue;
+    if (name.startsWith(ASKED_GATES_FILE)) continue;
     const file = path.join(directory, name);
     const info = await stat(file).catch(() => null);
     if (info && now - info.mtimeMs > WAIT_REQUEST_TTL_MS) await rm(file, { force: true });

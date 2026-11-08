@@ -5,7 +5,7 @@ import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
 import { ARTIFACT_ACCEPTED, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, collideInLetterCase, componentScope, holdsArtifactPaths, kindInScope, locationArtifact, malformedArtifactName, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
-import { acceptedLocation, answerApproval, askApproval, hasStatus, latestAnsweredGate, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
+import { acceptedLocation, answerApproval, askApproval, hasStatus, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
 import { pruneArtifactFolders, scheduleRecordSync } from "./record-store-sync.mjs";
@@ -911,20 +911,19 @@ export async function pendingApprovalGates(projectRoot) {
 }
 
 /**
- * The approval gates that an agent still has to hear about, for every requirement and ADR that the checkout sees, as { artifact: { path, scope }, gate },
- * with gate as a gate wait reads it: each pending gate, and the latest answered gate of an artifact that no later question replaced.
+ * The approval gates named by ids among the requirements and ADRs that the checkout sees, as { artifact: { path, scope }, gate },
+ * with gate as a gate wait reads it: pending without an answer, or answered with it. A gate that a later question replaced, or whose artifact is gone, is not listed.
  */
-export async function openApprovalGates(projectRoot) {
+export async function approvalGatesWithIds(projectRoot, ids) {
   return refusing(async () => {
     await configuration(projectRoot);
+    const wanted = new Set(ids);
     const seen = await seenScopes(projectRoot);
     const gates = [];
+    if (!wanted.size) return gates;
     for (const entry of await statusHoldings(seen)) {
       const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path));
-      const answered = latestAnsweredGate(record);
-      const open = record.pending.length ? record.pending : answered ? [answered] : [];
-      const shaped = waitableGates({ ...record, pending: open.filter((gate) => !gate.answer), closed: open.filter((gate) => gate.answer) });
-      for (const gate of shaped) gates.push({ artifact: { path: entry.path, scope: entry.scope }, gate: { ...gate, artifact: entry.path } });
+      for (const gate of waitableGates(record)) if (wanted.has(gate.id)) gates.push({ artifact: { path: entry.path, scope: entry.scope }, gate: { ...gate, artifact: entry.path } });
     }
     return gates;
   });
