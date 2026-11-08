@@ -96,6 +96,39 @@ Run the review-server tests after a server or UI change:
 npm test
 ```
 
+The review app's browser tests run the real review page in Chromium through an installed Playwright, local or global, and skip with an install hint when there is none.
+CI installs `playwright@1.63.0` and Chromium and sets `PRISM_REQUIRE_BROWSER=1`, under which a missing browser fails the run instead of skipping the browser tests.
+Set the same variable locally to make sure the browser tests ran:
+
+```bash
+npm install -g playwright@1.63.0
+npx playwright install chromium
+PRISM_REQUIRE_BROWSER=1 npm test
+```
+
+### Review app design values
+
+Every design value of the review app, such as a color, size, radius, shadow, blur, layer, font, or motion duration, lives in `src/server/review/public/kit/tokens.css`.
+Every other stylesheet, element, and script of the review app reads these `--prism-*` custom properties and declares no raw value of its own.
+A theme is one rule under `[data-theme="<name>"]` that gives a value to every semantic token, the `--prism-color-*` and `--prism-shadow-*` properties and `--prism-gradient-canvas`.
+The shipped `light` and `dark` themes declare the same set of names, and light is also the `:root` default.
+Compact sizes sit on `:root`, and `[data-density="comfortable"]` raises them.
+To change a shade, change it in both themes when both need it, and keep the contrast pairs that `test/server/review-kit-tokens.test.mjs` checks.
+The fonts, Geist and Geist Mono under the SIL Open Font License, ship in `kit/fonts/` and load from the review app, never from another host.
+The review app stores the user's theme and density in `review-preferences.json` in the review app folder, so the choice survives a restart on another port.
+
+The kit guard names each raw design value and each control styled or written around the kit:
+
+```bash
+node scripts/review-kit/kit-guard.mjs
+```
+
+It checks every stylesheet, script, and page under `src/server/review/public/` and prints `<file>:<line>: <rule> <value>` for each finding.
+The `raw-value` rule names a color, size, layer, or time literal outside `kit/tokens.css` and `kit/plantuml-defaults.js`.
+The `control-style` rule names a stylesheet selector outside `kit/` that styles a native control, a control role, a `prism-` element, or a class named like a control.
+The `native-control` rule names a native control, a control role, or a `title` attribute written in a script or page outside `kit/`.
+The older stylesheet `review.css` and the screens' scripts still hold findings until those screens move onto the kit.
+
 Run a local human review from the repository root:
 
 ```bash
@@ -104,6 +137,7 @@ Run a local human review from the repository root:
 
 To try the entity-first review browser, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
 The seed builds a temporary project whose roadmap, initiative records, change map, review ledger, coordination state, recorded user gates, and evidence come from the real MCP tools.
+The project is a Git repository, so the browser also lists its source files.
 The browser opens on Attention, which lists the recorded user gates, and its sidebar expands only the path to the open initiative, slice, or library section.
 Answering a gate on Attention records the answer in the initiative's coordination state, and the `deliver-gate-answers` prompt hook passes answered gates to the agent with the next user message until the agent resolves them.
 The same hook runs when a session resumes and lists every open gate, so the resumed agent waits on its unanswered gates again.

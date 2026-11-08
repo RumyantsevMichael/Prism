@@ -34,7 +34,15 @@ jobs:
       - name: Validate Skill Definition Markdown
         run: npm run validate:sdm
 
+      # The review app's browser tests run in Chromium through a global Playwright, which is not a repository dependency.
+      - name: Install Playwright and Chromium for the browser tests
+        run: |
+          npm install -g playwright@1.63.0
+          npx playwright install --with-deps chromium
+
       - name: Test the server and release automation
+        env:
+          PRISM_REQUIRE_BROWSER: "1"
         run: |
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
