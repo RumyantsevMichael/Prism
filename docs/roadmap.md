@@ -12,6 +12,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Shared record store** (`shared-record-store`): Let every checkout and machine of a project share one set of Prism records through an ordinary Git repository, without losing bytes or colliding on unrelated changes.
 - **Single review app** (`single-review-app`): Run one review app per user that every agent session and project shares, with a project switcher that shows which project waits on the user.
 - **Repository intelligence** (`repository-intelligence`): Give workflow agents deterministic repository evidence: providers, context planning, session capacity, structural analysis, and duplication gates.
+- **Shipped work as history** (`shipped-work-history`): Treat a shipped initiative's state as immutable history that tools and skills recognise, and let fixes to done work ship inside the initiative that has not shipped yet.
 
 ### Next
 
