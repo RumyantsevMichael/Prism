@@ -254,9 +254,10 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     if (!project) {
       const baseUrl = `http://127.0.0.1:${port}${viewerPrefix()}/p/${id}`;
       const onViewer = (sendNotice) => deliverPendingNotices(id, sendNotice);
+      const onAction = (event, { shared }) => announceAction(project, event, shared);
       // A new project starts as the most recent, so the recent limit never drops the project being registered.
       project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [], intelligenceDirectories: [], recordStoreDirectories: [] };
-      project.review = createProjectReview({ projectRoot: root, baseUrl, instance, appVersion: pluginVersion, onViewer, evidenceStore: () => evidenceStoreOf(project),
+      project.review = createProjectReview({ projectRoot: root, baseUrl, instance, appVersion: pluginVersion, onViewer, onAction, evidenceStore: () => evidenceStoreOf(project),
         intelligenceDirectories: () => intelligenceDirectoriesOf(project), writeSessions });
       projects.set(id, project);
       if (persist) await rememberProjects();
@@ -286,6 +287,19 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     if (open || project.review.viewerCount() > 0) pendingNotices.delete(project.id);
     else if (!watched) pendingNotices.set(project.id, { notice, expiresAt: now + noticeMs });
     return open;
+  }
+
+  // An applied action reaches every checkout's page whose records resolve to the same record store, since those pages show the same records;
+  // an index rebuild, and any action of a page whose store cannot be resolved, reaches only the applying page.
+  async function announceAction(project, event, shared) {
+    project.review.notify("action", event);
+    if (!shared) return;
+    const storeOf = (root) => describeRecordStore(root).then((store) => store.location ?? null, () => null);
+    const location = await storeOf(project.root);
+    if (!location) return;
+    await Promise.all([...projects.values()].filter((other) => other !== project && other.review.viewerCount() > 0).map(async (other) => {
+      if (await storeOf(other.root) === location) other.review.notify("action", event);
+    }));
   }
 
   // A project folder that is gone or records that cannot be read give an unknown count rather than a misleading zero.

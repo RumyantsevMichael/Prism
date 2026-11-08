@@ -15,7 +15,7 @@ import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
-import { applyAction, componentIndexingStatus, listActions, listActionTargets } from "../workflow/actions.mjs";
+import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 
@@ -440,7 +440,9 @@ async function readJson(request) {
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
 // writeSessions is the write session store of the server or app that serves this page; without one, no request can write.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null,
+// onAction(event, { shared }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
+// shared is false for an index target, whose history belongs to this checkout alone. Without it, the event reaches this page's viewer streams.
+export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null,
   rebuildIndex = (root, component) => backgroundPreparation().then((module) => module.startIndexRebuild(root, component ? { component: { identity: component.identity, folder: component.folder } } : {})), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
   let fingerprint = null;
   function currentFingerprint() {
@@ -739,6 +741,12 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         const result = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer });
         if (result.applied) forgetWorkspace();
         sendJson(response, 200, result);
+        if (result.applied) {
+          const target = parseTarget(result.applied.target);
+          const event = { ...result.applied, initiative: target?.initiative ?? null };
+          if (onAction) await Promise.resolve(onAction(event, { shared: target?.kind !== "index" })).catch(() => {});
+          else notify("action", event);
+        }
       } catch (error) {
         sendActionError(response, error);
       }

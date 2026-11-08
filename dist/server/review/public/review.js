@@ -12,6 +12,7 @@ import { createRecordStoreStatus } from "./views/record-store.js";
 import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connection.js";
 import { badgedIcon, notificationText, shouldNotify, signalTitle } from "./views/attention-signal.js";
 import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-tab.js";
+import { shownActionEntries } from "./views/actions.js";
 
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
@@ -115,6 +116,43 @@ function writeSession() {
 function writeHeaders() {
   const token = writeSession();
   return token ? { "X-Prism-Write": token } : {};
+}
+
+// The action registry as the views use it: listings carry whether this tab can write, and every change goes through the apply route with the write session.
+const actionApi = {
+  async list(target) {
+    if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
+    const response = await fetch(`./api/actions?target=${encodeURIComponent(target)}`, { cache: "no-store", headers: writeHeaders() });
+    const listing = await response.json().catch(() => ({}));
+    if (!response.ok) throw Object.assign(new Error(listing.message ?? "The actions could not be read."), { code: listing.code });
+    return listing;
+  },
+  async apply(request) {
+    if (connection === "stopped") return { status: 0, json: { message: STOPPED_MESSAGE } };
+    const response = await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request) })
+      .catch(() => null);
+    if (!response) return { status: 0, json: { message: "The review app did not answer, so the change was not applied. Try again in a moment." } };
+    return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };
+  },
+  confirm: confirmAction,
+  toast: (message) => showToast(message)
+};
+
+// A change that needs the person's confirmation asks in the page's modal dialog; Escape and Cancel decline, and only Confirm resolves true.
+function confirmAction({ title, message }) {
+  const dialog = document.getElementById("action-dialog");
+  return new Promise((resolve) => {
+    const returnFocus = document.activeElement;
+    document.getElementById("action-dialog-title").textContent = title;
+    document.getElementById("action-dialog-message").textContent = message;
+    dialog.returnValue = "";
+    dialog.addEventListener("close", () => {
+      resolve(dialog.returnValue === "confirm");
+      if (returnFocus?.isConnected) returnFocus.focus();
+    }, { once: true });
+    dialog.showModal();
+    dialog.querySelector('button[value="cancel"]').focus();
+  });
 }
 
 // Exchanges a grant in the address fragment once, and removes the fragment without a new history entry so a reload or a copied address holds no grant.
@@ -626,6 +664,13 @@ function connectSessionEvents() {
       notices.delete(notice.projectId);
       notices.set(notice.projectId, notice);
       renderNotices();
+    } catch {
+    }
+  });
+  // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload.
+  sessionStream.addEventListener("action", (event) => {
+    try {
+      document.dispatchEvent(new CustomEvent("prism:action", { detail: JSON.parse(event.data) }));
     } catch {
     }
   });
@@ -1331,6 +1376,7 @@ function viewContext(path, state) {
       openRef(artifactPath, rest);
     },
     openEvidence: (id, label) => openEvidence(id, label, viewContext(path, state)),
+    actionApi,
     // A view embeds a PlantUML file as the same diagram card that opening the file shows.
     async mountDiagram(target, diagramPath) {
       const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(diagramPath)}`);
@@ -1380,7 +1426,7 @@ function paletteEntries() {
   const indexed = navigation.index ?? [];
   const known = new Set(indexed.map((entry) => entry.ref));
   const files = [...availableArtifacts].filter((file) => !known.has(file)).map((file) => ({ ref: file, label: fileName(file), kind: "file", detail: file }));
-  return [...places, ...indexed, ...files];
+  return [...shownActionEntries(), ...places, ...indexed, ...files];
 }
 
 let recordStoreStatus = null;
@@ -1444,7 +1490,7 @@ async function initialize() {
     meter: document.getElementById("indexing-meter"),
     panel: document.getElementById("indexing-panel"),
     fetchJson,
-    writeHeaders
+    actionApi
   });
   availableArtifacts = new Set([...data.artifacts, ...(data.sources ?? [])]);
   missingTabs = new Set(data.missingTabs ?? []);
@@ -1586,7 +1632,10 @@ async function initialize() {
     renderTabs();
     await showArtifact(selectedPath);
   }
+  let polls = 0;
   setInterval(async () => {
+    // Shown action lists check their listing every few seconds, so a change an agent made shows without a reload.
+    if (++polls % 3 === 0 && connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
     try {
       const refreshed = await fetch("./api/index", { cache: "no-store" }).catch(() => null);
       reportRefresh(Boolean(refreshed?.ok));

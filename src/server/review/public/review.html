@@ -115,6 +115,16 @@
     </div>
   </footer>
   <dialog id="store-dialog" class="store-dialog" aria-labelledby="store-dialog-title"></dialog>
+  <dialog id="action-dialog" class="store-dialog action-dialog" aria-labelledby="action-dialog-title" aria-describedby="action-dialog-message">
+    <form method="dialog">
+      <header class="store-dialog-header"><h2 id="action-dialog-title">Confirm the change</h2></header>
+      <div class="store-dialog-body"><p id="action-dialog-message"></p></div>
+      <footer class="action-dialog-buttons">
+        <button type="submit" class="tool-button" value="cancel">Cancel</button>
+        <button type="submit" class="tool-button primary" value="confirm">Confirm</button>
+      </footer>
+    </form>
+  </dialog>
   <aside id="evidence-drawer" class="evidence-drawer" aria-label="Evidence" hidden>
     <header class="evidence-drawer-header">
       <div class="evidence-trail" id="evidence-trail"></div>
