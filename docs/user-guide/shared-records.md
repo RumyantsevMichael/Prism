@@ -174,6 +174,16 @@ The next Prism tool result on that machine names the record and the saved file, 
 Compare the saved file with the current record, and redo the change through Prism's tools if it still matters.
 Prism never replaces a record that changed while a merge was running: it leaves the branch where it was and resolves the change on the next sync.
 
+## When two people change the same artifact
+
+With store sync on, each `update_artifact` that changes a file, and each plan file or view that Prism writes into the store, is committed and pushed by the next sync without a further call.
+Changes to different lines of one artifact on two machines merge, so in a file with one sentence per line, edits to different sentences both survive.
+When both machines change the same line differently, or one machine makes a file where the other made a folder of the same name, the first push wins.
+The machine whose push lost keeps the upstream artifact and saves its own files under `.prism-sync/conflicts/<time>/artifacts/` in the store, so no bytes are lost.
+The next tool result of each running Prism server on that machine that uses the store names the artifact's path, its scope, and the saved copy.
+Read the artifact again with `get_artifact`, and redo the change with `update_artifact` if it still matters.
+A sync that starts while an artifact update is still writing leaves that update to the next sync, so it never merges the upstream over a change in progress.
+
 ## Who works on a slice
 
 Starting a slice, or starting the design of a scope, claims it for the agent session that does the work, so no other agent in any checkout or on any machine that shares the records starts it at the same time.
@@ -207,15 +217,16 @@ Anyone may release any claim, and the initiative's history records who released 
 The review browser's status bar names the record store and when it last synced, and `.prism-sync/status.json` in the store holds the details.
 When the last sync did not succeed, clicking the sync state opens its message, its time, and every saved conflict.
 Each saved conflict shows the saved local copy against the current record as a diff, so you can ask an agent to redo the change that lost.
+The list shows saved records, while a saved artifact is named in the next tool result as described above.
 
 | State | Meaning | What to do |
 | --- | --- | --- |
 | `ok` | The last sync committed, merged, and pushed. | Nothing. |
-| `conflicts` | A record changed on both sides in a way that does not merge; the local version is saved under `.prism-sync/conflicts/`. | Review the saved file. |
+| `conflicts` | A record or an artifact changed on both sides in a way that does not merge; the local version is saved under `.prism-sync/conflicts/`. | Review the saved file. |
 | `no_upstream` | A path store's branch has no upstream, so Prism only commits locally; a remote store sets its upstream on its first sync instead. | Set an upstream with `git branch --set-upstream-to`. |
 | `not_a_repository` | Sync is on, but the store is not the top of a Git checkout. | Clone the store, or turn sync off. |
 | `fetch_failed` or `push_rejected` | The remote could not be reached, refused the push, or kept moving for three attempts. | Check access to the remote; Prism retries on the next write or read. |
-| `merge_failed` | A file other than a record conflicted, a record stayed locked through every attempt, or Git is older than 2.38. | Read the status message; a busy record clears on its own. |
+| `merge_failed` | A file other than a record or an artifact conflicted, a record or an artifact stayed locked through every attempt, or Git is older than 2.38. | Read the status message; a busy record clears on its own. |
 | `git_failed` | Git failed for another reason, such as a leftover `.git/index.lock`. | Fix the store with Git; Prism never deletes Git's locks. |
 
 ## Cloud sessions
