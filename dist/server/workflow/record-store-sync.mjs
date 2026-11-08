@@ -246,7 +246,7 @@ export function syncRecordStore(base, options = {}) {
     } catch (error) {
       // The holder may have committed before this process wrote, so a later sync picks the change up.
       if (error.code === "lock_timeout") { scheduleRecordSync(base); return { state: "skipped" }; }
-      // An upstream path that leads outside the store stops the merge before any file changes, so the branch stays and every sync reports it until the upstream drops it.
+      // An upstream entry that no store shares, or a path that leads outside the store, stops the merge before any file changes, so the branch stays and every sync reports it until the upstream drops it.
       if (error.unsafePath) return writeStatus(base, { state: "merge_failed", message: error.message, ...await counts(base) });
       // A Git error outside fetch, merge, and push, such as a leftover index lock, is reported as it is and never repaired here.
       return writeStatus(base, { state: "git_failed", message: error.message }).catch(() => ({ state: "git_failed", message: withoutCredentials(error.message) }));
@@ -266,25 +266,33 @@ async function identity(base) {
   return args;
 }
 
-// The files that every machine of a store shares, which a commit adds even where the person's own excludes match them: Prism's ignore and attributes files,
-// its record files, whose names never begin with ".", and the artifacts under artifacts/, whose every name follows the artifact name form.
-// A dotfile or a tool's folder, such as .env, .idea/, or .DS_Store, is none of these, so it stays out of the shared history as the person's excludes keep it.
-const RECORD_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
-export function isSharedStoreFile(relative) {
-  if (relative === ".gitignore" || relative === ".gitattributes") return true;
-  const names = relative.split("/");
-  if (names[0] === ARTIFACTS) return names.length > 1 && names.slice(1).every(wellFormedName);
-  return isRecordFile(relative) && names.every((name) => RECORD_NAME.test(name));
-}
+// The modes of the entries a store shares: a regular file, executable or not, and never a symbolic link or a submodule link.
+const FILE_MODES = new Set(["100644", "100755"]);
+// The record store module, which owns the store's layout, imports this one, so it loads when a sync first needs that layout.
+const storeLayout = async () => {
+  const { isStoreFile } = await import("./record-store.mjs");
+  return { isStoreFile, sharedEntry: (file, mode) => FILE_MODES.has(mode) && isStoreFile(file) };
+};
 
 // Stage the store's changes, with or without artifacts/, so that only the store's own ignore files decide what it tracks among the files it shares.
 async function stage(base, artifacts) {
+  const { isStoreFile, sharedEntry } = await storeLayout();
   const scope = artifacts ? ["."] : [".", `:(exclude)${ARTIFACTS}`];
   await required(base, ["add", "-A", "--", ...scope]);
   // The person's core.excludesFile and the store's info/exclude would leave files that other machines share uncommitted, so those are added anyway, and nothing else.
+  // A dotfile or a tool's folder, such as .env, .idea/, or .DS_Store, is no file Prism writes, so it stays out of the shared history as the person's excludes keep it.
   const leftOut = (await required(base, ["ls-files", "-z", "--others", "--exclude-per-directory=.gitignore", "--", ...scope])).stdout.toString("utf8").split("\0").filter(Boolean)
-    .filter((file) => isSharedStoreFile(file) && (artifacts || !file.startsWith(`${ARTIFACTS}/`)));
+    .filter((file) => isStoreFile(file) && (artifacts || !file.startsWith(`${ARTIFACTS}/`)));
   if (leftOut.length) await required(base, ["--literal-pathspecs", "add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], { input: `${leftOut.join("\0")}\0` });
+  // Every other machine's sync refuses an upstream that adds a file Prism does not write, so such a file, or a link, is never staged: its index entry stays as the branch has it.
+  const raw = (await required(base, ["diff", "--cached", "--raw", "--no-abbrev", "--no-renames", "-z", "--", ...scope])).stdout.toString("utf8").split("\0");
+  const kept = [];
+  for (let at = 0; at + 1 < raw.length; at += 2) {
+    const [oldMode, newMode, oldObject, , status] = raw[at].slice(1).split(" ");
+    const file = raw[at + 1];
+    if (status !== "D" && !sharedEntry(file, newMode)) kept.push(oldMode === "000000" ? `0 ${"0".repeat(40)}\t${file}\0` : `${oldMode} ${oldObject}\t${file}\0`);
+  }
+  if (kept.length) await required(base, ["update-index", "-z", "--index-info"], { input: kept.join("") });
 }
 
 /**
@@ -329,7 +337,7 @@ async function unpublished(base) {
   return !(await git(base, ["rev-parse", "--verify", "--quiet", "@{upstream}"])).ok && (await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"])).ok;
 }
 
-// Git checks every object a fetch receives, so a tree that a teammate built with a name such as "..", ".git", or an empty one fails the fetch, and the sync's own path check still guards every write.
+// Git checks every object a fetch receives, so a tree that a teammate built with a name such as "..", ".git", or an empty one fails the fetch, and the sync's own check of the upstream's tree still guards every write.
 // Only the objects new to the store are checked, so a history that this machine already holds never stops its syncs.
 const CHECKED_FETCH = ["-c", "fetch.fsckObjects=true"];
 
@@ -389,6 +397,7 @@ async function publishBranch(base, options) {
   const theirs = await git(base, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`]);
   if (theirs.ok) {
     // An unborn branch has nothing local to keep, so it takes the pushed branch's files before it tracks it.
+    if (!head.ok) await refuseForeignTree(base, theirs.text);
     if (!head.ok && !(await apply(base, null, theirs.text, options))) return { status: { state: "merge_failed", message: "Record files changed or stayed locked while the upstream was applied, so the next sync applies it again." } };
     await required(base, ["branch", "--quiet", `--set-upstream-to=origin/${branch}`, branch]);
     return { upstream: await upstreamOf(base) };
@@ -409,8 +418,9 @@ async function merge(base, author, options) {
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
   const theirs = upstream.text;
   if (head.ok && (await git(base, ["merge-base", "--is-ancestor", theirs, head.text])).ok) return { applied: true, conflicts: [] };
+  // The upstream is another machine's work, so its whole tree is checked before any of it is taken, whether it fast-forwards or merges.
+  await refuseForeignTree(base, theirs, await treeFiles(base, head.ok ? head.text : null));
   if (!head.ok || (await git(base, ["merge-base", "--is-ancestor", head.text, theirs])).ok) return { applied: await apply(base, head.ok ? head.text : null, theirs, options), conflicts: [] };
-  await refuseUnsafePaths(base, await changedPaths(base, head.text, theirs));
   const mergeBase = await git(base, ["merge-base", head.text, theirs]);
   if (!mergeBase.ok || !mergeBase.text) return { failed: "The store's branch and its upstream share no commit, so the store was left as it was.", conflicts: [] };
   const index = syncPath(base, "merge-index");
@@ -616,21 +626,43 @@ async function holdLocks(targets, action) {
   return withFileLock(targets[0], () => holdLocks(targets.slice(1), action), undefined, { timeoutMs: SETTINGS.applyLockMs });
 }
 
-// Git keeps a tree entry that a teammate pushed even when its name is empty, "." or "..", since fsck is off by default, and prints it in a diff,
-// so a path from the upstream is written into the store only when each part is a name that stays below the store on every system:
-// not empty or made only of dots and spaces, with no backslash or drive form, never Git's own folder or the sync folder, and no part of it in the store a symbolic link.
-// A name is compared as a case-insensitive file system that drops trailing dots and spaces would see it.
-const plainName = (name) => name.replace(/[. ]+$/, "").toLowerCase();
-
-function unsafeName(name) {
-  if (name.includes("\\") || /^[A-Za-z]:/.test(name)) return true;
-  const plain = plainName(name);
-  return plain === "" || plain === ".git" || /^git~\d+$/.test(plain);
+// The entries of a commit's whole tree, files and links alike: Map(path, { mode, object }), empty without a commit.
+async function treeFiles(base, commit) {
+  const files = new Map();
+  if (!commit) return files;
+  for (const line of (await required(base, ["ls-tree", "-r", "-z", "--full-tree", commit])).stdout.toString("utf8").split("\0").filter(Boolean)) {
+    const tab = line.indexOf("\t");
+    const [mode, , object] = line.slice(0, tab).split(" ");
+    files.set(line.slice(tab + 1), { mode, object });
+  }
+  return files;
 }
 
-async function unsafePath(base, file) {
+const sameEntry = (left, right) => left === right || (left !== undefined && right !== undefined && left.mode === right.mode && left.object === right.object);
+const entryKind = (mode) => mode === "120000" ? "a symbolic link" : mode === "160000" ? "a submodule link" : FILE_MODES.has(mode) ? "a file" : "an entry";
+
+/**
+ * The first entry of a commit's whole tree that no store shares, as { path, kind }, or null when every entry is a regular file at a path Prism writes in a store.
+ * An entry that held, this machine's own commit, holds with the same mode and contents passes as it is, since taking the commit writes nothing for it.
+ * The check is by what Prism writes, not by what it must avoid, so the sync folder, Git's folder, a lock, a link, or a name that another file system reads as one of them, in any spelling, never passes.
+ */
+export async function foreignStoreEntry(base, commit, held = new Map()) {
+  const { sharedEntry } = await storeLayout();
+  for (const [file, entry] of await treeFiles(base, commit)) {
+    if (!sharedEntry(file, entry.mode) && !sameEntry(held.get(file), entry)) return { path: file, kind: entryKind(entry.mode) };
+  }
+  return null;
+}
+
+/** Refuse an upstream commit whose tree holds anything a store does not share, before any file is written or removed, so the branch stays where it was. */
+async function refuseForeignTree(base, commit, held) {
+  const foreign = await foreignStoreEntry(base, commit, held);
+  if (foreign) throw Object.assign(new Error(`The upstream holds ${foreign.kind} at ${JSON.stringify(foreign.path)}, but a store shares only the records, artifacts, and ignore and attributes files that Prism writes, as regular files, so the store was left as it was. Remove that path from the remote's branch.`), { unsafePath: true });
+}
+
+// A changed path is written only below the store and through no symbolic link that sits in the store, whatever the upstream holds.
+async function outsideStore(base, file) {
   const parts = file.split("/");
-  if (parts.some(unsafeName) || plainName(parts[0]) === SYNC_DIRECTORY) return true;
   const root = path.resolve(base);
   if (!path.resolve(root, ...parts).startsWith(`${root}${path.sep}`)) return true;
   for (let at = 1; at <= parts.length; at++) {
@@ -641,11 +673,17 @@ async function unsafePath(base, file) {
   return false;
 }
 
-/** Refuse a merge whose files include a path that would leave the store, before any file is written or removed, so the branch stays where it was. */
-async function refuseUnsafePaths(base, files) {
+async function refuseOutsidePaths(base, files) {
   for (const file of files) {
-    if (await unsafePath(base, file)) throw Object.assign(new Error(`The upstream holds the path ${JSON.stringify(file)}, which leads outside the store's files, so the store was left as it was.`), { unsafePath: true });
+    if (await outsideStore(base, file)) throw Object.assign(new Error(`The upstream changes the path ${JSON.stringify(file)}, which leads outside the store's files through a symbolic link in the store, so the store was left as it was.`), { unsafePath: true });
   }
+}
+
+// A folder can sit where a file goes or is removed, as a submodule link that an earlier Prism checked out leaves an empty one; an empty folder goes, and one that holds files stays.
+async function clearFolder(target) {
+  const stats = await lstat(target).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; });
+  if (stats?.isDirectory()) await rmdir(target).catch((error) => { if (!["ENOTEMPTY", "EEXIST", "ENOENT"].includes(error.code)) throw error; });
+  return stats;
 }
 
 /**
@@ -660,7 +698,7 @@ async function apply(base, from, to, options) {
   try {
     await options.beforeApply?.();
     files = from ? await changedPaths(base, from, to) : (await required(base, ["ls-tree", "-r", "--name-only", "-z", to])).stdout.toString("utf8").split("\0").filter(Boolean);
-    await refuseUnsafePaths(base, files);
+    await refuseOutsidePaths(base, files);
     const targets = files.map((file) => path.join(base, file));
     const artifacts = path.join(base, ARTIFACTS);
     const artifactLock = files.some(isArtifactFile) ? [artifacts] : [];
@@ -680,12 +718,13 @@ async function apply(base, from, to, options) {
           // so a file that takes a removed folder's place, or a folder that differs from a removed one only in letter case, is made anew rather than inside the old one.
           for (const [index, bytes] of next.entries()) {
             if (bytes !== null) continue;
-            await rm(targets[index], { force: true });
+            if (!(await clearFolder(targets[index]))?.isDirectory()) await rm(targets[index], { force: true });
             if (isArtifactFile(files[index])) await pruneArtifactFolders(artifacts, targets[index]);
           }
           for (const [index, bytes] of next.entries()) {
             if (bytes === null) continue;
             await mkdir(path.dirname(targets[index]), { recursive: true });
+            await clearFolder(targets[index]);
             await writeAtomically(targets[index], bytes);
           }
           for (const [index, bytes] of next.entries()) if (!sameBytes(await fileBytes(targets[index]), bytes)) return false;

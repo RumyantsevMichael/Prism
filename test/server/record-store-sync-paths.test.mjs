@@ -39,14 +39,16 @@ async function stores(context) {
   return { parent, storeA, storeB: path.join(parent, "b", "store") };
 }
 
-// Push from store a a commit on top of the remote's branch that adds a file at the path that names lists, part by part, built with mktree as a teammate could.
-function pushCrafted(storeA, names, contents = "crafted\n") {
+// Push from store a a commit on top of the remote's branch that adds a file at the path that names lists, part by part, built with mktree as a teammate could;
+// mode makes the entry a symbolic link (120000), whose contents are its target, or a submodule link (160000) to a commit the store does not hold.
+function pushCrafted(storeA, names, contents = "crafted\n", mode = "100644") {
   git(storeA, ["fetch", "-q", "origin"]);
-  let entry = `100644 blob ${git(storeA, ["hash-object", "-w", "--stdin"], contents)}\t${names.at(-1)}`;
-  for (const name of names.slice(0, -1).reverse()) entry = `040000 tree ${git(storeA, ["mktree"], `${entry}\n`)}\t${name}`;
+  const leaf = mode === "160000" ? `160000 commit ${"1".repeat(40)}` : `${mode} blob ${git(storeA, ["hash-object", "-w", "--stdin"], contents)}`;
+  let entry = `${leaf}\t${names.at(-1)}`;
+  for (const name of names.slice(0, -1).reverse()) entry = `040000 tree ${git(storeA, ["mktree", "--missing"], `${entry}\n`)}\t${name}`;
   const top = names[0];
   const kept = git(storeA, ["ls-tree", "origin/main^{tree}"]).split("\n").filter((line) => line && line.split("\t")[1] !== top);
-  const tree = git(storeA, ["mktree"], `${[...kept, entry].join("\n")}\n`);
+  const tree = git(storeA, ["mktree", "--missing"], `${[...kept, entry].join("\n")}\n`);
   const commit = git(storeA, ["commit-tree", tree, "-p", "origin/main", "-m", "crafted"]);
   git(storeA, ["push", "-q", "origin", `${commit}:refs/heads/main`]);
   return commit;
@@ -64,20 +66,29 @@ const CRAFTED = [
   { label: "the sync folder", names: [".prism-sync", "planted"], target: (store) => path.join(store, ".prism-sync", "planted") },
   { label: "the sync folder in another letter case", names: [".Prism-Sync", "conflicts", "planted.md"], target: (store) => path.join(store, ".Prism-Sync", "conflicts", "planted.md") },
   { label: "the sync folder with a trailing dot", names: [".prism-sync.", "status.json"], target: (store) => path.join(store, ".prism-sync.", "status.json") },
-  { label: "the sync folder with a trailing space", names: [".PRISM-SYNC ", "planted"], target: (store) => path.join(store, ".PRISM-SYNC ", "planted") }
+  { label: "the sync folder with a trailing space", names: [".PRISM-SYNC ", "planted"], target: (store) => path.join(store, ".PRISM-SYNC ", "planted") },
+  // HFS+ ignores a zero-width non-joiner in a name, and Windows gives a long name a short 8.3 one, so each of these is the sync folder on some machine.
+  { label: "the sync folder with an invisible character that HFS+ ignores", names: [".prism\u200c-sync", "conflicts", "planted.md"], target: (store) => path.join(store, ".prism\u200c-sync", "conflicts", "planted.md") },
+  { label: "the sync folder's 8.3 short name", names: ["PRISM-~1", "status.json"], target: (store) => path.join(store, "PRISM-~1", "status.json") },
+  { label: "a lock file beside a record", names: ["initiatives", "reports", "initiative.json.lock"], target: (store) => path.join(store, "initiatives", "reports", "initiative.json.lock") },
+  { label: "a file Prism does not write at the store root", names: ["notes.md"], target: (store) => path.join(store, "notes.md") },
+  { label: "an artifact name outside the artifact name form", names: ["artifacts", "plans", ".hidden.md"], target: (store) => path.join(store, "artifacts", "plans", ".hidden.md") },
+  { label: "a symbolic link", names: ["artifacts", "plans", "link.md"], contents: "../../../escape.md", mode: "120000", target: (store) => path.join(store, "artifacts", "plans", "link.md") },
+  { label: "a submodule link", names: ["artifacts", "plans", "sub"], mode: "160000", target: (store) => path.join(store, "artifacts", "plans", "sub") }
 ];
 
-for (const { label, names, target } of CRAFTED) {
+for (const { label, names, target, contents, mode } of CRAFTED) {
   for (const diverged of [false, true]) {
     test(`a sync refuses an upstream path with ${label}${diverged ? " after a local change" : ""}, and writes and removes nothing`, async (context) => {
       const { storeA, storeB } = await stores(context);
       if (diverged) await writeFile(path.join(storeB, "artifacts", "plans", "local.md"), "# Local\n");
-      const crafted = pushCrafted(storeA, names);
+      const crafted = pushCrafted(storeA, names, contents, mode);
       // Store b already holds the crafted objects, as after any fetch without checks, so the sync's own path check is what refuses them.
       git(storeB, ["fetch", "-q", "origin"]);
       const status = await syncRecordStore(storeB);
       assert.equal(status.state, "merge_failed", JSON.stringify(status));
-      assert.match(status.message, /leads outside the store's files/);
+      assert.match(status.message, /a store shares only the records, artifacts, and ignore and attributes files that Prism writes/);
+      assert.ok(status.message.includes(JSON.stringify(names.join("/"))), "the refusal names the path");
       assert.equal(await exists(target(storeB)), false, "nothing is written through the crafted path");
       assert.equal(isAncestor(storeB, crafted), false, "the branch stays where it was");
       assert.equal(git(storeB, ["status", "--porcelain", "--", ".", ":(exclude).prism-sync"]), "", "the store's files match its branch");
@@ -125,4 +136,76 @@ test("a sync with fetch checks on still takes an ordinary upstream change", asyn
   git(storeA, ["push", "-q", "origin", "main"]);
   assert.equal((await syncRecordStore(storeB)).state, "ok");
   assert.equal(git(storeB, ["show", "HEAD:artifacts/plans/slice.md"]), "# Slice\n\nMore.");
+});
+
+// A store that an earlier Prism synced may hold a submodule link from the remote, which Git checks out as an empty folder.
+async function storeWithSubmoduleLink(context) {
+  const place = await stores(context);
+  const crafted = pushCrafted(place.storeA, ["artifacts", "plans", "sub"], undefined, "160000");
+  git(place.storeB, ["fetch", "-q", "origin"]);
+  git(place.storeB, ["reset", "-q", "--hard", crafted]);
+  git(place.storeA, ["fetch", "-q", "origin"]);
+  git(place.storeA, ["reset", "-q", "--hard", crafted]);
+  assert.equal(git(place.storeB, ["ls-tree", "HEAD", "artifacts/plans/sub"]).split(" ")[0], "160000");
+  return place;
+}
+
+async function pushTree(storeA, change, message) {
+  git(storeA, ["fetch", "-q", "origin"]);
+  git(storeA, ["reset", "-q", "--hard", "origin/main"]);
+  await change();
+  git(storeA, ["commit", "-q", "-m", message]);
+  git(storeA, ["push", "-q", "origin", "main"]);
+}
+
+for (const diverged of [false, true]) {
+  test(`a submodule link the store already holds syncs on, and an upstream removal or change of it never fails the sync${diverged ? " after a local change" : ""}`, async (context) => {
+    const { storeA, storeB } = await storeWithSubmoduleLink(context);
+    const local = async (text) => { if (diverged) await writeFile(path.join(storeB, "artifacts", "plans", "slice.md"), text); };
+    await local("# Slice\n\nLocal one.\n");
+    await pushTree(storeA, async () => { await writeFile(path.join(storeA, "roadmap.json"), "{\"a\":1}\n"); git(storeA, ["add", "roadmap.json"]); }, "ordinary change");
+    assert.equal((await syncRecordStore(storeB)).state, "ok", "an unchanged link the store holds is no new upstream entry");
+    // The upstream points the link elsewhere: a new entry no store shares, refused as a whole.
+    await local("# Slice\n\nLocal two.\n");
+    await pushTree(storeA, () => git(storeA, ["update-index", "--cacheinfo", `160000,${"2".repeat(40)},artifacts/plans/sub`]), "move the link");
+    const moved = await syncRecordStore(storeB);
+    assert.equal(moved.state, "merge_failed", JSON.stringify(moved));
+    assert.ok(moved.message.includes("a submodule link at \"artifacts/plans/sub\""), moved.message);
+    // The upstream replaces the link with a folder of artifacts: the empty folder the link left takes the files.
+    await pushTree(storeA, () => {
+      git(storeA, ["rm", "-q", "--cached", "artifacts/plans/sub"]);
+      execFileSync("sh", ["-c", "mkdir -p artifacts/plans/sub && printf '# In\\n' > artifacts/plans/sub/in.md"], { cwd: storeA });
+      git(storeA, ["add", "artifacts/plans/sub/in.md"]);
+    }, "replace the link with a folder");
+    const replaced = await syncRecordStore(storeB);
+    assert.equal(replaced.state, "ok", JSON.stringify(replaced));
+    assert.equal(git(storeB, ["show", "HEAD:artifacts/plans/sub/in.md"]), "# In");
+    assert.equal(await exists(path.join(storeB, "artifacts", "plans", "sub", "in.md")), true);
+    if (diverged) assert.equal(git(storeB, ["show", "origin/main:artifacts/plans/slice.md"]), "# Slice\n\nLocal two.");
+  });
+}
+
+test("an upstream removal of a submodule link the store holds removes its empty folder and syncs", async (context) => {
+  const { storeA, storeB } = await storeWithSubmoduleLink(context);
+  await pushTree(storeA, () => git(storeA, ["rm", "-q", "--cached", "artifacts/plans/sub"]), "remove the link");
+  const status = await syncRecordStore(storeB);
+  assert.equal(status.state, "ok", JSON.stringify(status));
+  assert.equal(await exists(path.join(storeB, "artifacts", "plans", "sub")), false);
+  await pushTree(storeA, async () => { await writeFile(path.join(storeA, "roadmap.json"), "{\"b\":2}\n"); git(storeA, ["add", "roadmap.json"]); }, "ordinary change");
+  assert.equal((await syncRecordStore(storeB)).state, "ok");
+});
+
+test("a sync never shares a file Prism does not write or a link, so no other machine's sync refuses this machine's commit", async (context) => {
+  const { parent, storeA, storeB } = await stores(context);
+  await writeFile(path.join(storeB, "notes.md"), "# Mine\n");
+  await mkdir(path.join(storeB, "PRISM-~1"));
+  await writeFile(path.join(storeB, "PRISM-~1", "status.json"), "{}\n");
+  await symlink(path.join(parent, "outside.md"), path.join(storeB, "artifacts", "plans", "link.md"));
+  await writeFile(path.join(storeB, "artifacts", "plans", "kept.md"), "# Kept\n");
+  assert.equal((await syncRecordStore(storeB)).state, "ok");
+  const shared = git(storeB, ["ls-tree", "-r", "--name-only", "origin/main"]).split("\n");
+  assert.deepEqual(shared.sort(), ["artifacts/plans/kept.md", "artifacts/plans/slice.md", "roadmap.json"]);
+  assert.equal(await exists(path.join(storeB, "notes.md")), true, "the file stays on disk");
+  git(storeA, ["pull", "-q", "origin", "main"]);
+  assert.equal((await syncRecordStore(storeA)).state, "ok");
 });

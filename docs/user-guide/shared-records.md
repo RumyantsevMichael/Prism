@@ -18,6 +18,7 @@ Choosing the workspace there opens its records, which every checkout shares.
 ## Share records between machines
 
 1. Create an empty repository for the store on your Git host, for example `you/prism-store`, and give everyone who works on the project push access to it.
+   Leave out a README, a license, and any other file, because a store holds only the files Prism writes.
 
 2. Add a `Workspace` section to `.prism/workflow.md` that names the store's remote and this repository:
 
@@ -45,14 +46,18 @@ Store sync is on by default for a remote store, so Prism keeps the clone in step
 
 `- Store sync: off` keeps the clone but never fetches, commits, or pushes after the first clone.
 Prism never deletes, replaces, or rewrites the history of a clone it made.
-The clone writes a symbolic link from the remote as a plain file that holds the link's target, so no file in the store leads outside the clone.
+Before the clone writes any file, Prism checks the remote's whole branch, and every sync checks the upstream's whole branch the same way before it takes any of it.
+The branch may hold only regular files at the paths Prism writes in a store: the records under `initiatives/`, `roadmap.json`, the registrations under `repositories/`, the migration files under `migrations/`, the artifacts under `artifacts/` whose every name follows the artifact name form, and the store's `.gitignore` and `.gitattributes`.
+A symbolic link, a submodule link, or a file at any other path, such as a README, a lock file, or anything in the sync folder `.prism-sync/` in any spelling, fails the clone, or refuses the sync as a whole, and the message names the path.
+An entry that the store's own branch already holds unchanged, such as a README in a store cloned before this check, does not stop a sync.
+A sync commits only those files, so another file or a link you put in the store stays on your machine and never reaches the remote.
 Syncing requires Git 2.25 or later.
 SSH runs in batch mode unless you configured an SSH command, and Git never prompts, so a remote that needs a passphrase or password prompt fails instead of hanging.
 Use an SSH agent or a Git credential helper for a remote that needs credentials, because a token in the URL stays in the clone's Git configuration, although Prism leaves it out of every message and status.
 
 These problems make every record operation fail with `store_unavailable`, and the message names the remote without any user name or token:
 
-- The clone failed, for example because the remote cannot be reached or sent an object that fails Git's object checks; Prism leaves no partial clone behind and tries again on the next access.
+- The clone failed, for example because the remote cannot be reached, sent an object that fails Git's object checks, or holds a path that a store does not share; Prism leaves no partial clone behind and tries again on the next access.
 - A folder already sits at the clone path with another origin; Prism leaves it untouched, so move it away.
 
 The first record access from a checkout moves its existing records into the store, as described below.
@@ -228,7 +233,7 @@ The list shows saved records, while a saved artifact is named in the next tool r
 | `no_upstream` | A path store's branch has no upstream, so Prism only commits locally; a remote store sets its upstream on its first sync instead. | Set an upstream with `git branch --set-upstream-to`. |
 | `not_a_repository` | Sync is on, but the store is not the top of a Git checkout. | Clone the store, or turn sync off. |
 | `fetch_failed` or `push_rejected` | The remote could not be reached, sent an object that fails Git's object checks, refused the push, or kept moving for three attempts. | Check access to the remote; Prism retries on the next write or read, and a commit whose objects fail the checks needs removing from the remote's history. |
-| `merge_failed` | A file other than a record or an artifact conflicted, a record or an artifact stayed locked through every attempt, the store's branch and its upstream share no commit, or the upstream holds a path that leads outside the store's files, such as one with a `..` part. | Read the status message; a busy record clears on its own, and a path outside the store needs the commit that added it removed from the remote's history. |
+| `merge_failed` | A file other than a record or an artifact conflicted, a record or an artifact stayed locked through every attempt, the store's branch and its upstream share no commit, or the upstream's branch holds an entry that a store does not share, such as a symbolic link, a submodule link, or a file at a path Prism does not write. | Read the status message; a busy record clears on its own, and an entry that a store does not share needs a commit on the remote's branch that removes the path the message names. |
 | `git_failed` | Git failed for another reason, such as a leftover `.git/index.lock`. | Fix the store with Git; Prism never deletes Git's locks. |
 
 ## Cloud sessions

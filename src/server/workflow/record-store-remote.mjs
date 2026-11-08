@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { cp, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
-import { gitTimeoutMs, markManagedStore, runGit } from "./record-store-sync.mjs";
+import { foreignStoreEntry, gitTimeoutMs, markManagedStore, runGit } from "./record-store-sync.mjs";
 import { legacyStoresDirectory, managedStoreId, managedStoresDirectory, normalizeRemote, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 
 // A record store named by its remote lives in a clone Prism keeps in its application folder, one per remote, shared by every checkout and host that names it.
@@ -83,10 +83,17 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
     try {
       // Long paths keep deep record paths usable on Windows, where Git otherwise stops at 260 characters.
       // Git checks every object the remote sends, so a tree that a teammate built with a name such as ".." or ".git" fails the clone,
-      // and the clone writes a symbolic link from the remote as a plain file holding its target, so no store file leads outside the clone.
-      const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--config", "core.longpaths=true", "--config", "core.symlinks=false", "--", configured, temporary]);
+      // and the clone writes no file until the remote's whole tree holds only regular files at paths Prism writes in a store, as every sync checks an upstream's tree.
+      const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--no-checkout", "--config", "core.longpaths=true", "--config", "core.symlinks=false", "--", configured, temporary]);
       if (cloned.missing) throw unavailable("Git is not available, so the remote store cannot be cloned.");
       if (!cloned.ok) throw unavailable(`Git could not clone it: ${withoutCredentials(cloned.stderr) || `git clone exited with code ${cloned.code}.`}`);
+      const head = await runGit(temporary, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+      if (head.ok) {
+        const foreign = await foreignStoreEntry(temporary, head.text);
+        if (foreign) throw unavailable(`Its branch holds ${foreign.kind} at ${JSON.stringify(foreign.path)}, but a store holds only the records, artifacts, and ignore and attributes files that Prism writes, as regular files, so it was not cloned. Remove that path from the remote's branch.`);
+        const checkedOut = await runGit(temporary, ["reset", "--quiet", "--hard", "HEAD"]);
+        if (!checkedOut.ok) throw unavailable(`Git could not check out its files: ${withoutCredentials(checkedOut.stderr) || `git reset exited with code ${checkedOut.code}.`}`);
+      }
       await rename(temporary, target);
     } finally {
       await rm(temporary, { recursive: true, force: true });

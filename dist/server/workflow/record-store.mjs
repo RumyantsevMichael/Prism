@@ -7,8 +7,8 @@ import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { listSavedConflicts, pullRecordStoreIfStale, readSavedConflict, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
 import { managedRecordStore } from "./record-store-remote.mjs";
 import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
-import { checkRepositoryName, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
-import { ARTIFACTS, artifactAddress, componentScope, normalizeArtifactPath, repositoryScope, scopeFolder, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
+import { checkRepositoryName, portableRepositoryName, REPOSITORIES, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
+import { ARTIFACTS, artifactAddress, componentScope, normalizeArtifactPath, repositoryScope, scopeFolder, wellFormedName, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
 import { COMPONENT_NAME } from "./components.mjs";
 import { artifactKinds, initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
@@ -87,6 +87,29 @@ export function parseRecordPath(relative) {
 export function isManagedRecordFile(relative) {
   if (relative === ROADMAP_RECORD || relative.startsWith(`${INITIATIVES}/`)) return true;
   return relative.startsWith(`${RECORD_DIRECTORY}/`) && Object.hasOwn(HOUSEKEEPING, relative.slice(RECORD_DIRECTORY.length + 1));
+}
+
+// The names of the migration files Prism writes: a time and random suffix, or before the ledger, the hash that names the migrated repository.
+const MIGRATION_FILE = /^(?:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{8}|[0-9a-f]{40,64})\.json$/;
+
+/**
+ * Whether a store-relative path is one Prism writes in a record store, and so one that every machine of the store shares:
+ * the ignore and attributes files at the root, the roadmap record, each record path an initiative's records use, each registration and migration file,
+ * and each file below artifacts/ whose every name follows the artifact name form.
+ * No other path is shared, so a store's history never carries the sync folder, a lock, a temporary file, Git's folder, or a name that another file system reads as one of these.
+ */
+export function isStoreFile(relative) {
+  if (typeof relative !== "string") return false;
+  if (Object.hasOwn(HOUSEKEEPING, relative) || relative === "roadmap.json") return true;
+  const names = relative.split("/");
+  if (names[0] === ARTIFACTS) return names.length > 1 && names.slice(1).every(wellFormedName);
+  if (names[0] === "migrations") return names.length === 2 && MIGRATION_FILE.test(names[1]);
+  if (names[0] === REPOSITORIES) return names.length === 2 && names[1].endsWith(".json") && portableRepositoryName(names[1].slice(0, -".json".length));
+  if (names[0] !== "initiatives") return false;
+  const key = parseRecordPath(`${RECORD_DIRECTORY}/${relative}`);
+  if (key?.kind !== "runs") return key !== null && key.kind !== "roadmap";
+  // A run entry is one file of its own below the slice's runs folder.
+  return names.length === 6 && names[5].endsWith(".json") && ENTRY_ID.test(names[5].slice(0, -".json".length));
 }
 
 function inside(root, target) {

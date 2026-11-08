@@ -21,8 +21,8 @@ Object.assign(process.env, {
   GIT_AUTHOR_NAME: "Prism Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Prism Test", GIT_COMMITTER_EMAIL: "test@example.invalid"
 });
 const RECORD_STORE = new URL("../../dist/server/workflow/record-store.mjs", import.meta.url).href;
-const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
-const { forgetMigrations, listInitiatives, readRecord, recordStoreOf, recordSyncStatus, writeRecord } = await import(RECORD_STORE);
+const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
+const { forgetMigrations, listInitiatives, listRecordStoreConflicts, readRecord, recordStoreOf, recordSyncStatus, writeRecord } = await import(RECORD_STORE);
 const { parseWorkflowConfig } = await import("../../dist/server/workflow/workflow-config.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
@@ -63,7 +63,7 @@ function bareRemote(parent, name = "remote.git", { empty = false } = {}) {
     const seed = path.join(parent, `${name}-seed`);
     git(parent, "clone", "-q", remote, seed);
     git(seed, "checkout", "-q", "-b", "main");
-    execFileSync("sh", ["-c", "printf 'Prism records\\n' > README.md"], { cwd: seed });
+    execFileSync("sh", ["-c", "printf '# Prism records\\n' > .gitattributes"], { cwd: seed });
     git(seed, "add", ".");
     git(seed, "commit", "-q", "-m", "init");
     git(seed, "push", "-q", "-u", "origin", "main");
@@ -111,7 +111,7 @@ test("the first access clones the remote and a second process reuses the clone w
   assert.equal(await exists(clone), false);
   await create(a);
   assert.equal(git(clone, "config", "--get", "remote.origin.url"), url);
-  assert.equal(await exists(path.join(clone, "README.md")), true, "the clone holds the remote's files");
+  assert.equal(await exists(path.join(clone, ".gitattributes")), true, "the clone holds the remote's files");
   // With the remote gone, only a reused clone can answer.
   await rename(remote, `${remote}.away`);
   assert.deepEqual(await childListing(b), ["reports"]);
@@ -137,7 +137,7 @@ test("a remote store needs no plugin data directory, so a host that gives none s
   } finally {
     process.env.PLUGIN_DATA = data;
   }
-  assert.equal(await exists(path.join(clone, "README.md")), true);
+  assert.equal(await exists(path.join(clone, ".gitattributes")), true);
   assert.deepEqual(await readdir(data), before);
 });
 
@@ -171,7 +171,7 @@ test("a folder under plugin data with another origin is not moved", async (conte
   const root = await project(parent, "project", remoteConfig(url));
   assert.deepEqual(await listInitiatives(root), []);
   assert.equal(await exists(path.join(legacy, ".git")), true);
-  assert.equal(await exists(path.join(clone, "README.md")), true);
+  assert.equal(await exists(path.join(clone, ".gitattributes")), true);
 });
 
 test("a managed clone keeps long paths usable on Windows", async (context) => {
@@ -205,25 +205,60 @@ test("a managed clone checks the objects it receives, so a tree with a .. entry 
   assert.equal(await exists(path.join(appFolder, "stores", "escape.md")), false);
 });
 
-test("a managed clone writes a symbolic link from the remote as a plain file, so no store path leads outside the clone", async (context) => {
+// A remote whose branch holds an entry that no store shares, pushed by a teammate: the first clone refuses it as a whole, writes no file, and leaves no folder.
+async function refusedClone(context, plant) {
   const parent = await folder(context);
   const { remote, url, clone } = bareRemote(parent);
-  const outside = path.join(parent, "outside");
-  await mkdir(outside);
-  await writeFile(path.join(outside, "secret.md"), "secret\n");
   const seed = seedOf(parent, remote);
-  await symlink(path.join(outside, "secret.md"), path.join(seed, "notes.md"));
-  await symlink(outside, path.join(seed, "artifacts"));
-  git(seed, "add", ".");
-  git(seed, "commit", "-q", "-m", "links");
+  await plant(seed, parent);
+  git(seed, "add", "-f", ".");
+  git(seed, "commit", "-q", "-m", "planted");
   git(seed, "push", "-q", "origin", "main");
   const root = await project(parent, "project", remoteConfig(url));
-  assert.deepEqual(await listInitiatives(root), []);
-  assert.equal(git(clone, "config", "--local", "--get", "core.symlinks"), "false");
-  for (const name of ["notes.md", "artifacts"]) assert.equal((await lstat(path.join(clone, name))).isFile(), true, `${name} is a plain file`);
-  assert.equal(await readFile(path.join(clone, "notes.md"), "utf8"), path.join(outside, "secret.md"));
-  assert.deepEqual(await readdir(outside), ["secret.md"]);
+  let refusal;
+  await assert.rejects(listInitiatives(root), (error) => { refusal = error; return error.code === "store_unavailable"; });
+  assert.equal(await exists(clone), false, "no folder is left at the clone path");
+  assert.deepEqual(await leftovers(clone), []);
+  return { root, refusal, parent };
+}
+
+test("a managed clone refuses a remote whose branch holds a symbolic link, so no store path leads outside the clone", async (context) => {
+  const { refusal, parent } = await refusedClone(context, async (seed, folderPath) => {
+    const outside = path.join(folderPath, "outside");
+    await mkdir(outside);
+    await writeFile(path.join(outside, "secret.md"), "secret\n");
+    await mkdir(path.join(seed, "artifacts"));
+    await symlink(path.join(outside, "secret.md"), path.join(seed, "artifacts", "notes.md"));
+  });
+  assert.match(refusal.message, /holds a symbolic link at "artifacts\/notes\.md"/);
+  assert.deepEqual(await readdir(path.join(parent, "outside")), ["secret.md"]);
 });
+
+test("a managed clone refuses a remote whose branch holds the sync folder, so no saved conflict is reported that no sync saved", async (context) => {
+  const stamp = "2099-01-01T00-00-00-000Z";
+  const { root, refusal } = await refusedClone(context, async (seed) => {
+    const saved = path.join(seed, ".prism-sync", "conflicts", stamp);
+    await mkdir(path.join(saved, "artifacts", "plans", "foo"), { recursive: true });
+    await writeFile(path.join(saved, "artifacts", "plans", "foo", "slice.md"), "# Planted\n");
+    await mkdir(path.join(saved, "initiatives", "reports"), { recursive: true });
+    await writeFile(path.join(saved, "initiatives", "reports", "initiative.json"), "{\"planted\":true}\n");
+  });
+  assert.match(refusal.message, /holds a file at "\.prism-sync\/conflicts\//);
+  assert.deepEqual(await takeSavedConflicts(), []);
+  await assert.rejects(listRecordStoreConflicts(root), (error) => error.code === "store_unavailable");
+});
+
+for (const [label, plant, named] of [
+  ["a file Prism does not write at its root", (seed) => writeFile(path.join(seed, "README.md"), "# Store\n"), "README.md"],
+  ["a lock file beside a record", async (seed) => { await mkdir(path.join(seed, "initiatives", "reports"), { recursive: true }); await writeFile(path.join(seed, "initiatives", "reports", "initiative.json.lock"), "{}\n"); }, "initiatives/reports/initiative.json.lock"],
+  ["a lookalike of the sync folder", async (seed) => { await mkdir(path.join(seed, "PRISM-~1")); await writeFile(path.join(seed, "PRISM-~1", "status.json"), "{}\n"); }, "PRISM-~1/status.json"],
+  ["a submodule link", async (seed) => { await mkdir(path.join(seed, "artifacts", "plans", "sub"), { recursive: true }); execFileSync("git", ["update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},artifacts/plans/sub`], { cwd: seed }); }, "artifacts/plans/sub"]
+]) {
+  test(`a managed clone refuses a remote whose branch holds ${label}, and leaves no folder`, async (context) => {
+    const { refusal } = await refusedClone(context, plant);
+    assert.ok(refusal.message.includes(JSON.stringify(named)), refusal.message);
+  });
+}
 
 test("an unreachable remote is unavailable, leaves no folder, and a later access succeeds once the remote exists", async (context) => {
   const parent = await folder(context);
@@ -235,7 +270,7 @@ test("an unreachable remote is unavailable, leaves no folder, and a later access
   assert.deepEqual(await leftovers(clone), []);
   bareRemote(parent, "late.git");
   assert.deepEqual(await listInitiatives(root), []);
-  assert.equal(await exists(path.join(clone, "README.md")), true);
+  assert.equal(await exists(path.join(clone, ".gitattributes")), true);
 });
 
 test("a folder at the clone path with another origin is unavailable and left untouched", async (context) => {
