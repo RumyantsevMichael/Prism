@@ -6,7 +6,7 @@ import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
-import { keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, locateRecord, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
+import { inArtifactStore, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
@@ -44,16 +44,46 @@ async function recordFile(root, key) {
   return located.legacy ?? located.path;
 }
 
+// With a record store, a descriptive artifact such as a requirement, an ADR, the glossary, or a plan file is read from the store, and a record where it lives.
 async function readText(root, relative) {
   try {
+    if (await inArtifactStore(root, relative)) {
+      // An unavailable store or a refused repository name shows the checkout's documents, as the listing does.
+      const stored = await readArtifactText(root, relative).catch((error) => { if (recordsUnavailable(error)) return undefined; throw error; });
+      if (stored !== undefined) return stored;
+      return await readFile(path.join(root, relative), "utf8");
+    }
     return await readFile((await resolveRecordFile(root, relative)).target, "utf8");
   } catch (error) {
-    if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) return null;
+    // An unavailable store, or a store artifact that cannot be read, shows as missing.
+    if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code) || recordsUnavailable(error) || error?.name === "ArtifactError") return null;
     throw error;
   }
 }
 
+// The store artifacts below a folder, up to depth folders down, in the order a walk of the folder lists them, or null when the project names no store.
+async function storeWalk(root, relative, depth, accept, limit) {
+  // An unavailable store or a refused repository name lists the checkout's documents instead.
+  const stored = await listStoreArtifacts(root, relative).catch((error) => { if (recordsUnavailable(error)) return null; if (error?.name === "ArtifactError") return []; throw error; });
+  if (stored === null) return null;
+  const prefix = relative ? `${relative}/` : "";
+  const files = [...new Set(stored.map((entry) => entry.path))].filter((file) => {
+    const parts = file.slice(prefix.length).split("/");
+    return parts.length <= depth + 1 && accept(parts.at(-1));
+  });
+  const order = (file) => file.slice(prefix.length).split("/").map((name) => name.toLowerCase());
+  return files.sort((left, right) => {
+    const a = order(left), b = order(right);
+    for (let index = 0; index < Math.min(a.length, b.length); index += 1) if (a[index] !== b[index]) return a[index].localeCompare(b[index]);
+    return a.length - b.length;
+  }).slice(0, limit);
+}
+
 async function walk(root, relative, depth, accept, results, limit) {
+  if (await inArtifactStore(root, `${relative}/x`).catch(() => false)) {
+    const stored = await storeWalk(root, relative, depth, accept, limit - results.length);
+    if (stored !== null) { results.push(...stored); return; }
+  }
   let entries;
   try {
     entries = await readdir((await resolveRecordFile(root, relative)).target, { withFileTypes: true });

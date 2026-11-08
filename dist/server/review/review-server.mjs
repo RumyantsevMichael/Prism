@@ -8,7 +8,8 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, describeRecordStore, keyOfPath, listRecordStoreConflicts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, describeRecordStore, inArtifactStore, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
+import { readStoreArtifact } from "../workflow/store-artifacts.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
@@ -135,11 +136,32 @@ export async function listSourceFiles(projectRoot) {
   return value;
 }
 
+// With a record store, the descriptive artifacts the checkout sees come from the store, by path, while the checkout's own files under those paths are not artifacts.
+// An unavailable store or a refused repository name hides only the records, so the checkout's documents still list, as they do without a store.
+async function storeArtifactEntries(projectRoot) {
+  return listStoreArtifacts(projectRoot).catch((error) => {
+    if (recordsUnavailable(error) || error?.name === "ArtifactError") return null;
+    throw error;
+  });
+}
+
+/** The scope label of each store artifact the checkout sees, by path, or an empty object without a store; a path that several scopes hold names the first by label. */
+export async function listArtifactScopes(projectRoot) {
+  const scopes = {};
+  for (const entry of await storeArtifactEntries(projectRoot) ?? []) scopes[entry.path] ??= entry.scope.label;
+  return scopes;
+}
+
 export async function listArtifacts(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const results = new Set();
   for (const root of configuredRoots(config)) {
     await walkArtifacts(projectRoot, root, results);
+  }
+  const stored = await storeArtifactEntries(projectRoot);
+  if (stored !== null) {
+    for (const file of [...results]) if (await inArtifactStore(projectRoot, file)) results.delete(file);
+    for (const entry of stored) if (TEXT_EXTENSIONS.has(path.posix.extname(entry.path).toLowerCase())) results.add(entry.path);
   }
   // Machine records live under .prism, which the walk above skips as a hidden folder.
   await walkArtifacts(projectRoot, `${RECORD_DIRECTORY}/initiatives`, results);
@@ -169,9 +191,13 @@ export async function searchArtifacts(projectRoot, query) {
   for (const artifactPath of await listArtifacts(projectRoot)) {
     let content;
     try {
-      const absolutePath = await resolveProjectFile(projectRoot, artifactPath);
-      if ((await stat(absolutePath)).size > SEARCH_SIZE_LIMIT) continue;
-      content = await readFile(absolutePath, "utf8");
+      if (await inArtifactStore(projectRoot, artifactPath)) ({ content } = await readReviewed(projectRoot, artifactPath));
+      else {
+        const absolutePath = await resolveProjectFile(projectRoot, artifactPath);
+        if ((await stat(absolutePath)).size > SEARCH_SIZE_LIMIT) continue;
+        content = await readFile(absolutePath, "utf8");
+      }
+      if (Buffer.byteLength(content) > SEARCH_SIZE_LIMIT) continue;
     } catch {
       continue;
     }
@@ -279,7 +305,22 @@ export async function loadEvidence(projectRoot, evidenceId, store = conservation
   return { id: evidenceId, kind: record.kind, record, truncated, arrayLimit: EVIDENCE_ARRAY_LIMIT };
 }
 
+// A store artifact is read from the store, and every other file from the project or the record store as its path decides.
+// An unavailable store or a refused repository name shows the checkout's file, as the listing does.
+async function readReviewed(projectRoot, file) {
+  const stored = await inArtifactStore(projectRoot, file) ? await readStoreArtifact(projectRoot, file).catch((error) => { if (recordsUnavailable(error)) return undefined; throw error; }) : undefined;
+  if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
+  if (stored !== undefined) return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, scope: stored.scope };
+  const absolutePath = await resolveProjectFile(projectRoot, file);
+  return { content: await readFile(absolutePath, "utf8"), modifiedAt: (await stat(absolutePath)).mtimeMs, absolutePath };
+}
+
 export async function loadArtifact(projectRoot, artifactPath) {
+  if (await inArtifactStore(projectRoot, artifactPath) && await listStoreArtifacts(projectRoot).then(() => true, (error) => { if (recordsUnavailable(error)) return false; throw error; })) {
+    const { content, modifiedAt } = await readReviewed(projectRoot, artifactPath);
+    if (path.extname(artifactPath).toLowerCase() === ".json") return { path: artifactPath, content, diagrams: [], modifiedAt, ...(await loadJsonArtifact(projectRoot, artifactPath, content)) };
+    return { path: artifactPath, content, diagrams: await linkedDiagrams(projectRoot, artifactPath, content), modifiedAt };
+  }
   const absolutePath = await resolveProjectFile(projectRoot, artifactPath);
   if (!TEXT_EXTENSIONS.has(path.extname(artifactPath).toLowerCase())) {
     const bytes = await readFile(absolutePath);
@@ -292,19 +333,23 @@ export async function loadArtifact(projectRoot, artifactPath) {
     const metadata = await stat(absolutePath);
     return { path: artifactPath, content, diagrams: [], modifiedAt: metadata.mtimeMs, ...(await loadJsonArtifact(projectRoot, artifactPath, content)) };
   }
+  const metadata = await stat(absolutePath);
+  return { path: artifactPath, content, diagrams: await linkedDiagrams(projectRoot, artifactPath, content), modifiedAt: metadata.mtimeMs };
+}
+
+async function linkedDiagrams(projectRoot, artifactPath, content) {
   const diagrams = [];
   for (const diagramPath of linkedDiagramPaths(artifactPath, content)) {
     try {
-      const diagramFile = await resolveProjectFile(projectRoot, diagramPath);
-      diagrams.push({ path: diagramPath, source: await readFile(diagramFile, "utf8") });
+      diagrams.push({ path: diagramPath, source: (await readReviewed(projectRoot, diagramPath)).content });
     } catch (error) {
-      if (error.code !== "ENOENT") {
+      // A missing diagram, or a store diagram the checkout cannot read, is left out.
+      if (error.code !== "ENOENT" && error.name !== "ArtifactError") {
         throw error;
       }
     }
   }
-  const metadata = await stat(absolutePath);
-  return { path: artifactPath, content, diagrams, modifiedAt: metadata.mtimeMs };
+  return diagrams;
 }
 
 export function isTrustedHost(host) {
@@ -646,7 +691,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
-      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, artifactScopes: await listArtifactScopes(projectRoot), sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.
       send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
