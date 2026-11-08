@@ -293,8 +293,8 @@ test("store sync shares only artifacts and record files that the person's own ex
   for (const file of local) assert.equal(pushed.includes(file), false, `${file} stays out of the store's history`);
 });
 
-test("on a file system that ignores letter case, a variant of a stored path in another letter case is no artifact and never opens the stored one", async (context) => {
-  // This host's file system tells letter case apart, so the server runs with a preload that makes its file calls below the store's artifacts folder ignore letter case, while listings keep each stored name.
+// This host's file system tells letter case apart, so the server runs with a preload that makes its file calls below the store's artifacts folder ignore letter case, while listings keep each stored name.
+async function caseInsensitiveServer(context) {
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const marker = path.join(place.parent, "case-insensitive.loaded");
@@ -303,6 +303,11 @@ test("on a file system that ignores letter case, a variant of a stored path in a
     PRISM_TEST_CASE_INSENSITIVE: path.join(place.store, "artifacts"),
     PRISM_TEST_CASE_INSENSITIVE_MARKER: marker
   } });
+  return { place, prism, marker };
+}
+
+test("on a file system that ignores letter case, a variant of a stored path in another letter case is no artifact and never opens the stored one", async (context) => {
+  const { place, prism, marker } = await caseInsensitiveServer(context);
   const stored = await writeArtifact(prism, "docs/plans/x/Plan.md", "# Plan\n");
   assert.ok(await exists(marker), "the server ignores letter case below the artifacts folder");
   const folder = path.join(place.store, "artifacts", "plans", "x");
@@ -324,4 +329,47 @@ test("on a file system that ignores letter case, a variant of a stored path in a
   assert.equal(await text(path.join(folder, "Plan.md")), "# Plan\n");
   assert.equal(ok(await prism.call("get_artifact", { path: "docs/plans/x/Plan.md" })).content, "# Plan\n");
   assert.equal(await exists(path.join(place.store, "artifacts", "repositories")), false, "no variant moved to another scope");
+});
+
+test("on a file system that ignores letter case, a write never lands in a stored folder that matches its location only in letter case and holds no artifact", async (context) => {
+  const { place, prism, marker } = await caseInsensitiveServer(context);
+  const plans = path.join(place.store, "artifacts", "plans");
+
+  // A folder in another letter case at the written location, holding only Finder's .DS_Store, refuses the update before its earlier write lands.
+  await mkdir(path.join(plans, "x", "A.md"), { recursive: true });
+  await writeFile(path.join(plans, "x", "A.md", ".DS_Store"), "finder");
+  const refusal = refused(await prism.call("update_artifact", { operations: [
+    { op: "write", path: "docs/requirements/new.md", content: "# New\n", expectedVersion: null },
+    { op: "write", path: "docs/plans/x/a.md", content: "# A\n", expectedVersion: null }
+  ] }), "invalid_path");
+  assert.ok(await exists(marker), "the server ignores letter case below the artifacts folder");
+  assert.equal(refusal.data.location, "plans/x/A.md");
+  assert.equal(await exists(path.join(place.store, "artifacts", "requirements")), false, "the earlier write did not land");
+  assert.deepEqual(await readdir(path.join(plans, "x", "A.md")), [".DS_Store"]);
+  await rm(path.join(plans, "x"), { recursive: true });
+
+  // A case-only folder rename by a remove and then a write: the remove takes the folder with the .DS_Store it held, so the new artifact lands under its own path.
+  const first = await writeArtifact(prism, "docs/plans/X/a.md", "# A\n");
+  await writeFile(path.join(plans, "X", ".DS_Store"), "finder");
+  ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/plans/X/a.md", expectedVersion: first.version }] }));
+  assert.deepEqual(await readdir(plans).catch(() => []), [], "no folder in the old letter case stays");
+  const created = await writeArtifact(prism, "docs/plans/x/b.md", "# B\n");
+  assert.equal(created.path, "docs/plans/x/b.md");
+  assert.equal(ok(await prism.call("get_artifact", { path: "docs/plans/x/b.md" })).content, "# B\n");
+  assert.deepEqual(ok(await prism.call("get_artifact", {})).artifacts.map((entry) => entry.path), ["docs/plans/x/b.md"]);
+  assert.deepEqual(await readdir(plans), ["x"]);
+  assert.deepEqual(await readdir(path.join(plans, "x")), ["b.md"]);
+
+  // A folder that keeps a file a person put there stays with it, and a create in another letter case below it is refused before any file changes.
+  await writeFile(path.join(plans, "x", "my notes.txt"), "mine");
+  ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/plans/x/b.md", expectedVersion: created.version }] }));
+  assert.deepEqual(await readdir(path.join(plans, "x")), ["my notes.txt"]);
+  const kept = refused(await prism.call("update_artifact", { operations: [
+    { op: "write", path: "docs/requirements/new.md", content: "# New\n", expectedVersion: null },
+    { op: "write", path: "docs/plans/X/c.md", content: "# C\n", expectedVersion: null }
+  ] }), "invalid_path");
+  assert.equal(kept.data.location, "plans/x");
+  assert.equal(await exists(path.join(place.store, "artifacts", "requirements")), false, "the earlier write did not land");
+  assert.deepEqual(await readdir(plans), ["x"]);
+  assert.deepEqual(await readdir(path.join(plans, "x")), ["my notes.txt"]);
 });

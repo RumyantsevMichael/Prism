@@ -371,12 +371,40 @@ function applyEdits(file, content, edits) {
   return result;
 }
 
-// Every location an update writes must be able to hold a file, checked before any file changes: it is no folder, lies below no file the store holds, and lies below no other file the update writes.
+// A written location's names follow the name form, which admits only ASCII letters, so ASCII folding finds the entries that match them in another letter case.
+const folded = (name) => name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+
+/**
+ * The first entry on the way from the artifacts folder to a location whose name matches the location's name there only in letter case, as a location below artifacts/, or null.
+ * A case-insensitive file system, the default on macOS and Windows, writes into that entry, so the file would land under another path; a name that matches exactly, or a missing one, is safe.
+ */
+async function letterCaseVariant(base, target, entries) {
+  let folder = base;
+  for (const name of path.relative(base, target).split(path.sep)) {
+    if (!entries.has(folder)) entries.set(folder, await readdir(folder).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return []; throw error; }));
+    const names = entries.get(folder);
+    if (!names.includes(name)) {
+      const variant = names.find((other) => folded(other) === folded(name));
+      return variant === undefined ? null : path.relative(base, path.join(folder, variant)).split(path.sep).join("/");
+    }
+    folder = path.join(folder, name);
+  }
+  return null;
+}
+
+// Every location an update writes must be able to hold a file, checked before any file changes: it is no folder, lies below no file the store holds, lies below no other file the update writes, and passes through no entry in another letter case.
 async function checkLayout(seen, writes, state, names) {
+  const entries = new Map();
   for (const [target] of writes) {
     const file = names.get(target);
     for (let folder = path.dirname(target); folder !== seen.base && folder.startsWith(`${seen.base}${path.sep}`); folder = path.dirname(folder)) {
       if (state.get(folder)) throw fail("invalid_path", `${file} lies below ${names.get(folder)}, which this update writes as a file, so the two cannot both exist; nothing changed.`);
+    }
+    // Store entries that hold an artifact a seen scope lists were refused with artifact_name_conflict already; this catches the rest, such as a folder that holds only a lock, a temporary file, or Finder's .DS_Store.
+    const variant = await letterCaseVariant(seen.base, target, entries);
+    if (variant !== null) {
+      const location = path.relative(seen.base, target).split(path.sep).join("/");
+      throw fail("invalid_path", `${file} would be written at ${location} in the record store, where ${variant} already exists with a name that differs only in letter case, so a file system that ignores letter case, as macOS and Windows do by default, would write it into ${variant} under another path; nothing changed. Choose another name; a person can remove ${variant} from the store's artifacts folder if nothing in it is needed.`, { location: variant });
     }
     const kind = await locationKind(target, seen.base);
     if (kind === "folder") throw fail("invalid_path", `${file} is a folder of artifacts in the record store, so no file can be written in its place; nothing changed.`);
@@ -384,10 +412,22 @@ async function checkLayout(seen, writes, state, names) {
   }
 }
 
-// Remove the folders that a removal left empty, up to the artifacts folder.
+/**
+ * Files that a file manager writes into a folder on its own and writes again when it needs them: Finder's view settings and Windows Explorer's thumbnail cache.
+ * A removal deletes them with the folder it emptied, so no folder lingers whose letter case a later create in another case would land in.
+ * Lock and temporary files are not among them, since one may belong to a lock or a write that another process holds now.
+ */
+const FILE_MANAGER_FILES = new Set([".DS_Store", "Thumbs.db"]);
+
+// Remove the folders that a removal left empty, or holding only file manager files, up to the artifacts folder.
 async function pruneParents(base, target) {
   for (let folder = path.dirname(target); folder !== base && folder.startsWith(`${base}${path.sep}`); folder = path.dirname(folder)) {
-    try { await rmdir(folder); } catch { return; }
+    try {
+      const entries = await readdir(folder, { withFileTypes: true });
+      if (!entries.every((entry) => entry.isFile() && FILE_MANAGER_FILES.has(entry.name))) return;
+      for (const entry of entries) await rm(path.join(folder, entry.name));
+      await rmdir(folder);
+    } catch { return; }
   }
 }
 
