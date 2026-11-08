@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { cp, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
-import { gitTimeoutMs, markManagedStore, runGit } from "./record-store-sync.mjs";
+import { describeUnsafeEntry, gitTimeoutMs, gitTooOld, markManagedStore, remoteHelperOption, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
 import { legacyStoresDirectory, managedStoreId, managedStoresDirectory, normalizeRemote, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 
 // A record store named by its remote lives in a clone Prism keeps in its application folder, one per remote, shared by every checkout and host that names it.
@@ -82,9 +82,22 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
     const temporary = path.join(directory, `.${id}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
     try {
       // Long paths keep deep record paths usable on Windows, where Git otherwise stops at 260 characters.
-      const cloned = await runGit(directory, ["clone", "--quiet", "--config", "core.longpaths=true", "--", configured, temporary]);
+      // Git checks every object the remote sends, so a tree that a teammate built with a name such as ".." or ".git" fails the clone,
+      // and the clone writes no file until the remote's whole tree holds no entry that a store may not hold, as every sync checks an upstream's tree.
+      // The files are written from their blobs' bytes, never checked out, so no line-ending setting or attributes file makes a file differ from what every sync expects.
+      // The remote is named origin, as every sync of a managed clone expects, whatever the person's clone.defaultRemoteName.
+      // A file:// remote's upload-pack runs on this machine, so it reads no hook or command that the remote's own files name, as in every sync.
+      const url = await runGit(directory, ["ls-remote", "--get-url", configured]);
+      const helper = await remoteHelperOption("--upload-pack", [url.ok && url.text ? url.text : configured]);
+      const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--no-checkout", "--origin", "origin", "--config", "core.longpaths=true", "--config", "core.symlinks=false", ...helper, "--", configured, temporary]);
       if (cloned.missing) throw unavailable("Git is not available, so the remote store cannot be cloned.");
       if (!cloned.ok) throw unavailable(`Git could not clone it: ${withoutCredentials(cloned.stderr) || `git clone exited with code ${cloned.code}.`}`);
+      const head = await runGit(temporary, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+      if (head.ok) {
+        const unsafe = await unsafeStoreEntry(temporary, head.text);
+        if (unsafe) throw unavailable(`Its branch holds ${describeUnsafeEntry(unsafe)}, so it was not cloned. Remove that path from the remote's branch.`);
+        await writeCommitFiles(temporary, head.text).catch((error) => { throw unavailable(`Git could not write its files: ${withoutCredentials(error.message)}`); });
+      }
       await rename(temporary, target);
     } finally {
       await rm(temporary, { recursive: true, force: true });
@@ -103,6 +116,9 @@ export async function managedRecordStore(projectRoot, configured, makeUnavailabl
   const directory = managedStoresOf(projectRoot);
   const id = managedStoreId(configured);
   if (!id) throw unavailable("It is not a usable remote address.");
+  // A Git older than the store sync needs would fail some of the clone's or a sync's commands midway, so the store is refused before either runs.
+  const tooOld = await gitTooOld();
+  if (tooOld) throw unavailable(tooOld);
   const target = path.join(directory, id);
   const cached = clones.get(target);
   // A clone that disappeared since it was cached is looked for again, so the access reports what is there now.

@@ -4,10 +4,10 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { listSavedConflicts, pullRecordStoreIfStale, readSavedConflict, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
+import { gitTooOld, listSavedConflicts, prepareStoreFiles, pullRecordStoreIfStale, readSavedConflict, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
 import { managedRecordStore } from "./record-store-remote.mjs";
 import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
-import { checkRepositoryName, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
+import { checkRepositoryName, REPOSITORIES, REPOSITORY_NAME, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
 import { initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
 // Machine records live under .prism beside the workflow config, or in the record store the workflow config names; human documents and generated views stay under the configured paths.
@@ -87,6 +87,47 @@ export function isManagedRecordFile(relative) {
   return relative.startsWith(`${RECORD_DIRECTORY}/`) && Object.hasOwn(HOUSEKEEPING, relative.slice(RECORD_DIRECTORY.length + 1));
 }
 
+// The names of the migration files Prism writes: a time and random suffix, or before the ledger, the hash that names the migrated repository.
+const MIGRATION_FILE = /^(?:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{8}|[0-9a-f]{40,64})\.json$/;
+// A later Prism keeps a workspace's descriptive artifacts below artifacts/, each name beginning with an ASCII letter or digit and holding only ASCII letters, digits, ".", "_", and "-",
+// never ending in "." or ".lock" and never a Windows device name, so a store that shares them with machines on that version still syncs here.
+const ARTIFACT_NAME = (name) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) && !name.endsWith(".") && !/\.lock$/i.test(name) && !/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i.test(name);
+
+/**
+ * Whether a store-relative path is one Prism writes in a record store, and so one that every machine of the store shares:
+ * the ignore and attributes files at the root, the roadmap record, each record path an initiative's records use, each registration and migration file,
+ * and each file below artifacts/ whose every name follows the artifact name form.
+ * No other path is shared, so a store's history never carries the sync folder, a lock, a temporary file, Git's folder, or a name that another file system reads as one of these.
+ */
+export function isStoreFile(relative) {
+  if (typeof relative !== "string") return false;
+  if (Object.hasOwn(HOUSEKEEPING, relative) || relative === "roadmap.json") return true;
+  const names = relative.split("/");
+  if (names[0] === "artifacts") return names.length > 1 && names.slice(1).every(ARTIFACT_NAME);
+  if (names[0] === "migrations") return names.length === 2 && MIGRATION_FILE.test(names[1]);
+  if (names[0] === REPOSITORIES) return names.length === 2 && names[1].endsWith(".json") && REPOSITORY_NAME.test(names[1].slice(0, -".json".length));
+  if (names[0] !== "initiatives") return false;
+  const key = parseRecordPath(`${RECORD_DIRECTORY}/${relative}`);
+  if (key?.kind !== "runs") return key !== null && key.kind !== "roadmap";
+  // A run entry is one file of its own below the slice's runs folder.
+  return names.length === 6 && names[5].endsWith(".json") && ENTRY_ID.test(names[5].slice(0, -".json".length));
+}
+
+/**
+ * Whether a store-relative path is a folder that holds files Prism writes in a record store:
+ * a top folder of the layout, a folder below artifacts/ whose every name follows the artifact name form, or an initiative's folder, its claims, slices, one slice, or that slice's runs.
+ */
+export function isStoreFolder(relative) {
+  if (typeof relative !== "string") return false;
+  const names = relative.split("/");
+  if (names.length === 1) return ["initiatives", "artifacts", "migrations", REPOSITORIES].includes(names[0]);
+  if (names[0] === "artifacts") return names.slice(1).every(ARTIFACT_NAME);
+  if (names[0] !== "initiatives" || !SLUG_PATTERN.test(names[1])) return false;
+  if (names.length === 2) return true;
+  if (names.length === 3) return names[2] === CLAIMS || names[2] === "slices";
+  return names[2] === "slices" && SLUG_PATTERN.test(names[3]) && (names.length === 4 || (names.length === 5 && names[4] === "runs"));
+}
+
 function inside(root, target) {
   const relative = path.relative(root, target);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
@@ -140,6 +181,9 @@ async function resolveStore(projectRootPath) {
   if (!(await stat(base)).isDirectory()) throw unavailable("is not a directory. Create or clone the store there; Prism never creates it.");
   if (inside(root, base)) throw unavailable("is inside the project root. Place the store outside the project, so every checkout can share it.");
   if (inside(base, root)) throw unavailable("contains the project root. Place the store beside the project, so records and project files never share a folder.");
+  // A store with sync on is refused on a Git older than its sync needs, which would fail some of the sync's commands midway.
+  const tooOld = workspace.sync === true ? await gitTooOld() : null;
+  if (tooOld) throw unavailable(`has Store sync on. ${tooOld.replace(/; update Git\.$/, "; update Git, or turn Store sync off.")}`);
   return { root, base, contain: base, external: true, sync: workspace.sync === true };
 }
 
@@ -450,6 +494,11 @@ export function takeMigrationReports() {
   return unreportedMoves.splice(0);
 }
 
+/** Give back record moves that takeMigrationReports returned for a tool result that was never written, so the next result reports them. */
+export function restoreMigrationReports(reports) {
+  unreportedMoves.unshift(...(reports ?? []));
+}
+
 /** Move legacy records before a record update, so the update reads and locks each record where it now lives; an unusable root is left for the update to report. */
 export async function moveLegacyRecords(projectRootPath) {
   let root;
@@ -478,9 +527,11 @@ export function forgetMigrations() {
 
 const storeLabel = (store) => store.external ? "the record store" : "the project root";
 
-// A synced store pulls in the background when its last fetch is old, and record access waits while a merge replaces record files.
+// A synced store prepares its files for syncing before any record access, pulls in the background when its last fetch is old, and record access waits while a merge replaces record files.
+// A preparation that fails is tried again by the next access and by every sync, which runs it first.
 async function synced(store) {
   if (!store.sync) return;
+  await prepareStoreFiles(store.base).catch(() => {});
   pullRecordStoreIfStale(store.base);
   await waitForStableStore(store.base);
 }
