@@ -92,6 +92,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "mcp__.*prism-review__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-call-agent.mjs\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [

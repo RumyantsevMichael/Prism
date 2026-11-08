@@ -47,13 +47,14 @@ export async function historyIds({ projectRoot, initiative }) {
   return historyOf((await readCoordinationState({ projectRoot, initiative })).state).map((entry) => entry.id);
 }
 
-function outcome(initiative, gateIds, state, known, first) {
+function outcome(initiative, gateIds, state, known, first, watchChanges) {
   const pending = state?.pending ?? [];
   const present = gateIds.map((id) => pending.find((item) => isRecord(item) && item.id === id)).filter(Boolean);
   if (!present.length) return { status: first ? "unknown_gate" : "resolved" };
   const answered = present.filter((gate) => gate.answer);
   const waiting = present.filter((gate) => !gate.answer).map((gate) => gate.id);
   if (answered.length) return { status: "answered", answered, waiting };
+  if (!watchChanges) return null;
   // An entry absent when the wait started ends it, by id rather than time, so one a store sync brings counts too; an answer to a waited gate answers instead.
   const answers = new Set(gateIds.map((id) => `gate:${initiative}/${id}`));
   const changes = historyOf(state).filter((entry) => !known.has(entry.id) && !(entry.action === "gate.answer" && answers.has(entry.target)));
@@ -63,7 +64,8 @@ function outcome(initiative, gateIds, state, known, first) {
 // The wait reads the coordination state record rather than server memory, so an answer recorded by any review server process ends it.
 // After the first answer it keeps polling briefly, because a user often answers several gates in one visit.
 // knownEntries are the history entry ids present when the wait started, read at its start when not given.
-export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries }) {
+// Only a wait given takeChanges, the coordinator's, ends on the person's changes: it takes the new entries no other result of the session showed, and goes on while it takes none.
+export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, takeChanges = null }) {
   if (!Array.isArray(gateIds) || !gateIds.length || gateIds.length > MAX_WAIT_GATES || gateIds.some((id) => typeof id !== "string" || !id)) {
     throw new Error(`Pass one to ${MAX_WAIT_GATES} gate ids.`);
   }
@@ -88,7 +90,12 @@ export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWa
       }
       if (state) {
         known ??= new Set(historyOf(state).map((entry) => entry.id));
-        const result = outcome(initiative, ids, state, known, first);
+        let result = outcome(initiative, ids, state, known, first, typeof takeChanges === "function");
+        if (result?.status === "changed") {
+          const taken = await takeChanges(result.changes);
+          for (const entry of result.changes) known.add(entry.id);
+          result = taken.length ? { ...result, changes: taken } : null;
+        }
         if (result && result.status !== "answered") return { ...result, gateIds: ids };
         if (result) {
           last = result;

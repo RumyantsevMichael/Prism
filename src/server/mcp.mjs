@@ -42,7 +42,8 @@ import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, historyIds, waitForUserGates } from "./workflow/gate-wait.mjs";
-import { markPersonChangesShown, personChangesText, takePersonChanges } from "./workflow/change-notices.mjs";
+import { coordinatesInitiative, keptSettingsText, markAnswersShown, personChangesText, takePersonChanges, takeWaitChanges } from "./workflow/change-notices.mjs";
+import { callAgent, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
@@ -863,13 +864,19 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   let value;
   const unsupported = waitUnsupportedReason();
   const hookSession = typeof metadata?.sessionId === "string" && metadata.sessionId ? metadata.sessionId : null;
+  // Only the initiative's coordinator when the wait starts has it end on the person's changes, taking each one that no other result of the session showed.
+  const initiative = argumentsValue.initiative;
+  const coordinates = typeof initiative === "string" && !(unsupported && !hookSession)
+    ? await coordinatesInitiative({ projectRoot, initiative, agent: currentCallAgent() }).catch(() => false)
+    : false;
+  const takeChanges = coordinates ? (entries) => takeWaitChanges({ projectRoot, initiative, entries }).catch(() => []) : null;
   if (unsupported && hookSession) {
     // Codex names its session in the call's metadata, and its Stop hook for that session waits once this turn ends.
-    const knownEntries = await historyIds({ projectRoot, initiative: argumentsValue.initiative });
-    value = await waitForUserGates({ projectRoot, initiative: argumentsValue.initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries });
+    const knownEntries = await historyIds({ projectRoot, initiative });
+    value = await waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, takeChanges });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
-      await recordWaitRequest({ sessionId: hookSession, projectRoot, initiative: argumentsValue.initiative, gateIds: value.gateIds, maxWaitMinutes, knownEntries });
+      await recordWaitRequest({ sessionId: hookSession, projectRoot, initiative, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates });
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
     }
   } else if (unsupported) {
@@ -885,6 +892,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
         gateIds,
         maxWaitMinutes: argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES,
         signal: controller.signal,
+        takeChanges,
         heartbeatMs: Number(process.env.PRISM_GATE_WAIT_HEARTBEAT_MS) || 60000,
         settleMs: process.env.PRISM_GATE_WAIT_SETTLE_MS === undefined ? undefined : Number(process.env.PRISM_GATE_WAIT_SETTLE_MS),
         onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, "Waiting for the user's answer in the review browser")
@@ -893,8 +901,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
       pendingWaits.delete(requestId);
     }
   }
-  // The changes a wait returns count as shown, so the session's next result does not repeat them.
-  if (value.status === "changed") await markPersonChangesShown({ projectRoot, initiative: argumentsValue.initiative, entries: value.changes }).catch(() => {});
+  if (value.status === "answered" && typeof initiative === "string") await markAnswersShown({ projectRoot, initiative, gateIds: value.answered.map((gate) => gate.id) }).catch(() => {});
   const list = value.gateIds.join(", ");
   const text = {
     changed: () => changedText(value),
@@ -937,7 +944,9 @@ async function callStateTool(name, argumentsValue) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
   }
-  return { content: [{ type: "text", text: stateContent(resultValue) }], structuredContent: resultValue };
+  const content = [{ type: "text", text: stateContent(resultValue) }];
+  if (Array.isArray(resultValue?.keptSettings) && resultValue.keptSettings.length) content.push({ type: "text", text: keptSettingsText(resultValue.keptSettings) });
+  return { content, structuredContent: resultValue };
 }
 
 async function callRepositoryTool(name, argumentsValue) {
@@ -1134,12 +1143,16 @@ async function withRecordNotes(value) {
   return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
 }
 
-// A successful call that names an initiative tells the session, once, of the person's changes in the review app that it has not been shown.
-async function withPersonChanges(argumentsValue, value) {
+// A successful claim, or start of a slice, makes its agent the initiative's coordinator in the session.
+const coordinatingCall = (name, argumentsValue) => name === "update_initiative" && Array.isArray(argumentsValue?.operations)
+  && argumentsValue.operations.some((operation) => operation?.op === "claim" || (operation?.op === "set_status" && operation.status === "in-progress"));
+
+// A successful call that names an initiative tells the initiative's coordinator in the session, once, of the person's changes in the review app that the session has not been shown.
+async function withPersonChanges(name, argumentsValue, value) {
   if (typeof argumentsValue?.initiative !== "string" || !Array.isArray(value?.content) || value.structuredContent?.status === "cancelled") return value;
   let changes;
   try {
-    changes = await takePersonChanges({ projectRoot: await requestedProjectRoot(argumentsValue), initiative: argumentsValue.initiative });
+    changes = await takePersonChanges({ projectRoot: await requestedProjectRoot(argumentsValue), initiative: argumentsValue.initiative, agent: currentCallAgent(), coordinates: coordinatingCall(name, argumentsValue) });
   } catch {
     return value;
   }
@@ -1239,7 +1252,11 @@ input.on("line", async (line) => {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
       const meta = request.params?._meta;
-      const value = await withRecordNotes(await withCallSession(meta, async () => withPersonChanges(request.params?.arguments, await callTool(request.params?.name, request.params?.arguments, meta, request.id))));
+      const { name, arguments: argumentsValue } = request.params ?? {};
+      const value = await withRecordNotes(await withCallSession(meta, async () => {
+        const agent = await callAgent(meta).catch(() => undefined);
+        return withCallAgent(agent, async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id)));
+      }));
       // A cancelled request gets no response, as the MCP cancellation rules require.
       if (value.structuredContent?.status !== "cancelled") {
         result(request.id, value);

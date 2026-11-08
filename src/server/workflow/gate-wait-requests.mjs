@@ -26,13 +26,14 @@ async function removeExpired(directory, now) {
 }
 
 // One request per session: a later wait in the same turn replaces an earlier one, since the agent lists every gate it still waits on.
-// knownEntries are the history entry ids when the wait was asked, so a change the person makes before the hook starts still ends it.
-export async function recordWaitRequest({ sessionId, projectRoot, initiative, gateIds, maxWaitMinutes, knownEntries, directory = gateWaitDirectory(), now = Date.now() }) {
+// knownEntries are the history entry ids when the wait was asked, so a change the person makes before the hook starts still ends it,
+// and coordinates keeps whether the asking agent coordinated the initiative, since only such a wait ends on the person's changes.
+export async function recordWaitRequest({ sessionId, projectRoot, initiative, gateIds, maxWaitMinutes, knownEntries, coordinates = false, directory = gateWaitDirectory(), now = Date.now() }) {
   await mkdir(directory, { recursive: true });
   await removeExpired(directory, now);
   const file = requestFile(directory, sessionId);
   const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ sessionId, projectRoot, initiative, gateIds, maxWaitMinutes, ...(Array.isArray(knownEntries) ? { knownEntries } : {}), requestedAt: new Date(now).toISOString() })}\n`);
+  await writeFile(temporary, `${JSON.stringify({ sessionId, projectRoot, initiative, gateIds, maxWaitMinutes, ...(Array.isArray(knownEntries) ? { knownEntries } : {}), coordinates: coordinates === true, requestedAt: new Date(now).toISOString() })}\n`);
   await rename(temporary, file);
 }
 

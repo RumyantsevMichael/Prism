@@ -1,45 +1,38 @@
-import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { actionEffect } from "./actions.mjs";
+import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { MAIN_AGENT } from "./call-agent.mjs";
 import { claimHolder } from "./slice-claims.mjs";
 import { readCoordinationState } from "./state.mjs";
 
-// What each session was shown of the person's changes, kept per session and initiative in the host's private plugin data folder,
-// so a server the host restarts in the same session does not show them again; without that folder this process keeps it.
-const FOLDER = "person-change-notices";
+// What each session was shown of the person's changes, and which of its agents coordinates the initiative, kept per session and initiative in Prism's private app directory.
+// Every server process of the session reads and writes one record under one lock, so an entry is shown in at most one result or gate wait of the session.
+export const NOTICE_FOLDER = "person-change-notices";
 const ENTRY_ID = /^[0-9a-f]{32}$/;
-const inMemory = new Map();
 
 export const NOTICE_HEADING = "The person changed this initiative in the review app since this session last read it:";
 
-const pluginDataDirectory = (env = process.env) => env.PLUGIN_DATA || env.CLAUDE_PLUGIN_DATA || null;
-
-function shownKey(session, projectRoot, initiative) {
-  return createHash("sha256").update(`${session}\0${path.resolve(projectRoot)}\0${initiative}`, "utf8").digest("hex").slice(0, 32);
+export function noticeDirectory(env = process.env) {
+  return path.join(reviewAppDirectory(env), NOTICE_FOLDER);
 }
 
-async function readShown(key, dataDirectory) {
-  if (!dataDirectory) return inMemory.get(key) ?? null;
+function noticeFile(directory, session, projectRoot, initiative) {
+  return path.join(directory, `${createHash("sha256").update(`${session}\0${path.resolve(projectRoot)}\0${initiative}`, "utf8").digest("hex").slice(0, 32)}.json`);
+}
+
+async function readNotice(file) {
   try {
-    const value = JSON.parse(await readFile(path.join(dataDirectory, FOLDER, `${key}.json`), "utf8"));
-    return Array.isArray(value?.shown) ? value.shown.filter((id) => typeof id === "string") : null;
+    const value = JSON.parse(await readFile(file, "utf8"));
+    return {
+      shown: Array.isArray(value?.shown) ? value.shown.filter((id) => typeof id === "string") : null,
+      coordinator: typeof value?.coordinator === "string" && value.coordinator ? value.coordinator : MAIN_AGENT
+    };
   } catch {
-    return null;
+    return { shown: null, coordinator: MAIN_AGENT };
   }
-}
-
-async function writeShown(key, dataDirectory, ids) {
-  if (!dataDirectory) {
-    inMemory.set(key, ids);
-    return;
-  }
-  const folder = path.join(dataDirectory, FOLDER);
-  await mkdir(folder, { recursive: true });
-  const file = path.join(folder, `${key}.json`);
-  const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ shown: ids })}\n`);
-  await rename(temporary, file);
 }
 
 /** The well-formed entries of an initiative's history, in history order. */
@@ -49,43 +42,92 @@ export async function readPersonHistory(projectRoot, initiative) {
   return history.filter((entry) => typeof entry?.id === "string" && ENTRY_ID.test(entry.id));
 }
 
+// One step for the session: read its record and the history, decide, and write the record, under a lock that every process of the session honors.
+async function withNotice({ projectRoot, initiative, session, directory }, step) {
+  await mkdir(directory, { recursive: true });
+  const file = noticeFile(directory, session, projectRoot, initiative);
+  return withArtifactLock(file, () => withFileLock(file, async () => {
+    const record = await readNotice(file);
+    const history = await readPersonHistory(projectRoot, initiative);
+    const { result, shown = record.shown, coordinator = record.coordinator } = await step(record, history);
+    // A first call counts every existing entry as shown; the kept ids are only those still in the history.
+    const ids = history.map((entry) => entry.id);
+    const kept = shown === null ? ids : ids.filter((id) => shown.includes(id));
+    if (record.shown === null || coordinator !== record.coordinator || kept.length !== record.shown.length || kept.some((id, index) => id !== record.shown[index])) {
+      await writeAtomically(file, `${JSON.stringify({ shown: kept, coordinator })}\n`, { mode: 0o600 });
+    }
+    return result;
+  }));
+}
+
 /**
- * The entries of an initiative's history that this session has not been shown, which now count as shown.
- * A session's first call shows nothing and counts every existing entry as shown; the kept ids are those still in the history.
+ * The entries of an initiative's history that this session has not been shown, for its coordinator, which now count as shown.
+ * coordinates makes the agent the coordinator first, as a successful claim or start of a slice does; another agent is shown nothing and counts nothing as shown.
+ * A session's first call shows nothing and counts every existing entry as shown.
  */
-export async function takePersonChanges({ projectRoot, initiative, session = claimHolder(), dataDirectory = pluginDataDirectory() }) {
-  const history = await readPersonHistory(projectRoot, initiative);
-  const key = shownKey(session, projectRoot, initiative);
-  const shown = await readShown(key, dataDirectory);
-  const changes = shown === null ? [] : history.filter((entry) => !shown.includes(entry.id));
-  const ids = history.map((entry) => entry.id);
-  if (shown === null || changes.length || shown.length !== ids.length) await writeShown(key, dataDirectory, ids);
-  return changes;
+export async function takePersonChanges({ projectRoot, initiative, agent = MAIN_AGENT, coordinates = false, session = claimHolder(), directory = noticeDirectory() }) {
+  return withNotice({ projectRoot, initiative, session, directory }, (record, history) => {
+    const coordinator = coordinates ? agent : record.coordinator;
+    if (record.shown === null || coordinator !== agent) return { result: [], coordinator };
+    const changes = history.filter((entry) => !record.shown.includes(entry.id));
+    return { result: changes, shown: [...record.shown, ...changes.map((entry) => entry.id)], coordinator };
+  });
 }
 
-/** Count entries as shown to this session, as a gate wait that returned them does. */
-export async function markPersonChangesShown({ projectRoot, initiative, entries, session = claimHolder(), dataDirectory = pluginDataDirectory() }) {
-  const key = shownKey(session, projectRoot, initiative);
-  const shown = await readShown(key, dataDirectory);
-  const history = (await readPersonHistory(projectRoot, initiative)).map((entry) => entry.id);
-  const seen = new Set([...(shown ?? history), ...entries.map((entry) => entry.id)]);
-  await writeShown(key, dataDirectory, history.filter((id) => seen.has(id)));
+/** Whether the agent coordinates the initiative in its session now; a session's first call counts every existing entry as shown. */
+export async function coordinatesInitiative({ projectRoot, initiative, agent = MAIN_AGENT, session = claimHolder(), directory = noticeDirectory() }) {
+  return withNotice({ projectRoot, initiative, session, directory }, (record) => ({ result: record.coordinator === agent }));
 }
 
-const valueText = (value) => value === null || value === undefined ? "none" : typeof value === "string" ? value : JSON.stringify(value);
+/** Of the entries a coordinator's gate wait found, the ones no other result of the session showed, which now count as shown. */
+export async function takeWaitChanges({ projectRoot, initiative, entries, session = claimHolder(), directory = noticeDirectory() }) {
+  return withNotice({ projectRoot, initiative, session, directory }, (record, history) => {
+    const present = new Set(history.map((entry) => entry.id));
+    const shown = record.shown ?? [];
+    const changes = entries.filter((entry) => present.has(entry.id) && !shown.includes(entry.id));
+    return { result: changes, shown: [...shown, ...changes.map((entry) => entry.id)] };
+  });
+}
+
+/** A wait's result showed the answers to its answered gates, whichever agent waited, so their history entries count as shown. */
+export async function markAnswersShown({ projectRoot, initiative, gateIds, session = claimHolder(), directory = noticeDirectory() }) {
+  const targets = new Set(gateIds.map((id) => `gate:${initiative}/${id}`));
+  return withNotice({ projectRoot, initiative, session, directory }, (record, history) => {
+    if (record.shown === null) return { result: [] };
+    const answers = history.filter((entry) => entry.action === "gate.answer" && targets.has(entry.target) && !record.shown.includes(entry.id));
+    return { result: answers, shown: [...record.shown, ...answers.map((entry) => entry.id)] };
+  });
+}
+
+// A string has each backslash and each control or line separator character escaped, so a value from a synced entry cannot start a line.
+const UNSAFE = /[\\\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+export const noticeString = (value) => value.replace(UNSAFE, (character) => character === "\\" ? "\\\\" : `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+
+/** A value as a notice line writes it: a string escaped, any other value as its JSON text with line separators escaped. */
+export function noticeValue(value) {
+  if (typeof value === "string") return noticeString(value);
+  return (JSON.stringify(value) ?? "null").replace(/[\u2028\u2029]/g, (character) => `\\u${character.charCodeAt(0).toString(16)}`);
+}
 
 /** The author as `<name> <<email>>`, without whichever part is unset, or `an unknown person`, followed by its checkout. */
 export function authorText(by) {
-  const name = typeof by?.name === "string" && by.name ? by.name : null;
-  const email = typeof by?.email === "string" && by.email ? `<${by.email}>` : null;
+  const name = typeof by?.name === "string" && by.name ? noticeString(by.name) : null;
+  const email = typeof by?.email === "string" && by.email ? `<${noticeString(by.email)}>` : null;
   const who = [name, email].filter(Boolean).join(" ") || "an unknown person";
-  return `${who}${by?.checkout ? ` (${by.checkout})` : ""}`;
+  return `${who}${typeof by?.checkout === "string" && by.checkout ? ` (${noticeString(by.checkout)})` : ""}`;
 }
 
 /** The notice text for entries, one line per entry with its action, target, values, effect, and author. */
 export function personChangesText(entries) {
   return [NOTICE_HEADING, ...entries.map((entry) => {
     const effect = actionEffect(entry.action);
-    return `- ${entry.action} on ${entry.target}: ${valueText(entry.before)} -> ${valueText(entry.after)}.${effect ? ` ${effect}` : ""} Changed by ${authorText(entry.by)}.`;
+    return `- ${noticeValue(entry.action)} on ${noticeValue(entry.target)}: ${noticeValue(entry.before)} -> ${noticeValue(entry.after)}.${effect ? ` ${effect}` : ""} Changed by ${authorText(entry.by)}.`;
   })].join("\n");
+}
+
+export const KEPT_SETTINGS_HEADING = "The person set these settings in the review app, so Prism kept their values:";
+
+/** The text of the settings an agent's write kept, one line per setting. */
+export function keptSettingsText(kept) {
+  return [KEPT_SETTINGS_HEADING, ...kept.map((item) => `- ${noticeString(String(item.setting))}: kept ${noticeValue(item.kept)}, requested ${noticeValue(item.requested)}.`)].join("\n");
 }
