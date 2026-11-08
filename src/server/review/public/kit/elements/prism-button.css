@@ -1,0 +1,135 @@
+/* prism-button: the native button fills the element, so the element's box is the control's box. */
+
+:host {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  height: var(--prism-control-height);
+  vertical-align: middle;
+}
+
+:host([size="sm"]) {
+  height: var(--prism-control-height-sm);
+}
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0 var(--prism-space-5);
+  border: var(--prism-stroke) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  font: inherit;
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-medium);
+  line-height: var(--prism-line-height-tight);
+  letter-spacing: inherit;
+  cursor: pointer;
+  transition: background-color var(--prism-duration-fast) var(--prism-easing-standard), color var(--prism-duration-fast) var(--prism-easing-standard), transform var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+.content {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+::slotted(prism-icon) {
+  margin-inline-end: var(--prism-space-3);
+  vertical-align: middle;
+}
+
+::slotted(prism-icon:last-child) {
+  margin-inline-end: 0;
+}
+
+button:hover {
+  background: var(--prism-color-hover);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(var(--prism-stroke));
+}
+
+:host([size="sm"]) button {
+  padding: 0 var(--prism-space-4);
+  font-size: var(--prism-font-size-xs);
+}
+
+:host([variant="primary"]) button {
+  border-color: var(--prism-color-accent);
+  background: var(--prism-color-accent);
+  color: var(--prism-color-on-accent);
+  box-shadow: var(--prism-shadow-lift);
+}
+
+:host([variant="primary"]) button:hover {
+  border-color: var(--prism-color-accent-hover);
+  background: var(--prism-color-accent-hover);
+}
+
+:host([variant="ghost"]) button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--prism-color-ink-muted);
+}
+
+:host([variant="ghost"]) button:hover {
+  background: var(--prism-color-hover);
+  color: var(--prism-color-ink);
+}
+
+:host([variant="danger"]) button {
+  border-color: var(--prism-color-danger);
+  color: var(--prism-color-danger);
+}
+
+:host([variant="danger"]) button:hover {
+  background: var(--prism-color-danger-soft);
+}
+
+button[aria-pressed="true"],
+:host([variant="ghost"]) button[aria-pressed="true"] {
+  background: var(--prism-color-selected);
+  color: var(--prism-color-accent-text);
+}
+
+button[aria-expanded="true"] {
+  background: var(--prism-color-hover);
+  color: var(--prism-color-ink);
+}
+
+:host([label]) {
+  width: var(--prism-control-height);
+}
+
+:host([label][size="sm"]) {
+  width: var(--prism-control-height-sm);
+}
+
+:host([label]) button {
+  padding: 0;
+}
+
+button:disabled,
+:host([disabled]) button:disabled {
+  border-color: var(--prism-color-line);
+  background: var(--prism-color-sunken);
+  color: var(--prism-color-ink-faint);
+  box-shadow: none;
+  cursor: default;
+}
+
+:host([variant="ghost"][disabled]) button:disabled {
+  border-color: transparent;
+  background: transparent;
+}

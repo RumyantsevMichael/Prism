@@ -46,3 +46,450 @@ hr {
   border: 0;
   border-top: var(--prism-stroke) solid var(--prism-color-line);
 }
+
+/* ---------- Elements before they are defined ----------
+   An element whose script has not run yet keeps the room it will take, so the page does not shift when the kit defines it. */
+
+:is(prism-button, prism-chip, prism-badge, prism-icon, prism-tab):not(:defined) {
+  display: inline-block;
+  visibility: hidden;
+  vertical-align: middle;
+}
+
+prism-button:not(:defined) {
+  height: var(--prism-control-height);
+}
+
+prism-button[size="sm"]:not(:defined),
+:is(prism-chip, prism-badge):not(:defined) {
+  height: var(--prism-control-height-sm);
+}
+
+prism-icon:not(:defined) {
+  width: var(--prism-icon-size);
+  height: var(--prism-icon-size);
+}
+
+prism-tab:not(:defined) {
+  height: var(--prism-subtab-height);
+}
+
+prism-menu:not(:defined),
+prism-tooltip:not(:defined),
+prism-option {
+  display: none;
+}
+
+/* ---------- Light-DOM elements size their own boxes, borders and padding included ---------- */
+
+:where(prism-tabs, prism-menu, prism-menu-group, prism-field, prism-choice, prism-choice-option),
+:where(prism-tabs, prism-menu, prism-field, prism-choice) *,
+:where(prism-tabs, prism-menu, prism-field, prism-choice) ::before,
+:where(prism-tabs, prism-menu, prism-field, prism-choice) ::after {
+  box-sizing: border-box;
+}
+
+/* ---------- Kit buttons and tabs: the element is the control's box ---------- */
+
+prism-button:focus-visible {
+  outline: none;
+}
+
+/* ---------- prism-tabs: a strip of sub-tabs that scrolls when they do not fit ---------- */
+
+prism-tabs {
+  display: flex;
+  gap: var(--prism-space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding: calc(var(--prism-stroke-strong) + var(--prism-stroke)) calc(var(--prism-stroke-strong) + var(--prism-stroke)) 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: var(--prism-stroke) solid var(--prism-color-line);
+  scrollbar-width: thin;
+}
+
+/* ---------- Glass: menus, popovers, tooltips, dialogs, and the toast float on frosted glass ---------- */
+
+prism-menu {
+  --prism-color-line-control: var(--prism-color-glass-control);
+  display: block;
+  width: max-content;
+  min-width: calc(var(--prism-menu-width) / 2);
+  max-width: min(var(--prism-menu-width), 100%);
+  padding: var(--prism-space-2);
+  overflow: auto;
+  border: var(--prism-stroke) solid var(--prism-color-glass-edge);
+  border-radius: var(--prism-radius-overlay);
+  background: var(--prism-color-glass);
+  backdrop-filter: blur(var(--prism-blur-glass)) saturate(var(--prism-saturate-glass));
+  box-shadow: var(--prism-shadow-glass);
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-md);
+  overscroll-behavior: contain;
+}
+
+prism-menu[popover] {
+  position: fixed;
+  inset: auto;
+  z-index: var(--prism-layer-popup);
+  max-width: min(var(--prism-menu-width), calc(100vw - 2 * var(--prism-space-3)));
+  max-height: calc(100vh - 2 * var(--prism-space-3));
+  margin: 0;
+}
+
+prism-menu[popover]:not(:popover-open) {
+  display: none;
+}
+
+prism-menu[popover]:popover-open {
+  animation: prism-rise var(--prism-duration-normal) var(--prism-easing-enter);
+}
+
+@keyframes prism-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--prism-space-2));
+  }
+}
+
+prism-menu-group {
+  display: block;
+  min-width: 0;
+}
+
+prism-menu-group + prism-menu-group,
+prism-menu-group + prism-menu-item,
+prism-menu-item + prism-menu-group {
+  margin-top: var(--prism-space-2);
+  padding-top: var(--prism-space-2);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.prism-menu-group-label {
+  min-width: 0;
+  padding: var(--prism-space-2) var(--prism-space-3) var(--prism-space-1);
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- prism-field: label, native control, hint, and error ---------- */
+
+prism-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.prism-field-label {
+  min-width: 0;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.prism-field-control {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--prism-control-height);
+  margin: 0;
+  padding: 0 var(--prism-space-4);
+  border: var(--prism-stroke) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  font: inherit;
+  font-size: var(--prism-font-size-md);
+  letter-spacing: inherit;
+  text-overflow: ellipsis;
+}
+
+textarea.prism-field-control {
+  min-height: calc(3 * var(--prism-control-height));
+  padding: var(--prism-space-3) var(--prism-space-4);
+  line-height: var(--prism-line-height);
+  resize: vertical;
+}
+
+select.prism-field-control {
+  height: var(--prism-control-height);
+  padding-inline-end: var(--prism-space-2);
+}
+
+.prism-field-control::placeholder {
+  color: var(--prism-color-ink-muted);
+  opacity: 1;
+}
+
+.prism-field-control[aria-invalid="true"] {
+  border-color: var(--prism-color-danger);
+}
+
+.prism-field-control:disabled {
+  border-color: var(--prism-color-line-strong);
+  background: var(--prism-color-sunken);
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-field-hint,
+.prism-field-error {
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.prism-field-error {
+  color: var(--prism-color-danger);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+/* ---------- prism-choice: radio options drawn as cards with an indicator ---------- */
+
+prism-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.prism-choice-label {
+  min-width: 0;
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+prism-choice-option {
+  display: block;
+  min-width: 0;
+  border-radius: var(--prism-radius-md);
+}
+
+.prism-choice-box {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--prism-space-1) var(--prism-space-4);
+  min-width: 0;
+  padding: var(--prism-space-4) var(--prism-space-5);
+  border: var(--prism-stroke) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-md);
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  cursor: pointer;
+  transition: background-color var(--prism-duration-fast) var(--prism-easing-standard), border-color var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+.prism-choice-box:hover {
+  background: var(--prism-color-hover);
+}
+
+.prism-choice-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.prism-choice-input:focus-visible {
+  outline: none;
+}
+
+prism-choice-option:has(.prism-choice-input:focus-visible) {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: var(--prism-stroke);
+}
+
+.prism-choice-indicator {
+  display: grid;
+  place-items: center;
+  width: var(--prism-icon-size);
+  height: var(--prism-icon-size);
+  margin-top: var(--prism-space-1);
+  border: var(--prism-stroke-strong) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-surface);
+}
+
+.prism-choice-indicator::after {
+  content: "";
+  width: calc(var(--prism-icon-size) / 2 - var(--prism-stroke));
+  height: calc(var(--prism-icon-size) / 2 - var(--prism-stroke));
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-on-accent);
+  visibility: hidden;
+}
+
+.prism-choice-title {
+  min-width: 0;
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.prism-choice-detail {
+  grid-column: 2;
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.prism-choice-box:has(.prism-choice-input:checked) {
+  border-color: var(--prism-color-accent);
+  background: var(--prism-color-selected);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-accent);
+}
+
+.prism-choice-input:checked ~ .prism-choice-indicator {
+  border-color: var(--prism-color-accent);
+  background: var(--prism-color-accent);
+}
+
+.prism-choice-input:checked ~ .prism-choice-indicator::after {
+  visibility: visible;
+}
+
+prism-choice-option[tone="danger"] .prism-choice-box:has(.prism-choice-input:checked) {
+  border-color: var(--prism-color-danger);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-danger);
+}
+
+prism-choice-option[tone="danger"] .prism-choice-input:checked ~ .prism-choice-indicator {
+  border-color: var(--prism-color-danger);
+  background: var(--prism-color-danger);
+}
+
+prism-choice-option[disabled] .prism-choice-box {
+  border-color: var(--prism-color-line-strong);
+  background: var(--prism-color-sunken);
+  color: var(--prism-color-ink-muted);
+  cursor: default;
+}
+
+prism-choice-option[disabled] .prism-choice-indicator {
+  border-color: var(--prism-color-line-strong);
+}
+
+/* ---------- Visually hidden text ---------- */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------- Containers and content blocks: their base look ---------- */
+
+prism-dialog:not([open]),
+prism-popover:not([open]),
+prism-toast:empty {
+  display: none;
+}
+
+prism-panel,
+prism-tree,
+prism-listbox,
+prism-stepper,
+prism-breadcrumbs,
+prism-banner,
+prism-empty-state,
+prism-disclosure,
+prism-doc,
+prism-code,
+prism-tree-item,
+prism-list-item {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+prism-panel[variant="card"],
+prism-panel[variant="island"],
+prism-panel[variant="inset"],
+prism-banner {
+  padding: var(--prism-space-4) var(--prism-space-5);
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  background: var(--prism-color-surface);
+}
+
+prism-panel[variant="island"] {
+  border-color: var(--prism-color-island-edge);
+  border-radius: var(--prism-radius-island);
+  box-shadow: var(--prism-shadow-island);
+}
+
+prism-panel[variant="inset"] {
+  background: var(--prism-color-sunken);
+}
+
+prism-banner[tone="info"] { background: var(--prism-color-info-soft); }
+prism-banner[tone="warning"] { background: var(--prism-color-warning-soft); }
+prism-banner[tone="danger"] { background: var(--prism-color-danger-soft); }
+prism-banner[tone="success"] { background: var(--prism-color-success-soft); }
+
+:is(prism-panel, prism-banner, prism-empty-state, prism-disclosure, prism-doc) > p {
+  margin: var(--prism-space-2) 0 0;
+}
+
+.prism-banner-heading,
+.prism-empty-state-heading,
+.prism-disclosure-summary {
+  margin: 0;
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+prism-tree-item,
+prism-list-item {
+  min-height: var(--prism-row-height);
+  padding: 0 var(--prism-space-3);
+  border-radius: var(--prism-radius-sm);
+}
+
+prism-list-item[selected] {
+  background: var(--prism-color-selected);
+}
+
+prism-stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-3);
+}
+
+prism-step {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-top: var(--prism-space-2);
+  border-top: var(--prism-meter-height) solid var(--prism-color-line-strong);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+prism-step[state="done"],
+prism-step[state="current"] {
+  border-top-color: var(--prism-color-phase-design-fill);
+  color: var(--prism-color-ink);
+}
+
+prism-code pre {
+  margin: 0;
+  padding: var(--prism-space-4);
+  overflow: auto;
+  border-radius: var(--prism-radius-md);
+  background: var(--prism-color-sunken);
+}

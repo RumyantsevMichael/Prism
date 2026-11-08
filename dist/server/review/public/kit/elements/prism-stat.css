@@ -1,0 +1,37 @@
+/* prism-stat: a label above a large figure. */
+
+:host {
+  --tone: var(--prism-color-ink);
+  display: block;
+  min-width: 0;
+}
+
+:host([tone="accent"]) { --tone: var(--prism-color-accent-text); }
+:host([tone="danger"]) { --tone: var(--prism-color-danger); }
+:host([tone="warning"]) { --tone: var(--prism-color-warning); }
+:host([tone="success"]) { --tone: var(--prism-color-success); }
+:host([tone="info"]) { --tone: var(--prism-color-info); }
+
+.stat {
+  display: grid;
+  gap: var(--prism-space-1);
+  min-width: 0;
+}
+
+.label,
+.hint {
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.value {
+  min-width: 0;
+  color: var(--tone);
+  font-size: var(--prism-font-size-xl);
+  font-weight: var(--prism-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--prism-line-height-tight);
+  overflow-wrap: anywhere;
+}

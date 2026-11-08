@@ -1,0 +1,48 @@
+/* prism-tab: a sub-tab whose selection is an accent underline. */
+
+:host {
+  display: inline-flex;
+  flex: none;
+  min-width: 0;
+  max-width: var(--prism-menu-width);
+  height: var(--prism-subtab-height);
+  color: var(--prism-color-ink-muted);
+  cursor: pointer;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  width: 100%;
+  min-width: 0;
+  padding: 0 var(--prism-space-4);
+  border-bottom: var(--prism-stroke-strong) solid transparent;
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-medium);
+  white-space: nowrap;
+  transition: color var(--prism-duration-fast) var(--prism-easing-standard), border-color var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:host(:hover) {
+  color: var(--prism-color-ink);
+}
+
+:host([selected]) {
+  color: var(--prism-color-ink);
+}
+
+:host([selected]) .tab {
+  border-bottom-color: var(--prism-color-accent);
+}
+
+:host([disabled]) {
+  color: var(--prism-color-ink-faint);
+  cursor: default;
+}
