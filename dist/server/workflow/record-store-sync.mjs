@@ -5,6 +5,7 @@ import { ARTIFACTS, letterCaseKey, portableName, STORE_NAME_BYTES_MAX, STORE_PAT
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
+import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { withoutCredentials } from "./remote-url.mjs";
 
 // A record store that is a Git checkout exchanges its records with its upstream.
@@ -770,11 +771,74 @@ async function unpublished(base) {
   return !(await git(base, ["rev-parse", "--verify", "--quiet", "@{upstream}"])).ok && (await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"])).ok;
 }
 
+// For a remote reached by a path or a file:// URL, Git runs receive-pack for a push, and upload-pack for a fetch or a clone, on this machine inside the remote repository with that repository's configuration,
+// and starts them without any -c setting, so a hook, a core.hooksPath, or a core.alternateRefsCommand that the remote's own files name would run here as this user,
+// as would a filter or core.fsmonitor command when receive.denyCurrentBranch=updateInstead makes a push check out the remote's branch.
+// Every store command that reaches such a remote names the helper instead: Git reading hooks from an empty folder Prism owns, with a push to a checked-out branch refused,
+// and an alternate refs command that lists nothing, since an empty one makes every push's connectivity check print that it cannot run it.
+// An SSH server or a Git daemon takes that command as the service to run and refuses it, and HTTP ignores it, so only a local transport gets it.
+// A remote.<name>.uploadpack or remote.<name>.receivepack that the person set is a transport setting of theirs, so it runs as they set it.
+const NO_HOOKS = "no-hooks";
+const REMOTE_HELPER_CONFIG = ["core.alternateRefsCommand=exit 0;", "core.alternateRefsPrefixes=", "receive.denyCurrentBranch=refuse"];
+const shellQuoted = (text) => `'${text.replaceAll("'", "'\\''")}'`;
+
+/** Whether Git reaches a remote URL by its local transport, by Git's own rule: a helper names itself with ::, a URL its scheme with ://, and a colon before any slash an SSH host unless it is a Windows drive. */
+export function localTransport(url) {
+  if (/^[A-Za-z0-9][A-Za-z0-9+.-]*::/.test(url)) return false;
+  if (/^[A-Za-z0-9][A-Za-z0-9+.-]*:\/\//.test(url)) return /^file:\/\//i.test(url);
+  const colon = url.indexOf(":");
+  const slash = url.indexOf("/");
+  return colon < 0 || (slash >= 0 && slash < colon) || (process.platform === "win32" && /^[A-Za-z]:/.test(url));
+}
+
+// The empty folder every remote-side helper reads hooks from, in Prism's application folder; Git for Windows' shell reads its path with forward slashes.
+async function noHooksFolder() {
+  const folder = path.join(reviewAppDirectory(), NO_HOOKS);
+  try { await mkdir(folder, { recursive: true, mode: 0o700 }); }
+  catch (error) { throw new Error(`Prism could not create the empty hooks folder ${folder} that a sync with a local remote needs: ${error.message}`); }
+  return process.platform === "win32" ? folder.replaceAll("\\", "/") : folder;
+}
+
+/**
+ * The option that names the remote-side helper, --upload-pack or --receive-pack, of a fetch, clone, or push whose remote Git reaches at any of these URLs by its local transport; none for any other remote.
+ * Git runs the helper through the shell, so each setting is quoted for it.
+ */
+export async function remoteHelperOption(option, urls) {
+  if (!urls.some(localTransport)) return [];
+  const program = option === "--receive-pack" ? "receive-pack" : "upload-pack";
+  const settings = [`core.hooksPath=${await noHooksFolder()}`, ...REMOTE_HELPER_CONFIG].map((setting) => `-c ${shellQuoted(setting)}`);
+  return [`${option}=git ${settings.join(" ")} ${program}`];
+}
+
+// The helper option of a fetch or push of a remote, unless the person set the remote's own helper program.
+async function storeHelperOption(base, remote, option) {
+  const key = option === "--receive-pack" ? "receivepack" : "uploadpack";
+  if ((await git(base, ["config", "--get", `remote.${remote}.${key}`])).ok) return [];
+  return remoteHelperOption(option, option === "--receive-pack" ? await pushUrls(base, remote) : [await fetchUrl(base, remote)]);
+}
+
+// The URL a fetch reaches, after url.<base>.insteadOf, for a configured remote or a URL.
+async function fetchUrl(base, remote) {
+  const url = await git(base, ["ls-remote", "--get-url", remote]);
+  return url.ok && url.text ? url.text : remote;
+}
+
+// Every URL a push reaches, after pushurl and url.<base>.pushInsteadOf; a push to a configured remote goes to each.
+async function pushUrls(base, remote) {
+  const named = await git(base, ["remote", "get-url", "--push", "--all", remote]);
+  return named.ok && named.text ? named.text.split("\n") : [await fetchUrl(base, remote)];
+}
+
 // Git checks every object a fetch receives, so a tree that a teammate built with a name such as "..", ".git", or an empty one fails the fetch, and the sync's own check of the upstream's tree still guards every write.
 // Only the objects new to the store are checked, so a history that this machine already holds never stops its syncs.
-// Whatever the person's fetch settings, the fetch removes the remote-tracking branches that the remote no longer holds, so the commits the push check takes as known are ones the remote still has,
-// and it fetches no tag, removes no tag, writes no commit-graph file, and fetches no submodule.
-const fetchCommand = (remote) => ["-c", "fetch.fsckObjects=true", "fetch", "--quiet", "--prune", "--no-prune-tags", "--no-tags", "--no-recurse-submodules", "--no-write-commit-graph", remote];
+// A configured remote is fetched with its branches mapped to refs/remotes/<remote>/ on the command line, so the fetch removes the remote-tracking branches that the remote no longer holds,
+// and the commits the push check takes as known are ones the remote still has, while no remote.<name>.fetch refspec of the person's decides which other refs it removes.
+// It fetches no tag, removes no tag, writes no commit-graph file, and fetches no submodule, whatever the person's fetch settings.
+async function fetchCommand(base, remote) {
+  const named = (await git(base, ["remote", "get-url", remote])).ok;
+  return ["-c", "fetch.fsckObjects=true", "fetch", "--quiet", "--prune", "--no-prune-tags", "--no-tags", "--no-recurse-submodules", "--no-write-commit-graph",
+    ...await storeHelperOption(base, remote, "--upload-pack"), remote, ...(named ? [`+refs/heads/*:refs/remotes/${remote}/*`] : [])];
+}
 
 // A remote named in the store's configuration, whose remote.<name>.mirror setting would make Git refuse a push of one refspec, rather than a URL, which has no such setting.
 const REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -783,9 +847,9 @@ const REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  * The push of one branch that every sync runs: the refspec names the branch on both sides, and the push sends no tag, as push.followTags would, and no submodule, as push.recurseSubmodules would,
  * so it sends only the objects of the branch's history, which the push check walked; remote.<name>.push is never read when a refspec is given.
  */
-const pushCommand = (remote, refspec, options = []) => [
+const pushCommand = async (base, remote, refspec, options = []) => [
   "-c", "push.followTags=false", ...(REMOTE_NAME.test(remote) ? ["-c", `remote.${remote}.mirror=false`] : []),
-  "push", "--quiet", "--no-follow-tags", "--no-recurse-submodules", ...options, remote, refspec
+  "push", "--quiet", "--no-follow-tags", "--no-recurse-submodules", ...await storeHelperOption(base, remote, "--receive-pack"), ...options, remote, refspec
 ];
 
 async function sync(base, options) {
@@ -812,7 +876,7 @@ async function sync(base, options) {
   for (let attempt = 1; attempt <= PUSH_ATTEMPTS; attempt++) {
     // A merge left unapplied keeps the branch where it was, so files it replaced and local writes are committed and merged again.
     if (attempt > 1) await commitLocal(base, author, run);
-    const fetched = await git(base, fetchCommand(upstream.remote));
+    const fetched = await git(base, await fetchCommand(base, upstream.remote));
     if (!fetched.ok) return report({ state: "fetch_failed", message: fetched.stderr, ...await counts(base) });
     lastFetch.set(base, Date.now());
     const merged = await merge(base, author, options, run);
@@ -826,9 +890,10 @@ async function sync(base, options) {
     const refused = await unpushable(base, upstream.remote);
     if (refused) return report({ state: "merge_failed", message: refused, ...await counts(base) });
     await options.beforePush?.();
-    const pushed = await git(base, pushCommand(upstream.remote, `HEAD:${upstream.merge}`));
+    const pushed = await git(base, await pushCommand(base, upstream.remote, `HEAD:${upstream.merge}`));
     if (pushed.ok) return report({ ...settled([]), ...await counts(base) });
-    if (!/rejected|fetch first|non-fast-forward/i.test(pushed.stderr)) return report({ state: "push_rejected", message: pushed.stderr, ...await counts(base) });
+    // Only a push that lost a race to another push tries again; a remote that refused it for another reason, such as a checked-out branch, says why.
+    if (!/\[rejected\]|fetch first|non-fast-forward|cannot lock ref|incorrect old value/i.test(pushed.stderr)) return report({ state: "push_rejected", message: pushed.stderr, ...await counts(base) });
   }
   if (busy) {
     scheduleRecordSync(base);
@@ -858,7 +923,7 @@ function withheldIn(status, withheld) {
 async function publishBranch(base, author, options) {
   const branch = (await git(base, ["symbolic-ref", "--quiet", "--short", "HEAD"])).text;
   if (!branch || !(await git(base, ["config", "--local", "--get", "remote.origin.url"])).ok) return { upstream: null };
-  const fetched = await git(base, fetchCommand("origin"));
+  const fetched = await git(base, await fetchCommand(base, "origin"));
   if (!fetched.ok) return { status: { state: "fetch_failed", message: fetched.stderr } };
   lastFetch.set(base, Date.now());
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
@@ -875,7 +940,7 @@ async function publishBranch(base, author, options) {
   const refused = await unpushable(base, "origin");
   if (refused) return { status: { state: "merge_failed", message: refused } };
   await options.beforePush?.();
-  const pushed = await git(base, pushCommand("origin", `HEAD:refs/heads/${branch}`, ["--set-upstream"]));
+  const pushed = await git(base, await pushCommand(base, "origin", `HEAD:refs/heads/${branch}`, ["--set-upstream"]));
   if (!pushed.ok) return { status: { state: "push_rejected", message: pushed.stderr } };
   return { upstream: await upstreamOf(base) };
 }

@@ -15,6 +15,7 @@ const SUITES = [
   "record-store-sync-crash.test.mjs",
   "record-store-sync-old-git.test.mjs",
   "record-store-sync-git-settings.test.mjs",
+  "record-store-sync-remote-side.test.mjs",
   "record-store-sync-letter-case.test.mjs",
   "artifact-sync-layout.test.mjs",
   "artifact-sync-line-endings.test.mjs",

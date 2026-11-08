@@ -61,7 +61,9 @@ A leftover Git lock in the store stops syncing with `git_failed` until a person 
 The sync and the first clone of a remote store use only commands and options that Git 2.25 has, and on an older Git every record operation of a store that syncs, or of a remote store, fails with `store_unavailable`, naming both versions.
 A push MUST NOT send a commit or a tree that the checked fetch of any supported Git release refuses, so the sync applies Git's own commit and tree checks itself, ported from Git's source, rather than relying on how much this machine's Git checks.
 Every Git command in a store MUST run with the same settings whatever the user's Git configuration, the variables the server inherits, or the store's local refs say, so a check MUST read the objects that the push sends, and a push MUST send the store's branch and nothing else.
-Only settings that choose how Git reaches the remote or who the user is, such as credentials, URL rewriting, the SSH command, and hooks, stay the user's.
+Only settings that choose how Git reaches the remote or who the user is, such as credentials, URL rewriting, the SSH command, and the store's own hooks, stay the user's.
+A sync's fetch MUST NOT remove a ref outside the remote's remote-tracking branches, whatever refspecs the user configured, and it MUST remove each remote-tracking branch whose branch the remote deleted, because the push check takes them as the commits the remote holds.
+The remote is untrusted, so a sync or a first clone MUST NOT run a hook or a command that the remote repository's own files name, which Git would otherwise do on this machine for a remote it reaches by a path or a `file://` URL.
 
 ## Mechanism
 
@@ -85,6 +87,13 @@ Record reads and writes in every process wait, for at most ten seconds, while th
 The branch and index move to the merge commit while the locks are still held, then the locks and the mark are released.
 A write scheduled while a sync runs starts another sync after it, because the running sync may have committed before the write.
 SSH runs in batch mode unless the user configured an SSH command, so no prompt can hold the sync lock.
+The fetch maps `refs/heads/*` to `refs/remotes/<remote>/*` on its command line, so it prunes only that folder, and Git still updates any other remote-tracking ref that the user's refspecs map from the branches it fetched.
+For a remote whose fetch URL, or any push URL, Git reaches by its local transport, as Git's own rule for a URL decides, the fetch, the push, and the first clone pass `--upload-pack` or `--receive-pack` naming Git with `core.hooksPath` set to an empty folder in Prism's application folder, `core.alternateRefsCommand` set to `exit 0;`, `core.alternateRefsPrefixes` empty, and `receive.denyCurrentBranch=refuse`.
+An empty `core.alternateRefsCommand` would also run nothing, but every push's connectivity check would then print that it cannot run it.
+Git drops every `-c` setting before it starts a local transport's helper, so only the helper's own command line reaches it, and Git runs that command through the shell, so each setting is quoted for it.
+Every one of those settings exists in Git 2.25.
+An SSH server or a Git daemon would take that command as the service to run and refuse it, and HTTP ignores it, so no other transport gets it.
+A `remote.<name>.uploadpack` or `remote.<name>.receivepack` that the user set in the store is a transport setting of the user's, so it runs as set.
 Every sync writes its outcome, ahead and behind counts, and saved conflicts to a status file in the ignored sync folder, and the review index includes it.
 A sync that saves local versions, of records, of [artifacts](store-artifacts.md), or of a store file it had withheld, first writes a pending notice for that save under `.prism-sync/notices/`, then moves the copies to `.prism-sync/conflicts/`.
 Each server remembers the stores it synced or pulled, and the next tool result it writes to its host names each saved version that it has not named yet and that was saved since it started or still has a pending notice, artifacts by their path in the checkout.
@@ -100,3 +109,4 @@ A call that the host cancels before its result is written gets no response, as M
 2026-11-08: A server that stopped before naming a saved version, or a cancelled call that took the notes it never sent, left that version named by no tool result; saved versions now stay pending under `.prism-sync/notices/` until a result written to the host names them.
 2026-11-08: A push from an older Git sent objects that a newer Git's checked fetch refuses, such as a tree entry name over 4096 bytes, and a cancelled call other than a wait still wrote a result that the host ignores; the sync now applies Git's own commit and tree checks itself, and no cancelled call gets a response.
 2026-11-08: The user's `push.followTags` made a sync push unchecked tags, a replace ref made the checks read other objects than the push sent, and a push from Git before 2.43 could send a tree nested deeper than later releases walk; every store command now reads the real objects with fixed settings, a push sends only the branch, and the sync refuses a tree nested more than 2048 folders deep.
+2026-11-08: A push to a `file://` remote ran the hooks and the `core.alternateRefsCommand` that the remote repository named, on the syncing machine, and the fetch's pruning followed the user's `remote.<name>.fetch`, so a refspec for tags deleted local tags; the helpers of a local transport now run with hooks and those commands off, and the fetch prunes only the remote's remote-tracking branches.

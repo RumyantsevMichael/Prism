@@ -55,11 +55,23 @@ Your Git configuration, the variables Prism's process inherits, and the store's 
 
 - Every Git command in the store reads the objects themselves, so a replace ref, a `.git/info/grafts` file, a commit-graph file, or a reachability bitmap never makes Prism check other objects than those the push sends.
 - A push sends only the store's branch, as `HEAD:<branch>`, so it never sends a tag, whatever `push.followTags` says, never pushes a submodule, and never mirrors, whatever `remote.<name>.mirror` or `remote.<name>.push` say.
-- A sync's fetch takes no tag and removes no tag, whatever `remote.<name>.tagOpt` or `fetch.pruneTags` say, and it removes each remote-tracking branch whose branch the remote deleted, so the push check takes as known only commits the remote still holds.
+- A sync's fetch names the remote's branches and `refs/remotes/<remote>/` on its command line, so it takes no tag and removes no ref outside that folder, such as a tag of yours, whatever `remote.<name>.fetch`, `remote.<name>.tagOpt`, or `fetch.pruneTags` say, and it removes each remote-tracking branch there whose branch the remote deleted, so the push check takes as known only commits the remote still holds.
 - Every command walks trees only as deep as Git's default `core.maxTreeDepth` of 2048 folders, and a first clone always names its remote `origin`, whatever `clone.defaultRemoteName` says.
 - A variable such as `GIT_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ICASE_PATHSPECS`, or `GIT_ATTR_SOURCE` that Prism's process inherits never reaches a store command.
 
-Prism keeps the settings that only choose how Git reaches the remote or who you are, such as credentials, `url.<base>.insteadOf`, `remote.<name>.pushurl`, `core.sshCommand`, proxies, and your hooks, so a push that your own settings or a hook refuse fails with `push_rejected` and Git's message.
+Prism keeps the settings that only choose how Git reaches the remote or who you are, such as credentials, `url.<base>.insteadOf`, `remote.<name>.pushurl`, `core.sshCommand`, proxies, and the store's own hooks, so a push that your own settings or a hook refuse fails with `push_rejected` and Git's message.
+
+A remote that Git reaches by a path or a `file://` URL, such as a bare repository on a shared or synced folder, is different, because Git then runs the remote's side of a push or fetch on your machine, inside that repository and with its configuration.
+Anyone who can write that folder could otherwise make every sync run a command on every machine that syncs, so Prism runs Git's `receive-pack` and `upload-pack` there with settings of its own, for every sync and the first clone:
+
+- `core.hooksPath` names the empty folder `no-hooks` in Prism's application folder, so no hook in the remote's `hooks` folder or in a `core.hooksPath` its configuration names runs.
+- `core.alternateRefsCommand` is a command that lists nothing, and `core.alternateRefsPrefixes` is empty, so no command that the remote's configuration names runs for an `objects/info/alternates` file.
+- `receive.denyCurrentBranch` is `refuse`, so a push never checks out a non-bare remote's branch with that repository's filters or `core.fsmonitor`, and a push to a branch that a non-bare remote has checked out fails with `push_rejected` and Git's message.
+
+A remote that Git reaches by SSH, `git://`, or HTTP runs its own server's side of the push or fetch, so Prism leaves it as it is.
+A `remote.<name>.uploadpack` or `remote.<name>.receivepack` that you set in the store is your own transport setting, so Prism runs that program as you set it, without these settings.
+When a remote has several push URLs and any of them is local, every one of them gets the local helper, which an SSH or `git://` server refuses, so give such a store a remote with local URLs only.
+
 Before the clone writes any file, Prism checks the remote's whole branch, and every sync checks the upstream's whole branch the same way before it takes any of it.
 A symbolic link, a submodule link, a path that some file system reads as leading outside the store, such as one with a `..` part, a backslash, or a drive form, Git's folder or the sync folder `.prism-sync/` in any spelling, an entry where Prism keeps a folder, such as a file named `initiatives/<slug>/slices`, or an entry below a file Prism keeps, such as `roadmap.json/x`, fails the clone, or refuses the sync as a whole, and the message names the path.
 So does a path that some supported machine cannot hold, because Git for Windows refuses it even in Git's index: a part that is a Windows device name such as `aux.md`, `con.json`, or `NUL`, a part that ends in `.` or a space, or a part that holds `<`, `>`, `"`, `|`, `?`, `*`, or a control character.
