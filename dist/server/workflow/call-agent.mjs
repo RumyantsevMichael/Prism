@@ -1,8 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
+import { prepareDirectory, reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { claimHolder } from "./slice-claims.mjs";
 
 // Which agent of a host session made a Prism tool call.
@@ -31,11 +31,11 @@ async function removeExpired(directory, now) {
 /** Record the sub-agent of one Claude Code tool use, by session and tool use id; a main agent's tool use, which names no agent, records nothing. */
 export async function recordCallAgent({ session, toolUseId, agentId, directory = callAgentDirectory(), now = Date.now() }) {
   if (!text(session) || !text(toolUseId) || !text(agentId)) return false;
-  await mkdir(directory, { recursive: true });
+  await prepareDirectory(directory);
   await removeExpired(directory, now);
   const file = recordFile(directory, session, text(toolUseId));
   const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ agentId: text(agentId), at: new Date(now).toISOString() })}\n`);
+  await writeFile(temporary, `${JSON.stringify({ agentId: text(agentId), at: new Date(now).toISOString() })}\n`, { mode: 0o600 });
   await rename(temporary, file);
   return true;
 }

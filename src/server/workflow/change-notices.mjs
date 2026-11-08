@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
+import { prepareDirectory, reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { actionEffect } from "./actions.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { MAIN_AGENT } from "./call-agent.mjs";
@@ -35,20 +35,27 @@ async function readNotice(file) {
   }
 }
 
-/** The well-formed entries of an initiative's history, in history order. */
+/** The well-formed entries of an initiative's history, in history order, or null while its coordination state reads invalid. */
 export async function readPersonHistory(projectRoot, initiative) {
   const read = await readCoordinationState({ projectRoot, initiative });
-  const history = read.valid && Array.isArray(read.state?.history) ? read.state.history : [];
+  if (!read.valid) return null;
+  const history = Array.isArray(read.state?.history) ? read.state.history : [];
   return history.filter((entry) => typeof entry?.id === "string" && ENTRY_ID.test(entry.id));
 }
 
 // One step for the session: read its record and the history, decide, and write the record, under a lock that every process of the session honors.
+// While the coordination state reads invalid the step sees no history, so it shows nothing, and the shown ids and the first call's starting point stay as they were.
 async function withNotice({ projectRoot, initiative, session, directory }, step) {
-  await mkdir(directory, { recursive: true });
+  await prepareDirectory(directory);
   const file = noticeFile(directory, session, projectRoot, initiative);
   return withArtifactLock(file, () => withFileLock(file, async () => {
     const record = await readNotice(file);
     const history = await readPersonHistory(projectRoot, initiative);
+    if (history === null) {
+      const { result, coordinator = record.coordinator } = await step(record, []);
+      if (coordinator !== record.coordinator) await writeAtomically(file, `${JSON.stringify({ shown: record.shown, coordinator })}\n`, { mode: 0o600 });
+      return result;
+    }
     const { result, shown = record.shown, coordinator = record.coordinator } = await step(record, history);
     // A first call counts every existing entry as shown; the kept ids are only those still in the history.
     const ids = history.map((entry) => entry.id);
