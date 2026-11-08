@@ -174,7 +174,7 @@ test("clause 10: every text, boundary, phase, claim, glass, and diagram pair rea
       for (const boundary of ["glass-control", "focus"]) check(boundary, `glass over ${behind}`, 3, glass);
     }
     for (const ground of ["diagram-paper", "diagram-surface", "diagram-surface-2", "diagram-group", "diagram-note"]) check("diagram-ink", ground, 4.5);
-    for (const line of ["diagram-line", "diagram-danger"]) check(line, "diagram-paper", 3);
+    for (const line of ["diagram-line", "diagram-note-line", "diagram-danger"]) check(line, "diagram-paper", 3);
   }
   assert.deepEqual(failures, []);
 });
