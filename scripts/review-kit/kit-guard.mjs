@@ -318,7 +318,17 @@ function checkJs(file, source) {
     for (const match of text.matchAll(/\.style\.setProperty\(\s*(["'])([\w-]+)\1\s*,\s*(["'`])((?:(?!\3)[^\n])*)\3/g)) literal(match[2], match.index + match[0].length - match[4].length - 1, match[4]);
   }
   checkMarkup(file, text, findings, strings);
+  if (!isKit(file)) checkScriptAttributes(text, add);
   return findings;
+}
+
+// Control roles and title tooltips set from script code rather than written as markup.
+function checkScriptAttributes(text, add) {
+  const roles = CONTROL_ROLES.join("|");
+  for (const match of text.matchAll(new RegExp(`setAttribute\\(\\s*(["'\`])role\\1\\s*,\\s*(["'\`])(?:${roles})\\2\\s*\\)`, "g"))) add(match.index, "native-control", match[0]);
+  for (const match of text.matchAll(new RegExp(`(?<![\\w$-])role\\s*:\\s*(["'\`])(?:${roles})\\1`, "g"))) add(match.index, "native-control", match[0]);
+  for (const match of text.matchAll(/setAttribute\(\s*(["'`])title\1/g)) add(match.index, "native-control", match[0]);
+  for (const match of text.matchAll(/(?<![\w$.])([\w$]+(?:\.[\w$]+)*)\.title\s*=(?![=>])/g)) if (match[1] !== "document") add(match.index, "native-control", match[0]);
 }
 
 function checkHtml(file, source) {

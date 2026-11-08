@@ -363,7 +363,8 @@ export function publicAsset(route) {
 
 // A state-changing request must come from the review page as JSON, so another site's form or script cannot send it.
 function fromReviewPage(request) {
-  if (!String(request.headers["content-type"] ?? "").startsWith("application/json")) return false;
+  // Media types are case-insensitive, and parameters such as charset follow a semicolon.
+  if (String(request.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase() !== "application/json") return false;
   const origin = request.headers.origin;
   if (!origin) return true;
   try {

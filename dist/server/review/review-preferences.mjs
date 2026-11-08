@@ -37,7 +37,7 @@ export function validatePreferenceChange(change) {
   const keys = Object.keys(change);
   if (!keys.length) throw invalid("Give theme, density, or both.");
   for (const key of keys) {
-    const allowed = PREFERENCE_VALUES[key];
+    const allowed = Object.hasOwn(PREFERENCE_VALUES, key) ? PREFERENCE_VALUES[key] : null;
     if (!allowed) throw invalid(`${key} is not a preference; give theme, density, or both.`);
     if (!allowed.includes(change[key])) throw invalid(`${key} must be one of ${allowed.join(", ")}.`);
   }

@@ -126,7 +126,7 @@ node scripts/review-kit/kit-guard.mjs
 It checks every stylesheet, script, and page under `src/server/review/public/` and prints `<file>:<line>: <rule> <value>` for each finding.
 The `raw-value` rule names a color, size, layer, or time literal outside `kit/tokens.css` and `kit/plantuml-defaults.js`.
 The `control-style` rule names a stylesheet selector outside `kit/` that styles a native control, a control role, a `prism-` element, or a class named like a control.
-The `native-control` rule names a native control, a control role, or a `title` attribute written in a script or page outside `kit/`.
+The `native-control` rule names a native control, a control role, or a `title` attribute written in a script or page outside `kit/`, also when a script sets the role or the title from code.
 The older stylesheet `review.css` and the screens' scripts still hold findings until those screens move onto the kit.
 
 Run a local human review from the repository root:
