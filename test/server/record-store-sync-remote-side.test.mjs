@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -55,9 +55,75 @@ test("only a remote that Git reaches by its local transport gets the helper with
     assert.ok(!localTransport(url), url);
     assert.deepEqual(await remoteHelperOption("--receive-pack", [url]), [], url);
   }
-  const [option] = await remoteHelperOption("--receive-pack", ["https://example.com/records.git", "file:///srv/records.git"]);
-  assert.match(option, /^--receive-pack=git -c 'core\.hooksPath=.*no-hooks' -c 'core\.alternateRefsCommand=exit 0;' -c 'core\.alternateRefsPrefixes=' -c 'receive\.denyCurrentBranch=refuse' receive-pack$/);
-  assert.match((await remoteHelperOption("--upload-pack", ["/srv/records.git"]))[0], /^--upload-pack=git -c 'core\.hooksPath=.* upload-pack$/);
+  const [option, unsigned, ...rest] = await remoteHelperOption("--receive-pack", ["https://example.com/records.git", "file:///srv/records.git"]);
+  assert.match(option, /^--receive-pack=git -c 'core\.hooksPath=.*no-hooks' -c 'core\.alternateRefsCommand=exit 0;' -c 'core\.alternateRefsPrefixes=' -c 'receive\.denyCurrentBranch=refuse' .* receive-pack$/);
+  for (const setting of ["receive.autogc=false", "gc.auto=0", "maintenance.auto=false", "core.fsmonitor=", "hook.pre-receive.enabled=false", "hook.post-receive.enabled=false", "hook.reference-transaction.enabled=false", "hook.pre-auto-gc.enabled=false"]) {
+    assert.ok(option.includes(` -c '${setting}' `), setting);
+  }
+  assert.equal(unsigned, "--no-signed");
+  assert.deepEqual(rest, []);
+  const fetching = await remoteHelperOption("--upload-pack", ["/srv/records.git"]);
+  assert.equal(fetching.length, 1);
+  assert.match(fetching[0], /^--upload-pack=git -c 'core\.hooksPath=.* -c 'receive\.autogc=false' .* upload-pack$/);
+});
+
+// Automatic maintenance is due on the remote, and its configuration names a command that the maintenance runs to ask which unreachable objects to keep.
+async function remoteWithDueMaintenance(parent, marker) {
+  const remote = path.join(parent, "shared", "remote.git");
+  await mkdir(path.dirname(remote), { recursive: true });
+  await remoteWithBranch(parent, remote);
+  git(remote, ["repack", "-q", "-a", "-d"]);
+  const planted = execFileSync("git", ["-C", remote, "hash-object", "-w", "--stdin"], { input: "planted\n", env: process.env }).toString().trim();
+  await utimes(path.join(remote, "objects", planted.slice(0, 2), planted.slice(2)), new Date("2020-01-01"), new Date("2020-01-01"));
+  for (const [key, value] of [["receive.unpackLimit", "1"], ["gc.autoPackLimit", "1"], ["gc.autoDetach", "false"], ["maintenance.autoDetach", "false"], ["gc.recentObjectsHook", `echo recentObjectsHook >> '${marker}'; true`]]) {
+    git(remote, ["config", key, value]);
+  }
+  return remote;
+}
+
+test("a push to a file:// remote whose configuration makes maintenance due starts no maintenance and runs none of its commands", async (context) => {
+  const parent = await folder(context);
+  const marker = path.join(parent, "ran-here");
+  const remote = await remoteWithDueMaintenance(parent, marker);
+  const store = path.join(parent, "store");
+  git(parent, ["clone", "-q", pathToFileURL(remote).href, store]);
+  await writeFile(path.join(store, "roadmap.json"), "{\"store\":true}\n");
+  const status = await syncRecordStoreNow(store);
+  assert.equal(status.state, "ok", JSON.stringify(status));
+  assert.equal(git(remote, ["show", "main:roadmap.json"]), "{\"store\":true}");
+  assert.equal(await read(marker), "", "a command that the remote's own configuration names ran on this machine");
+  // The same push by plain Git runs the remote's maintenance and its command, so the remote above did make maintenance due.
+  const plain = path.join(parent, "plain");
+  git(parent, ["clone", "-q", pathToFileURL(remote).href, plain]);
+  await writeFile(path.join(plain, "roadmap.json"), "{\"plain\":true}\n");
+  git(plain, ["commit", "-q", "-am", "plain"]);
+  git(plain, ["push", "-q", "origin", "HEAD:main"]);
+  assert.match(await read(marker), /recentObjectsHook/, "plain Git's push started no maintenance, so the test proves nothing");
+});
+
+test("the helper turns off by name each hook that the remote's configuration sets up, and refuses one it cannot name", async (context) => {
+  const parent = await folder(context);
+  const remote = path.join(parent, "remote.git");
+  await remoteWithBranch(parent, remote);
+  git(remote, ["config", "hook.audit.event", "post-receive"]);
+  git(remote, ["config", "hook.audit.command", "true"]);
+  git(remote, ["config", "hook.Post.Notes.parallel", "true"]);
+  // A hook.<event>.command makes the event's name a hook's own, so Git 2.55's event switch no longer turns that event off.
+  git(remote, ["config", "hook.post-receive.command", "true"]);
+  for (const url of [remote, pathToFileURL(remote).href, path.relative(parent, remote)]) {
+    const [option] = await remoteHelperOption("--receive-pack", [url], parent);
+    for (const name of ["audit", "Post.Notes", "post-receive"]) assert.ok(option.includes(` -c 'hook.${name}.enabled=false' `), `${url}: ${name}`);
+  }
+  const store = path.join(parent, "store");
+  git(parent, ["clone", "-q", pathToFileURL(remote).href, store]);
+  await writeFile(path.join(store, "roadmap.json"), "{\"store\":true}\n");
+  assert.equal((await syncRecordStoreNow(store)).state, "ok");
+  git(remote, ["config", "hook.a=b.command", "true"]);
+  await writeFile(path.join(store, "roadmap.json"), "{\"again\":true}\n");
+  const status = await syncRecordStoreNow(store);
+  assert.equal(status.state, "git_failed", JSON.stringify(status));
+  assert.match(status.message, /hook named "a=b"/);
+  assert.equal(git(remote, ["show", "main:roadmap.json"]), "{\"store\":true}", "the sync pushed to a remote whose hook it could not turn off");
 });
 
 test("a first clone, a fetch, and a push to a file:// or path remote run no hook or command that the remote's own files name", async (context) => {

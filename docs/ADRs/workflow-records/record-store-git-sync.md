@@ -63,7 +63,9 @@ A push MUST NOT send a commit or a tree that the checked fetch of any supported 
 Every Git command in a store MUST run with the same settings whatever the user's Git configuration, the variables the server inherits, or the store's local refs say, so a check MUST read the objects that the push sends, and a push MUST send the store's branch and nothing else.
 Only settings that choose how Git reaches the remote or who the user is, such as credentials, URL rewriting, the SSH command, and the store's own hooks, stay the user's.
 A sync's fetch MUST NOT remove a ref outside the remote's remote-tracking branches, whatever refspecs the user configured, and it MUST remove each remote-tracking branch whose branch the remote deleted, because the push check takes them as the commits the remote holds.
-The remote is untrusted, so a sync or a first clone MUST NOT run a hook or a command that the remote repository's own files name, which Git would otherwise do on this machine for a remote it reaches by a path or a `file://` URL.
+For a remote that Git reaches by a path or a `file://` URL, Git runs the remote's side of a fetch or push on this machine inside that repository and, by design, trusts that repository's own settings.
+A sync or a first clone MUST turn off every hook, maintenance run, and configured program of that remote side that Prism knows of.
+That narrows what the folder's repository can make Git do but does not remove it: anyone who can write a folder store's repository can still affect what Git does on every machine that syncs with it, so such a folder MUST be writable only by people trusted that far.
 
 ## Mechanism
 
@@ -89,9 +91,15 @@ A write scheduled while a sync runs starts another sync after it, because the ru
 SSH runs in batch mode unless the user configured an SSH command, so no prompt can hold the sync lock.
 The fetch maps `refs/heads/*` to `refs/remotes/<remote>/*` on its command line, so it prunes only that folder, and Git still updates any other remote-tracking ref that the user's refspecs map from the branches it fetched.
 For a remote whose fetch URL, or any push URL, Git reaches by its local transport, as Git's own rule for a URL decides, the fetch, the push, and the first clone pass `--upload-pack` or `--receive-pack` naming Git with `core.hooksPath` set to an empty folder in Prism's application folder, `core.alternateRefsCommand` set to `exit 0;`, `core.alternateRefsPrefixes` empty, and `receive.denyCurrentBranch=refuse`.
+The helper also gets `receive.autogc=false`, `gc.auto=0`, `gc.autoPackLimit=0`, and `maintenance.auto=false`, so a push starts no maintenance, whose commands read programs such as `gc.recentObjectsHook` from the remote's configuration, and an empty `core.fsmonitor`.
+Git 2.54 and later also run hooks that `hook.<name>.command` and `hook.<name>.event` settings configure, which `core.hooksPath` does not reach.
+The helper turns off every hook event that Git documents with `hook.<event>.enabled=false`, which Git 2.55 and later honor while no `hook.<event>.command` or `hook.<event>.parallel` makes that name a hook's own, and it turns off by name, with `hook.<name>.enabled=false`, each hook that the remote repository's configuration sets up when the fetch or push starts, since Git 2.54 has no event switch.
+A hook whose name holds an equals sign cannot be named in a `-c` setting, so a sync with such a remote fails with `git_failed`, and a first clone with `store_unavailable`, naming the hook.
+A push to such a remote sends no push certificate, because `receive-pack` checks one with the `gpg.program` the remote's configuration names and only the remote's hooks, which never run, read the result.
+Hooks and settings that the remote's configuration adds after the fetch or push started its helper, and programs that a future Git adds, are not covered, which is why the folder's write access is a matter of trust.
 An empty `core.alternateRefsCommand` would also run nothing, but every push's connectivity check would then print that it cannot run it.
 Git drops every `-c` setting before it starts a local transport's helper, so only the helper's own command line reaches it, and Git runs that command through the shell, so each setting is quoted for it.
-Every one of those settings exists in Git 2.25.
+Every one of those settings except `maintenance.auto` and the `hook.*` switches exists in Git 2.25, and an older Git ignores a setting it does not know.
 An SSH server or a Git daemon would take that command as the service to run and refuse it, and HTTP ignores it, so no other transport gets it.
 A `remote.<name>.uploadpack` or `remote.<name>.receivepack` that the user set in the store is a transport setting of the user's, so it runs as set.
 Every sync writes its outcome, ahead and behind counts, and saved conflicts to a status file in the ignored sync folder, and the review index includes it.
@@ -110,3 +118,4 @@ A call that the host cancels before its result is written gets no response, as M
 2026-11-08: A push from an older Git sent objects that a newer Git's checked fetch refuses, such as a tree entry name over 4096 bytes, and a cancelled call other than a wait still wrote a result that the host ignores; the sync now applies Git's own commit and tree checks itself, and no cancelled call gets a response.
 2026-11-08: The user's `push.followTags` made a sync push unchecked tags, a replace ref made the checks read other objects than the push sent, and a push from Git before 2.43 could send a tree nested deeper than later releases walk; every store command now reads the real objects with fixed settings, a push sends only the branch, and the sync refuses a tree nested more than 2048 folders deep.
 2026-11-08: A push to a `file://` remote ran the hooks and the `core.alternateRefsCommand` that the remote repository named, on the syncing machine, and the fetch's pruning followed the user's `remote.<name>.fetch`, so a refspec for tags deleted local tags; the helpers of a local transport now run with hooks and those commands off, and the fetch prunes only the remote's remote-tracking branches.
+2026-11-08: A push to a `file://` remote still started the remote's automatic maintenance, which ran a `gc.recentObjectsHook` that the remote's configuration named, and Git 2.54's configured hooks bypass `core.hooksPath`; the helpers of a local transport now start no maintenance, turn configured hooks off, and send no push certificate, and the decision now states that Git trusts a folder store's own settings, so its write access is a matter of trust.

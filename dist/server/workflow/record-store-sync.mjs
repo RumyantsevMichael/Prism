@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
@@ -764,13 +764,21 @@ async function unpublished(base) {
 
 // For a remote reached by a path or a file:// URL, Git runs receive-pack for a push, and upload-pack for a fetch or a clone, on this machine inside the remote repository with that repository's configuration,
 // and starts them without any -c setting, so a hook, a core.hooksPath, or a core.alternateRefsCommand that the remote's own files name would run here as this user,
-// as would a filter or core.fsmonitor command when receive.denyCurrentBranch=updateInstead makes a push check out the remote's branch.
+// as would the automatic maintenance receive-pack starts after a push, whose children read programs such as gc.recentObjectsHook from that configuration,
+// and a filter or core.fsmonitor command when receive.denyCurrentBranch=updateInstead makes a push check out the remote's branch.
 // Every store command that reaches such a remote names the helper instead: Git reading hooks from an empty folder Prism owns, with a push to a checked-out branch refused,
+// no automatic maintenance, every hook event turned off for the hooks that hook.<name> settings configure (Git 2.54 and later), each of those hooks the remote's configuration names turned off by name,
 // and an alternate refs command that lists nothing, since an empty one makes every push's connectivity check print that it cannot run it.
+// A -c setting reaches the helper's own children too, since Git passes it on to every Git command it starts.
 // An SSH server or a Git daemon takes that command as the service to run and refuses it, and HTTP ignores it, so only a local transport gets it.
 // A remote.<name>.uploadpack or remote.<name>.receivepack that the person set is a transport setting of theirs, so it runs as they set it.
 const NO_HOOKS = "no-hooks";
-const REMOTE_HELPER_CONFIG = ["core.alternateRefsCommand=exit 0;", "core.alternateRefsPrefixes=", "receive.denyCurrentBranch=refuse"];
+// Every hook event that Git's documentation lists, so no event the helper or a command it starts runs has a configured hook left on.
+const HOOK_EVENTS = ["applypatch-msg", "commit-msg", "fsmonitor-watchman", "post-applypatch", "post-checkout", "post-commit", "post-index-change", "post-merge", "post-receive", "post-rewrite",
+  "post-update", "pre-applypatch", "pre-auto-gc", "pre-commit", "pre-merge-commit", "pre-push", "pre-rebase", "pre-receive", "prepare-commit-msg", "proc-receive", "push-to-checkout",
+  "receive-report", "reference-transaction", "sendemail-validate", "update"];
+const REMOTE_HELPER_CONFIG = ["core.alternateRefsCommand=exit 0;", "core.alternateRefsPrefixes=", "receive.denyCurrentBranch=refuse", "core.fsmonitor=",
+  "receive.autogc=false", "gc.auto=0", "gc.autoPackLimit=0", "maintenance.auto=false", ...HOOK_EVENTS.map((event) => `hook.${event}.enabled=false`)];
 const shellQuoted = (text) => `'${text.replaceAll("'", "'\\''")}'`;
 
 /** Whether Git reaches a remote URL by its local transport, by Git's own rule: a helper names itself with ::, a URL its scheme with ://, and a colon before any slash an SSH host unless it is a Windows drive. */
@@ -790,22 +798,68 @@ async function noHooksFolder() {
   return process.platform === "win32" ? folder.replaceAll("\\", "/") : folder;
 }
 
+// The path Git takes from a local remote URL: what follows the host of a file:// URL, or the path itself.
+function localPath(url) {
+  if (!/^file:\/\//i.test(url)) return url;
+  const rest = url.slice(7);
+  const slash = rest.indexOf("/");
+  const local = slash < 0 ? "" : rest.slice(slash);
+  return process.platform === "win32" && /^\/[A-Za-z]:/.test(local) ? local.slice(1) : local;
+}
+
+// Whether a path is what receive-pack takes for a Git directory: a .git file that names one, or a folder with a HEAD and an object or common folder.
+async function gitDirectory(candidate) {
+  const found = await stat(candidate).catch(() => null);
+  if (!found) return false;
+  if (found.isFile()) return true;
+  const [head, objects, common] = await Promise.all(["HEAD", "objects", "commondir"].map((name) => stat(path.join(candidate, name)).catch(() => null)));
+  return Boolean(head && (objects || common));
+}
+
 /**
- * The option that names the remote-side helper, --upload-pack or --receive-pack, of a fetch, clone, or push whose remote Git reaches at any of these URLs by its local transport; none for any other remote.
+ * The names of the hooks that hook.<name> settings configure for the repository a local remote URL names, read as receive-pack reads them, with each Git directory it tries for a path.
+ * Git 2.55 turns off a hook event by its name only while no hook.<event>.command or hook.<event>.parallel makes that name a hook's, and Git 2.54 has no event switch, so each named hook is also turned off by name.
+ */
+async function configuredHooks(base, url) {
+  const local = localPath(url);
+  for (const suffix of ["/.git", "", ".git/.git", ".git"]) {
+    const gitDir = `${local}${suffix}`;
+    if (!(await gitDirectory(path.resolve(base, gitDir)))) continue;
+    // Git exits with 1 when no key matches.
+    const listed = await git(base, [`--git-dir=${gitDir}`, "config", "--null", "--get-regexp", "^hook\\."]);
+    const names = new Set();
+    for (const entry of listed.ok ? listed.stdout.toString("utf8").split("\0") : []) {
+      const key = entry.split("\n", 1)[0];
+      const match = /^hook\.(.+)\.(command|event|parallel)$/i.exec(key);
+      if (match) names.add(match[1]);
+    }
+    return [...names];
+  }
+  return [];
+}
+
+/**
+ * The options that name the remote-side helper, --upload-pack or --receive-pack, of a fetch, clone, or push from a folder whose remote Git reaches at any of these URLs by its local transport; none for any other remote.
  * Git runs the helper through the shell, so each setting is quoted for it.
  */
-export async function remoteHelperOption(option, urls) {
-  if (!urls.some(localTransport)) return [];
+export async function remoteHelperOption(option, urls, base = process.cwd()) {
+  const local = urls.filter(localTransport);
+  if (!local.length) return [];
   const program = option === "--receive-pack" ? "receive-pack" : "upload-pack";
-  const settings = [`core.hooksPath=${await noHooksFolder()}`, ...REMOTE_HELPER_CONFIG].map((setting) => `-c ${shellQuoted(setting)}`);
-  return [`${option}=git ${settings.join(" ")} ${program}`];
+  const named = [...new Set((await Promise.all(local.map((url) => configuredHooks(base, url)))).flat())];
+  // A -c setting splits its key from its value at the first equals sign, so a hook whose name holds one cannot be turned off by name.
+  const unnamed = named.find((name) => name.includes("="));
+  if (unnamed !== undefined) throw new Error(`The remote store's Git configuration sets up a hook named "${unnamed}", which Prism cannot turn off, so it does not sync with that remote. Remove the hook.${unnamed}.* settings from the remote repository's configuration.`);
+  const settings = [`core.hooksPath=${await noHooksFolder()}`, ...REMOTE_HELPER_CONFIG, ...named.map((name) => `hook.${name}.enabled=false`)].map((setting) => `-c ${shellQuoted(setting)}`);
+  // receive-pack checks a signed push's certificate with the gpg program the remote's configuration names, and only the remote's hooks, which never run, read the result, so a push sends none.
+  return [`${option}=git ${settings.join(" ")} ${program}`, ...(program === "receive-pack" ? ["--no-signed"] : [])];
 }
 
 // The helper option of a fetch or push of a remote, unless the person set the remote's own helper program.
 async function storeHelperOption(base, remote, option) {
   const key = option === "--receive-pack" ? "receivepack" : "uploadpack";
   if ((await git(base, ["config", "--get", `remote.${remote}.${key}`])).ok) return [];
-  return remoteHelperOption(option, option === "--receive-pack" ? await pushUrls(base, remote) : [await fetchUrl(base, remote)]);
+  return remoteHelperOption(option, option === "--receive-pack" ? await pushUrls(base, remote) : [await fetchUrl(base, remote)], base);
 }
 
 // The URL a fetch reaches, after url.<base>.insteadOf, for a configured remote or a URL.
