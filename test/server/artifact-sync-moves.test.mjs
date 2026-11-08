@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdir, rm } from "node:fs/promises";
+import { access, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { checkout, eventually, isolateGit, notes, ok, remoteFile, server, syncedWorkspace, text, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
@@ -162,4 +162,22 @@ test("with sync on, the next tool result names an artifact whose local edit lost
   assert.ok(reported.includes(FILE), "the next result names the artifact's path");
   assert.match(reported, /workspace/, "the next result names the artifact's scope");
   assert.ok(reported.includes(savedAs), "the next result names the saved copy");
+});
+
+test("a saved version that a stopped sync never named is named by the next tool result of a server started later, once, and no server names it again", async (context) => {
+  const { place, onB } = await machines(context, "on");
+  // A sync of a server that has since stopped saved machine b's version a minute ago, before this server started, and wrote no status.
+  const stamp = new Date(Date.now() - 60000).toISOString().replace(/[:.]/g, "-");
+  const savedAs = path.join(place.storeB, ".prism-sync", "conflicts", stamp, ...WORKSPACE.split("/"));
+  const notice = path.join(place.storeB, ".prism-sync", "notices", stamp);
+  await mkdir(path.dirname(savedAs), { recursive: true });
+  await writeFile(savedAs, BASE);
+  await mkdir(path.dirname(notice), { recursive: true });
+  await writeFile(notice, "{}\n");
+  const reported = notes(await onB.call("get_artifact", { path: "docs/plans" }));
+  assert.ok(reported.includes(FILE) && reported.includes(savedAs), reported);
+  assert.equal(await access(notice).then(() => true, () => false), false, "the tool result that carried it clears its notice");
+  assert.equal(notes(await onB.call("get_artifact", { path: "docs/plans" })), "", "the next result names it no more");
+  const later = await server(context, place.b, await checkout(place.b, "admin"));
+  assert.equal(notes(await later.call("get_artifact", { path: "docs/plans" })).includes(savedAs), false, "a server started later names it no more");
 });

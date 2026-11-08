@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { cp, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
-import { describeUnsafeEntry, gitTimeoutMs, markManagedStore, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
+import { describeUnsafeEntry, gitTimeoutMs, gitTooOld, markManagedStore, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
 import { legacyStoresDirectory, managedStoreId, managedStoresDirectory, normalizeRemote, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 
 // A record store named by its remote lives in a clone Prism keeps in its application folder, one per remote, shared by every checkout and host that names it.
@@ -112,6 +112,9 @@ export async function managedRecordStore(projectRoot, configured, makeUnavailabl
   const directory = managedStoresOf(projectRoot);
   const id = managedStoreId(configured);
   if (!id) throw unavailable("It is not a usable remote address.");
+  // A Git older than the store sync needs would fail some of the clone's or a sync's commands midway, so the store is refused before either runs.
+  const tooOld = await gitTooOld();
+  if (tooOld) throw unavailable(tooOld);
   const target = path.join(directory, id);
   const cached = clones.get(target);
   // A clone that disappeared since it was cached is looked for again, so the access reports what is there now.

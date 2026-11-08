@@ -4,7 +4,7 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { listSavedConflicts, prepareStoreFiles, pullRecordStoreIfStale, readSavedConflict, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
+import { gitTooOld, listSavedConflicts, prepareStoreFiles, pullRecordStoreIfStale, readSavedConflict, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
 import { managedRecordStore } from "./record-store-remote.mjs";
 import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 import { checkRepositoryName, portableRepositoryName, REPOSITORIES, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
@@ -180,6 +180,9 @@ async function resolveStore(projectRootPath) {
   if (!(await stat(base)).isDirectory()) throw unavailable("is not a directory. Create or clone the store there; Prism never creates it.");
   if (inside(root, base)) throw unavailable("is inside the project root. Place the store outside the project, so every checkout can share it.");
   if (inside(base, root)) throw unavailable("contains the project root. Place the store beside the project, so records and project files never share a folder.");
+  // A store with sync on is refused on a Git older than its sync needs, which would fail some of the sync's commands midway.
+  const tooOld = workspace.sync === true ? await gitTooOld() : null;
+  if (tooOld) throw unavailable(`has Store sync on. ${tooOld.replace(/; update Git\.$/, "; update Git, or turn Store sync off.")}`);
   return { root, base, contain: base, external: true, sync: workspace.sync === true };
 }
 

@@ -9,7 +9,7 @@ import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { recordStoreOf, takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
-import { takeSavedConflicts } from "./workflow/record-store-sync.mjs";
+import { confirmSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { withCallSession } from "./workflow/slice-claims.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
@@ -1122,12 +1122,14 @@ async function savedArtifactLine(item, argumentsValue) {
 }
 
 // A sync that found the same record, or the same lines of an artifact, changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
+// A saved version stays pending until a tool result carries it, so a server that stopped before naming it leaves it to the next one.
 async function withRecordNotes(value, argumentsValue) {
+  if (!Array.isArray(value?.content)) return value;
   const reports = takeMigrationReports();
   const taken = await takeSavedConflicts().catch(() => []);
   const saved = taken.filter((item) => item.record);
   const artifacts = taken.filter((item) => item.location);
-  if (!Array.isArray(value?.content)) return value;
+  const files = taken.filter((item) => item.file);
   if (!reports.length && !taken.length) return value;
   const lines = [];
   for (const report of reports) {
@@ -1146,6 +1148,10 @@ async function withRecordNotes(value, argumentsValue) {
     lines.push(`Store sync found ${plural(artifacts.length, "artifact")} whose same lines someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`);
     for (const item of artifacts) lines.push(await savedArtifactLine(item, argumentsValue));
   }
+  if (files.length) {
+    lines.push(`Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, ...files.map((item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})`));
+  }
+  await confirmSavedConflicts(taken).catch(() => {});
   return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
 }
 

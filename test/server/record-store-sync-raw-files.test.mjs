@@ -13,7 +13,7 @@ Object.assign(process.env, {
   HOME: environment, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: "1", PLUGIN_DATA: environment,
   GIT_AUTHOR_NAME: "Prism Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Prism Test", GIT_COMMITTER_EMAIL: "test@example.invalid"
 });
-const { cancelRecordSyncs, configureRecordSync, prepareStoreFiles, syncRecordStore } = await import("../../dist/server/workflow/record-store-sync.mjs");
+const { cancelRecordSyncs, configureRecordSync, prepareStoreFiles, syncRecordStore, syncRecordStoreNow, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
 configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 });
 test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive: true, force: true }); });
 
@@ -243,3 +243,28 @@ test("a sync refuses to push a commit made by hand whose objects Git's object ch
   assert.equal(git(remote, ["rev-parse", "main"]), before, "nothing was pushed");
   checkedClone(remote, path.join(parent, "fresh"));
 });
+
+for (const removed of [false, true]) {
+  test(`a file whose local version the sync withheld takes the upstream's ${removed ? "removal" : "change"} of it, saves and names the local version, and every other change still syncs`, async (context) => {
+    const { remote, storeA, storeB } = await stores(context);
+    pushFiles(storeA, { ".gitattributes": "* -diff\n" });
+    await ok(storeB);
+    await writeFile(path.join(storeB, ".gitattributes"), refusedAttributes);
+    assert.deepEqual((await ok(storeB)).withheld.map((entry) => entry.path), [".gitattributes"]);
+    pushFiles(storeA, { ".gitattributes": removed ? null : "* -text\n", "artifacts/plans/slice.md": "# Slice, by a\n" });
+    await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
+    // A sync that a tool waits for watches the store, so the next tool result names what it saved.
+    const status = await syncRecordStoreNow(storeB);
+    assert.equal(status.state, "conflicts", JSON.stringify(status));
+    assert.equal(status.withheld, undefined, "the file is withheld no more");
+    assert.deepEqual(status.conflicts.map((conflict) => conflict.path), [".gitattributes"]);
+    assert.equal(await readFile(path.join(storeB, status.conflicts[0].savedAs), "utf8"), refusedAttributes, "the withheld version is saved");
+    if (removed) assert.equal(await exists(path.join(storeB, ".gitattributes")), false, "the upstream's removal applies");
+    else assert.equal(await readFile(path.join(storeB, ".gitattributes"), "utf8"), "* -text\n", "the upstream's version applies");
+    assert.equal(await readFile(path.join(storeB, "artifacts", "plans", "slice.md"), "utf8"), "# Slice, by a\n", "the upstream's other change applies");
+    assert.equal(remoteBytes(remote, "roadmap.json").toString(), "{\"b\":true}\n", "the local change reaches the remote");
+    const taken = (await takeSavedConflicts()).filter((item) => item.store === storeB);
+    assert.deepEqual(taken.map((item) => item.file), [".gitattributes"], "the next tool result names the saved file");
+    assert.equal((await ok(storeB)).withheld, undefined);
+  });
+}

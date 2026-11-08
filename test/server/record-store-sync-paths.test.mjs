@@ -395,3 +395,37 @@ test("a branch that took entries whose names are not UTF-8 by hand keeps each na
   assert.equal(git(storeB, ["show", "HEAD:roadmap.json"]), "{\"b\":true}", "the local change is committed");
   assert.equal(git(storeA, ["ls-remote", "origin", "main"]).split("\t")[0], crafted, "nothing was pushed");
 });
+
+// Names whose UTF-8 holds characters beyond U+FFFF, whose UTF-16 form pairs a high and a low surrogate, as emoji and some CJK names do.
+const ASTRAL = ["\u{10000}", "\u{10080}", "\u{1F4A1} ideas", "\u{1F4C1}", "\u{1F4DD}", "\u{1F4FF}", "\u{1F600}", "\u{20000}", "\u{10FFFF}"];
+
+test("a sync carries upstream entries whose UTF-8 names hold characters beyond U+FFFF byte for byte, and a name with a byte that is not UTF-8 beside them is still refused", async (context) => {
+  const { storeA, storeB } = await stores(context);
+  git(storeA, ["fetch", "-q", "origin"]);
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(storeA, ".git", "teammate-index") };
+  execFileSync("git", ["-C", storeA, "read-tree", "origin/main"], { env });
+  const blob = git(storeA, ["hash-object", "-w", "--stdin"], "notes\n");
+  const entries = ASTRAL.map((name) => Buffer.from(`100644 ${blob}\tnotes/${name}.md\0`));
+  execFileSync("git", ["-C", storeA, "update-index", "-z", "--index-info"], { env, input: Buffer.concat(entries) });
+  const tree = execFileSync("git", ["-C", storeA, "write-tree"], { env }).toString().trim();
+  const commit = git(storeA, ["commit-tree", tree, "-p", "origin/main", "-m", "astral names"]);
+  git(storeA, ["push", "-q", "origin", `${commit}:refs/heads/main`]);
+  await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
+  const status = await syncRecordStore(storeB);
+  assert.equal(status.state, "ok", JSON.stringify(status));
+  assert.equal(git(storeB, ["show", "origin/main:roadmap.json"]), "{\"b\":true}", "the local change reaches the remote");
+  const expected = ASTRAL.map((name) => Buffer.from(`notes/${name}.md`).toString("latin1")).sort();
+  assert.deepEqual(namesOf(storeB, "origin/main").filter((name) => name.startsWith("notes/")).sort(), expected, "each name keeps its bytes");
+  assert.equal(await exists(path.join(storeB, "notes")), false, "no carried file is written to disk");
+  // A byte that is not UTF-8 after such a character still makes the name unsafe.
+  git(storeA, ["fetch", "-q", "origin"]);
+  execFileSync("git", ["-C", storeA, "read-tree", "origin/main"], { env });
+  execFileSync("git", ["-C", storeA, "update-index", "-z", "--index-info"], { env, input: Buffer.concat([Buffer.from(`100644 ${blob}\tnotes/\u{1F4A1}`), Buffer.from([0xe9]), Buffer.from(".md\0")]) });
+  const strayTree = execFileSync("git", ["-C", storeA, "write-tree"], { env }).toString().trim();
+  const stray = git(storeA, ["commit-tree", strayTree, "-p", "origin/main", "-m", "a stray byte"]);
+  git(storeA, ["push", "-q", "origin", `${stray}:refs/heads/main`]);
+  const refused = await syncRecordStore(storeB);
+  assert.equal(refused.state, "merge_failed", JSON.stringify(refused));
+  assert.ok(refused.message.includes(String.raw`"notes/` + "\u{1F4A1}" + String.raw`\xe9.md"`), refused.message);
+  assert.equal(isAncestor(storeB, stray), false, "the branch stays where it was");
+});

@@ -51,6 +51,8 @@ const isQuietConflict = (relative) => isClaimFile(relative) || isRegistrationFil
 const isArtifactFile = (relative) => relative.startsWith(`${ARTIFACTS}/`);
 const isSavedFile = (relative) => isRecordFile(relative) || isArtifactFile(relative);
 const syncPath = (base, ...parts) => path.join(base, SYNC_DIRECTORY, ...parts);
+// The pending notices of saved conflicts, one per conflict stamp, which tool results clear once they carry them.
+const NOTICES = "notices";
 
 function gitEnvironment(extra = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !REDIRECTING.test(name)));
@@ -85,6 +87,33 @@ function git(base, args, { env = {}, input, maxBuffer = 64 * 1024 * 1024 } = {})
     });
     if (input !== undefined) child.stdin.end(input);
   });
+}
+
+/**
+ * The oldest Git whose commands and options every store sync and every first clone of a remote store use, as each command's documentation and source at that version show.
+ * An older Git would fail some of them midway, so a store refuses to sync on one instead.
+ */
+export const GIT_MINIMUM = "2.25";
+const versionChecks = new Map();
+
+/**
+ * Why this machine's Git cannot sync a store, as a sentence that names its version and the minimum; null when it can, when Git is missing, which every caller reports on its own, or when its version cannot be read.
+ * The answer is kept for each PATH, so one process asks Git once.
+ */
+export function gitTooOld() {
+  const key = process.env.PATH ?? "";
+  if (!versionChecks.has(key)) {
+    versionChecks.set(key, new Promise((resolve) => {
+      execFile("git", ["--version"], { env: gitEnvironment(), timeout: SETTINGS.gitTimeoutMs }, (error, stdout) => {
+        const found = /^git version (\d+)\.(\d+)(?:\.(\d+))?/.exec(error ? "" : String(stdout).trim());
+        if (!found) return resolve(null);
+        const [major, minor] = GIT_MINIMUM.split(".").map(Number);
+        const older = Number(found[1]) < major || (Number(found[1]) === major && Number(found[2]) < minor);
+        resolve(older ? `This machine has Git ${found.slice(1).filter(Boolean).join(".")}, and syncing a record store needs Git ${GIT_MINIMUM} or later, so Prism does not sync it; update Git.` : null);
+      });
+    }));
+  }
+  return versionChecks.get(key);
 }
 
 async function required(base, args, options) {
@@ -179,27 +208,45 @@ export async function readSavedConflict(base, savedAs) {
 }
 
 /**
- * Local versions that a sync saved because the upstream changed the same record or the same lines of an artifact, in stores this process uses, since this process started and not reported before:
- * { record, savedAs, at } for a record, and { store, location, savedAs, at } for an artifact, whose location is its path below artifacts/ in the store at store.
+ * Local versions that a sync saved because the upstream changed the same record or the same lines of an artifact, or a file whose local version the sync withheld,
+ * in stores this process uses, that this process has not reported before and that a sync saved since this process started or that no tool result has carried yet:
+ * { record, savedAs, at } for a record, { store, location, savedAs, at } for an artifact, whose location is its path below artifacts/ in the store at store,
+ * and { store, file, savedAs, at } for any other file the store shares, such as its .gitattributes.
+ * A tool result that carries them confirms them with confirmSavedConflicts, which clears their pending notices.
  */
 export async function takeSavedConflicts() {
+  const { shareable } = await storeLayout();
   const found = [];
   for (const base of watched) {
     const directory = syncPath(base, "conflicts");
     let stamps = [];
     try { stamps = (await readdir(directory)).sort(); } catch { continue; }
+    const pending = new Set(await readdir(syncPath(base, NOTICES)).catch(() => []));
     for (const stamp of stamps) {
       const at = stampTime(stamp);
       const key = `${base}\0${stamp}`;
-      if (!(at >= PROCESS_START) || reported.has(key)) continue;
+      if (reported.has(key) || !(at >= PROCESS_START || pending.has(stamp))) continue;
       reported.add(key);
-      for (const file of await savedFiles(path.join(directory, stamp), isSavedFile)) {
+      const notice = pending.has(stamp) ? syncPath(base, NOTICES, stamp) : null;
+      const items = (await savedFiles(path.join(directory, stamp), (file) => isSavedFile(file) || shareable(file))).map((file) => {
         const savedAs = path.join(directory, stamp, ...file.split("/"));
-        found.push(isArtifactFile(file) ? { store: base, location: file.slice(ARTIFACTS.length + 1), savedAs, at: new Date(at).toISOString() } : { record: `.prism/${file}`, savedAs, at: new Date(at).toISOString() });
-      }
+        const when = new Date(at).toISOString();
+        return isArtifactFile(file) ? { store: base, location: file.slice(ARTIFACTS.length + 1), savedAs, at: when } : isRecordFile(file) ? { record: `.prism/${file}`, savedAs, at: when } : { store: base, file, savedAs, at: when };
+      });
+      // A stamp that holds only claims and registrations, which other results report, has nothing to carry.
+      if (notice && !items.length) await rm(notice, { force: true });
+      for (const item of items) { if (notice) notices.set(item, notice); found.push(item); }
     }
   }
   return found;
+}
+
+// The pending notice of each saved version that takeSavedConflicts returned.
+const notices = new WeakMap();
+
+/** Clear the pending notices of saved versions that a tool result carried, so no Prism server started later names them again. */
+export async function confirmSavedConflicts(taken) {
+  for (const notice of new Set((taken ?? []).map((item) => notices.get(item)).filter(Boolean))) await rm(notice, { force: true }).catch(() => {});
 }
 
 /**
@@ -301,8 +348,8 @@ const storeLayout = () => layout ??= import("./record-store.mjs").then(({ isStor
    * or an entry where Prism keeps a folder, or below a file Prism keeps outside artifacts/, which would clash with Prism's own files;
    * and "carried" for any other regular file, such as a .DS_Store that an earlier Prism committed, which stays in Git only.
    */
-  const kind = (file, mode) => {
-    if (!FILE_MODES.has(mode) || STRAY_BYTE.test(file) || file.split("/").some((name) => unsafeName(name) || !portableName(name))) return "unsafe";
+  const kind = (file, { mode, notUtf8 }) => {
+    if (!FILE_MODES.has(mode) || notUtf8 || file.split("/").some((name) => unsafeName(name) || !portableName(name))) return "unsafe";
     if (shareable(file)) return storePathFits(file) ? "shared" : "unsafe";
     if (isStoreFolder(file) || folders(file).some((folder) => !isArtifactFile(folder) && shareable(folder))) return "unsafe";
     return "carried";
@@ -315,7 +362,7 @@ async function partition(files) {
   const { kind } = await storeLayout();
   const shared = new Map();
   const other = new Map();
-  for (const [file, entry] of files) (kind(file, entry.mode) === "shared" ? shared : other).set(file, entry);
+  for (const [file, entry] of files) (kind(file, entry) === "shared" ? shared : other).set(file, entry);
   return { shared, other };
 }
 
@@ -470,6 +517,8 @@ async function commitLocal(base, author, run) {
   const { shared, other } = await partition(branch);
   const withheld = new Map();
   run.withheld = withheld;
+  // The local version of each file withheld because Git's object check refuses it, which a merge that replaces the file saves.
+  run.heldBack = new Map();
   let files = null;
   if (run.artifacts !== false) {
     files = await withFileLock(path.join(base, ARTIFACTS), () => localFiles(base, true, shared, withheld), undefined, { timeoutMs: run.artifacts ? SETTINGS.applyLockMs : 1 })
@@ -488,10 +537,11 @@ async function commitLocal(base, author, run) {
     // The objects a commit adds pass the check that every other machine's fetch applies before the branch takes them, so the branch's history never holds one that no other machine could fetch.
     const refused = await refusedObjects(base, commit, previous ? [previous] : []);
     if (refused) {
-      const culprits = changed.filter((file) => files.has(file) && refused.objects.includes(files.get(file).object));
+      const culprits = changed.filter((file) => files.has(file) && refused.objects.includes(files.get(file).object) && (refused.places.get(files.get(file).object)?.includes(file) ?? true));
       if (!culprits.length) throw new Error(`Git's object check, which every other machine's fetch applies, refuses the store's new commit, so it was not made: ${refused.message}`);
       for (const file of culprits) {
         withheld.set(file, `Git's object check, which every other machine's fetch applies, refuses it (${refused.message})`);
+        run.heldBack.set(file, files.get(file));
         if (shared.has(file)) files.set(file, shared.get(file)); else files.delete(file);
       }
       continue;
@@ -506,21 +556,134 @@ async function commitLocal(base, author, run) {
  * null when Git accepts them, else { message, objects } with Git's reasons and the objects they name.
  * The objects are packed into the sync folder and indexed there with index-pack --strict, which every such fetch and clone runs, so a refusal here is one that another machine would meet.
  * The pack leaves out blobs, which the store already holds: the check reads every blob it inspects by name, such as a .gitattributes, from the store, and checks no other blob's content.
+ * Git before 2.43 packs with a filter only to standard output, so the pack reaches its file from there,
+ * and Git before 2.39.1 has no check of a .gitattributes, so the sync checks each one that a new tree holds as Git 2.43 does, whatever this machine's Git.
  */
 async function refusedObjects(base, tip, known) {
   const folder = syncPath(base, "object-check");
   await rm(folder, { recursive: true, force: true });
   await mkdir(folder, { recursive: true });
   try {
-    const name = (await required(base, ["pack-objects", "--revs", "--quiet", "--filter=blob:none", path.join(folder, "objects")], { input: `${tip}\n${known.map((commit) => `^${commit}\n`).join("")}` })).text;
-    const checked = await git(base, ["index-pack", "--strict", "-o", path.join(folder, "checked.idx"), path.join(folder, `objects-${name}.pack`)]);
+    const revisions = `${tip}\n${known.map((commit) => `^${commit}\n`).join("")}`;
+    const attributes = await refusedAttributes(base, revisions);
+    if (attributes.reasons.length) return refusal(attributes.reasons, attributes.places);
+    const pack = (await required(base, ["pack-objects", "--revs", "--stdout", "--quiet", "--filter=blob:none"], { input: revisions, maxBuffer: PACK_BYTES_MAX })).stdout;
+    await writeFile(path.join(folder, "objects.pack"), pack);
+    const checked = await git(base, ["index-pack", "--strict", "-o", path.join(folder, "objects.idx"), path.join(folder, "objects.pack")]);
     if (checked.ok) return null;
     const reasons = checked.stderr.split("\n").filter((line) => line.startsWith("error: ")).map((line) => line.slice("error: ".length));
-    const message = (reasons.length ? reasons : [checked.stderr]).join("; ");
-    return { message, objects: [...message.matchAll(/\b[0-9a-f]{40}(?:[0-9a-f]{24})?\b/g)].map((match) => match[0]) };
+    return refusal(reasons.length ? reasons : [checked.stderr]);
   } finally {
     await rm(folder, { recursive: true, force: true });
   }
+}
+
+// A filtered pack holds only commits and trees, so even a store of long history packs within this bound.
+const PACK_BYTES_MAX = 1024 * 1024 * 1024;
+const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+// A refusal: Git's reasons, the objects they name, and, where the check knows them, the paths at which the new trees hold each refused object, as Map(object, [path]).
+const refusal = (reasons, places = new Map()) => {
+  const message = reasons.join("; ");
+  return { message, objects: [...message.matchAll(/\b[0-9a-f]{40}(?:[0-9a-f]{24})?\b/g)].map((match) => match[0]), places };
+};
+
+// The limits Git 2.43's object check sets for a .gitattributes: a line, without its line feed, shorter than 2048 bytes, and a file of at most 100 MiB (attr.h).
+const ATTRIBUTES_LINE_MAX = 2048;
+const ATTRIBUTES_BYTES_MAX = 100 * 1024 * 1024;
+
+/**
+ * Whether a tree entry's name is one that Git's object check reads as .gitattributes, as is_hfs_dotgitattributes and is_ntfs_dotgitattributes in Git's path.c match it:
+ * the name in any ASCII letter case with HFS+'s ignored code points anywhere, the name followed only by spaces and dots up to its end or a colon, or a Windows short name such as GITATT~1 or gi7d29~3.
+ */
+function attributesName(name) {
+  if (name.replace(IGNORED_CODE_POINTS, "").replace(/[A-Z]/g, (letter) => letter.toLowerCase()) === ".gitattributes") return true;
+  const rest = /^\.gitattributes/i.test(name) ? name.slice(14) : /^gitatt~[1-4]/i.test(name) ? name.slice(8) : /^(?:|g|gi|gi7|gi7d|gi7d2|gi7d29)~[1-9][0-9]*/i.exec(name.slice(0, 8))?.[0].length === 8 ? name.slice(8) : null;
+  return rest !== null && /^[ .]*(?::|$)/.test(rest);
+}
+
+/**
+ * The reasons, in the words of Git 2.43's object check, that the trees new to the known commits hold a .gitattributes that check refuses: one that is no blob or is missing,
+ * one over 100 MiB, or one with a line of 2048 bytes or more before its first zero byte, whether its blob is new or already in the store's history: { reasons, places }.
+ */
+async function refusedAttributes(base, revisions) {
+  const output = (await required(base, ["rev-list", "--objects", "--stdin"], { input: revisions, maxBuffer: PACK_BYTES_MAX })).stdout;
+  // Each line is an object id, followed for a tree or a blob by a space and the path it was first found at.
+  const where = new Map();
+  for (let at = 0; at < output.length;) {
+    const end = output.indexOf(10, at) < 0 ? output.length : output.indexOf(10, at);
+    const line = output.subarray(at, end);
+    const space = line.indexOf(32);
+    const object = (space < 0 ? line : line.subarray(0, space)).toString("latin1");
+    if (OBJECT_ID.test(object)) where.set(object, space < 0 ? "" : pathOfBytes(line.subarray(space + 1)));
+    at = end + 1;
+  }
+  const none = { reasons: [], places: new Map() };
+  if (!where.size) return none;
+  const types = await objectInfo(base, [...where.keys()]);
+  const trees = [...where.keys()].filter((object) => types.get(object)?.type === "tree");
+  const found = new Map();
+  for (const [tree, contents] of await objectContents(base, trees)) {
+    const size = tree.length / 2;
+    for (let at = 0; at < contents.length;) {
+      const space = contents.indexOf(32, at);
+      const end = contents.indexOf(0, space);
+      if (space < 0 || end < 0) break;
+      const mode = contents.subarray(at, space).toString("latin1");
+      const name = pathOfBytes(contents.subarray(space + 1, end));
+      const object = contents.subarray(end + 1, end + 1 + size).toString("hex");
+      // A link at that name is only reported, and a folder holds no attributes of its own.
+      if (mode !== "120000" && mode !== "40000" && attributesName(name)) found.set(object, [...(found.get(object) ?? []), where.get(tree) ? `${where.get(tree)}/${name}` : name]);
+      at = end + 1 + size;
+    }
+  }
+  if (!found.size) return none;
+  const blobs = await objectInfo(base, [...found.keys()]);
+  const reasons = [];
+  const readable = [];
+  for (const object of found.keys()) {
+    const info = blobs.get(object);
+    if (!info) reasons.push(`object ${object}: gitattributesMissing: unable to read .gitattributes blob`);
+    else if (info.type !== "blob") reasons.push(`object ${object}: gitattributesBlob: non-blob found at .gitattributes`);
+    else if (info.size > ATTRIBUTES_BYTES_MAX) reasons.push(`object ${object}: gitattributesLarge: .gitattributes too large to parse`);
+    else readable.push(object);
+  }
+  for (const [object, contents] of await objectContents(base, readable)) {
+    const text = contents.includes(0) ? contents.subarray(0, contents.indexOf(0)) : contents;
+    for (let at = 0; at < text.length;) {
+      const end = text.indexOf(10, at) < 0 ? text.length : text.indexOf(10, at);
+      if (end - at >= ATTRIBUTES_LINE_MAX) { reasons.push(`object ${object}: gitattributesLineLength: .gitattributes has too long lines to parse`); break; }
+      at = end + 1;
+    }
+  }
+  const refused = new Set(reasons.map((reason) => reason.split(" ")[1].slice(0, -1)));
+  return { reasons, places: new Map([...found].filter(([object]) => refused.has(object))) };
+}
+
+// The type and size of each object the store holds: Map(object, { type, size }), without the ones it lacks.
+async function objectInfo(base, objects) {
+  const info = new Map();
+  const output = (await required(base, ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"], { input: `${objects.join("\n")}\n` })).text;
+  for (const line of output.split("\n")) {
+    const [object, type, size] = line.split(" ");
+    if (size !== undefined && type !== "missing") info.set(object, { type, size: Number(size) });
+  }
+  return info;
+}
+
+// The contents of objects the store holds, as Map(object, bytes), read in one Git process.
+async function objectContents(base, objects) {
+  const contents = new Map();
+  if (!objects.length) return contents;
+  const output = (await required(base, ["cat-file", "--batch"], { input: `${objects.join("\n")}\n`, maxBuffer: PACK_BYTES_MAX })).stdout;
+  for (let at = 0; at < output.length;) {
+    const header = output.indexOf(10, at);
+    if (header < 0) break;
+    const [object, type, size] = output.subarray(at, header).toString("latin1").split(" ");
+    if (type === "missing" || size === undefined) { at = header + 1; continue; }
+    contents.set(object, output.subarray(header + 1, header + 1 + Number(size)));
+    at = header + 1 + Number(size) + 1;
+  }
+  return contents;
 }
 
 /**
@@ -562,6 +725,8 @@ async function sync(base, options) {
   const top = await git(base, ["rev-parse", "--show-toplevel"]);
   if (top.missing) return writeStatus(base, { state: "not_a_repository", message: "Git is not available, so the record store is not synced." });
   if (!top.ok || path.resolve(top.text) !== path.resolve(base)) return writeStatus(base, { state: "not_a_repository", message: "The record store is not the top of a Git checkout, so it is not synced." });
+  const tooOld = await gitTooOld();
+  if (tooOld) return writeStatus(base, { state: "git_failed", message: tooOld });
   const author = await identity(base);
   await migrateLineEndings(base);
   // Local versions that a sync stopped while saving or replacing are saved for good, or dropped when no file was replaced, before anything else changes.
@@ -583,7 +748,7 @@ async function sync(base, options) {
     const fetched = await git(base, [...CHECKED_FETCH, "fetch", "--quiet", upstream.remote]);
     if (!fetched.ok) return report({ state: "fetch_failed", message: fetched.stderr, ...await counts(base) });
     lastFetch.set(base, Date.now());
-    const merged = await merge(base, author, options);
+    const merged = await merge(base, author, options, run);
     if (merged.failed) return report({ state: "merge_failed", message: merged.failed, ...await counts(base) });
     // A merge that replaced files without moving the branch saved the local versions it replaced, which the next attempt would otherwise commit as the upstream's.
     conflicts.push(...merged.conflicts);
@@ -649,7 +814,7 @@ async function publishBranch(base, author, options) {
 }
 
 // Merge the fetched upstream without touching the working tree, then replace changed files one by one atomically.
-async function merge(base, author, options) {
+async function merge(base, author, options, run) {
   const upstream = await git(base, ["rev-parse", "--verify", "--quiet", "@{upstream}"]);
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
   // An upstream branch that the remote does not hold, as one deleted there, has nothing to merge, and the push that publishes the branch again keeps none of its entries that a store does not share.
@@ -667,7 +832,11 @@ async function merge(base, author, options) {
   }
   // The upstream is another machine's work, so its whole tree is checked before any of it is taken, whether it fast-forwards or merges.
   await refuseUnsafeTree(base, theirs);
-  if (!head.ok || (await git(base, ["merge-base", "--is-ancestor", head.text, theirs])).ok) return { applied: await apply(base, head.ok ? head.text : null, theirs, options), conflicts: [] };
+  if (!head.ok || (await git(base, ["merge-base", "--is-ancestor", head.text, theirs])).ok) {
+    const from = head.ok ? head.text : null;
+    const kept = run.heldBack?.size ? heldCopies(run, await treeFiles(base, from), await treeFiles(base, theirs)) : [];
+    return replaceFiles(base, run, { from, to: theirs, copies: kept }, options);
+  }
   const mergeBase = await git(base, ["merge-base", head.text, theirs]);
   if (!mergeBase.ok || !mergeBase.text) return { failed: "The store's branch and its upstream share no commit, so the store was left as it was.", conflicts: [] };
   // Only the entries a store shares merge; every other entry comes from the upstream alone, so no machine's commit changes one and a local one never reaches the remote.
@@ -694,12 +863,33 @@ async function merge(base, author, options) {
   if (clash) return { failed: `The merge would hold ${describeUnsafeEntry({ path: clash[1], clash: clash[0] })}, so the store was left as it was. Remove or rename one of them.`, conflicts: [] };
   const tree = await writeTree(base, merged);
   const commit = (await required(base, [...author, "commit-tree", tree, "-p", head.text, "-p", theirs, "-m", `prism: merge records from ${(await git(base, ["rev-parse", "--abbrev-ref", "@{upstream}"])).text || "upstream"}`])).text;
-  // The local versions that the upstream's replace are saved before any file is replaced or the branch moves, so a sync that stops anywhere in between loses none of them.
-  const stage = conflicted.length ? await stageLocal(base, local.shared, upstreamFiles.shared, conflicted, { from: head.text, to: commit }) : null;
-  const progress = {};
-  const applied = await apply(base, head.text, commit, options, progress);
-  if (!stage) return { applied, conflicts: [] };
-  return { applied, conflicts: applied || progress.wrote ? await publishSaved(base, stage) : await dropSaved(stage) };
+  const copies = conflictCopies(local.shared, upstreamFiles.shared, conflicted);
+  // A file whose local version the sync withheld keeps the branch's version in the local tree, so the merge replaces it whenever the upstream changed it, and its withheld bytes are saved as a conflict's are.
+  for (const [file, entry] of heldCopies(run, local.shared, merged)) {
+    const at = copies.findIndex(([candidate]) => candidate === file);
+    if (at < 0) copies.push([file, entry]); else copies[at] = [file, entry];
+  }
+  return replaceFiles(base, run, { from: head.text, to: commit, copies }, options);
+}
+
+/**
+ * Replace the store's files with a target commit's, after saving the local versions that it replaces into a stage, so a sync that stops anywhere in between loses none of them:
+ * { applied, conflicts }, where conflicts lists the saved versions, as a sync status names them, of the files the merge replaced.
+ * copies lists [path, entry] for each local version to save, with entry null for a conflicted path where the local side holds no file.
+ * run.heldBack maps each file whose local version the sync withheld to that version, which the replacement takes as the file's own bytes; a replaced one is withheld no more.
+ */
+async function replaceFiles(base, run, { from, to, copies }, options) {
+  const held = run.heldBack ?? new Map();
+  if (!copies.length) return { applied: await apply(base, from, to, options, {}, held), conflicts: [] };
+  const stage = await stageLocal(base, copies, { from, to });
+  const applied = await apply(base, from, to, options, { replacing: (file) => markReplaced(stage, file) }, held);
+  if (applied) for (const [file, entry] of copies) if (entry && held.get(file) === entry) { held.delete(file); run.withheld?.delete(file); }
+  return { applied, conflicts: await settleStage(base, stage, applied) };
+}
+
+// The withheld local versions of the files that a change from one tree to another replaces, as [path, entry].
+function heldCopies(run, before, after) {
+  return [...(run.heldBack ?? [])].filter(([file]) => !sameEntry(before.get(file), after.get(file)));
 }
 
 /**
@@ -773,56 +963,115 @@ async function lineMerge(base, original, local, upstream) {
 }
 
 /**
- * Save the local files at each conflicted path, and below it when it was a folder, that differ from the upstream's, into a staging folder of the sync folder, before the merge replaces any file:
- * the stage, whose conflicts lists { path, saved }, with saved true for each path whose copy sits below the stage's files folder and left out for a path the local side removed.
+ * The local files at each conflicted path, and below it when it was a folder, that differ from the upstream's, as [path, entry] in a stable order,
+ * with [path, null] for a conflicted path where the local side holds no such file, as where it removed one.
  * local and upstream are the shared entries of the two sides, so only files Prism writes are saved.
- * The stage's record names the commit the branch held and the merge commit, and is written last, so a stage without one never held every copy and is dropped.
  */
-async function stageLocal(base, local, upstream, conflicted, { from, to }) {
-  const folder = syncPath(base, "saving", `${Date.now()}-${process.pid}`);
-  await rm(folder, { recursive: true, force: true });
-  const conflicts = [];
+function conflictCopies(local, upstream, conflicted) {
+  const copies = [];
   // A folder's path and a file below it can both be conflicted, so each local file is saved once.
   const done = new Set();
   for (const file of conflicted) {
     const within = (candidate) => candidate === file || candidate.startsWith(`${file}/`);
     const changed = [...local].filter(([candidate, entry]) => within(candidate) && upstream.get(candidate)?.object !== entry.object && !done.has(candidate)).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
-    if (!changed.length && !done.has(file)) conflicts.push({ path: file, savedAs: null });
+    if (!changed.length && !done.has(file)) copies.push([file, null]);
     for (const [candidate, entry] of changed) {
       done.add(candidate);
-      const target = path.join(folder, "files", ...candidate.split("/"));
-      await mkdir(path.dirname(target), { recursive: true });
-      await writeAtomically(target, await entryBytes(base, entry));
-      conflicts.push({ path: candidate, saved: true });
+      copies.push([candidate, entry]);
     }
   }
+  return copies;
+}
+
+/**
+ * Save local versions into a staging folder of the sync folder before the merge replaces any file: the stage, whose conflicts lists { path, saved },
+ * with saved true for each path whose copy sits below the stage's files folder and left out for a path the local side removed.
+ * The stage's record names the commit the branch held and the target commit, and is written last, so a stage without one never held every copy and is dropped.
+ * Each file the replacement is about to replace or remove is named in the stage's replaced record first, so a stage that a stopped sync left is settled for exactly the files it replaced.
+ */
+async function stageLocal(base, copies, { from, to }) {
+  const folder = syncPath(base, "saving", `${Date.now()}-${process.pid}`);
+  await rm(folder, { recursive: true, force: true });
+  const conflicts = [];
+  for (const [file, entry] of copies) {
+    if (!entry) { conflicts.push({ path: file }); continue; }
+    const target = path.join(folder, "files", ...file.split("/"));
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeAtomically(target, await entryBytes(base, entry));
+    conflicts.push({ path: file, saved: true });
+  }
   await mkdir(folder, { recursive: true });
+  await writeAtomically(path.join(folder, REPLACED_RECORD), "[]\n");
   await writeAtomically(path.join(folder, STAGE_RECORD), `${JSON.stringify({ from, to, conflicts })}\n`);
-  return { folder, from, to, conflicts };
+  return { folder, from, to, conflicts, replaced: [] };
 }
 
 const STAGE_RECORD = "stage.json";
+const REPLACED_RECORD = "replaced.json";
+
+// Whether a replaced or removed file is, holds, or lies below a staged conflict's path.
+const touches = (file, conflict) => file === conflict || file.startsWith(`${conflict}/`) || conflict.startsWith(`${file}/`);
+
+// Name a file the replacement is about to replace or remove in the stage's replaced record, when it touches one of the stage's conflicts.
+async function markReplaced(stage, file) {
+  if (!stage.conflicts.some((conflict) => touches(file, conflict.path)) || stage.replaced.includes(file)) return;
+  stage.replaced.push(file);
+  await writeAtomically(path.join(stage.folder, REPLACED_RECORD), `${JSON.stringify(stage.replaced)}\n`);
+}
+
+/**
+ * Settle a stage once its replacement ended or stopped: the conflicts it saves, as a sync status lists them.
+ * A replacement that moved the branch saved every staged version; otherwise only the conflicts whose files it named as replaced and whose local version is no longer on disk are saved,
+ * and every other one is left to the next merge, which saves it again from the file that still holds it, so each local version is saved once.
+ * Settling removes the copies it does not save first, so a sync that stops while settling settles the same conflicts again.
+ */
+async function settleStage(base, stage, moved) {
+  const copyOf = (file) => path.join(stage.folder, "files", ...file.split("/"));
+  const kept = [];
+  for (const conflict of stage.conflicts) {
+    if (moved) { kept.push(conflict); continue; }
+    if (!stage.replaced.some((file) => touches(file, conflict.path))) continue;
+    if (!conflict.saved) { kept.push(conflict); continue; }
+    const [now, copy] = await Promise.all([fileBytes(path.join(base, ...conflict.path.split("/"))), fileBytes(copyOf(conflict.path))]);
+    if (copy !== null && !sameBytes(now, copy)) kept.push(conflict);
+  }
+  if (!kept.length) return dropSaved(stage);
+  for (const conflict of stage.conflicts) if (conflict.saved && !kept.includes(conflict)) await rm(copyOf(conflict.path), { force: true });
+  return publishSaved(base, { folder: stage.folder, conflicts: kept });
+}
+
+/**
+ * Move a folder of saved copies into the conflicts folder under a new conflict stamp, with a pending notice of that stamp written first,
+ * so the next tool result of every Prism server that uses the store names them, whether the server ran when they were saved or started later: the stamp.
+ */
+async function publishCopies(base, source) {
+  await mkdir(syncPath(base, "conflicts"), { recursive: true });
+  await mkdir(syncPath(base, NOTICES), { recursive: true });
+  const taken = (name) => Promise.all([syncPath(base, "conflicts", name), syncPath(base, NOTICES, name)].map((target) => lstat(target).then(() => true, () => false))).then((found) => found.some(Boolean));
+  // Two saves within one millisecond take the next free stamp.
+  for (let attempt = 0; ; attempt++) {
+    const candidate = new Date(Date.now() + attempt).toISOString().replace(/[:.]/g, "-");
+    if (await taken(candidate)) continue;
+    await writeAtomically(syncPath(base, NOTICES, candidate), `${JSON.stringify({ at: new Date().toISOString() })}\n`);
+    try { await rename(source, syncPath(base, "conflicts", candidate)); return candidate; }
+    catch (error) {
+      await rm(syncPath(base, NOTICES, candidate), { force: true });
+      if (!["EEXIST", "ENOTEMPTY", "EPERM"].includes(error.code) || attempt >= 100) throw error;
+    }
+  }
+}
 
 /**
  * Move a stage's copies into the conflicts folder under a new conflict stamp, so every Prism server that uses the store, one started since the stage was made among them, reports them once:
  * the stage's conflicts as a sync status lists them, with savedAs relative to the store.
  */
 async function publishSaved(base, { folder, conflicts }) {
-  let stamp = null;
-  if (conflicts.some((conflict) => conflict.saved)) {
-    await mkdir(syncPath(base, "conflicts"), { recursive: true });
-    // Two saves within one millisecond take the next free stamp.
-    for (let attempt = 0; stamp === null; attempt++) {
-      const candidate = new Date(Date.now() + attempt).toISOString().replace(/[:.]/g, "-");
-      try { await rename(path.join(folder, "files"), syncPath(base, "conflicts", candidate)); stamp = candidate; }
-      catch (error) { if (!["EEXIST", "ENOTEMPTY", "EPERM"].includes(error.code) || attempt >= 100) throw error; }
-    }
-  }
+  const stamp = conflicts.some((conflict) => conflict.saved) ? await publishCopies(base, path.join(folder, "files")) : null;
   await rm(folder, { recursive: true, force: true });
   return conflicts.map(({ path: file, saved }) => ({ path: file, savedAs: saved ? `${SYNC_DIRECTORY}/conflicts/${stamp}/${file}` : null }));
 }
 
-// Drop a stage whose merge replaced no file, so the merge that runs again saves its copies once.
+// Drop a stage whose merge replaced none of its files, so the merge that runs again saves its copies once.
 async function dropSaved({ folder }) {
   await rm(folder, { recursive: true, force: true });
   return [];
@@ -830,12 +1079,16 @@ async function dropSaved({ folder }) {
 
 /**
  * Settle every stage that a sync left behind when it stopped, which only one sync at a time can do, since each holds the store's sync lock: the conflicts it saves, as a sync status lists them.
- * A stage whose merge moved the branch, or replaced any of the files it saved, is published, so its local versions are saved and reported once;
- * one whose merge replaced none of them is dropped, since those files still hold the local versions and the next merge saves them again;
- * and one without its record, or whose copies were already published, is removed.
+ * A stage whose merge moved the branch is published whole, one whose replacement named files as replaced saves the conflicts of those it did replace, and one that replaced none is dropped,
+ * since those files still hold the local versions and the next merge saves them again; one without its record, or whose copies were already published, is removed.
  * A folder that an earlier Prism left there holds its copies directly, after its merge applied, so it is moved to the conflicts folder whole.
+ * A pending notice whose stamp holds no saved copies, as when a sync stopped before it moved them, is removed.
  */
 async function recoverSaved(base) {
+  const { shareable } = await storeLayout();
+  for (const name of await readdir(syncPath(base, NOTICES)).catch(() => [])) {
+    if (!(await lstat(syncPath(base, "conflicts", name)).then(() => true, () => false))) await rm(syncPath(base, NOTICES, name), { force: true });
+  }
   let names = [];
   try { names = (await readdir(syncPath(base, "saving"))).sort(); } catch { return []; }
   const conflicts = [];
@@ -844,22 +1097,21 @@ async function recoverSaved(base) {
     const stage = await readFile(path.join(folder, STAGE_RECORD), "utf8").then(JSON.parse).catch(() => null);
     const copies = await lstat(path.join(folder, "files")).then((stats) => stats.isDirectory(), () => false);
     if (!stage && !copies && STAMP.test(name)) {
-      await mkdir(syncPath(base, "conflicts"), { recursive: true });
-      await rename(folder, syncPath(base, "conflicts", new Date().toISOString().replace(/[:.]/g, "-"))).catch(() => rm(folder, { recursive: true, force: true }));
+      await publishCopies(base, folder).catch(() => rm(folder, { recursive: true, force: true }));
       continue;
     }
     // The record is the sync folder's own, and still names only paths a store shares, so no check of a stage reads outside the store.
-    const valid = Array.isArray(stage?.conflicts) && stage.conflicts.every((conflict) => typeof conflict?.path === "string" && isSavedFile(conflict.path) && conflict.path.split("/").every((part) => part && part !== "." && part !== ".."));
+    const valid = Array.isArray(stage?.conflicts) && stage.conflicts.every((conflict) => typeof conflict?.path === "string" && (isSavedFile(conflict.path) || shareable(conflict.path)) && conflict.path.split("/").every((part) => part && part !== "." && part !== ".."));
     const saved = valid ? stage.conflicts.filter((conflict) => conflict.saved) : [];
     if (!valid || (saved.length && !copies)) { await rm(folder, { recursive: true, force: true }); continue; }
     const moved = typeof stage.to === "string" && (await git(base, ["merge-base", "--is-ancestor", stage.to, "HEAD"])).ok;
-    let replaced = moved;
-    for (const conflict of saved) {
-      if (replaced) break;
-      const [now, copy] = await Promise.all([fileBytes(path.join(base, ...conflict.path.split("/"))), fileBytes(path.join(folder, "files", ...conflict.path.split("/")))]);
-      replaced = !sameBytes(now, copy);
+    let replaced = await readFile(path.join(folder, REPLACED_RECORD), "utf8").then(JSON.parse).catch(() => null);
+    // A stage that an earlier Prism made has no replaced record, so each saved file whose bytes on disk differ from its copy counts as replaced, as that Prism counted it.
+    if (!Array.isArray(replaced)) {
+      replaced = [];
+      for (const conflict of saved) if (!sameBytes(await fileBytes(path.join(base, ...conflict.path.split("/"))), await fileBytes(path.join(folder, "files", ...conflict.path.split("/"))))) replaced.push(conflict.path);
     }
-    conflicts.push(...(replaced ? await publishSaved(base, { folder, conflicts: stage.conflicts }) : await dropSaved({ folder })));
+    conflicts.push(...await settleStage(base, { folder, conflicts: stage.conflicts, replaced: replaced.filter((file) => typeof file === "string") }, moved));
   }
   await rmdir(syncPath(base, "saving")).catch(() => {});
   return conflicts;
@@ -926,7 +1178,8 @@ async function treeFiles(base, commit) {
     const tab = output.indexOf(9, at);
     if (tab < 0 || tab > end) throw new Error(`git ls-tree printed an entry without a path for ${commit}.`);
     const [mode, , object] = output.subarray(at, tab).toString("latin1").split(" ");
-    files.set(pathOfBytes(output.subarray(tab + 1, end)), { mode, object });
+    const name = output.subarray(tab + 1, end);
+    files.set(pathOfBytes(name), utf8(name) ? { mode, object } : { mode, object, notUtf8: true });
     at = end + 1;
   }
   return files;
@@ -934,7 +1187,11 @@ async function treeFiles(base, commit) {
 
 // A byte of a tree path that is no part of a UTF-8 character is read as the lone surrogate U+DC00 plus that byte, which no UTF-8 text decodes to,
 // so two paths that differ only in such bytes keep apart, and every path is written back with the bytes it was read from.
-const STRAY_BYTE = /[\udc80-\udcff]/;
+// The u flag matches a lone surrogate only, never half of a character beyond U+FFFF such as U+1F4A1.
+const STRAY_BYTE = /[\udc80-\udcff]/u;
+// Whether a tree path's bytes are UTF-8, decided on the bytes themselves, so a character beyond U+FFFF is never mistaken for a stray byte.
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = (bytes) => { try { UTF8.decode(bytes); return true; } catch { return false; } };
 const UTF8_LENGTH = (lead) => lead < 0x80 ? 1 : lead >= 0xc2 && lead <= 0xdf ? 2 : lead >= 0xe0 && lead <= 0xef ? 3 : lead >= 0xf0 && lead <= 0xf4 ? 4 : 0;
 
 /** A tree path's bytes as text, with each byte that is not UTF-8 kept as a lone surrogate. */
@@ -1020,7 +1277,7 @@ function settleLetterCase(result, local, upstream) {
 export async function unsafeStoreEntry(base, commit) {
   const { kind } = await storeLayout();
   const files = await treeFiles(base, commit);
-  for (const [file, entry] of files) if (kind(file, entry.mode) === "unsafe") return { path: file, kind: entryKind(entry.mode) };
+  for (const [file, entry] of files) if (kind(file, entry) === "unsafe") return { path: file, kind: entryKind(entry.mode) };
   const clash = letterCaseClash(files.keys());
   return clash ? { path: clash[1], kind: "an entry", clash: clash[0] } : null;
 }
@@ -1048,7 +1305,8 @@ async function unpushable(base, remote) {
   const known = (await required(base, ["for-each-ref", "--format=%(objectname)", `refs/remotes/${remote}/`])).text.split("\n").filter(Boolean);
   const refused = await refusedObjects(base, "HEAD", known);
   if (!refused) return null;
-  const named = [...await treeFiles(base, "HEAD")].filter(([, entry]) => refused.objects.includes(entry.object)).map(([file]) => shownPath(file));
+  const places = [...new Set([...refused.places.values()].flat())];
+  const named = (places.length ? places : [...await treeFiles(base, "HEAD")].filter(([, entry]) => refused.objects.includes(entry.object)).map(([file]) => file)).map(shownPath);
   return `The store's branch holds ${named.length ? named.join(" and ") : "an object"} that Git's object check refuses (${refused.message}), so it was not pushed, since every other machine's fetch and first clone would then refuse the remote for good. Fix that file in this store, or take the commit you made by hand that holds it off the store's branch.`;
 }
 
@@ -1113,11 +1371,12 @@ async function clearFolder(target) {
  * Replace the files at shared paths that differ between two commits by atomic renames of their blobs' bytes, then move the branch and index to the target commit.
  * An entry at any other path, such as a .DS_Store the store's history holds, is never written, removed, or compared on disk.
  * The branch moves only when every changed file held the previous commit's bytes and holds the target's bytes afterwards, in the target's spelling.
- * Otherwise the branch stays, so the next commit records the replaced files and the local writes, and the next merge resolves them; progress.wrote tells whether any file was replaced or removed.
+ * Otherwise the branch stays, so the next commit records the replaced files and the local writes, and the next merge resolves them; progress.replacing, when given, runs before each file is replaced or removed.
+ * held maps a file whose local version the sync withheld to that version, which the file may hold in place of the branch's.
  * On a file system that ignores letter case, as macOS and Windows use by default, a path that differs only in letter case from a file on disk opens that file,
  * so a path counts as holding bytes only when every name of it is stored in that spelling, and two changed paths that such a file system reads as one take one lock.
  */
-async function apply(base, from, to, options, progress = {}) {
+async function apply(base, from, to, options, progress = {}, held = new Map()) {
   const marker = syncPath(base, "working-tree");
   await writeAtomically(marker, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
   let files = [];
@@ -1145,19 +1404,21 @@ async function apply(base, from, to, options, progress = {}) {
           const ownBytes = async (index, cache) => (await storedInSpelling(base, files[index], cache)) ? fileBytes(targets[index]) : null;
           for (const [index, file] of files.entries()) {
             const [bytes, expected] = await Promise.all([ownBytes(index, listings), entryBytes(base, before.get(file))]);
-            if (!sameBytes(bytes, expected)) return false;
+            // A file whose local version the sync withheld still holds that version, which the caller saved.
+            if (!sameBytes(bytes, expected) && !(held.has(file) && sameBytes(bytes, await entryBytes(base, held.get(file))))) return false;
             next.push(await entryBytes(base, after.get(file)));
           }
-          progress.wrote = next.length > 0;
           // Removals come first, and an artifact folder that one leaves empty, or holding only a file manager's files, goes with it,
           // so a file that takes a removed folder's place, or a folder that differs from a removed one only in letter case, is made anew rather than inside the old one.
           for (const [index, bytes] of next.entries()) {
             if (bytes !== null) continue;
+            await progress.replacing?.(files[index]);
             if (!(await clearFolder(targets[index]))?.isDirectory()) await rm(targets[index], { force: true });
             if (isArtifactFile(files[index])) await pruneArtifactFolders(artifacts, targets[index]);
           }
           for (const [index, bytes] of next.entries()) {
             if (bytes === null) continue;
+            await progress.replacing?.(files[index]);
             await respellFolders(base, files[index]);
             await mkdir(path.dirname(targets[index]), { recursive: true });
             await clearFolder(targets[index]);

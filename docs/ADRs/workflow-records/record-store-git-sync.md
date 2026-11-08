@@ -58,7 +58,7 @@ Other record kinds, such as coordination state, still resolve concurrent edits b
 A record written or locked while a merge would replace it keeps the branch where it was, so the next attempt commits the local bytes and resolves them against the upstream as a saved conflict.
 A record that stays locked through every attempt delays the merge to a later sync, which the status reports as `merge_failed`.
 A leftover Git lock in the store stops syncing with `git_failed` until a person removes it, because Prism never deletes Git's locks.
-Merging without the working tree requires Git 2.38 or later, and an older Git reports `merge_failed`.
+The sync and the first clone of a remote store use only commands and options that Git 2.25 has, and on an older Git every record operation of a store that syncs, or of a remote store, fails with `store_unavailable`, naming both versions.
 
 ## Mechanism
 
