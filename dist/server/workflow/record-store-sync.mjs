@@ -39,6 +39,8 @@ export function cancelRecordSyncs() {
   rerun.clear();
 }
 
+// The notice every view that Prism generates from a record carries, as generatedNotice in projection.mjs writes it.
+const GENERATED_VIEW = Buffer.from("This file is a generated view of ");
 // A repository registration syncs as a record, so a registration made on two machines keeps the upstream one instead of failing the merge.
 const isRegistrationFile = (relative) => /^repositories\/[^/]+\.json$/.test(relative);
 const isRecordFile = (relative) => relative === "roadmap.json" || relative.startsWith("initiatives/") || isRegistrationFile(relative);
@@ -390,19 +392,21 @@ async function merge(base, author, options) {
   if (result.code !== 0 && result.code !== 1) return { failed: result.stderr || "Git could not merge the upstream; Git 2.38 or later is required.", conflicts: [] };
   const [mergedTree, ...listed] = result.stdout.toString("utf8").split("\0").filter(Boolean);
   const lineConflicts = [...new Set(listed)];
-  const other = lineConflicts.filter((file) => !isRecordFile(file));
-  if (other.length) return { failed: `The upstream conflicts with local changes to ${other.slice(0, 5).join(", ")}, so the store was left as it was.`, conflicts: [] };
   const merges = await structuralMerges(base, head.text, theirs);
-  const conflicted = [...new Set([...lineConflicts, ...merges.fallback])].filter((file) => !merges.merged.has(file));
+  const views = new Set(merges.views);
+  const other = lineConflicts.filter((file) => !isRecordFile(file) && !views.has(file));
+  if (other.length) return { failed: `The upstream conflicts with local changes to ${other.slice(0, 5).join(", ")}, so the store was left as it was.`, conflicts: [] };
+  const conflicted = [...new Set([...lineConflicts, ...merges.fallback])].filter((file) => !merges.merged.has(file) && !views.has(file));
   let tree = mergedTree;
-  if (conflicted.length || merges.merged.size) {
+  if (conflicted.length || merges.merged.size || views.size) {
     // The upstream version wins, as the first push does for a stale revision, and the local version is kept beside the store once the merge applies.
     // A record merged by structure takes its merged blob instead of Git's line merge.
     const index = syncPath(base, "merge-index");
     const env = { GIT_INDEX_FILE: index };
     await rm(index, { force: true });
     await required(base, ["read-tree", mergedTree], { env });
-    for (const file of conflicted) {
+    // A generated view that changed on both sides takes the upstream view whole, which the next write of its record regenerates, so it is neither saved nor reported.
+    for (const file of [...conflicted, ...views]) {
       const entry = (await required(base, ["ls-tree", "-z", theirs, "--", file])).stdout;
       await required(base, ["update-index", "-z", "--index-info"], { env, input: entry.length ? entry : `0 ${"0".repeat(40)}\t${file}\0` });
     }
@@ -439,10 +443,17 @@ async function merge(base, author, options) {
 async function structuralMerges(base, head, theirs) {
   const merged = new Map();
   const fallback = [];
+  const views = [];
   const mergeBase = await git(base, ["merge-base", head, theirs]);
-  if (!mergeBase.ok || !mergeBase.text) return { merged, fallback };
+  if (!mergeBase.ok || !mergeBase.text) return { merged, fallback, views };
   const ours = new Set(await changedPaths(base, mergeBase.text, head));
-  const both = (await changedPaths(base, mergeBase.text, theirs)).filter((file) => ours.has(file) && (hasRecordMerge(file) || isRegistrationFile(file)));
+  const changed = (await changedPaths(base, mergeBase.text, theirs)).filter((file) => ours.has(file));
+  // Prism writes the views it generates from records, such as initiative.md, into the store's artifacts, so one that both sides regenerated is not a person's change.
+  for (const file of changed.filter((item) => item.startsWith(`${ARTIFACTS}/`))) {
+    const [local, upstream] = await Promise.all([head, theirs].map((commit) => blob(base, commit, file)));
+    if (local !== null && upstream !== null && !local.equals(upstream) && [local, upstream].every((bytes) => bytes.includes(GENERATED_VIEW))) views.push(file);
+  }
+  const both = changed.filter((file) => hasRecordMerge(file) || isRegistrationFile(file));
   for (const file of both) {
     const [original, local, upstream] = await Promise.all([mergeBase.text, head, theirs].map((commit) => blob(base, commit, file)));
     if (local === null || upstream === null || local.equals(upstream)) continue;
@@ -457,7 +468,7 @@ async function structuralMerges(base, head, theirs) {
     if (typeof outcome?.contents === "string") merged.set(file, Buffer.from(outcome.contents, "utf8"));
     else fallback.push(file);
   }
-  return { merged, fallback };
+  return { merged, fallback, views };
 }
 
 const blob = async (base, commit, file) => {

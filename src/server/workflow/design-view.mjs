@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { assertInput } from "./artifact-schema.mjs";
-import { locateRecord, readRecord, sliceDocumentFolder, withRecordLock, writeRecord } from "./record-store.mjs";
+import { inArtifactStore, listStoreArtifacts, locateRecord, readArtifactBytes, readArtifactText, readRecord, sliceDocumentFolder, withRecordLock, writeRecord } from "./record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { acceptedDesign, readFrozenTestOf } from "./slice-design.mjs";
@@ -117,11 +117,8 @@ async function designSource(root, initiative, slice) {
   const folder = await sliceDocumentFolder(root, initiative, slice);
   if (folder === null) throw fail("validation_failed", "The workflow configuration has no Plans path, so the slice has no slice.md.");
   const relative = `${folder}/slice.md`;
-  try { return { path: relative, source: await readFile(path.join(root, relative), "utf8") }; }
-  catch (error) {
-    if (error.code === "ENOENT") return { path: relative, source: null };
-    throw error;
-  }
+  // With a store, slice.md is read there and never from the checkout.
+  return { path: relative, source: await readArtifactText(root, relative) };
 }
 
 // A slice of a split scope has only its Changes; its Contract is the nearest ancestor design that has one.
@@ -194,8 +191,12 @@ export async function updateDesignView(input) {
   const folder = path.posix.dirname(own.path);
   const folders = [folder];
   if (initiativeDirectory(await readWorkflowConfig(root), initiative) === folder) {
-    const entries = await readdir(path.join(root, folder), { withFileTypes: true }).catch(() => []);
-    folders.push(...entries.filter((entry) => entry.isDirectory()).map((entry) => `${folder}/${entry.name}`).sort());
+    const stored = await listStoreArtifacts(root, folder);
+    if (stored !== null) folders.push(...[...new Set(stored.map((entry) => entry.path.slice(folder.length + 1).split("/")).filter((parts) => parts.length > 1).map((parts) => `${folder}/${parts[0]}`))].sort());
+    else {
+      const entries = await readdir(path.join(root, folder), { withFileTypes: true }).catch(() => []);
+      folders.push(...entries.filter((entry) => entry.isDirectory()).map((entry) => `${folder}/${entry.name}`).sort());
+    }
   }
   const diagrams = [];
   for (const item of folders) diagrams.push(...await checkFolderDiagrams(root, item));
@@ -297,7 +298,10 @@ export async function loadDesignView(projectRoot, initiative, slice, { changeMap
   if (!verified) {
     for (const change of planned.changes) {
       if (change.action === "add" || change.path.endsWith("/")) continue;
-      const found = await stat(path.join(root, change.path)).then(() => true, () => false);
+      // With a store, a planned change to a descriptive artifact, such as a requirement, names a file the store holds.
+      const found = await inArtifactStore(root, change.path)
+        ? await readArtifactBytes(root, change.path).then((bytes) => bytes !== null, () => false)
+        : await stat(path.join(root, change.path)).then(() => true, () => false);
       // A new file is planned as add, so a missing path to change is usually a wrong action, unless the path is mistyped.
       const hint = change.action === "change" ? " Plan a new file as add, or correct the path." : " Correct the path.";
       if (!found) changeProblems.push(`${change.path} is planned to ${change.action} but does not exist.${hint}`);

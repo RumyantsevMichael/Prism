@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
-import { listRecordEntries, listSliceRecords, locateRecord, readRecord, writeRecord } from "./record-store.mjs";
+import { inArtifactStore, listRecordEntries, listSliceRecords, locateRecord, readArtifactBytes, readRecord, writeRecord } from "./record-store.mjs";
 
 const FROZEN_TEST_MAX_BYTES = 4 * 1024 * 1024;
 export const REVIEW_MARKS = Object.freeze(["required", "none"]);
@@ -64,13 +64,16 @@ export async function digestFrozenTests(projectRoot, paths) {
 export const CONTRACT_TOKEN_BUDGET = 150000;
 const BYTES_PER_TOKEN = 4;
 
-/** Estimate from file sizes how many tokens the named contract files hold, and which of them are missing. */
+/**
+ * Estimate from file sizes how many tokens the named contract files hold, and which of them are missing.
+ * With a store, a contract file at an artifact path, such as slice.md, is measured in the store, and a test in the checkout.
+ */
 export async function measureContract(projectRoot, paths) {
   const root = await realpath(projectRoot);
   let bytes = 0;
   const missing = [];
   for (const relative of [...new Set(paths)].sort()) {
-    const content = await frozenBytes(root, relative);
+    const content = await inArtifactStore(root, relative) ? await readArtifactBytes(root, relative) : await frozenBytes(root, relative);
     if (content === null) missing.push(relative);
     else bytes += content.length;
   }

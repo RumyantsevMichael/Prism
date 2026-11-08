@@ -8,7 +8,7 @@ import { listSavedConflicts, pullRecordStoreIfStale, readSavedConflict, readSync
 import { managedRecordStore } from "./record-store-remote.mjs";
 import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 import { checkRepositoryName, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
-import { ARTIFACTS, componentScope, repositoryScope, scopeFolder, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
+import { ARTIFACTS, artifactAddress, componentScope, normalizeArtifactPath, repositoryScope, scopeFolder, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
 import { COMPONENT_NAME } from "./components.mjs";
 import { artifactKinds, initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
@@ -748,4 +748,69 @@ export async function withArtifactStoreLock(seen, action) {
     await ensureHousekeeping(seen.store);
     return action();
   }, fail));
+}
+
+// The store functions check names, scopes, and layout and take the artifact lock, and they import this module, so they load when first used.
+const storeArtifacts = () => import("./store-artifacts.mjs");
+
+/** Whether a project-relative path is an artifact path of a project whose .prism/workflow.md names a record store, so its file lives in the store and never in the checkout. */
+export async function inArtifactStore(projectRootPath, file) {
+  const config = await readWorkflowConfig(await projectRoot(projectRootPath));
+  if ((config.workspace?.store ?? null) === null) return false;
+  const normalized = normalizeArtifactPath(file);
+  if (normalized === null || normalized === "") return false;
+  const address = artifactAddress(artifactKinds(config), normalized);
+  return address !== null && address.rest !== "";
+}
+
+/**
+ * The bytes of a file that Prism reads itself, such as a slice.md, a diagram, or a recovery note, or null when it does not exist:
+ * an artifact path of a project with a store is read from the store, every other path from the checkout.
+ */
+export async function readArtifactBytes(projectRootPath, file) {
+  if (await inArtifactStore(projectRootPath, file)) return (await (await storeArtifacts()).readStoreArtifact(projectRootPath, file))?.bytes ?? null;
+  const root = await projectRoot(projectRootPath);
+  try { return await readFile(path.resolve(root, file)); }
+  catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; }
+}
+
+/** The text of a file that Prism reads itself, from the store or the checkout as readArtifactBytes decides, or null when it does not exist. */
+export async function readArtifactText(projectRootPath, file) {
+  return (await readArtifactBytes(projectRootPath, file))?.toString("utf8") ?? null;
+}
+
+/**
+ * Change a file that Prism writes itself, such as a generated view or a recovery note: decide gets its current text, or null, and returns the text to write,
+ * null to remove it, or undefined to leave it; a string stands for a decide that always writes it.
+ * An artifact path of a project with a store is written through the store's checked update, in the scope that holds it, a new one in the scope that holds its nearest folder with
+ * an artifact that is no generated view, else the workspace scope,
+ * and every other path in the checkout, with write, which defaults to an atomic replace; with follow, a generated view also moves to the scope that holds its folder.
+ * Returns { written, store }.
+ * @param {string} projectRootPath @param {string} file @param {string | null | ((current: string | null) => unknown)} decide
+ * @param {{ write?: (target: string, contents: string) => Promise<unknown>, follow?: boolean }} [options]
+ */
+export async function writeArtifactText(projectRootPath, file, decide, { write = writeAtomically, follow = false } = {}) {
+  const choose = typeof decide === "function" ? decide : () => decide;
+  if (await inArtifactStore(projectRootPath, file)) return { ...(await (await storeArtifacts()).writeStoreArtifact(projectRootPath, file, choose, { follow })), store: true };
+  const root = await projectRoot(projectRootPath);
+  const target = path.resolve(root, file);
+  if (!inside(root, target) || target === root) throw fail("invalid_path", `${file} lies outside the project root.`);
+  await assertContained(root, target);
+  const current = await regularFile(target) ? await readFile(target, "utf8") : null;
+  const next = await choose(current);
+  if (next === undefined || (next === null && current === null) || next === current) return { written: false, store: false };
+  if (next === null) await rm(target, { force: true });
+  else {
+    await mkdir(path.dirname(target), { recursive: true });
+    await assertContained(root, target);
+    await write(target, next);
+  }
+  return { written: true, store: false };
+}
+
+/** The artifact paths the store holds below a project-relative folder, as { path, scope, kind }, or null when the project names no store, so its files are listed in the checkout. */
+export async function listStoreArtifacts(projectRootPath, folder = "") {
+  const config = await readWorkflowConfig(await projectRoot(projectRootPath));
+  if ((config.workspace?.store ?? null) === null) return null;
+  return (await storeArtifacts()).storeArtifactPaths(projectRootPath, folder);
 }

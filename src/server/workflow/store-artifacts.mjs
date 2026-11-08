@@ -481,106 +481,112 @@ export async function updateArtifact(input) {
     const { config, kinds } = await configuration(input.projectRoot);
     const checked = input.operations.map((operation) => checkOperation(config, kinds, operation));
     const seen = await seenScopes(input.projectRoot);
-    return withArtifactStoreLock(seen, async () => {
-      // Each file's bytes as the earlier operations of this update leave them, so later operations see their effect.
-      const original = new Map();
-      const state = new Map();
-      // The artifact path each written location belongs to, for refusals that name it.
-      const names = new Map();
-      const read = async (target) => {
-        if (!state.has(target)) {
-          const record = await readStored(target, seen.base);
-          original.set(target, record);
-          state.set(target, record);
-        }
-        return state.get(target);
-      };
-      // The artifact paths every seen scope held before the update, found once when a write creates an artifact or a move_scope runs.
-      let before;
-      const heldBefore = async () => before ??= await holdings(seen, "", null);
-      const one = async ({ file, address }, scopes) => {
-        const held = await holders(seen, address, scopes, read);
-        if (held.length > 1) throw ambiguous(file, held);
-        return held[0] ?? null;
-      };
-      const artifacts = [];
-      for (const item of checked) {
-        const { operation, file, address, given } = item;
-        if (operation.op === "write") {
-          const all = scopesFor(seen, address.kind, null);
-          let scope, target, current;
-          if (given) {
-            scope = scopeOf(seen, given);
-            target = await resolveArtifactFile(seen, artifactLocation(scope, address));
-            current = await read(target);
-            if (current === null && operation.expectedVersion === null) {
-              const other = (await holders(seen, address, all.filter((candidate) => candidate.label !== scope.label), read))[0];
-              if (other) throw fail("artifact_exists", `${file} already exists in scope ${other.scope.label}, which this checkout sees, so it cannot also be created in scope ${scope.label}. Read and change that artifact, or move it with move_scope.`, { scope: other.scope });
-            }
-          } else {
-            const held = await one(item, all);
-            scope = held?.scope ?? (operation.expectedVersion === null ? await creationScope(seen, address, all, state) : WORKSPACE_SCOPE);
-            target = held?.target ?? await resolveArtifactFile(seen, artifactLocation(scope, address));
-            current = held?.record ?? null;
-          }
-          // A create always runs the letter-case check, whatever the location's lookup found, since a case-insensitive file system finds a stored variant there.
-          if (operation.expectedVersion === null) checkLetterCase(item, await heldBefore(), checked);
-          checkVersion(file, operation.expectedVersion, current);
-          if (current === null) {
-            checkComponentName(file, scope);
-            checkLocationLength(scope, address);
-          }
-          const next = Buffer.from(operation.content, "utf8");
-          state.set(target, stored(next));
-          names.set(target, file);
-          artifacts.push({ path: file, scope, version: artifactVersion(next) });
-          continue;
-        }
-        const source = operation.op === "move_scope" ? await moveSource(item, await holders(seen, address, scopesFor(seen, address.kind, null), read)) : await one(item, scopesFor(seen, address.kind, given));
-        if (!source) {
-          if (operation.expectedVersion !== null) checkVersion(file, operation.expectedVersion, null);
-          throw notFound(file);
-        }
-        checkVersion(file, operation.expectedVersion, source.record);
-        if (operation.op === "edit") {
-          const next = Buffer.from(applyEdits(file, decode(contentOf(file, source.record), file), operation.edits), "utf8");
-          tooLarge(file, next.length);
-          state.set(source.target, stored(next));
-          names.set(source.target, file);
-          artifacts.push({ path: file, scope: source.scope, version: artifactVersion(next) });
-        } else if (operation.op === "remove") {
-          state.set(source.target, null);
-          artifacts.push({ path: file, scope: source.scope, removed: true });
-        } else {
-          const scope = scopeOf(seen, given);
-          checkComponentName(file, scope);
-          checkLetterCase(item, await heldBefore(), checked);
-          checkLocationLength(scope, address);
-          if (scope.label !== source.scope.label) {
-            const target = await resolveArtifactFile(seen, artifactLocation(scope, address));
-            if ((await read(target)) !== null) throw fail("artifact_exists", `${file} already exists in scope ${scope.label}, so it cannot move there from scope ${source.scope.label}.`, { scope });
-            state.set(target, stored(contentOf(file, source.record)));
-            names.set(target, file);
-            state.set(source.target, null);
-          }
-          artifacts.push({ path: file, scope, version: source.record.version });
-        }
-      }
-      // New bytes are written before removals, so a move interrupted midway leaves the artifact in both scopes rather than in neither.
-      const changed = [...state].filter(([target, record]) => (record?.version ?? null) !== (original.get(target)?.version ?? null));
-      await checkLayout(seen, changed.filter(([, record]) => record !== null), state, names);
-      for (const [target, record] of changed.filter(([, record]) => record !== null)) {
-        await mkdir(path.dirname(target), { recursive: true });
-        await resolveArtifactFile(seen, path.relative(seen.base, target).split(path.sep).join("/"));
-        await writeAtomically(target, record.bytes);
-      }
-      for (const [target] of changed.filter(([, record]) => record === null)) {
-        await rm(target, { force: true });
-        await pruneParents(seen.base, target);
-      }
-      return { artifacts };
-    });
+    return withArtifactStoreLock(seen, () => applyOperations(seen, checked));
   });
+}
+
+/**
+ * Apply checked operations while the store's artifact lock is held: every operation is checked against the store before any file changes.
+ * Every change to a store artifact, an agent's update and Prism's own plan files and views alike, goes through here.
+ */
+async function applyOperations(seen, checked) {
+  // Each file's bytes as the earlier operations of this update leave them, so later operations see their effect.
+  const original = new Map();
+  const state = new Map();
+  // The artifact path each written location belongs to, for refusals that name it.
+  const names = new Map();
+  const read = async (target) => {
+    if (!state.has(target)) {
+      const record = await readStored(target, seen.base);
+      original.set(target, record);
+      state.set(target, record);
+    }
+    return state.get(target);
+  };
+  // The artifact paths every seen scope held before the update, found once when a write creates an artifact or a move_scope runs.
+  let before;
+  const heldBefore = async () => before ??= await holdings(seen, "", null);
+  const one = async ({ file, address }, scopes) => {
+    const held = await holders(seen, address, scopes, read);
+    if (held.length > 1) throw ambiguous(file, held);
+    return held[0] ?? null;
+  };
+  const artifacts = [];
+  for (const item of checked) {
+    const { operation, file, address, given } = item;
+    if (operation.op === "write") {
+      const all = scopesFor(seen, address.kind, null);
+      let scope, target, current;
+      if (given) {
+        scope = scopeOf(seen, given);
+        target = await resolveArtifactFile(seen, artifactLocation(scope, address));
+        current = await read(target);
+        if (current === null && operation.expectedVersion === null) {
+          const other = (await holders(seen, address, all.filter((candidate) => candidate.label !== scope.label), read))[0];
+          if (other) throw fail("artifact_exists", `${file} already exists in scope ${other.scope.label}, which this checkout sees, so it cannot also be created in scope ${scope.label}. Read and change that artifact, or move it with move_scope.`, { scope: other.scope });
+        }
+      } else {
+        const held = await one(item, all);
+        scope = held?.scope ?? (operation.expectedVersion === null ? await creationScope(seen, address, all, state) : WORKSPACE_SCOPE);
+        target = held?.target ?? await resolveArtifactFile(seen, artifactLocation(scope, address));
+        current = held?.record ?? null;
+      }
+      // A create always runs the letter-case check, whatever the location's lookup found, since a case-insensitive file system finds a stored variant there.
+      if (operation.expectedVersion === null) checkLetterCase(item, await heldBefore(), checked);
+      checkVersion(file, operation.expectedVersion, current);
+      if (current === null) {
+        checkComponentName(file, scope);
+        checkLocationLength(scope, address);
+      }
+      const next = Buffer.from(operation.content, "utf8");
+      state.set(target, stored(next));
+      names.set(target, file);
+      artifacts.push({ path: file, scope, version: artifactVersion(next) });
+      continue;
+    }
+    const source = operation.op === "move_scope" ? await moveSource(item, await holders(seen, address, scopesFor(seen, address.kind, null), read)) : await one(item, scopesFor(seen, address.kind, given));
+    if (!source) {
+      if (operation.expectedVersion !== null) checkVersion(file, operation.expectedVersion, null);
+      throw notFound(file);
+    }
+    checkVersion(file, operation.expectedVersion, source.record);
+    if (operation.op === "edit") {
+      const next = Buffer.from(applyEdits(file, decode(contentOf(file, source.record), file), operation.edits), "utf8");
+      tooLarge(file, next.length);
+      state.set(source.target, stored(next));
+      names.set(source.target, file);
+      artifacts.push({ path: file, scope: source.scope, version: artifactVersion(next) });
+    } else if (operation.op === "remove") {
+      state.set(source.target, null);
+      artifacts.push({ path: file, scope: source.scope, removed: true });
+    } else {
+      const scope = scopeOf(seen, given);
+      checkComponentName(file, scope);
+      checkLetterCase(item, await heldBefore(), checked);
+      checkLocationLength(scope, address);
+      if (scope.label !== source.scope.label) {
+        const target = await resolveArtifactFile(seen, artifactLocation(scope, address));
+        if ((await read(target)) !== null) throw fail("artifact_exists", `${file} already exists in scope ${scope.label}, so it cannot move there from scope ${source.scope.label}.`, { scope });
+        state.set(target, stored(contentOf(file, source.record)));
+        names.set(target, file);
+        state.set(source.target, null);
+      }
+      artifacts.push({ path: file, scope, version: source.record.version });
+    }
+  }
+  // New bytes are written before removals, so a move interrupted midway leaves the artifact in both scopes rather than in neither.
+  const changed = [...state].filter(([target, record]) => (record?.version ?? null) !== (original.get(target)?.version ?? null));
+  await checkLayout(seen, changed.filter(([, record]) => record !== null), state, names);
+  for (const [target, record] of changed.filter(([, record]) => record !== null)) {
+    await mkdir(path.dirname(target), { recursive: true });
+    await resolveArtifactFile(seen, path.relative(seen.base, target).split(path.sep).join("/"));
+    await writeAtomically(target, record.bytes);
+  }
+  for (const [target] of changed.filter(([, record]) => record === null)) {
+    await rm(target, { force: true });
+    await pruneParents(seen.base, target);
+  }
+  return { artifacts };
 }
 
 // A new artifact without a scope takes the scope that holds its nearest folder below the kind folder, when exactly one seen scope holds that folder, else the workspace scope.
@@ -599,4 +605,140 @@ async function creationScope(seen, address, scopes, state) {
     if (holding.length > 1) break;
   }
   return WORKSPACE_SCOPE;
+}
+
+// Prism's own plan files, views, and review pages reach the store through the functions below, which take the same checks and lock as the artifact tools.
+
+/** A project-relative path of a project with a store, checked as an artifact address; a malformed name is refused with artifact_name_invalid. */
+async function ownArtifact(projectRoot, file) {
+  const { config, kinds } = await configuration(projectRoot);
+  const normalized = normalizeArtifactPath(file);
+  const address = normalized === null || normalized === "" ? null : artifactAddress(kinds, normalized);
+  if (!address || address.rest === "") throw notAnArtifact(file);
+  checkName(file, address);
+  return { config, kinds, file: normalized, address };
+}
+
+// Every view that Prism generates from a record carries this notice, as generatedNotice in projection.mjs writes it.
+const GENERATED_VIEW = Buffer.from("This file is a generated view of ");
+const generatedView = (record) => record?.bytes != null && record.bytes.includes(GENERATED_VIEW);
+
+// Whether a store folder holds an artifact that is no generated view, such as a slice.md, looking no further than the first one.
+async function authoredFolder(target) {
+  let entries;
+  try { entries = await readdir(target, { withFileTypes: true }); }
+  catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return false; throw error; }
+  for (const entry of entries) {
+    if (!wellFormedName(entry.name)) continue;
+    const child = path.join(target, entry.name);
+    if (entry.isDirectory() && await authoredFolder(child)) return true;
+    if (entry.isFile() && !generatedView(await readStored(child).catch(() => null))) return true;
+  }
+  return false;
+}
+
+/**
+ * The scope that a file Prism writes itself belongs in: the scope that holds its nearest folder below the kind folder, when exactly one seen scope holds that folder
+ * with an artifact that is no generated view, else the workspace scope; a folder that holds only Prism's views, such as initiative.md, decides nothing.
+ */
+async function ownScope(seen, address, scopes) {
+  if (address.rest === null) return WORKSPACE_SCOPE;
+  const parts = address.rest.split("/").slice(0, -1);
+  for (let depth = parts.length; depth > 0; depth -= 1) {
+    const folder = { ...address, rest: parts.slice(0, depth).join("/") };
+    const holding = [];
+    for (const scope of scopes) {
+      const target = await resolveArtifactFile(seen, artifactLocation(scope, folder));
+      if (await isFolder(target, seen.base) && await authoredFolder(target)) holding.push(scope);
+    }
+    if (holding.length === 1) return holding[0];
+    if (holding.length > 1) break;
+  }
+  return WORKSPACE_SCOPE;
+}
+
+// The scope input of an update_artifact operation that names a scope.
+const scopeFieldsOf = (scope) => scope.kind === "component" ? { scope: "component", component: scope.component } : { scope: scope.kind };
+
+/**
+ * The stored artifact at a project-relative path as { path, scope, bytes, version, modifiedAt }, or null when no seen scope holds it.
+ * Two seen scopes that hold the path are refused with artifact_ambiguous, as a read without scope is.
+ */
+export async function readStoreArtifact(projectRoot, file) {
+  return refusing(async () => {
+    const { file: normalized, address } = await ownArtifact(projectRoot, file);
+    const seen = await seenScopes(projectRoot);
+    const held = await holders(seen, address, scopesFor(seen, address.kind, null));
+    if (held.length > 1) throw ambiguous(normalized, held);
+    if (!held.length) return null;
+    const [{ scope, target, record }] = held;
+    const modifiedAt = (await lstat(target).catch(() => null))?.mtimeMs ?? null;
+    return { path: normalized, scope, bytes: contentOf(normalized, record), version: record.version, modifiedAt };
+  });
+}
+
+/**
+ * Change one store artifact for Prism itself under the store's artifact lock: decide gets the artifact's current text, or null when no seen scope holds it,
+ * and returns the text to write, null to remove the artifact, or undefined to leave it.
+ * The change is made of update_artifact operations with the version just read, so it takes every check an agent's update takes.
+ * A new artifact takes the scope of ownScope, and with follow, which a generated view takes, an existing one moves there too, so a view follows its plans folder's scope.
+ * Returns { written, scope, version }, with written false when nothing changed.
+ */
+export async function writeStoreArtifact(projectRoot, file, decide, { follow = false } = {}) {
+  return refusing(async () => {
+    const { config, kinds, file: normalized, address } = await ownArtifact(projectRoot, file);
+    const seen = await seenScopes(projectRoot);
+    return withArtifactStoreLock(seen, async () => {
+      const scopes = scopesFor(seen, address.kind, null);
+      const held = await holders(seen, address, scopes);
+      if (held.length > 1) throw ambiguous(normalized, held);
+      const current = held[0] ?? null;
+      const unchanged = { written: false, scope: current?.scope ?? null, version: current?.record.version ?? null };
+      const next = await decide(current === null ? null : decode(contentOf(normalized, current.record), normalized));
+      if (next === undefined || (next === null && current === null)) return unchanged;
+      const preferred = next !== null && (current === null || follow) ? await ownScope(seen, address, scopes) : current?.scope ?? null;
+      const check = (operation) => checkOperation(config, kinds, operation);
+      // A scope that ## Components no longer declares cannot be named, so the file stays where it is, or takes the scope update_artifact gives it.
+      const inScope = (operation, scope) => { try { return check({ ...operation, ...scopeFieldsOf(scope) }); } catch (error) { if (error?.code === "component_unknown") return null; throw error; } };
+      const version = current?.record.version ?? null;
+      let checked;
+      if (next === null) checked = [check({ op: "remove", path: normalized, expectedVersion: version })];
+      else if (current === null) checked = [inScope({ op: "write", path: normalized, content: next, expectedVersion: null }, preferred) ?? check({ op: "write", path: normalized, content: next, expectedVersion: null })];
+      else {
+        const moved = preferred.label !== current.scope.label && inScope({ op: "write", path: normalized, content: next, expectedVersion: null }, preferred);
+        if (moved) checked = [check({ op: "remove", path: normalized, expectedVersion: version, ...scopeFieldsOf(current.scope) }), moved];
+        else if (Buffer.from(next, "utf8").equals(current.record.bytes)) return unchanged;
+        else checked = [check({ op: "write", path: normalized, content: next, expectedVersion: version })];
+      }
+      const entry = (await applyOperations(seen, checked)).artifacts.at(-1);
+      return { written: true, scope: entry.scope, version: entry.version ?? null };
+    });
+  });
+}
+
+/** The artifacts that the seen scopes hold below a project-relative folder, "" for all, as { path, scope, kind } sorted by path and then scope label, without reading them. */
+export async function storeArtifactPaths(projectRoot, folder = "") {
+  return refusing(async () => {
+    await configuration(projectRoot);
+    const normalized = normalizeArtifactPath(folder);
+    if (normalized === null) throw notAnArtifact(folder);
+    const seen = await seenScopes(projectRoot);
+    return (await holdings(seen, normalized, null)).map(({ path: found, scope, kind }) => ({ path: found, scope, kind }));
+  });
+}
+
+/**
+ * The location below artifacts/ that a project-relative artifact path has in the scope that holds it, or would take when Prism writes it, as writeStoreArtifact decides,
+ * with the limit a created location may hold.
+ */
+export async function storeArtifactLocation(projectRoot, file) {
+  return refusing(async () => {
+    const { file: normalized, address } = await ownArtifact(projectRoot, file);
+    const seen = await seenScopes(projectRoot);
+    const scopes = scopesFor(seen, address.kind, null);
+    const held = await holders(seen, address, scopes);
+    if (held.length > 1) throw ambiguous(normalized, held);
+    const scope = held[0]?.scope ?? await ownScope(seen, address, scopes);
+    return { scope, location: artifactLocation(scope, address), limit: LOCATION_MAX };
+  });
 }

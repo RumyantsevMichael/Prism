@@ -3,6 +3,7 @@ import { mkdir, open, readFile, readdir, realpath, rm, lstat } from "node:fs/pro
 import { readCoordinationState } from "./state.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { writeAtomically } from "./artifact-store.mjs";
+import { inArtifactStore, readArtifactBytes } from "./record-store.mjs";
 import path from "node:path";
 import { readHostSessionFacts } from "../session/host-session-facts.mjs";
 import { SESSION_TRACE_MAX_AGE_MS, SESSION_TRACE_MAX_DIRECTORY_BYTES } from "../session/session-trace-store.mjs";
@@ -328,9 +329,15 @@ async function assessRecovery({ root, state, directory, recoveryPaths, records }
     if (!absolute.startsWith(`${root}${path.sep}`)) throw new Error("The recovery path leaves the project root.");
     let content;
     try {
-      const info = await lstat(absolute);
-      if (!info.isFile() || info.isSymbolicLink()) throw new Error("The recovery note is unsafe.");
-      content = await readFile(absolute);
+      // With a record store the note lives there, beside the initiative's other plan files.
+      if (await inArtifactStore(root, recoveryPath)) {
+        content = await readArtifactBytes(root, recoveryPath);
+        if (content === null) throw Object.assign(new Error("The recovery note is missing."), { code: "ENOENT" });
+      } else {
+        const info = await lstat(absolute);
+        if (!info.isFile() || info.isSymbolicLink()) throw new Error("The recovery note is unsafe.");
+        content = await readFile(absolute);
+      }
     } catch (error) {
       if (error?.code === "ENOENT") {
         result.push({ recoveryPath, slice: owner, status: "missing" });

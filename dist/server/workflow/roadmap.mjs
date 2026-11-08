@@ -11,7 +11,7 @@ import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { locateRecord, moveLegacyRecords, readRecord, writeRecord } from "./record-store.mjs";
+import { inArtifactStore, locateRecord, moveLegacyRecords, readRecord, writeRecord } from "./record-store.mjs";
 import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
 import { latestDependentsRun } from "./slice-design.mjs";
@@ -84,8 +84,10 @@ async function resolveRoadmap(projectRoot, createParent = false) {
   const paths = roadmapPaths(config);
   if (!paths) throw fail("invalid_config", "The workflow config disables the roadmap path.");
   const record = await locateRecord(projectRoot, { kind: "roadmap" });
-  const projection = await resolveArtifactPath(projectRoot, paths.projection, createParent, path.posix.basename(paths.projection));
-  return { root: record.root, config, recordPath: record.path, target: record.target, projectionPath: projection.deltaPath, projectionTarget: projection.target, recordName: path.posix.basename(paths.record) };
+  // With a store the roadmap view is a store artifact, so the checkout gets no folder for it.
+  const inStore = await inArtifactStore(projectRoot, paths.projection);
+  const projection = inStore ? { deltaPath: paths.projection } : await resolveArtifactPath(projectRoot, paths.projection, createParent, path.posix.basename(paths.projection));
+  return { root: record.root, config, recordPath: record.path, target: record.target, projectionPath: projection.deltaPath, inStore, recordName: path.posix.basename(paths.record) };
 }
 
 function emptyRoadmap() {
@@ -452,7 +454,7 @@ export async function updateRoadmap(input) {
   validateInput(UPDATE_ROADMAP_SCHEMA, input);
   await moveLegacyRecords(input.projectRoot);
   const resolved = await resolveRoadmap(input.projectRoot, true);
-  const managed = [resolved.projectionPath].filter((file) => path.posix.basename(file) === "roadmap.md");
+  const managed = [resolved.projectionPath].filter((file) => !resolved.inStore && path.posix.basename(file) === "roadmap.md");
   if (managed.length) await conservationStore.registerCoordinationOutputs(resolved.root, managed);
   await mkdir(path.dirname(resolved.target), { recursive: true });
   return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
@@ -477,11 +479,8 @@ export async function updateRoadmap(input) {
     const projection = markdown(record, resolved.recordName);
     let projectionStale = false;
     try {
-      if (input.operations.some((operation) => operation.op === "replace_hand_written_projection")) {
-        await conservationStore.writeManaged(resolved.root, resolved.projectionTarget, projection);
-      } else {
-        projectionStale = !(await writeProjection(resolved.root, resolved.projectionTarget, projection, resolved.recordName)).written;
-      }
+      const replace = input.operations.some((operation) => operation.op === "replace_hand_written_projection");
+      projectionStale = !(await writeProjection(resolved.root, resolved.projectionPath, projection, resolved.recordName, { replace })).written;
     } catch {
       projectionStale = true;
     }

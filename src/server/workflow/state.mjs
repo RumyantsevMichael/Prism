@@ -5,7 +5,7 @@ import { mkdir, readFile, realpath, rm, lstat } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { locateRecord, moveLegacyRecords, sliceDocumentFolder, writeRecord } from "./record-store.mjs";
+import { inArtifactStore, locateRecord, moveLegacyRecords, readArtifactText, sliceDocumentFolder, writeArtifactText, writeRecord } from "./record-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 
@@ -748,7 +748,7 @@ export async function answerUserGate({ projectRoot, initiative, id, choice = nul
   }, error));
 }
 
-// The recovery note is a human document, so it sits in the slice's plans folder beside slice.md.
+// The recovery note is a human document, so it sits in the slice's plans folder beside slice.md, in the record store when the project names one.
 export async function checkpointPause({ projectRoot, initiative, expectedRevision, activeSlice, recoveryContent, changes }) {
   validateChanges(changes);
   if (typeof activeSlice !== "string" || !SLUG_PATTERN.test(activeSlice) || typeof recoveryContent !== "string" || !recoveryContent.trim() || Buffer.byteLength(recoveryContent) > 65536) {
@@ -764,7 +764,9 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
   if (!isInside(resolved.root, recovery)) {
     throw error("invalid_path", "The recovery note must be inside the project root.");
   }
-  await assertNearestExistingPathInside(resolved.root, path.dirname(recovery));
+  const recoveryRelative = path.relative(resolved.root, recovery).split(path.sep).join("/");
+  const inStore = await inArtifactStore(resolved.root, recoveryRelative);
+  if (!inStore) await assertNearestExistingPathInside(resolved.root, path.dirname(recovery));
   await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     const current = await loadState(resolved.path);
@@ -774,20 +776,22 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
     if (!current.valid || !current.state?.active.some((item) => item.slice === activeSlice)) {
       throw error("invalid_pause", "The slice is not active in the current coordination state.");
     }
-    const recoveryRelative = path.relative(resolved.root, recovery).split(path.sep).join("/");
     const stateRelativeRecovery = path.relative(path.resolve(resolved.root, resolved.directory), recovery).split(path.sep).join("/");
     const remainingActive = current.state.active.filter((item) => item.slice !== activeSlice);
     if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(remainingActive)) {
       throw error("invalid_pause", "The pause must preserve every other active slice.");
     }
     if (changes.activeOperations !== undefined) throw error("invalid_pause", "A pause releases only its named slice; other active operations are not allowed.");
-    const existing = await lstat(recovery).catch((caught) => caught.code === "ENOENT" ? null : Promise.reject(caught));
-    if (existing?.isSymbolicLink() || (existing && !existing.isFile())) throw error("invalid_path", "The recovery note must be a regular file.");
-    const previous = existing ? await readFile(recovery, "utf8") : null;
+    let previous;
+    if (inStore) previous = await readArtifactText(resolved.root, recoveryRelative);
+    else {
+      const existing = await lstat(recovery).catch((caught) => caught.code === "ENOENT" ? null : Promise.reject(caught));
+      if (existing?.isSymbolicLink() || (existing && !existing.isFile())) throw error("invalid_path", "The recovery note must be a regular file.");
+      previous = existing ? await readFile(recovery, "utf8") : null;
+    }
     try {
-      await conservationStore.registerCoordinationOutputs(resolved.root, [recoveryRelative]);
-      await mkdir(path.dirname(recovery), { recursive: true });
-      await conservationStore.writeManaged(resolved.root, recovery, recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}\n`);
+      if (!inStore) await conservationStore.registerCoordinationOutputs(resolved.root, [recoveryRelative]);
+      await writeArtifactText(resolved.root, recoveryRelative, recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}\n`, { write: (target, text) => conservationStore.writeManaged(resolved.root, target, text) });
       const result = await applyStateChange(resolved, expectedRevision, {
         ...changes,
         active: undefined,
@@ -796,7 +800,8 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
       });
       return { ...result, recoveryPath: recoveryRelative, recoveryDigest: createHash("sha256").update(recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}\n`).digest("hex"), pausedSlice: activeSlice };
     } catch (caught) {
-      if (previous === null) await rm(recovery, { force: true }).catch(() => {});
+      if (inStore) await writeArtifactText(resolved.root, recoveryRelative, previous).catch(() => {});
+      else if (previous === null) await rm(recovery, { force: true }).catch(() => {});
       else await writeAtomically(recovery, previous).catch(() => {});
       throw caught;
     }
