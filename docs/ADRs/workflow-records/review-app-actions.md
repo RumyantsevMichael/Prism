@@ -1,6 +1,6 @@
 # Change Prism records from the review app through one action registry and a per-tab write session
 
-Status: Proposed
+Status: Accepted
 Created: 2026-11-05
 
 ## Requirements

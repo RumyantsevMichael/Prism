@@ -1,6 +1,6 @@
 # Sync the record store through Git
 
-Status: Proposed
+Status: Accepted
 Created: 2026-11-01
 
 ## Requirements

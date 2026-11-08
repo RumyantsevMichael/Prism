@@ -1,6 +1,6 @@
 # Record user gates and accept answers from the review browser
 
-Status: Proposed
+Status: Accepted
 Created: 2026-10-14
 
 ## Requirements
