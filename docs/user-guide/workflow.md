@@ -250,6 +250,14 @@ When no child agent can start, the orchestrator stops and asks you to run it whe
 An `agentFlow` setting stored by an earlier Prism is dropped when the initiative's coordination state is next read.
 Full autonomy turns commits on when you have not set them, while explicit commit, continuation, and push settings always apply.
 
+## Changes you make in the review app
+
+A running agent learns of each change you make to an initiative's settings or gates in the review app on its next Prism call for that initiative, once per session, with your name, email, and checkout.
+An agent waiting on your answer to a question stops waiting when you change the initiative, and acts on the change at the point its effect names, such as the next child session for a push or commit change.
+A change you make on another machine reaches the agent once the record store syncs it to this machine.
+An agent keeps every setting you set: when it tries to write another value, your value stays, and the agent is told which settings it kept.
+The review setting decides review marks when a design is accepted: `all` marks every slice for review, `recommended` adds the slices that design recommends, and a design accepted earlier keeps its mark when you change the setting later.
+
 ## Defects
 
 Defect repair stays outside this workflow.
