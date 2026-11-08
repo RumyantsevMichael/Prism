@@ -10,6 +10,7 @@ import { readCoordinationState } from "./state.mjs";
 
 // What each session was shown of the person's changes, and which of its agents coordinates the initiative, kept per session and initiative in Prism's private app directory.
 // Every server process of the session reads and writes one record under one lock, so an entry is shown in at most one result or gate wait of the session.
+// A record holds { shown, coordinator, waits }; shown is null before the session's starting point exists.
 export const NOTICE_FOLDER = "person-change-notices";
 const ENTRY_ID = /^[0-9a-f]{32}$/;
 
@@ -23,86 +24,118 @@ function noticeFile(directory, session, projectRoot, initiative) {
   return path.join(directory, `${createHash("sha256").update(`${session}\0${path.resolve(projectRoot)}\0${initiative}`, "utf8").digest("hex").slice(0, 32)}.json`);
 }
 
+// A wait the session runs holds its gates in the record until it ends, so another result of the session leaves the answers to them for the wait,
+// and keeps the ids of the answer entries it found, which count as shown when it ends; a wait whose process stopped lets go at its until time.
+function readWaits(value, now) {
+  return (Array.isArray(value) ? value : []).filter((wait) => typeof wait?.id === "string" && Array.isArray(wait.gates) && Number.isFinite(wait.until) && wait.until > now)
+    .map((wait) => ({ id: wait.id, gates: wait.gates.filter((id) => typeof id === "string"), until: wait.until, answers: Array.isArray(wait.answers) ? wait.answers.filter((id) => typeof id === "string") : [] }));
+}
+
 async function readNotice(file) {
   try {
     const value = JSON.parse(await readFile(file, "utf8"));
     return {
       shown: Array.isArray(value?.shown) ? value.shown.filter((id) => typeof id === "string") : null,
-      coordinator: typeof value?.coordinator === "string" && value.coordinator ? value.coordinator : MAIN_AGENT
+      coordinator: typeof value?.coordinator === "string" && value.coordinator ? value.coordinator : MAIN_AGENT,
+      waits: readWaits(value?.waits, Date.now())
     };
   } catch {
-    return { shown: null, coordinator: MAIN_AGENT };
+    return { shown: null, coordinator: MAIN_AGENT, waits: [] };
   }
 }
 
-/** The well-formed entries of an initiative's history, in history order, or null while its coordination state reads invalid. */
-export async function readPersonHistory(projectRoot, initiative) {
-  const read = await readCoordinationState({ projectRoot, initiative });
-  if (!read.valid) return null;
-  const history = Array.isArray(read.state?.history) ? read.state.history : [];
-  return history.filter((entry) => typeof entry?.id === "string" && ENTRY_ID.test(entry.id));
-}
+const wellFormed = (state) => (Array.isArray(state?.history) ? state.history : []).filter((entry) => typeof entry?.id === "string" && ENTRY_ID.test(entry.id));
 
-// One step for the session: read its record and the history, decide, and write the record, under a lock that every process of the session honors.
-// While the coordination state reads invalid the step sees no history, so it shows nothing, and the shown ids and the first call's starting point stay as they were.
+const recordText = ({ shown, coordinator, waits }) => `${JSON.stringify({ shown, coordinator, ...(waits.length ? { waits } : {}) })}\n`;
+
+// One step for the session: read its record and the coordination state, decide, and write the record, under a lock that every process of the session honors.
+// The step gets the state and its well-formed history entries in history order; while the state reads invalid it gets no state and no history, so it shows nothing from the history,
+// and the first call's starting point stays unset.
 async function withNotice({ projectRoot, initiative, session, directory }, step) {
   await prepareDirectory(directory);
   const file = noticeFile(directory, session, projectRoot, initiative);
   return withArtifactLock(file, () => withFileLock(file, async () => {
     const record = await readNotice(file);
-    const history = await readPersonHistory(projectRoot, initiative);
-    if (history === null) {
-      const { result, coordinator = record.coordinator } = await step(record, []);
-      if (coordinator !== record.coordinator) await writeAtomically(file, `${JSON.stringify({ shown: record.shown, coordinator })}\n`, { mode: 0o600 });
-      return result;
+    const read = await readCoordinationState({ projectRoot, initiative });
+    const state = read.valid ? read.state ?? {} : null;
+    const history = state ? wellFormed(state) : [];
+    const { result, shown = record.shown, coordinator = record.coordinator, waits = record.waits } = await step(record, history, state);
+    // A first valid read counts every existing entry as shown; the kept ids are then only those still in the history.
+    let kept = shown;
+    if (state) {
+      const ids = history.map((entry) => entry.id);
+      kept = shown === null ? ids : ids.filter((id) => shown.includes(id));
     }
-    const { result, shown = record.shown, coordinator = record.coordinator } = await step(record, history);
-    // A first call counts every existing entry as shown; the kept ids are only those still in the history.
-    const ids = history.map((entry) => entry.id);
-    const kept = shown === null ? ids : ids.filter((id) => shown.includes(id));
-    if (record.shown === null || coordinator !== record.coordinator || kept.length !== record.shown.length || kept.some((id, index) => id !== record.shown[index])) {
-      await writeAtomically(file, `${JSON.stringify({ shown: kept, coordinator })}\n`, { mode: 0o600 });
-    }
+    const next = recordText({ shown: kept, coordinator, waits });
+    if (next !== recordText(record)) await writeAtomically(file, next, { mode: 0o600 });
     return result;
   }));
 }
+
+// The history targets of the answers that the session's running waits hold for themselves.
+const heldTargets = (initiative, waits, except = null) => new Set(waits.filter((wait) => wait.id !== except).flatMap((wait) => wait.gates.map((id) => `gate:${initiative}/${id}`)));
+const isHeld = (entry, held) => entry.action === "gate.answer" && held.has(entry.target);
 
 /**
  * The entries of an initiative's history that this session has not been shown, for its coordinator, which now count as shown.
  * coordinates makes the agent the coordinator first, as a successful claim or start of a slice does; another agent is shown nothing and counts nothing as shown.
  * A session's first call shows nothing and counts every existing entry as shown.
+ * An answer to a gate that a running wait of the session holds is left for that wait.
  */
 export async function takePersonChanges({ projectRoot, initiative, agent = MAIN_AGENT, coordinates = false, session = claimHolder(), directory = noticeDirectory() }) {
   return withNotice({ projectRoot, initiative, session, directory }, (record, history) => {
     const coordinator = coordinates ? agent : record.coordinator;
     if (record.shown === null || coordinator !== agent) return { result: [], coordinator };
-    const changes = history.filter((entry) => !record.shown.includes(entry.id));
+    const held = heldTargets(initiative, record.waits);
+    const changes = history.filter((entry) => !record.shown.includes(entry.id) && !isHeld(entry, held));
     return { result: changes, shown: [...record.shown, ...changes.map((entry) => entry.id)], coordinator };
   });
 }
 
-/** Whether the agent coordinates the initiative in its session now; a session's first call counts every existing entry as shown. */
-export async function coordinatesInitiative({ projectRoot, initiative, agent = MAIN_AGENT, session = claimHolder(), directory = noticeDirectory() }) {
-  return withNotice({ projectRoot, initiative, session, directory }, (record) => ({ result: record.coordinator === agent }));
+/**
+ * The start of a gate wait: whether the agent coordinates the initiative in its session now, and the entry ids the wait holds at its start.
+ * They are the history's ids, or while the state reads invalid the ids the session was shown, or null before the session's starting point exists; a session's first call counts every existing entry as shown.
+ */
+export async function startGateWait({ projectRoot, initiative, agent = MAIN_AGENT, session = claimHolder(), directory = noticeDirectory() }) {
+  return withNotice({ projectRoot, initiative, session, directory }, (record, history, state) => ({
+    result: { coordinates: record.coordinator === agent, known: state ? history.map((entry) => entry.id) : record.shown }
+  }));
 }
 
-/** Of the entries a coordinator's gate wait found, the ones no other result of the session showed, which now count as shown. */
-export async function takeWaitChanges({ projectRoot, initiative, entries, session = claimHolder(), directory = noticeDirectory() }) {
-  return withNotice({ projectRoot, initiative, session, directory }, (record, history) => {
-    const present = new Set(history.map((entry) => entry.id));
-    const shown = record.shown ?? [];
-    const changes = entries.filter((entry) => present.has(entry.id) && !shown.includes(entry.id));
-    return { result: changes, shown: [...shown, ...changes.map((entry) => entry.id)] };
+/**
+ * One poll of a gate wait as one step of its session, which holds the wait's gates until until.
+ * decide gets the state, its history, the ids the session was shown, and the answer targets other waits hold, or no state while it reads invalid,
+ * and returns { result, answers, changes }: the ids of the answered gates it found, whose answer entries the wait keeps until it ends, and the changes it ends on, which count as shown in this step.
+ */
+export async function gateWaitStep({ projectRoot, initiative, session = claimHolder(), directory = noticeDirectory(), waitId, gateIds, until }, decide) {
+  return withNotice({ projectRoot, initiative, session, directory }, (record, history, state) => {
+    const own = record.waits.find((wait) => wait.id === waitId);
+    const others = record.waits.filter((wait) => wait.id !== waitId);
+    const holding = { id: waitId, gates: [...gateIds], until, answers: own?.answers ?? [] };
+    if (!state) return { result: decide(null, [], null, null).result, waits: [...others, holding] };
+    // Before the session's starting point exists every existing entry counts as shown, as for a first call.
+    const shown = record.shown ?? history.map((entry) => entry.id);
+    const { result, answers = [], changes = [] } = decide(state, history, new Set(shown), heldTargets(initiative, others));
+    const targets = new Set(answers.map((id) => `gate:${initiative}/${id}`));
+    const found = history.filter((entry) => entry.action === "gate.answer" && targets.has(entry.target) && !shown.includes(entry.id)).map((entry) => entry.id);
+    holding.answers = [...new Set([...holding.answers, ...found])];
+    if (changes.length) return { result, shown: [...shown, ...changes.map((entry) => entry.id)], waits: others };
+    return { result, shown, waits: [...others, holding] };
   });
 }
 
-/** A wait's result showed the answers to its answered gates, whichever agent waited, so their history entries count as shown. */
-export async function markAnswersShown({ projectRoot, initiative, gateIds, session = claimHolder(), directory = noticeDirectory() }) {
-  const targets = new Set(gateIds.map((id) => `gate:${initiative}/${id}`));
-  return withNotice({ projectRoot, initiative, session, directory }, (record, history) => {
-    if (record.shown === null) return { result: [] };
-    const answers = history.filter((entry) => entry.action === "gate.answer" && targets.has(entry.target) && !record.shown.includes(entry.id));
-    return { result: answers, shown: [...record.shown, ...answers.map((entry) => entry.id)] };
+/**
+ * The end of a gate wait: it lets go of its gates, and the answer entries it found count as shown, unless it was cancelled, when a later result shows them.
+ * hold keeps the gates until that time instead, for a wait that the host's Stop hook goes on with.
+ */
+export async function endGateWait({ projectRoot, initiative, session = claimHolder(), directory = noticeDirectory(), waitId, cancelled = false, hold = null }) {
+  return withNotice({ projectRoot, initiative, session, directory }, (record) => {
+    const own = record.waits.find((wait) => wait.id === waitId);
+    if (!own) return { result: null };
+    const others = record.waits.filter((wait) => wait.id !== waitId);
+    if (hold !== null) return { result: null, waits: [...others, { ...own, until: hold }] };
+    const shown = record.shown === null || cancelled ? record.shown : [...record.shown, ...own.answers.filter((id) => !record.shown.includes(id))];
+    return { result: null, shown, waits: others };
   });
 }
 

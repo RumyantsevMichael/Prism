@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { answerText, changedText, HOOK_WAIT_MINUTES, waitForUserGates } from "../server/workflow/gate-wait.mjs";
-import { markAnswersShown, NOTICE_FOLDER, takeWaitChanges } from "../server/workflow/change-notices.mjs";
+import { NOTICE_FOLDER } from "../server/workflow/change-notices.mjs";
 import { sessionHolder } from "../server/workflow/slice-claims.mjs";
 import { takeWaitRequest } from "../server/workflow/gate-wait-requests.mjs";
 
@@ -30,13 +30,12 @@ export async function waitForGateAnswers({ input = process.stdin, directory, pol
   const request = await takeWaitRequest({ sessionId, ...(directory ? { directory } : {}) });
   if (!request) return null;
   const maxWaitMinutes = Math.min(Number(request.maxWaitMinutes) || HOOK_WAIT_MINUTES, HOOK_WAIT_MINUTES);
-  // A wait its session's coordinator asked ends on the person's changes, taking each one that no other result of the session showed.
+  // A wait its session's coordinator asked ends on the person's changes that no other result of the session showed; it goes on holding the gates that the asking call held, under the same wait id.
   const session = sessionHolder({ CLAUDE_CODE_SESSION_ID: sessionId });
-  const notices = { projectRoot: request.projectRoot, initiative: request.initiative, session, ...(directory ? { directory: path.join(path.dirname(directory), NOTICE_FOLDER) } : {}) };
-  const takeChanges = request.coordinates === true ? (entries) => takeWaitChanges({ ...notices, entries }).catch(() => []) : null;
+  const notices = { session, ...(typeof request.waitId === "string" ? { waitId: request.waitId } : {}), ...(directory ? { directory: path.join(path.dirname(directory), NOTICE_FOLDER) } : {}) };
   let result;
   try {
-    result = await waitForUserGates({ projectRoot: request.projectRoot, initiative: request.initiative, gateIds: request.gateIds, maxWaitMinutes, takeChanges, ...(Array.isArray(request.knownEntries) ? { knownEntries: request.knownEntries } : {}), ...(pollMs ? { pollMs } : {}), ...(settleMs === undefined ? {} : { settleMs }) });
+    result = await waitForUserGates({ projectRoot: request.projectRoot, initiative: request.initiative, gateIds: request.gateIds, maxWaitMinutes, notices, watchChanges: request.coordinates === true, ...(Array.isArray(request.knownEntries) ? { knownEntries: request.knownEntries } : {}), ...(pollMs ? { pollMs } : {}), ...(settleMs === undefined ? {} : { settleMs }) });
   } catch {
     return null;
   }
@@ -49,7 +48,6 @@ export async function waitForGateAnswers({ input = process.stdin, directory, pol
     return { decision: "block", reason: lines.join("\n") };
   }
   if (result.status !== "answered") return null;
-  await markAnswersShown({ ...notices, gateIds: result.answered.map((gate) => gate.id) }).catch(() => {});
   const lines = [
     "The user answered while Prism's wait_for_user_gate call waited after your turn; this is its result.",
     ...result.answered.map(answerText),

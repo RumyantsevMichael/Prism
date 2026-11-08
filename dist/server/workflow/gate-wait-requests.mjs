@@ -27,14 +27,17 @@ async function removeExpired(directory, now) {
 
 // One request per session: a later wait in the same turn replaces an earlier one, since the agent lists every gate it still waits on.
 // knownEntries are the history entry ids when the wait was asked, so a change the person makes before the hook starts still ends it,
-// and coordinates keeps whether the asking agent coordinated the initiative, since only such a wait ends on the person's changes.
-export async function recordWaitRequest({ sessionId, projectRoot, initiative, gateIds, maxWaitMinutes, knownEntries, coordinates = false, directory = gateWaitDirectory(), now = Date.now() }) {
+// coordinates keeps whether the asking agent coordinated the initiative, since only such a wait ends on the person's changes,
+// and waitId names the wait whose gates the session's notice record holds for the hook; the result names the wait of the request it replaced.
+export async function recordWaitRequest({ sessionId, projectRoot, initiative, gateIds, maxWaitMinutes, knownEntries, coordinates = false, waitId, directory = gateWaitDirectory(), now = Date.now() }) {
   await mkdir(directory, { recursive: true });
   await removeExpired(directory, now);
   const file = requestFile(directory, sessionId);
+  const replaced = await readFile(file, "utf8").then((text) => JSON.parse(text), () => null).catch(() => null);
   const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ sessionId, projectRoot, initiative, gateIds, maxWaitMinutes, ...(Array.isArray(knownEntries) ? { knownEntries } : {}), coordinates: coordinates === true, requestedAt: new Date(now).toISOString() })}\n`);
+  await writeFile(temporary, `${JSON.stringify({ sessionId, projectRoot, initiative, gateIds, maxWaitMinutes, ...(Array.isArray(knownEntries) ? { knownEntries } : {}), coordinates: coordinates === true, ...(typeof waitId === "string" ? { waitId } : {}), requestedAt: new Date(now).toISOString() })}\n`);
   await rename(temporary, file);
+  return { replaced: typeof replaced?.waitId === "string" && typeof replaced.initiative === "string" && typeof replaced.projectRoot === "string" ? { waitId: replaced.waitId, initiative: replaced.initiative, projectRoot: replaced.projectRoot } : null };
 }
 
 // The hook takes the request by moving it away first, so two Stop hooks of one session never both wait on it.

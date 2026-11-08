@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import readline from "node:readline";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { INITIATIVE, actionProject } from "./fixtures/review-actions.mjs";
 
 const { applyAction, listActions } = await import("../../dist/server/workflow/actions.mjs");
-const { NOTICE_FOLDER, noticeValue, personChangesText, takePersonChanges, takeWaitChanges } = await import("../../dist/server/workflow/change-notices.mjs");
+const { NOTICE_FOLDER, noticeValue, personChangesText, startGateWait, takePersonChanges } = await import("../../dist/server/workflow/change-notices.mjs");
 const { waitForUserGates } = await import("../../dist/server/workflow/gate-wait.mjs");
 const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 const { recordCallAgent } = await import("../../dist/server/workflow/call-agent.mjs");
@@ -90,7 +94,7 @@ test("a coordinator's wait ends on a change that first appears while the coordin
   await takePersonChanges({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory });
   const wait = waitForUserGates({
     projectRoot: root, initiative: INITIATIVE, gateIds: [gate.id], maxWaitMinutes: 0.1, pollMs: 50, settleMs: 0,
-    takeChanges: (entries) => takeWaitChanges({ projectRoot: root, initiative: INITIATIVE, entries, session: "s1", directory })
+    notices: { session: "s1", directory }, watchChanges: true
   });
   await new Promise((resolve) => setTimeout(resolve, 150));
   await changeContinuation(root, "stepwise");
@@ -118,4 +122,140 @@ test("a non-string value escapes C1 controls and line separators, so each entry 
   const text = personChangesText([entry]);
   assert.doesNotMatch(text, /[\u007f-\u009f\u2028\u2029]/);
   assert.equal(text.split("\n").length, 2);
+});
+
+async function answerGate(root, gateId, choice) {
+  const listed = await listActions({ projectRoot: root, target: `gate:${INITIATIVE}/${gateId}` });
+  const action = listed.actions.find((item) => item.id === "gate.answer");
+  await applyAction({ projectRoot: root, target: action.target, action: action.id, input: { choice }, revision: action.revision, via: "review-app" });
+}
+
+test("a coordinator's wait that starts while the state reads invalid ends on a change made before its first valid read", async (context) => {
+  const { root } = await actionProject(context);
+  const directory = await temporaryDirectory(context, "prism-notices-");
+  const gate = (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state.pending.find((item) => !item.answer);
+  await takePersonChanges({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory });
+  const restore = await breakState(root);
+  const start = await startGateWait({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory });
+  assert.equal(start.coordinates, true);
+  const wait = waitForUserGates({
+    projectRoot: root, initiative: INITIATIVE, gateIds: [gate.id], maxWaitMinutes: 0.05, pollMs: 1000, settleMs: 0,
+    knownEntries: start.known, notices: { session: "s1", directory }, watchChanges: true
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await restore();
+  await changeContinuation(root, "stepwise");
+  const result = await wait;
+  assert.equal(result.status, "changed");
+  assert.deepEqual(result.changes.map((entry) => entry.action), ["initiative.continuation"]);
+  assert.deepEqual(await takePersonChanges({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory }), [], "the wait's change is not shown again");
+});
+
+test("a wait that starts with no known entries holds what the session was shown, not its first valid read", async (context) => {
+  const { root } = await actionProject(context);
+  const directory = await temporaryDirectory(context, "prism-notices-");
+  const gate = (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state.pending.find((item) => !item.answer);
+  await takePersonChanges({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory });
+  const restore = await breakState(root);
+  const wait = waitForUserGates({ projectRoot: root, initiative: INITIATIVE, gateIds: [gate.id], maxWaitMinutes: 0.05, pollMs: 1000, settleMs: 0, notices: { session: "s1", directory }, watchChanges: true });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await restore();
+  await changeContinuation(root, "stepwise");
+  const result = await wait;
+  assert.equal(result.status, "changed");
+});
+
+test("answers a wait finds count as shown in the step that finds them, so a concurrent call during the settle window does not show them", async (context) => {
+  const { root, gateIds } = await actionProject(context);
+  const directory = await temporaryDirectory(context, "prism-notices-");
+  const take = () => takePersonChanges({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory });
+  await take();
+  const wait = waitForUserGates({ projectRoot: root, initiative: INITIATIVE, gateIds: [gateIds.review, gateIds.decision], maxWaitMinutes: 0.1, pollMs: 50, settleMs: 600, notices: { session: "s1", directory }, watchChanges: true });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  await answerGate(root, gateIds.review, "approve");
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(await take(), [], "the answer the wait found is not shown by a concurrent call");
+  const restore = await breakState(root);
+  const result = await wait;
+  await restore();
+  assert.equal(result.status, "answered");
+  assert.deepEqual(result.answered.map((item) => item.id), [gateIds.review]);
+  assert.deepEqual(await take(), [], "an invalid read when the wait returns does not let the answer repeat later");
+});
+
+const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
+
+function server(context, root, { data, sessionId }) {
+  const env = isolatedEnv({ PRISM_REVIEW_APP_DIR: path.join(root, ".app"), PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_GATE_WAIT_HEARTBEAT_MS: "200", PRISM_GATE_WAIT_SETTLE_MS: "300", CLAUDE_PROJECT_DIR: root, PLUGIN_DATA: data });
+  for (const name of ["MCP_TOOL_TIMEOUT", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"]) delete env[name];
+  env.CLAUDE_CODE_SESSION_ID = sessionId;
+  const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
+  const messages = [];
+  const listeners = new Set();
+  readline.createInterface({ input: child.stdout }).on("line", (line) => {
+    messages.push(JSON.parse(line));
+    for (const listener of listeners) listener();
+  });
+  context.after(async () => {
+    if (child.exitCode === null) {
+      child.stdin.end();
+      await new Promise((resolve) => child.once("exit", resolve));
+    }
+  });
+  let next = 1;
+  const send = (message) => child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
+  const response = (id) => new Promise((resolve, reject) => {
+    const check = () => {
+      const found = messages.find((message) => message.id === id);
+      if (!found) return;
+      listeners.delete(check);
+      clearTimeout(timer);
+      resolve(found);
+    };
+    const timer = setTimeout(() => reject(new Error(`No response to request ${id}`)), 15000);
+    listeners.add(check);
+    check();
+  });
+  const ready = (async () => {
+    const id = next++;
+    send({ id, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claude-code", version: "2.1.296" } } });
+    await response(id);
+  })();
+  const start = async (name, args, meta) => {
+    await ready;
+    const id = next++;
+    send({ id, method: "tools/call", params: { name, arguments: { projectRoot: root, ...args }, ...(meta ? { _meta: meta } : {}) } });
+    return id;
+  };
+  const call = async (name, args) => (await response(await start(name, args))).result;
+  return { call, start, response };
+}
+
+test("an answer a wait returns is not also shown by a coordinator call made while the wait settles", async (context) => {
+  const { root, gateIds } = await actionProject(context);
+  const data = await realpath(await temporaryDirectory(context, "prism-notices-data-"));
+  const mcp = server(context, root, { data, sessionId: "answer-race" });
+  await mcp.call("get_coordination_state", { initiative: INITIATIVE });
+  const id = await mcp.start("wait_for_user_gate", { initiative: INITIATIVE, gateIds: [gateIds.review, gateIds.decision] }, { progressToken: "w" });
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  await answerGate(root, gateIds.review, "approve");
+  const read = await mcp.call("get_initiative", { initiative: INITIATIVE });
+  const ended = (await mcp.response(id)).result.structuredContent;
+  assert.equal(ended.status, "answered");
+  assert.deepEqual(read.structuredContent?.personChanges ?? [], [], "the answer the wait returned is not shown again");
+});
+
+test("a deferred wait keeps its gates held for the wait that goes on with it, so its answer is shown once", async (context) => {
+  const { root, gateIds } = await actionProject(context);
+  const directory = await temporaryDirectory(context, "prism-notices-");
+  const take = () => takePersonChanges({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory });
+  await take();
+  const notices = { session: "s1", directory, waitId: "deferred-wait" };
+  const asked = await waitForUserGates({ projectRoot: root, initiative: INITIATIVE, gateIds: [gateIds.review], maxWaitMinutes: 0.0001, settleMs: 0, notices: { ...notices, hold: Date.now() + 60000 } });
+  assert.equal(asked.status, "timeout");
+  await answerGate(root, gateIds.review, "approve");
+  assert.deepEqual(await take(), [], "the answer is left for the wait that goes on");
+  const result = await waitForUserGates({ projectRoot: root, initiative: INITIATIVE, gateIds: [gateIds.review], maxWaitMinutes: 0.05, pollMs: 50, settleMs: 0, notices });
+  assert.equal(result.status, "answered");
+  assert.deepEqual(await take(), [], "the answer the wait returned is not shown again");
 });

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import readline from "node:readline";
 import { pluginURL } from "./plugin-root.mjs";
 import { ACTIVE_OPERATIONS_SCHEMA } from "./workflow/active-operations.mjs";
@@ -41,10 +42,10 @@ import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
 import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
-import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, historyIds, waitForUserGates } from "./workflow/gate-wait.mjs";
-import { coordinatesInitiative, keptSettingsText, markAnswersShown, personChangesText, takePersonChanges, takeWaitChanges } from "./workflow/change-notices.mjs";
+import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
+import { endGateWait, keptSettingsText, personChangesText, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
 import { callAgent, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
-import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
+import { WAIT_REQUEST_TTL_MS, recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
@@ -864,19 +865,26 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   let value;
   const unsupported = waitUnsupportedReason();
   const hookSession = typeof metadata?.sessionId === "string" && metadata.sessionId ? metadata.sessionId : null;
-  // Only the initiative's coordinator when the wait starts has it end on the person's changes, taking each one that no other result of the session showed.
+  // Only the initiative's coordinator when the wait starts has it end on the person's changes; one step of the session tells whether it coordinates and which entries it holds at its start.
+  // Every wait that names an initiative holds its gates in the session's notice record while it runs, so their answers reach the agent once, in its result, whichever agent waited.
   const initiative = argumentsValue.initiative;
-  const coordinates = typeof initiative === "string" && !(unsupported && !hookSession)
-    ? await coordinatesInitiative({ projectRoot, initiative, agent: currentCallAgent() }).catch(() => false)
-    : false;
-  const takeChanges = coordinates ? (entries) => takeWaitChanges({ projectRoot, initiative, entries }).catch(() => []) : null;
+  const notices = typeof initiative === "string" ? {} : null;
+  const start = notices && !(unsupported && !hookSession)
+    ? await startGateWait({ projectRoot, initiative, agent: currentCallAgent() }).catch(() => ({ coordinates: false, known: null }))
+    : { coordinates: false, known: null };
+  const coordinates = start.coordinates;
+  const knownEntries = Array.isArray(start.known) ? start.known : undefined;
   if (unsupported && hookSession) {
     // Codex names its session in the call's metadata, and its Stop hook for that session waits once this turn ends.
-    const knownEntries = await historyIds({ projectRoot, initiative });
-    value = await waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, takeChanges });
+    // The gates stay held for the hook's wait, which goes on under the same wait id, until the request expires.
+    const waitId = randomBytes(16).toString("hex");
+    const held = notices && { ...notices, waitId, hold: Date.now() + WAIT_REQUEST_TTL_MS };
+    value = await waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
-      await recordWaitRequest({ sessionId: hookSession, projectRoot, initiative, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates });
+      const { replaced } = await recordWaitRequest({ sessionId: hookSession, projectRoot, initiative, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates, waitId });
+      // The request this one replaced never reaches the hook, so its wait lets go of its gates.
+      if (replaced) await endGateWait({ ...replaced, cancelled: true }).catch(() => {});
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
     }
   } else if (unsupported) {
@@ -892,7 +900,9 @@ async function callGateWait(argumentsValue, metadata, requestId) {
         gateIds,
         maxWaitMinutes: argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES,
         signal: controller.signal,
-        takeChanges,
+        knownEntries,
+        notices,
+        watchChanges: coordinates,
         heartbeatMs: Number(process.env.PRISM_GATE_WAIT_HEARTBEAT_MS) || 60000,
         settleMs: process.env.PRISM_GATE_WAIT_SETTLE_MS === undefined ? undefined : Number(process.env.PRISM_GATE_WAIT_SETTLE_MS),
         onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, "Waiting for the user's answer in the review browser")
@@ -901,7 +911,6 @@ async function callGateWait(argumentsValue, metadata, requestId) {
       pendingWaits.delete(requestId);
     }
   }
-  if (value.status === "answered" && typeof initiative === "string") await markAnswersShown({ projectRoot, initiative, gateIds: value.answered.map((gate) => gate.id) }).catch(() => {});
   const list = value.gateIds.join(", ");
   const text = {
     changed: () => changedText(value),
