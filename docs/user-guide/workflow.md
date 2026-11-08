@@ -252,8 +252,11 @@ Full autonomy turns commits on when you have not set them, while explicit commit
 
 ## Changes you make in the review app
 
-A running agent learns of each change you make to an initiative's settings or gates in the review app on its next Prism call for that initiative, once per session, with your name, email, and checkout.
-An agent waiting on your answer to a question stops waiting when you change the initiative, and acts on the change at the point its effect names, such as the next child session for a push or commit change.
+The agent that coordinates an initiative learns of each change you make to its settings or gates in the review app on its next Prism call for that initiative, once per session, with your name, email, and checkout.
+That agent is the one that last claimed a scope or started a slice of the initiative in the session, or the session's main agent until one has.
+The child agents it starts are not told of the change and keep the settings they started with, and the next child session starts with your value.
+The coordinating agent stops waiting on your answer to a question when you change the initiative, and acts on the change at the point its effect names, such as the next child session for a push or commit change.
+On Claude Code, Prism tells a child agent's calls apart through its own hook before each Prism tool call; with hooks turned off, every call counts as the main agent's.
 A change you make on another machine reaches the agent once the record store syncs it to this machine.
 An agent keeps every setting you set: when it tries to write another value, your value stays, and the agent is told which settings it kept.
 The review setting decides review marks when a design is accepted: `all` marks every slice for review, `recommended` adds the slices that design recommends, and a design accepted earlier keeps its mark when you change the setting later.
