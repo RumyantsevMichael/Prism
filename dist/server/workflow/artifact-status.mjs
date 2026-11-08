@@ -49,6 +49,24 @@ export function newRecord(kind, status = null) {
 
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const list = (value) => Array.isArray(value) ? value.filter(isRecord) : [];
+const VERSION = /^sha256:[0-9a-f]{64}$/;
+
+/** Whether a status is one that an approval gate may ask for: one line of 1 to 200 characters without surrounding spaces, and never Accepted on an ADR, which only a ship records. */
+export function askableStatus(kind, status) {
+  return typeof status === "string" && status.length > 0 && status.length <= STATUS_MAX && status === status.trim() && !/[\r\n]/.test(status) && !(kind === "adrs" && /^accepted$/i.test(status));
+}
+
+/**
+ * Whether a stored gate is one that ask_approval could have recorded: a string id, an askable status, and a sha256 version,
+ * and, once answered, a known choice with a note of at most 4000 characters.
+ * A gate that a damaged file or another writer placed in a synced record otherwise could decide what an approval writes.
+ */
+function wellFormedGate(kind, gate) {
+  if (typeof gate.id !== "string" || !gate.id || !askableStatus(kind, gate.status) || !VERSION.test(gate.version ?? "")) return false;
+  if (gate.answer === undefined) return true;
+  const answer = gate.answer;
+  return isRecord(answer) && APPROVAL_CHOICES.includes(answer.choice) && (answer.note === null || answer.note === undefined || (typeof answer.note === "string" && answer.note.length <= 4000));
+}
 
 /**
  * The status record held in bytes, or a new record when there are none.
@@ -62,11 +80,12 @@ export function parseRecord(kind, bytes) {
   if (!isRecord(value)) return newRecord(kind);
   const fresh = newRecord(kind);
   return {
-    status: hasStatus(kind) ? (typeof value.status === "string" && value.status ? value.status : fresh.status) : null,
-    acceptedVersion: typeof value.acceptedVersion === "string" ? value.acceptedVersion : null,
+    status: hasStatus(kind) ? (typeof value.status === "string" && value.status.trim() && !/[\r\n]/.test(value.status) ? value.status : fresh.status) : null,
+    acceptedVersion: typeof value.acceptedVersion === "string" && VERSION.test(value.acceptedVersion) ? value.acceptedVersion : null,
     approval: isRecord(value.approval) ? value.approval : null,
-    pending: list(value.pending).filter((gate) => typeof gate.id === "string"),
-    closed: list(value.closed).filter((gate) => typeof gate.id === "string"),
+    // A gate that ask_approval could not have recorded is dropped, so Attention never offers it and no answer can apply it.
+    pending: list(value.pending).filter((gate) => wellFormedGate(kind, gate)),
+    closed: list(value.closed).filter((gate) => wellFormedGate(kind, gate)),
     history: list(value.history)
   };
 }
@@ -76,13 +95,21 @@ export const serializeRecord = (record) => `${JSON.stringify(record)}\n`;
 
 const keep = (entries, count) => entries.slice(-count);
 
+/** The latest answered approval gate of a record, or null. */
+export const latestAnsweredGate = (record) => record.closed.findLast((gate) => gate.answer) ?? null;
+
+/** A person's answer to an approval gate as get_artifact returns it: { gate, status, choice, note, answeredAt, by }. */
+export const answerFields = (gate) => ({ gate: gate.id, status: gate.status, choice: gate.answer.choice, note: gate.answer.note ?? null, answeredAt: gate.answer.answeredAt ?? null, by: gate.answer.by ?? null });
+
 /** The fields that get_artifact returns from a status record for an artifact whose bytes have version. */
 export function statusFields(kind, record, version) {
+  const answered = latestAnsweredGate(record);
   return {
     ...(hasStatus(kind) ? { status: record.status } : {}),
     acceptedVersion: record.acceptedVersion,
     changedSinceAccepted: record.acceptedVersion !== version,
-    ...(record.approval ? { approval: record.approval } : {})
+    ...(record.approval ? { approval: record.approval } : {}),
+    ...(answered ? { latestAnswer: answerFields(answered) } : {})
   };
 }
 
@@ -131,6 +158,14 @@ export const notAStatusArtifact = (file) => fail("not_a_status_artifact", `${fil
 
 const STATUS_LINE = /^Status:[^\r\n]*(\r?\n|$)/;
 const APPROVED_LINE = /^Approved:[^\r\n]*(\r?\n|$)/;
+const FENCE = /^---\r?\n?$/;
+
+// The index of the first line after a YAML front matter block that opens on the file's first line, or 0 when the file has none.
+function frontMatterEnd(lines) {
+  if (!FENCE.test(lines[0] ?? "")) return 0;
+  const close = lines.findIndex((line, index) => index > 0 && FENCE.test(line));
+  return close < 0 ? 0 : close + 1;
+}
 
 /**
  * The text of a requirement or ADR with its Status: line set to status and, for Approved, its Approved: line set to the date, added after the Status: line when it has none.
@@ -143,12 +178,18 @@ export function rewriteStatusLines(text, status, date) {
   const ending = (line) => /\r?\n$/.exec(line)?.[0] ?? "";
   let at = lines.slice(0, head).findIndex((line) => STATUS_LINE.test(line));
   if (at < 0) {
-    const title = lines.slice(0, head).findIndex((line) => line.startsWith("# "));
+    // YAML front matter stays the file's first lines, and a "# " comment inside it is no title.
+    const body = Math.min(frontMatterEnd(lines), head);
+    const found = lines.slice(body, head).findIndex((line) => line.startsWith("# "));
+    const title = found < 0 ? -1 : body + found;
     const newline = lines.map(ending).find(Boolean) ?? "\n";
-    at = title + 1;
-    // A title gets a blank line between it and the status lines, and a file without one gets them at its top.
-    const insert = title < 0 ? [`Status: ${status}${newline}`] : [newline, `Status: ${status}${newline}`];
+    // A title gets a blank line between it and the status lines, and a file without one gets them at its top, after any front matter.
+    at = title < 0 ? body : title + 1;
+    // Lines added at the end of a file without a final newline leave it without one.
+    const closing = at >= lines.length && at > 0 && !ending(lines[at - 1]) ? "" : newline;
+    const insert = title < 0 ? [`Status: ${status}${closing}`] : [newline, `Status: ${status}${closing}`];
     if (title >= 0 && !ending(lines[title])) lines[title] += newline;
+    if (title < 0 && body > 0 && !ending(lines[body - 1])) lines[body - 1] += newline;
     lines.splice(at, 0, ...insert);
     at += insert.length - 1;
   } else {
@@ -156,12 +197,19 @@ export function rewriteStatusLines(text, status, date) {
   }
   if (status === "Approved") {
     const end = lines.findIndex((line, index) => index > at && line.startsWith("## "));
-    const approved = lines.slice(0, end < 0 ? lines.length : end).findIndex((line) => APPROVED_LINE.test(line));
-    const newline = ending(lines[at]) || "\n";
+    // An Approved: line counts in the same part of the file as the Status: line, front matter or the text after it.
+    const front = frontMatterEnd(lines);
+    const from = at >= front ? front : 0;
+    const found = lines.slice(from, end < 0 ? lines.length : end).findIndex((line) => APPROVED_LINE.test(line));
+    const approved = found < 0 ? -1 : from + found;
+    const newline = ending(lines[at]) || lines.map(ending).find(Boolean) || "\n";
     if (approved >= 0) lines[approved] = `Approved: ${date}${ending(lines[approved])}`;
     else {
+      // The Approved: line ends as the Status: line did, so a file keeps its final newline, or its lack of one.
+      const last = at + 1 >= lines.length;
+      const closing = last && !ending(lines[at]) ? "" : newline;
       if (!ending(lines[at])) lines[at] += newline;
-      lines.splice(at + 1, 0, `Approved: ${date}${at + 1 < lines.length ? newline : ""}`);
+      lines.splice(at + 1, 0, `Approved: ${date}${closing}`);
     }
   }
   return lines.join("");
@@ -172,12 +220,15 @@ export function rewriteStatusLines(text, status, date) {
  * Approving rewrites the status lines, records the status, the accepted version of the new bytes, and the approval with the gate, the time, and who approved;
  * a request for changes keeps the recorded status. version is the artifact's current version, which must be the one the gate asked about.
  */
-export function answerApproval(file, record, { id, choice, note = null, by, version, text, now = new Date() }) {
+export function answerApproval(kind, file, record, { id, choice, note = null, by, version, text, now = new Date() }) {
   const gate = record.pending.find((item) => item.id === id);
   if (!gate) {
     const closed = record.closed.find((item) => item.id === id);
     if (closed?.answer) throw fail("gate_answered", "The question already has an answer.");
     throw fail("unknown_gate", closed ? "The agent asked again since this question, so it no longer applies." : "The question is no longer open; the agent resolved or withdrew it.");
+  }
+  if (!askableStatus(kind, gate.status) || !VERSION.test(gate.version ?? "")) {
+    throw fail("gate_invalid", `The approval gate on ${file} holds a status or version that no ask_approval records, so answering it would change ${file} in a way nobody asked; nothing changed. The agent asks again.`);
   }
   if (!APPROVAL_CHOICES.includes(choice)) throw fail("invalid_answer", "The answer is invalid: choice must be approve or request-changes.");
   const normalizedNote = typeof note === "string" && note.trim() ? note.trim() : null;

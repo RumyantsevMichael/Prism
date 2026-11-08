@@ -1,3 +1,4 @@
+import { markAnswersDelivered } from "./gate-wait-requests.mjs";
 import { readCoordinationState } from "./state.mjs";
 
 export const DEFAULT_WAIT_MINUTES = 720;
@@ -39,11 +40,17 @@ export function answerText(gate) {
  * How a wait reads its gates: an initiative's from its coordination state, or one requirement's or ADR's approval gates from its status record in the store,
  * where an answered approval gate stays listed with its answer and a superseded one is gone.
  */
+// After the first read an artifact wait reads leniently, so an artifact removed, moved out of the checkout's view, or out of the given scope has no gates left and the wait ends as resolved.
 export function gateSource({ projectRoot, initiative, artifact, scope }) {
   if (typeof artifact === "string" && artifact) {
+    let since = false;
     return async () => {
       const { artifactApprovalGates } = await import("./store-artifacts.mjs");
-      return (await artifactApprovalGates(projectRoot, artifact, scope)).map((gate) => ({ ...gate, artifact }));
+      let gates;
+      try { gates = await artifactApprovalGates(projectRoot, artifact, scope, undefined, { since }); }
+      catch (error) { if (since && ["scope_invalid", "component_unknown"].includes(error?.code)) return []; throw error; }
+      since = true;
+      return gates.map((gate) => ({ ...gate, artifact }));
     };
   }
   if (typeof initiative !== "string" || !initiative) throw new Error("Pass the initiative whose coordination state holds the gates, or the artifact whose approval gates to wait on.");
@@ -59,7 +66,16 @@ function outcome(gateIds, pending, first) {
 
 // The wait reads the coordination state record, or an artifact's status record, rather than server memory, so an answer recorded by any review server process ends it.
 // After the first answer it keeps polling briefly, because a user often answers several gates in one visit.
-export async function waitForUserGates({ projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS }) {
+// An artifact wait that returns answers notes them as delivered, so the prompt hook does not deliver them again.
+export async function waitForUserGates(input) {
+  const result = await waitOnGates(input);
+  if (result.status === "answered" && typeof input.artifact === "string" && input.artifact) {
+    await markAnswersDelivered(result.answered.map((gate) => gate.id), input.deliveredDirectory ? { directory: input.deliveredDirectory } : {}).catch(() => {});
+  }
+  return result;
+}
+
+async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS }) {
   if (!Array.isArray(gateIds) || !gateIds.length || gateIds.length > MAX_WAIT_GATES || gateIds.some((id) => typeof id !== "string" || !id)) {
     throw new Error(`Pass one to ${MAX_WAIT_GATES} gate ids.`);
   }

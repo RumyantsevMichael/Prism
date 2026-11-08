@@ -31,7 +31,7 @@ export async function waitForGateAnswers({ input = process.stdin, directory, pol
   let result;
   try {
     const source = typeof request.artifact === "string" ? { artifact: request.artifact, scope: request.scope } : { initiative: request.initiative };
-    result = await waitForUserGates({ projectRoot: request.projectRoot, ...source, gateIds: request.gateIds, maxWaitMinutes, ...(pollMs ? { pollMs } : {}), ...(settleMs === undefined ? {} : { settleMs }) });
+    result = await waitForUserGates({ projectRoot: request.projectRoot, ...source, gateIds: request.gateIds, maxWaitMinutes, ...(pollMs ? { pollMs } : {}), ...(settleMs === undefined ? {} : { settleMs }), ...(directory ? { deliveredDirectory: directory } : {}) });
   } catch {
     return null;
   }

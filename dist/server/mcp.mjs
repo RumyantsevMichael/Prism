@@ -916,7 +916,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   const list = value.gateIds.join(", ");
   const text = {
     answered: () => [...value.answered.map(answerText), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n"),
-    resolved: () => source.artifact ? `Approval gates ${list} of ${source.artifact} closed without an answer, because a later ask_approval replaced them.` : `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
+    resolved: () => source.artifact ? `Approval gates ${list} of ${source.artifact} closed without an answer: a later ask_approval replaced them, or the artifact was removed or left the scopes this checkout sees.` : `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
     timeout: () => `No answer arrived for user gates ${list} before the wait ended.`,
     unknown_gate: () => `No pending user gate has any of the ids ${list}.`,
     deferred: () => `This host cannot wait during a tool call, so Prism waits after this turn ends: end your turn now, and the session continues with the answer when the user answers user gates ${list} in the review browser within ${value.maxWaitMinutes} minutes. If it does not continue, the user's next message delivers any browser answer.`,

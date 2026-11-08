@@ -5,7 +5,7 @@ import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
 import { ARTIFACT_ACCEPTED, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, collideInLetterCase, componentScope, holdsArtifactPaths, kindInScope, locationArtifact, malformedArtifactName, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
-import { acceptedLocation, answerApproval, askApproval, hasStatus, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
+import { acceptedLocation, answerApproval, askApproval, hasStatus, latestAnsweredGate, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
 import { pruneArtifactFolders, scheduleRecordSync } from "./record-store-sync.mjs";
@@ -67,7 +67,7 @@ const SCOPE_TEXT = "scope is \"workspace\", \"repository\" for this checkout's r
 export const ARTIFACT_TOOLS = Object.freeze([
   {
     name: "get_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", not end in "." or ".lock", and be no Windows device name such as con, aux, nul, com1, or lpt1 before its first "."; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. A requirement or ADR also returns status, its recorded status, which only a person's answer at a gate changes, and statusMismatch with written, recorded, and a message when its Status: line says otherwise; every file returns acceptedVersion and changedSinceAccepted against the bytes a person last accepted, approval once one is recorded, and accepted true reads those accepted bytes. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
+    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", not end in "." or ".lock", and be no Windows device name such as con, aux, nul, com1, or lpt1 before its first "."; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. A requirement or ADR also returns status, its recorded status, which only a person's answer at a gate changes, and statusMismatch with written, recorded, and a message when its Status: line says otherwise; every file returns acceptedVersion and changedSinceAccepted against the bytes a person last accepted, approval once one is recorded, latestAnswer with the gate, status, choice (approve or request-changes), note, answeredAt, and by of the person's latest answer at an approval gate, so requested changes reach an agent that no longer waits, and accepted true reads those accepted bytes. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
     inputSchema: GET_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
@@ -618,7 +618,7 @@ async function applyOperations(seen, checked) {
       artifacts.push({ path: file, scope: source.scope, version: source.record.version, gate: asked.gate.id });
     } else if (operation.op === "answer_approval") {
       const status = await statusOf(source.scope, address);
-      const answered = answerApproval(file, status.record, { ...operation.answer, version: source.record.version, text: decode(contentOf(file, source.record), file) });
+      const answered = answerApproval(address.kind, file, status.record, { ...operation.answer, version: source.record.version, text: decode(contentOf(file, source.record), file) });
       let record = answered.record;
       let version = source.record.version;
       if (answered.text !== null) {
@@ -910,6 +910,26 @@ export async function pendingApprovalGates(projectRoot) {
   });
 }
 
+/**
+ * The approval gates that an agent still has to hear about, for every requirement and ADR that the checkout sees, as { artifact: { path, scope }, gate },
+ * with gate as a gate wait reads it: each pending gate, and the latest answered gate of an artifact that no later question replaced.
+ */
+export async function openApprovalGates(projectRoot) {
+  return refusing(async () => {
+    await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const gates = [];
+    for (const entry of await statusHoldings(seen)) {
+      const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path));
+      const answered = latestAnsweredGate(record);
+      const open = record.pending.length ? record.pending : answered ? [answered] : [];
+      const shaped = waitableGates({ ...record, pending: open.filter((gate) => !gate.answer), closed: open.filter((gate) => gate.answer) });
+      for (const gate of shaped) gates.push({ artifact: { path: entry.path, scope: entry.scope }, gate: { ...gate, artifact: entry.path } });
+    }
+    return gates;
+  });
+}
+
 /** The recorded statuses of the requirements and ADRs that the seen scopes hold below a project-relative folder, as { path, scope, status }. */
 export async function storeArtifactStatuses(projectRoot, folder = "") {
   return refusing(async () => {
@@ -928,13 +948,20 @@ export async function storeArtifactStatuses(projectRoot, folder = "") {
 /**
  * The approval gates of one requirement or ADR as a gate wait reads them: pending ones without an answer, answered ones with it, each with options and kind approval.
  * The artifact is found by its path, and by scope when two seen scopes hold it.
+ * A wait that already read the gates passes since true: an artifact that is gone from the seen scopes then has no gates, so the wait ends as resolved,
+ * and one that another scope came to hold too has the gates of every copy, since a gate id names one gate.
  */
-export async function artifactApprovalGates(projectRoot, file, scope, component) {
+export async function artifactApprovalGates(projectRoot, file, scope, component, { since = false } = {}) {
   return refusing(async () => {
     const { config, kinds } = await configuration(projectRoot);
     const seen = await seenScopes(projectRoot);
     const { address, given } = checkOperation(config, kinds, { op: "answer_approval", path: file, ...namedScope(seen, scope, component) });
     const held = await holders(seen, address, scopesFor(seen, address.kind, given));
+    if (since) {
+      const gates = [];
+      for (const entry of held) gates.push(...waitableGates(await statusRecordOf(seen, entry.scope, address)));
+      return gates;
+    }
     if (held.length > 1) throw ambiguous(file, held);
     if (!held.length) throw notFound(file);
     return waitableGates(await statusRecordOf(seen, held[0].scope, address));

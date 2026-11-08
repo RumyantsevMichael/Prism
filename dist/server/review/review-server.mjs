@@ -731,7 +731,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         send(response, 200, JSON.stringify(answered), "application/json; charset=utf-8");
       } catch (error) {
         // An approval of an artifact that changed since it was asked, or by a checkout whose Git names no user, conflicts with the store as it is.
-        const status = { gate_answered: 409, unknown_gate: 409, artifact_changed: 409, author_unknown: 409, invalid_answer: 400, artifact_not_found: 404, not_a_status_artifact: 400 }[error.code] ?? (recordsUnavailable(error) ? 503 : 400);
+        const status = { gate_answered: 409, unknown_gate: 409, gate_invalid: 409, artifact_changed: 409, author_unknown: 409, invalid_answer: 400, artifact_not_found: 404, not_a_status_artifact: 400 }[error.code] ?? (recordsUnavailable(error) ? 503 : 400);
         send(response, status, JSON.stringify({ code: error.code ?? "invalid_answer", message: error.message }), "application/json; charset=utf-8");
       }
     } else if (route === "/api/context") {

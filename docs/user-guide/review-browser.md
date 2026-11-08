@@ -62,6 +62,7 @@ When you resume a session with open questions, Prism lists them for the agent wi
 In Codex the agent ends its turn, and Prism's Stop hook keeps the turn open for up to 55 minutes and continues it with your answer.
 Codex runs that hook only after you trust Prism's current hook definition through `/hooks`.
 Elsewhere, or after the 55 minutes, the agent receives the answer with your next message, even a short one such as "go".
+An answer to the approval of a requirement or ADR reaches the agent once in the same ways, and the agent also reads your latest answer and its note with that file, so requested changes are not lost when nothing waits.
 Attention also lists blocked slices, open findings, and active work.
 Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
 
