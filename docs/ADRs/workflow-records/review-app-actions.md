@@ -63,6 +63,7 @@ A Git identity is what Prism can name without accounts, and it is a claim becaus
 - A tab that an agent opens in its own browser, such as an internal browser pane, is read-only, so the person answers there in the conversation or opens a writable tab through Prism.
 - A process with the user's full file and process access, such as an agent that reads the private app directory or drives the person's browser, can still act as the person; the product owner accepted this limit, which only a separate desktop process could close.
 - A cold restart of the shared app ends every write session, so a tab needs a new one from Prism.
+- The one-time grant travels in the command-line arguments of the browser opener, so another local user who can read process arguments could race the tab for it within its 120 seconds; the person then sees their tab stay read-only, and keeping the grant out of files is deliberate.
 - Browser changes now also change the history in the coordination state, so an agent's next state write may need one more re-read.
 - Where a host gives child agents the session identity of their orchestrator, a child may receive a notice first, so the orchestrator also reads the current settings whenever it claims a scope or starts a slice.
 - A change made on another machine reaches agents and tabs only after the store syncs, and tabs see it when Attention next loads, not as an event.
