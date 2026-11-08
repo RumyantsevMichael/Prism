@@ -877,6 +877,8 @@ export async function startReviewServer(options = {}) {
     },
     close() {
       review.closeViewers();
+      // An open page reuses its keep-alive sockets to poll and to reopen its event stream, so a close that waited for them would last as long as the page.
+      server.closeAllConnections?.();
       return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   };
