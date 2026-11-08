@@ -1,0 +1,725 @@
+/* The review page's shell: a top bar, one sidebar on a tinted canvas, the main island with its page bar, a side panel island, and the status bar.
+   Every value comes from kit/tokens.css; the kit draws every control. */
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  display: block;
+  margin: 0;
+  overflow: hidden;
+  background: var(--prism-color-chrome) var(--prism-gradient-canvas) no-repeat;
+  color: var(--prism-color-ink);
+  font-family: var(--prism-font-ui);
+  font-size: var(--prism-font-size-md);
+  line-height: var(--prism-line-height);
+  letter-spacing: var(--prism-tracking-body);
+}
+
+.shell {
+  display: grid;
+  grid-template-rows: var(--prism-bar-height) auto minmax(0, 1fr) var(--prism-status-height);
+  grid-template-areas: "bar" "banners" "body" "status";
+  height: 100vh;
+  height: 100dvh;
+  min-width: 0;
+}
+
+/* Each part keeps its row, so the banners can leave the flow when none shows without moving the status bar into the page's row. */
+.topbar { grid-area: bar; }
+.banners { grid-area: banners; }
+.shell-body { grid-area: body; }
+.statusbar { grid-area: status; }
+
+/* ---------- Top bar ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-5);
+  min-width: 0;
+  padding: 0 var(--prism-space-5) 0 var(--prism-space-6);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  flex: none;
+  color: var(--prism-color-ink);
+  text-decoration: none;
+}
+
+.brand-mark {
+  display: block;
+  width: var(--prism-mark-size);
+  height: var(--prism-mark-size);
+}
+
+.wordmark {
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-bold);
+  letter-spacing: var(--prism-tracking-heading);
+}
+
+.topbar-project {
+  flex: 0 1 auto;
+  max-width: 32%;
+}
+
+.project-label {
+  min-width: 0;
+}
+
+.project-workspace,
+.project-repository {
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.project-separator {
+  margin: 0 var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+}
+
+.project-worktree {
+  color: var(--prism-color-ink-muted);
+}
+
+.topbar-search {
+  flex: 1 1 240px;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.topbar-search-label {
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-regular);
+}
+
+.topbar kbd {
+  margin-inline-start: var(--prism-space-4);
+  padding: 0 var(--prism-space-3);
+  border: var(--prism-stroke) solid var(--prism-color-line-strong);
+  border-radius: var(--prism-radius-xs);
+  background: var(--prism-color-sunken);
+  color: var(--prism-color-ink-muted);
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-2xs);
+}
+
+.topbar-end {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-inline-start: auto;
+}
+
+.topbar-presence {
+  flex: 0 1 auto;
+}
+
+/* The DOM lists the stack first to last, and each avatar after the first tucks under the one before it. */
+.presence-stack {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-end: var(--prism-space-3);
+  vertical-align: middle;
+}
+
+.presence-stack > * + * {
+  margin-inline-start: var(--prism-avatar-overlap);
+}
+
+.presence-more {
+  margin-inline-start: var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-2xs);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+/* Who's working: live claims, then claims that expired, each with its holder, activity, slice, and time left. */
+.presence-content {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.presence-group {
+  margin: var(--prism-space-3) 0 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-2xs);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-caps);
+  text-transform: uppercase;
+}
+
+.presence-list {
+  display: grid;
+  gap: var(--prism-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.presence-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--prism-space-1) var(--prism-space-4);
+  min-width: 0;
+  padding: var(--prism-space-3) var(--prism-space-4);
+  border-radius: var(--prism-radius-md);
+}
+
+.presence-row > :first-child {
+  grid-row: 1 / span 2;
+  align-self: start;
+}
+
+.presence-holder {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.presence-kind {
+  margin-inline-start: var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-2xs);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+.presence-time {
+  grid-column: 3;
+  grid-row: 1;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.presence-row.is-expired .presence-time {
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.presence-what {
+  grid-column: 2 / -1;
+  grid-row: 2;
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.presence-activity {
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+.presence-slice {
+  color: var(--prism-color-accent-text);
+}
+
+.presence-none,
+.presence-note {
+  margin: var(--prism-space-2) 0 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Banners across the window ---------- */
+
+.banners {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  padding: 0 var(--prism-island-gap) var(--prism-island-gap);
+}
+
+.banners:not(:has(> :not([hidden]))) {
+  display: none;
+}
+
+.notices {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.notices[hidden] {
+  display: none;
+}
+
+/* ---------- Body: the sidebar on the canvas beside the islands ---------- */
+
+.shell-body {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--prism-sidebar-width) minmax(0, 1fr);
+  gap: var(--prism-island-gap);
+  min-width: 0;
+  min-height: 0;
+  padding: 0 var(--prism-island-gap) 0 0;
+}
+
+.shell-body.side-panel-open {
+  grid-template-columns: var(--prism-sidebar-width) minmax(0, 1fr) var(--side-panel-width, var(--prism-panel-width));
+}
+
+.sidebar {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--prism-space-2) var(--prism-space-4) var(--prism-space-4);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  min-height: 100%;
+}
+
+.nav-scope {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.nav-library {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  margin-top: auto;
+  padding-top: var(--prism-space-4);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.nav-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  margin: var(--prism-space-5) 0 0;
+  padding: 0 var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-2xs);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-caps);
+  text-transform: uppercase;
+}
+
+.nav-section > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-library > .nav-section {
+  margin-top: 0;
+}
+
+.nav-note {
+  margin: 0;
+  padding: 0 var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.nav-diagnostics {
+  margin: var(--prism-space-4) 0 0;
+  padding: 0 var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+/* A drawer holds the same navigation, moved into it while it is open. */
+#nav-drawer .nav {
+  min-height: 0;
+}
+
+/* ---------- The main island: the page bar over the scrolling page ---------- */
+
+.main {
+  min-width: 0;
+  min-height: 0;
+}
+
+.main > .prism-panel-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.page-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  flex: none;
+  min-width: 0;
+  height: var(--prism-pagebar-height);
+  padding: 0 var(--prism-space-4) 0 var(--prism-space-3);
+  border-bottom: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.page-bar-history {
+  display: flex;
+  flex: none;
+  gap: var(--prism-space-1);
+}
+
+.page-bar-trail {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--prism-font-size-sm);
+}
+
+.page-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
+}
+
+.page-bar-actions[hidden] {
+  display: none;
+}
+
+.workspace {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.welcome {
+  margin: var(--prism-space-8) auto;
+}
+
+/* ---------- The side panel island ---------- */
+
+.side {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The panel island paints itself as a block, so a closed panel says so here. */
+.side[hidden] {
+  display: none;
+}
+
+.side > .prism-panel-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.side-source {
+  margin: 0;
+  padding: 0 var(--prism-space-5) var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.side-source[hidden] {
+  display: none;
+}
+
+.side-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--prism-space-4) var(--prism-space-5) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.side-resizer {
+  position: absolute;
+  top: var(--prism-space-6);
+  bottom: var(--prism-space-6);
+  left: 0;
+  z-index: var(--prism-layer-raised);
+  width: var(--prism-space-2);
+  cursor: col-resize;
+}
+
+.side-resizer:hover,
+.side-resizer:focus-visible {
+  background: var(--prism-color-accent-soft);
+}
+
+/* ---------- Status bar on the canvas ---------- */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  padding: 0 var(--prism-space-3);
+  /* A full-height control, such as Appearance in the comfortable density, may stand taller than the bar, so only the width is clipped. */
+  overflow-x: clip;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+.statusbar-spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.statusbar-appearance {
+  display: inline-flex;
+  flex: none;
+}
+
+.indexing {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.indexing[hidden] {
+  display: none;
+}
+
+.status-label {
+  min-width: 0;
+}
+
+.status-dot {
+  display: inline-block;
+  width: var(--prism-dot-size);
+  height: var(--prism-dot-size);
+  margin-inline-end: var(--prism-space-3);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-ink-faint);
+  vertical-align: middle;
+}
+
+.status-item[data-tone="ok"] .status-dot,
+.indexing[data-tone="ok"] .status-dot {
+  background: var(--prism-color-success);
+}
+
+.status-item[data-tone="warn"] .status-dot,
+.indexing[data-tone="warn"] .status-dot {
+  background: var(--prism-color-warning);
+}
+
+.status-item[data-tone="danger"] .status-dot,
+.indexing[data-tone="danger"] .status-dot {
+  background: var(--prism-color-danger);
+}
+
+.indexing[data-tone="busy"] .status-dot {
+  background: var(--prism-color-info);
+}
+
+.indexing-component,
+.indexing-detail {
+  margin-inline-start: var(--prism-space-3);
+}
+
+.indexing-component[hidden],
+.indexing-detail[hidden],
+.indexing-meter[hidden] {
+  display: none;
+}
+
+.indexing-meter {
+  display: inline-block;
+  width: calc(4 * var(--prism-control-height));
+  margin-inline-start: var(--prism-space-3);
+  vertical-align: middle;
+}
+
+.indexing-details,
+.store-details {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Command palette ---------- */
+
+.palette-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--prism-preview-width);
+  gap: var(--prism-space-4);
+  min-width: 0;
+  margin-top: var(--prism-space-4);
+}
+
+.palette-results {
+  min-width: 0;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.palette-group {
+  display: grid;
+  min-width: 0;
+}
+
+.palette-group-label {
+  margin: var(--prism-space-4) var(--prism-space-3) var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-2xs);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-caps);
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.palette-group:first-child > .palette-group-label {
+  margin-top: 0;
+}
+
+.palette-result.is-code {
+  font-family: var(--prism-font-code);
+}
+
+.palette-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.palette-status {
+  margin: var(--prism-space-4) var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+.palette-preview {
+  display: grid;
+  align-content: start;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  padding: var(--prism-space-5);
+  border-radius: var(--prism-radius-md);
+  background: var(--prism-color-sunken);
+}
+
+.palette-preview > * {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.palette-preview-kind,
+.palette-preview-hint,
+.palette-preview-detail {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+.palette-preview-title {
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-semibold);
+  line-height: var(--prism-line-height-tight);
+}
+
+.palette-hint {
+  margin: var(--prism-space-4) 0 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+/* ---------- Above 1100px: no Navigation button, the sidebar is always there ---------- */
+
+@media (min-width: 1101px) {
+  .topbar-navigation {
+    display: none;
+  }
+}
+
+/* ---------- 1100px and below: the sidebar opens as a drawer, and the side panel floats over the main island ---------- */
+
+@media (max-width: 1100px) {
+  .shell-body,
+  .shell-body.side-panel-open {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0 var(--prism-island-gap);
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .topbar {
+    padding-inline-start: var(--prism-space-3);
+  }
+
+  .shell-body > .side {
+    position: absolute;
+    top: 0;
+    right: var(--prism-island-gap);
+    bottom: 0;
+    z-index: var(--prism-layer-panel);
+    width: min(var(--side-panel-width, var(--prism-panel-width)), calc(100% - 2 * var(--prism-space-7)));
+    box-shadow: var(--prism-shadow-dialog);
+  }
+
+  .palette-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .palette-preview {
+    display: none;
+  }
+}
+
+/* ---------- 720px and below: one column; the side panel opens as a sheet from the bottom ---------- */
+
+@media (max-width: 720px) {
+  .topbar {
+    gap: var(--prism-space-3);
+    padding: 0 var(--prism-space-3);
+  }
+
+  .wordmark,
+  .topbar-search-label,
+  .topbar kbd {
+    display: none;
+  }
+
+  .topbar-project {
+    flex: 1 1 auto;
+    max-width: none;
+  }
+
+  .topbar-search {
+    flex: none;
+    margin: 0;
+  }
+
+  .page-bar {
+    padding: 0 var(--prism-space-3) 0 var(--prism-space-2);
+  }
+
+  .page-bar-trail .prism-breadcrumbs-item:not(:last-child) {
+    display: none;
+  }
+
+  .statusbar .status-label {
+    display: none;
+  }
+}

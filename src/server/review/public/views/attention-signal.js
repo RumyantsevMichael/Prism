@@ -30,6 +30,6 @@ export function notificationText(count, project) {
 export function notifyControl(permission) {
   if (permission === "granted") return '<p class="notify-control muted">Desktop notifications are on for new questions while this page is in the background.</p>';
   if (permission === "denied") return '<p class="notify-control muted">Desktop notifications are blocked for this page in the browser settings.</p>';
-  if (permission === "default") return '<p class="notify-control"><button type="button" class="tool-button" data-notify>Notify me about new questions</button> <span class="muted">A desktop notification appears when a question arrives while this page is in the background.</span></p>';
+  if (permission === "default") return '<p class="notify-control"><prism-button size="sm" data-notify>Notify me about new questions</prism-button> <span class="muted">A desktop notification appears when a question arrives while this page is in the background.</span></p>';
   return "";
 }

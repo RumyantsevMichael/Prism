@@ -57,7 +57,7 @@ test("the index panel and chip name the component of the running build and list 
   assert.equal(chip.label, "Indexing 3/5");
   const html = panelHtml(status);
   assert.match(html, new RegExp(`Building <code>${long}</code>`));
-  assert.match(html, /<dt>Latest index<\/dt><dd title="root\/net">root\/net<\/dd>/);
+  assert.match(html, /<dt>Latest index<\/dt><dd>root\/net<\/dd>/);
   assert.match(html, /data-state="preparing"/);
   assert.match(html, /root\/&lt;app&gt;/);
   assert.doesNotMatch(html, /root\/<app>/);

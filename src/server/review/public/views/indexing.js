@@ -83,7 +83,7 @@ function stepsHtml(progress) {
   return `<ol class="indexing-steps">${STEPS.map((step, index) => {
     const state = index < current ? "done" : index === current ? "current" : "pending";
     const meter = index === current
-      ? `<span class="indexing-step-meter${share === null ? " indeterminate" : ""}" role="progressbar" aria-label="${escapeHtml(step.label)}"${share === null ? "" : ` aria-valuemin="0" aria-valuemax="100" aria-valuenow="${share}"`}><span style="width:${share ?? 100}%"></span></span>
+      ? `<prism-meter class="indexing-step-meter" label="${escapeHtml(step.label)}"${share === null ? "" : ` value="${share}"`}></prism-meter>
         <span class="indexing-step-detail">${escapeHtml(phaseDetail(progress))}${share === null ? "" : ` · ${share}%`}</span>`
       : "";
     return `<li class="indexing-step ${state}"><span class="indexing-step-label">${escapeHtml(step.label)}</span>${meter}</li>`;
@@ -103,19 +103,19 @@ function indexHtml(status) {
     coverage.complete === false ? ["Coverage", "Partial: some files were skipped or not fully parsed"] : null,
     index.diagnostics ? ["Diagnostics", String(index.diagnostics)] : null
   ].filter(Boolean);
-  return `<dl class="indexing-facts">${facts.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd title="${escapeHtml(value)}">${escapeHtml(value)}</dd>`).join("")}</dl>`;
+  return `<dl class="indexing-facts">${facts.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}</dl>`;
 }
 
 const COMPONENT_STATES = { preparing: "Building", failed: "Failed", interrupted: "Stopped", ready: "Indexed" };
 
-// Each component with an index or a recorded build, in component order; a long identity ends in an ellipsis and its tooltip gives it whole.
+// Each component with an index or a recorded build, in component order; a long identity wraps.
 function componentsHtml(status) {
   if (!status.components?.length) return "";
   return `<p class="indexing-panel-title">Components</p><ul class="indexing-components">${status.components.map(({ component, state }) =>
-    `<li class="indexing-component-row" data-state="${escapeHtml(state)}" title="${escapeHtml(`${component}: ${COMPONENT_STATES[state] ?? state}`)}"><span class="indexing-dot" aria-hidden="true"></span><span class="indexing-component-name">${escapeHtml(component)}</span><span class="indexing-component-state">${escapeHtml(COMPONENT_STATES[state] ?? state)}</span></li>`).join("")}</ul>`;
+    `<li class="indexing-component-row" data-state="${escapeHtml(state)}"><span class="indexing-dot" aria-hidden="true"></span><span class="indexing-component-name">${escapeHtml(component)}</span><span class="indexing-component-state">${escapeHtml(COMPONENT_STATES[state] ?? state)}</span></li>`).join("")}</ul>`;
 }
 
-const componentPrefix = (item) => item.component ? `<span class="indexing-diagnostic-component" title="${escapeHtml(item.component)}">${escapeHtml(item.component)}</span> ` : "";
+const componentPrefix = (item) => item.component ? `<span class="indexing-diagnostic-component">${escapeHtml(item.component)}</span> ` : "";
 
 function rebuildWhen(status) {
   return status.autoRebuild ? "This page rebuilds it once the files stay unchanged for a minute." : "The next agent search or Rebuild index updates it.";
@@ -123,13 +123,13 @@ function rebuildWhen(status) {
 
 // Any state but a running build can be rebuilt by hand, including a project that has no index yet.
 function rebuildButton(status) {
-  return status.state === "preparing" ? "" : '<p class="indexing-actions"><button type="button" class="tool-button" data-rebuild-index>Rebuild index</button></p>';
+  return status.state === "preparing" ? "" : '<p class="indexing-actions"><prism-button size="sm" data-rebuild-index>Rebuild index</prism-button></p>';
 }
 
 function summaryHtml(status) {
   if (status.state === "preparing") {
     const component = status.progress?.component;
-    const building = component ? `<p class="indexing-building" title="${escapeHtml(component)}">Building <code>${escapeHtml(component)}</code></p>` : "";
+    const building = component ? `<p class="indexing-building">Building <code>${escapeHtml(component)}</code></p>` : "";
     return `${building}<p>Started ${escapeHtml(relativeTime(status.startedAt))}.${status.index ? ` Searches use the previous index${component ? " of each component" : ""} until this build finishes.` : ""}</p>${stepsHtml(status.progress)}`;
   }
   if (changedDuringBuild(status)) return `<p>Files changed while the index was being built. ${rebuildWhen(status)}</p>`;
@@ -146,7 +146,7 @@ function summaryHtml(status) {
 }
 
 export function panelHtml(status) {
-  return `<p class="indexing-panel-title">Repository index</p>${summaryHtml(status)}${rebuildButton(status)}${indexHtml(status)}${componentsHtml(status)}
+  return `${summaryHtml(status)}${rebuildButton(status)}${indexHtml(status)}${componentsHtml(status)}
     <p class="indexing-panel-note">Agents also build and update the index when they search.${status.autoRebuild ? "" : " Background indexing is off for this project, so this page rebuilds it only when you ask."}</p>`;
 }
 
@@ -157,16 +157,21 @@ export function currentIndexStatus() {
   return latest;
 }
 
+/** The status bar's index item: `button` is a kit button, `panel` the prism-popover it opens, and `meter` a prism-meter in the button. */
 export function createIndexingStatus({ root, button, label, detail, meter, panel, fetchJson, component = root.querySelector(".indexing-component") }) {
   let status = null;
   let timer = null;
   let rendered = "";
+  // The popover keeps its own heading and body, so the details render into one holder in its body.
+  const content = document.createElement("div");
+  content.className = "indexing-details";
+  panel.append(content);
 
   function render() {
     const chip = chipState(status);
     root.hidden = !chip;
     if (!chip) {
-      setOpen(false);
+      panel.close?.();
       return;
     }
     root.dataset.tone = chip.tone;
@@ -178,20 +183,15 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
       component.hidden = !chip.component;
     }
     meter.hidden = chip.tone !== "busy";
-    meter.classList.toggle("indeterminate", chip.meter === null || chip.meter === undefined);
-    meter.firstElementChild.style.width = `${chip.meter ?? 100}%`;
-    button.title = [chip.label, [chip.component, chip.detail].filter(Boolean).join(" · ")].filter(Boolean).join(": ");
+    if (chip.meter === null || chip.meter === undefined) meter.removeAttribute("value");
+    else meter.setAttribute("value", String(chip.meter));
+    button.setAttribute("tip", [chip.label, [chip.component, chip.detail].filter(Boolean).join(" · ")].filter(Boolean).join(": "));
     // The panel is rebuilt only when its content changes, so an open panel keeps its scroll position between polls.
     const html = panelHtml(status);
     if (html !== rendered) {
       rendered = html;
-      panel.innerHTML = html;
+      content.innerHTML = html;
     }
-  }
-
-  function setOpen(open) {
-    panel.hidden = !open;
-    button.setAttribute("aria-expanded", String(open));
   }
 
   async function refresh() {
@@ -206,22 +206,12 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
     timer = setTimeout(refresh, status?.state === "preparing" ? ACTIVE_POLL_MS : IDLE_POLL_MS);
   }
 
-  button.addEventListener("click", () => setOpen(panel.hidden));
-  panel.addEventListener("click", async (event) => {
+  content.addEventListener("click", async (event) => {
     const rebuild = event.target.closest?.("[data-rebuild-index]");
     if (!rebuild) return;
-    rebuild.disabled = true;
+    rebuild.setAttribute("disabled", "");
     await fetch("./api/indexing/rebuild", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
     await refresh();
-  });
-  document.addEventListener("click", (event) => {
-    if (!panel.hidden && !root.contains(event.target)) setOpen(false);
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !panel.hidden) {
-      setOpen(false);
-      button.focus();
-    }
   });
   void refresh();
   return { refresh };

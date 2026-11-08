@@ -1,5 +1,5 @@
 import { chipState, currentIndexStatus } from "./indexing.js";
-import { artifactChip, bindLinks, card, cardSource, emptyNote, escapeHtml, formatTime, keyValues, plural, requirementLinks } from "./util.js";
+import { artifactChip, bindLinks, card, emptyNote, escapeHtml, formatTime, keyValues, plural, requirementLinks } from "./util.js";
 import { sliceRunTotalsHtml } from "./run-totals.js";
 import { codeParts } from "./code-location.js";
 import { claimChip } from "./claims.js";
@@ -11,8 +11,9 @@ function sliceChip(data, slug, ctx) {
 
 
 function reviewCard(review, ctx) {
-  if (!review) return card("Review ledger", emptyNote("No review has started for this slice."), { source: "review.json" });
-  if (review.invalid) return card("Review ledger", `<p class="error">The review ledger is not valid JSON.</p>${artifactChip(review.path, ctx, "Open raw")}`, { source: "review.json" });
+  // A card names a record by its kind, never by its file name.
+  if (!review) return card("Review ledger", emptyNote("No review has started for this slice."));
+  if (review.invalid) return card("Review ledger", `<p class="error">The review ledger is not valid JSON.</p>${artifactChip(review.path, ctx, "Open raw")}`);
   const statuses = Object.entries(review.byStatus).filter(([, count]) => count).map(([status, count]) => `<span class="meta-pill">${escapeHtml(status)}: ${count}</span>`).join(" ");
   return card("Review ledger", `
     <div class="stat-row compact">
@@ -22,7 +23,7 @@ function reviewCard(review, ctx) {
     </div>
     ${review.currentWave ? `<p>Current wave <code>${escapeHtml(review.currentWave.id)}</code> (${escapeHtml(review.currentWave.mode)}) is ${review.currentWave.accepted ? "accepted" : "not accepted"}.</p>` : ""}
     ${statuses ? `<p>${statuses}</p>` : ""}
-    <p>${artifactChip(review.path, ctx, "Open the findings board")}</p>`, { source: "review.json" });
+    <p>${artifactChip(review.path, ctx, "Open the findings board")}</p>`);
 }
 
 const REASONS = {
@@ -212,7 +213,7 @@ function changeMapLine(path, state, ctx) {
 // A slice designed before slice.md carried a contract may still have a hand-written change map.
 function legacyChangeMapCard(path, ctx) {
   if (!path) return "";
-  return card("Change map", `<p>The planned changes and their readiness.</p><p>${artifactChip(path, ctx, "Open the change map")}</p>`, { source: path.split("/").pop() });
+  return card("Change map", `<p>The planned changes and their readiness.</p><p>${artifactChip(path, ctx, "Open the change map")}</p>`);
 }
 
 function failingList(run) {
@@ -307,7 +308,7 @@ export async function render(container, entity, ctx) {
       ])}
     </section>
     ${diagramsCard(diagrams, artifacts.folder, ctx)}
-    ${artifacts.narrative ? `<section class="view-card design-document"><header class="view-card-header"><div class="view-card-title"><h2>Design</h2>${cardSource(artifacts.narrative.split("/").pop())}</div></header>${designNotices(view)}${servedClauses(view, ctx)}<div class="document-content" data-narrative><p class="rendering">Loading the design</p></div></section>` : ""}
+    ${artifacts.narrative ? `<section class="view-card design-document"><header class="view-card-header"><div class="view-card-title"><h2>Design</h2></div></header>${designNotices(view)}${servedClauses(view, ctx)}<div class="document-content" data-narrative><p class="rendering">Loading the design</p></div></section>` : ""}
     ${unplannedCard(view, ctx)}
     ${sliceRunTotalsHtml(data.runTotals, data.children.length > 0)}
     <div class="artifact-cards">
@@ -315,7 +316,7 @@ export async function render(container, entity, ctx) {
       ${reviewCard(artifacts.review, ctx)}
       ${slice.design ? "" : legacyChangeMapCard(artifacts.changeMap, ctx)}
     </div>
-    ${card("Slice folder", artifacts.files.length ? `<ul class="plain-list">${artifacts.files.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder is empty."), { eyebrow: `${plural(artifacts.files.length, "file")} in ${artifacts.folder}` })}`;
+    ${card("Slice folder", artifacts.files.length ? `<ul class="plain-list">${artifacts.files.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder is empty."), { eyebrow: plural(artifacts.files.length, "file") })}`;
   bindLinks(container, ctx);
   container.addEventListener("click", (event) => {
     const link = event.target.closest("[data-clause]");

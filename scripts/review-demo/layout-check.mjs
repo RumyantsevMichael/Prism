@@ -96,7 +96,7 @@ try {
         const url = new URL("review", project.url);
         url.searchParams.set("artifact", ref);
         await page.goto(url.href);
-        await page.waitForSelector("#artifact .artifact-header, #artifact .document-card, #artifact .error", { timeout: 10000 }).catch(() => record("the page did not render", current));
+        await page.waitForSelector('#artifact[aria-busy="false"]', { timeout: 10000 }).catch(() => record("the page did not render", current));
         await page.waitForTimeout(400);
       };
       const check = async (project, label) => {
@@ -119,9 +119,14 @@ try {
         palette: ["roadmap", async () => { await page.keyboard.press("Control+k"); await page.keyboard.type("slice"); }],
         "project menu": ["attention", () => page.click("#project-button")],
         "index panel": ["attention", () => page.click("#indexing-button")],
-        "sidebar toggled": ["roadmap", () => page.click("#sidebar-toggle")],
-        "maximized document": ["docs/wide.md", () => page.click(".maximize-button")],
-        "maximized diagram": ["docs/plans/huge-initiative/slice-with-long-name/diagram.puml", () => page.click(".maximize-button")],
+        // Each overlay opens the way a reader opens it, through its kit control.
+        "who's working": ["attention", () => page.locator("header").getByRole("button", { name: /working/ }).click()],
+        "navigation drawer": ["roadmap", async () => {
+          const navigation = page.locator("header").getByRole("button", { name: "Navigation", exact: true });
+          if (await navigation.isVisible()) await navigation.click();
+        }],
+        "maximized document": ["docs/wide.md", () => page.locator("[data-maximize]").first().click()],
+        "maximized diagram": ["docs/plans/huge-initiative/slice-with-long-name/diagram.puml", () => page.locator("[data-maximize]").first().click()],
         "link preview": ["slice:huge-initiative/slice-with-long-name", () => page.locator("#artifact .link-chip").first().hover()],
         "side panel": ["slice:huge-initiative/slice-with-long-name", async () => {
           await page.locator('#artifact .link-chip[data-artifact$=".md"]').first().hover();

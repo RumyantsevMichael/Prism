@@ -16,7 +16,7 @@ Start a review from a Prism checkout when no agent session is active:
 ./bin/prism review docs/requirements/reports.md
 ```
 
-The browser opens on Attention, or on the artifact you name, and later visits restore the tabs you left open.
+The browser opens on Attention, or on the artifact you name, and later visits return to the page you left open.
 
 `Review browser: auto` in `.prism/workflow.md` uses the internal browser in desktop sessions and the system browser in CLI sessions.
 Set `internal` or `external` to override this choice.
@@ -33,18 +33,24 @@ A choice applies at once, and System follows the operating system again.
 **Component catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
 
-The top bar holds the project switcher and the open tabs.
+The top bar holds the Prism mark, the project switcher, the search button that opens the Jump palette, and **Who's working**.
 The status bar at the bottom shows where the project's records live, their sync state, and the repository index.
-The sidebar keeps Attention and Roadmap at the top and the Library, with Requirements, Decisions, and the Glossary, at the bottom.
-Between them it expands only the path to what is open: the open initiative's slices or the open library section's documents.
-Press `[` or the sidebar toggle to collapse the sidebar to an icon rail that keeps the Attention badge.
+The sidebar is the only navigation.
+It lists Attention and Roadmap, every initiative with its state, the open initiative's slices or the open library section's documents, and the Library, with Requirements, Decisions, and the Glossary.
+A slice that has subslices expands when you expand it or when one of its subslices is open.
+At a window width of 1100 pixels or less the sidebar is hidden, and the Navigation button at the left of the top bar opens it as a drawer that closes when you choose a page.
 
-A link opens in the preview tab, which the next link replaces.
-Ctrl-click or Cmd-click a link, double-click its tab, or choose Keep on the tab to keep it open.
-Tabs that an agent presents stay open until you close them.
-A tab whose file was moved or deleted, or whose initiative or slice no longer exists, is dimmed and struck through, and opening it offers to close it.
-The tab returns to normal on its own when the file comes back, for example after a checkout.
-When Prism moves a record from its legacy location into `.prism/`, a tab on that record follows it to the new path.
+The page bar at the top of the page holds Back and Forward and the trail of the page's place, initiative, and slice by title.
+Back and Forward, Alt+Left and Alt+Right, and the browser's own buttons move through the pages you visited in that browser tab.
+A page that an agent presents opens as the next page.
+Prism's records and documents appear by title and kind, such as Design, Diagram, or Change map, and only repository files are named by their path.
+A page whose file was moved or deleted, or whose initiative or slice no longer exists, says so and offers to close it, and it shows the page again on its own when the target comes back, for example after a checkout.
+When Prism moves a record from its legacy location into `.prism/`, a page on that record follows it to the new path.
+
+**Who's working** shows up to three avatars of the agents that hold a live claim on a slice, and how many are working.
+Its popover lists every live claim and then every claim that expired, with the holder, the activity, the slice, and the time left.
+The sidebar shows a claimed slice's holder at the end of its row.
+Claims are read-only in the browser.
 
 A banner appears when the review server stops responding, and it clears when the connection returns.
 When the server stays silent for about 15 seconds, the banner says that the review app stopped and the page is no longer live, and actions that need the server say so instead of failing silently.
@@ -146,19 +152,20 @@ An initiative preview shows its state, band, intent, and progress, and a slice p
 A link to a document section previews that section.
 A link to a PlantUML file previews the diagram drawn small enough to fit.
 A file's preview has a Show in side panel button, and Alt+click on a link does the same: the whole file opens in a panel beside the current page, at the linked heading or lines.
-The panel draws a PlantUML file, and the diagrams a document links, as its tab does, fitted to the panel's width, with the same zoom and source controls.
+The panel draws a PlantUML file, and the diagrams a document links, as its page does, fitted to the panel's width, with the same zoom and source controls.
 The side panel holds one file at a time, so opening another replaces it, and a link inside the panel opens its target in the panel.
-Open as tab moves the file into a tab, Esc or the close button closes the panel, and dragging its left edge sets its width.
+Open as page opens the file as the page, Esc or the close button closes the panel, and dragging its left edge sets its width.
 Graph, diagram, and document cards can be maximized, and Esc restores them.
 
 ## Find artifacts
 
 Press Ctrl K or Cmd K, or `/`, to open the Jump palette.
-It finds initiatives, slices, documents, and files by name.
+It finds places, initiatives, slices, requirements, decisions, glossary terms, and Prism's records by title, and repository files by path, grouped by kind.
+A slice's result shows who holds a claim on it, and beside the results a preview shows the active result.
 A query of three or more characters also searches the text of Prism artifacts, never source files, and every word must occur in a matching file.
 Opening a text match scrolls to and highlights the first occurrence.
 When the match is not visible in the rendered view, try the Raw view.
-In the palette, Enter opens the result in the preview tab, Ctrl+Enter keeps it open, and Esc closes the palette.
+In the palette, the arrow keys move through the results, Enter opens one, and Esc closes the palette.
 
 ## Index status
 
@@ -180,7 +187,7 @@ The switcher marks the projects an agent session is using now, and lists workspa
 When an agent presents a review for another project while a tab is open, that tab shows a notice with a link instead of a second tab opening.
 
 The app starts with the MCP server of the first Prism session, outlives that session, and exits after 30 minutes with no session and no open viewer.
-A session of a newer Prism release replaces an app of an older release on the same port, and open tabs reload into the new version.
+A session of a newer Prism release replaces an app of an older release on the same port, and open review pages reload into the new version.
 A session never replaces a newer app.
 
 A new session opens the review browser on its project when no review tab of any project is open.
