@@ -307,3 +307,17 @@ test("a server that closes mid-wait lets go of the wait's gates before it exits"
   const read = await second.call("get_initiative", { initiative: INITIATIVE });
   assert.deepEqual((read.structuredContent?.personChanges ?? []).map((entry) => entry.action), ["gate.answer"]);
 });
+
+test("a wait aborted after an answer is recorded ends cancelled and leaves the answer for a later result", async (context) => {
+  const { root, gateIds } = await actionProject(context);
+  const directory = await temporaryDirectory(context, "prism-notices-");
+  const take = () => takePersonChanges({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory });
+  await take();
+  const controller = new AbortController();
+  const wait = waitForUserGates({ projectRoot: root, initiative: INITIATIVE, gateIds: [gateIds.review], maxWaitMinutes: 1, pollMs: 5000, signal: controller.signal, notices: { session: "s1", directory } });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await answerGate(root, gateIds.review, "approve");
+  controller.abort();
+  assert.equal((await wait).status, "cancelled");
+  assert.deepEqual((await take()).map((entry) => entry.action), ["gate.answer"], "the answer nobody received is shown by a later result");
+});

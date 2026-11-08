@@ -87,7 +87,9 @@ export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWa
   // first holds until a valid read, which alone can find the gates unknown.
   let first = true;
   // A read that fails or finds the state invalid brings no new information: the wait neither ends on it nor counts its entries as known or shown, as the notice step sees no history then.
+  // An aborted wait ends cancelled in the step itself, so a poll that runs or finishes after the abort marks nothing as shown.
   const decide = (state, history, shown, held) => {
+    if (signal?.aborted) return { result: { status: "cancelled" } };
     if (!state) return { result: undefined };
     known ??= new Set(shown);
     const decision = outcome(initiative, ids, state, history, shown, held ?? new Set(), known, first, watch);
