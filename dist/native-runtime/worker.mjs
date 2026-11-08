@@ -27,7 +27,20 @@ env.useFSCache = false;
 let tokenizer;
 let model;
 let modelIdentity;
-let current;
+const LOADED_BYTES = 1.5 * 1024 * 1024 * 1024;
+const loaded = /* @__PURE__ */ new Map();
+const loadedKey = (snapshot, identity) => `${snapshot}\0${identity}`;
+function keep(value) {
+  const key = loadedKey(value.index.snapshot, value.index.modelIdentity);
+  loaded.delete(key);
+  loaded.set(key, value);
+  for (const chunk of value.index.chunks) delete chunk.embedding;
+  for (const [other] of loaded) {
+    if (loaded.size <= 1 || process.memoryUsage().rss <= LOADED_BYTES) break;
+    loaded.delete(other);
+  }
+}
+let lastQuery;
 let boundaries;
 async function loadModel(directory, identity) {
   if (model && modelIdentity === identity) return;
@@ -143,11 +156,13 @@ async function build(args, progress) {
 }
 async function query(args) {
   await loadModel(args.modelDirectory, args.modelIdentity);
-  if (!current || current.index.snapshot !== args.snapshot || current.index.modelIdentity !== args.modelIdentity) {
+  let current = loaded.get(loadedKey(args.snapshot, args.modelIdentity));
+  if (!current) {
     const index = JSON.parse(await readFile(args.indexPath, "utf8"));
     if (index.snapshot !== args.snapshot || index.modelIdentity !== args.modelIdentity) throw Object.assign(new Error("The semantic index is stale."), { code: "stale_snapshot" });
     current = { index, db: await database(index) };
   }
+  keep(current);
   const prefix = "Represent this sentence for searching relevant passages: ";
   if (countTokens(prefix + args.query) > 512) throw Object.assign(new Error("The search query exceeds the model token limit."), { code: "validation_failed" });
   const where = {};
@@ -158,7 +173,9 @@ async function query(args) {
   const words = args.query.replace(/([a-z])([A-Z])/g, "$1 $2").split(/\s+/);
   const term = words.filter((word) => !STOP_WORDS.has(word.toLowerCase())).join(" ") || words.join(" ");
   const lexical = await search(current.db, { term, properties: ["text", "context"], boost: { context: CONTEXT_BOOST }, limit: candidateLimit, where });
-  const dense = args.mode === "lexical" ? { hits: [] } : await search(current.db, { mode: "vector", vector: { property: "embedding", value: (await embed([prefix + args.query]))[0] }, similarity: -1, limit: candidateLimit, where });
+  if (args.mode !== "lexical" && (lastQuery?.text !== args.query || lastQuery.identity !== args.modelIdentity))
+    lastQuery = { text: args.query, identity: args.modelIdentity, vector: (await embed([prefix + args.query]))[0] };
+  const dense = args.mode === "lexical" ? { hits: [] } : await search(current.db, { mode: "vector", vector: { property: "embedding", value: lastQuery.vector }, similarity: -1, limit: candidateLimit, where });
   const chunks = new Map(current.index.chunks.map((chunk) => [chunk.id, chunk]));
   const allowed = (id) => !args.filters?.paths?.length || args.filters.paths.some((prefix2) => chunks.get(id).file === prefix2 || chunks.get(id).file.startsWith(`${prefix2}/`));
   const fused = /* @__PURE__ */ new Map();

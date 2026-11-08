@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   NATIVE_SNAPSHOT_IDENTITY_SCHEME,
   NativeRepositoryIntelligence,
+  RepositoryScan,
   openNativeRepositoryIntelligence,
   withNativeRepositoryIntelligence
 } from "../../dist/server/repository-intelligence/native-repository-intelligence.mjs";
@@ -469,4 +470,32 @@ test("runs an action through the native provider helper", async (context) => {
   }, { gitCommand: "prism-git-command-does-not-exist" });
 
   assert.equal(result, "native");
+});
+
+test("component sources that share a repository scan list the repository once until it is refreshed", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "prism-shared-scan-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "a"));
+  await mkdir(path.join(root, "b"));
+  await writeFile(path.join(root, "a", "one.md"), "# One\n");
+  await writeFile(path.join(root, "b", "two.md"), "# Two\n");
+  await execFileAsync("git", ["init", "-q"], { cwd: root });
+  // A Git wrapper that records each listing, so the test counts how often the sources ask Git for the files.
+  const log = path.join(root, ".git", "listings.log");
+  const wrapper = path.join(root, ".git", "git-wrapper.sh");
+  await writeFile(wrapper, `#!/bin/sh\ncase "$1" in ls-files) echo x >> "${log}";; esac\nexec git "$@"\n`, { mode: 0o755 });
+  const listings = async () => (await readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  const scan = new RepositoryScan();
+  const [a, b] = ["a/", "b/"].map((prefix) => new NativeRepositoryIntelligence(root, { gitCommand: wrapper, scan, filter: (file) => file.startsWith(prefix) }));
+  assert.deepEqual((await a.snapshot()).files.map((file) => file.file), ["a/one.md"]);
+  assert.deepEqual((await b.snapshot()).files.map((file) => file.file), ["b/two.md"]);
+  assert.equal(await listings(), 1);
+  await a.verifySnapshot();
+  assert.equal(await listings(), 1, "verification reuses the scan until it is refreshed");
+  // A file added after the scan is seen once the scan is refreshed.
+  await writeFile(path.join(root, "b", "three.md"), "# Three\n");
+  scan.refresh();
+  await a.verifySnapshot();
+  await assert.rejects(b.verifySnapshot(), { code: "snapshot-changed" });
+  assert.equal(await listings(), 2);
 });

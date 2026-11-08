@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { componentOf, listsComponents, readComponents } from "../workflow/components.mjs";
-import { NativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
+import { NativeRepositoryIntelligence, RepositoryScan } from "./native-repository-intelligence.mjs";
 import { semanticError } from "./native-semantic-runtime.mjs";
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const inside = (file, folder) => file === folder || file.startsWith(`${folder}/`);
@@ -18,12 +18,18 @@ async function indexComponents(projectRoot) {
   return readComponents(config);
 }
 function componentSources(root, declaration, options = {}) {
+  const scan = new RepositoryScan();
   return declaration.components.map((component) => ({
     component: component.identity,
     name: component.name,
     folder: component.folder,
-    source: new NativeRepositoryIntelligence(root, { ...options, filter: (file) => componentOf(declaration, file).identity === component.identity })
+    scan,
+    source: new NativeRepositoryIntelligence(root, { ...options, scan, filter: (file) => componentOf(declaration, file).identity === component.identity })
   }));
+}
+async function verifyComponents(entries, verify = (source) => source.verifySnapshot()) {
+  for (const scan of new Set(entries.map((entry) => entry.scan))) scan?.refresh();
+  for (const entry of entries) await verify(entry.source);
 }
 async function baselineSources(declaration, open) {
   const sources = [];
@@ -160,5 +166,6 @@ export {
   selectedComponents,
   selectionSnapshot,
   unionIndex,
-  unionSnapshot
+  unionSnapshot,
+  verifyComponents
 };

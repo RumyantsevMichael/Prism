@@ -351,15 +351,39 @@ async function sourceRecord(root, relativePath, limits) {
   };
 }
 
+async function evidenceOutputsOf(root) {
+  // Evidence paths are registered by server mutations, never supplied as caller exclusion patterns.
+  const { conservationStore } = await import("../conservation/conservation-store.mjs");
+  return new Set(await conservationStore.outputs(root));
+}
+
+/**
+ * One Git listing of a repository, its evidence outputs, and its commit, shared by the sources of its components, so that a call over many
+ * components asks Git once instead of once per component. A pass stays until refresh(), which the next read then repeats; a source whose
+ * repository has no Git listing falls back to its own bounded filesystem scan.
+ */
+export class RepositoryScan {
+  constructor() { this.pass = null; }
+  enumeration(root, options) {
+    if (!this.pass) {
+      this.pass = (async () => {
+        const listed = await gitFiles(root, options).then((value) => ({ ...value, enumerator: "git", diagnostics: [] }), () => null);
+        return { listed, evidenceOutputs: await evidenceOutputsOf(root), head: listed ? await gitCommit(root, options) : null };
+      })().catch((error) => { this.pass = null; throw error; });
+    }
+    return this.pass;
+  }
+  refresh() { this.pass = null; }
+}
+
 async function buildSnapshot(projectRoot, options) {
   const root = await realpath(projectRoot);
   const rootMetadata = await stat(root);
   if (!rootMetadata.isDirectory()) throw new TypeError("The native repository root must be a directory.");
-  const enumeration = await enumerateFiles(root, options);
-  // Evidence paths are registered by server mutations, never supplied as caller exclusion patterns.
-  const { conservationStore } = await import("../conservation/conservation-store.mjs");
+  const shared = options.scan ? await options.scan.enumeration(root, options) : null;
+  const enumeration = shared?.listed ? { ...shared.listed, files: [...shared.listed.files] } : await enumerateFiles(root, options);
   const { isManagedRecordFile } = await import("../workflow/record-store.mjs");
-  const evidenceOutputs = new Set(await conservationStore.outputs(root));
+  const evidenceOutputs = shared ? shared.evidenceOutputs : await evidenceOutputsOf(root);
   enumeration.files = enumeration.files.filter(file => !evidenceOutputs.has(file) && !isManagedRecordFile(file));
   // A component's source scans only the files of its component, so the native limits apply to each component on its own.
   if (options.filter) enumeration.files = enumeration.files.filter(options.filter);
@@ -441,7 +465,7 @@ async function buildSnapshot(projectRoot, options) {
   }
   // A component's identity is its content alone, computed the same way for the live project and for a retained baseline.
   const sourceFingerprint = options.filter ? contentFingerprint(files) : fingerprintHash.digest("hex");
-  const head = enumeration.enumerator === "git" ? await gitCommit(root, options) : null;
+  const head = enumeration.enumerator !== "git" ? null : shared?.listed ? shared.head : await gitCommit(root, options);
   return {
     root,
     commit: head || `snapshot:${sourceFingerprint}`,
@@ -497,7 +521,8 @@ export class NativeRepositoryIntelligence {
       maxBytes: positiveInteger(options.maxBytes, DEFAULT_MAX_BYTES, "maxBytes"),
       maxFileBytes: positiveInteger(options.maxFileBytes, DEFAULT_MAX_FILE_BYTES, "maxFileBytes"),
       retainOpaque: options.retainOpaque === true,
-      filter: typeof options.filter === "function" ? options.filter : null
+      filter: typeof options.filter === "function" ? options.filter : null,
+      scan: options.scan instanceof RepositoryScan ? options.scan : null
     };
     this.snapshotPromise = null;
   }

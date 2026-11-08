@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { readdir, rm } from "node:fs/promises";
 import { FILES, entry, fakeRuntime, fingerprint, manifestPath, project, settled, sha256 } from "./fixtures/component-indexes.mjs";
 
 // Acceptance tests of components.md §20-§24 and §26 for the component-indexes contract, clauses 1-8, 10-13, 21, and 25.
@@ -51,12 +52,12 @@ test("clauses 2, 8, and 10: a path-scoped call prepares only the components that
   assert.equal(control.builds.length, 2);
 });
 
-test("clauses 2 and 8: an unscoped call prepares every component that holds a file, in component order", async (t) => {
+test("clauses 2 and 8: an unscoped call prepares every component that holds a file, the declared ones in component order and then the root component", async (t) => {
   const { root, storage, write } = await project(t, { components: ["## Components", "- net: packages/net", "- app: packages/app", "- empty: packages/empty", ""].join("\n") });
   await write("packages/empty/.gitkeep", "");
   const { runtime, control } = await fakeRuntime(storage);
   const found = await search(root, runtime);
-  assert.deepEqual(built(control), [ROOT_FILES, NET_FILES, APP_FILES, ["packages/empty/.gitkeep"]]);
+  assert.deepEqual(built(control), [NET_FILES, APP_FILES, ["packages/empty/.gitkeep"], ROOT_FILES]);
   assert.deepEqual((found.components ?? []).map((item) => [item.component, item.status]), [["root/root", "included"], ["root/net", "included"], ["root/app", "included"], ["root/empty", "included"]]);
   assert.equal(found.status, "ready");
   assert.equal(entry(found, "root/root").folder, "");
@@ -87,27 +88,57 @@ test("clauses 3 and 4: a component is prepared again only when its own files cha
 test("clause 5: a later call's waiting components move ahead of components that only an earlier call needs", async (t) => {
   const { root, storage } = await project(t);
   const { runtime, control } = await fakeRuntime(storage);
-  control.hold("README.md");
+  control.hold("packages/net/retry.ts");
   const unscoped = await search(root, runtime, {}, 0);
   assert.equal(unscoped.status, "preparing");
   assert.deepEqual(unscoped.results, []);
   assert.deepEqual((unscoped.components ?? []).map((item) => item.component), ["root/root", "root/net", "root/app"]);
-  assert.ok(["waiting", "preparing"].includes(entry(unscoped, "root/root")?.status));
-  assert.deepEqual([entry(unscoped, "root/net")?.status, entry(unscoped, "root/app")?.status], ["waiting", "waiting"]);
+  assert.ok(["waiting", "preparing"].includes(entry(unscoped, "root/net")?.status));
+  assert.deepEqual([entry(unscoped, "root/root")?.status, entry(unscoped, "root/app")?.status], ["waiting", "waiting"]);
   let status;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     status = await runtime.status(root);
-    if (entry(status, "root/root")?.status === "preparing") break;
+    if (entry(status, "root/net")?.status === "preparing" && built(control).length) break;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  assert.deepEqual((status.components ?? []).map((item) => [item.component, item.status]), [["root/root", "preparing"], ["root/net", "waiting"], ["root/app", "waiting"]]);
-  const scoped = await search(root, runtime, { filters: { paths: ["packages/app"] } }, 0);
-  assert.deepEqual((scoped.components ?? []).map((item) => [item.component, item.status]), [["root/app", "waiting"]]);
+  assert.deepEqual((status.components ?? []).map((item) => [item.component, item.status]), [["root/root", "waiting"], ["root/net", "preparing"], ["root/app", "waiting"]]);
+  // The root component builds after the declared ones, until a call that needs it moves it ahead of them.
+  const scoped = await search(root, runtime, { filters: { paths: ["README.md"] } }, 0);
+  assert.deepEqual((scoped.components ?? []).map((item) => [item.component, item.status]), [["root/root", "waiting"]]);
   // The running preparation is never interrupted.
-  assert.deepEqual(built(control), [ROOT_FILES]);
-  control.release("README.md");
+  assert.deepEqual(built(control), [NET_FILES]);
+  control.release("packages/net/retry.ts");
   await settled(runtime, root);
-  assert.deepEqual(built(control), [ROOT_FILES, APP_FILES, NET_FILES]);
+  assert.deepEqual(built(control), [NET_FILES, ROOT_FILES, APP_FILES]);
+});
+
+test("a stored component index loads at once instead of waiting behind a build", async (t) => {
+  const { root, storage, write } = await project(t);
+  const first = await fakeRuntime(storage);
+  assert.equal((await search(root, first.runtime)).status, "ready");
+  await write("packages/net/retry.ts", `${FILES["packages/net/retry.ts"]}// changed\n`);
+  // A new process, as after a restart, has nothing loaded; net must build again, and app and the root component only load.
+  const later = await fakeRuntime(storage);
+  later.control.hold("packages/net/retry.ts");
+  const found = await search(root, later.runtime, {}, 2000);
+  assert.deepEqual((found.components ?? []).map((item) => [item.component, item.status]), [["root/root", "included"], ["root/net", "preparing"], ["root/app", "included"]]);
+  assert.deepEqual(built(later.control), [NET_FILES]);
+  later.control.release("packages/net/retry.ts");
+  await settled(later.runtime, root);
+  assert.equal((await search(root, later.runtime)).status, "ready");
+});
+
+test("a stored index pointer whose index is gone hands the component back to the build queue", async (t) => {
+  const { root, storage } = await project(t);
+  const first = await fakeRuntime(storage);
+  assert.equal((await search(root, first.runtime)).status, "ready");
+  const { directory } = await first.runtime.location(root, { name: "app", identity: "root/app", folder: "packages/app" });
+  for (const name of await readdir(directory)) if (/^[a-f\d]{64}\.json$/.test(name)) await rm(path.join(directory, name));
+  const later = await fakeRuntime(storage);
+  const found = await search(root, later.runtime, {}, 2000);
+  assert.equal(found.status, "ready");
+  assert.deepEqual(built(later.control), [APP_FILES]);
+  assert.equal((await settled(later.runtime, root)).status, "indexed");
 });
 
 test("clause 6: a call waits at most its bound for its components and then answers", async (t) => {

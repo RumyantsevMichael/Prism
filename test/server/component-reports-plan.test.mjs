@@ -26,12 +26,12 @@ test("a context plan accepts the snapshot of an unscoped search or its own sourc
 test("a structural report answers preparing without a preparation id while no component is included", async (t) => {
   const { root, storage } = await project(t);
   const { runtime, control } = await fakeRuntime(storage);
-  control.hold("README.md");
+  control.hold("packages/net/retry.ts");
   const found = await reportComplexUnits({ projectRoot: root }, { runtime, waitMs: 0 });
   assert.deepEqual([found.status, found.preparationId, found.units], ["preparing", null, []]);
-  assert.equal(entry(found, "root/root").status, "preparing");
+  assert.equal(entry(found, "root/net").status, "preparing");
   assert.equal(found.diagnostics[0].code, "components_missing");
-  control.release("README.md");
+  control.release("packages/net/retry.ts");
   await settled(runtime, root);
   const ready = await reportComplexUnits({ projectRoot: root }, { runtime, waitMs: 2000 });
   assert.equal(ready.status, "ready");
