@@ -315,7 +315,9 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.match(tools.get_review_url.description, /does not open a browser/);
   assert.match(tools.get_review_url.description, /the human's open tabs stay open/);
   assert.match(tools.present_review.description, /system browser/);
-  assert.deepEqual(tools.wait_for_user_gate.inputSchema.required, ["projectRoot", "initiative"]);
+  // A wait names an initiative or, for an approval gate, the artifact in its place, so neither is required by the schema.
+  assert.deepEqual(tools.wait_for_user_gate.inputSchema.required, ["projectRoot"]);
+  assert.equal(tools.wait_for_user_gate.inputSchema.properties.artifact.type, "string");
   assert.equal(tools.wait_for_user_gate.inputSchema.properties.gateIds.maxItems, 10);
   assert.equal(tools.wait_for_user_gate.annotations.readOnlyHint, true);
   assert.match(tools.wait_for_user_gate.description, /its result wakes the session when the user answers/);

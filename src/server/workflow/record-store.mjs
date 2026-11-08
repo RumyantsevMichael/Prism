@@ -8,7 +8,7 @@ import { gitTooOld, listSavedConflicts, prepareStoreFiles, pullRecordStoreIfStal
 import { managedRecordStore } from "./record-store-remote.mjs";
 import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 import { checkRepositoryName, portableRepositoryName, REPOSITORIES, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
-import { ARTIFACTS, artifactAddress, componentScope, normalizeArtifactPath, repositoryScope, scopeFolder, wellFormedName, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_STATUS, ARTIFACTS, STATUS_RECORD_NAME, artifactAddress, componentScope, normalizeArtifactPath, repositoryScope, scopeFolder, wellFormedName, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
 import { COMPONENT_NAME } from "./components.mjs";
 import { artifactKinds, initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
@@ -103,6 +103,9 @@ export function isStoreFile(relative) {
   if (Object.hasOwn(HOUSEKEEPING, relative) || relative === "roadmap.json") return true;
   const names = relative.split("/");
   if (names[0] === ARTIFACTS) return names.length > 1 && names.slice(1).every(wellFormedName);
+  // A status record sits at its artifact's location below artifact-status/, and accepted bytes under their hash below artifact-accepted/.
+  if (names[0] === ARTIFACT_STATUS) return names.length > 2 && names.at(-1) === STATUS_RECORD_NAME && names.slice(1).every(wellFormedName);
+  if (names[0] === ARTIFACT_ACCEPTED) return names.length === 2 && /^[0-9a-f]{64}$/.test(names[1]);
   if (names[0] === "migrations") return names.length === 2 && MIGRATION_FILE.test(names[1]);
   if (names[0] === REPOSITORIES) return names.length === 2 && names[1].endsWith(".json") && portableRepositoryName(names[1].slice(0, -".json".length));
   if (names[0] !== "initiatives") return false;
@@ -119,8 +122,8 @@ export function isStoreFile(relative) {
 export function isStoreFolder(relative) {
   if (typeof relative !== "string") return false;
   const names = relative.split("/");
-  if (names.length === 1) return ["initiatives", ARTIFACTS, "migrations", REPOSITORIES].includes(names[0]);
-  if (names[0] === ARTIFACTS) return names.slice(1).every(wellFormedName);
+  if (names.length === 1) return ["initiatives", ARTIFACTS, ARTIFACT_STATUS, ARTIFACT_ACCEPTED, "migrations", REPOSITORIES].includes(names[0]);
+  if (names[0] === ARTIFACTS || names[0] === ARTIFACT_STATUS) return names.slice(1).every(wellFormedName);
   if (names[0] !== "initiatives" || !SLUG_PATTERN.test(names[1])) return false;
   if (names.length === 2) return true;
   if (names.length === 3) return names[2] === CLAIMS || names[2] === "slices";
@@ -784,6 +787,17 @@ async function assertUnlinked(base, target) {
 export async function resolveArtifactFile(seen, location) {
   const target = path.join(seen.base, ...location.split("/"));
   if (!inside(seen.base, target) || target === seen.base) throw fail("invalid_path", "The artifact location resolves outside the store's artifacts folder.");
+  await assertUnlinked(seen.store.base, target);
+  await assertContained(seen.store.contain, target, "the record store");
+  return target;
+}
+
+/** The file of a store-relative path below artifact-status/ or artifact-accepted/ in a seen store, after the checks that resolveArtifactFile makes. */
+export async function resolveStatusFile(seen, relative) {
+  const folder = path.join(seen.store.base, relative.split("/")[0]);
+  if (![ARTIFACT_STATUS, ARTIFACT_ACCEPTED].includes(relative.split("/")[0])) throw fail("invalid_path", "A status file lies outside the store's status folders.");
+  const target = path.join(seen.store.base, ...relative.split("/"));
+  if (!inside(folder, target) || target === folder) throw fail("invalid_path", "The status location resolves outside the store's status folders.");
   await assertUnlinked(seen.store.base, target);
   await assertContained(seen.store.contain, target, "the record store");
   return target;

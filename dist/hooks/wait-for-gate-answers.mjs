@@ -30,7 +30,8 @@ export async function waitForGateAnswers({ input = process.stdin, directory, pol
   const maxWaitMinutes = Math.min(Number(request.maxWaitMinutes) || HOOK_WAIT_MINUTES, HOOK_WAIT_MINUTES);
   let result;
   try {
-    result = await waitForUserGates({ projectRoot: request.projectRoot, initiative: request.initiative, gateIds: request.gateIds, maxWaitMinutes, ...(pollMs ? { pollMs } : {}), ...(settleMs === undefined ? {} : { settleMs }) });
+    const source = typeof request.artifact === "string" ? { artifact: request.artifact, scope: request.scope } : { initiative: request.initiative };
+    result = await waitForUserGates({ projectRoot: request.projectRoot, ...source, gateIds: request.gateIds, maxWaitMinutes, ...(pollMs ? { pollMs } : {}), ...(settleMs === undefined ? {} : { settleMs }) });
   } catch {
     return null;
   }
@@ -39,7 +40,9 @@ export async function waitForGateAnswers({ input = process.stdin, directory, pol
     "The user answered while Prism's wait_for_user_gate call waited after your turn; this is its result.",
     ...result.answered.map(answerText),
     ...(result.waiting.length ? [`Still waiting on: ${result.waiting.join(", ")}.`] : []),
-    "Act on each answer, then remove each answered gate with an update_coordination_state resolve operation for its id."
+    typeof request.artifact === "string"
+      ? "Act on each answer; an approval gate needs no resolve, since Prism recorded the answer in the artifact's status record."
+      : "Act on each answer, then remove each answered gate with an update_coordination_state resolve operation for its id."
   ];
   return { decision: "block", reason: lines.join("\n") };
 }

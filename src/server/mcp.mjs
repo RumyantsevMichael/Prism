@@ -705,17 +705,19 @@ const tools = [
   },
   {
     name: "wait_for_user_gate",
-    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn.",
+    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn. For the approval gates that update_artifact ask_approval records on a requirement or ADR, pass artifact, its project-relative path, and scope when two scopes hold it, in place of initiative; an answered approval gate needs no resolve.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
         initiative: { type: "string", description: "The initiative whose coordination state holds the gates." },
+        artifact: { type: "string", minLength: 1, description: "In place of initiative: the project-relative path of the requirement or ADR whose approval gates to wait on." },
+        scope: { type: "string", minLength: 1, description: "With artifact, when two scopes hold its path: workspace, repository, or a scope label such as <repository>/<component>." },
         gateIds: { type: "array", minItems: 1, maxItems: MAX_WAIT_GATES, items: { type: "string", minLength: 1 }, description: "The gate ids that the ask operations returned." },
         gateId: { type: "string", minLength: 1, description: "One gate id; use gateIds for several." },
         maxWaitMinutes: { type: "number", exclusiveMinimum: 0, maximum: MAX_WAIT_MINUTES, description: `How long to wait before returning timeout. Defaults to ${DEFAULT_WAIT_MINUTES}.` }
       },
-      required: ["projectRoot", "initiative"],
+      required: ["projectRoot"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false }
@@ -872,15 +874,22 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   if (!Array.isArray(gateIds) || !gateIds.length) {
     throw new Error("Pass the recorded gate ids in gateIds.");
   }
+  // A wait names the initiative whose coordination state holds the gates, or the artifact whose status record holds them.
+  const source = typeof argumentsValue.artifact === "string" && argumentsValue.artifact
+    ? { artifact: argumentsValue.artifact, ...(argumentsValue.scope === undefined ? {} : { scope: argumentsValue.scope }) }
+    : { initiative: argumentsValue.initiative };
+  if (source.artifact === undefined && (typeof source.initiative !== "string" || !source.initiative)) {
+    throw new Error("Pass initiative, the initiative whose coordination state holds the gates, or artifact, the requirement or ADR whose approval gates to wait on.");
+  }
   let value;
   const unsupported = waitUnsupportedReason();
   const hookSession = typeof metadata?.sessionId === "string" && metadata.sessionId ? metadata.sessionId : null;
   if (unsupported && hookSession) {
     // Codex names its session in the call's metadata, and its Stop hook for that session waits once this turn ends.
-    value = await waitForUserGates({ projectRoot, initiative: argumentsValue.initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0 });
+    value = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 0.0001, settleMs: 0 });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
-      await recordWaitRequest({ sessionId: hookSession, projectRoot, initiative: argumentsValue.initiative, gateIds: value.gateIds, maxWaitMinutes });
+      await recordWaitRequest({ sessionId: hookSession, projectRoot, ...source, gateIds: value.gateIds, maxWaitMinutes });
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
     }
   } else if (unsupported) {
@@ -892,7 +901,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
     try {
       value = await waitForUserGates({
         projectRoot,
-        initiative: argumentsValue.initiative,
+        ...source,
         gateIds,
         maxWaitMinutes: argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES,
         signal: controller.signal,
@@ -907,7 +916,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   const list = value.gateIds.join(", ");
   const text = {
     answered: () => [...value.answered.map(answerText), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n"),
-    resolved: () => `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
+    resolved: () => source.artifact ? `Approval gates ${list} of ${source.artifact} closed without an answer, because a later ask_approval replaced them.` : `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
     timeout: () => `No answer arrived for user gates ${list} before the wait ended.`,
     unknown_gate: () => `No pending user gate has any of the ids ${list}.`,
     deferred: () => `This host cannot wait during a tool call, so Prism waits after this turn ends: end your turn now, and the session continues with the answer when the user answers user gates ${list} in the review browser within ${value.maxWaitMinutes} minutes. If it does not continue, the user's next message delivers any browser answer.`,

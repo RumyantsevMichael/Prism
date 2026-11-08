@@ -5,7 +5,8 @@ const GATE_LABELS = {
   "visual-review": "Visual review",
   correctness: "Correctness confirmation",
   decision: "Decision",
-  assistance: "Action needed"
+  assistance: "Action needed",
+  approval: "Approval"
 };
 
 function ago(timestamp) {
@@ -20,13 +21,14 @@ function ago(timestamp) {
 }
 
 function location(item, ctx) {
+  if (item.kind === "approval" && item.artifact) return artifactChip(item.artifact.path, ctx, item.artifact.path.split("/").pop());
   const parts = [];
   if (item.initiative) parts.push(artifactChip(`initiative:${item.initiative.id}`, ctx, item.initiative.title));
   if (item.slice) parts.push(artifactChip(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title));
   return parts.join('<span class="crumb-separator" aria-hidden="true">›</span>');
 }
 
-const REVIEW_KINDS = new Set(["visual-review", "correctness"]);
+const REVIEW_KINDS = new Set(["visual-review", "correctness", "approval"]);
 
 // An assistance gate has one answer, so its Send button gives it instead of a separate choice.
 function choices(item) {
@@ -92,7 +94,11 @@ function answerForm(item, draft) {
   const options = choices(item);
   const state = answerState(item, draft);
   const key = escapeHtml(item.id);
-  return `<div class="gate-answer" data-gate="${key}" data-initiative="${escapeHtml(item.initiative.id)}">
+  // An approval gate is answered by its artifact and scope, every other gate by its initiative; data-artifact would make the form a link to the file.
+  const target = item.kind === "approval"
+    ? ` data-gate-artifact="${escapeHtml(item.artifact.path)}" data-scope="${escapeHtml(item.artifact.scope?.kind ?? "workspace")}"${item.artifact.scope?.component ? ` data-component="${escapeHtml(item.artifact.scope.component)}"` : ""}`
+    : ` data-initiative="${escapeHtml(item.initiative.id)}"`;
+  return `<div class="gate-answer" data-gate="${key}"${target}>
     ${options.length ? `<div class="gate-choices" role="group" aria-label="Your answer">${options.map(([id, label]) => `<button type="button" class="choice-button${id === "request-changes" ? " is-negative" : id === "approve" ? " is-positive" : ""}${id === item.recommended?.option ? " is-recommended" : ""}" data-choice="${escapeHtml(id)}" aria-pressed="${state.choice === id}"${id === item.recommended?.option ? ' title="Recommended"' : ""}>${escapeHtml(label)}</button>`).join("")}</div>` : ""}
     <label class="gate-note"><span class="gate-note-label"><span data-note-label>${escapeHtml(state.noteLabel)}</span> <span class="gate-note-need${state.noteRequired ? " is-required" : ""}" data-note-need>${state.noteRequired ? "required" : "optional"}</span></span><textarea data-note rows="2" maxlength="4000" placeholder="${escapeHtml(state.notePlaceholder)}" aria-required="${state.noteRequired}">${escapeHtml(draft.note ?? "")}</textarea></label>
     <div class="gate-actions"><button type="button" class="tool-button primary${state.choice === "request-changes" ? " is-negative" : ""}" data-submit aria-describedby="gate-hint-${key} gate-error-${key}"${state.ready ? "" : " disabled"}>${escapeHtml(state.submitLabel)}</button><p class="gate-hint" id="gate-hint-${key}" aria-live="polite">${escapeHtml(state.hint)}</p></div>
@@ -100,7 +106,29 @@ function answerForm(item, draft) {
   </div>`;
 }
 
+// An approval gate names the requirement or ADR in full, with its scope and the status an approval records, since the answer applies to exactly that file.
+function approvalSubject(item) {
+  const scope = item.artifact.scope?.label ?? "workspace";
+  // A pill is one line, so a long status ends in an ellipsis and shows whole as its tooltip.
+  const pill = (status, tone = "") => `<span class="status-pill${tone}" title="${escapeHtml(status)}">${escapeHtml(status)}</span>`;
+  const change = item.recorded && item.recorded !== item.status ? `<span class="approval-status">${pill(item.recorded)}<span aria-hidden="true">→</span><span class="sr-only">to</span>${pill(item.status, " is-good")}</span>` : `<span class="approval-status">${pill(item.status, " is-good")}</span>`;
+  return `<dl class="approval-subject">
+      <div><dt>File</dt><dd><code class="approval-path">${escapeHtml(item.artifact.path)}</code></dd></div>
+      <div><dt>Scope</dt><dd><span class="approval-scope">${escapeHtml(scope)}</span></dd></div>
+      <div><dt>Approving records</dt><dd>${change}</dd></div>
+    </dl>
+    ${item.changed ? `<p class="notice">The file changed since this approval was asked, so approving it is refused. The agent asks again for the current version.</p>` : ""}`;
+}
+
 function gateCard(item, ctx, draft) {
+  if (item.kind === "approval") {
+    return `<li class="attention-card gate-approval">
+    ${gateHead(item, ctx, item.askedAt)}
+    ${approvalSubject(item)}
+    ${gateContext(item, ctx)}
+    ${answerForm(item, draft)}
+  </li>`;
+  }
   const available = item.artifacts.filter((artifact) => artifact.available);
   const missing = item.artifacts.filter((artifact) => !artifact.available);
   return `<li class="attention-card gate-${escapeHtml(item.kind)}">
@@ -189,19 +217,27 @@ function bindAnswers(container, ctx, gates) {
       clearFailure();
       refresh();
       try {
-        await ctx.answerGate({ initiative: form.dataset.initiative, id, choice: state.choice, note: draft.note });
+        const target = form.dataset.gateArtifact
+          ? { artifact: form.dataset.gateArtifact, scope: form.dataset.scope, ...(form.dataset.component ? { component: form.dataset.component } : {}) }
+          : { initiative: form.dataset.initiative };
+        await ctx.answerGate({ ...target, id, choice: state.choice, note: draft.note });
         delete drafts[id];
         ctx.state.focus = null;
         ctx.showToast("Answer recorded. An agent waiting in Claude Code resumes on its own; otherwise the agent sees it with your next message.");
         ctx.rerender();
       } catch (error) {
         // The server stays the backstop: its refusal shows beside the form, and the draft keeps the note through a re-render.
-        draft.error = error.code === "gate_answered" ? "This question already has an answer." : error.code === "unknown_gate" ? "The agent already resolved or withdrew this question." : error.message;
+        draft.error = {
+          gate_answered: "This question already has an answer.",
+          unknown_gate: "The agent already resolved or withdrew this question.",
+          artifact_changed: "The file changed since this approval was asked, so nothing was recorded. The agent asks again for the current version.",
+          author_unknown: "Git names no user for this checkout, so the approval cannot record who gave it. Set one with git config user.name, then answer again."
+        }[error.code] ?? error.message;
         failure.textContent = draft.error;
         failure.hidden = false;
         sending = false;
         refresh();
-        if (error.code === "gate_answered" || error.code === "unknown_gate") ctx.rerender();
+        if (["gate_answered", "unknown_gate", "artifact_changed"].includes(error.code)) ctx.rerender();
       }
     });
     // The page re-renders when live data changes, so an unsent note and its cursor are restored.

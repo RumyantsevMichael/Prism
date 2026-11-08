@@ -5191,6 +5191,65 @@ th {
   font-size: 0.74rem;
 }
 
+/* An approval gate names its file in full, its scope, and the status an approval records; long paths and labels wrap inside the card. */
+.approval-subject {
+  display: grid;
+  font-size: 0.8rem;
+  gap: 0.3rem;
+  margin: 0.35rem 0 0.5rem;
+  min-width: 0;
+}
+
+.approval-subject > div {
+  align-items: baseline;
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  min-width: 0;
+}
+
+.approval-subject dt {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+}
+
+.approval-subject dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.approval-path,
+.approval-scope {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.approval-scope {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  display: inline-block;
+  font-size: 0.74rem;
+  max-width: 100%;
+  padding: 0.05rem 0.45rem;
+}
+
+.approval-status {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  max-width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 520px) {
+  .approval-subject > div {
+    gap: 0.1rem;
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .attention-footnote {
   font-size: 0.74rem;
   margin: -0.4rem 0.2rem 0;

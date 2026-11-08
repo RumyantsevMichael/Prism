@@ -1,5 +1,8 @@
+import { execFile } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
@@ -11,6 +14,7 @@ import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-co
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { loadDesignView } from "../workflow/design-view.mjs";
+import { answerArtifactApproval, pendingApprovalGates, storeArtifactStatuses } from "../workflow/store-artifacts.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 
 const LIBRARY_LIMIT = 500;
@@ -383,6 +387,7 @@ async function computeLibrary(projectRoot, kind) {
   const files = [];
   await walk(projectRoot, directory, 4, (name) => name.endsWith(".md") && name.toLowerCase() !== "readme.md", files, LIBRARY_LIMIT);
   const references = kind === "requirements" ? await initiativeReferences(projectRoot, config) : new Map();
+  const recorded = await recordedStatuses(projectRoot, directory);
   const entries = [];
   for (const file of files) {
     const source = await readText(projectRoot, file);
@@ -391,7 +396,8 @@ async function computeLibrary(projectRoot, kind) {
     entries.push({
       path: file,
       title: fields.title ?? path.posix.basename(file, ".md"),
-      status: fields.status,
+      // With a store, the status a gate recorded is the artifact's status, whatever its Status: line says.
+      status: recorded?.has(file) ? recorded.get(file) : fields.status,
       created: fields.created,
       approved: fields.approved,
       topic: relative.includes("/") ? relative.split("/")[0] : null,
@@ -399,6 +405,16 @@ async function computeLibrary(projectRoot, kind) {
     });
   }
   return { kind, directory, entries };
+}
+
+// The recorded statuses of a store's requirements or ADRs by path, or null when the project names no store or the store cannot be read.
+async function recordedStatuses(projectRoot, directory) {
+  if (!(await inArtifactStore(projectRoot, `${directory}/x.md`).catch(() => false))) return null;
+  const statuses = await storeArtifactStatuses(projectRoot, directory).catch(() => null);
+  if (statuses === null) return null;
+  const byPath = new Map();
+  for (const entry of statuses) if (!byPath.has(entry.path)) byPath.set(entry.path, entry.status);
+  return byPath;
 }
 
 export async function loadGlossary(projectRoot) {
@@ -515,6 +531,7 @@ async function computeAttention(projectRoot) {
     const item = items.get(id);
     if (item?.readyToShip && item.state !== "shipped") watch.push({ type: "ready-to-ship", initiative });
   }
+  needsYou.push(...await approvalGates(projectRoot));
   needsYou.sort((left, right) => (left.type === "gate") === (right.type === "gate") ? gateOrder(left, right) : left.type === "gate" ? -1 : 1);
   if (roadmap.error) needsYou.push({ type: "roadmap-problem", path: config.paths.roadmap, message: roadmap.error });
   else if (!roadmap.exists && config.paths.roadmap) needsYou.push({ type: "roadmap-missing", path: roadmap.recordPath });
@@ -530,8 +547,46 @@ async function computeAttention(projectRoot) {
   return { needsYou, answered, earlier: earlier.slice(0, 20), watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
 }
 
-// The browser names the initiative and gate; the state record is always the initiative's own, never a client path.
+/**
+ * The pending approval gates of the requirements and ADRs the checkout sees, as Attention items of kind approval with the artifact's path and scope,
+ * or none when the project names no store or the store cannot be read.
+ */
+async function approvalGates(projectRoot) {
+  const config = await readWorkflowConfig(projectRoot);
+  if ((config.workspace?.store ?? null) === null) return [];
+  const gates = await pendingApprovalGates(projectRoot).catch(() => []);
+  return gates.map((gate) => ({
+    type: "gate", id: gate.id, kind: "approval", status: gate.status, recorded: gate.recorded, question: gate.question, context: gate.context ?? null, options: null, recommended: null,
+    askedAt: gate.askedAt, answer: null, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope }, changed: gate.changed
+  }));
+}
+
+const execFileAsync = promisify(execFile);
+
+// Who answers in the browser: the checkout's Git user name and the machine's host name, or null when Git names no user, which an approval refuses rather than record an anonymous one.
+async function answeringPerson(projectRoot) {
+  const name = await execFileAsync("git", ["config", "user.name"], { cwd: projectRoot, timeout: 10000 }).then(({ stdout }) => stdout.trim(), () => "");
+  return name ? { name, host: os.hostname() } : null;
+}
+
+// An approval gate's answer names the artifact by its path and scope, and the answer is applied to the store's artifact, never to a client path.
+async function answerApprovalGate(projectRoot, body) {
+  if (typeof body.artifact !== "string" || !body.artifact || typeof body.id !== "string" || !body.id) {
+    throw Object.assign(new Error("An artifact path and a gate id are required."), { code: "invalid_answer" });
+  }
+  const scope = body.scope === undefined || body.scope === null || typeof body.scope === "string" || (typeof body.scope === "object" && !Array.isArray(body.scope)) ? body.scope : undefined;
+  const component = typeof body.component === "string" ? body.component : undefined;
+  const by = await answeringPerson(projectRoot);
+  if (!by) throw Object.assign(new Error("Git names no user.name for this checkout, so the answer cannot record who approved; set one with git config user.name and answer again."), { code: "author_unknown" });
+  const choice = typeof body.choice === "string" && body.choice ? body.choice : null;
+  const note = typeof body.note === "string" ? body.note : null;
+  const entry = await answerArtifactApproval(projectRoot, { path: body.artifact, scope, component, id: body.id, choice, note, by });
+  return { gate: { ...entry.gate, kind: "approval" }, artifact: { path: entry.path, scope: entry.scope, version: entry.version } };
+}
+
+// The browser names the initiative and gate, or the artifact and gate; the state record is always the initiative's own, never a client path.
 export async function answerGate(projectRoot, body) {
+  if (body && typeof body === "object" && body.artifact !== undefined) return answerApprovalGate(projectRoot, body);
   if (!body || typeof body !== "object" || !SLUG_PATTERN.test(body.initiative ?? "") || typeof body.id !== "string") {
     throw Object.assign(new Error("An initiative and a gate id are required."), { code: "invalid_answer" });
   }

@@ -12,7 +12,7 @@ import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { inArtifactStore, listClaimRecords, listInitiatives, listStoreArtifacts, locateRecord, moveLegacyRecords, readArtifactText, readRecord, recordStoreOf, removeInitiativeRecords, removeRecord, withRecordLock, writeRecord } from "./record-store.mjs";
 import { ARTIFACT_NAME_FORM, artifactAddress as artifactAddressOf, collideInLetterCase, wellFormedName } from "./artifact-paths.mjs";
-import { ArtifactError, storeArtifactLocation } from "./store-artifacts.mjs";
+import { acceptArtifactVersions, ArtifactError, storeArtifactLocation } from "./store-artifacts.mjs";
 import { syncRecordStoreNow } from "./record-store-sync.mjs";
 import { blockingClaim, claimedMessage, claimHolder, claimLabel, claimView, dropClaim, holdClaim, isLive, newClaim, parseClaim, pendClaim, renewal, serializeClaim, settleClaim, takeLostClaims, adoptClaims } from "./slice-claims.mjs";
 import { mergeHistory, mergeKeyed, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
@@ -999,6 +999,7 @@ async function writeInitiative(input, plan = null) {
     const contents = serialize(record);
     const changed = recorded.length > 0 && (!current.exists || contents !== current.text);
     if (changed) await writeRecord(resolved.root, { kind: "initiative", initiative: resolved.initiative }, contents);
+    if (changed && resolved.store && input.operations[0]?.op === "accept_proposal") await acceptPlanVersions(resolved, record, effects.accepted, at);
     // Staged tests leave the work tree only after the initiative record is written, and only for slices still staged at the end of the update.
     const withdrawn = [];
     for (const staged of effects.staged) if (record.slices[staged.slice]?.design?.staged) withdrawn.push(...await withdrawFrozenTests(resolved.root, resolved.initiative, staged));
@@ -1022,6 +1023,19 @@ async function writeInitiative(input, plan = null) {
     return { result: { ...publicResult(resolved, updated), created: !current.exists, previousRevision: current.revision, projectionStale, withdrawn, installed: effects.installed, diagrams: effects.diagrams }, ended: [...effects.claims.ended].map((slug) => effects.claims.files.get(slug)) };
   }, fail));
   return { ...written, resolved };
+}
+
+/**
+ * With a store, the accept_proposal that accepts slices' designs keeps the bytes of the store artifacts in their folders as each one's accepted version,
+ * so a reviewer later sees what changed since; a root slice's folder holds the other slices' folders, whose files only their own acceptance keeps.
+ * The record is already written, so a store that refuses this leaves the acceptance in place and those versions unkept.
+ */
+async function acceptPlanVersions(resolved, record, accepted, at) {
+  const slugs = [...accepted].filter((slug) => Object.hasOwn(record.slices, slug));
+  if (!slugs.length) return;
+  const folders = slugs.map((slug) => sliceFolder(resolved.directory, record.slices, slug));
+  const exclude = Object.keys(record.slices).filter((slug) => record.slices[slug].parent !== null && !accepted.has(slug)).map((slug) => sliceFolder(resolved.directory, record.slices, slug));
+  await acceptArtifactVersions(resolved.root, folders, { exclude, event: { event: "design_accepted", initiative: resolved.initiative, slices: slugs, at } }).catch(() => []);
 }
 
 // After the initiative write, the claims the update ended are removed, unless another attempt replaced them meanwhile.

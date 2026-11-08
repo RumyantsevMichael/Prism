@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ARTIFACTS, letterCaseKey, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_STATUS, ARTIFACTS, letterCaseKey, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
@@ -53,7 +53,12 @@ const isClaimFile = (relative) => /^initiatives\/[^/]+\/claims\/[^/]+\.json$/.te
 const isQuietConflict = (relative) => isClaimFile(relative) || isRegistrationFile(relative);
 // A person's artifact keeps the upstream version on a line conflict, as a record does, and its local version is saved and reported by its location.
 const isArtifactFile = (relative) => relative.startsWith(`${ARTIFACTS}/`);
-const isSavedFile = (relative) => isRecordFile(relative) || isArtifactFile(relative);
+// An artifact's status record and its accepted bytes change with the artifact under the artifact lock, so a sync stages them with the artifacts, and a status record that changed on both sides keeps the upstream one as a record does.
+const STATUS_FOLDERS = [ARTIFACT_STATUS, ARTIFACT_ACCEPTED];
+const isStatusFile = (relative) => STATUS_FOLDERS.some((folder) => relative.startsWith(`${folder}/`));
+const isGuardedFile = (relative) => isArtifactFile(relative) || isStatusFile(relative);
+const guardedFolder = (relative) => [ARTIFACTS, ...STATUS_FOLDERS].find((folder) => relative.startsWith(`${folder}/`)) ?? null;
+const isSavedFile = (relative) => isRecordFile(relative) || isGuardedFile(relative);
 const syncPath = (base, ...parts) => path.join(base, SYNC_DIRECTORY, ...parts);
 // The pending notices of saved conflicts, one per conflict stamp, which tool results clear once they carry them.
 const NOTICES = "notices";
@@ -475,9 +480,9 @@ async function migrateLineEndings(base) {
     const bytes = await fileBytes(target);
     if (bytes && lineEndingEcho(bytes, blobBytes)) await writeAtomically(target, blobBytes);
   };
-  const artifacts = echoes.filter(({ file }) => isArtifactFile(file));
+  const artifacts = echoes.filter(({ file }) => isGuardedFile(file));
   if (artifacts.length) await holdLocks([path.join(base, ARTIFACTS)], async () => { for (const echo of artifacts) await rewrite(echo); });
-  for (const echo of echoes.filter(({ file }) => !isArtifactFile(file))) await holdLocks([echo.target], () => rewrite(echo));
+  for (const echo of echoes.filter(({ file }) => !isGuardedFile(file))) await holdLocks([echo.target], () => rewrite(echo));
   await writeAtomically(syncPath(base, RAW_FILES), `${JSON.stringify({ at: new Date().toISOString() })}\n`);
   migrated.add(base);
 }
@@ -498,8 +503,8 @@ async function localFiles(base, artifacts, held, withheld) {
       for (const entry of entries) {
         const child = relative ? `${relative}/${entry.name}` : entry.name;
         // A file whose path some machine cannot write stays out of every commit, and the sync's status names it.
-        if (entry.isFile()) { if (shareable(child) && (artifacts || !isArtifactFile(child))) (storePathFits(child) ? found.push(child) : withheld.set(child, TOO_LONG)); }
-        else if (entry.isDirectory() && isStoreFolder(child) && (artifacts || child !== ARTIFACTS)) await visit(child);
+        if (entry.isFile()) { if (shareable(child) && (artifacts || !isGuardedFile(child))) (storePathFits(child) ? found.push(child) : withheld.set(child, TOO_LONG)); }
+        else if (entry.isDirectory() && isStoreFolder(child) && (artifacts || (child !== ARTIFACTS && !STATUS_FOLDERS.includes(child)))) await visit(child);
       }
     };
     await visit("");
@@ -513,7 +518,7 @@ async function localFiles(base, artifacts, held, withheld) {
     }
     const files = new Map();
     for (const [index, file] of found.entries()) files.set(file, { mode: held.get(file)?.mode ?? "100644", object: objects[index] });
-    if (!artifacts) for (const [file, entry] of held) if (isArtifactFile(file)) files.set(file, entry);
+    if (!artifacts) for (const [file, entry] of held) if (isGuardedFile(file)) files.set(file, entry);
     return files;
   }
 }
@@ -1658,10 +1663,10 @@ async function apply(base, from, to, options, progress = {}, held = new Map()) {
     await refuseOutsidePaths(base, files);
     const targets = files.map((file) => path.join(base, ...file.split("/")));
     const artifacts = path.join(base, ARTIFACTS);
-    const artifactLock = files.some(isArtifactFile) ? [artifacts] : [];
+    const artifactLock = files.some(isGuardedFile) ? [artifacts] : [];
     // Every artifact update holds the artifact lock from its version checks to its last write, so only the other files take a lock of their own beside them.
     const keys = new Set();
-    const locked = targets.filter((target, index) => !isArtifactFile(files[index]) && !keys.has(letterCaseKey(files[index])) && keys.add(letterCaseKey(files[index])));
+    const locked = targets.filter((target, index) => !isGuardedFile(files[index]) && !keys.has(letterCaseKey(files[index])) && keys.add(letterCaseKey(files[index])));
     // Folders under artifacts/ are made and removed only while the artifact lock is held, so none appears or vanishes between an update's layout check and its last write.
     return await holdLocks(artifactLock, async () => {
       try {
@@ -1682,7 +1687,7 @@ async function apply(base, from, to, options, progress = {}, held = new Map()) {
             if (bytes !== null) continue;
             await progress.replacing?.(files[index]);
             if (!(await clearFolder(targets[index]))?.isDirectory()) await rm(targets[index], { force: true });
-            if (isArtifactFile(files[index])) await pruneArtifactFolders(artifacts, targets[index]);
+            if (guardedFolder(files[index])) await pruneArtifactFolders(path.join(base, guardedFolder(files[index])), targets[index]);
           }
           for (const [index, bytes] of next.entries()) {
             if (bytes === null) continue;

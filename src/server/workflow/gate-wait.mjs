@@ -31,7 +31,23 @@ function sleep(milliseconds, signal) {
 export function answerText(gate) {
   const { choice, note } = gate.answer;
   const label = choice === null ? "a free answer" : gate.options?.find((option) => option.id === choice)?.label ?? choice;
-  return `The user answered user gate ${gate.id} in the review browser. Question: ${gate.question} Answer: ${label}.${note ? ` Note: ${note}` : ""}`;
+  const recorded = gate.kind === "approval" ? choice === "approve" ? ` Prism recorded ${gate.status} for ${gate.artifact ?? "the artifact"} and rewrote its status lines in the store.` : ` The recorded status of ${gate.artifact ?? "the artifact"} stays as it was.` : "";
+  return `The user answered user gate ${gate.id} in the review browser. Question: ${gate.question} Answer: ${label}.${note ? ` Note: ${note}` : ""}${recorded}`;
+}
+
+/**
+ * How a wait reads its gates: an initiative's from its coordination state, or one requirement's or ADR's approval gates from its status record in the store,
+ * where an answered approval gate stays listed with its answer and a superseded one is gone.
+ */
+export function gateSource({ projectRoot, initiative, artifact, scope }) {
+  if (typeof artifact === "string" && artifact) {
+    return async () => {
+      const { artifactApprovalGates } = await import("./store-artifacts.mjs");
+      return (await artifactApprovalGates(projectRoot, artifact, scope)).map((gate) => ({ ...gate, artifact }));
+    };
+  }
+  if (typeof initiative !== "string" || !initiative) throw new Error("Pass the initiative whose coordination state holds the gates, or the artifact whose approval gates to wait on.");
+  return async () => (await readCoordinationState({ projectRoot, initiative })).state?.pending ?? [];
 }
 
 function outcome(gateIds, pending, first) {
@@ -41,15 +57,16 @@ function outcome(gateIds, pending, first) {
   return answered.length ? { status: "answered", answered, waiting: present.filter((gate) => !gate.answer).map((gate) => gate.id) } : null;
 }
 
-// The wait reads the coordination state record rather than server memory, so an answer recorded by any review server process ends it.
+// The wait reads the coordination state record, or an artifact's status record, rather than server memory, so an answer recorded by any review server process ends it.
 // After the first answer it keeps polling briefly, because a user often answers several gates in one visit.
-export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS }) {
+export async function waitForUserGates({ projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS }) {
   if (!Array.isArray(gateIds) || !gateIds.length || gateIds.length > MAX_WAIT_GATES || gateIds.some((id) => typeof id !== "string" || !id)) {
     throw new Error(`Pass one to ${MAX_WAIT_GATES} gate ids.`);
   }
   if (typeof maxWaitMinutes !== "number" || !(maxWaitMinutes > 0) || maxWaitMinutes > MAX_WAIT_MINUTES) {
     throw new Error(`The maxWaitMinutes argument must be greater than 0 and at most ${MAX_WAIT_MINUTES}.`);
   }
+  const readGates = gateSource({ projectRoot, initiative, artifact, scope });
   const ids = [...new Set(gateIds)];
   const started = Date.now();
   const deadline = started + maxWaitMinutes * 60000;
@@ -61,7 +78,7 @@ export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWa
     while (true) {
       let pending = null;
       try {
-        pending = (await readCoordinationState({ projectRoot, initiative })).state?.pending ?? [];
+        pending = await readGates();
       } catch (error) {
         if (first) throw error;
       }

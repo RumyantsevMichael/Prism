@@ -26,12 +26,13 @@ async function removeExpired(directory, now) {
 }
 
 // One request per session: a later wait in the same turn replaces an earlier one, since the agent lists every gate it still waits on.
-export async function recordWaitRequest({ sessionId, projectRoot, initiative, gateIds, maxWaitMinutes, directory = gateWaitDirectory(), now = Date.now() }) {
+// A wait names an initiative, or the artifact, with its scope when one was given, whose approval gates it waits on.
+export async function recordWaitRequest({ sessionId, projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes, directory = gateWaitDirectory(), now = Date.now() }) {
   await mkdir(directory, { recursive: true });
   await removeExpired(directory, now);
   const file = requestFile(directory, sessionId);
   const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ sessionId, projectRoot, initiative, gateIds, maxWaitMinutes, requestedAt: new Date(now).toISOString() })}\n`);
+  await writeFile(temporary, `${JSON.stringify({ sessionId, projectRoot, ...(artifact ? { artifact, ...(scope === undefined ? {} : { scope }) } : { initiative }), gateIds, maxWaitMinutes, requestedAt: new Date(now).toISOString() })}\n`);
   await rename(temporary, file);
 }
 
@@ -47,7 +48,8 @@ export async function takeWaitRequest({ sessionId, directory = gateWaitDirectory
   try {
     const request = JSON.parse(await readFile(taken, "utf8"));
     if (request.sessionId !== sessionId || now - Date.parse(request.requestedAt) > WAIT_REQUEST_TTL_MS) return null;
-    if (!Array.isArray(request.gateIds) || !request.gateIds.length || typeof request.initiative !== "string" || typeof request.projectRoot !== "string") return null;
+    const named = typeof request.initiative === "string" || typeof request.artifact === "string";
+    if (!Array.isArray(request.gateIds) || !request.gateIds.length || !named || typeof request.projectRoot !== "string") return null;
     return request;
   } catch {
     return null;

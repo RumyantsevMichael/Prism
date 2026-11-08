@@ -3,6 +3,10 @@ import path from "node:path";
 // A store keeps descriptive artifacts under artifacts/, in one folder per scope, and inside it one fixed folder or file per kind,
 // so checkouts that configure different paths share one layout, while the configured path stays each artifact's address.
 export const ARTIFACTS = "artifacts";
+// Beside artifacts/, a store keeps each requirement's and ADR's status record at artifact-status/<location>/status.json and the bytes a person accepted under their hash in artifact-accepted/.
+export const ARTIFACT_STATUS = "artifact-status";
+export const ARTIFACT_ACCEPTED = "artifact-accepted";
+export const STATUS_RECORD_NAME = "status.json";
 const KIND_LOCATIONS = Object.freeze({ requirements: "requirements", adrs: "adrs", plans: "plans", glossary: "glossary.md", roadmap: "roadmap.md" });
 
 export const WORKSPACE_SCOPE = Object.freeze({ kind: "workspace", label: "workspace" });
