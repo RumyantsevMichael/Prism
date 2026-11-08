@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import test from "node:test";
@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { checkout, eventually, isolateGit, notes, ok, server, syncedWorkspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// A saved version is named by the next tool result that a server writes to its host, so a result that is never written, as for a cancelled wait or a wait the session's end aborts,
+// A saved version is named by the next tool result that a server writes to its host, so a result that is never written, as for a cancelled call or a wait the session's end aborts,
 // neither marks it named nor clears its pending notice.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
@@ -89,4 +89,35 @@ test("a wait that the session's end aborts is never written, so the next server 
   const named = notes(await later.call("get_artifact", { path: "docs/plans" }));
   assert.ok(named.includes("slice.md"), named);
   await eventually(async () => (await pending(place.storeB)).length === 0, 5000, "the written result clearing the notice it carried");
+});
+
+test("any call that the host cancels before its result is written gets no response and leaves the saved version pending for the next result", async (context) => {
+  const place = await syncedWorkspace(context);
+  const b = { ...place.b, sync: "on" };
+  const root = await checkout(b, "web");
+  const onB = waitingServer(context, b, root);
+  await onB.response(onB.request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claude-code", version: "2.1.296" } }));
+  await onB.call("get_artifact", { path: "docs/plans" });
+  // A sync of a server that has since stopped saved b's version, and its notice is pending.
+  const stamp = new Date(Date.now() - 60000).toISOString().replace(/[:.]/g, "-");
+  const savedAs = path.join(place.storeB, ".prism-sync", "conflicts", stamp, "artifacts", "plans", "foo", "slice.md");
+  await mkdir(path.dirname(savedAs), { recursive: true });
+  await writeFile(savedAs, BASE);
+  await mkdir(path.join(place.storeB, ".prism-sync", "notices"), { recursive: true });
+  await writeFile(path.join(place.storeB, ".prism-sync", "notices", stamp), "{}\n");
+  for (const name of ["get_artifact", "list_reviewable_artifacts"]) {
+    const cancelled = onB.request("tools/call", { name, arguments: { projectRoot: root, path: "docs/plans" } });
+    onB.send({ method: "notifications/cancelled", params: { requestId: cancelled, reason: "user pressed Esc" } });
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    assert.equal(onB.messages.some((message) => message.id === cancelled), false, `a cancelled ${name} gets no response`);
+    assert.equal((await pending(place.storeB)).length, 1, `the cancelled ${name} cleared no pending notice`);
+  }
+  const named = notes(await onB.call("get_artifact", { path: "docs/plans" }));
+  assert.ok(named.includes(savedAs), named);
+  await eventually(async () => (await pending(place.storeB)).length === 0, 5000, "the written result clearing the notice it carried");
+  // A cancel that arrives after a result was written changes nothing for the next call.
+  const answered = onB.request("tools/call", { name: "get_artifact", arguments: { projectRoot: root, path: "docs/plans" } });
+  await onB.response(answered);
+  onB.send({ method: "notifications/cancelled", params: { requestId: answered } });
+  assert.equal(notes(await onB.call("get_artifact", { path: "docs/plans" })).includes(savedAs), false, "the saved version is named once");
 });

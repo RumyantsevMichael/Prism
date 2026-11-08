@@ -3,6 +3,7 @@ import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "n
 import path from "node:path";
 import { ARTIFACTS, letterCaseKey, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, treeEntries, treeProblems } from "./git-objects.mjs";
 import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
 import { withoutCredentials } from "./remote-url.mjs";
 
@@ -542,7 +543,7 @@ async function commitLocal(base, author, run) {
     const tree = await writeTree(base, entries);
     const commit = (await required(base, [...author, "commit-tree", tree, ...(previous ? ["-p", previous] : []), "-m", "prism: update records", "-m", listed])).text;
     // The objects a commit adds pass the check that every other machine's fetch applies before the branch takes them, so the branch's history never holds one that no other machine could fetch.
-    const refused = await refusedObjects(base, commit, previous ? [previous] : [], { named: false });
+    const refused = await refusedObjects(base, commit, previous ? [previous] : [], { pushing: false });
     if (refused) {
       const culprits = changed.filter((file) => files.has(file) && refused.objects.includes(files.get(file).object) && (refused.places.get(files.get(file).object)?.includes(file) ?? true));
       if (!culprits.length) throw new Error(`Git's object check, which every other machine's fetch applies, refuses the store's new commit, so it was not made: ${refused.message}`);
@@ -560,22 +561,22 @@ async function commitLocal(base, author, run) {
 
 /**
  * The objects that a commit holds and the known commits do not, checked as strictly as a fetch with fetch.fsckObjects, or a clone with transfer.fsckObjects, checks what it receives:
- * null when Git accepts them, else { message, objects } with Git's reasons and the objects they name.
- * The objects are packed into the sync folder and indexed there with index-pack --strict, which every such fetch and clone runs, so a refusal here is one that another machine would meet.
+ * null when Git accepts them, else { message, objects, places } with Git's reasons, the objects they name, and where the new trees hold them.
+ * Git's own rules for commits and trees run first, as git-objects.mjs ports them, so the check never depends on how much this machine's Git checks: see refusedHistory.
+ * The objects are then packed into the sync folder and indexed there with index-pack --strict, which every such fetch and clone runs, so a refusal here is one that another machine would meet.
  * The pack leaves out blobs, which the store already holds: the check reads every blob it inspects by name, such as a .gitattributes, from the store, and checks no other blob's content.
  * Git before 2.43 packs with a filter only to standard output, so the pack reaches its file from there.
- * Older Git checks less: before 2.39.1 no .gitattributes, before 2.30.1 fewer .gitmodules URLs, and before 2.43 fewer of the names it reads as either file,
- * so the sync checks, whatever this machine's Git, every tree entry that a new tree holds under such a name, unless named is false: see refusedAttributes.
- * A local commit passes false, since it adds no such entry of its own, and the push of a branch that holds one is refused.
+ * A local commit passes pushing false, since it adds only files the store shares, which carry no name Git reads as .gitattributes or .gitmodules and are no links,
+ * and the push of a branch that holds such an entry is refused.
  */
-async function refusedObjects(base, tip, known, { named = true } = {}) {
+async function refusedObjects(base, tip, known, { pushing = true } = {}) {
   const folder = syncPath(base, "object-check");
   await rm(folder, { recursive: true, force: true });
   await mkdir(folder, { recursive: true });
   try {
     const revisions = `${tip}\n${known.map((commit) => `^${commit}\n`).join("")}`;
-    const attributes = await refusedAttributes(base, revisions, named);
-    if (attributes.reasons.length) return refusal(attributes.reasons, attributes.places);
+    const history = await refusedHistory(base, revisions, pushing);
+    if (history.reasons.length) return refusal(history.reasons, history.places);
     const pack = (await required(base, ["pack-objects", "--revs", "--stdout", "--quiet", "--filter=blob:none"], { input: revisions, maxBuffer: PACK_BYTES_MAX })).stdout;
     await writeFile(path.join(folder, "objects.pack"), pack);
     const checked = await git(base, ["index-pack", "--strict", "-o", path.join(folder, "objects.idx"), path.join(folder, "objects.pack")]);
@@ -600,102 +601,15 @@ const refusal = (reasons, places = new Map()) => {
 const ATTRIBUTES_LINE_MAX = 2048;
 const ATTRIBUTES_BYTES_MAX = 100 * 1024 * 1024;
 
-// Code points that HFS+ ignores in a name, as Git 2.43's next_hfs_char in utf8.c lists them.
-const HFS_IGNORED = new Set([0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x206a, 0x206b, 0x206c, 0x206d, 0x206e, 0x206f, 0xfeff]);
-
 /**
- * The code point at a byte of a name and its length, as Git 2.43's pick_one_utf8_char in utf8.c reads it: the name ends at its last byte as at a zero byte,
- * and a byte that begins no UTF-8 character, an overlong form, a surrogate, a code point above U+10FFFF, U+FFFE, and U+FFFF are all malformed, which is null.
- */
-function utf8CodePoint(bytes, at) {
-  const byte = (offset) => bytes[at + offset] ?? 0;
-  const s0 = byte(0);
-  const follows = (count) => Array.from({ length: count }, (_, offset) => byte(offset + 1)).every((next) => (next & 0xc0) === 0x80);
-  if (s0 < 0x80) return { code: s0, size: 1 };
-  if ((s0 & 0xe0) === 0xc0) return !follows(1) || (s0 & 0xfe) === 0xc0 ? null : { code: ((s0 & 0x1f) << 6) | (byte(1) & 0x3f), size: 2 };
-  if ((s0 & 0xf0) === 0xe0) {
-    if (!follows(2) || (s0 === 0xe0 && (byte(1) & 0xe0) === 0x80) || (s0 === 0xed && (byte(1) & 0xe0) === 0xa0) || (s0 === 0xef && byte(1) === 0xbf && (byte(2) & 0xfe) === 0xbe)) return null;
-    return { code: ((s0 & 0x0f) << 12) | ((byte(1) & 0x3f) << 6) | (byte(2) & 0x3f), size: 3 };
-  }
-  if ((s0 & 0xf8) === 0xf0) {
-    if (!follows(3) || (s0 === 0xf0 && (byte(1) & 0xf0) === 0x80) || (s0 === 0xf4 && byte(1) > 0x8f) || s0 > 0xf4) return null;
-    return { code: ((s0 & 0x07) << 18) | ((byte(1) & 0x3f) << 12) | ((byte(2) & 0x3f) << 6) | (byte(3) & 0x3f), size: 4 };
-  }
-  return null;
-}
-
-/**
- * Whether a name's bytes are "." and the needle as Git 2.43's is_hfs_dot_generic in utf8.c reads them: HFS+'s ignored code points anywhere, ASCII letters in any case,
- * and after the needle the name's end, a malformed byte, or a folder separator, which is "/" and, on Git for Windows, "\".
- */
-function hfsDotName(bytes, needle) {
-  let at = 0;
-  const next = () => {
-    for (;;) {
-      const read = utf8CodePoint(bytes, at);
-      if (!read) return 0;
-      at += read.size;
-      if (!HFS_IGNORED.has(read.code)) return read.code;
-    }
-  };
-  if (next() !== 0x2e) return false;
-  for (const letter of needle) {
-    const code = next();
-    if (code > 127 || String.fromCharCode(code).toLowerCase() !== letter) return false;
-  }
-  const after = next();
-  return after === 0 || after === 0x2f || after === 0x5c;
-}
-
-/**
- * Whether a name's bytes are one that Git 2.43's is_ntfs_dot_generic in path.c reads as "." and the needle: the needle in any ASCII letter case,
- * a short name of the needle's first six letters followed by "~1" to "~4", or a fall-back short name of up to six letters of shortPrefix, a "~", and digits, eight bytes in all,
- * each then followed only by spaces and dots up to the name's end or a colon.
- */
-function ntfsDotName(bytes, needle, shortPrefix) {
-  const byte = (at) => bytes[at] ?? 0;
-  const lower = (code) => code >= 0x41 && code <= 0x5a ? code + 0x20 : code;
-  const sameLetters = (from, text) => [...text].every((letter, offset) => lower(byte(from + offset)) === letter.charCodeAt(0));
-  const onlySpacesAndPeriods = (at) => {
-    for (;;) {
-      const code = byte(at++);
-      if (code === 0 || code === 0x3a) return true;
-      if (code !== 0x20 && code !== 0x2e) return false;
-    }
-  };
-  if (byte(0) === 0x2e && sameLetters(1, needle)) return onlySpacesAndPeriods(needle.length + 1);
-  if (sameLetters(0, needle.slice(0, 6)) && byte(6) === 0x7e && byte(7) >= 0x31 && byte(7) <= 0x34) return onlySpacesAndPeriods(8);
-  let at = 0;
-  for (let sawTilde = false; at < 8; at++) {
-    const code = byte(at);
-    if (code === 0) return false;
-    if (sawTilde) { if (code < 0x30 || code > 0x39) return false; }
-    else if (code === 0x7e) {
-      at += 1;
-      if (byte(at) < 0x31 || byte(at) > 0x39) return false;
-      sawTilde = true;
-    } else if (at >= 6 || code & 0x80 || lower(code) !== shortPrefix.charCodeAt(at)) return false;
-  }
-  return onlySpacesAndPeriods(at);
-}
-
-/**
- * Whether a tree entry's name is one that Git 2.43's object check reads as .gitattributes or .gitmodules on some machine, as is_hfs_dotgitattributes, is_ntfs_dotgitattributes,
- * is_hfs_dotgitmodules, and is_ntfs_dotgitmodules match its bytes, such as .GitModules, .gitattributes followed by U+200C, U+FFFE, or a byte that is not UTF-8, or GITATT~1 and gi7eba~9.
- * A store shares no .gitmodules and holds a .gitattributes only as the file at its root, so every other entry with such a name, of any mode, is one no store may hold,
- * whatever this machine's Git checks of it.
- */
-function gitFileName(bytes) {
-  return hfsDotName(bytes, "gitattributes") || ntfsDotName(bytes, "gitattributes", "gi7d29") || hfsDotName(bytes, "gitmodules") || ntfsDotName(bytes, "gitmodules", "gi7eba");
-}
-
-/**
- * The reasons, in the words of Git 2.43's object check, that the trees new to the known commits hold a .gitattributes that check refuses: one that is no blob or is missing,
- * one over 100 MiB, or one with a line of 2048 bytes or more before its first zero byte, whether its blob is new or already in the store's history: { reasons, places }.
- * Only a regular file named exactly .gitattributes in a commit's root tree is read so; when named is true, every other entry with a name that gitFileName matches,
+ * What the commits and trees new to the known commits hold that some supported Git's checked fetch refuses, in the words of Git's object check: { reasons, places }.
+ * Every commit and every tree is checked by Git's own rules as git-objects.mjs ports them, whatever this machine's Git checks,
+ * and, when pushing is true, every link those trees hold by the target rules of the Git releases that checked targets.
+ * A .gitattributes is refused when it is no blob or is missing, is over 100 MiB, or has a line of 2048 bytes or more before its first zero byte, whether its blob is new or already in the store's history.
+ * Only a regular file named exactly .gitattributes in a commit's root tree is read so; when pushing is true, every other entry with a name that gitFileName matches,
  * such as a folder named .gitattributes, a link, a .gitmodules, or one in a folder, is a reason too, so no Git that checks less than 2.43 lets such a history be pushed.
  */
-async function refusedAttributes(base, revisions, named) {
+async function refusedHistory(base, revisions, pushing) {
   const output = (await required(base, ["rev-list", "--objects", "--stdin"], { input: revisions, maxBuffer: PACK_BYTES_MAX })).stdout;
   // Each line is an object id, followed for a tree or a blob by a space and the path it was first found at.
   const where = new Map();
@@ -711,49 +625,68 @@ async function refusedAttributes(base, revisions, named) {
   if (!where.size) return none;
   const types = await objectInfo(base, [...where.keys()]);
   const trees = [...where.keys()].filter((object) => types.get(object)?.type === "tree");
-  const commits = [...where.keys()].filter((object) => types.get(object)?.type === "commit");
-  const roots = new Set([...(await objectContents(base, commits)).values()].map((contents) => /^tree ([0-9a-f]+)\n/.exec(contents.toString("latin1"))?.[1]).filter(Boolean));
+  const roots = new Set();
+  const reasons = [];
+  const places = new Map();
+  const place = (tree, name) => where.get(tree) ? `${where.get(tree)}/${name}` : name;
+  const refuse = (object, reason, at = []) => { reasons.push(`object ${object}: ${reason}`); if (at.length) places.set(object, [...(places.get(object) ?? []), ...at]); };
+  for (const [commit, contents] of await objectContents(base, [...where.keys()].filter((object) => types.get(object)?.type === "commit"))) {
+    const problem = commitProblem(contents, commit.length);
+    if (problem) refuse(commit, `${problem.id}: ${problem.text}`);
+    const tree = /^tree ([0-9a-f]+)\n/.exec(contents.toString("latin1"))?.[1];
+    if (tree) roots.add(tree);
+  }
   const found = new Map();
   const misnamed = new Map();
+  const links = new Map();
   for (const [tree, contents] of await objectContents(base, trees)) {
     const size = tree.length / 2;
-    for (let at = 0; at < contents.length;) {
-      const space = contents.indexOf(32, at);
-      const end = contents.indexOf(0, space);
-      if (space < 0 || end < 0) break;
-      const mode = contents.subarray(at, space).toString("latin1");
-      const bytes = contents.subarray(space + 1, end);
-      const name = pathOfBytes(bytes);
-      const object = contents.subarray(end + 1, end + 1 + size).toString("hex");
-      if (gitFileName(bytes)) {
-        const place = where.get(tree) ? `${where.get(tree)}/${name}` : name;
-        if (roots.has(tree) && name === ".gitattributes" && FILE_MODES.has(mode)) found.set(object, [...(found.get(object) ?? []), ".gitattributes"]);
-        else if (named) misnamed.set(tree, [...(misnamed.get(tree) ?? []), place]);
+    for (const problem of treeProblems(contents, size)) {
+      // A name too long for Git is shown by its first characters only.
+      const shown = problem.names.map((name) => name.length > STORE_NAME_BYTES_MAX ? `${pathOfBytes(name.subarray(0, 64))}…` : pathOfBytes(name));
+      refuse(tree, `${problem.id}: ${problem.text}`, shown.length ? [...new Set(shown)].map((name) => place(tree, name)) : [where.get(tree) || "/"]);
+    }
+    for (const entry of treeEntries(contents, size)) {
+      const name = pathOfBytes(entry.name);
+      if (pushing && isLinkMode(entry.mode)) links.set(entry.object, [...(links.get(entry.object) ?? []), place(tree, name)]);
+      if (gitFileName(entry.name)) {
+        if (roots.has(tree) && name === ".gitattributes" && FILE_MODES.has(entry.modeText)) found.set(entry.object, [...(found.get(entry.object) ?? []), ".gitattributes"]);
+        else if (pushing) misnamed.set(tree, [...(misnamed.get(tree) ?? []), place(tree, name)]);
       }
-      at = end + 1 + size;
     }
   }
-  const reasons = [...misnamed].map(([tree, places]) => `object ${tree}: ${places.map(shownPath).join(", ")}: a name that Git reads as .gitattributes or .gitmodules, which a store holds only as the file .gitattributes at its root`);
-  if (!found.size) return { reasons, places: misnamed };
-  const blobs = await objectInfo(base, [...found.keys()]);
+  for (const [tree, at] of misnamed) refuse(tree, `${at.map(shownPath).join(", ")}: a name that Git reads as .gitattributes or .gitmodules, which a store holds only as the file .gitattributes at its root`, at);
+  const blobs = found.size || links.size ? await objectInfo(base, [...found.keys(), ...links.keys()]) : new Map();
   const readable = [];
   for (const object of found.keys()) {
     const info = blobs.get(object);
-    if (!info) reasons.push(`object ${object}: gitattributesMissing: unable to read .gitattributes blob`);
-    else if (info.type !== "blob") reasons.push(`object ${object}: gitattributesBlob: non-blob found at .gitattributes`);
-    else if (info.size > ATTRIBUTES_BYTES_MAX) reasons.push(`object ${object}: gitattributesLarge: .gitattributes too large to parse`);
+    if (!info) refuse(object, "gitattributesMissing: unable to read .gitattributes blob", found.get(object));
+    else if (info.type !== "blob") refuse(object, "gitattributesBlob: non-blob found at .gitattributes", found.get(object));
+    else if (info.size > ATTRIBUTES_BYTES_MAX) refuse(object, "gitattributesLarge: .gitattributes too large to parse", found.get(object));
     else readable.push(object);
   }
   for (const [object, contents] of await objectContents(base, readable)) {
     const text = contents.includes(0) ? contents.subarray(0, contents.indexOf(0)) : contents;
     for (let at = 0; at < text.length;) {
       const end = text.indexOf(10, at) < 0 ? text.length : text.indexOf(10, at);
-      if (end - at >= ATTRIBUTES_LINE_MAX) { reasons.push(`object ${object}: gitattributesLineLength: .gitattributes has too long lines to parse`); break; }
+      if (end - at >= ATTRIBUTES_LINE_MAX) { refuse(object, "gitattributesLineLength: .gitattributes has too long lines to parse", found.get(object)); break; }
       at = end + 1;
     }
   }
-  const refused = new Set(reasons.map((reason) => reason.split(" ")[1].slice(0, -1)));
-  return { reasons, places: new Map([...misnamed, ...[...found].filter(([object]) => refused.has(object))]) };
+  // Git 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, and 2.45.1 check the target of every link a tree they receive holds, though a store shares no link.
+  const targets = [];
+  for (const [object, at] of links) {
+    const info = blobs.get(object);
+    if (!info) refuse(object, "symlinkTargetMissing: unable to read <symlink-target> blob", at);
+    else if (info.type !== "blob") refuse(object, "symlinkTargetBlob: non-blob found at <symlink-target>", at);
+    else if (info.size > LINK_TARGET_BYTES_MAX) refuse(object, "symlinkTargetLength: symlink target too long", at);
+    else targets.push(object);
+  }
+  for (const [object, contents] of await objectContents(base, targets)) {
+    const problem = linkTargetProblem(contents);
+    if (problem) refuse(object, `${problem.id}: ${problem.text}`, links.get(object));
+  }
+  return { reasons, places };
 }
 
 // The type and size of each object the store holds: Map(object, { type, size }), without the ones it lacks.

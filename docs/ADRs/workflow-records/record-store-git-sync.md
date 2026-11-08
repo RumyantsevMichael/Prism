@@ -59,6 +59,7 @@ A record written or locked while a merge would replace it keeps the branch where
 A record that stays locked through every attempt delays the merge to a later sync, which the status reports as `merge_failed`.
 A leftover Git lock in the store stops syncing with `git_failed` until a person removes it, because Prism never deletes Git's locks.
 The sync and the first clone of a remote store use only commands and options that Git 2.25 has, and on an older Git every record operation of a store that syncs, or of a remote store, fails with `store_unavailable`, naming both versions.
+A push MUST NOT send a commit or a tree that the checked fetch of any supported Git release refuses, so the sync applies Git's own commit and tree checks itself, ported from Git's source, rather than relying on how much this machine's Git checks.
 
 ## Mechanism
 
@@ -86,6 +87,7 @@ Every sync writes its outcome, ahead and behind counts, and saved conflicts to a
 A sync that saves local versions, of records, of [artifacts](store-artifacts.md), or of a store file it had withheld, first writes a pending notice for that save under `.prism-sync/notices/`, then moves the copies to `.prism-sync/conflicts/`.
 Each server remembers the stores it synced or pulled, and the next tool result it writes to its host names each saved version that it has not named yet and that was saved since it started or still has a pending notice, artifacts by their path in the checkout.
 Writing that result clears the notices it carried, so a server started later names a version only when no written result has named it, and a result that is never written, such as a cancelled call's, clears nothing.
+A call that the host cancels before its result is written gets no response, as MCP asks of a cancelled request, so it takes no notes and clears nothing.
 
 ## Decision Log
 
@@ -94,3 +96,4 @@ Writing that result clears the notices it carried, so a server started later nam
 2026-11-02: A store cloned from an empty remote reported `ok` without pushing, because its upstream branch did not exist yet; a sync now pushes a branch whose upstream the remote lacks, a managed clone without an upstream pushes its branch with the upstream set, and status messages drop the user information of any URL.
 2026-11-03: An update that takes or releases a [slice claim](slice-claims.md) syncs at once and waits for the outcome instead of the debounced sync; claim records have no structural merge, so the upstream version wins, and a claim record saved aside is reported through the claim's refusal or its holder's lost-claim notice instead of as a saved record.
 2026-11-08: A server that stopped before naming a saved version, or a cancelled call that took the notes it never sent, left that version named by no tool result; saved versions now stay pending under `.prism-sync/notices/` until a result written to the host names them.
+2026-11-08: A push from an older Git sent objects that a newer Git's checked fetch refuses, such as a tree entry name over 4096 bytes, and a cancelled call other than a wait still wrote a result that the host ignores; the sync now applies Git's own commit and tree checks itself, and no cancelled call gets a response.

@@ -1244,6 +1244,11 @@ if (process.env.CLAUDE_PROJECT_DIR) {
   reviewServers.startApp();
 }
 
+// The ids of the tool calls in progress, and of those the host cancelled: MCP asks a receiver not to respond to a cancelled request, and the host ignores a response that arrives after its cancel,
+// so a call cancelled before its result is written gets no response, and the saved versions its notes would name stay pending for the next result the host reads.
+const callsInProgress = new Set();
+const cancelledCalls = new Set();
+
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on("line", async (line) => {
   if (!line.trim()) {
@@ -1263,23 +1268,33 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
+      callsInProgress.add(request.id);
       const meta = request.params?._meta;
       const value = await withCallSession(meta, () => callTool(request.params?.name, request.params?.arguments, meta, request.id));
-      // A cancelled request gets no response, as the MCP cancellation rules require, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
-      if (value.structuredContent?.status === "cancelled") return;
+      // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
+      if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;
       if (closing) { await result(request.id, value); return; }
       const noted = await withRecordNotes(value, request.params?.arguments);
+      // A cancel that arrived while the notes were taken still stops the result, and nothing runs between this check and the write.
+      if (cancelledCalls.has(request.id)) { noted.unwritten(); return; }
       if (await result(request.id, noted.value) && !closing) await noted.written();
       else noted.unwritten();
     } else if (request.method === "notifications/cancelled") {
-      pendingWaits.get(request.params?.requestId)?.abort();
+      const id = request.params?.requestId;
+      if (callsInProgress.has(id)) cancelledCalls.add(id);
+      pendingWaits.get(id)?.abort();
     } else if (request.id !== undefined) {
       failure(request.id, -32601, `Method not found: ${request.method}`);
     }
   } catch (error) {
-    if (request?.id !== undefined) {
+    if (request?.id !== undefined && !cancelledCalls.has(request.id)) {
       const data = stateErrorData(error);
       failure(request.id, -32603, errorMessage(error, data), data);
+    }
+  } finally {
+    if (request?.method === "tools/call") {
+      callsInProgress.delete(request.id);
+      cancelledCalls.delete(request.id);
     }
   }
 });

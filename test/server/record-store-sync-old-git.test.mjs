@@ -19,7 +19,8 @@ test.after(() => rm(environment, { recursive: true, force: true }));
 const git = (cwd, args, input) => execFileSync("git", ["-C", cwd, ...args], { input, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
 
 // A git that behaves as an older release: --version reports FAKE_GIT_VERSION when it is set, pack-objects refuses --filter without --stdout as Git up to 2.42 does,
-// and index-pack --strict leaves out the .gitattributes checks, which Git before 2.39.1 does not have, and the .gitmodules URL check, which Git before 2.30.1 makes of fewer URLs.
+// and index-pack --strict leaves out the .gitattributes checks, which Git before 2.39.1 does not have, the .gitmodules URL check, which Git before 2.30.1 makes of fewer URLs,
+// the check of a tree entry name over 4096 bytes, which Git before 2.43 does not have, and any further checks that IGNORE_CHECKS lists, as an older release lacks them.
 const realGit = execFileSync("sh", ["-c", "command -v git"]).toString().trim();
 const wrapper = path.join(environment, "bin", "git");
 await mkdir(path.dirname(wrapper), { recursive: true });
@@ -28,20 +29,20 @@ if [[ "$1" == "--version" && -n "$FAKE_GIT_VERSION" ]]; then echo "git version $
 if [[ " $* " == *" pack-objects "* && " $* " == *" --filter="* && " $* " != *" --stdout "* ]]; then echo "fatal: cannot use --filter without --stdout" >&2; exit 128; fi
 args=("$@")
 if [[ " $* " == *" index-pack "* ]]; then
-  for i in "\${!args[@]}"; do [[ "\${args[$i]}" == "--strict" ]] && args[$i]="--strict=gitattributesLineLength=ignore,gitattributesLarge=ignore,gitattributesMissing=ignore,gitattributesBlob=ignore,gitmodulesUrl=ignore"; done
+  for i in "\${!args[@]}"; do [[ "\${args[$i]}" == "--strict" ]] && args[$i]="--strict=gitattributesLineLength=ignore,gitattributesLarge=ignore,gitattributesMissing=ignore,gitattributesBlob=ignore,gitmodulesUrl=ignore,largePathname=ignore\${IGNORE_CHECKS:+,$IGNORE_CHECKS}"; done
 fi
 exec "${realGit}" "\${args[@]}"
 `);
 await chmod(wrapper, 0o755);
-const oldGit = (version) => ({ ...process.env, PATH: `${path.dirname(wrapper)}:${process.env.PATH}`, ...(version ? { FAKE_GIT_VERSION: version } : {}) });
+const oldGit = (version, ignored) => ({ ...process.env, PATH: `${path.dirname(wrapper)}:${process.env.PATH}`, ...(version ? { FAKE_GIT_VERSION: version } : {}), ...(ignored ? { IGNORE_CHECKS: ignored } : {}) });
 
 // Run a script in a process whose git is the older one, and return what it printed as JSON.
-function withOldGit(script, version) {
-  const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], { env: oldGit(version), encoding: "utf8" });
+function withOldGit(script, version, ignored) {
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], { env: oldGit(version, ignored), encoding: "utf8" });
   assert.equal(child.status, 0, child.stderr);
   return JSON.parse(child.stdout);
 }
-const syncWithOldGit = (store, version) => withOldGit(`const sync = await import(${JSON.stringify(SYNC)}); sync.configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 }); process.stdout.write(JSON.stringify(await sync.syncRecordStoreNow(${JSON.stringify(store)})));`, version);
+const syncWithOldGit = (store, version, ignored) => withOldGit(`const sync = await import(${JSON.stringify(SYNC)}); sync.configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 }); process.stdout.write(JSON.stringify(await sync.syncRecordStoreNow(${JSON.stringify(store)})));`, version, ignored);
 
 async function stores(context) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-sync-old-git-")));
@@ -127,6 +128,71 @@ for (const [label, name, content, mode] of MISNAMED) {
     assert.ok(mode ? status.message.includes("gitattributesSymlink") || status.message.includes("reads as .gitattributes or .gitmodules") : status.message.includes("reads as .gitattributes or .gitmodules"), status.message);
     assert.equal(git(remote, ["rev-parse", "main"]), before, "nothing was pushed");
     checkedClone(remote, path.join(parent, "fresh"));
+  });
+}
+
+// Objects that some Git's checked fetch refuses although an older supported Git takes them, which the sync's own port of Git's checks refuses whatever this machine's Git checks.
+// Each hand history ends in a commit that drops the object again, or keeps it at the tip, and the old Git leaves out exactly the check that the release lacks.
+const longName = Buffer.from(`notes/${"n".repeat(5000)}.md`);
+
+// Point the store's branch at a commit made by hand on top of HEAD, then, unless kept, at one more that restores HEAD's tree.
+function handCommit(store, tree, { kept = false, author } = {}) {
+  const head = git(store, ["rev-parse", "HEAD"]);
+  const header = `tree ${tree}\nparent ${head}\nauthor ${author ?? "Prism Test <test@example.invalid> 1700000000 +0000"}\ncommitter Prism Test <test@example.invalid> 1700000000 +0000\n\nby hand\n`;
+  const holding = git(store, ["hash-object", "--literally", "-t", "commit", "-w", "--stdin"], header);
+  git(store, ["update-ref", "HEAD", kept ? holding : git(store, ["commit-tree", git(store, ["rev-parse", "HEAD^{tree}"]), "-p", holding, "-m", "removed by hand"])]);
+}
+
+// A tree holding notes/a, notes/a-b, and the folder notes/a, which Git before 2.27 reads as sorted and later Git as a duplicate, since a folder sorts as its name with "/" added.
+function fileAndFolderTree(store) {
+  const blob = git(store, ["hash-object", "-w", "--no-filters", "--stdin"], "notes\n");
+  const inner = git(store, ["mktree"], `100644 blob ${blob}\tx\n`);
+  const notes = git(store, ["mktree"], `100644 blob ${blob}\ta\n100644 blob ${blob}\ta-b\n040000 tree ${inner}\ta\n`);
+  return git(store, ["mktree"], `${git(store, ["ls-tree", "HEAD"])}\n040000 tree ${notes}\tnotes\n`);
+}
+
+function longNameTree(store) {
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(store, ".git", "hand-index") };
+  const run = (args, input) => execFileSync("git", ["-C", store, ...args], { input, env, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
+  const blob = run(["hash-object", "-w", "--no-filters", "--stdin"], "notes\n");
+  run(["read-tree", "HEAD"]);
+  run(["update-index", "-z", "--index-info"], Buffer.concat([Buffer.from(`100644 ${blob}\t`), longName, Buffer.from([0])]));
+  return run(["write-tree"]);
+}
+
+const STRICTER = [
+  ["a tree entry name over 4096 bytes in its history, which Git 2.43 refuses", (store) => handCommit(store, longNameTree(store)), "largePathname", ""],
+  ["a tree entry name over 4096 bytes at its tip, which Git 2.43 refuses", (store) => handCommit(store, longNameTree(store), { kept: true }), "largePathname", ""],
+  ["a file and a folder of one name that are not adjacent, which Git 2.27 refuses", (store) => handCommit(store, fileAndFolderTree(store)), "duplicateEntries", "duplicateEntries=ignore"],
+  ["an author date after a carriage return, which Git 2.40 refuses", (store) => handCommit(store, git(store, ["rev-parse", "HEAD^{tree}"]), { author: "Prism Test <test@example.invalid> \r1700000000 +0000" }), "badDate", "badDate=ignore"]
+];
+
+for (const [label, make, reason, ignored] of STRICTER) {
+  test(`on a Git that lacks the check, a sync refuses to push a hand commit with ${label}, and every checked clone still takes the remote`, async (context) => {
+    const { parent, remote, storeB } = await stores(context);
+    const before = git(remote, ["rev-parse", "main"]);
+    make(storeB);
+    await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
+    const status = syncWithOldGit(storeB, undefined, ignored);
+    assert.equal(status.state, "merge_failed", JSON.stringify(status).slice(0, 2000));
+    assert.ok(status.message.includes("not pushed") && status.message.includes(reason), status.message.slice(0, 2000));
+    assert.ok(status.message.length < 4000, "a long name is shown by its first characters only");
+    assert.equal(git(remote, ["rev-parse", "main"]), before, "nothing was pushed");
+    checkedClone(remote, path.join(parent, "fresh"));
+  });
+}
+
+// Git 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1, and 2.45.1 refuse a link whose target leads into Git's folder or is longer than 260 bytes, which no other release checks.
+for (const [label, target, reason] of [["into Git's folder", "../.git/hooks/post-checkout", "symlinkPointsToGitDir"], ["into Git's folder by a Windows short name", "sub\\GIT~1\\hooks", "symlinkPointsToGitDir"], ["longer than 260 bytes", `${"t".repeat(300)}.md`, "symlinkTargetLength"]]) {
+  test(`a sync refuses to push a hand commit whose history holds a link ${label}, which some Git releases refuse, though this Git takes it`, async (context) => {
+    const { remote, storeB } = await stores(context);
+    const before = git(remote, ["rev-parse", "main"]);
+    handHistory(storeB, "notes/link", target, "120000");
+    await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
+    const status = syncWithOldGit(storeB);
+    assert.equal(status.state, "merge_failed", JSON.stringify(status));
+    assert.ok(status.message.includes(reason) && status.message.includes("\"notes/link\""), status.message);
+    assert.equal(git(remote, ["rev-parse", "main"]), before, "nothing was pushed");
   });
 }
 
