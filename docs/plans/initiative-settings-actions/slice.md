@@ -129,6 +129,7 @@ An index belongs to one checkout, so an index target exists only on the page of 
     A review server or app keeps only SHA-256 digests of the tokens it issued; the shared app keeps the digests of its newest 100 tokens in its private app directory, readable only by its user, and an app that starts from a handoff in which it reuses the viewer credential accepts them, while an app that starts any other way accepts none.
 39. A read-only tab shows the notice `This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.`, its action controls are disabled, and the same text is the `write_forbidden` message.
 40. A viewer stream `GET <base>/api/events?write=<token>` counts as writable when the token is a live write session, and when Prism decides whether to open a browser at a presentation, a session start, or `prism review`, it counts only writable viewer streams of the app, or of the session server in fallback, as connected tabs, keeping every other rule of that decision.
+    A presentation or session start request to the shared app that does not declare `acceptsGrant: true`, as one from an older release, gets no grant and is decided by the earlier rule that counts every connected viewer stream, so its read-only tabs still take its presentations (refined 2026-11-08 with the person's approval).
 
 ### What the page shows
 
