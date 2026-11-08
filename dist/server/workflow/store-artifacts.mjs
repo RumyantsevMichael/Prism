@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, rm, rmdir } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
-import { ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, artifactPathOf, collideInLetterCase, componentScope, holdsArtifactPaths, kindInScope, malformedArtifactName, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, artifactPathOf, collideInLetterCase, componentScope, holdsArtifactPaths, kindInScope, locationArtifact, malformedArtifactName, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
-import { resolveArtifactFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
+import { recordStoreOf, resolveArtifactFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
+import { pruneArtifactFolders, scheduleRecordSync } from "./record-store-sync.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
 
 // Agents read and write a workspace's descriptive artifacts in its record store through these tools, addressed by the project-relative path the checkout's configured paths give them.
@@ -413,28 +414,6 @@ async function checkLayout(seen, writes, state, names) {
 }
 
 /**
- * Files that a file manager writes into a folder on its own and writes again when it needs them: Finder's view settings.
- * A removal deletes them with the folder it emptied, so no folder lingers whose letter case a later create in another case would land in.
- * Only a name that the artifact name form refuses is among them, so no file that is or could be an artifact is ever deleted without an operation naming it:
- * Windows Explorer's Thumbs.db meets the name form, so it keeps its folder, and a later create in another letter case there is refused before any change.
- * Lock and temporary files are not among them, since one may belong to a lock or a write that another process holds now.
- */
-const FILE_MANAGER_FILES = new Set([".DS_Store"]);
-const prunable = (entry) => entry.isFile() && FILE_MANAGER_FILES.has(entry.name) && !wellFormedName(entry.name);
-
-// Remove the folders that a removal left empty, or holding only file manager files, up to the artifacts folder.
-async function pruneParents(base, target) {
-  for (let folder = path.dirname(target); folder !== base && folder.startsWith(`${base}${path.sep}`); folder = path.dirname(folder)) {
-    try {
-      const entries = await readdir(folder, { withFileTypes: true });
-      if (!entries.every(prunable)) return;
-      for (const entry of entries) await rm(path.join(folder, entry.name));
-      await rmdir(folder);
-    } catch { return; }
-  }
-}
-
-/**
  * The copy a move_scope moves: the one seen scope that holds the path, or, when several do, the one copy whose version is expectedVersion,
  * since move_scope's scope names where the artifact goes rather than which copy it comes from.
  */
@@ -584,8 +563,10 @@ async function applyOperations(seen, checked) {
   }
   for (const [target] of changed.filter(([, record]) => record === null)) {
     await rm(target, { force: true });
-    await pruneParents(seen.base, target);
+    await pruneArtifactFolders(seen.base, target);
   }
+  // A change syncs as a record write does, so it is committed and pushed without a further call; the sync stages artifacts only once this update releases the artifact lock.
+  if (changed.length && seen.store.sync) scheduleRecordSync(seen.store.base);
   return { artifacts };
 }
 
@@ -714,6 +695,26 @@ export async function writeStoreArtifact(projectRoot, file, decide, { follow = f
       return { written: true, scope: entry.scope, version: entry.version ?? null };
     });
   });
+}
+
+/**
+ * The artifact at a location below artifacts/ in the record store at storeBase, as the checkout at projectRoot names it: { path, scope },
+ * with path null when the checkout's store is another one or its configuration gives the location's kind no path.
+ * It reads only the configuration, so a sync's saved copy is named even while the store refuses other access.
+ */
+export async function artifactAtLocation(projectRoot, storeBase, location) {
+  const found = locationArtifact(location);
+  if (!found) return null;
+  const named = { path: null, scope: found.scope };
+  try {
+    const { kinds } = await configuration(projectRoot);
+    if ((await recordStoreOf(projectRoot)).base !== storeBase) return named;
+    const file = artifactPathOf(kinds, found.kind, found.rest);
+    const address = file === null ? null : artifactAddress(kinds, file);
+    return address?.kind === found.kind && address.rest === found.rest ? { ...named, path: file } : named;
+  } catch {
+    return named;
+  }
 }
 
 /** The artifacts that the seen scopes hold below a project-relative folder, "" for all, as { path, scope, kind } sorted by path and then scope label, without reading them. */

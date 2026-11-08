@@ -35,7 +35,7 @@ import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-disco
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
-import { ARTIFACT_TOOLS, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
+import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
 import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
 import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
@@ -1113,12 +1113,22 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
 // The first write after an upgrade moves files in the user's work tree, so its result says which, to commit on their own.
 const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
-// A sync that found the same record changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
-async function withRecordNotes(value) {
+// A saved artifact named as the checkout names it, by its path and scope label, or by its store location when the checkout gives it no path.
+async function savedArtifactLine(item, argumentsValue) {
+  const projectRoot = await requestedProjectRoot(argumentsValue ?? {}).catch(() => null);
+  const named = projectRoot ? await artifactAtLocation(projectRoot, item.store, item.location).catch(() => null) : null;
+  const where = named?.path ? `${named.path} in scope ${named.scope.label}` : `artifacts/${item.location} in the record store at ${item.store}${named ? `, scope ${named.scope.label}` : ""}`;
+  return `- ${where} (this machine's version: ${item.savedAs})`;
+}
+
+// A sync that found the same record, or the same lines of an artifact, changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
+async function withRecordNotes(value, argumentsValue) {
   const reports = takeMigrationReports();
-  const saved = await takeSavedConflicts().catch(() => []);
+  const taken = await takeSavedConflicts().catch(() => []);
+  const saved = taken.filter((item) => item.record);
+  const artifacts = taken.filter((item) => item.location);
   if (!Array.isArray(value?.content)) return value;
-  if (!reports.length && !saved.length) return value;
+  if (!reports.length && !taken.length) return value;
   const lines = [];
   for (const report of reports) {
     const into = report.store ? `the record store at ${report.store}` : ".prism";
@@ -1131,6 +1141,10 @@ async function withRecordNotes(value) {
   }
   if (saved.length) {
     lines.push(`Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, ...saved.map((item) => `- ${item.record} (this machine's version: ${item.savedAs})`));
+  }
+  if (artifacts.length) {
+    lines.push(`Store sync found ${plural(artifacts.length, "artifact")} whose same lines someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`);
+    for (const item of artifacts) lines.push(await savedArtifactLine(item, argumentsValue));
   }
   return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
 }
@@ -1232,7 +1246,7 @@ input.on("line", async (line) => {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
       const meta = request.params?._meta;
-      const value = await withRecordNotes(await withCallSession(meta, () => callTool(request.params?.name, request.params?.arguments, meta, request.id)));
+      const value = await withRecordNotes(await withCallSession(meta, () => callTool(request.params?.name, request.params?.arguments, meta, request.id)), request.params?.arguments);
       // A cancelled request gets no response, as the MCP cancellation rules require.
       if (value.structuredContent?.status !== "cancelled") {
         result(request.id, value);

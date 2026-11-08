@@ -100,5 +100,22 @@ export function artifactLocation(scope, { kind, rest }) {
   return path.posix.join(scopeFolder(scope), inScope);
 }
 
+/** The scope, kind, and rest of an artifact location below artifacts/, the inverse of artifactLocation: { scope, kind, rest }, or null for a location that names no artifact of a kind. */
+export function locationArtifact(location) {
+  const names = typeof location === "string" ? location.split("/") : [];
+  let scope = WORKSPACE_SCOPE, at = 0;
+  // No kind folder is named repositories or components, so a scope folder is told apart from a kind folder by these names alone.
+  if (names[0] === "repositories" && names.length > 2) {
+    if (names[2] === "components" && names.length > 4) { scope = componentScope(names[1], names[3]); at = 4; }
+    else { scope = repositoryScope(names[1]); at = 2; }
+  }
+  const [first, ...rest] = names.slice(at);
+  const kind = Object.keys(KIND_LOCATIONS).find((candidate) => KIND_LOCATIONS[candidate] === first);
+  if (!kind || !kindInScope(kind, scope)) return null;
+  const folder = !KIND_LOCATIONS[kind].endsWith(".md");
+  if (folder !== rest.length > 0) return null;
+  return { scope, kind, rest: folder ? rest.join("/") : null };
+}
+
 /** Whether an artifact kind may live in a scope: every kind in every scope, except the roadmap view, which lives only in the workspace scope. */
 export const kindInScope = (kind, scope) => kind !== "roadmap" || scope.kind === "workspace";

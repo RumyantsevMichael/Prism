@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, readFile, rm, rmdir } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { ARTIFACTS, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
@@ -47,6 +47,9 @@ const isRecordFile = (relative) => relative === "roadmap.json" || relative.start
 const isClaimFile = (relative) => /^initiatives\/[^/]+\/claims\/[^/]+\.json$/.test(relative);
 // A claim or a registration that lost a race is its holder's news, reported through the refusal or acceptance it causes, so no conflict list shows it.
 const isQuietConflict = (relative) => isClaimFile(relative) || isRegistrationFile(relative);
+// A person's artifact keeps the upstream version on a line conflict, as a record does, and its local version is saved and reported by its location.
+const isArtifactFile = (relative) => relative.startsWith(`${ARTIFACTS}/`);
+const isSavedFile = (relative) => isRecordFile(relative) || isArtifactFile(relative);
 const syncPath = (base, ...parts) => path.join(base, SYNC_DIRECTORY, ...parts);
 
 function gitEnvironment(extra = {}) {
@@ -128,10 +131,10 @@ const stampTime = (stamp) => Date.parse(stamp.replace(STAMP, "$1:$2:$3.$4Z"));
 // A claim or a registration that lost a race is reported through its refusal, lost-claim notice, or acceptance, so the store's status shows only other saved records.
 function settled(conflicts) {
   const shown = conflicts.filter((conflict) => !isQuietConflict(conflict.path));
-  return { state: shown.length ? "conflicts" : "ok", conflicts: shown, message: shown.length ? "Concurrent record changes were resolved for the upstream; the local versions are saved." : "" };
+  return { state: shown.length ? "conflicts" : "ok", conflicts: shown, message: shown.length ? "Concurrent changes to records or artifacts were resolved for the upstream; the local versions are saved." : "" };
 }
 
-async function savedFiles(directory) {
+async function savedFiles(directory, kept = isRecordFile) {
   const files = [];
   const visit = async (relative) => {
     let entries = [];
@@ -140,7 +143,7 @@ async function savedFiles(directory) {
       const child = relative ? `${relative}/${entry.name}` : entry.name;
       if (entry.isDirectory()) await visit(child);
       // A claim or a registration that lost to the upstream is reported by its own refusal, its holder's notice of a lost claim, or the next name check.
-      else if (entry.isFile() && isRecordFile(child) && !isQuietConflict(child)) files.push(child);
+      else if (entry.isFile() && kept(child) && !isQuietConflict(child)) files.push(child);
     }
   };
   await visit("");
@@ -169,7 +172,10 @@ export async function readSavedConflict(base, savedAs) {
   return saved === null ? null : { path: file, saved, current: await text(path.join(base, ...file.split("/"))) };
 }
 
-/** Local record versions that a sync saved because the upstream changed the same record, in stores this process uses, since this process started and not reported before. */
+/**
+ * Local versions that a sync saved because the upstream changed the same record or the same lines of an artifact, in stores this process uses, since this process started and not reported before:
+ * { record, savedAs, at } for a record, and { store, location, savedAs, at } for an artifact, whose location is its path below artifacts/ in the store at store.
+ */
 export async function takeSavedConflicts() {
   const found = [];
   for (const base of watched) {
@@ -181,7 +187,10 @@ export async function takeSavedConflicts() {
       const key = `${base}\0${stamp}`;
       if (!(at >= PROCESS_START) || reported.has(key)) continue;
       reported.add(key);
-      for (const file of await savedFiles(path.join(directory, stamp))) found.push({ record: `.prism/${file}`, savedAs: path.join(directory, stamp, file), at: new Date(at).toISOString() });
+      for (const file of await savedFiles(path.join(directory, stamp), isSavedFile)) {
+        const savedAs = path.join(directory, stamp, ...file.split("/"));
+        found.push(isArtifactFile(file) ? { store: base, location: file.slice(ARTIFACTS.length + 1), savedAs, at: new Date(at).toISOString() } : { record: `.prism/${file}`, savedAs, at: new Date(at).toISOString() });
+      }
     }
   }
   return found;
@@ -276,14 +285,20 @@ async function stage(base, artifacts) {
   if (leftOut.length) await required(base, ["--literal-pathspecs", "add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], { input: `${leftOut.join("\0")}\0` });
 }
 
-async function commitLocal(base, author) {
-  // An artifact update holds the store's artifact lock from its version checks to its last write, so staging under that lock never commits part of an update.
-  // While an update holds the lock longer than a merge waits for it, this commit leaves artifacts/ as committed and a later sync commits the whole update.
-  await holdLocks([path.join(base, ARTIFACTS)], () => stage(base, true)).catch(async (error) => {
-    if (error.code !== "lock_timeout") throw error;
-    scheduleRecordSync(base);
-    await stage(base, false);
-  });
+/**
+ * Commit the store's changes; run is one sync's state, whose artifacts is false once an update held the artifact lock when this sync came to stage it.
+ * An artifact update holds the store's artifact lock from its version checks to its last write, so staging under that lock never commits part of an update.
+ * An update in progress is left to a later sync, which its own write schedules, for the rest of this sync, so this sync never merges the upstream over a change the update is still making:
+ * the first commit tries the lock once, and a later commit waits for it as long as a merge does.
+ */
+async function commitLocal(base, author, run) {
+  if (run.artifacts !== false) {
+    const staged = await withFileLock(path.join(base, ARTIFACTS), () => stage(base, true), undefined, { timeoutMs: run.artifacts ? SETTINGS.applyLockMs : 1 })
+      .then(() => true, (error) => { if (error.code !== "lock_timeout") throw error; return false; });
+    run.artifacts = staged;
+    if (!staged) scheduleRecordSync(base);
+  }
+  if (run.artifacts === false) await stage(base, false);
   // A store whose ignore file predates the sync folder, or lists no lock files, still never commits the sync folder, the registration lock, or the artifact lock this commit holds.
   await required(base, ["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", SYNC_DIRECTORY, "repositories.lock", `${ARTIFACTS}.lock`]);
   const staged = (await required(base, ["diff", "--cached", "--name-only", "-z"])).stdout.toString("utf8").split("\0").filter(Boolean);
@@ -317,7 +332,8 @@ async function sync(base, options) {
   if (top.missing) return writeStatus(base, { state: "not_a_repository", message: "Git is not available, so the record store is not synced." });
   if (!top.ok || path.resolve(top.text) !== path.resolve(base)) return writeStatus(base, { state: "not_a_repository", message: "The record store is not the top of a Git checkout, so it is not synced." });
   const author = await identity(base);
-  await commitLocal(base, author);
+  const run = {};
+  await commitLocal(base, author, run);
   let upstream = await upstreamOf(base);
   if (!upstream && managed.has(base)) {
     const published = await publishBranch(base, options);
@@ -329,7 +345,7 @@ async function sync(base, options) {
   let busy = false;
   for (let attempt = 1; attempt <= PUSH_ATTEMPTS; attempt++) {
     // A merge left unapplied keeps the branch where it was, so files it replaced and local writes are committed and merged again.
-    if (attempt > 1) await commitLocal(base, author);
+    if (attempt > 1) await commitLocal(base, author, run);
     const fetched = await git(base, ["fetch", "--quiet", upstream.remote]);
     if (!fetched.ok) return writeStatus(base, { state: "fetch_failed", message: fetched.stderr, ...await counts(base) });
     lastFetch.set(base, Date.now());
@@ -391,10 +407,10 @@ async function merge(base, author, options) {
   const result = await git(base, ["merge-tree", "--write-tree", "--name-only", "-z", "--no-messages", head.text, theirs]);
   if (result.code !== 0 && result.code !== 1) return { failed: result.stderr || "Git could not merge the upstream; Git 2.38 or later is required.", conflicts: [] };
   const [mergedTree, ...listed] = result.stdout.toString("utf8").split("\0").filter(Boolean);
-  const lineConflicts = [...new Set(listed)];
+  const lineConflicts = [...new Set(listed.map(conflictedPath))];
   const merges = await structuralMerges(base, head.text, theirs);
   const views = new Set(merges.views);
-  const other = lineConflicts.filter((file) => !isRecordFile(file) && !views.has(file));
+  const other = lineConflicts.filter((file) => !isSavedFile(file) && !views.has(file));
   if (other.length) return { failed: `The upstream conflicts with local changes to ${other.slice(0, 5).join(", ")}, so the store was left as it was.`, conflicts: [] };
   const conflicted = [...new Set([...lineConflicts, ...merges.fallback])].filter((file) => !merges.merged.has(file) && !views.has(file));
   let tree = mergedTree;
@@ -406,10 +422,7 @@ async function merge(base, author, options) {
     await rm(index, { force: true });
     await required(base, ["read-tree", mergedTree], { env });
     // A generated view that changed on both sides takes the upstream view whole, which the next write of its record regenerates, so it is neither saved nor reported.
-    for (const file of [...conflicted, ...views]) {
-      const entry = (await required(base, ["ls-tree", "-z", theirs, "--", file])).stdout;
-      await required(base, ["update-index", "-z", "--index-info"], { env, input: entry.length ? entry : `0 ${"0".repeat(40)}\t${file}\0` });
-    }
+    for (const file of [...conflicted, ...views]) await takeUpstream(base, env, mergedTree, theirs, file);
     for (const [file, contents] of merges.merged) {
       const object = (await required(base, ["hash-object", "-w", "--stdin"], { input: contents })).text;
       await required(base, ["update-index", "-z", "--index-info"], { env, input: `100644 ${object}\t${file}\0` });
@@ -419,18 +432,65 @@ async function merge(base, author, options) {
   }
   const commit = (await required(base, [...author, "commit-tree", tree, "-p", head.text, "-p", theirs, "-m", `prism: merge records from ${(await git(base, ["rev-parse", "--abbrev-ref", "@{upstream}"])).text || "upstream"}`])).text;
   if (!(await apply(base, head.text, commit, options))) return { applied: false, conflicts: [] };
+  return { applied: true, conflicts: await saveLocal(base, head.text, theirs, conflicted) };
+}
+
+// Git moves a file that a folder of the other side is in the way of to <path>~<side>, and no artifact name holds "~", so an artifact's own path is the part before it.
+function conflictedPath(file) {
+  const at = file.indexOf("~");
+  return isArtifactFile(file) && at > 0 ? file.slice(0, at) : file;
+}
+
+// The entries of a tree at a path and below it: [{ mode, type, object, path }].
+async function treeEntries(base, tree, file) {
+  return (await required(base, ["ls-tree", "-r", "-z", tree, "--", file])).stdout.toString("utf8").split("\0").filter(Boolean).map((line) => {
+    const [meta, ...name] = line.split("\t");
+    const [mode, type, object] = meta.split(" ");
+    return { mode, type, object, path: name.join("\t") };
+  });
+}
+
+/**
+ * Give a path the upstream's file or folder in the merge index: every entry at the path or below it, and a copy that Git moved aside to <path>~<side> because a folder was in the way,
+ * is replaced by what the upstream holds there, so a file on one side and a folder on the other resolve as a changed line does.
+ */
+async function takeUpstream(base, env, mergedTree, theirs, file) {
+  const parent = path.posix.dirname(file);
+  const merged = (await required(base, ["ls-tree", "-r", "-z", "--name-only", mergedTree, ...(parent === "." ? [] : ["--", parent])])).stdout.toString("utf8").split("\0").filter(Boolean);
+  const removed = merged.filter((entry) => entry === file || entry.startsWith(`${file}/`) || entry.startsWith(`${file}~`)).map((entry) => `0 ${"0".repeat(40)}\t${entry}\0`);
+  const upstream = (await treeEntries(base, theirs, file)).map((entry) => `${entry.mode} ${entry.object}\t${entry.path}\0`);
+  const input = [...removed, ...upstream].join("");
+  if (input) await required(base, ["update-index", "-z", "--index-info"], { env, input });
+}
+
+/**
+ * Save the local files at each conflicted path, and below it when it was a folder, that differ from the upstream's, under one new conflict stamp: [{ path, savedAs }], savedAs null for a path the local side removed.
+ * The copies are written into a folder of their own and moved into the conflicts folder whole, so a reader never sees a stamp that holds only some of them.
+ */
+async function saveLocal(base, head, theirs, conflicted) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const staging = syncPath(base, "saving", stamp);
   const conflicts = [];
+  // A folder's path and a file below it can both be conflicted, so each local file is saved once.
+  const done = new Set();
   for (const file of conflicted) {
-    const local = await git(base, ["cat-file", "blob", `${head.text}:${file}`]);
-    const savedAs = `${SYNC_DIRECTORY}/conflicts/${stamp}/${file}`;
-    if (local.ok) {
-      await mkdir(path.dirname(path.join(base, savedAs)), { recursive: true });
-      await writeAtomically(path.join(base, savedAs), local.stdout);
+    const upstream = new Map((await treeEntries(base, theirs, file)).map((entry) => [entry.path, entry.object]));
+    const local = (await treeEntries(base, head, file)).filter((entry) => entry.type === "blob" && upstream.get(entry.path) !== entry.object && !done.has(entry.path));
+    if (!local.length && !done.has(file)) conflicts.push({ path: file, savedAs: null });
+    for (const entry of local) {
+      done.add(entry.path);
+      const target = path.join(staging, ...entry.path.split("/"));
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeAtomically(target, (await required(base, ["cat-file", "blob", entry.object])).stdout);
+      conflicts.push({ path: entry.path, savedAs: `${SYNC_DIRECTORY}/conflicts/${stamp}/${entry.path}` });
     }
-    conflicts.push({ path: file, savedAs: local.ok ? savedAs : null });
   }
-  return { applied: true, conflicts };
+  if (conflicts.some((conflict) => conflict.savedAs)) {
+    await mkdir(syncPath(base, "conflicts"), { recursive: true });
+    await rename(staging, syncPath(base, "conflicts", stamp));
+  }
+  await rm(syncPath(base, "saving"), { recursive: true, force: true });
+  return conflicts;
 }
 
 /**
@@ -475,7 +535,8 @@ const blob = async (base, commit, file) => {
   const result = commit ? await git(base, ["cat-file", "blob", `${commit}:${file}`]) : { ok: false };
   return result.ok ? result.stdout : null;
 };
-const fileBytes = (target) => readFile(target).catch((error) => { if (error.code === "ENOENT") return null; throw error; });
+// A path that is a folder, or lies below a file, holds no file, as when a file on one side meets a folder on the other.
+const fileBytes = (target) => readFile(target).catch((error) => { if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) return null; throw error; });
 const sameBytes = (left, right) => left === null || right === null ? left === right : left.equals(right);
 
 // Every changed file's record lock is held from the first check until the branch moves, so no locked record write lands in between.
@@ -498,20 +559,31 @@ async function apply(base, from, to, options) {
     await options.beforeApply?.();
     files = from ? await changedPaths(base, from, to) : (await required(base, ["ls-tree", "-r", "--name-only", "-z", to])).stdout.toString("utf8").split("\0").filter(Boolean);
     const targets = files.map((file) => path.join(base, file));
-    const artifactLock = files.some((file) => file.startsWith(`${ARTIFACTS}/`)) ? [path.join(base, ARTIFACTS)] : [];
+    const artifacts = path.join(base, ARTIFACTS);
+    const artifactLock = files.some(isArtifactFile) ? [artifacts] : [];
+    // Every artifact update holds the artifact lock from its version checks to its last write, so only the other files take a lock of their own beside them.
+    const locked = targets.filter((target, index) => !isArtifactFile(files[index]));
     // Folders under artifacts/ are made and removed only while the artifact lock is held, so none appears or vanishes between an update's layout check and its last write.
     return await holdLocks(artifactLock, async () => {
       try {
-        for (const target of targets) await mkdir(path.dirname(target), { recursive: true });
-        return await holdLocks(targets, async () => {
+        for (const target of locked) await mkdir(path.dirname(target), { recursive: true });
+        return await holdLocks(locked, async () => {
           const next = [];
           for (const [index, file] of files.entries()) {
             if (!sameBytes(await fileBytes(targets[index]), await blob(base, from, file))) return false;
             next.push(await blob(base, to, file));
           }
+          // Removals come first, and an artifact folder that one leaves empty, or holding only a file manager's files, goes with it,
+          // so a file that takes a removed folder's place, or a folder that differs from a removed one only in letter case, is made anew rather than inside the old one.
           for (const [index, bytes] of next.entries()) {
-            if (bytes === null) await rm(targets[index], { force: true });
-            else await writeAtomically(targets[index], bytes);
+            if (bytes !== null) continue;
+            await rm(targets[index], { force: true });
+            if (isArtifactFile(files[index])) await pruneArtifactFolders(artifacts, targets[index]);
+          }
+          for (const [index, bytes] of next.entries()) {
+            if (bytes === null) continue;
+            await mkdir(path.dirname(targets[index]), { recursive: true });
+            await writeAtomically(targets[index], bytes);
           }
           for (const [index, bytes] of next.entries()) if (!sameBytes(await fileBytes(targets[index]), bytes)) return false;
           await required(base, ["update-ref", "-m", "prism: sync records", "HEAD", to, ...(from ? [from] : [])]);
@@ -525,5 +597,27 @@ async function apply(base, from, to, options) {
     }).catch((error) => { if (error.code === "lock_timeout") return false; throw error; });
   } finally {
     await rm(marker, { force: true });
+  }
+}
+
+/**
+ * Files that a file manager writes into a folder on its own and writes again when it needs them: Finder's view settings.
+ * A removal deletes them with the folder it emptied, so no folder lingers whose letter case a later create in another case would land in.
+ * Only a name that the artifact name form refuses is among them, so no file that is or could be an artifact is ever deleted without an operation naming it:
+ * Windows Explorer's Thumbs.db meets the name form, so it keeps its folder, and a later create in another letter case there is refused before any change.
+ * Lock and temporary files are not among them, since one may belong to a lock or a write that another process holds now.
+ */
+const FILE_MANAGER_FILES = new Set([".DS_Store"]);
+const prunable = (entry) => entry.isFile() && FILE_MANAGER_FILES.has(entry.name) && !wellFormedName(entry.name);
+
+/** Remove the folders that removing an artifact left empty, or holding only file manager files, up to the artifacts folder at base; an artifact update and a sync both call it under the artifact lock. */
+export async function pruneArtifactFolders(base, target) {
+  for (let folder = path.dirname(target); folder !== base && folder.startsWith(`${base}${path.sep}`); folder = path.dirname(folder)) {
+    try {
+      const entries = await readdir(folder, { withFileTypes: true });
+      if (!entries.every(prunable)) return;
+      for (const entry of entries) await rm(path.join(folder, entry.name));
+      await rmdir(folder);
+    } catch { return; }
   }
 }
