@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -180,6 +180,49 @@ test("a managed clone keeps long paths usable on Windows", async (context) => {
   const root = await project(parent, "project", remoteConfig(url));
   await listInitiatives(root);
   assert.equal(git(clone, "config", "--local", "--get", "core.longpaths"), "true");
+});
+
+// A seed clone of a bare remote, where a test builds a commit as a teammate could and pushes it.
+function seedOf(parent, remote) {
+  const seed = path.join(parent, "teammate");
+  git(parent, "clone", "-q", remote, seed);
+  return seed;
+}
+
+test("a managed clone checks the objects it receives, so a tree with a .. entry fails the clone and leaves no folder", async (context) => {
+  const parent = await folder(context);
+  const { remote, url, clone } = bareRemote(parent);
+  const seed = seedOf(parent, remote);
+  const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: seed, input: "planted\n" }).toString().trim();
+  const inner = execFileSync("git", ["mktree"], { cwd: seed, input: `100644 blob ${blob}\tescape.md\n` }).toString().trim();
+  const dots = execFileSync("git", ["mktree"], { cwd: seed, input: `040000 tree ${inner}\t..\n` }).toString().trim();
+  const top = execFileSync("git", ["mktree"], { cwd: seed, input: `${git(seed, "ls-tree", "HEAD")}\n040000 tree ${dots}\tartifacts\n` }).toString().trim();
+  git(seed, "push", "-q", "origin", `${git(seed, "commit-tree", top, "-p", "HEAD", "-m", "crafted")}:refs/heads/main`);
+  const root = await project(parent, "project", remoteConfig(url));
+  await assert.rejects(listInitiatives(root), (error) => error.code === "store_unavailable" && /Git could not clone it/.test(error.message) && /fsck/i.test(error.message));
+  assert.equal(await exists(clone), false);
+  assert.deepEqual(await leftovers(clone), []);
+  assert.equal(await exists(path.join(appFolder, "stores", "escape.md")), false);
+});
+
+test("a managed clone writes a symbolic link from the remote as a plain file, so no store path leads outside the clone", async (context) => {
+  const parent = await folder(context);
+  const { remote, url, clone } = bareRemote(parent);
+  const outside = path.join(parent, "outside");
+  await mkdir(outside);
+  await writeFile(path.join(outside, "secret.md"), "secret\n");
+  const seed = seedOf(parent, remote);
+  await symlink(path.join(outside, "secret.md"), path.join(seed, "notes.md"));
+  await symlink(outside, path.join(seed, "artifacts"));
+  git(seed, "add", ".");
+  git(seed, "commit", "-q", "-m", "links");
+  git(seed, "push", "-q", "origin", "main");
+  const root = await project(parent, "project", remoteConfig(url));
+  assert.deepEqual(await listInitiatives(root), []);
+  assert.equal(git(clone, "config", "--local", "--get", "core.symlinks"), "false");
+  for (const name of ["notes.md", "artifacts"]) assert.equal((await lstat(path.join(clone, name))).isFile(), true, `${name} is a plain file`);
+  assert.equal(await readFile(path.join(clone, "notes.md"), "utf8"), path.join(outside, "secret.md"));
+  assert.deepEqual(await readdir(outside), ["secret.md"]);
 });
 
 test("an unreachable remote is unavailable, leaves no folder, and a later access succeeds once the remote exists", async (context) => {

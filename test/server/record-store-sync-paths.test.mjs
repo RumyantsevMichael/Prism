@@ -61,7 +61,10 @@ const CRAFTED = [
   { label: "a . part", names: ["artifacts", ".", "plans", "dot.md"], target: (store) => path.join(store, "artifacts", "plans", "dot.md") },
   { label: "a backslash", names: ["artifacts", "plans\\..\\..\\..\\escape.md"], target: (store) => path.join(store, "artifacts", "plans\\..\\..\\..\\escape.md") },
   { label: "a drive form", names: ["artifacts", "C:escape.md"], target: (store) => path.join(store, "artifacts", "C:escape.md") },
-  { label: "the sync folder", names: [".prism-sync", "planted"], target: (store) => path.join(store, ".prism-sync", "planted") }
+  { label: "the sync folder", names: [".prism-sync", "planted"], target: (store) => path.join(store, ".prism-sync", "planted") },
+  { label: "the sync folder in another letter case", names: [".Prism-Sync", "conflicts", "planted.md"], target: (store) => path.join(store, ".Prism-Sync", "conflicts", "planted.md") },
+  { label: "the sync folder with a trailing dot", names: [".prism-sync.", "status.json"], target: (store) => path.join(store, ".prism-sync.", "status.json") },
+  { label: "the sync folder with a trailing space", names: [".PRISM-SYNC ", "planted"], target: (store) => path.join(store, ".PRISM-SYNC ", "planted") }
 ];
 
 for (const { label, names, target } of CRAFTED) {

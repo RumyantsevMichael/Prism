@@ -82,7 +82,9 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
     const temporary = path.join(directory, `.${id}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
     try {
       // Long paths keep deep record paths usable on Windows, where Git otherwise stops at 260 characters.
-      const cloned = await runGit(directory, ["clone", "--quiet", "--config", "core.longpaths=true", "--", configured, temporary]);
+      // Git checks every object the remote sends, so a tree that a teammate built with a name such as ".." or ".git" fails the clone,
+      // and the clone writes a symbolic link from the remote as a plain file holding its target, so no store file leads outside the clone.
+      const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--config", "core.longpaths=true", "--config", "core.symlinks=false", "--", configured, temporary]);
       if (cloned.missing) throw unavailable("Git is not available, so the remote store cannot be cloned.");
       if (!cloned.ok) throw unavailable(`Git could not clone it: ${withoutCredentials(cloned.stderr) || `git clone exited with code ${cloned.code}.`}`);
       await rename(temporary, target);

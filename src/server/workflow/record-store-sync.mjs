@@ -619,15 +619,18 @@ async function holdLocks(targets, action) {
 // Git keeps a tree entry that a teammate pushed even when its name is empty, "." or "..", since fsck is off by default, and prints it in a diff,
 // so a path from the upstream is written into the store only when each part is a name that stays below the store on every system:
 // not empty or made only of dots and spaces, with no backslash or drive form, never Git's own folder or the sync folder, and no part of it in the store a symbolic link.
+// A name is compared as a case-insensitive file system that drops trailing dots and spaces would see it.
+const plainName = (name) => name.replace(/[. ]+$/, "").toLowerCase();
+
 function unsafeName(name) {
   if (name.includes("\\") || /^[A-Za-z]:/.test(name)) return true;
-  const plain = name.replace(/[. ]+$/, "").toLowerCase();
+  const plain = plainName(name);
   return plain === "" || plain === ".git" || /^git~\d+$/.test(plain);
 }
 
 async function unsafePath(base, file) {
   const parts = file.split("/");
-  if (parts.some(unsafeName) || parts[0] === SYNC_DIRECTORY) return true;
+  if (parts.some(unsafeName) || plainName(parts[0]) === SYNC_DIRECTORY) return true;
   const root = path.resolve(base);
   if (!path.resolve(root, ...parts).startsWith(`${root}${path.sep}`)) return true;
   for (let at = 1; at <= parts.length; at++) {

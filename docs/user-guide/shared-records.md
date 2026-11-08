@@ -45,13 +45,14 @@ Store sync is on by default for a remote store, so Prism keeps the clone in step
 
 `- Store sync: off` keeps the clone but never fetches, commits, or pushes after the first clone.
 Prism never deletes, replaces, or rewrites the history of a clone it made.
+The clone writes a symbolic link from the remote as a plain file that holds the link's target, so no file in the store leads outside the clone.
 Syncing requires Git 2.25 or later.
 SSH runs in batch mode unless you configured an SSH command, and Git never prompts, so a remote that needs a passphrase or password prompt fails instead of hanging.
 Use an SSH agent or a Git credential helper for a remote that needs credentials, because a token in the URL stays in the clone's Git configuration, although Prism leaves it out of every message and status.
 
 These problems make every record operation fail with `store_unavailable`, and the message names the remote without any user name or token:
 
-- The clone failed, for example because the remote cannot be reached; Prism leaves no partial clone behind and tries again on the next access.
+- The clone failed, for example because the remote cannot be reached or sent an object that fails Git's object checks; Prism leaves no partial clone behind and tries again on the next access.
 - A folder already sits at the clone path with another origin; Prism leaves it untouched, so move it away.
 
 The first record access from a checkout moves its existing records into the store, as described below.
