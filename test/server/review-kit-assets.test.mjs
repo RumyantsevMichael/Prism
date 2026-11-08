@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §1, §6.
+// Contract: docs/plans/review-app-ui-kit/slice.md clauses 1, 2, 3, 4, and 11.
 // The kit's files are fetched from a running review server the way the page fetches them.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-kit-assets-data-")));
@@ -40,7 +41,7 @@ function get(url) {
   });
 }
 
-test("the kit's stylesheets, scripts, and catalog page are served with their types and the page's security headers", async (context) => {
+test("clause 1: the kit's stylesheets, scripts, and catalog page are served with their types and the page's security headers", async (context) => {
   const base = await serve(context);
   const page = await get(`${base}/`);
   for (const [file, type] of [["kit/tokens.css", "text/css; charset=utf-8"], ["kit/kit.css", "text/css; charset=utf-8"], ["kit/boot.js", "text/javascript; charset=utf-8"], ["kit/kit.js", "text/javascript; charset=utf-8"]]) {
@@ -53,18 +54,18 @@ test("the kit's stylesheets, scripts, and catalog page are served with their typ
   }
 });
 
-test("the fonts and their licenses are served from the kit", async (context) => {
+test("clauses 1, 11: the fonts and their licenses are served from the kit", async (context) => {
   const base = await serve(context);
   const tokens = (await get(`${base}/kit/tokens.css`)).body.toString("utf8");
   const fonts = [...new Set([...tokens.matchAll(/url\(\s*["']?([^"')]+\.woff2)["']?\s*\)/g)].map((match) => match[1]))];
-  assert.ok(fonts.length >= 2, "tokens.css names the font files");
+  assert.deepEqual(fonts.map((font) => font.replace(/^\.\//, "")).sort(), ["fonts/geist-latin-wght-normal.woff2", "fonts/geist-mono-latin-wght-normal.woff2"], "tokens.css names the Geist font files");
   for (const font of fonts) {
     const response = await get(new URL(font, `${base}/kit/`).href);
     assert.equal(response.status, 200, `${font} is served`);
     assert.equal(response.headers["content-type"], "font/woff2");
     assert.equal(response.body.subarray(0, 4).toString("latin1"), "wOF2");
   }
-  for (const license of ["OFL-Inter.txt", "OFL-JetBrains-Mono.txt"]) {
+  for (const license of ["OFL-Geist.txt", "OFL-Geist-Mono.txt"]) {
     const response = await get(`${base}/kit/fonts/${license}`);
     assert.equal(response.status, 200, `${license} is served`);
     assert.equal(response.headers["content-type"], "text/plain; charset=utf-8");
@@ -72,7 +73,7 @@ test("the fonts and their licenses are served from the kit", async (context) => 
   }
 });
 
-test("the catalog page is served at kit/catalog", async (context) => {
+test("clause 3: the catalog page is served at kit/catalog", async (context) => {
   const base = await serve(context);
   const response = await get(`${base}/kit/catalog`);
   assert.equal(response.status, 200);
@@ -80,14 +81,14 @@ test("the catalog page is served at kit/catalog", async (context) => {
   assert.match(response.body.toString("utf8"), /<!doctype html>/i);
 });
 
-test("a kit or styles path that is missing, leaves its folder, or has another extension answers 404", async (context) => {
+test("clause 2: a kit or styles path that is missing, leaves its folder, or has another extension answers 404", async (context) => {
   const base = await serve(context);
   for (const route of ["kit/missing.css", "kit/..%2Freview.js", "kit/%2e%2e%2Fkit.css", "kit/fonts/..%2F..%2Freview.js", "kit/tokens.css.map", "kit/tokens", "styles/missing.css", "styles/..%2Freview.css", "styles/shell.js", "kit/..%2F..%2F..%2F..%2Fetc%2Fpasswd", "kit/%00tokens.css"]) {
     assert.equal((await get(`${base}/${route}`)).status, 404, `${route} answers 404`);
   }
 });
 
-test("the review page loads the boot script, the design values, the kit, and the area stylesheets in order before its own script", async (context) => {
+test("clause 4: the review page loads the boot script, the design values, the kit, and the area stylesheets in order before its own script", async (context) => {
   const base = await serve(context);
   const html = (await get(`${base}/`)).body.toString("utf8");
   const head = html.slice(0, html.indexOf("</head>"));

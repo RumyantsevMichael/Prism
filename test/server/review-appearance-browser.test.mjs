@@ -3,6 +3,7 @@ import test from "node:test";
 import { demoProject, launch, openPage, serveProject, settle, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §3, §4, §5, §7.
+// Contract: docs/plans/review-app-ui-kit/slice.md clauses 25 and 26.
 // Feature: docs/Features/F-review-app-appearance.feature.
 // The person chooses the theme and density from the status bar's Appearance menu of the real review page.
 
@@ -17,7 +18,7 @@ async function open(context) {
   return { base, browser, page };
 }
 
-test("the status bar ends with an Appearance button whose menu offers the theme, the density, and the catalog", { skip }, async (context) => {
+test("clause 25: the status bar ends with an Appearance button whose menu offers the theme, the density, and the catalog", { skip }, async (context) => {
   const { page } = await open(context);
   const status = page.locator("#statusbar");
   const button = status.getByRole("button", { name: "Appearance", exact: true });
@@ -40,7 +41,7 @@ test("the status bar ends with an Appearance button whose menu offers the theme,
   assert.equal(await density.getByRole("menuitemradio", { name: "Compact" }).getAttribute("aria-checked"), "true");
 });
 
-test("choosing Dark from the keyboard applies it at once, stores it, and keeps it after a reload", { skip }, async (context) => {
+test("clause 26: choosing Dark from the keyboard applies it at once, stores it, and keeps it after a reload", { skip }, async (context) => {
   const { base, page } = await open(context);
   const button = page.locator("#statusbar").getByRole("button", { name: "Appearance", exact: true });
   await button.focus();
@@ -60,7 +61,7 @@ test("choosing Dark from the keyboard applies it at once, stores it, and keeps i
   assert.equal(await page.getByRole("menuitemradio", { name: "System", exact: true }).getAttribute("aria-checked"), "false");
 });
 
-test("choosing System again follows the operating system, and Comfortable raises the density", { skip }, async (context) => {
+test("clause 26: choosing System again follows the operating system, and Comfortable raises the density", { skip }, async (context) => {
   const { base, page } = await open(context);
   const button = page.locator("#statusbar").getByRole("button", { name: "Appearance", exact: true });
   await button.click();
@@ -78,7 +79,7 @@ test("choosing System again follows the operating system, and Comfortable raises
   assert.deepEqual(await stored(base), { theme: "system", density: "comfortable" });
 });
 
-test("Component catalog opens the catalog in a new tab", { skip }, async (context) => {
+test("clause 26: Component catalog opens the catalog in a new tab", { skip }, async (context) => {
   const { base, page } = await open(context);
   await page.locator("#statusbar").getByRole("button", { name: "Appearance", exact: true }).click();
   const [tab] = await Promise.all([page.context().waitForEvent("page"), page.getByRole("menuitem", { name: "Component catalog" }).click()]);

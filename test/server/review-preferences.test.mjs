@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §3, §5.
+// Contract: docs/plans/review-app-ui-kit/slice.md clauses 13, 14, 15, and 16.
 // The theme and density choices are kept by the review app for the user, so they survive another port and are shared by every project.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-preferences-data-")));
@@ -66,13 +67,13 @@ const put = async (base, body, headers = { "Content-Type": "application/json" })
   return { status: response.status, body: json };
 };
 
-test("without a stored choice the preferences are the system theme and compact density", async (context) => {
+test("clause 13: without a stored choice the preferences are the system theme and compact density", async (context) => {
   await appDirectory(context);
   const { base } = await serve(context, await project(context));
   assert.deepEqual(await read(base), { status: 200, body: { theme: "system", density: "compact" } });
 });
 
-test("a PUT stores the given choice, keeps the other one, and answers with both", async (context) => {
+test("clause 14: a PUT stores the given choice, keeps the other one, and answers with both", async (context) => {
   const directory = await appDirectory(context);
   const { base } = await serve(context, await project(context));
   assert.deepEqual(await put(base, { theme: "dark" }), { status: 200, body: { theme: "dark", density: "compact" } });
@@ -84,7 +85,7 @@ test("a PUT stores the given choice, keeps the other one, and answers with both"
   assert.equal(stored.density, "compact");
 });
 
-test("an invalid PUT answers invalid_preference and stores nothing", async (context) => {
+test("clause 15: an invalid PUT answers invalid_preference and stores nothing", async (context) => {
   await appDirectory(context);
   const { base } = await serve(context, await project(context));
   await put(base, { theme: "dark", density: "comfortable" });
@@ -97,7 +98,7 @@ test("an invalid PUT answers invalid_preference and stores nothing", async (cont
   assert.deepEqual((await read(base)).body, { theme: "dark", density: "comfortable" });
 });
 
-test("a PUT without a JSON content type or from another origin answers 403", async (context) => {
+test("clause 15: a PUT without a JSON content type or from another origin answers 403", async (context) => {
   await appDirectory(context);
   const { base } = await serve(context, await project(context));
   assert.equal((await put(base, { theme: "dark" }, { "Content-Type": "text/plain" })).status, 403);
@@ -105,7 +106,7 @@ test("a PUT without a JSON content type or from another origin answers 403", asy
   assert.deepEqual((await read(base)).body, { theme: "system", density: "compact" });
 });
 
-test("an unreadable or invalid stored value reads as its default", async (context) => {
+test("clause 13: an unreadable or invalid stored value reads as its default", async (context) => {
   const directory = await appDirectory(context);
   const { base } = await serve(context, await project(context));
   await mkdir(directory, { recursive: true });
@@ -117,7 +118,7 @@ test("an unreadable or invalid stored value reads as its default", async (contex
   assert.deepEqual((await read(base)).body, { theme: "dark", density: "compact" });
 });
 
-test("the choice survives a restart on another port and is shared by every project", async (context) => {
+test("clause 16: the choice survives a restart on another port and is shared by every project", async (context) => {
   await appDirectory(context);
   const first = await serve(context, await project(context));
   await put(first.base, { theme: "dark", density: "comfortable" });

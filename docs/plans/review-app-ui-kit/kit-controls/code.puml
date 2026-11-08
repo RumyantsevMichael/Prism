@@ -22,7 +22,6 @@ kit --> tip
 kit --> field
 kit --> choice
 chip --> tip
-tabs --> button
 catalog --> kit
 appearance --> menu
 appearance --> button

@@ -1,39 +1,52 @@
-/* Proposed design values for the review app UI kit.
-   The implementation copies this file to kit/tokens.css; a shade may change only when the contrast test requires it, and its hue stays.
-   A theme is one rule that gives every --prism-color-* and --prism-shadow-* value under [data-theme="<name>"]; light and dark are the two shipped themes, and light is also the root default. */
+/* Direction D: proposed design values for the review app kit.
+   Every component reads only these custom properties.
+   A theme is one rule that gives every --prism-color-* and --prism-shadow-* value; light is the root default.
+   A theme may also restate the island and glass values below, so a flat theme sets the gap and radius to 0.
+   The six phase colors are the six stops of the mark's spectrum, shaded per theme for contrast, in workflow order.
+   Claim colors tell people from agents: a person has one of four soft hues, an agent has the accent hue.
+   Intended fonts ship beside this file: Geist (UI) and Geist Mono (code), both SIL OFL 1.1. */
 
 @font-face {
   font-display: swap;
   font-family: "Prism UI";
   font-style: normal;
   font-weight: 100 900;
-  src: url("./fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+  src: url("./fonts/geist-latin-wght-normal.woff2") format("woff2-variations");
 }
 
 @font-face {
   font-display: swap;
   font-family: "Prism Code";
   font-style: normal;
-  font-weight: 100 800;
-  src: url("./fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  src: url("./fonts/geist-mono-latin-wght-normal.woff2") format("woff2-variations");
 }
 
 :root {
-  --prism-font-ui: "Prism UI", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --prism-font-code: "Prism Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Type */
+  --prism-font-ui: "Prism UI", Geist, Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --prism-font-code: "Prism Code", "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --prism-font-weight-regular: 400;
   --prism-font-weight-medium: 500;
   --prism-font-weight-semibold: 600;
-  --prism-line-height: 1.45;
-  --prism-line-height-tight: 1.25;
-
+  --prism-font-weight-bold: 700;
+  --prism-line-height: 1.5;
+  --prism-line-height-tight: 1.2;
+  --prism-line-height-code: 1.6;
+  --prism-tracking-heading: -0.022em;
+  --prism-tracking-body: -0.004em;
+  --prism-tracking-caps: 0.06em;
+  --prism-font-size-3xs: 9px;
+  --prism-font-size-2xs: 10.5px;
   --prism-font-size-xs: 11px;
   --prism-font-size-sm: 12px;
   --prism-font-size-md: 13px;
-  --prism-font-size-lg: 15px;
-  --prism-font-size-xl: 18px;
-  --prism-font-size-xxl: 22px;
+  --prism-font-size-lg: 14px;
+  --prism-font-size-xl: 17px;
+  --prism-font-size-xxl: 21px;
+  --prism-font-size-code: 0.94em;
 
+  /* Space and size (compact is the default) */
   --prism-space-1: 2px;
   --prism-space-2: 4px;
   --prism-space-3: 6px;
@@ -43,20 +56,68 @@
   --prism-space-7: 24px;
   --prism-space-8: 32px;
   --prism-control-height: 24px;
+  --prism-control-height-sm: 18px;
   --prism-row-height: 22px;
+  --prism-bar-height: 44px;
+  --prism-pagebar-height: 36px;
+  --prism-subtab-height: 34px;
+  --prism-status-height: 24px;
+  --prism-sidebar-width: 248px;
+  --prism-drawer-width: 300px;
+  --prism-list-width: 316px;
+  --prism-panel-width: 400px;
+  --prism-popover-width: 400px;
+  --prism-menu-width: 320px;
+  --prism-palette-width: 800px;
+  --prism-preview-width: 260px;
+  --prism-measure: 76ch;
+  --prism-stroke: 1px;
+  --prism-stroke-strong: 2px;
+  --prism-icon-size: 16px;
+  --prism-icon-size-sm: 14px;
+  --prism-icon-size-xs: 12px;
+  --prism-mark-size: 20px;
+  --prism-glyph-size: 10px;
+  --prism-dot-size: 7px;
+  --prism-badge-size-sm: 14px;
 
-  --prism-radius-sm: 3px;
-  --prism-radius-md: 4px;
-  --prism-radius-lg: 6px;
+  /* Claims: a person is a circle with initials, an agent is a rounded square with the agent glyph. */
+  --prism-avatar-size: 20px;
+  --prism-avatar-size-sm: 16px;
+  --prism-avatar-size-lg: 32px;
+  --prism-avatar-overlap: -3px;
+  --prism-meter-height: 4px;
+
+  /* Corners grow outward: controls < cards < islands < overlays, so nesting always reads inward. */
+  --prism-radius-xs: 3px;
+  --prism-radius-sm: 4px;
+  --prism-radius-md: 6px;
+  --prism-radius-lg: 8px;
+  --prism-radius-island: 10px;
+  --prism-radius-overlay: 12px;
   --prism-radius-round: 999px;
 
-  --prism-duration-fast: 90ms;
+  /* Islands: the content and the side panel float on the canvas. */
+  --prism-island-gap: 6px;
+
+  /* Glass: overlays blur what is behind them; the fill is opaque enough for AA over pure black or white. */
+  --prism-blur-glass: 22px;
+  --prism-saturate-glass: 1.5;
+  --prism-blur-scrim: 3px;
+
+  /* Motion */
+  --prism-duration-instant: 50ms;
+  --prism-duration-fast: 100ms;
   --prism-duration-normal: 160ms;
   --prism-duration-slow: 240ms;
-  --prism-duration-spin: 900ms;
+  --prism-duration-blink: 1000ms;
+  --prism-duration-pulse: 2800ms;
   --prism-tooltip-delay: 400ms;
-  --prism-easing: cubic-bezier(0.2, 0, 0, 1);
+  --prism-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --prism-easing-enter: cubic-bezier(0, 0, 0, 1);
+  --prism-easing-exit: cubic-bezier(0.3, 0, 1, 1);
 
+  /* Stacking */
   --prism-layer-raised: 1;
   --prism-layer-sticky: 10;
   --prism-layer-bar: 20;
@@ -66,118 +127,199 @@
   --prism-layer-dialog: 60;
   --prism-layer-toast: 70;
   --prism-layer-tooltip: 80;
+
+  /* Brand: the light edge is the mark's spectrum, fixed across themes. */
+  --prism-gradient-spectrum: linear-gradient(90deg, #7fe3ff 0%, #4f8bff 22%, #7a5cff 45%, #f062d6 66%, #ff9a6e 84%, #ffd37a 100%);
 }
 
 :root,
 [data-theme="light"] {
   color-scheme: light;
-  --prism-color-bg: #f4f3f8;
-  --prism-color-chrome: #efedf5;
+  --prism-color-bg: #ffffff;
+  --prism-color-chrome: #eeedf5;
+  --prism-color-chrome-hover: #e3e2ec;
   --prism-color-surface: #ffffff;
-  --prism-color-sunken: #f8f7fb;
+  --prism-color-sunken: #f7f7fa;
   --prism-color-raised: #ffffff;
-  --prism-color-hover: #e9e6f1;
-  --prism-color-selected: #e6e1fb;
-  --prism-color-ink: #242137;
-  --prism-color-ink-muted: #5f5a71;
-  --prism-color-line: #e3e0eb;
-  --prism-color-line-strong: #d2cedd;
-  --prism-color-line-control: #7f7a93;
-  --prism-color-accent: #6752d8;
-  --prism-color-accent-text: #5038c2;
-  --prism-color-accent-soft: #eeeafd;
+  --prism-color-hover: #e5e4ee;
+  --prism-color-selected: #ebe8fd;
+  --prism-color-ink: #131219;
+  --prism-color-ink-muted: #5a5867;
+  --prism-color-ink-faint: #8d8b9a;
+  --prism-color-line: #e6e5ec;
+  --prism-color-line-strong: #d3d2db;
+  --prism-color-line-control: #7f7d92;
+  --prism-color-glass-control: #77758a;
+  --prism-color-island-edge: #e2e1ea;
+  --prism-color-accent: #5b3fe4;
+  --prism-color-accent-hover: #4a2fd2;
+  --prism-color-accent-text: #4a2fd0;
+  --prism-color-accent-soft: #efecff;
   --prism-color-on-accent: #ffffff;
-  --prism-color-focus: #6752d8;
-  --prism-color-danger: #b42f48;
-  --prism-color-danger-soft: #fbeaed;
-  --prism-color-warning: #8a5600;
-  --prism-color-warning-soft: #fbf0dc;
-  --prism-color-success: #127556;
-  --prism-color-success-soft: #e3f4ed;
-  --prism-color-info: #2264b8;
-  --prism-color-info-soft: #e6effb;
-  --prism-color-scrim: rgb(23 21 43 / 0.32);
-  --prism-shadow-popup: 0 4px 14px rgb(36 33 55 / 0.14);
-  --prism-shadow-dialog: 0 12px 40px rgb(36 33 55 / 0.22);
-  --prism-color-brand: #52c7a5;
-  --prism-color-diagram-paper: #f8f7fb;
-  --prism-color-diff-added: #127556;
-  --prism-color-diff-added-soft: #e3f4ed;
-  --prism-color-diff-removed: #b42f48;
-  --prism-color-diff-removed-soft: #fbeaed;
-  --prism-color-syntax-comment: #6e6984;
-  --prism-color-syntax-keyword: #7136d6;
-  --prism-color-syntax-string: #0c7a50;
-  --prism-color-syntax-number: #a14c05;
-  --prism-color-syntax-literal: #b03e0e;
-  --prism-color-syntax-type: #0b66a3;
-  --prism-color-syntax-function: #3644c0;
-  --prism-color-syntax-attr: #9a2867;
-  --prism-color-syntax-meta: #7f5900;
-  --prism-color-syntax-variable: #a81f73;
-  --prism-color-syntax-tag: #1b6ab0;
-  --prism-color-syntax-inserted: #127556;
-  --prism-color-syntax-deleted: #b42f48;
+  --prism-color-on-accent-veil: rgb(255 255 255 / 0.4);
+  --prism-color-focus: #5b3fe4;
+  --prism-color-brand: #1f9a79;
+  --prism-color-danger: #b02c46;
+  --prism-color-danger-soft: #fcebee;
+  --prism-color-warning: #8a5200;
+  --prism-color-warning-soft: #fcf1dc;
+  --prism-color-success: #0e7354;
+  --prism-color-success-soft: #e1f5ed;
+  --prism-color-info: #1f5fb3;
+  --prism-color-info-soft: #e7effb;
+  --prism-color-scrim: rgb(19 18 25 / 0.28);
+  --prism-color-glass: rgb(255 255 255 / 0.88);
+  --prism-color-glass-edge: rgb(19 18 25 / 0.14);
+  --prism-color-live: #1f9a79;
+  --prism-color-agent: #e9e5ff;
+  --prism-color-on-agent: #4a2fd0;
+  --prism-color-person-1: #d6efe8;
+  --prism-color-on-person-1: #0b5a46;
+  --prism-color-person-2: #f9e6cf;
+  --prism-color-on-person-2: #7a4100;
+  --prism-color-person-3: #f7dcec;
+  --prism-color-on-person-3: #8a1f5c;
+  --prism-color-person-4: #e2e5ec;
+  --prism-color-on-person-4: #39404f;
+  --prism-color-avatar-edge: rgb(19 18 25 / 0.1);
+  --prism-gradient-canvas: radial-gradient(1100px 280px at 50% 0%, rgb(122 92 255 / 0.07), transparent 72%);
+  --prism-shadow-island: 0 1px 2px rgb(19 18 25 / 0.05), 0 4px 14px rgb(19 18 25 / 0.05);
+  --prism-shadow-lift: 0 1px 2px rgb(19 18 25 / 0.08), 0 2px 6px rgb(19 18 25 / 0.06);
+  --prism-shadow-glass: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 2px 6px rgb(19 18 25 / 0.08), 0 16px 44px rgb(19 18 25 / 0.2);
+  --prism-shadow-dialog: 0 2px 6px rgb(19 18 25 / 0.08), 0 20px 56px rgb(19 18 25 / 0.24);
+  --prism-color-phase-requirements: #007191;
+  --prism-color-phase-design: #0056fc;
+  --prism-color-phase-frozen: #6a49f5;
+  --prism-color-phase-build: #be129e;
+  --prism-color-phase-review: #bd3900;
+  --prism-color-phase-shipped: #8e5f00;
+  --prism-color-phase-requirements-fill: #0097c1;
+  --prism-color-phase-design-fill: #4f8bff;
+  --prism-color-phase-frozen-fill: #7a5cff;
+  --prism-color-phase-build-fill: #ed44ce;
+  --prism-color-phase-review-fill: #fd4d00;
+  --prism-color-phase-shipped-fill: #bf8000;
+  --prism-color-diagram-paper: #ffffff;
+  --prism-color-diagram-ink: #131219;
+  --prism-color-diagram-line: #6b6980;
+  --prism-color-diagram-surface: #f4f3f8;
+  --prism-color-diagram-surface-2: #ebeaf3;
+  --prism-color-diagram-group: #f6f6f9;
+  --prism-color-diagram-group-line: #d3d2db;
+  --prism-color-diagram-note: #fbf6dc;
+  --prism-color-diagram-note-line: #b9a45a;
+  --prism-color-diagram-danger: #b02c46;
+  --prism-color-diff-added: #0e7354;
+  --prism-color-diff-added-soft: #e1f5ed;
+  --prism-color-diff-removed: #b02c46;
+  --prism-color-diff-removed-soft: #fcebee;
+  --prism-color-syntax-comment: #6b6980;
+  --prism-color-syntax-keyword: #6a2fd0;
+  --prism-color-syntax-string: #0b7650;
+  --prism-color-syntax-number: #9c4905;
+  --prism-color-syntax-type: #0a64a0;
+  --prism-color-syntax-function: #3541bd;
+  --prism-color-syntax-attr: #962665;
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --prism-color-bg: #11101a;
-  --prism-color-chrome: #15141f;
-  --prism-color-surface: #191824;
-  --prism-color-sunken: #14131d;
-  --prism-color-raised: #211f2e;
-  --prism-color-hover: #272538;
-  --prism-color-selected: #2d284c;
-  --prism-color-ink: #eeebf7;
-  --prism-color-ink-muted: #a29dae;
-  --prism-color-line: #302e3d;
-  --prism-color-line-strong: #444052;
-  --prism-color-line-control: #7c7791;
-  --prism-color-accent: #a392ff;
-  --prism-color-accent-text: #c1b6ff;
-  --prism-color-accent-soft: #2d284c;
-  --prism-color-on-accent: #17152b;
-  --prism-color-focus: #a392ff;
-  --prism-color-danger: #ff8d9c;
-  --prism-color-danger-soft: #3a1f29;
-  --prism-color-warning: #e0a030;
-  --prism-color-warning-soft: #33281a;
-  --prism-color-success: #3fbf8f;
-  --prism-color-success-soft: #16302a;
-  --prism-color-info: #6aa8f0;
-  --prism-color-info-soft: #1a2740;
-  --prism-color-scrim: rgb(0 0 0 / 0.55);
-  --prism-shadow-popup: 0 4px 14px rgb(0 0 0 / 0.4);
-  --prism-shadow-dialog: 0 12px 40px rgb(0 0 0 / 0.5);
+  --prism-color-bg: #121218;
+  --prism-color-chrome: #0a0a0e;
+  --prism-color-chrome-hover: #1a1a22;
+  --prism-color-surface: #121218;
+  --prism-color-sunken: #0f0f14;
+  --prism-color-raised: #1b1b23;
+  --prism-color-hover: #202029;
+  --prism-color-selected: #29234d;
+  --prism-color-ink: #ececf3;
+  --prism-color-ink-muted: #a09eb0;
+  --prism-color-ink-faint: #6e6c80;
+  --prism-color-line: #25252e;
+  --prism-color-line-strong: #33333e;
+  --prism-color-line-control: #75738b;
+  --prism-color-glass-control: #8f8da5;
+  --prism-color-island-edge: #24242d;
+  --prism-color-accent: #9a89ff;
+  --prism-color-accent-hover: #ad9fff;
+  --prism-color-accent-text: #b6abff;
+  --prism-color-accent-soft: #262148;
+  --prism-color-on-accent: #0f0c24;
+  --prism-color-on-accent-veil: rgb(15 12 36 / 0.35);
+  --prism-color-focus: #a597ff;
   --prism-color-brand: #52c7a5;
-  --prism-color-diagram-paper: #f8f7fb;
-  --prism-color-diff-added: #3fbf8f;
-  --prism-color-diff-added-soft: #16302a;
-  --prism-color-diff-removed: #ff8d9c;
-  --prism-color-diff-removed-soft: #3a1f29;
-  --prism-color-syntax-comment: #8e89a8;
-  --prism-color-syntax-keyword: #c6a8ff;
-  --prism-color-syntax-string: #8fd6aa;
-  --prism-color-syntax-number: #f3b97c;
-  --prism-color-syntax-literal: #ffa47e;
-  --prism-color-syntax-type: #7fc8ff;
-  --prism-color-syntax-function: #aab5ff;
-  --prism-color-syntax-attr: #f39cc9;
-  --prism-color-syntax-meta: #e3c17e;
-  --prism-color-syntax-variable: #ff9fd0;
-  --prism-color-syntax-tag: #80baff;
-  --prism-color-syntax-inserted: #72d4a7;
-  --prism-color-syntax-deleted: #ff8d9c;
+  --prism-color-danger: #ff8b9b;
+  --prism-color-danger-soft: #361b25;
+  --prism-color-warning: #e8a940;
+  --prism-color-warning-soft: #30240e;
+  --prism-color-success: #4fcb9d;
+  --prism-color-success-soft: #0f2a22;
+  --prism-color-info: #76aff5;
+  --prism-color-info-soft: #14233a;
+  --prism-color-scrim: rgb(0 0 0 / 0.55);
+  --prism-color-glass: rgb(27 27 35 / 0.9);
+  --prism-color-glass-edge: rgb(255 255 255 / 0.1);
+  --prism-color-live: #52c7a5;
+  --prism-color-agent: #2b2550;
+  --prism-color-on-agent: #c3b9ff;
+  --prism-color-person-1: #12342d;
+  --prism-color-on-person-1: #8edcc4;
+  --prism-color-person-2: #3a2913;
+  --prism-color-on-person-2: #f0c286;
+  --prism-color-person-3: #3a1a30;
+  --prism-color-on-person-3: #f2a5d4;
+  --prism-color-person-4: #262a35;
+  --prism-color-on-person-4: #c3c9d8;
+  --prism-color-avatar-edge: rgb(255 255 255 / 0.1);
+  --prism-gradient-canvas: radial-gradient(1100px 280px at 50% 0%, rgb(140 121 255 / 0.1), transparent 72%);
+  --prism-shadow-island: 0 0 0 1px rgb(0 0 0 / 0.35), 0 6px 20px rgb(0 0 0 / 0.3);
+  --prism-shadow-lift: 0 0 0 1px rgb(0 0 0 / 0.3), 0 2px 6px rgb(0 0 0 / 0.35);
+  --prism-shadow-glass: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 0 0 1px rgb(0 0 0 / 0.4), 0 18px 48px rgb(0 0 0 / 0.55);
+  --prism-shadow-dialog: 0 0 0 1px rgb(0 0 0 / 0.3), 0 20px 56px rgb(0 0 0 / 0.6);
+  --prism-color-phase-requirements: #7fe3ff;
+  --prism-color-phase-design: #6f9fff;
+  --prism-color-phase-frozen: #9a85ff;
+  --prism-color-phase-build: #f062d6;
+  --prism-color-phase-review: #ff9a6e;
+  --prism-color-phase-shipped: #ffd37a;
+  --prism-color-phase-requirements-fill: #7fe3ff;
+  --prism-color-phase-design-fill: #4f8bff;
+  --prism-color-phase-frozen-fill: #7a5cff;
+  --prism-color-phase-build-fill: #f062d6;
+  --prism-color-phase-review-fill: #ff9a6e;
+  --prism-color-phase-shipped-fill: #ffd37a;
+  --prism-color-diagram-paper: #121218;
+  --prism-color-diagram-ink: #ececf3;
+  --prism-color-diagram-line: #9d9bb2;
+  --prism-color-diagram-surface: #1f1e2b;
+  --prism-color-diagram-surface-2: #282638;
+  --prism-color-diagram-group: #17161f;
+  --prism-color-diagram-group-line: #44425a;
+  --prism-color-diagram-note: #342e1f;
+  --prism-color-diagram-note-line: #b3a266;
+  --prism-color-diagram-danger: #ff8b9b;
+  --prism-color-diff-added: #4fcb9d;
+  --prism-color-diff-added-soft: #0f2a22;
+  --prism-color-diff-removed: #ff8b9b;
+  --prism-color-diff-removed-soft: #361b25;
+  --prism-color-syntax-comment: #8e8ca6;
+  --prism-color-syntax-keyword: #c4a6ff;
+  --prism-color-syntax-string: #8dd6a9;
+  --prism-color-syntax-number: #f1b77a;
+  --prism-color-syntax-type: #7cc6ff;
+  --prism-color-syntax-function: #a9b4ff;
+  --prism-color-syntax-attr: #f19ac7;
 }
 
 [data-density="comfortable"] {
+  --prism-font-size-3xs: 10px;
+  --prism-font-size-2xs: 11px;
   --prism-font-size-xs: 11.5px;
   --prism-font-size-sm: 12.5px;
   --prism-font-size-md: 14px;
-  --prism-font-size-lg: 16px;
-  --prism-font-size-xl: 19px;
-  --prism-font-size-xxl: 24px;
+  --prism-font-size-lg: 15px;
+  --prism-font-size-xl: 18px;
+  --prism-font-size-xxl: 23px;
   --prism-space-1: 3px;
   --prism-space-2: 5px;
   --prism-space-3: 8px;
@@ -187,14 +329,36 @@
   --prism-space-7: 28px;
   --prism-space-8: 40px;
   --prism-control-height: 30px;
+  --prism-control-height-sm: 22px;
   --prism-row-height: 28px;
+  --prism-bar-height: 50px;
+  --prism-pagebar-height: 42px;
+  --prism-subtab-height: 40px;
+  --prism-status-height: 28px;
+  --prism-sidebar-width: 268px;
+  --prism-drawer-width: 320px;
+  --prism-list-width: 340px;
+  --prism-panel-width: 420px;
+  --prism-popover-width: 420px;
+  --prism-island-gap: 8px;
+  --prism-icon-size: 18px;
+  --prism-icon-size-sm: 16px;
+  --prism-icon-size-xs: 13px;
+  --prism-mark-size: 22px;
+  --prism-avatar-size: 24px;
+  --prism-avatar-size-sm: 18px;
+  --prism-avatar-size-lg: 36px;
+  --prism-avatar-overlap: -4px;
+  --prism-badge-size-sm: 16px;
 }
 
 @media (prefers-reduced-motion: reduce) {
   :root {
+    --prism-duration-instant: 0ms;
     --prism-duration-fast: 0ms;
     --prism-duration-normal: 0ms;
     --prism-duration-slow: 0ms;
-    --prism-duration-spin: 0ms;
+    --prism-duration-blink: 0ms;
+    --prism-duration-pulse: 0ms;
   }
 }

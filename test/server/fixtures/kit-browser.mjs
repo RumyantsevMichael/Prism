@@ -25,6 +25,8 @@ function loadPlaywright() {
 }
 
 export const playwright = loadPlaywright();
+// CI sets PRISM_REQUIRE_BROWSER, so a missing browser fails the run there instead of skipping every browser test.
+if (!playwright && process.env.PRISM_REQUIRE_BROWSER === "1") throw new Error("PRISM_REQUIRE_BROWSER is 1, but Playwright is not installed; run npm install -g playwright and npx playwright install chromium");
 export const skip = playwright ? false : "Playwright is not installed; run npm install -g playwright and npx playwright install chromium";
 
 async function temporary(context, prefix) {
@@ -111,6 +113,21 @@ export function reviewUrl(base, ref) {
   return `${base}/review?artifact=${encodeURIComponent(ref)}`;
 }
 
+/**
+ * Writes a claim record for a slice of a project, as a Prism server writes one: live for `minutesLeft`, or lapsed `minutesLeft` minutes ago when it is negative.
+ * Write it before the project's review server starts, since the server caches what it read.
+ */
+export async function writeClaim(projectRoot, initiative, slug, { label = "Claude on build-2", activity = "implementation", minutesLeft = 41, minutesClaimed = 20 } = {}) {
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const now = Date.now();
+  const at = (minutes) => new Date(now + minutes * 60000).toISOString();
+  const claim = { schemaVersion: 1, slug, holder: `session-${slug.replace(/[^a-z0-9]/g, "").padEnd(16, "0").slice(0, 16)}`, label, activity, claimedAt: at(-minutesClaimed), renewedAt: at(minutesLeft - 30), expiresAt: at(minutesLeft), nonce: "0123456789abcdef01234567" };
+  const folder = path.join(projectRoot, ".prism", "initiatives", initiative, "claims");
+  await mkdir(folder, { recursive: true });
+  await writeFile(path.join(folder, `${slug}.json`), `${JSON.stringify(claim, null, 2)}\n`);
+  return claim;
+}
+
 // The functions below run in the page. They walk the flat tree, through open shadow roots and slots, and turn every CSS color into RGBA through a canvas.
 const IN_PAGE = String.raw`
 const canvas = document.createElement("canvas");
@@ -132,15 +149,22 @@ const over = (top, bottom) => {
 const luminance = ([r, g, b]) => [r, g, b].map((v) => v / 255).map((v) => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
 const ratio = (x, y) => { const [hi, lo] = [luminance(x), luminance(y)].sort((p, q) => q - p); return (hi + 0.05) / (lo + 0.05); };
 const parentOf = (node) => node.assignedSlot ?? node.parentElement ?? (node.parentNode instanceof ShadowRoot ? node.parentNode.host : null);
-const backdrop = (element) => {
+// The grounds a text or boundary may sit on: the composed backgrounds of its ancestors, or, below a translucent surface with a backdrop filter, that surface composed over pure black and over pure white, the worst cases of whatever shows through.
+const grounds = (element) => {
   const layers = [];
+  let glass = false;
   for (let node = element; node; node = parentOf(node)) {
-    const color = rgba(getComputedStyle(node).backgroundColor);
+    const style = getComputedStyle(node);
+    const color = rgba(style.backgroundColor);
     if (color[3] > 0) layers.push(color);
     if (color[3] >= 1) break;
+    if (color[3] > 0 && style.backdropFilter && style.backdropFilter !== "none") { glass = true; break; }
   }
-  return layers.reduceRight((below, layer) => over(layer, below), [255, 255, 255, 1]);
+  const compose = (base) => layers.reduceRight((below, layer) => over(layer, below), base);
+  return glass ? [compose([0, 0, 0, 1]), compose([255, 255, 255, 1])] : [compose([255, 255, 255, 1])];
 };
+const backdrop = (element) => grounds(element)[0];
+const worst = (color, element) => Math.min(...grounds(element).map((ground) => ratio(over(color, ground), ground)));
 const visible = (element) => {
   for (let node = element; node; node = parentOf(node)) {
     const style = getComputedStyle(node);
@@ -172,7 +196,7 @@ const disabled = (element) => {
   }
   return false;
 };
-const CONTROL = "button, a[href], input, select, textarea, summary, [tabindex], [role=button], [role=tab], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [role=treeitem], [role=option], [role=radio], [role=checkbox], [role=switch], [role=combobox], [role=slider]";
+const FIELD_OR_CHOICE = "input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]), select, textarea, [role=textbox], [role=searchbox], [role=combobox], [role=radio], [role=checkbox], [role=switch], [data-indicator]";
 `;
 
 /** Every visible text below `selector` whose contrast is under WCAG AA, as `<element path>: <ratio> < <minimum> "<text>"`. */
@@ -188,9 +212,7 @@ export function contrastFailures(page, selector = "body") {
           const style = getComputedStyle(element);
           const size = parseFloat(style.fontSize);
           const large = size >= 24 || (size >= 18.66 && Number(style.fontWeight) >= 700);
-          const background = backdrop(element);
-          const text = over(rgba(style.color), background);
-          const value = ratio(text, background);
+          const value = worst(rgba(style.color), element);
           const minimum = large ? 3 : 4.5;
           if (value + 0.005 < minimum) failures.push(describe(element) + ": " + value.toFixed(2) + " < " + minimum + " " + JSON.stringify(node.textContent.trim().slice(0, 40)));
         }
@@ -201,21 +223,18 @@ export function contrastFailures(page, selector = "body") {
   }, [IN_PAGE, selector]);
 }
 
-/** Every visible enabled control below `selector` that draws a boundary none of whose sides or fill reaches 3:1 against what surrounds it. */
+/** Every visible enabled field or choice control below `selector` none of whose border sides or fill reaches 3:1 against what surrounds it, on glass over pure black and over pure white. */
 export function boundaryFailures(page, selector = "body") {
   return page.evaluate(([code, selector]) => {
     const audit = new Function("selector", `${code}
       const failures = [];
       for (const scope of document.querySelectorAll(selector)) {
         for (const node of walk(scope)) {
-          if (node.nodeType !== Node.ELEMENT_NODE || !node.matches(CONTROL) || node.closest("svg") || !visible(node) || disabled(node)) continue;
+          if (node.nodeType !== Node.ELEMENT_NODE || !node.matches(FIELD_OR_CHOICE) || node.closest("svg") || !visible(node) || disabled(node)) continue;
           const style = getComputedStyle(node);
-          const outside = backdrop(parentOf(node) ?? document.documentElement);
-          const fill = over(rgba(style.backgroundColor), outside);
-          const fillDiffers = ratio(fill, outside) > 1.05;
+          const around = parentOf(node) ?? document.documentElement;
           const sides = ["Top", "Right", "Bottom", "Left"].filter((side) => parseFloat(style["border" + side + "Width"]) > 0 && style["border" + side + "Style"] !== "none" && rgba(style["border" + side + "Color"])[3] > 0);
-          if (!fillDiffers && !sides.length) continue;
-          const passes = ratio(fill, outside) >= 3 || sides.some((side) => ratio(over(rgba(style["border" + side + "Color"]), outside), outside) >= 3);
+          const passes = worst(rgba(style.backgroundColor), around) >= 3 || sides.some((side) => worst(rgba(style["border" + side + "Color"]), around) >= 3);
           if (!passes) failures.push(describe(node));
         }
       }
@@ -239,8 +258,7 @@ export function focusRing(page) {
       for (const node of candidates) {
         const style = getComputedStyle(node);
         if (style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0) {
-          const outside = backdrop(parentOf(node) ?? document.documentElement);
-          return { element: describe(node), width: parseFloat(style.outlineWidth), style: style.outlineStyle, offset: parseFloat(style.outlineOffset), contrast: ratio(over(rgba(style.outlineColor), outside), outside), color: rgba(style.outlineColor) };
+          return { element: describe(node), width: parseFloat(style.outlineWidth), style: style.outlineStyle, offset: parseFloat(style.outlineOffset), contrast: worst(rgba(style.outlineColor), parentOf(node) ?? document.documentElement), color: rgba(style.outlineColor) };
         }
       }
       return { element: describe(element), width: 0, style: "none", offset: 0, contrast: 0, color: null };
@@ -335,4 +353,63 @@ export function shownTooltip(page) {
     `);
     return read();
   }, IN_PAGE);
+}
+
+/** Every visible choice option below `selector` whose radio is hidden and that shows no visible indicator marked data-indicator. */
+export function choicesWithoutIndicator(page, selector = "body") {
+  return page.evaluate(([code, selector]) => {
+    const read = new Function("selector", `${code}
+      const out = [];
+      for (const scope of document.querySelectorAll(selector)) {
+        for (const option of scope.querySelectorAll("prism-choice-option")) {
+          if (!visible(option)) continue;
+          const input = option.querySelector("input[type=radio]");
+          const indicator = [...option.querySelectorAll("[data-indicator]")].some((node) => visible(node));
+          if (!(input && visible(input)) && !indicator) out.push(describe(option));
+        }
+      }
+      return out;
+    `);
+    return read(selector);
+  }, [IN_PAGE, selector]);
+}
+
+/**
+ * Every place below `selector` where the page names one of Prism's own files: visible text, an accessible name or description, a tooltip, or the document title that holds a file ending in .json, .md, or .puml, or a path under .prism/ or docs/.
+ * Text inside an element marked data-code-subject, and rendered documents and code, are where repository files are the subject, and are left out.
+ */
+export function stateFileNames(page, selector = "body") {
+  return page.evaluate(([code, selector]) => {
+    const read = new Function("selector", `${code}
+      const NAME = /(?:^|[\\s"'(\\[\\/])(?:[\\w.-]+\\.(?:json|md|puml))(?![\\w-])|\\.prism\\/|(?:^|[\\s"'(\\[])docs\\//i;
+      const exempt = (element) => {
+        for (let node = element; node; node = parentOf(node)) {
+          if (node.hasAttribute?.("data-code-subject") || ["PRISM-DOC", "PRISM-CODE"].includes(node.tagName)) return true;
+        }
+        return false;
+      };
+      const out = [];
+      if (NAME.test(document.title)) out.push("document title: " + JSON.stringify(document.title));
+      for (const scope of document.querySelectorAll(selector)) {
+        for (const node of walk(scope)) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            const element = node.assignedSlot ?? node.parentElement ?? node.parentNode?.host;
+            if (!element || ["SCRIPT", "STYLE", "TITLE"].includes(element.tagName) || element.closest?.("svg") || !visible(element) || exempt(element)) continue;
+            if (NAME.test(node.textContent)) out.push(describe(element) + ": " + JSON.stringify(node.textContent.trim().slice(0, 80)));
+          } else if (node.nodeType === Node.ELEMENT_NODE && !exempt(node)) {
+            for (const attribute of ["aria-label", "aria-description", "tip", "title", "label", "heading", "summary"]) {
+              const value = node.getAttribute(attribute);
+              if (value && NAME.test(value)) out.push(describe(node) + " [" + attribute + "]: " + JSON.stringify(value.slice(0, 80)));
+            }
+            for (const id of (node.getAttribute("aria-labelledby") ?? "").split(/\\s+/).filter(Boolean)) {
+              const label = node.getRootNode().getElementById?.(id) ?? document.getElementById(id);
+              if (label && !exempt(label) && NAME.test(label.textContent)) out.push(describe(node) + " [aria-labelledby]: " + JSON.stringify(label.textContent.trim().slice(0, 80)));
+            }
+          }
+        }
+      }
+      return [...new Set(out)];
+    `);
+    return read(selector);
+  }, [IN_PAGE, selector]);
 }

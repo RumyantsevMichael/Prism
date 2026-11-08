@@ -5,7 +5,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §1, §5, §6, §8, §13.
-// The design values file is read as shipped and compared with the proposed values of the design.
+// Contract: docs/plans/review-app-ui-kit/slice.md clauses 5, 6, 7, 9, 10, 11, 12, and 24.
+// The design values file is read as shipped and compared with the design values of the mockup.
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const KIT = path.join(ROOT, "src/server/review/public/kit");
@@ -69,19 +70,22 @@ const contrast = (a, b) => {
   return (hi + 0.05) / (lo + 0.05);
 };
 
-test("tokens.css declares every proposed design value under the same selector", async () => {
+test("clause 6: tokens.css declares every design value of the mockup with the same value under the same selector", async () => {
   const proposed = parse(await readFile(PROPOSED, "utf8"));
   const shipped = await tokens();
+  const normalize = (value) => value.replace(/\s+/g, " ").trim();
   for (const rule of proposed.rules) {
     const match = ruleOf(shipped, rule.selector, rule.media);
     assert.ok(match, `tokens.css has no rule ${rule.media ? `@media ${rule.media} ` : ""}${rule.selector}`);
     for (const name of Object.keys(rule.declarations).filter((key) => key.startsWith("--"))) {
       assert.ok(Object.hasOwn(match.declarations, name), `${rule.selector} in tokens.css does not declare ${name}`);
+      assert.equal(normalize(match.declarations[name]), normalize(rule.declarations[name]), `${rule.selector} gives ${name} the mockup's value`);
     }
   }
+  assert.deepEqual(shipped.faces.map((face) => Object.fromEntries(Object.entries(face).map(([key, value]) => [key, normalize(value)]))), proposed.faces.map((face) => Object.fromEntries(Object.entries(face).map(([key, value]) => [key, normalize(value)]))), "tokens.css declares the mockup's font faces");
 });
 
-test("compact sizes sit on the root and the themes and comfortable density sit on attribute selectors", async () => {
+test("clauses 7, 24: compact sizes sit on the root and the themes and comfortable density sit on attribute selectors", async () => {
   const parsed = await tokens();
   const root = ruleOf(parsed, ":root");
   assert.ok(root, "tokens.css has no :root rule");
@@ -93,6 +97,8 @@ test("compact sizes sit on the root and the themes and comfortable density sit o
   assert.equal(comfortable.declarations["--prism-control-height"], "30px");
   assert.equal(comfortable.declarations["--prism-row-height"], "28px");
   assert.equal(comfortable.declarations["--prism-font-size-md"], "14px");
+  assert.equal(root.declarations["--prism-island-gap"], "6px");
+  assert.equal(comfortable.declarations["--prism-island-gap"], "8px");
   const steps = Object.keys(root.declarations).filter((name) => /^--prism-space-\d+$/.test(name));
   assert.ok(steps.length >= 6, "the root declares at least six spacing steps");
   for (const step of steps) {
@@ -101,23 +107,37 @@ test("compact sizes sit on the root and the themes and comfortable density sit o
   for (const theme of ["light", "dark"]) {
     const colors = themeColors(parsed, theme);
     for (const [name, value] of Object.entries(colors)) {
-      if (["ink", "ink-muted", "accent-text", "bg", "chrome", "surface", "sunken", "raised", "hover", "selected", "line-control", "focus", "accent", "on-accent"].includes(name) || /-soft$|^syntax-|^(danger|warning|success|info)$/.test(name)) {
+      if (["ink", "ink-muted", "accent-text", "bg", "chrome", "chrome-hover", "surface", "sunken", "raised", "hover", "selected", "line-control", "glass-control", "focus", "accent", "on-accent", "agent", "on-agent", "live"].includes(name) || /-soft$|^syntax-|^diff-|^diagram-|^phase-|person-|^(danger|warning|success|info)$/.test(name)) {
         assert.match(value, /^#[0-9a-f]{6}$/i, `--prism-color-${name} in the ${theme} theme is a six-digit hex color`);
       }
     }
   }
 });
 
-test("every text and boundary pair reaches the WCAG AA contrast in both themes", async () => {
+// A color as [r, g, b, alpha] from a six-digit hex or an rgb() with a slash alpha, as tokens.css writes them.
+const channels = (value) => {
+  if (/^#[0-9a-f]{6}$/i.test(value)) return [1, 3, 5].map((at) => parseInt(value.slice(at, at + 2), 16)).concat(1);
+  const match = value.match(/^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\/\s*([\d.]+)(%?)\s*\)$/);
+  assert.ok(match, `${value} is a six-digit hex color or an rgb() color with an alpha`);
+  return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4]) / (match[5] ? 100 : 1)];
+};
+const hex = ([r, g, b]) => `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
+const composed = (value, behind) => {
+  const [r, g, b, a] = channels(value);
+  const [R, G, B] = channels(behind);
+  return hex([r * a + R * (1 - a), g * a + G * (1 - a), b * a + B * (1 - a)]);
+};
+
+test("clause 10: every text, boundary, phase, claim, glass, and diagram pair reaches the WCAG AA contrast in both themes", async () => {
   const parsed = await tokens();
-  const surfaces = ["bg", "chrome", "surface", "sunken", "raised", "hover", "selected"];
+  const surfaces = ["bg", "chrome", "chrome-hover", "surface", "sunken", "raised", "hover", "selected"];
   const failures = [];
   for (const theme of ["light", "dark"]) {
     const colors = themeColors(parsed, theme);
-    const check = (foreground, background, minimum) => {
+    const check = (foreground, background, minimum, on = colors[background]) => {
       assert.ok(colors[foreground], `the ${theme} theme declares --prism-color-${foreground}`);
-      assert.ok(colors[background], `the ${theme} theme declares --prism-color-${background}`);
-      const value = contrast(colors[foreground], colors[background]);
+      assert.ok(on, `the ${theme} theme declares --prism-color-${background}`);
+      const value = contrast(colors[foreground], on);
       if (value < minimum) failures.push(`${theme}: ${foreground} on ${background} is ${value.toFixed(2)}:1, under ${minimum}:1`);
     };
     for (const surface of surfaces) {
@@ -131,26 +151,43 @@ test("every text and boundary pair reaches the WCAG AA contrast in both themes",
     check("accent-text", "accent-soft", 4.5);
     check("on-accent", "accent", 4.5);
     for (const diff of ["diff-added", "diff-removed"]) {
-      for (const surface of ["surface", `${diff}-soft`]) check(diff, surface, 4.5);
+      for (const surface of ["surface", "sunken", `${diff}-soft`]) check(diff, surface, 4.5);
     }
     const syntax = Object.keys(colors).filter((name) => name.startsWith("syntax-"));
-    assert.ok(syntax.length >= 13, `the ${theme} theme declares the syntax colors`);
+    assert.ok(syntax.length >= 7, `the ${theme} theme declares the syntax colors`);
     for (const name of syntax) {
       for (const surface of ["surface", "sunken"]) check(name, surface, 4.5);
     }
+    for (const phase of ["requirements", "design", "frozen", "build", "review", "shipped"]) {
+      for (const surface of ["bg", "surface", "sunken", "raised"]) {
+        check(`phase-${phase}`, surface, 4.5);
+        check(`phase-${phase}-fill`, surface, 3);
+      }
+    }
+    check("on-agent", "agent", 4.5);
+    for (const hue of [1, 2, 3, 4]) check(`on-person-${hue}`, `person-${hue}`, 4.5);
+    for (const surface of ["bg", "surface", "chrome"]) check("live", surface, 3);
+    assert.ok(colors.glass, `the ${theme} theme declares --prism-color-glass`);
+    for (const behind of ["#000000", "#ffffff"]) {
+      const glass = composed(colors.glass, behind);
+      for (const text of ["ink", "ink-muted", "accent-text"]) check(text, `glass over ${behind}`, 4.5, glass);
+      for (const boundary of ["glass-control", "focus"]) check(boundary, `glass over ${behind}`, 3, glass);
+    }
+    for (const ground of ["diagram-paper", "diagram-surface", "diagram-surface-2", "diagram-group", "diagram-note"]) check("diagram-ink", ground, 4.5);
+    for (const line of ["diagram-line", "diagram-danger"]) check(line, "diagram-paper", 3);
   }
   assert.deepEqual(failures, []);
 });
 
-test("each shipped theme is one complete value set for the same semantic tokens, declared nowhere else", async () => {
+test("clause 7: each shipped theme is one complete value set for the same semantic tokens, declared nowhere else", async () => {
   const parsed = await tokens();
-  const semantic = (rule) => Object.keys(rule.declarations).filter((name) => /^--prism-(color|shadow)-/.test(name)).sort();
+  const semantic = (rule) => Object.keys(rule.declarations).filter((name) => /^--prism-(color|shadow)-/.test(name) || name === "--prism-gradient-canvas").sort();
   const light = ruleOf(parsed, ':root, [data-theme="light"]');
   const dark = ruleOf(parsed, '[data-theme="dark"]');
   assert.ok(light && dark, "both shipped themes have a rule");
-  assert.ok(semantic(light).length >= 40, "the light theme gives the semantic tokens");
+  assert.ok(semantic(light).length >= 80, "the light theme gives the semantic tokens");
   assert.deepEqual(semantic(dark), semantic(light), "the dark theme gives exactly the light theme's semantic tokens");
-  for (const name of ["--prism-color-brand", "--prism-color-diagram-paper", "--prism-color-diff-added", "--prism-color-diff-removed", "--prism-color-syntax-keyword", "--prism-color-danger", "--prism-shadow-popup"]) {
+  for (const name of ["--prism-color-brand", "--prism-color-chrome", "--prism-color-glass", "--prism-color-island-edge", "--prism-color-agent", "--prism-color-person-1", "--prism-color-live", "--prism-color-phase-design", "--prism-color-diagram-paper", "--prism-color-diagram-ink", "--prism-color-diff-added", "--prism-color-diff-removed", "--prism-color-syntax-keyword", "--prism-color-danger", "--prism-shadow-island", "--prism-shadow-glass", "--prism-gradient-canvas"]) {
     assert.ok(semantic(light).includes(name), `a theme gives ${name}`);
   }
   for (const rule of parsed.rules) {
@@ -159,7 +196,7 @@ test("each shipped theme is one complete value set for the same semantic tokens,
   }
 });
 
-test("reduced motion sets every motion duration to zero", async () => {
+test("clause 9: reduced motion sets every motion duration to zero", async () => {
   const parsed = await tokens();
   const root = ruleOf(parsed, ":root");
   const durations = Object.keys(root.declarations).filter((name) => name.startsWith("--prism-duration-"));
@@ -169,7 +206,7 @@ test("reduced motion sets every motion duration to zero", async () => {
   for (const name of durations) assert.equal(reduced.declarations[name], "0ms", `${name} is 0ms under reduced motion`);
 });
 
-test("the interface and code fonts ship beside the design values", async () => {
+test("clauses 11, 12: the interface and code fonts ship beside the design values", async () => {
   const parsed = await tokens();
   const root = ruleOf(parsed, ":root");
   assert.match(root.declarations["--prism-font-ui"], /^"Prism UI",/);
@@ -188,13 +225,25 @@ test("the interface and code fonts ship beside the design values", async () => {
       }
     }
   }
-  for (const license of ["OFL-Inter.txt", "OFL-JetBrains-Mono.txt"]) {
+  for (const file of ["geist-latin-wght-normal.woff2", "geist-mono-latin-wght-normal.woff2"]) await access(path.join(KIT, "fonts", file));
+  for (const license of ["OFL-Geist.txt", "OFL-Geist-Mono.txt"]) {
     assert.match(await readFile(path.join(KIT, "fonts", license), "utf8"), /SIL OPEN FONT LICENSE/i, `kit/fonts/${license} holds the license text`);
   }
 });
 
-test("the build copies the kit to dist unchanged", async () => {
-  for (const file of ["tokens.css", "kit.css", "kit.js", "boot.js"]) {
-    assert.equal(await readFile(path.join(ROOT, "dist/server/review/public/kit", file), "utf8"), await readFile(path.join(KIT, file), "utf8"), `dist holds kit/${file} as in src`);
+test("clause 5: the build copies the kit and the area stylesheets to dist unchanged", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const files = async (folder) => {
+    const out = [];
+    for (const entry of await readdir(folder, { withFileTypes: true, recursive: true })) if (entry.isFile()) out.push(path.relative(folder, path.join(entry.parentPath ?? entry.path, entry.name)));
+    return out.sort();
+  };
+  for (const folder of ["kit", "styles"]) {
+    const source = path.join(ROOT, "src/server/review/public", folder);
+    const built = path.join(ROOT, "dist/server/review/public", folder);
+    const listed = await files(source).catch(() => []);
+    if (folder === "kit") assert.ok(listed.includes("tokens.css") && listed.includes("kit.js") && listed.includes("boot.js") && listed.includes("kit.css"), "src holds the kit");
+    assert.deepEqual(await files(built).catch(() => []), listed, `dist holds the same ${folder}/ files as src`);
+    for (const file of listed) assert.ok((await readFile(path.join(built, file))).equals(await readFile(path.join(source, file))), `dist holds ${folder}/${file} byte for byte`);
   }
 });

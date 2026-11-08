@@ -4,9 +4,12 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { ROOT, serveProject, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §11.
+// Contract: docs/plans/review-app-ui-kit/slice.md clauses 60 and 61.
 // The layout check opens a catalog page at checked widths and themes and names each entry that breaks.
 
 const BROKEN = `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -34,7 +37,7 @@ async function fixture(context) {
 
 const audit = () => import(path.join(ROOT, "scripts/review-demo/layout-audit.mjs"));
 
-test("a catalog entry that escapes its container, cuts off a control, or scrolls the page is named with its width and theme", { skip, timeout: 120000 }, async (context) => {
+test("clause 60: a catalog entry that escapes its container, cuts off a control, or scrolls the page is named with its width and theme", { skip, timeout: 120000 }, async (context) => {
   const { checkCatalog } = await audit();
   const url = await fixture(context);
   const problems = await checkCatalog({ url, viewports: ["phone", "wide"], themes: ["light", "dark"] });
@@ -55,7 +58,7 @@ test("a catalog entry that escapes its container, cuts off a control, or scrolls
   assert.ok(at("prism-dark", "wide", "dark")[0].width === 1920);
 });
 
-test("the shipped catalog passes the layout check at a phone and a wide width in both themes", { skip, timeout: 180000 }, async (context) => {
+test("clause 60: the shipped catalog passes the layout check at a phone and a wide width in both themes", { skip, timeout: 180000 }, async (context) => {
   const { checkCatalog } = await audit();
   await useAppDirectory(context);
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-layout-catalog-")));
@@ -64,4 +67,18 @@ test("the shipped catalog passes the layout check at a phone and a wide width in
   await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans: docs/plans/\n");
   const { base } = await serveProject(context, root);
   assert.deepEqual(await checkCatalog({ url: `${base}/kit/catalog`, viewports: ["phone", "wide"], themes: ["light", "dark"] }), []);
+});
+
+test("clause 61: the layout check command prints each catalog problem with its entry, viewport, width, and theme, and fails", { skip, timeout: 240000 }, async (context) => {
+  const url = await fixture(context);
+  const run = promisify(execFile);
+  const failed = await run(process.execPath, [path.join(ROOT, "scripts/review-demo/layout-check.mjs"), "--catalog", url, "--viewports", "phone,wide", "--themes", "light,dark"], { maxBuffer: 16 * 1024 * 1024, timeout: 230000 }).then(() => null, (error) => error);
+  assert.ok(failed, "the command fails on a broken catalog");
+  assert.equal(failed.code, 1);
+  assert.match(failed.stdout, /^catalog prism-escapes: .+ at phone \(360px\), light$/m);
+  assert.match(failed.stdout, /^catalog prism-escapes: .+ at phone \(360px\), dark$/m);
+  assert.match(failed.stdout, /^catalog prism-cuts: .+ at phone \(360px\), (light|dark)$/m);
+  assert.match(failed.stdout, /^catalog prism-dark: .+ at wide \(1920px\), dark$/m);
+  assert.doesNotMatch(failed.stdout, /^catalog prism-fine:/m);
+  assert.doesNotMatch(failed.stdout, /^catalog prism-dark: .+, light$/m);
 });

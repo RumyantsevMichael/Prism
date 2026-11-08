@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §1, §2, §12.
+// Contract: docs/plans/review-app-ui-kit/slice.md clauses 8 and 82.
 // Feature: docs/Features/F-review-app-ui-kit.feature.
 // Once every screen is on the kit, no browser file of the review app holds a raw design value or styles or writes a control around the kit.
 
@@ -25,7 +26,7 @@ async function files(directory) {
   return out;
 }
 
-test("no browser file of the review app has a guard finding", async () => {
+test("clauses 8, 82: no browser file of the review app has a guard finding", async () => {
   const { checkKitUsage } = await import(path.join(ROOT, "scripts/review-kit/kit-guard.mjs"));
   const findings = await checkKitUsage({ root: ROOT, files: await files(PUBLIC) });
   assert.deepEqual(findings.map((finding) => `${finding.file}:${finding.line}: ${finding.rule} ${finding.value}`), []);
@@ -33,7 +34,7 @@ test("no browser file of the review app has a guard finding", async () => {
   assert.equal(command.stdout.trim(), "", "the guard command finds nothing");
 });
 
-test("the old stylesheet is gone and the page loads only the kit and area stylesheets", async (context) => {
+test("clause 82: the old stylesheet is gone and the page loads only the kit and area stylesheets", async (context) => {
   for (const copy of [PUBLIC, "dist/server/review/public"]) {
     await assert.rejects(access(path.join(ROOT, copy, "review.css")), `${copy}/review.css is removed`);
   }

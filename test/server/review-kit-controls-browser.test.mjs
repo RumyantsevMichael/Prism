@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
-import { boundaryFailures, contrastFailures, escapes, focusRing, launch, openPage, ROOT, serveProject, shownTooltip, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { boundaryFailures, choicesWithoutIndicator, contrastFailures, escapes, focusRing, launch, openPage, ROOT, serveProject, shownTooltip, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §2, §5, §7, §8, §9, §10.
+// Contract: docs/plans/review-app-ui-kit/slice.md clauses 21, 22, 23, 27 to 40, and 57 to 59.
 // The controls are exercised through their public attributes, events, and keys on the served catalog page, where the kit is loaded as it ships.
 
 const CONTROLS = ["prism-button", "prism-icon", "prism-chip", "prism-badge", "prism-tab", "prism-tabs", "prism-menu", "prism-menu-group", "prism-menu-item", "prism-tooltip", "prism-field", "prism-option", "prism-choice", "prism-choice-option"];
 const HOLDS_ITEMS = ["prism-tabs", "prism-menu", "prism-choice"];
+// Clause 28: every tag the kit registers, the first eleven in shadow DOM and the rest in light DOM.
+const SHADOW = ["prism-button", "prism-icon", "prism-chip", "prism-badge", "prism-tab", "prism-menu-item", "prism-tooltip", "prism-stat", "prism-meter", "prism-spinner", "prism-avatar"];
+const LIGHT = ["prism-tabs", "prism-menu", "prism-menu-group", "prism-field", "prism-option", "prism-choice", "prism-choice-option", "prism-panel", "prism-tree", "prism-tree-item", "prism-listbox", "prism-list-item", "prism-dialog", "prism-popover", "prism-disclosure", "prism-empty-state", "prism-banner", "prism-toast", "prism-claim", "prism-stepper", "prism-step", "prism-breadcrumbs", "prism-doc", "prism-code"];
 const LONG = "A caption that is far longer than the room any control gives it, so it has to end early";
 const UNBROKEN = "slice-with-a-very-long-name-that-has-no-spaces-anywhere-and-cannot-wrap-at-all";
 
@@ -68,10 +72,10 @@ async function kitElements() {
   return kit.KIT_ELEMENTS.map((element) => ({ tag: element.tag, catalog: element.catalog }));
 }
 
-test("the kit registry holds every control and describes each one", async () => {
+test("clauses 27, 28: the kit registry holds every element of the contract and describes each one", async () => {
   const elements = await kitElements();
   const tags = elements.map((element) => element.tag);
-  for (const tag of CONTROLS) assert.ok(tags.includes(tag), `the kit registers ${tag}`);
+  for (const tag of [...SHADOW, ...LIGHT]) assert.ok(tags.includes(tag), `the kit registers ${tag}`);
   assert.equal(new Set(tags).size, tags.length, "each tag is registered once");
   for (const { tag, catalog } of elements) {
     assert.equal(typeof catalog?.purpose, "string", `${tag} states its purpose`);
@@ -86,7 +90,14 @@ test("the kit registry holds every control and describes each one", async () => 
   kit.defineKit();
 });
 
-test("the catalog shows every kit element with its documentation and live specimens", { skip }, async (context) => {
+test("clause 28: the self-contained elements render in shadow DOM and the others in light DOM", { skip }, async (context) => {
+  const { page } = await catalog(context);
+  const roots = await page.evaluate((tags) => Object.fromEntries(tags.map((tag) => [tag, Boolean(document.createElement(tag).shadowRoot) || Boolean([...document.querySelectorAll(tag)].some((element) => element.shadowRoot))])), [...SHADOW, ...LIGHT]);
+  for (const tag of SHADOW) assert.equal(roots[tag], true, `${tag} renders in shadow DOM`);
+  for (const tag of LIGHT) assert.equal(roots[tag], false, `${tag} renders in light DOM`);
+});
+
+test("clause 57: the catalog shows every kit element with its documentation and live specimens", { skip }, async (context) => {
   const elements = await kitElements();
   const { page } = await catalog(context);
   const entries = await page.evaluate(() => [...document.querySelectorAll("[data-catalog-entry]")].map((entry) => ({
@@ -111,7 +122,7 @@ test("the catalog shows every kit element with its documentation and live specim
   assert.deepEqual(page.errors, []);
 });
 
-test("the catalog lists every semantic token with its value in each shipped theme", { skip }, async (context) => {
+test("clause 58: the catalog lists every semantic token with its value in each shipped theme", { skip }, async (context) => {
   const { page } = await catalog(context);
   const listed = await page.evaluate(() => {
     const entry = document.querySelector('[data-catalog-entry="design-values"]');
@@ -120,17 +131,17 @@ test("the catalog lists every semantic token with its value in each shipped them
       let rules;
       try { rules = sheet.cssRules; } catch { continue; }
       for (const rule of rules) {
-        if (rule.selectorText?.includes('[data-theme="light"]')) for (const name of rule.style) if (/^--prism-(color|shadow)-/.test(name)) names.add(name);
+        if (rule.selectorText?.includes('[data-theme="light"]')) for (const name of rule.style) if (/^--prism-(color|shadow)-/.test(name) || name === "--prism-gradient-canvas") names.add(name);
       }
     }
     return { text: entry?.textContent ?? "", names: [...names] };
   });
-  assert.ok(listed.names.length >= 40, "the page loaded the semantic tokens");
+  assert.ok(listed.names.length >= 80, "the page loaded the semantic tokens");
   for (const name of listed.names) assert.ok(listed.text.includes(name), `the catalog lists ${name}`);
-  for (const value of ["#6752d8", "#a392ff"]) assert.ok(listed.text.toLowerCase().includes(value), `the catalog shows the value ${value} of a shipped theme`);
+  for (const value of ["#5b3fe4", "#9a89ff"]) assert.ok(listed.text.toLowerCase().includes(value), `the catalog shows the value ${value} of a shipped theme`);
 });
 
-test("the catalog's toolbar and query choose its theme, density, and width without storing them", { skip }, async (context) => {
+test("clause 59: the catalog's toolbar and query choose its theme, density, and width without storing them", { skip }, async (context) => {
   const { base, page } = await catalog(context, "?theme=dark&density=comfortable&width=narrow");
   const state = await page.evaluate(() => {
     const scoped = document.querySelector("[data-catalog-entry]").closest("[data-theme]");
@@ -145,7 +156,7 @@ test("the catalog's toolbar and query choose its theme, density, and width witho
   }
 });
 
-test("text and control boundaries in the control entries reach WCAG AA in both themes and densities", { skip, timeout: 120000 }, async (context) => {
+test("clauses 21, 22: text and field and choice boundaries in the control entries reach WCAG AA in both themes and densities", { skip, timeout: 120000 }, async (context) => {
   await useAppDirectory(context);
   const { base } = await serveProject(context, await emptyProject(context));
   const browser = await launch(context);
@@ -155,13 +166,15 @@ test("text and control boundaries in the control entries reach WCAG AA in both t
       const page = await openPage(browser, `${base}/kit/catalog?theme=${theme}&density=${density}`);
       assert.equal(await page.locator(selector).count(), CONTROLS.length, "the catalog shows every control entry");
       assert.deepEqual(await contrastFailures(page, selector), [], `text contrast, ${theme} ${density}`);
-      assert.deepEqual(await boundaryFailures(page, selector), [], `control boundaries, ${theme} ${density}`);
+      assert.deepEqual(await boundaryFailures(page, selector), [], `field and choice boundaries, ${theme} ${density}`);
+      assert.deepEqual(await choicesWithoutIndicator(page, selector), [], `every choice option draws its radio or an indicator, ${theme} ${density}`);
+      assert.ok(await page.locator(`${selector.split(", ").filter((part) => /prism-(field|choice)/.test(part)).join(", ")}`).locator("input, select, textarea, [data-indicator]").count() > 0, "the field and choice entries hold controls to check");
       await page.context().close();
     }
   }
 });
 
-test("every keyboard focus stop on the catalog shows a 2px focus outline that reaches 3:1", { skip, timeout: 120000 }, async (context) => {
+test("clause 23: every keyboard focus stop on the catalog shows a 2px focus outline that reaches 3:1", { skip, timeout: 120000 }, async (context) => {
   await useAppDirectory(context);
   const { base } = await serveProject(context, await emptyProject(context));
   const browser = await launch(context);
@@ -183,11 +196,12 @@ test("every keyboard focus stop on the catalog shows a 2px focus outline that re
   }
 });
 
-test("a button takes its height from the density and sends clicks only while enabled", { skip }, async (context) => {
+test("clauses 24, 29: a button takes its height from the density and its size, and sends clicks only while enabled", { skip }, async (context) => {
   const { browser, base, page } = await catalog(context);
-  await mount(page, `<prism-button id="save" variant="primary">Save</prism-button><prism-button id="off" disabled>Off</prism-button><prism-button id="bold" pressed>Bold</prism-button><prism-button id="close" label="Close the panel"><prism-icon name="close"></prism-icon></prism-button>`);
+  await mount(page, `<prism-button id="small" size="sm">Small</prism-button><prism-button id="save" variant="primary">Save</prism-button><prism-button id="off" disabled>Off</prism-button><prism-button id="bold" pressed>Bold</prism-button><prism-button id="close" label="Close the panel"><prism-icon name="close"></prism-icon></prism-button>`);
   const height = (target) => target.evaluate(() => document.querySelector("#save").getBoundingClientRect().height);
   assert.equal(await height(page), 24);
+  assert.equal(await page.evaluate(() => document.querySelector("#small").getBoundingClientRect().height), 18, "a small button takes --prism-control-height-sm");
   const comfortable = await openPage(browser, `${base}/kit/catalog?density=comfortable`);
   await mount(comfortable, `<prism-button id="save">Save</prism-button>`);
   assert.equal(await height(comfortable), 30);
@@ -206,9 +220,9 @@ test("a button takes its height from the density and sends clicks only while ena
   assert.equal(await page.getByRole("button", { name: "Close the panel" }).count(), 1, "an icon-only button is named by its label");
 });
 
-test("icons are hidden from assistive technology unless labelled", { skip }, async (context) => {
+test("clause 30: icons are hidden from assistive technology unless labelled", { skip }, async (context) => {
   const { page } = await catalog(context);
-  const names = ["search", "close", "chevron-right", "chevron-down", "store", "sync", "maximize", "restore", "external", "check", "warning", "info", "more"];
+  const names = ["search", "close", "chevron-right", "chevron-down", "back", "forward", "menu", "panel", "link", "agent", "store", "sync", "maximize", "restore", "external", "check", "warning", "info", "more"];
   await mount(page, names.map((name) => `<prism-icon name="${name}"></prism-icon>`).join("") + `<prism-icon name="warning" label="Warning"></prism-icon>`);
   const drawn = await page.evaluate(() => [...document.querySelectorAll("#fixture prism-icon")].map((icon) => icon.getBoundingClientRect().width > 0 && Boolean(icon.shadowRoot?.querySelector("svg"))));
   assert.deepEqual(drawn, names.map(() => true).concat(true), "every icon draws an SVG");
@@ -216,7 +230,7 @@ test("icons are hidden from assistive technology unless labelled", { skip }, asy
   assert.equal(await page.locator("#fixture").getByRole("img", { name: "Warning" }).count(), 1);
 });
 
-test("chips are static text, links, or buttons, and badges are static text", { skip }, async (context) => {
+test("clauses 31, 32: chips are static text, links, or buttons, and badges are static text", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-chip id="plain" tone="info">plain<span slot="meta">meta</span></prism-chip><prism-chip id="link" href="#target">link</prism-chip><prism-chip id="act" interactive>act</prism-chip><prism-badge tone="danger" variant="count">3</prism-badge>`);
   const region = page.locator("#fixture");
@@ -228,17 +242,24 @@ test("chips are static text, links, or buttons, and badges are static text", { s
   await region.getByRole("button", { name: "act" }).click();
   assert.equal((await events(page)).length, 1);
   assert.match(await page.locator("#plain").innerText(), /plain/);
+  const roles = await page.evaluate(() => {
+    const deep = (root) => [root, ...[...root.querySelectorAll("*")].flatMap((node) => node.shadowRoot ? [node, ...deep(node.shadowRoot)] : [node])];
+    const badge = document.querySelector("#fixture prism-badge");
+    return [badge, ...(badge.shadowRoot ? deep(badge.shadowRoot) : [])].map((node) => node.getAttribute?.("role")).filter(Boolean);
+  });
+  assert.deepEqual(roles.filter((role) => ["button", "link", "checkbox", "option", "tab", "menuitem"].includes(role)), [], "a badge carries no control role");
 });
 
-test("tabs move focus with arrow keys, select with Enter, and close with Delete", { skip }, async (context) => {
+test("clauses 33, 34: tabs are a named tablist with one selected tab, move focus with arrow keys, and select with Enter", { skip }, async (context) => {
   const { page } = await catalog(context);
-  await mount(page, `<prism-button id="before">Before</prism-button><prism-tabs id="tabs" label="Open artifacts"><prism-tab value="a" selected>Alpha</prism-tab><prism-tab value="b" closable>Beta</prism-tab><prism-tab value="c" preview>Gamma</prism-tab></prism-tabs><prism-button id="after">After</prism-button>`);
+  await mount(page, `<prism-button id="before">Before</prism-button><prism-tabs id="tabs" label="Slice"><prism-tab value="a" selected>Design</prism-tab><prism-tab value="b">Diagram</prism-tab><prism-tab value="c">Files</prism-tab></prism-tabs><prism-button id="after">After</prism-button>`);
   await record(page, "#tabs", "prism-select");
-  await record(page, "#tabs", "prism-close");
   const region = page.locator("#fixture");
-  assert.equal(await region.getByRole("tablist", { name: "Open artifacts" }).count(), 1);
+  assert.equal(await region.getByRole("tablist", { name: "Slice" }).count(), 1);
   assert.equal(await region.getByRole("tab").count(), 3);
-  assert.equal(await region.getByRole("tab", { name: "Alpha" }).getAttribute("aria-selected"), "true");
+  assert.equal(await region.getByRole("tab", { name: "Design" }).getAttribute("aria-selected"), "true");
+  assert.equal(await region.getByRole("tab", { selected: true }).count(), 1, "exactly one tab is selected");
+  assert.equal(await region.getByRole("button", { name: /^Close/ }).count(), 0, "a tab offers no close button");
   await page.locator("#before").focus();
   await page.keyboard.press("Tab");
   assert.equal((await focused(page)).value, "a", "Tab enters the tabs at the selected tab");
@@ -255,22 +276,19 @@ test("tabs move focus with arrow keys, select with Enter, and close with Delete"
   assert.equal((await focused(page)).value, "c");
   await page.keyboard.press("Enter");
   await page.keyboard.press("ArrowLeft");
-  await page.keyboard.press("Delete");
-  await page.keyboard.press("Home");
-  await page.keyboard.press("Delete");
+  await page.keyboard.press("Space");
+  await region.getByRole("tab", { name: "Design" }).click();
   const sent = await events(page);
-  assert.deepEqual(sent.filter((event) => event.type === "prism-select").map((event) => event.detail.value), ["c"]);
-  assert.deepEqual(sent.filter((event) => event.type === "prism-close").map((event) => event.detail.value), ["b"], "only a closable tab closes");
-  await region.getByRole("button", { name: "Close Beta" }).click();
-  assert.equal((await events(page)).filter((event) => event.type === "prism-close").length, 2);
+  assert.deepEqual(sent.filter((event) => event.type === "prism-select").map((event) => event.detail.value), ["c", "b", "a"]);
+  assert.equal(await region.getByRole("tab", { name: "Design" }).getAttribute("aria-selected"), "true");
+  assert.equal(await region.getByRole("tab", { selected: true }).count(), 1, "selecting a tab unselects the others");
   await page.locator("#before").focus();
   await page.keyboard.press("Tab");
   await page.keyboard.press("Tab");
   assert.equal((await focused(page)).id, "after", "only one tab is in the Tab order");
-  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('prism-tab[value="c"]').shadowRoot.querySelector("[part~=label], span, *") ?? document.body).fontStyle !== undefined), true);
 });
 
-test("tabs that do not fit scroll inside their strip", { skip }, async (context) => {
+test("clause 34: tabs that do not fit scroll inside their strip", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-tabs label="Many">${Array.from({ length: 30 }, (_, index) => `<prism-tab value="t${index}"${index === 0 ? " selected" : ""}>${index % 3 ? "Tab" : UNBROKEN} ${index}</prism-tab>`).join("")}</prism-tabs>`, { width: "320px" });
   assert.deepEqual(await escapes(page, "#fixture"), []);
@@ -284,7 +302,7 @@ test("tabs that do not fit scroll inside their strip", { skip }, async (context)
   assert.ok(await page.locator('prism-tab[value="t29"]').isVisible(), "the last tab scrolls into view");
 });
 
-test("a menu opens from its button, moves with arrow keys, chooses with Enter, and closes with Escape", { skip }, async (context) => {
+test("clauses 35, 36: a menu opens from its button, moves with arrow keys, chooses with Enter, and closes with Escape", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-button id="trigger">Appearance</prism-button>
     <prism-menu id="menu" for="trigger">
@@ -339,7 +357,7 @@ test("a menu opens from its button, moves with arrow keys, chooses with Enter, a
   assert.equal(await page.getByRole("menu").count(), 0, "a click outside closes the menu");
 });
 
-test("a menu near the bottom of the window opens above its button and stays inside the window", { skip }, async (context) => {
+test("clause 36: a menu near the bottom of the window opens above its button and stays inside the window", { skip }, async (context) => {
   const { page } = await catalog(context, "", { viewport: { width: 800, height: 600 } });
   await page.evaluate(() => {
     const holder = document.createElement("div");
@@ -363,7 +381,7 @@ test("a menu near the bottom of the window opens above its button and stays insi
   assert.ok(boxes.menu.top >= 0 && boxes.menu.left >= 0 && boxes.menu.right <= boxes.width && boxes.menu.bottom <= boxes.height, "the menu stays inside the window");
 });
 
-test("shortened text shows its full text in a tooltip on hover and on keyboard focus", { skip }, async (context) => {
+test("clauses 37, 38: shortened text shows its full text in a tooltip on hover and on keyboard focus", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-button id="before">Before</prism-button>
     <div style="width: 140px"><prism-chip id="long">${LONG}</prism-chip></div>
@@ -409,7 +427,7 @@ test("shortened text shows its full text in a tooltip on hover and on keyboard f
   assert.equal(await shownTooltip(page), "Opens the roadmap", "a tip shows on focus");
 });
 
-test("a field creates a labelled native control whose value and events reach the page", { skip }, async (context) => {
+test("clause 39: a field creates a labelled native control whose value and events reach the page", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<form id="form">
     <prism-field id="note" type="textarea" label="Note" name="note" hint="Optional unless you request changes" placeholder="Write a note"></prism-field>
@@ -449,7 +467,7 @@ test("a field creates a labelled native control whose value and events reach the
   assert.ok(seen.some(([type, id]) => type === "change" && id === "lane"), "change bubbles from the native control");
 });
 
-test("a choice is a radio group that arrow keys move and that reports its value", { skip }, async (context) => {
+test("clause 40: a choice is a radio group that arrow keys move and that reports its value", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-choice id="answer" label="Your answer" name="answer">
     <prism-choice-option value="accept">Accept<span slot="detail">The slices start in order.</span></prism-choice-option>
@@ -471,7 +489,7 @@ test("a choice is a radio group that arrow keys move and that reports its value"
   assert.match(await region.innerText(), /Design revises the contract\./);
 });
 
-test("controls that receive many items or long names stay inside their containers at a narrow width", { skip }, async (context) => {
+test("clause 38: controls that receive many items or long names stay inside their containers at a narrow width", { skip }, async (context) => {
   const { page } = await catalog(context, "", { viewport: { width: 360, height: 740 } });
   await mount(page, `<prism-choice label="${LONG}" name="many">${Array.from({ length: 12 }, (_, index) => `<prism-choice-option value="v${index}">${index % 2 ? LONG : UNBROKEN}</prism-choice-option>`).join("")}</prism-choice>
     <prism-field type="select" label="${UNBROKEN}" name="s">${Array.from({ length: 40 }, (_, index) => `<prism-option value="o${index}">${UNBROKEN}${index}</prism-option>`).join("")}</prism-field>

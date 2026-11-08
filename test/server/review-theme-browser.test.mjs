@@ -3,28 +3,36 @@ import test from "node:test";
 import { demoProject, launch, movingElements, openPage, paintedBackgrounds, reviewUrl, rootToken, serveProject, settle, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §1, §3, §4, §5, §6, §13.
+// Contract: docs/plans/review-app-ui-kit/slice.md clauses 9, 12, 17, 18, 19, 20, and 24.
 // The real review page runs in Chromium over a demo project, with the theme chosen through the preferences route and the operating system's setting emulated.
 
-const PAGES = ["attention", "roadmap", "slice:retry-hardening/timeout-retries", "docs/retry.md", "src/retry/strategy.ts", "config/retry.json"];
+const PAGES = ["attention", "roadmap", "slice:retry-hardening/timeout-retries", "docs/retry.md", "src/retry/strategy.ts", "config/retry.json", "docs/plans/retry-hardening/timeout-retries/timeout-retries.puml"];
 
 const choose = (base, body) => fetch(`${base}/api/preferences`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const appearance = (page) => page.evaluate(() => ({ choice: document.documentElement.dataset.themeChoice, theme: document.documentElement.dataset.theme, density: document.documentElement.dataset.density }));
 
-test("by default the page follows the operating system's theme and switches with it without a reload", { skip }, async (context) => {
+const themeColor = (page) => page.evaluate(() => document.querySelector('meta[name="theme-color"]')?.content.trim().toLowerCase());
+
+test("clauses 17, 18, 19: by default the page follows the operating system's theme and switches with it without a reload", { skip }, async (context) => {
   await useAppDirectory(context);
   const { base } = await serveProject(context, await demoProject(context));
   const browser = await launch(context);
   const page = await openPage(browser, `${base}/`, { colorScheme: "light" });
   assert.deepEqual(await appearance(page), { choice: "system", theme: "light", density: "compact" });
   await page.evaluate(() => { window.__sameDocument = true; });
+  const lightColor = await themeColor(page);
+  assert.equal(lightColor, (await rootToken(page, "--prism-color-chrome")).toLowerCase(), "the theme color is the light chrome color");
   await page.emulateMedia({ colorScheme: "dark" });
   await page.waitForFunction(() => document.documentElement.dataset.theme === "dark", null, { timeout: 3000 });
   assert.equal(await page.evaluate(() => window.__sameDocument), true, "the switch happens without a reload");
+  await page.waitForTimeout(100);
+  assert.equal(await themeColor(page), (await rootToken(page, "--prism-color-chrome")).toLowerCase(), "the theme color follows to the dark chrome color");
+  assert.notEqual(await themeColor(page), lightColor, "the theme color changes with the theme");
   await page.emulateMedia({ colorScheme: "light" });
   await page.waitForFunction(() => document.documentElement.dataset.theme === "light", null, { timeout: 3000 });
 });
 
-test("a stored theme overrides the operating system and survives a reload and a restart on another port", { skip }, async (context) => {
+test("clauses 16, 17, 18, 19: a stored theme overrides the operating system and survives a reload and a restart on another port", { skip }, async (context) => {
   await useAppDirectory(context);
   const root = await demoProject(context);
   const first = await serveProject(context, root);
@@ -44,7 +52,7 @@ test("a stored theme overrides the operating system and survives a reload and a 
   assert.deepEqual(await appearance(restarted), { choice: "dark", theme: "dark", density: "compact" });
 });
 
-test("the page applies the last choice it saw before the server answers, and keeps it when the server cannot be reached", { skip }, async (context) => {
+test("clause 17: the page applies the last choice it saw before the server answers, and keeps it when the server cannot be reached", { skip }, async (context) => {
   await useAppDirectory(context);
   const { base } = await serveProject(context, await demoProject(context));
   await choose(base, { theme: "dark", density: "comfortable" });
@@ -74,7 +82,7 @@ test("the page applies the last choice it saw before the server answers, and kee
   assert.deepEqual(await appearance(fresh), { choice: "system", theme: "light", density: "compact" }, "a browser without a choice uses the defaults");
 });
 
-test("comfortable density raises the control and row heights", { skip }, async (context) => {
+test("clause 24: comfortable density raises the control and row heights, the text size, and the island gap", { skip }, async (context) => {
   await useAppDirectory(context);
   const { base } = await serveProject(context, await demoProject(context));
   const browser = await launch(context);
@@ -87,45 +95,31 @@ test("comfortable density raises the control and row heights", { skip }, async (
   assert.equal(await rootToken(comfortable, "--prism-control-height"), "30px");
   assert.equal(await rootToken(comfortable, "--prism-row-height"), "28px");
   assert.equal(await rootToken(comfortable, "--prism-font-size-md"), "14px");
+  assert.equal(await rootToken(comfortable, "--prism-island-gap"), "8px");
 });
 
-test("every painted surface of every page changes with the theme", { skip, timeout: 120000 }, async (context) => {
+test("clause 20: every painted surface of every page changes with the theme, the diagram sheet included", { skip, timeout: 120000 }, async (context) => {
   await useAppDirectory(context);
   const { base } = await serveProject(context, await demoProject(context));
   const browser = await launch(context);
   const failures = [];
   for (const ref of PAGES) {
     const painted = {};
-    const paper = {};
     for (const theme of ["light", "dark"]) {
       await choose(base, { theme });
       const page = await openPage(browser, reviewUrl(base, ref));
-      // A probe painted with the diagram paper gives that color in the same form as every painted surface.
-      await page.evaluate(() => {
-        const probe = document.createElement("div");
-        probe.id = "paper-probe";
-        probe.style.setProperty("background-color", "var(--prism-color-diagram-paper)");
-        probe.style.setProperty("width", "1px");
-        probe.style.setProperty("height", "1px");
-        document.body.append(probe);
-      });
       painted[theme] = await paintedBackgrounds(page);
-      const probe = Object.keys(painted[theme]).find((key) => key.endsWith("div#paper-probe"));
-      paper[theme] = painted[theme][probe];
-      delete painted[theme][probe];
       await page.context().close();
     }
     assert.ok(Object.keys(painted.light).length > 3, `${ref} paints surfaces`);
     for (const [element, color] of Object.entries(painted.light)) {
-      if (!(element in painted.dark) || painted.dark[element] !== color) continue;
-      if (color === paper.light && color === paper.dark) continue;
-      failures.push(`${ref}: ${element} keeps ${color} in both themes`);
+      if (element in painted.dark && painted.dark[element] === color) failures.push(`${ref}: ${element} keeps ${color} in both themes`);
     }
   }
   assert.deepEqual(failures, []);
 });
 
-test("the interface and code fonts load from the review app with every other host unreachable", { skip }, async (context) => {
+test("clause 12: the interface and code fonts load from the review app with every other host unreachable", { skip }, async (context) => {
   await useAppDirectory(context);
   const { base } = await serveProject(context, await demoProject(context));
   const browser = await launch(context);
@@ -146,7 +140,7 @@ test("the interface and code fonts load from the review app with every other hos
   assert.deepEqual(page.errors, []);
 });
 
-test("under reduced motion nothing on the page animates or transitions", { skip }, async (context) => {
+test("clause 9: under reduced motion nothing on the page animates or transitions", { skip }, async (context) => {
   await useAppDirectory(context);
   const { base } = await serveProject(context, await demoProject(context));
   const browser = await launch(context);
