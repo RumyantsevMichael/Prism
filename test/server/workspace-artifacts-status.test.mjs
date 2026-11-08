@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import { rm } from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 import test from "node:test";
+import { deliverGateAnswers } from "../../dist/hooks/deliver-gate-answers.mjs";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
 import { adrFile, browserRequest, checkout, git, isolateGit, ok, refused, requirementFile, reviewBrowser, server, text, today, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
@@ -155,6 +157,51 @@ test("clause 37: waiting on an artifact's approval gate returns the person's ans
   const result = ok(await waiting);
   assert.match(JSON.stringify(result), /answered/);
   assert.match(JSON.stringify(result), /Looks right\./);
+});
+
+// The prompt and session start hooks as a host runs them in a checkout, with app as the machine's Prism application folder.
+const hook = (event, cwd, app) => deliverGateAnswers({ input: Readable.from([JSON.stringify({ hook_event_name: event, cwd, ...(event === "SessionStart" ? { source: "resume" } : {}) })]), environment: { PRISM_REVIEW_APP_DIR: app } });
+const hookText = async (event, cwd, app) => (await hook(event, cwd, app))?.hookSpecificOutput?.additionalContext ?? null;
+
+test("clause 37: an approval answer reaches the checkout that asked it once, however old, and no other checkout or machine", async (context) => {
+  const { place, api, prism } = await project(context);
+  const web = await checkout(place, "web");
+  const webPrism = await server(context, place, web);
+  const otherMachine = path.join(place.parent, "other-app");
+  await writeArtifact(prism, FILE, requirementFile("Billing"));
+  const ask = async () => ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: FILE, context: "Billing." }] })).artifacts[0].gate;
+  const first = await ask();
+  assert.equal(ok(await webPrism.call("get_artifact", { path: FILE })).path, FILE, "the other checkout sees the workspace artifact");
+
+  assert.match(await hookText("SessionStart", api, place.app) ?? "", new RegExp(`${first}[\\s\\S]*${FILE}`), "a resumed session of the asking checkout is told its unanswered gate");
+  assert.equal(await hookText("SessionStart", web, place.app), null, "another checkout did not ask the gate");
+  assert.equal(await hookText("UserPromptSubmit", api, place.app), null, "an unanswered gate is no answer");
+
+  const review = await reviewBrowser(context, api);
+  assert.equal((await answer(review, { artifact: FILE, scope: "workspace", id: first, choice: "request-changes", note: "Name the currency." })).status, 200);
+  assert.equal(await hookText("UserPromptSubmit", web, place.app), null, "another checkout on the asking machine is not handed the answer");
+  assert.equal(await hookText("UserPromptSubmit", web, otherMachine), null, "another machine is not handed the answer");
+  assert.equal(ok(await webPrism.call("get_artifact", { path: FILE })).latestAnswer.gate, first, "another checkout reads the latest answer");
+  const delivered = await hookText("UserPromptSubmit", api, place.app);
+  assert.match(delivered ?? "", new RegExp(first));
+  assert.match(delivered, /request changes/i);
+  assert.match(delivered, /Name the currency\./);
+  assert.equal(await hookText("UserPromptSubmit", api, place.app), null, "an answer is delivered once");
+  assert.equal(await hookText("SessionStart", api, place.app), null, "a resumed session is not told a received answer again");
+
+  const second = await ask();
+  assert.equal((await answer(review, { artifact: FILE, scope: "workspace", id: second, choice: "request-changes", note: "Round totals." })).status, 200);
+  context.mock.timers.enable({ apis: ["Date"], now: Date.now() + 30 * 86400000 });
+  try {
+    assert.match(await hookText("UserPromptSubmit", api, place.app) ?? "", new RegExp(`${second}[\\s\\S]*Round totals\\.`), "an answer that waited 30 days still reaches the asking checkout");
+  } finally {
+    context.mock.timers.reset();
+  }
+
+  const third = await ask();
+  assert.equal((await answer(review, { artifact: FILE, scope: "workspace", id: third, choice: "approve", note: null })).status, 200);
+  assert.equal(ok(await prism.call("get_artifact", { path: FILE })).latestAnswer.gate, third);
+  assert.equal(await hookText("UserPromptSubmit", api, place.app), null, "a read that returned the answer as latestAnswer received it");
 });
 
 test("clause 38: the accepted version is kept at approval and at design acceptance, and can be read", async (context) => {
