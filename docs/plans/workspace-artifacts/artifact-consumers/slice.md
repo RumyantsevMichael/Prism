@@ -9,5 +9,5 @@
 - change `src/server/workflow/state.mjs`, `dist/server/workflow/state.mjs`: `checkpointPause` writes `recovery.md` in the store (§22).
 - change `src/server/workflow/projection.mjs`, `dist/server/workflow/projection.mjs`, `src/server/workflow/roadmap.mjs`, `dist/server/workflow/roadmap.mjs`: generated views are written through the artifact resolver (§22).
 - change `src/server/review/review-ledger.mts`, `dist/server/review/review-ledger.mjs`: writes `review.md` in the store (§22).
-- change `src/server/review/review-server.mjs`, `dist/server/review/review-server.mjs`: `listArtifacts` lists the seen store artifacts, `/api/index` adds `artifactScopes`, and `/api/artifact` serves store bytes (§23).
-- change `src/server/review/workspace-model.mjs`, `dist/server/review/workspace-model.mjs`: libraries, slice files, and the glossary read store artifacts (§23).
+- change `src/server/review/review-server.mjs`, `dist/server/review/review-server.mjs`: `listArtifacts` lists the seen store artifacts, `/api/index` adds `artifactScopes`, `/api/artifact` serves store bytes, and an unavailable store or refused repository name lists, searches, and serves no checkout copy of an artifact (§23).
+- change `src/server/review/workspace-model.mjs`, `dist/server/review/workspace-model.mjs`: libraries, slice files, and the glossary read store artifacts and show no checkout copy when the store is refused (§23).

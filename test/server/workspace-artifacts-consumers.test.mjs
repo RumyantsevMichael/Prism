@@ -20,7 +20,7 @@ async function designed(context, { scope } = {}) {
   const prism = await server(context, place, api);
   ok(await createInitiative(prism, "reports"));
   await writeArtifact(prism, "docs/plans/reports/slice.md", CONTRACT, scope ? { scope } : {});
-  await writeArtifact(prism, "docs/plans/reports/code.puml", DIAGRAM);
+  await writeArtifact(prism, "docs/plans/reports/code.puml", DIAGRAM, scope ? { scope } : {});
   return { place, api, prism };
 }
 
@@ -44,12 +44,15 @@ test("clause 22: design proposal, acceptance, and the design view read slice.md 
 test("clause 22: the recovery note of a pause is written in the store, beside its initiative's plans", async (context) => {
   const { place, api, prism } = await designed(context, { scope: "repository" });
   const started = ok(await prism.call("update_coordination_state", { initiative: "reports", expectedRevision: null, changes: {
-    activeOperations: [{ op: "start", entry: { slice: "download", activity: "implementation", workers: ["worker"], workspace: api } }]
+    activeOperations: [{ op: "start", entry: { slice: "download", activity: "design", workers: ["worker"], workspace: api } }]
   } }));
   ok(await prism.call("checkpoint_pause", { initiative: "reports", expectedRevision: started.revision, activeSlice: "download", recoveryContent: "Continue the download.", changes: { next: ["Continue"] } }));
   assert.equal(await text(path.join(place.store, "artifacts", "repositories", "api", "plans", "reports", "download", "recovery.md")), "Continue the download.\n", "the note lands in the scope that holds the initiative's plans folder");
   assert.equal(await exists(path.join(api, "docs", "plans")), false);
+  // The view was generated before slice.md gave the plans folder a scope, so it moves there the next time it is generated.
+  ok(await prism.call("update_initiative", { initiative: "reports", expectedRevision: await revision(prism), operations: [{ op: "regenerate_markdown" }] }));
   assert.equal((await readdir(path.join(place.store, "artifacts", "repositories", "api", "plans", "reports"))).includes("initiative.md"), true, "the generated initiative view follows the plans folder's scope");
+  assert.equal(await exists(path.join(place.store, "artifacts", "plans", "reports", "initiative.md")), false, "no copy of the view stays in the workspace scope");
 });
 
 test("clause 22: a slice.md that only the checkout holds is not read", async (context) => {
@@ -143,4 +146,37 @@ test("clause 23: the review browser lists the store's artifacts with their scope
   const served = await browserRequest(review, `/api/artifact?path=${encodeURIComponent("docs/requirements/billing.md")}`);
   assert.equal(served.status, 200);
   assert.match(JSON.stringify(served.body), /Stored text\./);
+});
+
+test("clause 23: with the store unavailable or the repository name refused, the review browser shows no checkout copy of an artifact and refuses to serve one", async (context) => {
+  const place = await workspace(context);
+  const paths = ["- Requirements: docs/requirements", "- Plans: docs/plans"];
+  const files = { "docs/requirements/billing.md": "# Checkout billing\n\nCheckout copy.\n", "docs/plans/reports/slice.md": "# Checkout reports\n\nCheckout copy.\n" };
+  const shownNowhere = async (review, label) => {
+    const index = await browserRequest(review, "/api/index");
+    assert.equal(index.status, 200, `${label}: the browser still opens`);
+    for (const file of Object.keys(files)) {
+      assert.equal(index.body.artifacts.includes(file), false, `${label}: ${file} is not listed from the checkout`);
+      const served = await browserRequest(review, `/api/artifact?path=${encodeURIComponent(file)}`);
+      assert.equal(served.status, 503, `${label}: ${file} is refused, not served from the checkout`);
+      assert.doesNotMatch(JSON.stringify(served.body), /Checkout copy/, `${label}: no checkout bytes are served`);
+    }
+    const search = await browserRequest(review, `/api/search?q=${encodeURIComponent("Checkout copy")}`);
+    assert.deepEqual(search.body.results.filter((result) => Object.keys(files).includes(result.path)), [], `${label}: search finds no checkout copy`);
+    const library = await browserRequest(review, "/api/entity?ref=requirements");
+    assert.doesNotMatch(JSON.stringify(library.body), /Checkout billing/, `${label}: the requirements library shows no checkout copy`);
+    return index;
+  };
+
+  const api = await checkout(place, "api", { store: "../missing-store", paths, files });
+  const review = await reviewBrowser(context, api);
+  const index = await shownNowhere(review, "unavailable store");
+  assert.match(index.body.recordStore.unavailable, /\.\.\/missing-store/, "the index names the store as configured");
+  const served = await browserRequest(review, `/api/artifact?path=${encodeURIComponent("docs/requirements/billing.md")}`);
+  assert.match(String(served.body), /\.\.\/missing-store/, "the refusal names the store as configured");
+
+  const web = await checkout(place, "web");
+  await commitFiles(web, { ".prism/workflow.md": `## Paths\n${paths.join("\n")}\n\n## Workspace\n- Store: ../store\n`, ...files }, "name no repository");
+  const unnamed = await shownNowhere(await reviewBrowser(context, web), "refused repository name");
+  assert.equal(typeof unnamed.body.recordStore.unavailable, "string", "the index reports the refusal");
 });
