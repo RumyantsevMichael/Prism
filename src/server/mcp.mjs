@@ -7,9 +7,9 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { recordStoreOf, takeMigrationReports } from "./workflow/record-store.mjs";
+import { recordStoreOf, restoreMigrationReports, takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
-import { confirmSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
+import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { withCallSession } from "./workflow/slice-claims.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
@@ -141,8 +141,15 @@ async function server(argumentsValue, metadata) {
   return reviewServers.get(projectRoot, id);
 }
 
+// Write a result to the host: whether the write reached standard output.
 function result(id, value) {
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result: value })}\n`);
+  return new Promise((resolve) => {
+    try {
+      process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result: value })}\n`, (error) => resolve(!error));
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 function requestedTabs(argumentsValue) {
@@ -1123,14 +1130,16 @@ async function savedArtifactLine(item, argumentsValue) {
 
 // A sync that found the same record, or the same lines of an artifact, changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
 // A saved version stays pending until a tool result carries it, so a server that stopped before naming it leaves it to the next one.
+// Returns the result with the notes, and what to do once it was written or was not: a written result confirms the saved versions it names, and one never written leaves them for the next result.
 async function withRecordNotes(value, argumentsValue) {
-  if (!Array.isArray(value?.content)) return value;
+  const none = { value, written: async () => {}, unwritten: () => {} };
+  if (!Array.isArray(value?.content)) return none;
   const reports = takeMigrationReports();
   const taken = await takeSavedConflicts().catch(() => []);
   const saved = taken.filter((item) => item.record);
   const artifacts = taken.filter((item) => item.location);
   const files = taken.filter((item) => item.file);
-  if (!reports.length && !taken.length) return value;
+  if (!reports.length && !taken.length) return none;
   const lines = [];
   for (const report of reports) {
     const into = report.store ? `the record store at ${report.store}` : ".prism";
@@ -1151,8 +1160,11 @@ async function withRecordNotes(value, argumentsValue) {
   if (files.length) {
     lines.push(`Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, ...files.map((item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})`));
   }
-  await confirmSavedConflicts(taken).catch(() => {});
-  return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
+  return {
+    value: { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] },
+    written: () => confirmSavedConflicts(taken).catch(() => {}),
+    unwritten: () => { restoreMigrationReports(reports); releaseSavedConflicts(taken); }
+  };
 }
 
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
@@ -1252,11 +1264,13 @@ input.on("line", async (line) => {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
       const meta = request.params?._meta;
-      const value = await withRecordNotes(await withCallSession(meta, () => callTool(request.params?.name, request.params?.arguments, meta, request.id)), request.params?.arguments);
-      // A cancelled request gets no response, as the MCP cancellation rules require.
-      if (value.structuredContent?.status !== "cancelled") {
-        result(request.id, value);
-      }
+      const value = await withCallSession(meta, () => callTool(request.params?.name, request.params?.arguments, meta, request.id));
+      // A cancelled request gets no response, as the MCP cancellation rules require, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
+      if (value.structuredContent?.status === "cancelled") return;
+      if (closing) { await result(request.id, value); return; }
+      const noted = await withRecordNotes(value, request.params?.arguments);
+      if (await result(request.id, noted.value) && !closing) await noted.written();
+      else noted.unwritten();
     } else if (request.method === "notifications/cancelled") {
       pendingWaits.get(request.params?.requestId)?.abort();
     } else if (request.id !== undefined) {
@@ -1273,7 +1287,9 @@ input.on("line", async (line) => {
 // The host ends the session by closing input, so the server exits once its cleanup ends, or after a short grace period,
 // even when index preparation, a store sync, or a child process started meanwhile would keep it alive.
 const CLOSE_GRACE_MS = 5000;
+let closing = false;
 input.on("close", async () => {
+  closing = true;
   const deadline = setTimeout(() => process.exit(0), CLOSE_GRACE_MS);
   deadline.unref();
   try {

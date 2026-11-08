@@ -235,18 +235,24 @@ export async function takeSavedConflicts() {
       });
       // A stamp that holds only claims and registrations, which other results report, has nothing to carry.
       if (notice && !items.length) await rm(notice, { force: true });
-      for (const item of items) { if (notice) notices.set(item, notice); found.push(item); }
+      for (const item of items) { if (notice) notices.set(item, notice); reportKeys.set(item, key); found.push(item); }
     }
   }
   return found;
 }
 
-// The pending notice of each saved version that takeSavedConflicts returned.
+// The pending notice of each saved version that takeSavedConflicts returned, and the key that marks its stamp reported.
 const notices = new WeakMap();
+const reportKeys = new WeakMap();
 
 /** Clear the pending notices of saved versions that a tool result carried, so no Prism server started later names them again. */
 export async function confirmSavedConflicts(taken) {
   for (const notice of new Set((taken ?? []).map((item) => notices.get(item)).filter(Boolean))) await rm(notice, { force: true }).catch(() => {});
+}
+
+/** Give back saved versions that takeSavedConflicts returned for a tool result that was never written, so this process's next result names them and their pending notices stay. */
+export function releaseSavedConflicts(taken) {
+  for (const item of taken ?? []) if (reportKeys.has(item)) reported.delete(reportKeys.get(item));
 }
 
 /**
@@ -345,11 +351,12 @@ const storeLayout = () => layout ??= import("./record-store.mjs").then(({ isStor
    * How a store treats a tree entry: "shared" for a regular file at a path Prism writes, or a README or license at the root, which every sync writes to disk and commits;
    * "unsafe" for a link, a path that leads outside the store's files on some machine, a path with a name that some supported machine cannot hold, which Git for Windows refuses even in its index,
    * a path that is not UTF-8, which macOS and Windows cannot hold either, a path Prism shares that is too long for some machine to write,
+   * a path with a name that Git reads as .gitattributes or .gitmodules, other than the file .gitattributes at the root, which Git checks in ways older Git does not (see gitFileName),
    * or an entry where Prism keeps a folder, or below a file Prism keeps outside artifacts/, which would clash with Prism's own files;
    * and "carried" for any other regular file, such as a .DS_Store that an earlier Prism committed, which stays in Git only.
    */
   const kind = (file, { mode, notUtf8 }) => {
-    if (!FILE_MODES.has(mode) || notUtf8 || file.split("/").some((name) => unsafeName(name) || !portableName(name))) return "unsafe";
+    if (!FILE_MODES.has(mode) || notUtf8 || file.split("/").some((name) => unsafeName(name) || !portableName(name) || (file !== ".gitattributes" && gitFileName(bytesOfPath(name))))) return "unsafe";
     if (shareable(file)) return storePathFits(file) ? "shared" : "unsafe";
     if (isStoreFolder(file) || folders(file).some((folder) => !isArtifactFile(folder) && shareable(folder))) return "unsafe";
     return "carried";
@@ -535,7 +542,7 @@ async function commitLocal(base, author, run) {
     const tree = await writeTree(base, entries);
     const commit = (await required(base, [...author, "commit-tree", tree, ...(previous ? ["-p", previous] : []), "-m", "prism: update records", "-m", listed])).text;
     // The objects a commit adds pass the check that every other machine's fetch applies before the branch takes them, so the branch's history never holds one that no other machine could fetch.
-    const refused = await refusedObjects(base, commit, previous ? [previous] : []);
+    const refused = await refusedObjects(base, commit, previous ? [previous] : [], { named: false });
     if (refused) {
       const culprits = changed.filter((file) => files.has(file) && refused.objects.includes(files.get(file).object) && (refused.places.get(files.get(file).object)?.includes(file) ?? true));
       if (!culprits.length) throw new Error(`Git's object check, which every other machine's fetch applies, refuses the store's new commit, so it was not made: ${refused.message}`);
@@ -556,16 +563,18 @@ async function commitLocal(base, author, run) {
  * null when Git accepts them, else { message, objects } with Git's reasons and the objects they name.
  * The objects are packed into the sync folder and indexed there with index-pack --strict, which every such fetch and clone runs, so a refusal here is one that another machine would meet.
  * The pack leaves out blobs, which the store already holds: the check reads every blob it inspects by name, such as a .gitattributes, from the store, and checks no other blob's content.
- * Git before 2.43 packs with a filter only to standard output, so the pack reaches its file from there,
- * and Git before 2.39.1 has no check of a .gitattributes, so the sync checks each one that a new tree holds as Git 2.43 does, whatever this machine's Git.
+ * Git before 2.43 packs with a filter only to standard output, so the pack reaches its file from there.
+ * Older Git checks less: before 2.39.1 no .gitattributes, before 2.30.1 fewer .gitmodules URLs, and before 2.43 fewer of the names it reads as either file,
+ * so the sync checks, whatever this machine's Git, every tree entry that a new tree holds under such a name, unless named is false: see refusedAttributes.
+ * A local commit passes false, since it adds no such entry of its own, and the push of a branch that holds one is refused.
  */
-async function refusedObjects(base, tip, known) {
+async function refusedObjects(base, tip, known, { named = true } = {}) {
   const folder = syncPath(base, "object-check");
   await rm(folder, { recursive: true, force: true });
   await mkdir(folder, { recursive: true });
   try {
     const revisions = `${tip}\n${known.map((commit) => `^${commit}\n`).join("")}`;
-    const attributes = await refusedAttributes(base, revisions);
+    const attributes = await refusedAttributes(base, revisions, named);
     if (attributes.reasons.length) return refusal(attributes.reasons, attributes.places);
     const pack = (await required(base, ["pack-objects", "--revs", "--stdout", "--quiet", "--filter=blob:none"], { input: revisions, maxBuffer: PACK_BYTES_MAX })).stdout;
     await writeFile(path.join(folder, "objects.pack"), pack);
@@ -591,21 +600,102 @@ const refusal = (reasons, places = new Map()) => {
 const ATTRIBUTES_LINE_MAX = 2048;
 const ATTRIBUTES_BYTES_MAX = 100 * 1024 * 1024;
 
+// Code points that HFS+ ignores in a name, as Git 2.43's next_hfs_char in utf8.c lists them.
+const HFS_IGNORED = new Set([0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x206a, 0x206b, 0x206c, 0x206d, 0x206e, 0x206f, 0xfeff]);
+
 /**
- * Whether a tree entry's name is one that Git's object check reads as .gitattributes, as is_hfs_dotgitattributes and is_ntfs_dotgitattributes in Git's path.c match it:
- * the name in any ASCII letter case with HFS+'s ignored code points anywhere, the name followed only by spaces and dots up to its end or a colon, or a Windows short name such as GITATT~1 or gi7d29~3.
+ * The code point at a byte of a name and its length, as Git 2.43's pick_one_utf8_char in utf8.c reads it: the name ends at its last byte as at a zero byte,
+ * and a byte that begins no UTF-8 character, an overlong form, a surrogate, a code point above U+10FFFF, U+FFFE, and U+FFFF are all malformed, which is null.
  */
-function attributesName(name) {
-  if (name.replace(IGNORED_CODE_POINTS, "").replace(/[A-Z]/g, (letter) => letter.toLowerCase()) === ".gitattributes") return true;
-  const rest = /^\.gitattributes/i.test(name) ? name.slice(14) : /^gitatt~[1-4]/i.test(name) ? name.slice(8) : /^(?:|g|gi|gi7|gi7d|gi7d2|gi7d29)~[1-9][0-9]*/i.exec(name.slice(0, 8))?.[0].length === 8 ? name.slice(8) : null;
-  return rest !== null && /^[ .]*(?::|$)/.test(rest);
+function utf8CodePoint(bytes, at) {
+  const byte = (offset) => bytes[at + offset] ?? 0;
+  const s0 = byte(0);
+  const follows = (count) => Array.from({ length: count }, (_, offset) => byte(offset + 1)).every((next) => (next & 0xc0) === 0x80);
+  if (s0 < 0x80) return { code: s0, size: 1 };
+  if ((s0 & 0xe0) === 0xc0) return !follows(1) || (s0 & 0xfe) === 0xc0 ? null : { code: ((s0 & 0x1f) << 6) | (byte(1) & 0x3f), size: 2 };
+  if ((s0 & 0xf0) === 0xe0) {
+    if (!follows(2) || (s0 === 0xe0 && (byte(1) & 0xe0) === 0x80) || (s0 === 0xed && (byte(1) & 0xe0) === 0xa0) || (s0 === 0xef && byte(1) === 0xbf && (byte(2) & 0xfe) === 0xbe)) return null;
+    return { code: ((s0 & 0x0f) << 12) | ((byte(1) & 0x3f) << 6) | (byte(2) & 0x3f), size: 3 };
+  }
+  if ((s0 & 0xf8) === 0xf0) {
+    if (!follows(3) || (s0 === 0xf0 && (byte(1) & 0xf0) === 0x80) || (s0 === 0xf4 && byte(1) > 0x8f) || s0 > 0xf4) return null;
+    return { code: ((s0 & 0x07) << 18) | ((byte(1) & 0x3f) << 12) | ((byte(2) & 0x3f) << 6) | (byte(3) & 0x3f), size: 4 };
+  }
+  return null;
+}
+
+/**
+ * Whether a name's bytes are "." and the needle as Git 2.43's is_hfs_dot_generic in utf8.c reads them: HFS+'s ignored code points anywhere, ASCII letters in any case,
+ * and after the needle the name's end, a malformed byte, or a folder separator, which is "/" and, on Git for Windows, "\".
+ */
+function hfsDotName(bytes, needle) {
+  let at = 0;
+  const next = () => {
+    for (;;) {
+      const read = utf8CodePoint(bytes, at);
+      if (!read) return 0;
+      at += read.size;
+      if (!HFS_IGNORED.has(read.code)) return read.code;
+    }
+  };
+  if (next() !== 0x2e) return false;
+  for (const letter of needle) {
+    const code = next();
+    if (code > 127 || String.fromCharCode(code).toLowerCase() !== letter) return false;
+  }
+  const after = next();
+  return after === 0 || after === 0x2f || after === 0x5c;
+}
+
+/**
+ * Whether a name's bytes are one that Git 2.43's is_ntfs_dot_generic in path.c reads as "." and the needle: the needle in any ASCII letter case,
+ * a short name of the needle's first six letters followed by "~1" to "~4", or a fall-back short name of up to six letters of shortPrefix, a "~", and digits, eight bytes in all,
+ * each then followed only by spaces and dots up to the name's end or a colon.
+ */
+function ntfsDotName(bytes, needle, shortPrefix) {
+  const byte = (at) => bytes[at] ?? 0;
+  const lower = (code) => code >= 0x41 && code <= 0x5a ? code + 0x20 : code;
+  const sameLetters = (from, text) => [...text].every((letter, offset) => lower(byte(from + offset)) === letter.charCodeAt(0));
+  const onlySpacesAndPeriods = (at) => {
+    for (;;) {
+      const code = byte(at++);
+      if (code === 0 || code === 0x3a) return true;
+      if (code !== 0x20 && code !== 0x2e) return false;
+    }
+  };
+  if (byte(0) === 0x2e && sameLetters(1, needle)) return onlySpacesAndPeriods(needle.length + 1);
+  if (sameLetters(0, needle.slice(0, 6)) && byte(6) === 0x7e && byte(7) >= 0x31 && byte(7) <= 0x34) return onlySpacesAndPeriods(8);
+  let at = 0;
+  for (let sawTilde = false; at < 8; at++) {
+    const code = byte(at);
+    if (code === 0) return false;
+    if (sawTilde) { if (code < 0x30 || code > 0x39) return false; }
+    else if (code === 0x7e) {
+      at += 1;
+      if (byte(at) < 0x31 || byte(at) > 0x39) return false;
+      sawTilde = true;
+    } else if (at >= 6 || code & 0x80 || lower(code) !== shortPrefix.charCodeAt(at)) return false;
+  }
+  return onlySpacesAndPeriods(at);
+}
+
+/**
+ * Whether a tree entry's name is one that Git 2.43's object check reads as .gitattributes or .gitmodules on some machine, as is_hfs_dotgitattributes, is_ntfs_dotgitattributes,
+ * is_hfs_dotgitmodules, and is_ntfs_dotgitmodules match its bytes, such as .GitModules, .gitattributes followed by U+200C, U+FFFE, or a byte that is not UTF-8, or GITATT~1 and gi7eba~9.
+ * A store shares no .gitmodules and holds a .gitattributes only as the file at its root, so every other entry with such a name, of any mode, is one no store may hold,
+ * whatever this machine's Git checks of it.
+ */
+function gitFileName(bytes) {
+  return hfsDotName(bytes, "gitattributes") || ntfsDotName(bytes, "gitattributes", "gi7d29") || hfsDotName(bytes, "gitmodules") || ntfsDotName(bytes, "gitmodules", "gi7eba");
 }
 
 /**
  * The reasons, in the words of Git 2.43's object check, that the trees new to the known commits hold a .gitattributes that check refuses: one that is no blob or is missing,
  * one over 100 MiB, or one with a line of 2048 bytes or more before its first zero byte, whether its blob is new or already in the store's history: { reasons, places }.
+ * Only a regular file named exactly .gitattributes in a commit's root tree is read so; when named is true, every other entry with a name that gitFileName matches,
+ * such as a folder named .gitattributes, a link, a .gitmodules, or one in a folder, is a reason too, so no Git that checks less than 2.43 lets such a history be pushed.
  */
-async function refusedAttributes(base, revisions) {
+async function refusedAttributes(base, revisions, named) {
   const output = (await required(base, ["rev-list", "--objects", "--stdin"], { input: revisions, maxBuffer: PACK_BYTES_MAX })).stdout;
   // Each line is an object id, followed for a tree or a blob by a space and the path it was first found at.
   const where = new Map();
@@ -621,7 +711,10 @@ async function refusedAttributes(base, revisions) {
   if (!where.size) return none;
   const types = await objectInfo(base, [...where.keys()]);
   const trees = [...where.keys()].filter((object) => types.get(object)?.type === "tree");
+  const commits = [...where.keys()].filter((object) => types.get(object)?.type === "commit");
+  const roots = new Set([...(await objectContents(base, commits)).values()].map((contents) => /^tree ([0-9a-f]+)\n/.exec(contents.toString("latin1"))?.[1]).filter(Boolean));
   const found = new Map();
+  const misnamed = new Map();
   for (const [tree, contents] of await objectContents(base, trees)) {
     const size = tree.length / 2;
     for (let at = 0; at < contents.length;) {
@@ -629,16 +722,20 @@ async function refusedAttributes(base, revisions) {
       const end = contents.indexOf(0, space);
       if (space < 0 || end < 0) break;
       const mode = contents.subarray(at, space).toString("latin1");
-      const name = pathOfBytes(contents.subarray(space + 1, end));
+      const bytes = contents.subarray(space + 1, end);
+      const name = pathOfBytes(bytes);
       const object = contents.subarray(end + 1, end + 1 + size).toString("hex");
-      // A link at that name is only reported, and a folder holds no attributes of its own.
-      if (mode !== "120000" && mode !== "40000" && attributesName(name)) found.set(object, [...(found.get(object) ?? []), where.get(tree) ? `${where.get(tree)}/${name}` : name]);
+      if (gitFileName(bytes)) {
+        const place = where.get(tree) ? `${where.get(tree)}/${name}` : name;
+        if (roots.has(tree) && name === ".gitattributes" && FILE_MODES.has(mode)) found.set(object, [...(found.get(object) ?? []), ".gitattributes"]);
+        else if (named) misnamed.set(tree, [...(misnamed.get(tree) ?? []), place]);
+      }
       at = end + 1 + size;
     }
   }
-  if (!found.size) return none;
+  const reasons = [...misnamed].map(([tree, places]) => `object ${tree}: ${places.map(shownPath).join(", ")}: a name that Git reads as .gitattributes or .gitmodules, which a store holds only as the file .gitattributes at its root`);
+  if (!found.size) return { reasons, places: misnamed };
   const blobs = await objectInfo(base, [...found.keys()]);
-  const reasons = [];
   const readable = [];
   for (const object of found.keys()) {
     const info = blobs.get(object);
@@ -656,7 +753,7 @@ async function refusedAttributes(base, revisions) {
     }
   }
   const refused = new Set(reasons.map((reason) => reason.split(" ")[1].slice(0, -1)));
-  return { reasons, places: new Map([...found].filter(([object]) => refused.has(object))) };
+  return { reasons, places: new Map([...misnamed, ...[...found].filter(([object]) => refused.has(object))]) };
 }
 
 // The type and size of each object the store holds: Map(object, { type, size }), without the ones it lacks.
@@ -1271,7 +1368,8 @@ function settleLetterCase(result, local, upstream) {
  * The first entry of a commit's whole tree that no store may hold, as { path, kind, clash? }, or null when there is none:
  * a symbolic or submodule link, a path that some file system reads as leading outside the store's files, such as one with a ".." part, Git's folder, or the sync folder in any spelling,
  * a name that Windows or Git for Windows refuses, such as aux.md, a name ending in "." or " ", or one holding a character such as "?" or a control character,
- * two paths that differ only in letter case, where clash is the first of them, or an entry where Prism keeps a folder, or below a file Prism keeps outside artifacts/.
+ * two paths that differ only in letter case, where clash is the first of them, a name that Git reads as .gitattributes or .gitmodules other than the file .gitattributes at the root,
+ * or an entry where Prism keeps a folder, or below a file Prism keeps outside artifacts/.
  * Any other entry that Prism does not write, such as a .DS_Store or a notes file, is no reason to refuse a tree: it stays in Git, and no sync writes it to disk or changes it.
  */
 export async function unsafeStoreEntry(base, commit) {
@@ -1285,7 +1383,7 @@ export async function unsafeStoreEntry(base, commit) {
 /** What a tree holds that no store may hold, and why, for a refusal that names a tree's unsafe entry. */
 export function describeUnsafeEntry(unsafe) {
   const what = unsafe.clash ? `${shownPath(unsafe.clash)} and ${shownPath(unsafe.path)}, whose paths differ only in letter case,` : `${unsafe.kind} at ${shownPath(unsafe.path)},`;
-  return `${what} which no store may hold, since a link, a path that some file system reads as Git's folder, the sync folder, or a place outside the store, a name that Windows refuses, a path that is not UTF-8, a file Prism shares whose name holds more than ${STORE_NAME_BYTES_MAX} bytes or whose path holds more than ${STORE_PATH_BYTES_MAX}, two paths that macOS and Windows read as one, or an entry where Prism keeps its own files would make some machine's store unsafe or stuck`;
+  return `${what} which no store may hold, since a link, a path that some file system reads as Git's folder, the sync folder, or a place outside the store, a name that Windows refuses, a path that is not UTF-8, a file Prism shares whose name holds more than ${STORE_NAME_BYTES_MAX} bytes or whose path holds more than ${STORE_PATH_BYTES_MAX}, two paths that macOS and Windows read as one, a name that Git reads as .gitattributes or .gitmodules other than the store's own .gitattributes at its root, or an entry where Prism keeps its own files would make some machine's store unsafe or stuck`;
 }
 
 /** Refuse an upstream commit whose tree holds an entry no store may hold, before any file is written or removed and before the branch or the index moves, so the branch stays where it was. */

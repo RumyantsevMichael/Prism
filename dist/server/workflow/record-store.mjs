@@ -493,6 +493,11 @@ export function takeMigrationReports() {
   return unreportedMoves.splice(0);
 }
 
+/** Give back record moves that takeMigrationReports returned for a tool result that was never written, so the next result reports them. */
+export function restoreMigrationReports(reports) {
+  unreportedMoves.unshift(...(reports ?? []));
+}
+
 /** Move legacy records before a record update, so the update reads and locks each record where it now lives; an unusable root is left for the update to report. */
 export async function moveLegacyRecords(projectRootPath) {
   let root;

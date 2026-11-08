@@ -176,7 +176,8 @@ test("a saved version that a stopped sync never named is named by the next tool 
   await writeFile(notice, "{}\n");
   const reported = notes(await onB.call("get_artifact", { path: "docs/plans" }));
   assert.ok(reported.includes(FILE) && reported.includes(savedAs), reported);
-  assert.equal(await access(notice).then(() => true, () => false), false, "the tool result that carried it clears its notice");
+  // The server clears the notice once the result is written, so it is gone soon after the result arrives.
+  await eventually(async () => !(await access(notice).then(() => true, () => false)), 5000, "the tool result that carried it clearing its notice");
   assert.equal(notes(await onB.call("get_artifact", { path: "docs/plans" })), "", "the next result names it no more");
   const later = await server(context, place.b, await checkout(place.b, "admin"));
   assert.equal(notes(await later.call("get_artifact", { path: "docs/plans" })).includes(savedAs), false, "a server started later names it no more");

@@ -83,7 +83,9 @@ The branch and index move to the merge commit while the locks are still held, th
 A write scheduled while a sync runs starts another sync after it, because the running sync may have committed before the write.
 SSH runs in batch mode unless the user configured an SSH command, so no prompt can hold the sync lock.
 Every sync writes its outcome, ahead and behind counts, and saved conflicts to a status file in the ignored sync folder, and the review index includes it.
-Each server remembers the stores it synced or pulled, and on every tool result it lists record versions saved under the sync folder since the server started that it has not reported yet.
+A sync that saves local versions, of records, of [artifacts](store-artifacts.md), or of a store file it had withheld, first writes a pending notice for that save under `.prism-sync/notices/`, then moves the copies to `.prism-sync/conflicts/`.
+Each server remembers the stores it synced or pulled, and the next tool result it writes to its host names each saved version that it has not named yet and that was saved since it started or still has a pending notice, artifacts by their path in the checkout.
+Writing that result clears the notices it carried, so a server started later names a version only when no written result has named it, and a result that is never written, such as a cancelled call's, clears nothing.
 
 ## Decision Log
 
@@ -91,3 +93,4 @@ Each server remembers the stores it synced or pulled, and on every tool result i
 2026-11-02: Roadmap and initiative records that changed on both sides now merge by structure, and only a unit changed differently on both sides or an invalid result falls back to the upstream version.
 2026-11-02: A store cloned from an empty remote reported `ok` without pushing, because its upstream branch did not exist yet; a sync now pushes a branch whose upstream the remote lacks, a managed clone without an upstream pushes its branch with the upstream set, and status messages drop the user information of any URL.
 2026-11-03: An update that takes or releases a [slice claim](slice-claims.md) syncs at once and waits for the outcome instead of the debounced sync; claim records have no structural merge, so the upstream version wins, and a claim record saved aside is reported through the claim's refusal or its holder's lost-claim notice instead of as a saved record.
+2026-11-08: A server that stopped before naming a saved version, or a cancelled call that took the notes it never sent, left that version named by no tool result; saved versions now stay pending under `.prism-sync/notices/` until a result written to the host names them.

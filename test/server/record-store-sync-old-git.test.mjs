@@ -19,7 +19,7 @@ test.after(() => rm(environment, { recursive: true, force: true }));
 const git = (cwd, args, input) => execFileSync("git", ["-C", cwd, ...args], { input, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
 
 // A git that behaves as an older release: --version reports FAKE_GIT_VERSION when it is set, pack-objects refuses --filter without --stdout as Git up to 2.42 does,
-// and index-pack --strict leaves out the .gitattributes checks, which Git before 2.39.1 does not have.
+// and index-pack --strict leaves out the .gitattributes checks, which Git before 2.39.1 does not have, and the .gitmodules URL check, which Git before 2.30.1 makes of fewer URLs.
 const realGit = execFileSync("sh", ["-c", "command -v git"]).toString().trim();
 const wrapper = path.join(environment, "bin", "git");
 await mkdir(path.dirname(wrapper), { recursive: true });
@@ -28,7 +28,7 @@ if [[ "$1" == "--version" && -n "$FAKE_GIT_VERSION" ]]; then echo "git version $
 if [[ " $* " == *" pack-objects "* && " $* " == *" --filter="* && " $* " != *" --stdout "* ]]; then echo "fatal: cannot use --filter without --stdout" >&2; exit 128; fi
 args=("$@")
 if [[ " $* " == *" index-pack "* ]]; then
-  for i in "\${!args[@]}"; do [[ "\${args[$i]}" == "--strict" ]] && args[$i]="--strict=gitattributesLineLength=ignore,gitattributesLarge=ignore,gitattributesMissing=ignore,gitattributesBlob=ignore"; done
+  for i in "\${!args[@]}"; do [[ "\${args[$i]}" == "--strict" ]] && args[$i]="--strict=gitattributesLineLength=ignore,gitattributesLarge=ignore,gitattributesMissing=ignore,gitattributesBlob=ignore,gitmodulesUrl=ignore"; done
 fi
 exec "${realGit}" "\${args[@]}"
 `);
@@ -77,25 +77,89 @@ test("on a Git that packs with a filter only to standard output and lacks the .g
   checkedClone(remote, path.join(parent, "fresh"));
 });
 
-// Commits made by hand whose history, but not their tip, holds an attributes file that Git 2.43 refuses, at names Git's check reads as .gitattributes.
-for (const [label, name] of [["a .gitattributes in another letter case", "notes/.GitAttributes"], ["a Windows short name of .gitattributes", "notes/GITATT~1"], ["a .gitattributes below the root", "notes/.gitattributes"]]) {
-  test(`on a Git that lacks the .gitattributes check, a sync refuses to push a history that holds ${label} which Git 2.43 refuses`, async (context) => {
+// Commit by hand an entry at a name given as bytes, then a commit that removes it again, so the store's history holds the entry and its tip does not.
+function handHistory(store, name, content, mode = "100644") {
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(store, ".git", "hand-index") };
+  const run = (args, input) => execFileSync("git", ["-C", store, ...args], { input, env, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
+  const blob = run(["hash-object", "-w", "--no-filters", "--stdin"], content);
+  run(["read-tree", "HEAD"]);
+  run(["update-index", "-z", "--index-info"], Buffer.concat([Buffer.from(`${mode} ${blob}\t`), Buffer.from(name), Buffer.from([0])]));
+  const holding = run(["commit-tree", run(["write-tree"]), "-p", "HEAD", "-m", "by hand"]);
+  run(["update-ref", "HEAD", run(["commit-tree", run(["rev-parse", "HEAD^{tree}"]), "-p", holding, "-m", "removed by hand"])]);
+  return blob;
+}
+
+// A .gitmodules whose git:// URL decodes to a line feed, which Git refuses from 2.30.1 on and older Git takes.
+const refusedModules = "[submodule \"x\"]\n\tpath = x\n\turl = git://example.com/%0aevil\n";
+const NOT_UTF8 = Buffer.from([0xff]);
+
+// Names that Git 2.43's object check reads as .gitattributes or .gitmodules, given as bytes, with contents that it refuses there; the store holds none of them, since it shares no .gitmodules
+// and holds a .gitattributes only as the file at its root, so a sync refuses to push a history that holds one, whatever its Git checks.
+const MISNAMED = [
+  ["a .gitattributes in another letter case", "notes/.GitAttributes", refusedAttributes],
+  ["a Windows short name of .gitattributes", "notes/GITATT~1", refusedAttributes],
+  ["a fall-back Windows short name of .gitattributes", "notes/gi7d29~9", refusedAttributes],
+  ["a .gitattributes below the root", "notes/.gitattributes", refusedAttributes],
+  ["a folder named .gitattributes", "notes/.gitattributes/x.md", "notes\n"],
+  ["a folder named .gitattributes at the root", ".gitattributes/x.md", "notes\n"],
+  ["a .gitattributes followed by U+FFFE", "notes/.gitattributes\u{FFFE}", refusedAttributes],
+  ["a .gitattributes followed by U+FFFF", "notes/.gitattributes\u{FFFF}", refusedAttributes],
+  ["a .gitattributes followed by a byte that is not UTF-8", Buffer.concat([Buffer.from("notes/.gitattributes"), NOT_UTF8]), refusedAttributes],
+  ["a .gitattributes with a byte that is not UTF-8 after an ignored code point", Buffer.concat([Buffer.from(".git\u200cattributes"), NOT_UTF8]), refusedAttributes],
+  ["a .gitattributes followed by a backslash, which Git for Windows reads as a folder separator", "notes/.gitattributes\\", refusedAttributes],
+  ["a .gitattributes followed by dots and spaces and a stream name", "notes/.gitattributes. .:stream", refusedAttributes],
+  ["a .gitmodules whose git:// URL decodes to a line feed", ".gitmodules", refusedModules],
+  ["a .gitmodules in another letter case below the root", "notes/.GitModules", refusedModules],
+  ["a Windows short name of .gitmodules", "GITMOD~1", refusedModules],
+  ["a .gitmodules followed by U+FFFE", ".gitmodules\u{FFFE}", refusedModules],
+  ["a link named .gitattributes at the root", ".gitattributes", "elsewhere", "120000"]
+];
+
+for (const [label, name, content, mode] of MISNAMED) {
+  test(`on a Git that lacks Git 2.43's checks, a sync refuses to push a history that holds ${label}, and every checked clone still takes the remote`, async (context) => {
     const { parent, remote, storeB } = await stores(context);
     const before = git(remote, ["rev-parse", "main"]);
-    const blob = git(storeB, ["hash-object", "-w", "--no-filters", "--stdin"], refusedAttributes);
-    git(storeB, ["update-index", "--add", "--cacheinfo", `100644,${blob},${name}`]);
-    git(storeB, ["commit", "-q", "-m", "by hand"]);
-    git(storeB, ["update-index", "--force-remove", name]);
-    git(storeB, ["commit", "-q", "-m", "removed by hand"]);
+    handHistory(storeB, name, content, mode);
+    await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
     const status = syncWithOldGit(storeB);
     assert.equal(status.state, "merge_failed", JSON.stringify(status));
-    assert.ok(status.message.includes(`object ${blob}: gitattributesLineLength`), status.message);
+    assert.ok(status.message.includes("not pushed"), status.message);
+    assert.ok(mode ? status.message.includes("gitattributesSymlink") || status.message.includes("reads as .gitattributes or .gitmodules") : status.message.includes("reads as .gitattributes or .gitmodules"), status.message);
     assert.equal(git(remote, ["rev-parse", "main"]), before, "nothing was pushed");
     checkedClone(remote, path.join(parent, "fresh"));
   });
 }
 
-test("on a Git that lacks the .gitattributes check, a sync refuses to push a .gitattributes whose blob the remote already holds at another path", async (context) => {
+test("on a Git that lacks Git 2.43's checks, a store refuses an upstream, a branch tip, and a first clone that holds a .gitmodules or a .gitattributes below the root", async (context) => {
+  const { parent, remote, storeA, storeB } = await stores(context);
+  const before = git(remote, ["rev-parse", "main"]);
+  await mkdir(path.join(storeA, "notes"));
+  await writeFile(path.join(storeA, "notes", ".gitattributes"), "* -text\n");
+  git(storeA, ["add", "notes"]);
+  git(storeA, ["commit", "-q", "-m", "attributes in a folder"]);
+  git(storeA, ["push", "-q", "origin", "main"]);
+  const upstream = syncWithOldGit(storeB);
+  assert.equal(upstream.state, "merge_failed", JSON.stringify(upstream));
+  assert.ok(upstream.message.includes("\"notes/.gitattributes\"") && upstream.message.includes(".gitmodules"), upstream.message);
+  assert.equal(await readFile(path.join(storeB, "notes", ".gitattributes"), "utf8").catch(() => null), null, "the store was left as it was");
+  const root = path.join(parent, "project");
+  await mkdir(path.join(root, ".prism"), { recursive: true });
+  await writeFile(path.join(root, ".prism", "workflow.md"), `## Workspace\n- Store: file://${remote}\n- Repository: project\n`);
+  const clone = withOldGit(`const { recordStoreOf } = await import(${JSON.stringify(RECORD_STORE)}); process.stdout.write(JSON.stringify(await recordStoreOf(${JSON.stringify(root)}).then((store) => ({ base: store.base }), (error) => ({ code: error.code, message: error.message }))));`);
+  assert.equal(clone.code, "store_unavailable", JSON.stringify(clone));
+  assert.ok(clone.message.includes("\"notes/.gitattributes\""), clone.message);
+  git(storeA, ["push", "-q", "-f", "origin", `${before}:main`]);
+  git(storeB, ["fetch", "-q", "origin"]);
+  git(storeB, ["update-index", "--add", "--cacheinfo", `100644,${git(storeB, ["hash-object", "-w", "--stdin"], "[submodule \"x\"]\n\tpath = x\n\turl = https://example.com/x\n")},.gitmodules`]);
+  git(storeB, ["commit", "-q", "-m", "a valid .gitmodules by hand"]);
+  const tip = syncWithOldGit(storeB);
+  assert.equal(tip.state, "merge_failed", JSON.stringify(tip));
+  assert.ok(tip.message.includes("\".gitmodules\"") && tip.message.includes("not pushed"), tip.message);
+  assert.equal(git(remote, ["rev-parse", "main"]), before, "nothing was pushed");
+  checkedClone(remote, path.join(parent, "fresh"));
+});
+
+test("on a Git that lacks the .gitattributes check, a sync refuses to push a .gitattributes below the root whose blob the remote already holds at another path", async (context) => {
   const { parent, remote, storeA, storeB } = await stores(context);
   await mkdir(path.join(storeA, "notes"));
   await writeFile(path.join(storeA, "notes", "long.txt"), refusedAttributes);
@@ -108,7 +172,7 @@ test("on a Git that lacks the .gitattributes check, a sync refuses to push a .gi
   git(storeB, ["commit", "-q", "-m", "by hand"]);
   const status = syncWithOldGit(storeB);
   assert.equal(status.state, "merge_failed", JSON.stringify(status));
-  assert.ok(status.message.includes("\"notes/.gitattributes\"") && status.message.includes("gitattributesLineLength"), status.message);
+  assert.ok(status.message.includes("\"notes/.gitattributes\"") && status.message.includes("not pushed"), status.message);
   assert.equal(git(remote, ["rev-parse", "main"]), before, "nothing was pushed");
   checkedClone(remote, path.join(parent, "fresh"));
 });

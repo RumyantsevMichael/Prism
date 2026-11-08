@@ -57,6 +57,8 @@ So does a path that some supported machine cannot hold, because Git for Windows 
 So do two paths that differ only in letter case, such as `notes/Plan.md` and `notes/plan.md`, because macOS and Windows read them as one file.
 So does a path that is not UTF-8, as an older Git on Windows could commit, because macOS and Windows cannot hold it either, and the message shows each byte that is not UTF-8 as `\x` and two hex digits.
 So does a file Prism shares whose name holds more than 200 bytes or whose path holds more than 512, because every write goes through a temporary file about 30 bytes longer than the name, which some machine's file system could not hold.
+So does any entry, file, folder, or link, at any folder, whose name Git reads as `.gitmodules` or `.gitattributes` on some machine, other than the store's own `.gitattributes` file at its root: such as `.GitModules`, `notes/.gitattributes`, a folder named `.gitattributes`, a Windows short name such as `GITATT~1`, or `.gitattributes` followed by a byte that is not UTF-8 or by a trailing backslash.
+A store shares no `.gitmodules`, and Git checks the contents of every file it reads as either one, in ways that changed between releases, so this rule keeps a store's every tree one that every supported Git takes.
 Any other file on the branch, such as a `.DS_Store` or a notes file that an earlier Prism committed, a README below the root, or a lock file, stays in Git only: Prism never writes it to disk, and no sync of any machine changes or removes it, so it never stops a sync.
 A sync gives the branch the remote's copy of each such file before it pushes, so a commit of yours in the store that removes one can be undone by a sync before you push it.
 To remove such a file, use a separate clone of the remote instead of the store:
@@ -78,7 +80,7 @@ The sync's status lists each such file under `withheld` with the reason, and its
 When another machine changes or removes a file whose version this machine withheld, the next sync takes the other machine's version, saves this machine's under `.prism-sync/conflicts/`, names it as a conflict, and keeps syncing.
 Prism keeps sharing the store's `.gitattributes`, which Git hosts read to collapse records in pull request diffs, because this check keeps every version of it that a sync commits one that every machine can fetch.
 Before every push, Prism also checks every object that the push would send with those checks, because an object the remote holds stays in its history even after a later commit removes the file.
-Prism checks every `.gitattributes` in those objects, at any folder and in any spelling that Git reads as one, as Git 2.43 does, so the check holds on an older Git that does not check them, such as Git before 2.39.1.
+Prism checks the `.gitattributes` at the root of every tree in those objects as Git 2.43 does, and refuses every other entry in them whose name Git reads as `.gitmodules` or `.gitattributes`, so the check holds on an older Git that checks less, such as Git before 2.39.1, which does not check a `.gitattributes`, or Git before 2.30.1, which takes more `.gitmodules` URLs.
 A push whose objects fail them, such as one of a commit you made by hand, is refused with `merge_failed`, and the message names the file; fix the file, then move the store's branch back to the remote's with `git reset --soft @{upstream}` in the store, and the next sync commits the store's files again without that commit.
 A clone that an earlier Prism checked out with CR LF line endings is migrated once, on its first record access or sync after the upgrade, before Prism writes anything to it.
 The migration gives each file at a path Prism shares whose only difference from the branch's version is CR LF line endings the branch's bytes again, and records in `.prism-sync/raw-files.json` that the clone is migrated.
@@ -232,6 +234,7 @@ A sync that starts while an artifact update is still writing leaves that update 
 A sync saves the local versions that lost under `.prism-sync/saving/` before it replaces any file, so a sync that stops partway, for example because its server exits when the host closes, loses none of them.
 The next sync on that machine moves the versions of the files the stopped sync replaced to `.prism-sync/conflicts/` and drops the others, which the merge saves again when it runs, even when such a file changed in between, so each lost version is saved once.
 Each saved version stays pending in `.prism-sync/notices/` until a tool result has named it, so a sync that stops after it saved a version and before its status was written still has the version named by the next server's tool result.
+Only a result that the server writes to its host counts, so a call that the host cancels, such as a `wait_for_user_gate` you stop with Esc, or that the session's end aborts, leaves the version pending for the next result.
 
 ## Who works on a slice
 
