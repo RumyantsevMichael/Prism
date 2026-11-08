@@ -41,11 +41,15 @@ async function mount(page, html, { width = "600px" } = {}) {
   await page.waitForTimeout(150);
 }
 
+// The focused element through shadow roots: an item's value, or else the id of its nearest kit host.
 const focusedItem = (page) => page.evaluate(() => {
   let element = document.activeElement;
   while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
   for (let node = element; node; node = node.parentElement ?? node.getRootNode().host) {
     if (["prism-tree-item", "prism-list-item"].includes(node.tagName?.toLowerCase())) return node.getAttribute("value");
+  }
+  for (let node = element; node; node = node.parentElement ?? node.getRootNode().host) {
+    if (node.tagName?.toLowerCase().startsWith("prism-")) return node.id || node.tagName.toLowerCase();
   }
   return element?.id || element?.tagName.toLowerCase() || null;
 });
@@ -308,9 +312,12 @@ test("clause 45: a dialog opens modally over a blurred scrim, keeps focus inside
 
 test("clause 46: a popover opens from its button as a named non-modal dialog, closes with Escape or a click outside, and stays inside the window", { skip }, async (context) => {
   const { page } = await catalog(context, "", { viewport: { width: 1280, height: 800 } });
-  await mount(page, `<div style="display: flex; justify-content: flex-end"><prism-button id="who">3 working</prism-button></div>
+  await mount(page, `<div class="end"><prism-button id="who">3 working</prism-button></div>
     <prism-popover id="pop" for="who" heading="Who's working"><p>Claude on build-2 · Agent · implementation · 41 min left</p><prism-button id="inside">Inside</prism-button></prism-popover><prism-button id="other">Other</prism-button>`, { width: "1200px" });
+  // The page's style policy refuses inline style attributes, so the right-edge layout goes through the CSSOM.
+  await page.evaluate(() => { const end = document.querySelector("#fixture .end"); end.style.setProperty("display", "flex"); end.style.setProperty("justify-content", "flex-end"); });
   const button = page.locator("#fixture").getByRole("button", { name: "3 working" });
+  assert.ok(await button.evaluate((element) => element.getBoundingClientRect().right > innerWidth - 120), "the button sits at the window's right edge");
   assert.equal(await button.getAttribute("aria-haspopup"), "dialog");
   assert.equal(await button.getAttribute("aria-expanded"), "false");
   await button.focus();
@@ -368,7 +375,7 @@ test("clause 54: a stepper lists the six phases with the current one marked and 
 test("clauses 38, 55: breadcrumbs are a named navigation list whose last crumb is the current page, and long crumbs shorten", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-breadcrumbs id="trail"><a href="#roadmap">Roadmap</a><a href="#init">${UNBROKEN}</a><a href="#slice">Retry timed-out requests until a total deadline</a></prism-breadcrumbs>`, { width: "300px" });
-  const nav = page.getByRole("navigation", { name: "Breadcrumb" });
+  const nav = page.locator("#fixture").getByRole("navigation", { name: "Breadcrumb" });
   assert.equal(await nav.count(), 1);
   assert.equal(await nav.getByRole("list").count(), 1);
   assert.equal(await nav.getByRole("listitem").count(), 3);
