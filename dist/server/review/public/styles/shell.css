@@ -677,14 +677,6 @@ body {
     width: min(var(--side-panel-width, var(--prism-panel-width)), calc(100% - 2 * var(--prism-space-7)));
     box-shadow: var(--prism-shadow-dialog);
   }
-
-  .palette-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .palette-preview {
-    display: none;
-  }
 }
 
 /* ---------- 720px and below: one column; the side panel opens as a sheet from the bottom ---------- */
@@ -720,6 +712,15 @@ body {
   }
 
   .statusbar .status-label {
+    display: none;
+  }
+
+  /* The palette's preview shows above 720px only. */
+  .palette-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .palette-preview {
     display: none;
   }
 }

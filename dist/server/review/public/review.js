@@ -127,6 +127,15 @@ function startHistory() {
   storeHistoryTop();
 }
 
+// Back and Forward, and Alt+arrows, move only through the pages visited in this tab, so they never leave the review app.
+function goBack() {
+  if (pages.index > 0) history.back();
+}
+
+function goForward() {
+  if (pages.index < pages.top) history.forward();
+}
+
 function showHistory() {
   pageBar?.setHistory({ back: pages.index > 0, forward: pages.index < pages.top });
 }
@@ -1170,7 +1179,7 @@ async function showArtifact(path) {
     <header class="artifact-header">
       <div>
         ${named.code ? "" : `<p class="eyebrow">${escapeHtml(named.kind)}</p>`}
-        <h1>${escapeHtml(heading)}</h1>
+        <h1${named.code ? " data-code-subject" : ""}>${escapeHtml(heading)}</h1>
         ${named.code ? `<p class="artifact-path" data-code-subject>${escapeHtml(data.path)}</p>` : ""}
       </div>
       <div class="artifact-meta">
@@ -1307,13 +1316,26 @@ function closeDrawer() {
   if (navRoot.parentElement !== sidebar) sidebar.append(navRoot);
 }
 
+// Above 1100px the sidebar shows the trees, so a drawer left open as the window widens closes and gives them back.
+function watchDrawerWidth() {
+  const wide = matchMedia("(min-width: 1101px)");
+  wide.addEventListener("change", () => {
+    if (!wide.matches) return;
+    if (!navDrawer.isOpen) return closeDrawer();
+    navDrawer.close();
+    closeDrawer();
+    // The Navigation button that opened the drawer is hidden now, so focus stays in the trees.
+    if (document.activeElement === document.body) (navRoot.querySelector("prism-tree-item[selected]") ?? navRoot.querySelector("prism-tree-item"))?.focus();
+  });
+}
+
 async function initialize() {
   const data = await fetchJson("./api/index");
   startHistory();
   pageBar = createPageBar({
     root: document.getElementById("page-bar"),
-    onBack: () => history.back(),
-    onForward: () => history.forward(),
+    onBack: goBack,
+    onForward: goForward,
     onOpen: (ref) => openRef(ref)
   });
   showHistory();
@@ -1464,6 +1486,7 @@ async function initialize() {
   });
   document.getElementById("nav-button").addEventListener("click", openDrawer);
   navDrawer.addEventListener("prism-close", closeDrawer);
+  watchDrawerWidth();
   document.getElementById("jump").addEventListener("click", () => palette.show());
   document.getElementById("evidence-close").addEventListener("click", closeEvidence);
   artifact.addEventListener("click", (event) => {
@@ -1509,8 +1532,8 @@ async function initialize() {
     } else if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && !typing) {
       // The browser may move through history on Alt+arrows itself, so the page does it once and keeps the key from the browser.
       event.preventDefault();
-      if (event.key === "ArrowLeft") history.back();
-      else history.forward();
+      if (event.key === "ArrowLeft") goBack();
+      else goForward();
     } else if (event.key === "Escape" && overlayOpen()) {
       // An open dialog, popover, or menu closes on its own Escape.
     } else if (event.key === "Escape" && !document.getElementById("evidence-drawer").hidden) {

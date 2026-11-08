@@ -137,8 +137,12 @@ export function createPalette({ dialog, field, results, preview, entries, onOpen
     showPreview();
   }
 
+  // Until an arrow key picks a result, the first one stands in for it: the preview shows it and Enter opens it.
+  // The listbox keeps no active option then, so the first ArrowDown still lands on the first result.
+  const current = () => results.active ?? results.options[0] ?? null;
+
   function showPreview() {
-    const entry = all()[Number(results.active?.getAttribute("value"))];
+    const entry = all()[Number(current()?.getAttribute("value"))];
     if (!entry) {
       preview.replaceChildren(node("p", "palette-preview-hint", "ArrowDown and ArrowUp move through the results, and Enter opens one."));
       return;
@@ -185,6 +189,9 @@ export function createPalette({ dialog, field, results, preview, entries, onOpen
     if (event.key === "Escape") {
       event.preventDefault();
       hide();
+    } else if (event.key === "Enter" && !event.isComposing && !event.altKey && !event.ctrlKey && !event.metaKey && !results.active && current()) {
+      event.preventDefault();
+      results.choose(current());
     }
   });
   results.addEventListener("prism-select", (event) => choose(Number(event.detail?.value)));
