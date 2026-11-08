@@ -411,30 +411,30 @@ async function merge(base, author, options) {
   if (head.ok && (await git(base, ["merge-base", "--is-ancestor", theirs, head.text])).ok) return { applied: true, conflicts: [] };
   if (!head.ok || (await git(base, ["merge-base", "--is-ancestor", head.text, theirs])).ok) return { applied: await apply(base, head.ok ? head.text : null, theirs, options), conflicts: [] };
   await refuseUnsafePaths(base, await changedPaths(base, head.text, theirs));
-  const result = await git(base, ["merge-tree", "--write-tree", "--name-only", "-z", "--no-messages", head.text, theirs]);
-  if (result.code !== 0 && result.code !== 1) return { failed: result.stderr || "Git could not merge the upstream; Git 2.38 or later is required.", conflicts: [] };
-  const [mergedTree, ...listed] = result.stdout.toString("utf8").split("\0").filter(Boolean);
-  const lineConflicts = [...new Set(listed.map(conflictedPath))];
-  const merges = await structuralMerges(base, head.text, theirs);
-  const views = new Set(merges.views);
-  const other = lineConflicts.filter((file) => !isSavedFile(file) && !views.has(file));
-  if (other.length) return { failed: `The upstream conflicts with local changes to ${other.slice(0, 5).join(", ")}, so the store was left as it was.`, conflicts: [] };
-  const conflicted = [...new Set([...lineConflicts, ...merges.fallback])].filter((file) => !merges.merged.has(file) && !views.has(file));
-  let tree = mergedTree;
-  if (conflicted.length || merges.merged.size || views.size) {
+  const mergeBase = await git(base, ["merge-base", head.text, theirs]);
+  if (!mergeBase.ok || !mergeBase.text) return { failed: "The store's branch and its upstream share no commit, so the store was left as it was.", conflicts: [] };
+  const index = syncPath(base, "merge-index");
+  const env = { GIT_INDEX_FILE: index };
+  let tree;
+  let conflicted;
+  await rm(index, { force: true });
+  try {
+    const lineConflicts = await mergePaths(base, env, mergeBase.text, head.text, theirs);
+    const merges = await structuralMerges(base, mergeBase.text, head.text, theirs);
+    const views = new Set(merges.views);
+    const other = lineConflicts.filter((file) => !isSavedFile(file) && !views.has(file));
+    if (other.length) return { failed: `The upstream conflicts with local changes to ${other.slice(0, 5).join(", ")}, so the store was left as it was.`, conflicts: [] };
+    conflicted = [...new Set([...lineConflicts, ...merges.fallback])].filter((file) => !merges.merged.has(file) && !views.has(file));
     // The upstream version wins, as the first push does for a stale revision, and the local version is kept beside the store once the merge applies.
-    // A record merged by structure takes its merged blob instead of Git's line merge.
-    const index = syncPath(base, "merge-index");
-    const env = { GIT_INDEX_FILE: index };
-    await rm(index, { force: true });
-    await required(base, ["read-tree", mergedTree], { env });
     // A generated view that changed on both sides takes the upstream view whole, which the next write of its record regenerates, so it is neither saved nor reported.
-    for (const file of [...conflicted, ...views]) await takeUpstream(base, env, mergedTree, theirs, file);
+    for (const file of [...conflicted, ...views]) await takeUpstream(base, env, theirs, file);
+    // A record merged by structure takes its merged blob instead of Git's line merge.
     for (const [file, contents] of merges.merged) {
       const object = (await required(base, ["hash-object", "-w", "--stdin"], { input: contents })).text;
       await required(base, ["update-index", "-z", "--index-info"], { env, input: `100644 ${object}\t${file}\0` });
     }
     tree = (await required(base, ["write-tree"], { env })).text;
+  } finally {
     await rm(index, { force: true });
   }
   const commit = (await required(base, [...author, "commit-tree", tree, "-p", head.text, "-p", theirs, "-m", `prism: merge records from ${(await git(base, ["rev-parse", "--abbrev-ref", "@{upstream}"])).text || "upstream"}`])).text;
@@ -442,10 +442,54 @@ async function merge(base, author, options) {
   return { applied: true, conflicts: await saveLocal(base, head.text, theirs, conflicted) };
 }
 
-// Git moves a file that a folder of the other side is in the way of to <path>~<side>, and no artifact name holds "~", so an artifact's own path is the part before it.
-function conflictedPath(file) {
-  const at = file.indexOf("~");
-  return isArtifactFile(file) && at > 0 ? file.slice(0, at) : file;
+/**
+ * Merge the merge base, the local commit, and the upstream path by path into the index at env, and return the paths that conflict, which the index no longer holds.
+ * Git's own merge pairs a removed file with a similar added one as a move, even when told not to, and then names a conflict only at the moved path,
+ * so a file that one side moved, to another scope or within its folder, merges as a removal and an addition, and each path keeps the upstream file and saves the local one by itself.
+ * A path changed on one side takes that side's file, a file changed on both sides takes Git's line merge of it, and any other path changed on both sides, such as a file that one side removed
+ * or one side's file in the place of the other side's folder, conflicts.
+ */
+async function mergePaths(base, env, mergeBase, head, theirs) {
+  await required(base, ["read-tree", "-m", "-i", "--aggressive", mergeBase, head, theirs], { env });
+  const unmerged = new Map();
+  for (const line of (await required(base, ["ls-files", "-u", "-z"], { env })).stdout.toString("utf8").split("\0").filter(Boolean)) {
+    const [meta, ...name] = line.split("\t");
+    const [mode, object, stage] = meta.split(" ");
+    const file = name.join("\t");
+    if (!unmerged.has(file)) unmerged.set(file, {});
+    unmerged.get(file)[stage] = { mode, object };
+  }
+  const conflicts = [];
+  const merged = [];
+  for (const [file, stages] of unmerged) {
+    const object = await lineMerge(base, stages);
+    if (object) merged.push(`${stages[2].mode} ${object}\t${file}\0`);
+    else conflicts.push(file);
+  }
+  // Every unmerged entry leaves the index first, so a line-merged file is held once and a conflicted path is left for its resolution.
+  const input = [...[...unmerged.keys()].map((file) => `0 ${"0".repeat(40)}\t${file}\0`), ...merged].join("");
+  if (input) await required(base, ["update-index", "-z", "--index-info"], { env, input });
+  // A file below a conflicted path is one side's folder in the place of the other side's file, so it conflicts as part of that path.
+  return conflicts.filter((file) => !conflicts.some((other) => file.startsWith(`${other}/`)));
+}
+
+// The object of Git's clean line merge of a file that both sides changed and kept as a regular file of one mode, or null when it conflicts or is no such file.
+// A file that both sides added merges against an empty file, as Git's own merge does.
+async function lineMerge(base, stages) {
+  const [original, local, upstream] = [stages[1], stages[2], stages[3]];
+  if (!local || !upstream || local.mode !== upstream.mode || !["100644", "100755"].includes(local.mode)) return null;
+  const folder = syncPath(base, "merge-files");
+  await rm(folder, { recursive: true, force: true });
+  await mkdir(folder, { recursive: true });
+  try {
+    const files = [["local", local], ["original", original], ["upstream", upstream]].map(([name, entry]) => ({ target: path.join(folder, name), entry }));
+    for (const { target, entry } of files) await writeAtomically(target, entry ? (await required(base, ["cat-file", "blob", entry.object])).stdout : Buffer.alloc(0));
+    const result = await git(base, ["merge-file", "-p", "--quiet", ...files.map(({ target }) => target)]);
+    if (!result.ok) return null;
+    return (await required(base, ["hash-object", "-w", "--stdin"], { input: result.stdout })).text;
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
 }
 
 // The entries of a tree at a path and below it: [{ mode, type, object, path }].
@@ -458,13 +502,12 @@ async function treeEntries(base, tree, file) {
 }
 
 /**
- * Give a path the upstream's file or folder in the merge index: every entry at the path or below it, and a copy that Git moved aside to <path>~<side> because a folder was in the way,
- * is replaced by what the upstream holds there, so a file on one side and a folder on the other resolve as a changed line does.
+ * Give a path the upstream's file or folder in the merge index: every entry at the path or below it is replaced by what the upstream holds there,
+ * so a file on one side and a folder on the other resolve as a changed line does.
  */
-async function takeUpstream(base, env, mergedTree, theirs, file) {
-  const parent = path.posix.dirname(file);
-  const merged = (await required(base, ["ls-tree", "-r", "-z", "--name-only", mergedTree, ...(parent === "." ? [] : ["--", parent])])).stdout.toString("utf8").split("\0").filter(Boolean);
-  const removed = merged.filter((entry) => entry === file || entry.startsWith(`${file}/`) || entry.startsWith(`${file}~`)).map((entry) => `0 ${"0".repeat(40)}\t${entry}\0`);
+async function takeUpstream(base, env, theirs, file) {
+  const held = new Set((await required(base, ["--literal-pathspecs", "ls-files", "-z", "--", file], { env })).stdout.toString("utf8").split("\0").filter(Boolean));
+  const removed = [...held].map((entry) => `0 ${"0".repeat(40)}\t${entry}\0`);
   const upstream = (await treeEntries(base, theirs, file)).map((entry) => `${entry.mode} ${entry.object}\t${entry.path}\0`);
   const input = [...removed, ...upstream].join("");
   if (input) await required(base, ["update-index", "-z", "--index-info"], { env, input });
@@ -507,14 +550,12 @@ async function saveLocal(base, head, theirs, conflicted) {
  * A record removed on either side keeps Git's whole-file handling.
  * Returns the merged contents by path, and the paths whose merge found a conflict or an invalid result, which fall back to the upstream version.
  */
-async function structuralMerges(base, head, theirs) {
+async function structuralMerges(base, mergeBase, head, theirs) {
   const merged = new Map();
   const fallback = [];
   const views = [];
-  const mergeBase = await git(base, ["merge-base", head, theirs]);
-  if (!mergeBase.ok || !mergeBase.text) return { merged, fallback, views };
-  const ours = new Set(await changedPaths(base, mergeBase.text, head));
-  const changed = (await changedPaths(base, mergeBase.text, theirs)).filter((file) => ours.has(file));
+  const ours = new Set(await changedPaths(base, mergeBase, head));
+  const changed = (await changedPaths(base, mergeBase, theirs)).filter((file) => ours.has(file));
   // Prism writes the views it generates from records, such as initiative.md, into the store's artifacts, so one that both sides regenerated is not a person's change.
   for (const file of changed.filter((item) => item.startsWith(`${ARTIFACTS}/`))) {
     const [local, upstream] = await Promise.all([head, theirs].map((commit) => blob(base, commit, file)));
@@ -522,7 +563,7 @@ async function structuralMerges(base, head, theirs) {
   }
   const both = changed.filter((file) => hasRecordMerge(file) || isRegistrationFile(file));
   for (const file of both) {
-    const [original, local, upstream] = await Promise.all([mergeBase.text, head, theirs].map((commit) => blob(base, commit, file)));
+    const [original, local, upstream] = await Promise.all([mergeBase, head, theirs].map((commit) => blob(base, commit, file)));
     if (local === null || upstream === null || local.equals(upstream)) continue;
     if (isRegistrationFile(file)) { fallback.push(file); continue; }
     const mergeRecord = await recordMergeFor(file);
