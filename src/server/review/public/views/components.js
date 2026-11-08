@@ -7,5 +7,5 @@ const IDENTITY = new RegExp(`^${NAME}/${NAME}$`);
 /** The label of the component a slice records, by its <repository>/<component> identity, or "" for a slice without one. */
 export function componentChip(component) {
   if (typeof component !== "string" || !IDENTITY.test(component)) return "";
-  return `<span class="component-chip" data-component="${escapeHtml(component)}">${escapeHtml(component)}</span>`;
+  return `<prism-chip data-component="${escapeHtml(component)}">${escapeHtml(component)}</prism-chip>`;
 }

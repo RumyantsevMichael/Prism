@@ -182,7 +182,7 @@ test("lists what waits on the user apart from agent-side state", async (context)
     assert.equal(needs[0].kind, "visual-review");
     assert.deepEqual(needs[0].slice, { slug: "download", title: "Download signed reports" });
     assert.deepEqual(needs[0].initiative, { id: "reports", title: "Export reports" });
-    assert.deepEqual(needs[0].artifacts, [{ path: "docs/plans/reports/download/slice.md", available: true }, { path: "docs/plans/reports/download/missing.md", available: false }, { path: ".prism/initiatives/reports/slices/download/review.json", available: true }], "a gate asked before the records moved names the record where it lives now");
+    assert.deepEqual(needs[0].artifacts, [{ path: "docs/plans/reports/download/slice.md", available: true, record: { kind: "design", title: "Download signed reports", clauses: 0, frozenTests: 0 } }, { path: "docs/plans/reports/download/missing.md", available: false }, { path: ".prism/initiatives/reports/slices/download/review.json", available: true, record: { kind: "review-ledger", openFindings: 1 } }], "a gate asked before the records moved names the record where it lives now");
     assert.deepEqual(attention.data.watch.map((item) => item.type), ["findings", "findings"]);
     assert.deepEqual([attention.data.watch[0].unresolved, attention.data.watch[0].blocking], [1, 1]);
     const index = (await get(`${review.baseUrl}/api/index`)).json();

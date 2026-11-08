@@ -148,7 +148,7 @@ const context = () => ({
 
 // Each run-totals block in rendered HTML, in document order, with its scope and its tiles' shown value and coverage mark.
 const BLOCK = /<(?:div|p) class="run-totals(?:-empty)?" data-run-totals="([a-z]+)">/g;
-const TILE = /<div class="stat run-total[^"]*" data-measure="([A-Za-z]+)" data-coverage="([a-z]+)">\s*<span class="stat-value"[^>]*>([^<]*)<\/span>/g;
+const TILE = /<prism-stat class="run-total[^"]*" data-measure="([A-Za-z]+)" data-coverage="([a-z]+)" label="[^"]*" value="([^"]*)"/g;
 function runTotalsBlocks(html) {
   const starts = [...html.matchAll(BLOCK)];
   return starts.map((match, index) => {

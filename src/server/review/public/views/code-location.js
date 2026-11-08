@@ -24,7 +24,8 @@ export function remoteWeb(remote) {
   return { host: HOSTS[host], url: `https://${host}/${parts.map(encodeURIComponent).join("/")}` };
 }
 
-const link = (href, title, html) => `<a class="code-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}">${html}</a>`;
+// The link's name says where it goes and keeps the text it shows.
+const link = (href, name, html) => `<a class="code-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(name)}">${html}</a>`;
 
 /** The branch, commit, and repository of a recorded checkout as HTML, linked to the remote's web pages on a known host: { branch, commit, remote }. */
 export function codeParts(code) {
@@ -47,5 +48,5 @@ export function codeChip(code) {
   const parts = codeParts(code);
   if (!parts) return "";
   const title = `Last passing run${code.branch ? ` on ${code.branch}` : ""} at ${code.head.slice(0, 7)}${code.dirty === true ? " with uncommitted changes" : ""}`;
-  return `<span class="code-chip" title="${escapeHtml(title)}">${parts.branch ? `${parts.branch} · ` : ""}${parts.commit}${code.dirty === true ? '<span class="code-dirty" aria-label="with uncommitted changes">*</span>' : ""}</span>`;
+  return `<prism-chip class="code-location" tip="${escapeHtml(title)}">${parts.branch ? `${parts.branch} · ` : ""}${parts.commit}${code.dirty === true ? '<span class="code-dirty" aria-label="with uncommitted changes">*</span>' : ""}</prism-chip>`;
 }

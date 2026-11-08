@@ -168,56 +168,9 @@ a {
   white-space: nowrap;
 }
 
-.claim-mark {
-  background: var(--info);
-  border-radius: 50%;
-  flex: 0 0 auto;
-  height: 0.45rem;
-  width: 0.45rem;
-}
-
-.claim-chip.activity-design .claim-mark {
-  background: var(--warn);
-}
-
-.claim-text {
-  flex: 0 1 auto;
-  font-weight: 600;
-  min-width: 2.5rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.claim-meta {
-  color: var(--ink-muted);
-  flex: 0 100 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .claim-chip.is-expired {
   border-style: dashed;
   color: var(--ink-muted);
-}
-
-.claim-chip.is-expired .claim-mark {
-  background: var(--ink-muted);
-}
-
-.slice-claim {
-  margin: 0.35rem 0 0;
-}
-
-.code-chip {
-  color: var(--ink-muted);
-  display: inline-block;
-  font-size: 0.72rem;
-  white-space: nowrap;
-}
-
-.code-chip code {
-  font-size: inherit;
 }
 
 /* A component label names the <repository>/<component> that holds a slice.
@@ -1375,10 +1328,6 @@ th {
   cursor: default;
 }
 
-.evidence-chip span {
-  font-weight: 600;
-}
-
 .text-button,
 .json-link {
   background: none;
@@ -1391,29 +1340,6 @@ th {
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
   text-underline-offset: 0.2em;
-}
-
-.key-values {
-  display: grid;
-  gap: 0.35rem 1rem;
-  grid-template-columns: max-content minmax(0, 1fr);
-  margin: 0.4rem 0;
-}
-
-.key-values > div {
-  display: contents;
-}
-
-.key-values dt {
-  color: var(--ink-muted);
-  font-size: 0.76rem;
-  padding-top: 0.15rem;
-}
-
-.key-values dd {
-  font-size: 0.84rem;
-  margin: 0;
-  min-width: 0;
 }
 
 .action-filters {
@@ -2089,8 +2015,7 @@ th {
   padding: 0.2rem 0.35rem;
 }
 
-.board,
-.slice-board {
+.board {
   display: grid;
   gap: 0.6rem;
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
@@ -2238,55 +2163,6 @@ th {
 }
 
 /* Initiative slice board: leaf slices by status, with any active work on the slice's card. */
-.slice-card.slice-board-card {
-  border-left: 4px solid var(--status-color, var(--line-strong));
-  display: grid;
-  gap: 0.35rem;
-  grid-template-columns: minmax(0, 1fr);
-  min-width: 0;
-}
-
-.slice-board-card.status-not-started { --status-color: var(--status-not-started); }
-.slice-board-card.status-in-progress { --status-color: var(--status-in-progress); }
-.slice-board-card.status-design-review { --status-color: var(--warn); }
-.slice-board-card.status-blocked { --status-color: var(--status-blocked); }
-.slice-board-card.status-deferred { --status-color: var(--status-deferred); }
-.slice-board-card.status-done { --status-color: var(--status-done); }
-.slice-board-card.status-split { --status-color: var(--status-split); }
-
-.slice-board-card h3 {
-  color: var(--ink);
-  font-size: 0.9rem;
-  letter-spacing: normal;
-  line-height: 1.3;
-  margin: 0;
-  text-transform: none;
-}
-
-.slice-board-card h3 .text-button {
-  color: var(--ink);
-  text-align: left;
-  text-decoration: none;
-}
-
-.slice-board-card h3 .text-button:hover {
-  color: var(--accent-strong);
-  text-decoration: underline;
-}
-
-.view-card .slice-path {
-  color: var(--ink-muted);
-  font-size: 0.7rem;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.view-card .slice-board-card .slice-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  margin: 0;
-}
 
 .active-details {
   border-top: 1px dashed var(--line);
@@ -2299,23 +2175,8 @@ th {
 }
 
 /* A board column is narrow, so each active detail stacks its label above its value. */
-.active-details .key-values {
-  gap: 0.1rem;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.active-details .key-values > div + div > dt {
-  margin-top: 0.25rem;
-}
 
 /* Coordination state */
-
-.slice-card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 0.6rem;
-  padding: 0.6rem 0.7rem;
-}
 
 .slice-head {
   align-items: flex-start;
@@ -2671,10 +2532,6 @@ th {
   font-size: 0.76rem;
 }
 
-.slice-card .link-chip code {
-  max-width: 14rem;
-}
-
 .queue,
 .queue-list li {
   min-width: 0;
@@ -2820,165 +2677,8 @@ th {
 /* Roadmap */
 
 /* Swimlane board: priority bands are lanes, lifecycle states are columns. */
-.swimlane-board {
-  display: grid;
-  gap: 0.6rem;
-  overflow-x: auto;
-  padding-bottom: 0.4rem;
-}
 
 /* The page's style policy forbids inline styles, so the column count is a class. */
-.swimlane-head,
-.swimlane {
-  display: grid;
-  gap: 0.6rem;
-  grid-template-columns: repeat(3, minmax(13rem, 1fr));
-}
-
-.columns-4 :is(.swimlane-head, .swimlane) {
-  grid-template-columns: repeat(4, minmax(13rem, 1fr));
-}
-
-.swimlane-column {
-  align-items: center;
-  border-bottom: 2px solid var(--state-color, var(--line-strong));
-  color: var(--ink-muted);
-  display: flex;
-  font-size: 0.72rem;
-  font-weight: 700;
-  justify-content: space-between;
-  letter-spacing: 0.06em;
-  padding: 0.2rem 0.3rem 0.35rem;
-  text-transform: uppercase;
-}
-
-.swimlane-column.state-envisioned { --state-color: var(--state-envisioned); }
-.swimlane-column.state-planned { --state-color: var(--state-planned); }
-.swimlane-column.state-in-progress { --state-color: var(--state-in-progress); }
-.swimlane-column.state-shipped { --state-color: var(--state-shipped); }
-
-.swimlane {
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-radius: 0.9rem;
-  padding: 0.5rem 0.6rem 0.7rem;
-}
-
-.swimlane.is-collapsed {
-  padding-bottom: 0.5rem;
-}
-
-.swimlane h2 {
-  font-size: 0.82rem;
-  grid-column: 1 / -1;
-  letter-spacing: 0.02em;
-  margin: 0;
-}
-
-.swimlane-toggle {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 0.4rem;
-  color: inherit;
-  cursor: pointer;
-  display: inline-flex;
-  font: inherit;
-  font-weight: 700;
-  gap: 0.5rem;
-  padding: 0.15rem 0.3rem;
-}
-
-.swimlane-toggle::before {
-  border-bottom: 1.5px solid currentColor;
-  border-right: 1.5px solid currentColor;
-  content: "";
-  height: 0.38rem;
-  transform: rotate(45deg) translate(-0.1rem, -0.1rem);
-  transition: transform var(--prism-duration-fast) ease;
-  width: 0.38rem;
-}
-
-.swimlane-toggle[aria-expanded="false"]::before {
-  transform: rotate(-45deg);
-}
-
-.swimlane-toggle:disabled {
-  color: var(--ink-muted);
-  cursor: default;
-}
-
-.swimlane-toggle:disabled::before {
-  visibility: hidden;
-}
-
-.swimlane-toggle:not(:disabled):hover {
-  background: var(--surface);
-}
-
-.band-now .swimlane-toggle { color: var(--accent-strong); }
-
-.swimlane-cell {
-  align-content: start;
-  display: grid;
-  gap: 0.55rem;
-  grid-template-columns: minmax(0, 1fr);
-  list-style: none;
-  margin: 0;
-  min-height: 2.5rem;
-  min-width: 0;
-  padding: 0;
-}
-
-.card-rank {
-  color: var(--ink-muted);
-  font-size: 0.66rem;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-}
-
-.initiative-card {
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--state-color, var(--line-strong));
-  border-radius: 0.7rem;
-  box-shadow: var(--shadow-soft);
-  display: grid;
-  gap: 0.4rem;
-  grid-template-columns: minmax(0, 1fr);
-  padding: 0.7rem 0.75rem;
-}
-
-.initiative-card.state-envisioned {
-  border-left-style: dashed;
-}
-
-.initiative-card.state-shipped {
-  opacity: 0.85;
-}
-
-.initiative-card h3 {
-  font-size: 0.9rem;
-  line-height: 1.3;
-  margin: 0;
-}
-
-.initiative-card h3 .text-button {
-  color: var(--ink);
-  text-decoration: none;
-}
-
-.initiative-card h3 .text-button:hover {
-  color: var(--accent-strong);
-  text-decoration: underline;
-}
-
-.initiative-card-head {
-  align-items: center;
-  display: flex;
-  gap: 0.4rem;
-  justify-content: space-between;
-}
 
 .pillar {
   color: var(--ink-muted);
@@ -2987,35 +2687,6 @@ th {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.initiative-intent {
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  color: var(--ink-muted);
-  display: -webkit-box;
-  font-size: 0.78rem !important;
-  line-height: 1.45;
-  margin: 0 !important;
-  overflow: hidden;
-}
-
-.initiative-intent.large {
-  -webkit-line-clamp: unset;
-  color: var(--ink);
-  font-size: 0.95rem !important;
-  margin: 0.8rem 0 !important;
-}
-
-.card-signals,
-.relation-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-}
-
-.card-signals .status-pill {
-  font-size: 0.62rem;
 }
 
 .relation-chip {
@@ -3059,11 +2730,6 @@ th {
   height: 100%;
 }
 
-.segment-done { background: var(--status-done); }
-.segment-in-progress { background: var(--status-in-progress); }
-.segment-blocked { background: var(--status-blocked); }
-.segment-deferred { background: var(--status-deferred); }
-
 .progress-label {
   color: var(--ink-muted);
   font-size: 0.68rem;
@@ -3071,61 +2737,9 @@ th {
   white-space: nowrap;
 }
 
-.superseded-card summary {
-  cursor: pointer;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
 .stat.is-info { border-color: var(--info); }
 
 /* Initiative and slice */
-
-.slice-tree {
-  display: grid;
-  gap: 0.35rem;
-  /* A row never grows past the tree, so a one-line chip ends in its ellipsis instead of widening the card. */
-  grid-template-columns: minmax(0, 1fr);
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.slice-tree .slice-tree {
-  border-left: 1px solid var(--line);
-  margin: 0.35rem 0 0 0.6rem;
-  padding-left: 0.9rem;
-}
-
-.slice-row-main {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.slice-title {
-  font-size: 0.88rem;
-  font-weight: 600;
-}
-
-.slice-slug {
-  color: var(--ink-muted);
-}
-
-.slice-outcome {
-  color: var(--ink-muted);
-  font-size: 0.78rem !important;
-  margin: 0.1rem 0 0 0.2rem !important;
-}
-
-.slice-tags {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  max-width: 100%;
-  min-width: 0;
-}
 
 .slice-status {
   border-radius: 0.3rem;
@@ -3144,25 +2758,6 @@ th {
 .slice-status.status-deferred { background: var(--status-deferred); }
 .slice-status.status-done { background: var(--status-done); }
 .slice-status.status-split { background: var(--status-split); }
-
-.artifact-tag {
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-radius: 0.3rem;
-  color: var(--ink-muted);
-  font-size: 0.62rem;
-  padding: 0.02rem 0.35rem;
-}
-
-.artifact-tag.is-bad { border-color: var(--danger); color: var(--danger); }
-.artifact-tag.is-warn { border-color: var(--warn); color: var(--warn); }
-.artifact-tag.is-good { border-color: var(--good); color: var(--good); }
-
-.artifact-cards {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
-}
 
 .legend-status {
   border-radius: 3px;
@@ -3205,45 +2800,6 @@ th {
 
 /* Library */
 
-.doc-status {
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  color: var(--ink-muted);
-  font-size: 0.64rem;
-  font-weight: 700;
-  padding: 0.06rem 0.5rem;
-  white-space: nowrap;
-}
-
-.doc-approved,
-.doc-accepted { border-color: var(--good); color: var(--good); }
-.doc-draft,
-.doc-proposed { border-color: var(--info); color: var(--info); }
-.doc-superseded,
-.doc-withdrawn,
-.doc-declined { border-style: dashed; text-decoration: line-through; }
-
-.decision-list {
-  display: grid;
-  gap: 0.45rem;
-  grid-template-columns: minmax(0, 1fr);
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.decision-list li {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.decision-list li,
-.decision-list .muted {
-  font-size: 0.8rem;
-}
-
 .data-table td.dates {
   font-size: 0.74rem;
   white-space: nowrap;
@@ -3272,39 +2828,6 @@ th {
 
 /* Attention */
 
-.attention-list {
-  display: grid;
-  gap: 0.6rem;
-  grid-template-columns: minmax(0, 1fr);
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.attention-card {
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--warn);
-  border-radius: 0.7rem;
-  padding: 0.75rem 0.9rem;
-}
-
-.attention-card[class*="note-"] {
-  border-left-color: var(--line-strong);
-}
-
-.attention-head {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  font-size: 0.76rem;
-}
-
-.attention-head .muted {
-  margin-left: auto;
-}
-
 .gate-kind {
   background: color-mix(in srgb, var(--warn) 14%, transparent);
   border-radius: 999px;
@@ -3320,20 +2843,6 @@ th {
   background: var(--surface);
   border: 1px solid var(--line);
   color: var(--ink-muted);
-}
-
-.attention-where {
-  align-items: center;
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  max-width: 100%;
-  min-width: 0;
-}
-
-.attention-question {
-  font-size: 0.92rem;
-  margin: 0.45rem 0 0.35rem;
 }
 
 /* The situation and the guidance an agent wrote for the person, kept compact inside the card. */
@@ -3415,36 +2924,7 @@ th {
   vertical-align: 0.05rem;
 }
 
-.choice-button.is-recommended {
-  border-style: dashed;
-}
-
-.attention-artifacts {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  font-size: 0.74rem;
-}
-
-.attention-footnote {
-  font-size: 0.74rem;
-  margin: -0.4rem 0.2rem 0;
-}
-
-.attention-watch td {
-  vertical-align: middle;
-}
-
 /* Roadmap archive filter */
-
-.roadmap-controls {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  justify-content: flex-end;
-}
 
 .tool-button[aria-pressed="true"] {
   background: var(--accent-soft);
@@ -3459,134 +2939,9 @@ th {
 
 /* Answering user gates */
 
-.gate-answer {
-  border-top: 1px solid var(--line);
-  display: grid;
-  gap: 0.5rem;
-  margin-top: 0.65rem;
-  padding-top: 0.65rem;
-}
-
-.gate-answer {
-  --choice-tone: var(--accent);
-  --choice-bad: var(--danger);
-}
-
-.gate-choices {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
 /* A choice reads as a radio option: the ring fills when it is picked, and Request changes keeps its negative tone before and after. */
-.choice-button {
-  align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: 0.55rem;
-  color: var(--ink);
-  cursor: pointer;
-  display: inline-flex;
-  font-size: 0.82rem;
-  font-weight: 650;
-  gap: 0.45rem;
-  min-height: 2.2rem;
-  padding: 0.35rem 0.85rem 0.35rem 0.65rem;
-  transition: background var(--prism-duration-fast) ease, border-color var(--prism-duration-fast) ease;
-}
-
-.choice-button.is-positive {
-  --choice-tone: var(--good);
-}
-
-.choice-button.is-negative {
-  --choice-tone: var(--choice-bad);
-  color: var(--choice-bad);
-}
-
-.choice-button::before {
-  border: 2px solid color-mix(in srgb, var(--choice-tone) 70%, var(--line-strong));
-  border-radius: 50%;
-  box-sizing: border-box;
-  content: "";
-  flex: none;
-  height: 0.9rem;
-  width: 0.9rem;
-}
-
-.choice-button:hover {
-  border-color: var(--choice-tone);
-}
-
-.choice-button:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--choice-tone) 30%, transparent);
-  outline-offset: 2px;
-}
-
-.choice-button[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--choice-tone) 13%, var(--surface));
-  border-color: var(--choice-tone);
-  color: color-mix(in srgb, var(--choice-tone) 70%, var(--ink));
-}
-
-.choice-button[aria-pressed="true"]::before {
-  background: var(--choice-tone);
-  border-color: var(--choice-tone);
-  box-shadow: inset 0 0 0 2px var(--surface);
-}
-
-.gate-note {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.gate-note-label {
-  color: var(--ink-muted);
-  font-size: 0.72rem;
-  font-weight: 650;
-}
-
-.gate-note-need {
-  font-weight: 500;
-}
-
-.gate-note-need::before {
-  content: "· ";
-}
-
-.gate-note-need.is-required {
-  color: var(--choice-bad);
-  font-weight: 700;
-}
 
 /* A field's edge reaches 3:1 against the card it sits on, so the field reads as one. */
-.gate-note textarea[aria-required="true"]:placeholder-shown {
-  border-color: color-mix(in srgb, var(--choice-bad) 55%, var(--prism-color-line-control));
-}
-
-.gate-note textarea {
-  background: var(--surface);
-  border: 1px solid var(--prism-color-line-control);
-  border-radius: 0.55rem;
-  font-size: 0.82rem;
-  min-height: 2.6rem;
-  padding: 0.5rem 0.65rem;
-  resize: vertical;
-  width: 100%;
-}
-
-.gate-note textarea:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
-  outline: 0;
-}
-
-.gate-actions {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-}
 
 .tool-button.primary {
   background: var(--accent);
@@ -3613,52 +2968,6 @@ th {
   border-color: var(--line-strong);
   color: var(--ink-muted);
   opacity: 1;
-}
-
-.gate-actions .tool-button {
-  height: 2.2rem;
-  padding: 0 0.95rem;
-}
-
-.gate-hint {
-  color: var(--ink-muted);
-  font-size: 0.76rem;
-  margin: 0;
-}
-
-.gate-error {
-  color: var(--choice-bad);
-  font-size: 0.76rem;
-  margin: 0;
-}
-
-.attention-card.is-answered {
-  border-left-color: var(--good);
-}
-
-.attention-card.is-closed {
-  border-left-color: var(--line-strong);
-  opacity: 0.85;
-}
-
-.gate-given {
-  font-size: 0.84rem;
-  margin: 0.2rem 0 0;
-}
-
-.choice-given {
-  background: color-mix(in srgb, var(--good) 14%, transparent);
-  border-radius: 999px;
-  color: var(--good);
-  font-size: 0.72rem;
-  font-weight: 700;
-  margin-right: 0.35rem;
-  padding: 0.1rem 0.55rem;
-}
-
-.choice-given.is-negative {
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
 }
 
 /* Read-only source files */
@@ -3960,70 +3269,12 @@ mark.find-hit {
 }
 
 /* Design document on the slice page: Prism's checks sit inside slice.md's Contract and Changes items */
-.design-document .notice,
-.design-document > .plain-list,
-.design-document > p {
-  margin: 0.4rem 0;
-}
-
-.design-badge {
-  display: inline-block;
-  margin-left: 0.4rem;
-  vertical-align: baseline;
-}
-
-.design-badge summary {
-  cursor: pointer;
-  display: inline;
-  list-style: none;
-}
-
-.design-badge summary::-webkit-details-marker {
-  display: none;
-}
-
-.design-badge[open] {
-  display: block;
-  margin: 0.3rem 0 0.4rem;
-}
-
-.design-examples {
-  background: var(--surface-soft);
-  border-radius: 6px;
-  list-style: none;
-  margin: 0.3rem 0 0;
-  padding: 0.35rem 0.6rem;
-}
-
-.design-examples li {
-  padding: 0.15rem 0;
-}
-
-.design-examples .link-chip {
-  margin-left: 0.3rem;
-}
-
-.served-clauses {
-  background: var(--surface-soft);
-  border-radius: 8px;
-  margin: 0.5rem 0 0.8rem;
-  padding: 0.6rem 0.9rem;
-}
-
-.served-clauses ol {
-  margin: 0.3rem 0 0;
-}
 
 .index-notice {
   margin: 0.5rem 0;
 }
 
 /* Each Changes line is a card: a colored action rail, the file and where it lands, why, and what checks it. */
-.change-list {
-  display: grid;
-  gap: 0.6rem;
-  margin: 0.5rem 0 1rem;
-}
 
 .change-card {
   --rail: var(--accent);
@@ -4049,53 +3300,6 @@ mark.find-hit {
 }
 
 /* The badge keeps the action's color even when a verified reading recolors the rail. */
-.change-action {
-  background: color-mix(in srgb, var(--action, var(--accent)) 14%, transparent);
-  border-radius: 999px;
-  color: var(--action, var(--accent));
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  padding: 0.05rem 0.5rem;
-  text-transform: uppercase;
-}
-
-.change-paths {
-  display: grid;
-  gap: 0.3rem;
-  min-width: 0;
-}
-
-.change-path-row {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 0.5rem;
-}
-
-.change-path-row > .link-chip.artifact-chip,
-.change-path-row > .link-chip.disabled {
-  background: none;
-  color: var(--ink);
-  font-size: 0.86rem;
-  font-weight: 600;
-  padding-left: 0;
-}
-
-.change-where {
-  align-items: center;
-  display: inline-flex;
-  flex-wrap: wrap;
-  font-size: 0.78rem;
-  gap: 0.3rem;
-  margin-left: auto;
-}
-
-.change-where-new {
-  color: var(--good);
-  font-size: 0.74rem;
-  font-weight: 600;
-}
 
 .code-span-chip {
   background: var(--surface-soft);
@@ -4104,67 +3308,7 @@ mark.find-hit {
   font-family: var(--prism-font-code);
 }
 
-.code-span-lines {
-  color: var(--ink-muted);
-  font-size: 0.7rem;
-}
-
-.change-why {
-  color: var(--ink);
-  font-size: 0.9rem;
-}
-
-.change-actual {
-  font-size: 0.8rem;
-}
-
-.change-card-footer {
-  align-items: center;
-  border-top: 1px dashed var(--line);
-  display: flex;
-  flex-wrap: wrap;
-  font-size: 0.78rem;
-  gap: 0.35rem 1.2rem;
-  padding-top: 0.4rem;
-}
-
-.change-serves,
-.change-tests {
-  align-items: center;
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-}
-
-.change-label {
-  color: var(--ink-muted);
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  margin-right: 0.15rem;
-  text-transform: uppercase;
-}
-
-.clause-tag {
-  background: var(--accent-soft);
-  border-radius: 999px;
-  color: var(--accent-strong);
-  font-size: 0.72rem;
-  font-weight: 700;
-  padding: 0.05rem 0.45rem;
-  text-decoration: none;
-}
-
-.test-chip .link-chip {
-  background: var(--surface-soft);
-  border-color: var(--line);
-  color: var(--ink);
-}
-
 /* A slice folder holds any number of diagrams; tabs switch between them when there is more than one. */
-.slice-diagrams {
-  margin-bottom: 1rem;
-}
 
 .diagram-tabs {
   display: flex;
@@ -4195,7 +3339,6 @@ mark.find-hit {
 .diagram-tab:not([aria-selected="true"]):hover {
   color: var(--ink);
 }
-
 
 /* The selected tab joins the diagram card below it. */
 .diagram-tabs + .diagram-slot .diagram-card {
@@ -4253,24 +3396,6 @@ mark.find-hit {
 
 .run-totals .stat-row {
   margin-bottom: 0.4rem;
-}
-
-.run-total.is-unavailable .stat-value {
-  color: var(--ink-muted);
-}
-
-.run-coverage {
-  color: var(--ink-muted);
-  font-size: 0.68rem;
-  letter-spacing: 0.04em;
-  overflow-wrap: anywhere;
-}
-
-.run-totals-note,
-.run-totals-empty {
-  color: var(--ink-muted);
-  font-size: 0.74rem;
-  margin: 0.2rem 0 0;
 }
 
 /* A chip or pill is one line. A label longer than its room ends in an ellipsis, and the full label shows as a tooltip. */
@@ -4422,30 +3547,4 @@ mark.find-hit {
 }
 
 /* Recent changes on Attention: what changed, from what to what, and who says they changed it. */
-.recent-change {
-  border-left-color: var(--info);
-}
 
-.recent-change-values {
-  font-size: 0.84rem;
-  margin: 0.35rem 0 0.2rem;
-  overflow-wrap: anywhere;
-}
-
-.recent-change-before {
-  color: var(--ink-muted);
-}
-
-.recent-change-after {
-  font-weight: 650;
-}
-
-.recent-change-by {
-  font-size: 0.74rem;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.recent-change-target {
-  overflow-wrap: anywhere;
-}

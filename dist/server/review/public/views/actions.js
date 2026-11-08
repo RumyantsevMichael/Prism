@@ -424,6 +424,6 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
 /** The Initiative settings card of an initiative or slice page, drawn into slot from the target's listing. */
 export function mountInitiativeSettings(slot, { target, eyebrow, ctx }) {
   if (!slot || !ctx.actionApi) return null;
-  slot.innerHTML = `<section class="view-card action-card"><header class="view-card-header"><p class="eyebrow">${escapeHtml(eyebrow)}</p><div class="view-card-title"><h2>Initiative settings</h2></div></header><div class="view-card-body" data-action-list></div></section>`;
+  slot.innerHTML = `<prism-panel class="view-section settings-panel" heading="Initiative settings" eyebrow="${escapeHtml(eyebrow)}"><div data-action-list></div></prism-panel>`;
   return createActionList({ root: slot.querySelector("[data-action-list]"), targets: [target], api: ctx.actionApi, drafts: (ctx.state.actionDrafts ??= {}), renderMarkdown: ctx.renderMarkdown ?? null, palette: true, emptyText: "This initiative has no settings to change." });
 }

@@ -381,8 +381,9 @@ body {
   gap: var(--prism-space-1);
 }
 
+/* The trail takes the room the actions leave, so its crumbs shorten before an action's label does. */
 .page-bar-trail {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   font-size: var(--prism-font-size-sm);
 }

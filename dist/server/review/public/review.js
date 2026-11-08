@@ -1364,6 +1364,18 @@ function viewContext(path, state) {
     },
     openEvidence: (id, label) => openEvidence(id, label, viewContext(path, state)),
     actionApi,
+    // Names one of Prism's records by title and kind, or a repository file by its path, as the page bar and the palette do.
+    describe,
+    recordTitle: (recordPath) => (navigation.index ?? []).find((entry) => entry.ref === recordPath)?.label ?? null,
+    // A view's own actions sit at the end of the page bar while it shows.
+    setPageActions: (nodes) => {
+      if (path === selectedPath) pageBar.setActions(nodes);
+    },
+    sidePanel: {
+      show: (ref) => sidePanel.showFile(ref),
+      close: () => sidePanel.close(),
+      isOpen: () => sidePanel.isOpen()
+    },
     // A view embeds a PlantUML file as the same diagram card that opening the file shows.
     async mountDiagram(target, diagramPath) {
       const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(diagramPath)}`);
@@ -1562,6 +1574,8 @@ async function initialize() {
     shell: appShell,
     sheet: document.getElementById("side-panel-sheet"),
     describe,
+    // A page's Side panel button follows the panel, however it opens or closes.
+    onChange: (open) => document.dispatchEvent(new CustomEvent("prism:side-panel", { detail: { open } })),
     fetchJson,
     renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
     // The panel draws a diagram as the same card its page shows, without the name its header already gives, and fitted to the panel's width.
