@@ -213,6 +213,79 @@ function bindAnswers(container, ctx, gates) {
   }
 }
 
+// A change's action reads by its own name: the last part of its id in words, such as "Security review" for initiative.securityReview.
+function changeLabel(action) {
+  const words = String(action ?? "").split(".").pop().replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+  return words ? `${words[0].toUpperCase()}${words.slice(1)}` : "Change";
+}
+
+function changeValue(value) {
+  if (value === null || value === undefined) return "none";
+  if (typeof value === "object") return Object.entries(value).filter(([, item]) => item !== null && item !== "").map(([key, item]) => `${key}: ${typeof item === "object" ? JSON.stringify(item) : item}`).join(", ") || "none";
+  return String(value);
+}
+
+// The author is what the applying checkout's Git configuration claims, so the page names it as given and never as verified.
+function changeAuthor(by) {
+  return by?.name || by?.email || "An unknown person";
+}
+
+function changeWhere(entry, ctx) {
+  const [kind, rest = ""] = String(entry.target ?? "").split(/:(.*)/s);
+  const parts = [];
+  if (entry.initiative) parts.push(artifactChip(`initiative:${entry.initiative}`, ctx, entry.initiative));
+  if (kind === "index") parts.push(`<code class="recent-change-target" title="${escapeHtml(rest)}">${escapeHtml(rest)}</code>`);
+  if (kind === "gate") parts.push('<span class="muted">question</span>');
+  return parts.join('<span class="crumb-separator" aria-hidden="true">›</span>');
+}
+
+const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+function changeStep(before, after) {
+  return `<span class="recent-change-before">${escapeHtml(before)}</span> <span aria-hidden="true">→</span><span class="sr-only">to</span> <span class="recent-change-after">${escapeHtml(after)}</span>`;
+}
+
+// Two object values, such as model names, show only the parts that changed, so a long value does not hide what differs.
+function changeValues(entry) {
+  if (entry.action === "gate.answer") return escapeHtml(changeValue(entry.after));
+  if (isObject(entry.before) && isObject(entry.after)) {
+    const keys = [...new Set([...Object.keys(entry.before), ...Object.keys(entry.after)])].filter((key) => JSON.stringify(entry.before[key] ?? null) !== JSON.stringify(entry.after[key] ?? null));
+    if (keys.length) return keys.map((key) => `<span class="recent-change-part">${escapeHtml(key)}: ${changeStep(changeValue(entry.before[key]), changeValue(entry.after[key]))}</span>`).join("; ");
+  }
+  return changeStep(changeValue(entry.before), changeValue(entry.after));
+}
+
+export function changeHtml(entry, ctx) {
+  const values = changeValues(entry);
+  return `<li class="attention-card recent-change" data-change="${escapeHtml(entry.id)}">
+    <div class="attention-head"><span class="gate-kind is-note">${escapeHtml(changeLabel(entry.action))}</span><span class="attention-where">${changeWhere(entry, ctx)}</span><span class="muted" title="${escapeHtml(entry.at)}">${escapeHtml(ago(entry.at))}</span></div>
+    <p class="recent-change-values">${values}</p>
+    <p class="recent-change-by muted"><span title="${escapeHtml(entry.by?.email ?? "")}">${escapeHtml(changeAuthor(entry.by))}</span> · <span title="${escapeHtml(entry.by?.checkout ?? "")}">${escapeHtml(entry.by?.checkout ?? "an unknown checkout")}</span></p>
+  </li>`;
+}
+
+const RECENT_LIMIT = 20;
+
+// A change applied while the page is open joins the top of the list at once; the next load brings the list as the records hold it.
+let following = null;
+
+function followChanges(container, ctx) {
+  if (!following) document.addEventListener("prism:action", (event) => following?.(event));
+  following = (event) => {
+    if (!container.isConnected) return;
+    const entry = event.detail;
+    const slot = container.querySelector("[data-recent-changes]");
+    if (!slot || !entry?.id || slot.querySelector(`[data-change="${CSS.escape(entry.id)}"]`)) return;
+    let list = slot.querySelector("ul");
+    if (!list) {
+      slot.innerHTML = '<ul class="attention-list"></ul>';
+      list = slot.querySelector("ul");
+    }
+    list.insertAdjacentHTML("afterbegin", changeHtml(entry, ctx));
+    while (list.children.length > RECENT_LIMIT) list.lastElementChild.remove();
+  };
+}
+
 function noteCard(item, ctx) {
   const roadmapLink = artifactChip("roadmap", ctx, "Roadmap");
   const describe = {
@@ -248,6 +321,7 @@ export function render(container, entity, ctx) {
   const drafts = (ctx.state.drafts ??= {});
   const answered = data.answered ?? [];
   const earlier = data.earlier ?? [];
+  const recent = data.recentChanges ?? [];
   const gates = data.needsYou.filter((item) => item.type === "gate");
   const notes = data.needsYou.filter((item) => item.type !== "gate");
   container.innerHTML = `
@@ -267,9 +341,11 @@ export function render(container, entity, ctx) {
     ${card("Watch", data.watch.length
       ? `<div class="table-wrap"><table class="data-table attention-watch"><tbody>${data.watch.map((item) => watchRow(item, ctx)).join("")}</tbody></table></div>`
       : emptyNote("No blocked slices, open findings, or active work."), { eyebrow: "Agent-side state" })}
+    ${card("Recent changes", `<div data-recent-changes>${recent.length ? `<ul class="attention-list">${recent.map((entry) => changeHtml(entry, ctx)).join("")}</ul>` : emptyNote("No one changed settings, answered a question, or rebuilt an index from the review app yet.")}</div>`, { eyebrow: "From the review app, newest first" })}
     ${earlier.length ? card("Earlier questions", `<ul class="attention-list">${earlier.map((item) => closedCard(item, ctx)).join("")}</ul>`, { eyebrow: "Most recent first" }) : ""}`;
   bindLinks(container, ctx);
   bindAnswers(container, ctx, gates);
+  followChanges(container, ctx);
   container.querySelector("[data-notify]")?.addEventListener("click", () => {
     void Notification.requestPermission().finally(() => ctx.rerender());
   });

@@ -6,6 +6,7 @@ import { createReviewAppClient } from "./review-app-client.mjs";
 import { pluginVersion } from "../plugin-root.mjs";
 import { recordFallback, reviewAppDirectory, reviewAppDisabled } from "./review-app-discovery.mjs";
 import { normalizeTabs, openBrowser, startReviewServer } from "./review-server.mjs";
+import { withWriteGrant } from "./write-sessions.mjs";
 
 const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1000;
 
@@ -51,8 +52,8 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
     setOpenTabs: (tabs) => viaApp(async () => (await client.present(projectRoot, { tabs, open: false })).session.openTabs, (review) => review.setOpenTabs(tabs)),
     open: (tabs) => viaApp(async () => {
       const answer = await client.present(projectRoot, { tabs: normalizeTabs(tabs), open: true });
-      // The app never opens a browser; this session opens it in its own environment.
-      const opened = answer.open ? Boolean(await browserOpener(answer.url)) : false;
+      // The app never opens a browser; this session opens it in its own environment, with the app's grant in the fragment of only the URL it opens.
+      const opened = answer.open ? Boolean(await browserOpener(withWriteGrant(answer.url, answer.writeGrant))) : false;
       return { url: answer.url, opened, ...answer.session };
     }, (review) => review.open(tabs)),
     viewerCount: () => session ? session.then((review) => review.viewerCount()) : 1,
@@ -142,7 +143,7 @@ export function createReviewServerPool({ start = startReviewServer, app } = {}) 
     if (!client || registered.has(projectRoot)) return;
     registered.add(projectRoot);
     const opener = app.openBrowser ?? openBrowser;
-    const started = open ? client.openAtStart(projectRoot).then((answer) => answer.open && opener(answer.url)) : client.register(projectRoot);
+    const started = open ? client.openAtStart(projectRoot).then((answer) => answer.open && opener(withWriteGrant(answer.url, answer.writeGrant))) : client.register(projectRoot);
     void started.catch(() => {});
   }
 

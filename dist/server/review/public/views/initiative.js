@@ -6,6 +6,7 @@ import { runTotalsHtml } from "./run-totals.js";
 import { codeChip } from "./code-location.js";
 import { claimChip, claimOf } from "./claims.js";
 import { componentChip } from "./components.js";
+import { mountInitiativeSettings } from "./actions.js";
 
 const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 // These columns always show; another status, such as deferred, gets a column only while a slice has it.
@@ -120,13 +121,18 @@ export async function render(container, entity, ctx) {
       ])}
       ${data.runTotals ? runTotalsHtml(data.runTotals.initiative, "initiative") : ""}
     </section>`;
+  // The settings belong to the initiative whatever state its record is in, so every branch shows them.
+  const settings = '<div data-initiative-settings></div>';
+  const mountSettings = () => mountInitiativeSettings(container.querySelector("[data-initiative-settings]"), { target: `initiative:${data.id}`, eyebrow: "Orchestration of every slice", ctx });
   if (!data.exists) {
-    container.innerHTML = `${head}${card("No slices yet", `<p>No initiative record exists at <code>${escapeHtml(data.recordPath)}</code>.</p><p class="muted">Orchestration creates it when the initiative starts.</p>`, { eyebrow: "Envisioned" })}`;
+    container.innerHTML = `${head}${card("No slices yet", `<p>No initiative record exists at <code>${escapeHtml(data.recordPath)}</code>.</p><p class="muted">Orchestration creates it when the initiative starts.</p>`, { eyebrow: "Envisioned" })}${settings}`;
+    mountSettings();
     bindLinks(container, ctx);
     return;
   }
   if (!data.valid) {
-    container.innerHTML = `${head}${card("Invalid initiative record", `<ul class="diagnostic-list">${data.errors.map((error) => `<li class="is-blocking">${escapeHtml(error)}</li>`).join("")}</ul>`, { source: "initiative.json" })}`;
+    container.innerHTML = `${head}${card("Invalid initiative record", `<ul class="diagnostic-list">${data.errors.map((error) => `<li class="is-blocking">${escapeHtml(error)}</li>`).join("")}</ul>`, { source: "initiative.json" })}${settings}`;
+    mountSettings();
     bindLinks(container, ctx);
     return;
   }
@@ -134,7 +140,9 @@ export async function render(container, entity, ctx) {
   const summary = `${plural(data.derived.leaves.length, "leaf slice")} · ${counts.done} done · ${counts["in-progress"]} in progress · ${counts.blocked} blocked`;
   container.innerHTML = `${head}
     <div data-initiative-body></div>
-    ${data.derived.designCandidates.length ? card("Design frontier", `<ul class="plain-list">${data.derived.designCandidates.map((slug) => `<li>${artifactChip(`slice:${data.id}/${slug}`, ctx, data.record.slices[slug].title)}${data.derived.dependenciesComplete.includes(slug) ? "" : ' <span class="muted">dependencies incomplete</span>'}</li>`).join("")}</ul>`, { eyebrow: "Unstarted leaves", source: "initiative.json" }) : ""}`;
+    ${data.derived.designCandidates.length ? card("Design frontier", `<ul class="plain-list">${data.derived.designCandidates.map((slug) => `<li>${artifactChip(`slice:${data.id}/${slug}`, ctx, data.record.slices[slug].title)}${data.derived.dependenciesComplete.includes(slug) ? "" : ' <span class="muted">dependencies incomplete</span>'}</li>`).join("")}</ul>`, { eyebrow: "Unstarted leaves", source: "initiative.json" }) : ""}
+    ${settings}`;
+  mountSettings();
   const body = container.querySelector("[data-initiative-body]");
   if (ctx.state.mode === "graph") await graph(body, data, ctx);
   else if (ctx.state.mode === "list") body.innerHTML = card("Slice tree", `<ul class="slice-tree root">${tree(data, data.derived.root, 0, ctx)}</ul>`, { eyebrow: summary, source: "initiative.json" });

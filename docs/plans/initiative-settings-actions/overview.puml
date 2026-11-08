@@ -1,0 +1,26 @@
+@startuml
+title Initiative settings from the review app - slices
+package "action-registry" as Registry {
+  interface "listActions / applyAction" as Api
+  interface "api/actions, targets, apply" as Routes
+  interface "history entries with id and by" as History
+}
+package "state-merge" as Merge {
+  interface "coordination state merge" as StateMerge
+}
+package "write-credential" as Credential {
+  interface "X-Prism-Write write session" as Session
+}
+package "action-controls" as Controls
+package "agent-change-notices" as Notices
+Merge ..> History : merges by id
+Credential ..> Routes : guards apply
+Controls ..> Routes : renders listings
+Controls ..> Session : writable, header
+Notices ..> History : notices by id, kept settings
+Notices ..> Api : person's changes
+Merge ..> Registry : after
+Credential ..> Registry : after
+Controls ..> Credential : after
+Notices ..> Registry : after
+@enduml
