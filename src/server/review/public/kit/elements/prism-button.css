@@ -133,3 +133,10 @@ button:disabled,
   border-color: transparent;
   background: transparent;
 }
+
+/* A disabled toggle still shows which option is on, as a settings group in a tab that can only read does. */
+button:disabled[aria-pressed="true"],
+:host([disabled]) button:disabled[aria-pressed="true"] {
+  background: var(--prism-color-selected);
+  color: var(--prism-color-accent-text);
+}
