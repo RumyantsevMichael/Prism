@@ -202,3 +202,42 @@ Requirement: Where the operating system asks for reduced motion, the review app 
 Rationale: Shared motion values make this one rule instead of one per screen.
 
 Related: [review-app-ui-kit.md§1](#1)
+
+<a id="14"></a>
+## 14. Show who holds each claim
+
+Pattern: Ubiquitous
+
+Disposition: Active
+
+Requirement: The review app shall show each live or expired claim on a slice, with its holder, whether the holder is a person or an agent, its activity in words, and its time left or time since expiry, wherever that slice appears, and shall offer no action that changes a claim.
+
+Rationale: Several people and agents share one workspace, so the person needs to see at a glance who works on what before acting, while claim actions are separate work.
+
+Related: [review-app-ui-kit.md§2](#2), [review-app-ui-kit.md§8](#8)
+
+<a id="15"></a>
+## 15. Name Prism's records by title and kind
+
+Pattern: Ubiquitous
+
+Disposition: Active
+
+Requirement: The review app shall name each of Prism's own records by its title and kind instead of its file name or storage path, and shall show a repository path only where the repository's code is the subject.
+
+Rationale: Record files are how Prism stores its workflow, not what the person reviews, so file names add noise and change when storage moves, while a path still matters where code is under review.
+
+Related: [review-app-ui-kit.md§2](#2)
+
+<a id="16"></a>
+## 16. Keep text on translucent surfaces readable over anything
+
+Pattern: Ubiquitous
+
+Disposition: Active
+
+Requirement: The review app shall give text and the boundaries of fields and choice controls on a translucent surface at least the contrast that WCAG 2.2 level AA requires whether pure black or pure white shows through that surface, in every shipped theme.
+
+Rationale: A frosted overlay shows whatever lies behind it, so only a worst-case measure keeps its text readable on every screen.
+
+Related: [review-app-ui-kit.md§8](#8)
