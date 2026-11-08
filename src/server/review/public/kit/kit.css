@@ -1,0 +1,48 @@
+/* The kit's base styles: typography, the keyboard focus outline, and content elements, all from the design values in tokens.css.
+   Light-DOM kit elements add their rules here; shadow-DOM elements carry their own stylesheets and read the same tokens through inheritance. */
+
+html {
+  background: var(--prism-color-chrome);
+  color: var(--prism-color-ink);
+  font-family: var(--prism-font-ui);
+  font-weight: var(--prism-font-weight-regular);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--prism-font-ui);
+  letter-spacing: var(--prism-tracking-body);
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--prism-font-code);
+}
+
+:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: var(--prism-stroke);
+}
+
+::selection {
+  background: var(--prism-color-selected);
+  color: var(--prism-color-ink);
+}
+
+a {
+  color: var(--prism-color-accent-text);
+}
+
+mark {
+  background: var(--prism-color-warning-soft);
+  color: var(--prism-color-ink);
+}
+
+hr {
+  border: 0;
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}

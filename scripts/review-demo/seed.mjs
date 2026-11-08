@@ -1,5 +1,6 @@
 // Build a demo project whose JSON artifacts come from the real Prism MCP tools, for trying the review browser views.
 // Usage: node scripts/review-demo/seed.mjs [project-directory]
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ROOT, prepareProject, startTools } from "./project.mjs";
@@ -8,6 +9,8 @@ import { runRecord, segment } from "../../test/server/fixtures/run-records.mjs";
 
 const examples = JSON.parse(await readFile(path.join(ROOT, "test/server/fixtures/change-map.json"), "utf8"));
 const { realRoot, dataDir, write } = await prepareProject(process.argv[2], "prism-review-demo-");
+// The project is a Git repository, as a real one is, so the review browser lists its source files.
+execFileSync("git", ["init", "--quiet"], { cwd: realRoot, stdio: "ignore" });
 
 const slice = "docs/plans/retry-hardening/timeout-retries";
 const key = { initiative: "retry-hardening", slice: "timeout-retries" };

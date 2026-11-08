@@ -24,6 +24,10 @@ When the selected browser is unavailable, Prism presents the URL and source arti
 
 ## Layout
 
+The browser follows the operating system's light or dark setting and changes with it while the page is open.
+It shows compact density by default.
+The review app keeps the theme and density for you, so every project and every later session shows the same choice.
+
 The top bar holds the project switcher and the open tabs.
 The status bar at the bottom shows where the project's records live, their sync state, and the repository index.
 The sidebar keeps Attention and Roadmap at the top and the Library, with Requirements, Decisions, and the Glossary, at the bottom.
@@ -85,7 +89,7 @@ A slice page shows the slice's diagrams, its design from `slice.md`, the verific
 It is the page to read at a design gate.
 
 Every PlantUML file directly in the slice folder gets a tab above the design, with `code.puml` first when it exists.
-In dark mode a diagram sits on a light sheet, because PlantUML draws black lines and text.
+A diagram sits on a sheet that follows the light or dark theme.
 
 The design is `slice.md` itself, with Prism's checks placed in it.
 Each contract clause shows how many frozen tests check it, and opening that count shows one plain-language example per test, each linked to its test file.

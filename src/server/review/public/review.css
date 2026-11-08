@@ -1,22 +1,27 @@
 :root {
-  color-scheme: light dark;
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--prism-font-ui);
   line-height: 1.55;
-  --bg: #f4f3f8;
-  --surface: #ffffff;
-  --surface-soft: #f8f7fb;
-  --surface-raised: #ffffff;
-  --ink: #242137;
-  --ink-muted: #6d687e;
-  --line: #e3e0eb;
-  --line-strong: #d2cedd;
-  --accent: #6752d8;
-  --accent-strong: #5038c2;
-  --accent-soft: #eeeafd;
-  --mint: #52c7a5;
-  --danger: #c6384f;
-  --shadow: 0 18px 50px rgba(36, 33, 55, 0.08);
-  --shadow-soft: 0 8px 24px rgba(36, 33, 55, 0.06);
+}
+
+/* The page's older names for design values point at the kit's tokens, and every element that sets a theme or density resolves them again for its subtree. */
+:root,
+[data-theme],
+[data-density] {
+  --bg: var(--prism-color-chrome);
+  --surface: var(--prism-color-surface);
+  --surface-soft: var(--prism-color-sunken);
+  --surface-raised: var(--prism-color-raised);
+  --ink: var(--prism-color-ink);
+  --ink-muted: var(--prism-color-ink-muted);
+  --line: var(--prism-color-line);
+  --line-strong: var(--prism-color-line-strong);
+  --accent: var(--prism-color-accent);
+  --accent-strong: var(--prism-color-accent-text);
+  --accent-soft: var(--prism-color-accent-soft);
+  --mint: var(--prism-color-live);
+  --danger: var(--prism-color-danger);
+  --shadow: var(--prism-shadow-dialog);
+  --shadow-soft: var(--prism-shadow-lift);
 }
 
 * {
@@ -63,8 +68,8 @@ a {
 /* The top bar carries the logo, the project and worktree, and the open tabs, so the workspace below gets the full height. */
 .topbar {
   align-items: center;
-  background: #17152b;
-  color: #f8f7ff;
+  background: var(--prism-color-chrome);
+  color: var(--prism-color-ink);
   display: flex;
   flex: 0 0 auto;
   gap: 0.85rem;
@@ -94,12 +99,12 @@ a {
 
 .project-chip {
   align-items: center;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--prism-color-raised);
+  border: 1px solid var(--prism-color-line-strong);
   border-radius: 999px;
-  color: #cbc7df;
+  color: var(--prism-color-ink-muted);
   display: flex;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   font-size: 0.72rem;
   gap: 0.5rem;
   max-width: min(36vw, 26rem);
@@ -116,27 +121,27 @@ a {
 }
 
 .project-repository {
-  color: #f8f7ff;
+  color: var(--prism-color-ink);
   font-weight: 650;
 }
 
 .project-separator {
-  color: #77729a;
+  color: var(--prism-color-ink-faint);
   margin: 0 0.3rem;
 }
 
 .project-worktree {
-  color: #aaa5c8;
+  color: var(--prism-color-ink-muted);
 }
 
 .project-workspace {
-  color: #f8f7ff;
+  color: var(--prism-color-ink);
   font-weight: 650;
 }
 
 /* After a workspace name the checkout is secondary, so it reads lighter. */
 .project-separator.is-workspace ~ .project-repository {
-  color: #cbc7df;
+  color: var(--prism-color-ink-muted);
   font-weight: 500;
 }
 
@@ -152,14 +157,14 @@ a {
 
 .project-chip:enabled:hover,
 .project-chip[aria-expanded="true"] {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--prism-color-chrome-hover);
 }
 
 .project-gates,
 .project-entry-gates {
   background: var(--accent);
   border-radius: 999px;
-  color: #ffffff;
+  color: var(--prism-color-on-accent);
   flex: 0 0 auto;
   font-size: 0.68rem;
   font-weight: 700;
@@ -207,7 +212,7 @@ a {
 
 .project-group {
   color: var(--ink-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   font-size: 0.72rem;
   font-weight: 650;
   margin: 0.5rem 0.5rem 0.15rem;
@@ -266,7 +271,7 @@ a.project-cluster-head[aria-current] .project-cluster-name {
 }
 
 .project-cluster-name {
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--prism-font-code);
   font-size: 0.74rem;
   font-weight: 650;
   overflow: hidden;
@@ -310,7 +315,7 @@ a.project-cluster-head[aria-current] .project-cluster-name {
 
 .project-entry-root {
   color: var(--ink-muted);
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--prism-font-code);
   font-size: 0.68rem;
   grid-column: 2;
   overflow: hidden;
@@ -339,7 +344,7 @@ a.project-cluster-head[aria-current] .project-cluster-name {
 }
 
 .project-entry-indexing.preparing {
-  animation: indexing-pulse 1.4s ease-in-out infinite;
+  animation: indexing-pulse var(--prism-duration-blink) ease-in-out infinite;
   background: var(--accent);
 }
 
@@ -355,10 +360,10 @@ a.project-cluster-head[aria-current] .project-cluster-name {
 
 .indexing-chip {
   align-items: center;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--prism-color-raised);
+  border: 1px solid var(--prism-color-line-strong);
   border-radius: 999px;
-  color: #cbc7df;
+  color: var(--prism-color-ink-muted);
   cursor: pointer;
   display: flex;
   font-size: 0.72rem;
@@ -369,33 +374,33 @@ a.project-cluster-head[aria-current] .project-cluster-name {
 
 .indexing-chip:hover,
 .indexing-chip[aria-expanded="true"] {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--prism-color-chrome-hover);
 }
 
 .indexing-dot {
-  background: #77729a;
+  background: var(--prism-color-ink-faint);
   border-radius: 50%;
   flex: 0 0 auto;
   height: 0.5rem;
   width: 0.5rem;
 }
 
-.indexing[data-tone="ok"] .indexing-dot { background: #52c7a5; }
-.indexing[data-tone="warn"] .indexing-dot { background: #e0a030; }
-.indexing[data-tone="danger"] .indexing-dot { background: #e05a6f; }
+.indexing[data-tone="ok"] .indexing-dot { background: var(--prism-color-success); }
+.indexing[data-tone="warn"] .indexing-dot { background: var(--prism-color-warning); }
+.indexing[data-tone="danger"] .indexing-dot { background: var(--prism-color-danger); }
 
 .indexing[data-tone="busy"] .indexing-dot {
-  animation: indexing-pulse 1.4s ease-in-out infinite;
-  background: #a392ff;
+  animation: indexing-pulse var(--prism-duration-blink) ease-in-out infinite;
+  background: var(--prism-color-accent);
 }
 
 /* The status bar is the app's bottom edge: where records live and their sync on the left, the repository index on the right.
    It shares the top bar's fixed dark colors in both themes, so the window reads as one frame around the workspace. */
 .statusbar {
   align-items: stretch;
-  background: #17152b;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  color: #cbc7df;
+  background: var(--prism-color-chrome);
+  border-top: 1px solid var(--prism-color-line);
+  color: var(--prism-color-ink-muted);
   display: flex;
   flex: 0 0 auto;
   font-size: 0.72rem;
@@ -417,7 +422,7 @@ a.project-cluster-head[aria-current] .project-cluster-name {
   background: transparent;
   border: 0;
   border-radius: 0.25rem;
-  color: #cbc7df;
+  color: var(--prism-color-ink-muted);
   cursor: pointer;
   display: flex;
   gap: 0.4rem;
@@ -434,13 +439,13 @@ a.project-cluster-head[aria-current] .project-cluster-name {
 .status-item:hover,
 .statusbar .indexing-chip:hover,
 .statusbar .indexing-chip[aria-expanded="true"] {
-  background: rgba(255, 255, 255, 0.09);
-  color: #f8f7ff;
+  background: var(--prism-color-chrome-hover);
+  color: var(--prism-color-ink);
 }
 
 .status-item:focus-visible,
 .statusbar .indexing-chip:focus-visible {
-  outline: 2px solid #a392ff;
+  outline: 2px solid var(--prism-color-focus);
   outline-offset: -2px;
 }
 
@@ -452,7 +457,7 @@ a.project-cluster-head[aria-current] .project-cluster-name {
 
 #store-status {
   flex: 0 1 auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   max-width: 40vw;
 }
 
@@ -460,12 +465,12 @@ a.project-cluster-head[aria-current] .project-cluster-name {
   flex: 0 1 auto;
 }
 
-.status-item[data-tone="ok"] .indexing-dot { background: #52c7a5; }
-.status-item[data-tone="warn"] .indexing-dot { background: #e0a030; }
-.status-item[data-tone="danger"] .indexing-dot { background: #e05a6f; }
+.status-item[data-tone="ok"] .indexing-dot { background: var(--prism-color-success); }
+.status-item[data-tone="warn"] .indexing-dot { background: var(--prism-color-warning); }
+.status-item[data-tone="danger"] .indexing-dot { background: var(--prism-color-danger); }
 .status-item[data-tone="warn"],
-.status-item[data-tone="danger"] { color: #f8f7ff; font-weight: 600; }
-#store-status[data-tone="danger"] { color: #ff9aaa; }
+.status-item[data-tone="danger"] { color: var(--prism-color-ink); font-weight: 600; }
+#store-status[data-tone="danger"] { color: var(--prism-color-danger); }
 
 /* A small stack of records: three bars, drawn with gradients so it needs no image. */
 .store-icon {
@@ -506,9 +511,9 @@ a.project-cluster-head[aria-current] .project-cluster-name {
 }
 
 .indexing-component {
-  color: #f8f7ff;
+  color: var(--prism-color-ink);
   flex: 0 1 auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   max-width: 16rem;
   min-width: 2.5rem;
   overflow: hidden;
@@ -567,7 +572,7 @@ a.project-cluster-head[aria-current] .project-cluster-name {
 }
 
 .store-dialog::backdrop {
-  background: rgba(17, 16, 26, 0.45);
+  background: var(--prism-color-scrim);
 }
 
 .store-dialog-header {
@@ -657,7 +662,7 @@ a.project-cluster-head[aria-current] .project-cluster-name {
 
 .line-diff {
   border-collapse: collapse;
-  font-family: var(--mono);
+  font-family: var(--prism-font-code);
   font-size: 0.74rem;
   min-width: 100%;
 }
@@ -769,7 +774,7 @@ a.project-cluster-head[aria-current] .project-cluster-name {
   box-sizing: border-box;
   color: var(--ink);
   display: inline-block;
-  font-family: var(--mono);
+  font-family: var(--prism-font-code);
   font-size: 0.68rem;
   line-height: 1.35;
   max-width: 100%;
@@ -808,17 +813,17 @@ a.code-link:hover {
 }
 
 .indexing-label {
-  color: #f8f7ff;
+  color: var(--prism-color-ink);
   font-weight: 600;
 }
 
 .indexing-detail {
-  color: #aaa5c8;
+  color: var(--prism-color-ink-muted);
 }
 
 .indexing-meter,
 .indexing-step-meter {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--prism-color-line-strong);
   border-radius: 999px;
   display: inline-block;
   height: 0.3rem;
@@ -836,11 +841,11 @@ a.code-link:hover {
 
 .indexing-meter > span,
 .indexing-step-meter > span {
-  background: #a392ff;
+  background: var(--prism-color-accent);
   border-radius: inherit;
   display: block;
   height: 100%;
-  transition: width 0.4s ease;
+  transition: width var(--prism-duration-slow) ease;
 }
 
 .indexing-step-meter > span {
@@ -855,7 +860,7 @@ a.code-link:hover {
 /* A step without counts shows motion, not a made-up fraction. */
 .indexing-meter.indeterminate > span,
 .indexing-step-meter.indeterminate > span {
-  animation: indexing-slide 1.3s ease-in-out infinite;
+  animation: indexing-slide var(--prism-duration-blink) ease-in-out infinite;
   width: 35% !important;
 }
 
@@ -1016,7 +1021,7 @@ a.code-link:hover {
 .indexing-component-name {
   flex: 1 1 auto;
   width: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   font-size: 0.74rem;
   min-width: 0;
   overflow: hidden;
@@ -1029,16 +1034,16 @@ a.code-link:hover {
 }
 
 .indexing-component-row[data-state="ready"] .indexing-dot { background: var(--good); }
-.indexing-component-row[data-state="interrupted"] .indexing-dot { background: #e0a030; }
+.indexing-component-row[data-state="interrupted"] .indexing-dot { background: var(--prism-color-warning); }
 .indexing-component-row[data-state="failed"] .indexing-dot { background: var(--danger); }
 .indexing-component-row[data-state="preparing"] .indexing-dot {
-  animation: indexing-pulse 1.4s ease-in-out infinite;
+  animation: indexing-pulse var(--prism-duration-blink) ease-in-out infinite;
   background: var(--accent);
 }
 
 .indexing-diagnostics .indexing-diagnostic-component {
   color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -1092,13 +1097,13 @@ a.code-link:hover {
 
 /* A private session server is a warning, not an outage: the page works, but other sessions may show the same project elsewhere. */
 .app-gone-banner.is-private {
-  background: color-mix(in srgb, var(--warn, #b26f00) 9%, var(--surface-raised));
-  border-bottom-color: color-mix(in srgb, var(--warn, #b26f00) 30%, var(--line));
+  background: color-mix(in srgb, var(--warn) 9%, var(--surface-raised));
+  border-bottom-color: color-mix(in srgb, var(--warn) 30%, var(--line));
 }
 
 .app-gone-banner.is-private .app-gone-mark {
-  background: var(--warn, #b26f00);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn, #b26f00) 22%, transparent);
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent);
 }
 
 .app-gone-text .private-server-reason {
@@ -1152,7 +1157,7 @@ a.code-link:hover {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 0.3rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   font-size: 0.92em;
   padding: 0.05rem 0.3rem;
   white-space: nowrap;
@@ -1200,7 +1205,7 @@ a.code-link:hover {
 .status-dot {
   background: var(--mint);
   border-radius: 50%;
-  box-shadow: 0 0 0 3px rgba(82, 199, 165, 0.15);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--prism-color-live) 15%, transparent);
   flex: 0 0 auto;
   height: 0.45rem;
   width: 0.45rem;
@@ -1281,7 +1286,7 @@ a.code-link:hover {
 
 .side-panel-source {
   color: var(--ink-muted);
-  font-family: var(--mono);
+  font-family: var(--prism-font-code);
   font-size: 0.7rem;
   margin: 0.2rem 0 0;
   overflow: hidden;
@@ -1335,7 +1340,7 @@ a.code-link:hover {
 
   .side-panel {
     bottom: 1.9rem;
-    box-shadow: -18px 0 50px rgba(36, 33, 55, 0.16);
+    box-shadow: var(--prism-shadow-dialog);
     max-width: 100vw;
     position: fixed;
     right: 0;
@@ -1553,7 +1558,7 @@ a.code-link:hover {
   gap: 0.55rem;
   margin-bottom: 0.8rem;
   padding: 0 0.65rem;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition: border-color var(--prism-duration-normal) ease, box-shadow var(--prism-duration-normal) ease;
 }
 
 .search-box:focus-within {
@@ -1637,7 +1642,7 @@ kbd {
   padding: 0.62rem 0.65rem;
   text-decoration: none;
   text-align: left;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background var(--prism-duration-fast) ease, color var(--prism-duration-fast) ease;
   width: 100%;
 }
 
@@ -1661,7 +1666,7 @@ kbd {
   border-left: 0.34rem solid var(--ink-muted);
   border-top: 0.28rem solid transparent;
   height: 0;
-  transition: transform 120ms ease;
+  transition: transform var(--prism-duration-fast) ease;
   width: 0;
 }
 
@@ -1773,15 +1778,15 @@ kbd {
 }
 
 .artifact-tabs.fade-start {
-  mask-image: linear-gradient(to right, transparent, #000 1.5rem);
+  mask-image: linear-gradient(to right, transparent, currentColor 1.5rem);
 }
 
 .artifact-tabs.fade-end {
-  mask-image: linear-gradient(to left, transparent, #000 1.5rem);
+  mask-image: linear-gradient(to left, transparent, currentColor 1.5rem);
 }
 
 .artifact-tabs.fade-start.fade-end {
-  mask-image: linear-gradient(to right, transparent, #000 1.5rem, #000 calc(100% - 1.5rem), transparent);
+  mask-image: linear-gradient(to right, transparent, currentColor 1.5rem, currentColor calc(100% - 1.5rem), transparent);
 }
 
 .artifact-tab {
@@ -1794,19 +1799,19 @@ kbd {
 }
 
 .artifact-tab:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--prism-color-hover);
 }
 
 .artifact-tab:has([aria-selected="true"]) {
-  background: rgba(255, 255, 255, 0.13);
-  border-color: rgba(255, 255, 255, 0.12);
+  background: var(--prism-color-surface);
+  border-color: var(--prism-color-line);
 }
 
 .artifact-tab-select,
 .artifact-tab-close {
   background: transparent;
   border: 0;
-  color: #aaa5c8;
+  color: var(--prism-color-ink-muted);
   cursor: pointer;
 }
 
@@ -1820,7 +1825,7 @@ kbd {
 }
 
 .artifact-tab-select[aria-selected="true"] {
-  color: #ffffff;
+  color: var(--prism-color-ink);
   font-weight: 650;
 }
 
@@ -1834,13 +1839,13 @@ kbd {
 
 .artifact-tab-close:hover,
 .artifact-tab-close:focus-visible {
-  background: rgba(255, 255, 255, 0.14);
-  color: #ffffff;
+  background: var(--prism-color-hover);
+  color: var(--prism-color-ink);
 }
 
 .artifact-tab-select:focus-visible,
 .artifact-tab-close:focus-visible {
-  outline: 2px solid color-mix(in srgb, #a392ff 70%, transparent);
+  outline: 2px solid var(--prism-color-focus);
   outline-offset: -2px;
 }
 
@@ -1884,7 +1889,7 @@ kbd {
 }
 
 .welcome-mark {
-  filter: drop-shadow(0 8px 18px rgba(103, 82, 216, 0.28));
+  filter: drop-shadow(0 8px 18px color-mix(in srgb, var(--prism-color-accent) 28%, transparent));
   height: 3.6rem;
   margin: 0.2rem;
   width: 3.6rem;
@@ -1936,7 +1941,7 @@ kbd {
 
 .artifact-path {
   color: var(--ink-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   font-size: 0.72rem;
   margin: 0;
 }
@@ -2011,7 +2016,7 @@ kbd {
 
 .document-content code,
 .source-panel code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   font-size: 0.84em;
 }
 
@@ -2023,66 +2028,33 @@ kbd {
 }
 
 pre {
-  background: #1e1c30;
-  border: 1px solid #302d48;
+  background: var(--prism-color-sunken);
+  border: 1px solid var(--prism-color-line);
   border-radius: 0.65rem;
-  color: #ece9ff;
+  color: var(--prism-color-ink);
   overflow: auto;
   padding: 1rem 1.1rem;
   white-space: pre-wrap;
 }
 
-/* Syntax colors. Source files and previews follow the theme; a code block keeps its dark background in both themes, so it always takes the dark set. */
-:root {
-  --tok-comment: #78738c;
-  --tok-keyword: #7136d6;
-  --tok-string: #0c7a50;
-  --tok-number: #ad5206;
-  --tok-literal: #b9410f;
-  --tok-type: #0b66a3;
-  --tok-function: #3644c0;
-  --tok-attr: #9a2867;
-  --tok-meta: #855e00;
-  --tok-variable: #ad2077;
-  --tok-tag: #1b6ab0;
-  --tok-title: var(--ink);
-  --tok-inserted: #15845f;
-  --tok-deleted: #c6384f;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --tok-comment: #8e89a8;
-    --tok-keyword: #c6a8ff;
-    --tok-string: #8fd6aa;
-    --tok-number: #f3b97c;
-    --tok-literal: #ffa47e;
-    --tok-type: #7fc8ff;
-    --tok-function: #aab5ff;
-    --tok-attr: #f39cc9;
-    --tok-meta: #e3c17e;
-    --tok-variable: #ff9fd0;
-    --tok-tag: #80baff;
-    --tok-inserted: #72d4a7;
-    --tok-deleted: #ff8d9c;
-  }
-}
-
-pre {
-  --tok-comment: #8e89a8;
-  --tok-keyword: #c6a8ff;
-  --tok-string: #8fd6aa;
-  --tok-number: #f3b97c;
-  --tok-literal: #ffa47e;
-  --tok-type: #7fc8ff;
-  --tok-function: #aab5ff;
-  --tok-attr: #f39cc9;
-  --tok-meta: #e3c17e;
-  --tok-variable: #ff9fd0;
-  --tok-tag: #80baff;
-  --tok-title: #ffffff;
-  --tok-inserted: #72d4a7;
-  --tok-deleted: #ff8d9c;
+/* Syntax colors come from the theme's syntax tokens, in source files, previews, and code blocks alike. */
+:root,
+[data-theme],
+[data-density] {
+  --tok-comment: var(--prism-color-syntax-comment);
+  --tok-keyword: var(--prism-color-syntax-keyword);
+  --tok-string: var(--prism-color-syntax-string);
+  --tok-number: var(--prism-color-syntax-number);
+  --tok-literal: var(--prism-color-syntax-number);
+  --tok-type: var(--prism-color-syntax-type);
+  --tok-function: var(--prism-color-syntax-function);
+  --tok-attr: var(--prism-color-syntax-attr);
+  --tok-meta: var(--prism-color-syntax-comment);
+  --tok-variable: var(--prism-color-syntax-attr);
+  --tok-tag: var(--prism-color-syntax-type);
+  --tok-title: var(--prism-color-ink);
+  --tok-inserted: var(--prism-color-diff-added);
+  --tok-deleted: var(--prism-color-diff-removed);
 }
 
 .tok-comment { color: var(--tok-comment); font-style: italic; }
@@ -2152,7 +2124,7 @@ th {
 }
 
 .diagram-title h2 {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   font-size: 0.77rem;
   font-weight: 600;
   margin: 0;
@@ -2186,7 +2158,7 @@ th {
   justify-content: center;
   min-width: 2rem;
   padding: 0 0.55rem;
-  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+  transition: background var(--prism-duration-fast) ease, border-color var(--prism-duration-fast) ease, transform var(--prism-duration-fast) ease;
 }
 
 .tool-button:hover {
@@ -2219,17 +2191,15 @@ th {
   display: block;
   margin: 0 auto;
   max-width: none;
-  transition: height 120ms ease, width 120ms ease;
+  transition: height var(--prism-duration-fast) ease, width var(--prism-duration-fast) ease;
 }
 
-/* PlantUML draws black lines and text on a transparent canvas, so in dark mode the diagram sits on a light sheet that keeps its own colors readable. */
-@media (prefers-color-scheme: dark) {
-  .diagram-output svg {
-    background: #f8f7fb;
-    border-radius: 8px;
-    box-sizing: content-box;
-    padding: 12px;
-  }
+/* PlantUML draws dark lines and text on a transparent canvas, so the diagram sits on a sheet of the theme's diagram paper. */
+.diagram-output svg {
+  background: var(--prism-color-diagram-paper);
+  border-radius: 8px;
+  box-sizing: content-box;
+  padding: 12px;
 }
 
 .rendering {
@@ -2242,7 +2212,7 @@ th {
 }
 
 .rendering::before {
-  animation: spin 800ms linear infinite;
+  animation: spin var(--prism-duration-blink) linear infinite;
   border: 2px solid var(--line-strong);
   border-top-color: var(--accent);
   border-radius: 50%;
@@ -2256,9 +2226,9 @@ th {
 }
 
 .source-panel {
-  background: #1e1c30;
-  border-top: 1px solid #302d48;
-  color: #ece9ff;
+  background: var(--prism-color-sunken);
+  border-top: 1px solid var(--prism-color-line);
+  color: var(--prism-color-ink);
   max-height: 24rem;
   overflow: auto;
 }
@@ -2275,36 +2245,18 @@ th {
 }
 
 .toast {
-  background: #17152b;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--prism-color-raised);
+  border: 1px solid var(--prism-color-line-strong);
   border-radius: 0.55rem;
   bottom: 1.25rem;
   box-shadow: var(--shadow);
-  color: #f8f7ff;
+  color: var(--prism-color-ink);
   font-size: 0.78rem;
   left: 50%;
   padding: 0.65rem 0.9rem;
   position: fixed;
   transform: translateX(-50%);
   z-index: 10;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #11101a;
-    --surface: #191824;
-    --surface-soft: #211f2e;
-    --surface-raised: #1b1a27;
-    --ink: #eeebf7;
-    --ink-muted: #a09bad;
-    --line: #302e3d;
-    --line-strong: #444052;
-    --accent: #a392ff;
-    --accent-strong: #c1b6ff;
-    --accent-soft: #2d284c;
-    --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
-    --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.2);
-  }
 }
 
 @media (max-width: 800px) {
@@ -2457,34 +2409,31 @@ th {
     animation: none !important;
   }
 
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
+  * {
     scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
   }
 }
 
 /* Structured artifact views */
 
-:root {
-  --action-add: #1baf7a;
-  --action-modify: #2a78d6;
-  --action-replace: #6250d6;
-  --action-delete: #e34948;
-  --action-keep: #8a8698;
-  --severity-blocker: #c6384f;
-  --severity-high: #eb6834;
-  --severity-medium: #c98500;
-  --severity-low: #8a8698;
-  --good: #15845f;
-  --warn: #b26f00;
-  --info: #2a78d6;
-  --bar-before: #b6b2c4;
-  --bar-after: #2a78d6;
-  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+:root,
+[data-theme],
+[data-density] {
+  --action-add: var(--prism-color-success);
+  --action-modify: var(--prism-color-info);
+  --action-replace: var(--prism-color-accent);
+  --action-delete: var(--prism-color-danger);
+  --action-keep: var(--prism-color-ink-faint);
+  --severity-blocker: var(--prism-color-danger);
+  --severity-high: var(--prism-color-phase-review);
+  --severity-medium: var(--prism-color-warning);
+  --severity-low: var(--prism-color-ink-faint);
+  --good: var(--prism-color-success);
+  --warn: var(--prism-color-warning);
+  --info: var(--prism-color-info);
+  --bar-before: var(--prism-color-line-strong);
+  --bar-after: var(--prism-color-info);
+  --mono: var(--prism-font-code);
 }
 
 .structured-view {
@@ -2518,7 +2467,7 @@ th {
 
 .card-source {
   color: var(--ink-muted);
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--prism-font-code);
   font-size: 0.68rem;
   font-weight: 400;
   margin: 0;
@@ -2545,7 +2494,7 @@ th {
 
 .view-card code,
 .detail-panel code {
-  font-family: var(--mono);
+  font-family: var(--prism-font-code);
   font-size: 0.78rem;
 }
 
@@ -2583,7 +2532,7 @@ th {
 
 .segmented button[aria-pressed="true"] {
   background: var(--accent);
-  color: #ffffff;
+  color: var(--prism-color-on-accent);
 }
 
 .summary-row,
@@ -2881,7 +2830,7 @@ th {
 }
 
 .change-card.is-target {
-  animation: target-flash 1.6s ease;
+  animation: target-flash var(--prism-duration-blink) ease;
 }
 
 .change-head {
@@ -3162,7 +3111,7 @@ th {
 
 .graph-cluster text {
   fill: var(--ink-muted);
-  font-family: var(--mono);
+  font-family: var(--prism-font-code);
   font-size: 10px;
 }
 
@@ -3170,7 +3119,7 @@ th {
   fill: none;
   stroke: color-mix(in srgb, var(--action-color, var(--line-strong)) 60%, transparent);
   stroke-width: 1.8;
-  transition: opacity 120ms ease, stroke-width 120ms ease;
+  transition: opacity var(--prism-duration-fast) ease, stroke-width var(--prism-duration-fast) ease;
 }
 
 .graph-edge.is-related {
@@ -3181,7 +3130,7 @@ th {
 .graph-node {
   cursor: pointer;
   outline: none;
-  transition: opacity 120ms ease;
+  transition: opacity var(--prism-duration-fast) ease;
 }
 
 .has-focus .graph-edge:not(.is-related) {
@@ -3200,7 +3149,7 @@ th {
   color: var(--ink);
   display: flex;
   flex-direction: column;
-  font-family: Inter, ui-sans-serif, sans-serif;
+  font-family: var(--prism-font-ui);
   height: 100%;
   justify-content: center;
   overflow: hidden;
@@ -3235,7 +3184,7 @@ th {
 }
 
 .ref-node .graph-node-box strong {
-  font-family: var(--mono);
+  font-family: var(--prism-font-code);
   font-size: 12px;
   font-weight: 500;
 }
@@ -3298,7 +3247,7 @@ th {
 
 .wave.is-accepted .wave-marker {
   background: var(--good);
-  color: #ffffff;
+  color: var(--prism-color-on-accent);
 }
 
 .wave-body {
@@ -3496,7 +3445,7 @@ th {
 
 .severity {
   border-radius: 0.3rem;
-  color: #ffffff;
+  color: var(--prism-color-surface);
   font-size: 0.62rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -3690,7 +3639,7 @@ th {
   overflow-wrap: anywhere;
   border-left: 1px solid var(--line);
   bottom: 0;
-  box-shadow: -18px 0 50px rgba(36, 33, 55, 0.16);
+  box-shadow: var(--prism-shadow-dialog);
   display: flex;
   flex-direction: column;
   max-width: 100vw;
@@ -3928,7 +3877,7 @@ th {
 
 .json-tree,
 .json-tree ul {
-  font-family: var(--mono);
+  font-family: var(--prism-font-code);
   font-size: 0.78rem;
   list-style: none;
   margin: 0;
@@ -3944,39 +3893,15 @@ th {
 }
 
 .json-key { color: var(--accent-strong); }
-.json-string { color: #15845f; }
-.json-number { color: #b5521b; }
+.json-string { color: var(--prism-color-syntax-string); }
+.json-number { color: var(--prism-color-syntax-number); }
 .json-boolean,
-.json-null { color: #6250d6; }
+.json-null { color: var(--prism-color-syntax-keyword); }
 .json-summary,
 .json-empty { color: var(--ink-muted); }
 
 .json-link {
-  font-family: var(--mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --action-add: #199e70;
-    --action-modify: #3987e5;
-    --action-replace: #9085e9;
-    --action-delete: #e66767;
-    --action-keep: #7d7890;
-    --severity-blocker: #e05a6f;
-    --severity-high: #d95926;
-    --severity-medium: #c98500;
-    --severity-low: #6e6a80;
-    --good: #3fbf8f;
-    --warn: #e0a030;
-    --info: #3987e5;
-    --bar-before: #5b5770;
-    --bar-after: #3987e5;
-  }
-
-  .json-string { color: #6fd3a8; }
-  .json-number { color: #f0a070; }
-  .json-boolean,
-  .json-null { color: #b4a8ff; }
+  font-family: var(--prism-font-code);
 }
 
 @media (max-width: 1100px) {
@@ -4033,18 +3958,20 @@ th {
 
 /* Entity navigation */
 
-:root {
-  --state-envisioned: #b6b2c4;
-  --state-planned: #8a8698;
-  --state-in-progress: #2a78d6;
-  --state-shipped: #15845f;
-  --state-superseded: #c9c5d4;
-  --status-not-started: #b6b2c4;
-  --status-in-progress: #2a78d6;
-  --status-blocked: #c6384f;
-  --status-deferred: #b26f00;
-  --status-done: #15845f;
-  --status-split: #6250d6;
+:root,
+[data-theme],
+[data-density] {
+  --state-envisioned: var(--prism-color-line-strong);
+  --state-planned: var(--prism-color-ink-faint);
+  --state-in-progress: var(--prism-color-info);
+  --state-shipped: var(--prism-color-success);
+  --state-superseded: var(--prism-color-line);
+  --status-not-started: var(--prism-color-line-strong);
+  --status-in-progress: var(--prism-color-info);
+  --status-blocked: var(--prism-color-danger);
+  --status-deferred: var(--prism-color-warning);
+  --status-done: var(--prism-color-success);
+  --status-split: var(--prism-color-accent);
 }
 
 .nav-group > ul {
@@ -4073,7 +4000,7 @@ th {
   justify-content: space-between;
   padding: 0.5rem 0.65rem;
   text-decoration: none;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background var(--prism-duration-fast) ease, color var(--prism-duration-fast) ease;
 }
 
 .nav-item a:hover {
@@ -4239,7 +4166,7 @@ th {
   content: "";
   height: 0.38rem;
   transform: rotate(45deg) translate(-0.1rem, -0.1rem);
-  transition: transform 120ms ease;
+  transition: transform var(--prism-duration-fast) ease;
   width: 0.38rem;
 }
 
@@ -4473,7 +4400,7 @@ th {
 
 .slice-status {
   border-radius: 0.3rem;
-  color: #ffffff;
+  color: var(--prism-color-surface);
   font-size: 0.62rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -4583,22 +4510,6 @@ th {
   gap: 0.5rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --state-envisioned: #6e6a80;
-    --state-planned: #8f8aa3;
-    --state-in-progress: #3987e5;
-    --state-shipped: #3fbf8f;
-    --state-superseded: #4a4658;
-    --status-not-started: #5b5770;
-    --status-in-progress: #3987e5;
-    --status-blocked: #e05a6f;
-    --status-deferred: #e0a030;
-    --status-done: #3fbf8f;
-    --status-split: #9085e9;
-  }
-}
-
 .decision-list li,
 .decision-list .muted {
   font-size: 0.8rem;
@@ -4623,7 +4534,7 @@ th {
   margin-bottom: 0.9rem;
   padding: 0.62rem 0.7rem;
   text-align: left;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition: border-color var(--prism-duration-normal) ease, box-shadow var(--prism-duration-normal) ease;
 }
 
 .jump-button:hover,
@@ -4731,7 +4642,7 @@ th {
   position: absolute;
   top: 0.4rem;
   transform: rotate(-45deg);
-  transition: transform 120ms ease;
+  transition: transform var(--prism-duration-fast) ease;
   width: 0.38rem;
 }
 
@@ -4750,7 +4661,7 @@ th {
 
 .count-badge.is-alert {
   background: var(--warn);
-  color: #ffffff;
+  color: var(--prism-color-surface);
 }
 
 .nav-flag {
@@ -4809,7 +4720,7 @@ th {
 }
 
 .agent-mark {
-  background: #a392ff;
+  background: var(--prism-color-accent);
   border-radius: 0.2rem;
   flex: 0 0 auto;
   height: 0.45rem;
@@ -4819,9 +4730,9 @@ th {
 
 .artifact-tab-keep {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--prism-color-line-strong);
   border-radius: 0.3rem;
-  color: #aaa5c8;
+  color: var(--prism-color-ink-muted);
   cursor: pointer;
   font-size: 0.62rem;
   font-weight: 650;
@@ -4830,19 +4741,19 @@ th {
 
 .artifact-tab-keep:hover,
 .artifact-tab-keep:focus-visible {
-  border-color: #a392ff;
-  color: #ffffff;
+  border-color: var(--prism-color-focus);
+  color: var(--prism-color-ink);
   outline: 0;
 }
 
 /* Missing tabs: the file was moved or deleted, or the entity no longer resolves, so the tab is dimmed until its target returns. */
 
 .artifact-tab.is-missing .artifact-tab-select {
-  color: #77729a;
+  color: var(--prism-color-ink-faint);
 }
 
 .artifact-tab.is-missing .artifact-tab-select[aria-selected="true"] {
-  color: #aaa5c8;
+  color: var(--prism-color-ink-muted);
 }
 
 .artifact-tab.is-missing .tab-label {
@@ -4885,7 +4796,7 @@ th {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 0.45rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   font-size: 0.78rem;
   margin: 0 auto 0.9rem;
   overflow-wrap: anywhere;
@@ -5256,7 +5167,7 @@ th {
   gap: 0.45rem;
   min-height: 2.2rem;
   padding: 0.35rem 0.85rem 0.35rem 0.65rem;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background var(--prism-duration-fast) ease, border-color var(--prism-duration-fast) ease;
 }
 
 .choice-button.is-positive {
@@ -5354,18 +5265,11 @@ th {
 .tool-button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #ffffff;
+  color: var(--prism-color-on-accent);
 }
 
 .tool-button.primary:hover:not(:disabled) {
-  background: var(--accent-strong);
-}
-
-/* The dark accent is a light violet, so white text on it is hard to read; dark text keeps primary buttons legible. */
-@media (prefers-color-scheme: dark) {
-  .tool-button.primary:not(:disabled) {
-    color: #16141f;
-  }
+  background: var(--prism-color-accent-hover);
 }
 
 .tool-button.primary.is-negative {
@@ -5374,7 +5278,7 @@ th {
 }
 
 .tool-button.primary.is-negative:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 85%, #000000);
+  background: color-mix(in srgb, var(--danger) 85%, var(--prism-color-ink));
 }
 
 /* A disabled Send looks inert rather than faded, and the hint beside it says what is missing. */
@@ -5400,12 +5304,6 @@ th {
   color: var(--choice-bad);
   font-size: 0.76rem;
   margin: 0;
-}
-
-@media (prefers-color-scheme: dark) {
-  .gate-answer {
-    --choice-bad: #e8687c;
-  }
 }
 
 .attention-card.is-answered {
@@ -5446,7 +5344,7 @@ th {
 
 .source-lines {
   counter-reset: line;
-  font-family: var(--mono);
+  font-family: var(--prism-font-code);
   font-size: 0.78rem;
   line-height: 1.5;
   list-style: none;
@@ -5546,7 +5444,7 @@ th {
 }
 
 .document-content .is-target {
-  animation: target-flash 1.6s ease;
+  animation: target-flash var(--prism-duration-blink) ease;
 }
 
 @keyframes target-flash {
@@ -5746,13 +5644,13 @@ body.has-maximized::after {
 
 .palette-option.is-text .palette-detail {
   flex-basis: 100%;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--prism-font-code);
   margin-left: 0;
   white-space: normal;
 }
 
 mark.find-hit {
-  background: color-mix(in srgb, var(--warn, #e0a030) 35%, transparent);
+  background: color-mix(in srgb, var(--warn) 35%, transparent);
   border-radius: 0.2rem;
   color: inherit;
   padding: 0 0.1rem;
@@ -5900,7 +5798,7 @@ mark.find-hit {
   background: var(--surface-soft);
   border-color: var(--line);
   color: var(--ink);
-  font-family: var(--mono);
+  font-family: var(--prism-font-code);
 }
 
 .code-span-lines {
@@ -6137,7 +6035,7 @@ mark.find-hit {
   content: "";
   height: 0.38rem;
   transform: translateY(-0.1rem) rotate(45deg);
-  transition: transform 120ms ease;
+  transition: transform var(--prism-duration-fast) ease;
   width: 0.38rem;
 }
 
@@ -6192,10 +6090,8 @@ mark.find-hit {
   white-space: pre;
 }
 
-@media (prefers-color-scheme: dark) {
-  .link-preview .preview-diagram {
-    background: #f8f7fb;
-  }
+.link-preview .preview-diagram {
+  background: var(--prism-color-diagram-paper);
 }
 
 .diagram-card.is-compact .diagram-header {

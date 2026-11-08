@@ -5,9 +5,16 @@ export function signalTitle(base, count) {
   return count > 0 ? `(${count}) ${base}` : base;
 }
 
+// The badge's colors are the current theme's danger and surface tokens, read when the icon is drawn; without a page they follow the icon's text color.
+export function badgeColors(root = globalThis.document?.documentElement) {
+  const style = root ? getComputedStyle(root) : null;
+  const read = (name) => style?.getPropertyValue(name).trim() || "currentColor";
+  return { fill: read("--prism-color-danger"), stroke: read("--prism-color-surface") };
+}
+
 // The favicon gains a dot in its top right corner, the way chat and mail tabs mark unread items.
-export function badgedIcon(svg) {
-  return String(svg).replace(/<\/svg>\s*$/, '<circle cx="25.5" cy="6.5" r="6" fill="#e5484d" stroke="#ffffff" stroke-width="1.5"/></svg>');
+export function badgedIcon(svg, { fill, stroke } = badgeColors()) {
+  return String(svg).replace(/<\/svg>\s*$/, `<circle cx="25.5" cy="6.5" r="6" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/></svg>`);
 }
 
 // A notification is for a question that arrived while the user looks elsewhere, so the first count a page sees never notifies.

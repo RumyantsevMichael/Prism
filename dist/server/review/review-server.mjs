@@ -16,12 +16,16 @@ import { readIndexingStatus } from "../repository-intelligence/index-status.mjs"
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { answerGate, entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
+import { readPreferences, writePreferences } from "./review-preferences.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const PUBLIC_DIR = path.join(SERVER_DIR, "public");
 const VENDOR_DIR = path.join(PLUGIN_ROOT, "vendor", "plantuml");
 const VIEWS_DIR = path.join(PUBLIC_DIR, "views");
+const KIT_DIR = path.join(PUBLIC_DIR, "kit");
+// The kit and the area stylesheets are served by extension, and any other file in their folders answers 404.
+const ASSET_TYPES = new Map([[".css", "text/css; charset=utf-8"], [".js", "text/javascript; charset=utf-8"], [".html", "text/html; charset=utf-8"], [".txt", "text/plain; charset=utf-8"], [".woff2", "font/woff2"]]);
 const TEXT_EXTENSIONS = new Set([".md", ".feature", ".puml", ".json"]);
 const EVIDENCE_ARRAY_LIMIT = 200;
 // Requests naming any other host are refused, so a DNS-rebinding page cannot reach the server.
@@ -330,11 +334,42 @@ async function serveFile(response, filePath, contentType) {
   try {
     send(response, 200, await readFile(filePath), contentType);
   } catch (error) {
-    if (error.code === "ENOENT") {
+    if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) {
       send(response, 404, "Not found");
       return;
     }
     throw error;
+  }
+}
+
+// The file and type of a route under kit/ or styles/, or null for a path that leaves its folder, is not a known type, or is not a styles/<name>.css.
+export function publicAsset(route) {
+  const folder = route.startsWith("/kit/") ? "kit" : route.startsWith("/styles/") ? "styles" : null;
+  if (!folder) return null;
+  let relative;
+  try {
+    relative = decodeURIComponent(route.slice(folder.length + 2));
+  } catch {
+    return null;
+  }
+  const parts = relative.split("/");
+  if (!relative || /[\0\\]/.test(relative) || parts.some((part) => !part || part === "." || part === "..")) return null;
+  const extension = path.extname(relative);
+  if (!ASSET_TYPES.has(extension) || (folder === "styles" && (parts.length !== 1 || extension !== ".css"))) return null;
+  const root = path.join(PUBLIC_DIR, folder);
+  const file = path.join(root, ...parts);
+  return isInside(root, file) ? { file, type: ASSET_TYPES.get(extension) } : null;
+}
+
+// A state-changing request must come from the review page as JSON, so another site's form or script cannot send it.
+function fromReviewPage(request) {
+  if (!String(request.headers["content-type"] ?? "").startsWith("application/json")) return false;
+  const origin = request.headers.origin;
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === request.headers.host;
+  } catch {
+    return false;
   }
 }
 
@@ -637,6 +672,31 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
     } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
       await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
+    } else if (route === "/kit/catalog") {
+      await serveFile(response, path.join(KIT_DIR, "catalog.html"), "text/html; charset=utf-8");
+    } else if (route.startsWith("/kit/") || route.startsWith("/styles/")) {
+      const asset = publicAsset(route);
+      if (asset) await serveFile(response, asset.file, asset.type);
+      else send(response, 404, "Not found");
+    } else if (route === "/api/preferences" && request.method === "GET") {
+      send(response, 200, JSON.stringify(await readPreferences()), "application/json; charset=utf-8");
+    } else if (route === "/api/preferences" && request.method === "PUT") {
+      if (!fromReviewPage(request)) {
+        send(response, 403, "Preferences must come from the review page as JSON.");
+        return;
+      }
+      try {
+        let change;
+        try {
+          change = JSON.parse(await readBody(request));
+        } catch {
+          throw Object.assign(new Error("The preferences must be a JSON object with theme, density, or both."), { code: "invalid_preference" });
+        }
+        send(response, 200, JSON.stringify(await writePreferences(change)), "application/json; charset=utf-8");
+      } catch (error) {
+        if (error.code !== "invalid_preference") throw error;
+        send(response, 400, JSON.stringify({ code: error.code, message: error.message }), "application/json; charset=utf-8");
+      }
     } else if (/^\/views\/[a-z][a-z-]*\.js$/.test(route)) {
       await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
     } else if (route === "/api/events" && request.method === "GET") {
