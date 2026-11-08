@@ -66,6 +66,10 @@ Codex runs that hook only after you trust Prism's current hook definition throug
 Elsewhere, or after the 55 minutes, the agent receives the answer with your next message, even a short one such as "go".
 Attention also lists blocked slices, open findings, and active work.
 Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
+Under Recent changes it shows the 20 newest actions applied from the review app, newest first: setting changes and answers of every initiative in the project's records, and index rebuilds of this checkout.
+Each change shows the value before and after it, the author's Git name, or email when no name is set, and the checkout label and host the change came from.
+A change applied in any tab joins the top of the list at once, also a setting change or answer from another checkout whose records live in the same record store, while another checkout's index rebuild never appears.
+A change that a record store sync brings from another machine appears the next time Attention loads.
 
 Only a tab that Prism opened can answer; see [Which tabs can make changes](#which-tabs-can-make-changes).
 See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-the-browser) for the tool timeout that the Claude Code wait needs.
@@ -108,6 +112,19 @@ An initiative has these settings, each with its default and the moment an agent 
 Turning autonomy to `full`, commit on, or push on asks you to confirm first, because it lets agents act further without you.
 
 Every setting can change at any time, including after work on the initiative started.
+
+### Initiative settings card
+
+The initiative page, and every slice page of the initiative, ends with an **Initiative settings** card.
+On a slice page the card names the initiative above its title, because the settings belong to the whole initiative and a change there applies to every slice.
+Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
+Picking an option applies it at once, except for Models, whose model names you type and then send with **Apply** or Enter; **Reset** drops what you typed.
+Choosing **Custom** for Models shows the delivery, review, security review, and examples model fields, and **Apply** stays disabled with a hint such as `Fill in Delivery model.` until every required name is filled in.
+A change that needs your confirmation opens a dialog that says what it lets agents do, with **Confirm** and **Cancel**; Esc or **Cancel** leaves the setting as it was.
+Every control works with Tab, Enter, and Space.
+When an agent or another tab changed the setting after the page showed it, the page refuses your change, shows the current value, and says `Someone changed this since you opened it; it now shows the current value.`
+The card checks for changes every few seconds and at once when any tab applies an action, so it shows a value an agent set without a reload.
+In a tab that can only read, the card shows the read-only notice and its controls are disabled.
 A question's answer shows the situation the agent described, what each option does, and the option the agent recommends with its reason, when the agent gave them.
 
 Each component that `## Components` declares has its own index target, named `<repository>/<component>`, after the root component of the checkout.
@@ -196,13 +213,16 @@ It finds initiatives, slices, documents, and files by name.
 A query of three or more characters also searches the text of Prism artifacts, never source files, and every word must occur in a matching file.
 Opening a text match scrolls to and highlights the first occurrence.
 When the match is not visible in the rendered view, try the Raw view.
+On an initiative or slice page, the palette also lists the page's settings as entries such as `Push: Off`, and choosing one moves the focus to that setting's control.
 In the palette, Enter opens the result in the preview tab, Ctrl+Enter keeps it open, and Esc closes the palette.
 
 ## Index status
 
 The index item at the right of the status bar shows the open project's native index, and its panel lists every build step.
-In a repository with components, the item combines every component's index and names the component being built, and its panel lists each component with its state and a Rebuild button for that component's index.
-A long component identity ends in an ellipsis, and the item's tooltip names it whole.
+Its panel lists each index target of the checkout, the root component first and then each declared component, with its indexing state and a **Rebuild** button that rebuilds only that component's index.
+While a component's index is being built, its row says `An index build is already running.` in place of the button.
+In a repository with components, the item combines every component's index and names the component being built.
+A long component identity ends in an ellipsis, and its tooltip names it whole.
 See [Watch an index build in the review browser](repository-intelligence.md#watch-an-index-build-in-the-review-browser) for what each state means.
 
 ## Several projects
