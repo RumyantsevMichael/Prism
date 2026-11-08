@@ -799,6 +799,11 @@ prism-list-item[active] {
   overflow-wrap: anywhere;
 }
 
+/* A long heading wraps rather than squeezing the Close button below its own size. */
+.prism-dialog-close {
+  flex: none;
+}
+
 .prism-dialog-body {
   flex: 1 1 auto;
   min-width: 0;
