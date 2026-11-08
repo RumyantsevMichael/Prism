@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { checkout, eventually, exists, git, isolateGit, notes, ok, server, syncedWorkspace, workspace } from "./fixtures/workspace-artifacts.mjs";
+import { checkout, commitFiles, eventually, exists, git, isolateGit, notes, ok, remoteFile, server, syncedWorkspace, text, workspace } from "./fixtures/workspace-artifacts.mjs";
 
 // The move of a checkout's existing artifacts keeps every byte it moves, leaves the files it must not take, and reports once per server process.
 const environment = await isolateGit();
@@ -87,4 +87,68 @@ test("one write that the store refuses keeps only its file, and the rest of a lo
   assert.equal(await readFile(path.join(api, "docs/plans/odd/a.md"), "utf8"), "# Odd\n", "the refused file stays in the checkout");
   assert.equal(await exists(path.join(api, "docs/plans/p49/s999.md")), false, "every other file moved");
   assert.equal(await readFile(scoped(place.store, "plans/p49/s999.md"), "utf8"), "# S999\n");
+});
+
+// A remote that the network black-holes: every SSH fetch hangs for this long before it fails.
+const HANG_SECONDS = 15;
+const hangingRemote = { env: { GIT_SSH_COMMAND: `sh -c 'sleep ${HANG_SECONDS}' x` } };
+const hangingUrl = "ssh://git@store.example.invalid/store.git";
+// A first access in a process runs the move again only after the record migration's five-second cache has expired.
+const pastMigrationCache = () => new Promise((resolve) => setTimeout(resolve, 5500));
+const timed = async (call) => { const started = Date.now(); const result = await call(); return { result, took: Date.now() - started }; };
+
+test("with store sync on and a hanging remote, a checkout whose remaining tracked files the move keeps whatever the store holds waits for no pull", async (context) => {
+  const place = await syncedWorkspace(context);
+  const image = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x00]);
+  const api = await checkout(place.a, "api", { files: { "docs/plans/reports/slice.md": "# Reports\n", "docs/plans/reports/diagram.png": image, "docs/plans/reports/my notes.md": "# Notes\n" } });
+  const first = await server(context, place.a, api);
+  const moved = await first.call("get_artifact", {});
+  assert.match(notes(moved), /docs\/plans\/reports\/slice\.md -> /);
+  assert.equal(await exists(path.join(api, "docs/plans/reports/slice.md")), false);
+  await first.close();
+
+  // The moved file's removal is not committed, so Git still tracks it, and the image and the misnamed file stay for good.
+  git(place.storeA, "remote", "set-url", "origin", hangingUrl);
+  const prism = await server(context, place.a, api, hangingRemote);
+  for (const access of [1, 2]) {
+    const { result, took } = await timed(() => prism.call("get_artifact", {}));
+    ok(result);
+    assert.ok(took < 5000, `access ${access} returns without waiting for the remote, took ${took} ms`);
+    assert.doesNotMatch(notes(result), /wait for a pull/, `access ${access} carries no deferred note`);
+    if (access === 1) assert.match(notes(result), /diagram\.png \(not_text\)/, "the new process reports the kept files again");
+    await pastMigrationCache();
+  }
+  assert.deepEqual(await readFile(path.join(api, "docs/plans/reports/diagram.png")), image);
+  assert.equal(await readFile(path.join(api, "docs/plans/reports/my notes.md"), "utf8"), "# Notes\n");
+});
+
+test("with store sync on, after a deferred move each later access waits for no fetch of its own while the remote hangs, and the move runs once a pull completes", async (context) => {
+  const place = await syncedWorkspace(context);
+  const file = "docs/plans/reports/slice.md";
+  const api = await checkout(place.a, "api");
+  const first = await server(context, place.a, api);
+  ok(await first.call("get_artifact", {}));
+  await first.close();
+  await eventually(() => remoteFile(place.remote, "repositories/api.json"), 30000, "the registration on the remote");
+  await commitFiles(api, { [file]: "# Reports\n" });
+
+  // The remote cannot be reached, so the first access defers the move; then the network starts to black-hole it.
+  git(place.storeA, "remote", "set-url", "origin", path.join(place.parent, "unreachable.git"));
+  const prism = await server(context, place.a, api, hangingRemote);
+  assert.match(notes(await prism.call("get_artifact", {})), /wait for a pull[^\n]*fetch_failed/);
+  git(place.storeA, "remote", "set-url", "origin", hangingUrl);
+  for (const access of [2, 3]) {
+    await pastMigrationCache();
+    const { result, took } = await timed(() => prism.call("get_artifact", {}));
+    assert.ok(took < 5000, `access ${access} returns while the retry's fetch hangs, took ${took} ms`);
+    assert.match(notes(result), /wait for a pull/, `access ${access} still defers the move`);
+    assert.equal(await text(path.join(api, file)), "# Reports\n", "the file stays in the checkout");
+  }
+
+  git(place.storeA, "remote", "set-url", "origin", place.remote);
+  await eventually(async () => {
+    const later = await prism.call("get_artifact", {});
+    return ok(later).artifacts.some((entry) => entry.path === file) && !(await exists(path.join(api, file)));
+  }, 60000, "the move after a completed pull");
+  assert.equal(await text(scoped(place.storeA, "plans/reports/slice.md")), "# Reports\n");
 });

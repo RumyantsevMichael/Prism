@@ -127,7 +127,8 @@ export async function migrateArtifacts({ root, kinds, store, repository, pull = 
   const report = (outcome) => ({ repository, store, untracked: listing.untracked, ignored: listing.ignored, references: [], moreReferences: 0, moved: [], kept: [], ledger: null, ...outcome });
   const quiet = () => listing.untracked.length || listing.ignored ? report({}) : null;
   if (!listing.candidates.length) return quiet();
-  if (pull) {
+  // A pull runs only when some file's decision can depend on the store, so files that every move keeps or passes over never make an access wait for the remote.
+  if (pull && await anyDependsOnStore(root, kinds, repository, listing.candidates)) {
     const pulled = await pull();
     if (!pulled.pulled) return { repository, store, deferred: { state: pulled.state } };
   }
@@ -140,6 +141,34 @@ export async function migrateArtifacts({ root, kinds, store, repository, pull = 
   const removed = new Set(outcome.moved.map((move) => move.from));
   const { references, moreReferences } = await referencesOf(root, kinds, listing.tracked.filter((file) => !removed.has(file)), outcome.moved.map((move) => move.from));
   return report({ moved: outcome.moved, kept: outcome.kept, references, moreReferences, ledger: decided.ledger });
+}
+
+/**
+ * Whether the decision for any of the files can depend on what the store holds.
+ * A file whose name breaks the name form, that is above the size limit or not UTF-8 text, whose location in no scope it could move to fits the location limit,
+ * or that the move passes over because it is gone from the work tree or sits below a symbolic link, gets the same decision whatever the store holds.
+ */
+async function anyDependsOnStore(root, kinds, repository, files) {
+  const folders = new Map();
+  for (const file of files) {
+    try { if (await dependsOnStore(root, kinds, repository, file, folders)) return true; }
+    catch { return true; }
+  }
+  return false;
+}
+
+async function dependsOnStore(root, kinds, repository, file, folders) {
+  const address = artifactAddress(kinds, file);
+  if (malformedArtifactName(address) !== null) return false;
+  if (!(await realFolders(root, file, folders))) return false;
+  const size = await checkoutSize(root, file);
+  if (size === null) return false;
+  if (address.kind === "roadmap") return true;
+  if (size > ARTIFACT_CONTENT_MAX) return false;
+  const bytes = await checkoutBytes(root, file, ARTIFACT_CONTENT_MAX);
+  if (bytes === null || artifactText(bytes) === null) return false;
+  // A component's location is longer than its repository's, so a file whose location in its repository's scope and in the workspace scope are both too long stays whatever the store holds.
+  return [repositoryScope(repository), WORKSPACE_SCOPE].some((scope) => artifactLocation(scope, address).length <= ARTIFACT_LOCATION_MAX);
 }
 
 // Decide every file, write the store copies and status records, then the ledger, all while holding the store's artifact lock; the checkout's files are removed afterwards.
