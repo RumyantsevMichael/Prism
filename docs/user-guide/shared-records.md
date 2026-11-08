@@ -72,6 +72,11 @@ Git trusts that repository's own settings by design, so Prism runs Git's `receiv
   A hook whose name holds an equals sign cannot be turned off this way, so a sync with that remote fails with `git_failed` and names the hook, and you remove its `hook.<name>.*` settings from the remote repository's configuration.
 - A push sends no push certificate, because the remote's side would check one with the `gpg.program` that the remote's configuration names, and only the remote's hooks, which never run, would read it.
 
+Prism finds that repository the way Git does, so a `file://` URL with `%20` for a space, a path with trailing slashes, and a folder whose `.git` is a file all work, and a path that starts with `~/` works for a sync, while a first clone, like `git clone`, takes the `~` literally.
+It then gives Git the repository's absolute path for the sync's fetch and push and for the first clone, and reads the hook names from that same repository, while your remote's URL and your URL settings stay as you set them.
+If Prism cannot tell which repository Git would open, as for `~otheruser/` or, on Windows, a path with a reserved name such as `con`, the sync fails with `git_failed` and the first clone with `store_unavailable`, and the message names the URL; name the repository by its absolute path or a `file://` URL of it instead.
+A push whose URLs reach both such a repository and an SSH or HTTPS remote also fails with `git_failed`, so give each of them a remote of its own.
+
 These settings narrow what the folder's repository can make Git do, but they do not make the folder safe to share with anyone.
 Anyone who can write a folder store's repository can still affect what Git does on every machine that syncs with it, for example through a setting a later Git adds or one changed while a sync runs.
 So make such a folder writable only by people you trust that far, and use an SSH or HTTPS remote to share a store with anyone else.

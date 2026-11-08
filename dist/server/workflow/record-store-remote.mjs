@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { cp, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
-import { describeUnsafeEntry, gitTimeoutMs, gitTooOld, markManagedStore, remoteHelperOption, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
+import { gitTransportPath } from "./git-local-repository.mjs";
+import { describeUnsafeEntry, gitTimeoutMs, gitTooOld, helperForRepositories, localRemoteRepository, markManagedStore, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
 import { legacyStoresDirectory, managedStoreId, managedStoresDirectory, normalizeRemote, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 
 // A record store named by its remote lives in a clone Prism keeps in its application folder, one per remote, shared by every checkout and host that names it.
@@ -66,6 +67,16 @@ async function moveLegacyClone(directory, id, target, configured) {
   }
 }
 
+// The origin URL that git clone records for a remote: a local path made absolute from the folder the clone ran in, as clone's absolute_pathdup does, or the URL as it is.
+async function clonedUrl(directory, configured) {
+  let local = null;
+  try { local = gitTransportPath(configured); } catch { local = null; }
+  const absolute = process.platform === "win32" ? /^(?:[\\/]|[^\0]:)/u.test(configured) : configured.startsWith("/");
+  if (!local?.plain || absolute) return configured;
+  const cwd = await realpath(directory);
+  return `${process.platform === "win32" ? cwd.replaceAll("\\", "/") : cwd}/${configured}`;
+}
+
 // One process at a time clones a remote, into a temporary sibling that is renamed into place, so the clone path never holds a partial clone.
 async function cloneOnce(directory, id, target, configured, unavailable) {
   const found = await adopt(target, configured, unavailable);
@@ -86,12 +97,19 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
       // and the clone writes no file until the remote's whole tree holds no entry that a store may not hold, as every sync checks an upstream's tree.
       // The files are written from their blobs' bytes, never checked out, so no line-ending setting or attributes file makes a file differ from what every sync expects.
       // The remote is named origin, as every sync of a managed clone expects, whatever the person's clone.defaultRemoteName.
-      // A file:// remote's upload-pack runs on this machine, so it reads no hook or command that the remote's own files name, as in every sync.
+      // A local remote's upload-pack runs on this machine, so it reads no hook or command that the remote's own files name, as in every sync,
+      // and the clone names the repository that Git enters for the remote's URL by its path, with --no-local so Git still checks every object, then records the remote as Git records it.
       const url = await runGit(directory, ["ls-remote", "--get-url", configured]);
-      const helper = await remoteHelperOption("--upload-pack", [url.ok && url.text ? url.text : configured], directory).catch((error) => { throw unavailable(error.message); });
-      const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--no-checkout", "--origin", "origin", "--config", "core.longpaths=true", "--config", "core.symlinks=false", ...helper, "--", configured, temporary]);
+      const local = await localRemoteRepository(url.ok && url.text ? url.text : configured, directory, { clone: true }).catch((error) => { throw unavailable(error.message); });
+      const helper = local ? await helperForRepositories("--upload-pack", local.path ? [local.path] : []).catch((error) => { throw unavailable(error.message); }) : [];
+      const source = local?.path ? ["--no-local", "--", local.path] : ["--", configured];
+      const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--no-checkout", "--origin", "origin", "--config", "core.longpaths=true", "--config", "core.symlinks=false", ...helper, ...source, temporary]);
       if (cloned.missing) throw unavailable("Git is not available, so the remote store cannot be cloned.");
       if (!cloned.ok) throw unavailable(`Git could not clone it: ${withoutCredentials(cloned.stderr) || `git clone exited with code ${cloned.code}.`}`);
+      if (local?.path) {
+        const recorded = await runGit(temporary, ["config", "remote.origin.url", await clonedUrl(directory, configured)]);
+        if (!recorded.ok) throw unavailable(`Git could not record its remote: ${recorded.stderr}`);
+      }
       const head = await runGit(temporary, ["rev-parse", "--verify", "--quiet", "HEAD"]);
       if (head.ok) {
         const unsafe = await unsafeStoreEntry(temporary, head.text);
