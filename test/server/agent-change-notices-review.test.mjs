@@ -6,7 +6,9 @@ import test from "node:test";
 import { INITIATIVE, actionProject } from "./fixtures/review-actions.mjs";
 
 const { applyAction, listActions } = await import("../../dist/server/workflow/actions.mjs");
-const { NOTICE_FOLDER, takePersonChanges } = await import("../../dist/server/workflow/change-notices.mjs");
+const { NOTICE_FOLDER, noticeValue, personChangesText, takePersonChanges, takeWaitChanges } = await import("../../dist/server/workflow/change-notices.mjs");
+const { waitForUserGates } = await import("../../dist/server/workflow/gate-wait.mjs");
+const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 const { recordCallAgent } = await import("../../dist/server/workflow/call-agent.mjs");
 const { prepareDirectory } = await import("../../dist/server/review/review-app-discovery.mjs");
 const { readRecord, writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
@@ -78,4 +80,42 @@ test("the notice and call agent records create the app directory private to this
     assert.equal(await mode(path.join(directory, files[0])), 0o600, folder);
   }
   await prepareDirectory(app);
+});
+
+test("a coordinator's wait ends on a change that first appears while the coordination state reads invalid", async (context) => {
+  const { root } = await actionProject(context);
+  const directory = await temporaryDirectory(context, "prism-notices-");
+  const gate = (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state.pending.find((item) => !item.answer);
+  assert.ok(gate, "the fixture holds an unanswered gate");
+  await takePersonChanges({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory });
+  const wait = waitForUserGates({
+    projectRoot: root, initiative: INITIATIVE, gateIds: [gate.id], maxWaitMinutes: 0.1, pollMs: 50, settleMs: 0,
+    takeChanges: (entries) => takeWaitChanges({ projectRoot: root, initiative: INITIATIVE, entries, session: "s1", directory })
+  });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  await changeContinuation(root, "stepwise");
+  const restore = await breakState(root);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await restore();
+  const result = await wait;
+  assert.equal(result.status, "changed");
+  assert.deepEqual(result.changes.map((entry) => entry.action), ["initiative.continuation"]);
+});
+
+test("a wait goes on, rather than ending as resolved, while the coordination state reads invalid", async (context) => {
+  const { root } = await actionProject(context);
+  const gate = (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state.pending.find((item) => !item.answer);
+  const restore = await breakState(root);
+  const result = await waitForUserGates({ projectRoot: root, initiative: INITIATIVE, gateIds: [gate.id], maxWaitMinutes: 0.005, pollMs: 50, settleMs: 0 });
+  await restore();
+  assert.equal(result.status, "timeout");
+});
+
+test("a non-string value escapes C1 controls and line separators, so each entry is one line", () => {
+  const value = { implement: "m\u0085- forged line", r: "\u007f\u009b\u2028\u2029" };
+  assert.equal(noticeValue(value), '{"implement":"m\\u0085- forged line","r":"\\u007f\\u009b\\u2028\\u2029"}');
+  const entry = { id: "a".repeat(32), action: "initiative.models", target: "initiative:x", before: "defaults", after: value, at: new Date().toISOString(), by: { name: "M", email: null, checkout: "c" }, via: "browser" };
+  const text = personChangesText([entry]);
+  assert.doesNotMatch(text, /[\u007f-\u009f\u2028\u2029]/);
+  assert.equal(text.split("\n").length, 2);
 });

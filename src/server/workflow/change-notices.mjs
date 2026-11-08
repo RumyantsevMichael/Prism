@@ -110,10 +110,13 @@ export async function markAnswersShown({ projectRoot, initiative, gateIds, sessi
 const UNSAFE = /[\\\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
 export const noticeString = (value) => value.replace(UNSAFE, (character) => character === "\\" ? "\\\\" : `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
 
-/** A value as a notice line writes it: a string escaped, any other value as its JSON text with line separators escaped. */
+// JSON text already escapes backslashes and U+0000 to U+001F, so the rest of the unsafe set is escaped the same way.
+const UNSAFE_JSON = /[\u007f-\u009f\u2028\u2029]/g;
+
+/** A value as a notice line writes it: a string escaped, any other value as its JSON text with the remaining control and line separator characters escaped. */
 export function noticeValue(value) {
   if (typeof value === "string") return noticeString(value);
-  return (JSON.stringify(value) ?? "null").replace(/[\u2028\u2029]/g, (character) => `\\u${character.charCodeAt(0).toString(16)}`);
+  return (JSON.stringify(value) ?? "null").replace(UNSAFE_JSON, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }
 
 /** The author as `<name> <<email>>`, without whichever part is unset, or `an unknown person`, followed by its checkout. */

@@ -80,13 +80,17 @@ export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWa
   let last = null;
   let known = Array.isArray(knownEntries) ? new Set(knownEntries) : null;
   try {
+    // first holds until a valid read, which alone can find the gates unknown; only the wait's very first read throws.
     let first = true;
+    let firstRead = true;
     while (true) {
+      // A read that fails or finds the state invalid brings no new information: the wait neither ends on it nor counts its entries as known, as the notice step sees no history then.
       let state;
       try {
-        state = (await readCoordinationState({ projectRoot, initiative })).state ?? {};
+        const read = await readCoordinationState({ projectRoot, initiative });
+        if (read.valid) state = read.state ?? {};
       } catch (error) {
-        if (first) throw error;
+        if (firstRead) throw error;
       }
       if (state) {
         known ??= new Set(historyOf(state).map((entry) => entry.id));
@@ -103,7 +107,8 @@ export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWa
           if (!result.waiting.length || Date.now() >= settleUntil) return { ...result, gateIds: ids };
         }
       }
-      first = false;
+      firstRead = false;
+      if (state) first = false;
       if (signal?.aborted) {
         return { status: "cancelled", gateIds: ids };
       }
