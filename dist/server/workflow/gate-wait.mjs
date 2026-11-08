@@ -52,22 +52,22 @@ function outcome(initiative, gateIds, state, history, shown, held, known, first,
   // An entry absent when the wait started ends it, by id rather than time, so one a store sync brings counts too;
   // one the session was shown does not, nor an answer to a waited gate, which answers instead, or to a gate another wait of the session holds.
   const answers = new Set(gateIds.map((id) => `gate:${initiative}/${id}`));
-  const changes = history.filter((entry) => !known.has(entry.id) && !shown.has(entry.id) && !(entry.action === "gate.answer" && (answers.has(entry.target) || held.has(entry.target))));
+  const changes = history.filter((entry) => !known.has(entry.id) && !shown.has(entry.id) && !(entry.action === "gate.answer" && (answers.has(entry.target) || held.has(entry.target) || held.has(entry.id))));
   return changes.length ? { result: { status: "changed", waiting, changes }, changes } : { result: null };
 }
 
-// How long after its deadline a wait whose process stopped still holds its gates.
-const HOLD_MARGIN_MS = 60000;
+// Each poll renews the wait's hold on its gates for this long, at least ten polls, so the hold of a wait whose process stopped lapses soon.
+const HOLD_LEASE_MS = 15000;
 
 // The wait reads the coordination state record rather than server memory, so an answer recorded by any review server process ends it.
 // After the first answer it keeps polling briefly, because a user often answers several gates in one visit.
 // Given notices, { session, directory, waitId, hold }, each poll is one step of the session's notice record of the initiative: it reads the state and what the session was shown once and decides.
 // The wait holds its gates in that record while it runs, so another result of the session leaves their answers to it, and the answer entries it finds count as shown when it ends, unless it is cancelled.
 // The changes it ends on count as shown in the step that finds them, so no other result of the session shows them and no later read shows them again.
-// hold, a time, keeps the gates held after a timeout, for a wait that the host's Stop hook goes on with under the same waitId.
+// hold, a time, keeps the gates held after a timeout, for a wait that the host's Stop hook goes on with under the same waitId; the hook's polls renew it.
 // Only a wait given watchChanges, the coordinator's, ends on the person's changes: entries absent from knownEntries, the ids held when the wait started, that the session was not shown.
 // Without knownEntries the wait holds the ids the session was shown at its first valid read, or every entry then before the session's starting point exists.
-export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false }) {
+export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false, leaseMs = Math.max(HOLD_LEASE_MS, 10 * pollMs) }) {
   if (!Array.isArray(gateIds) || !gateIds.length || gateIds.length > MAX_WAIT_GATES || gateIds.some((id) => typeof id !== "string" || !id)) {
     throw new Error(`Pass one to ${MAX_WAIT_GATES} gate ids.`);
   }
@@ -95,7 +95,7 @@ export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWa
     return decision;
   };
   const poll = notices
-    ? () => gateWaitStep({ projectRoot, initiative, ...session, waitId, gateIds: ids, until: deadline + HOLD_MARGIN_MS }, decide)
+    ? () => gateWaitStep({ projectRoot, initiative, ...session, waitId, gateIds: ids, until: Date.now() + leaseMs }, decide)
     : async () => {
       const read = await readCoordinationState({ projectRoot, initiative });
       if (!read.valid) return decide(null).result;

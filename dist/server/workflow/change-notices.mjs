@@ -24,8 +24,8 @@ function noticeFile(directory, session, projectRoot, initiative) {
   return path.join(directory, `${createHash("sha256").update(`${session}\0${path.resolve(projectRoot)}\0${initiative}`, "utf8").digest("hex").slice(0, 32)}.json`);
 }
 
-// A wait the session runs holds its gates in the record until it ends, so another result of the session leaves the answers to them for the wait,
-// and keeps the ids of the answer entries it found, which count as shown when it ends; a wait whose process stopped lets go at its until time.
+// A wait the session runs holds its pending gates in the record until it ends, so another result of the session leaves the answers to them for the wait,
+// and keeps the ids of the answer entries it found, which count as shown when it ends; each poll renews its until time, a short lease, so a wait whose process stopped soon lets go.
 function readWaits(value, now) {
   return (Array.isArray(value) ? value : []).filter((wait) => typeof wait?.id === "string" && Array.isArray(wait.gates) && Number.isFinite(wait.until) && wait.until > now)
     .map((wait) => ({ id: wait.id, gates: wait.gates.filter((id) => typeof id === "string"), until: wait.until, answers: Array.isArray(wait.answers) ? wait.answers.filter((id) => typeof id === "string") : [] }));
@@ -72,9 +72,9 @@ async function withNotice({ projectRoot, initiative, session, directory }, step)
   }));
 }
 
-// The history targets of the answers that the session's running waits hold for themselves.
-const heldTargets = (initiative, waits, except = null) => new Set(waits.filter((wait) => wait.id !== except).flatMap((wait) => wait.gates.map((id) => `gate:${initiative}/${id}`)));
-const isHeld = (entry, held) => entry.action === "gate.answer" && held.has(entry.target);
+// The history targets of the answers that the session's running waits hold for themselves, and the ids of the answer entries they found.
+const heldTargets = (initiative, waits, except = null) => new Set(waits.filter((wait) => wait.id !== except).flatMap((wait) => [...wait.gates.map((id) => `gate:${initiative}/${id}`), ...wait.answers]));
+const isHeld = (entry, held) => entry.action === "gate.answer" && (held.has(entry.target) || held.has(entry.id));
 
 /**
  * The entries of an initiative's history that this session has not been shown, for its coordinator, which now count as shown.
@@ -103,7 +103,7 @@ export async function startGateWait({ projectRoot, initiative, agent = MAIN_AGEN
 }
 
 /**
- * One poll of a gate wait as one step of its session, which holds the wait's gates until until.
+ * One poll of a gate wait as one step of its session, which holds those of the wait's gates that are pending until until.
  * decide gets the state, its history, the ids the session was shown, and the answer targets other waits hold, or no state while it reads invalid,
  * and returns { result, answers, changes }: the ids of the answered gates it found, whose answer entries the wait keeps until it ends, and the changes it ends on, which count as shown in this step.
  */
@@ -111,10 +111,13 @@ export async function gateWaitStep({ projectRoot, initiative, session = claimHol
   return withNotice({ projectRoot, initiative, session, directory }, (record, history, state) => {
     const own = record.waits.find((wait) => wait.id === waitId);
     const others = record.waits.filter((wait) => wait.id !== waitId);
-    const holding = { id: waitId, gates: [...gateIds], until, answers: own?.answers ?? [] };
+    const holding = { id: waitId, gates: own?.gates ?? [], until, answers: own?.answers ?? [] };
+    // A gate that is not pending has no answer the wait can return, so the wait holds only pending gates; while the state reads invalid it keeps what it held.
     if (!state) return { result: decide(null, [], null, null).result, waits: [...others, holding] };
     // Before the session's starting point exists every existing entry counts as shown, as for a first call.
     const shown = record.shown ?? history.map((entry) => entry.id);
+    const pending = new Set((Array.isArray(state.pending) ? state.pending : []).map((gate) => gate?.id));
+    holding.gates = gateIds.filter((id) => pending.has(id));
     const { result, answers = [], changes = [] } = decide(state, history, new Set(shown), heldTargets(initiative, others));
     const targets = new Set(answers.map((id) => `gate:${initiative}/${id}`));
     const found = history.filter((entry) => entry.action === "gate.answer" && targets.has(entry.target) && !shown.includes(entry.id)).map((entry) => entry.id);

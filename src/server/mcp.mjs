@@ -45,7 +45,7 @@ import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-v
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { endGateWait, keptSettingsText, personChangesText, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
 import { callAgent, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
-import { WAIT_REQUEST_TTL_MS, recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
+import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
@@ -829,6 +829,10 @@ const BACKGROUND_WAIT_CLIENTS = /claude/i;
 const FIRST_BACKGROUND_VERSION = [2, 1, 212];
 const DEFAULT_BACKGROUND_MS = 120000;
 const pendingWaits = new Map();
+// The gate waits that run, so closing awaits each one letting go of its gates.
+const endingWaits = new Set();
+// A deferred wait's gates stay held this long for the Stop hook's wait to start and renew them.
+const DEFERRED_HOLD_MS = 2 * 60000;
 let clientName = null;
 let clientVersion = null;
 
@@ -876,9 +880,9 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   const knownEntries = Array.isArray(start.known) ? start.known : undefined;
   if (unsupported && hookSession) {
     // Codex names its session in the call's metadata, and its Stop hook for that session waits once this turn ends.
-    // The gates stay held for the hook's wait, which goes on under the same wait id, until the request expires.
+    // The gates stay held for a short lease, which the polls of the hook's wait, under the same wait id, renew.
     const waitId = randomBytes(16).toString("hex");
-    const held = notices && { ...notices, waitId, hold: Date.now() + WAIT_REQUEST_TTL_MS };
+    const held = notices && { ...notices, waitId, hold: Date.now() + DEFERRED_HOLD_MS };
     value = await waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
@@ -894,7 +898,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
     if (requestId !== undefined) pendingWaits.set(requestId, controller);
     const progressToken = metadata?.progressToken;
     try {
-      value = await waitForUserGates({
+      const running = waitForUserGates({
         projectRoot,
         initiative: argumentsValue.initiative,
         gateIds,
@@ -907,6 +911,12 @@ async function callGateWait(argumentsValue, metadata, requestId) {
         settleMs: process.env.PRISM_GATE_WAIT_SETTLE_MS === undefined ? undefined : Number(process.env.PRISM_GATE_WAIT_SETTLE_MS),
         onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, "Waiting for the user's answer in the review browser")
       });
+      endingWaits.add(running);
+      try {
+        value = await running;
+      } finally {
+        endingWaits.delete(running);
+      }
     } finally {
       pendingWaits.delete(requestId);
     }
@@ -1294,7 +1304,7 @@ input.on("close", async () => {
     cancelVerifications();
     cancelRecordSyncs();
     stopClaimRenewals();
-    await Promise.all([nativeSemanticRuntime.close(), reviewServers.close()]);
+    await Promise.all([nativeSemanticRuntime.close(), reviewServers.close(), Promise.allSettled([...endingWaits])]);
   } finally {
     process.exit(0);
   }

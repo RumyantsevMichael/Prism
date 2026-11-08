@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -12,7 +12,7 @@ import { INITIATIVE, actionProject } from "./fixtures/review-actions.mjs";
 const { applyAction, listActions } = await import("../../dist/server/workflow/actions.mjs");
 const { NOTICE_FOLDER, noticeValue, personChangesText, startGateWait, takePersonChanges } = await import("../../dist/server/workflow/change-notices.mjs");
 const { waitForUserGates } = await import("../../dist/server/workflow/gate-wait.mjs");
-const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+const { readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 const { recordCallAgent } = await import("../../dist/server/workflow/call-agent.mjs");
 const { prepareDirectory } = await import("../../dist/server/review/review-app-discovery.mjs");
 const { readRecord, writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
@@ -228,7 +228,7 @@ function server(context, root, { data, sessionId }) {
     return id;
   };
   const call = async (name, args) => (await response(await start(name, args))).result;
-  return { call, start, response };
+  return { call, start, response, child };
 }
 
 test("an answer a wait returns is not also shown by a coordinator call made while the wait settles", async (context) => {
@@ -258,4 +258,52 @@ test("a deferred wait keeps its gates held for the wait that goes on with it, so
   const result = await waitForUserGates({ projectRoot: root, initiative: INITIATIVE, gateIds: [gateIds.review], maxWaitMinutes: 0.05, pollMs: 50, settleMs: 0, notices });
   assert.equal(result.status, "answered");
   assert.deepEqual(await take(), [], "the answer the wait returned is not shown again");
+});
+
+test("a wait that names an answered and resolved gate does not hold its answer from the coordinator", async (context) => {
+  const { root, gateIds } = await actionProject(context);
+  const directory = await temporaryDirectory(context, "prism-notices-");
+  const take = () => takePersonChanges({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory });
+  await take();
+  await answerGate(root, gateIds.review, "approve");
+  const { revision } = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
+  await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateIds.review }] } });
+  const wait = waitForUserGates({ projectRoot: root, initiative: INITIATIVE, gateIds: [gateIds.decision, gateIds.review], maxWaitMinutes: 0.02, pollMs: 50, settleMs: 0, notices: { session: "s1", directory } });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.deepEqual((await take()).map((entry) => entry.action), ["gate.answer"], "the resolved gate's answer reaches the coordinator during the wait");
+  assert.equal((await wait).status, "timeout");
+});
+
+test("the hold of a wait whose process was killed lapses after its lease", async (context) => {
+  const { root, gateIds } = await actionProject(context);
+  const directory = await temporaryDirectory(context, "prism-notices-");
+  const take = () => takePersonChanges({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory });
+  await take();
+  const script = path.join(await temporaryDirectory(context, "prism-waiter-"), "wait.mjs");
+  const module = fileURLToPath(new URL("../../dist/server/workflow/gate-wait.mjs", import.meta.url));
+  await writeFile(script, `const { waitForUserGates } = await import(${JSON.stringify(module)});
+await waitForUserGates({ projectRoot: ${JSON.stringify(root)}, initiative: ${JSON.stringify(INITIATIVE)}, gateIds: [${JSON.stringify(gateIds.review)}], maxWaitMinutes: 720, pollMs: 50, leaseMs: 500, notices: { session: "s1", directory: ${JSON.stringify(directory)} } });
+`);
+  const child = spawn(process.execPath, [script], { stdio: "ignore" });
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  child.kill("SIGKILL");
+  await new Promise((resolve) => child.once("exit", resolve));
+  await answerGate(root, gateIds.review, "approve");
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.deepEqual((await take()).map((entry) => entry.action), ["gate.answer"]);
+});
+
+test("a server that closes mid-wait lets go of the wait's gates before it exits", async (context) => {
+  const { root, gateIds } = await actionProject(context);
+  const data = await realpath(await temporaryDirectory(context, "prism-notices-data-"));
+  const first = server(context, root, { data, sessionId: "restart" });
+  await first.call("get_coordination_state", { initiative: INITIATIVE });
+  await first.start("wait_for_user_gate", { initiative: INITIATIVE, gateIds: [gateIds.review] }, { progressToken: "w" });
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  first.child.stdin.end();
+  await new Promise((resolve) => first.child.once("exit", resolve));
+  const second = server(context, root, { data, sessionId: "restart" });
+  await answerGate(root, gateIds.review, "approve");
+  const read = await second.call("get_initiative", { initiative: INITIATIVE });
+  assert.deepEqual((read.structuredContent?.personChanges ?? []).map((entry) => entry.action), ["gate.answer"]);
 });
