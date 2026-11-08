@@ -226,7 +226,7 @@ test("clauses 66, 67, 68: the sidebar and Who's working show every claim read-on
   assert.equal(await who.count(), 1, "the top bar counts the live claims");
   const stack = await who.evaluate((button) => {
     const deep = (root) => [...root.querySelectorAll("*")].flatMap((node) => node.shadowRoot ? [node, ...deep(node.shadowRoot)] : [node]);
-    return deep(button.closest("prism-button") ?? button).concat(deep(button)).filter((node) => node.tagName.toLowerCase() === "prism-avatar").map((avatar) => ({ live: avatar.hasAttribute("live"), breathing: avatar.hasAttribute("breathing") }));
+    return deep(button.getRootNode().host ?? button).concat(deep(button)).filter((node) => node.tagName.toLowerCase() === "prism-avatar").map((avatar) => ({ live: avatar.hasAttribute("live"), breathing: avatar.hasAttribute("breathing") }));
   });
   assert.ok(stack.length >= 1 && stack.length <= 3, "the button shows up to three avatars");
   assert.ok(stack.every((avatar) => avatar.live && avatar.breathing), "the top bar's avatars are live and breathing");
