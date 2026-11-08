@@ -27,6 +27,11 @@ When the selected browser is unavailable, Prism presents the URL and source arti
 The browser follows the operating system's light or dark setting and changes with it while the page is open.
 It shows compact density by default.
 The review app keeps the theme and density for you, so every project and every later session shows the same choice.
+Choose the theme and density from the **Appearance** button at the end of the status bar.
+Its menu offers the themes System, Light, and Dark, the densities Compact and Comfortable, and **Component catalog**.
+A choice applies at once, and System follows the operating system again.
+**Component catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
+The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
 
 The top bar holds the project switcher and the open tabs.
 The status bar at the bottom shows where the project's records live, their sync state, and the repository index.

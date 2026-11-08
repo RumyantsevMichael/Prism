@@ -116,6 +116,21 @@
       </button>
       <div id="indexing-panel" class="indexing-panel" role="dialog" aria-label="Repository index" hidden></div>
     </div>
+    <span class="statusbar-appearance">
+      <prism-button id="appearance-button" variant="ghost"><prism-icon name="contrast" size="sm"></prism-icon>Appearance</prism-button>
+      <prism-menu id="appearance-menu" for="appearance-button">
+        <prism-menu-group label="Theme">
+          <prism-menu-item type="radio" value="system">System</prism-menu-item>
+          <prism-menu-item type="radio" value="light">Light</prism-menu-item>
+          <prism-menu-item type="radio" value="dark">Dark</prism-menu-item>
+        </prism-menu-group>
+        <prism-menu-group label="Density">
+          <prism-menu-item type="radio" value="compact">Compact</prism-menu-item>
+          <prism-menu-item type="radio" value="comfortable">Comfortable</prism-menu-item>
+        </prism-menu-group>
+        <prism-menu-item value="catalog"><prism-icon name="external" size="sm"></prism-icon> Component catalog</prism-menu-item>
+      </prism-menu>
+    </span>
   </footer>
   <dialog id="store-dialog" class="store-dialog" aria-labelledby="store-dialog-title"></dialog>
   <aside id="evidence-drawer" class="evidence-drawer" aria-label="Evidence" hidden>

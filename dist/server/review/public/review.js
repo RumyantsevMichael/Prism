@@ -12,6 +12,7 @@ import { createRecordStoreStatus } from "./views/record-store.js";
 import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connection.js";
 import { badgedIcon, notificationText, shouldNotify, signalTitle } from "./views/attention-signal.js";
 import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-tab.js";
+import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
 
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
@@ -645,6 +646,31 @@ function requireApp() {
   if (connection !== "stopped") return true;
   showToast(STOPPED_MESSAGE);
   return false;
+}
+
+// The status bar's Appearance menu: its radio items show the theme and density the page applies, and choosing one applies and stores it.
+function startAppearanceMenu() {
+  const menu = document.getElementById("appearance-menu");
+  if (!menu) return;
+  const root = document.documentElement;
+  const showChoice = () => {
+    for (const item of menu.querySelectorAll('prism-menu-item[type="radio"]')) {
+      const value = item.getAttribute("value");
+      item.toggleAttribute("checked", value === root.dataset.themeChoice || value === root.dataset.density);
+    }
+  };
+  showChoice();
+  new MutationObserver(showChoice).observe(root, { attributes: true, attributeFilter: ["data-theme-choice", "data-density"] });
+  menu.addEventListener("prism-select", (event) => {
+    const value = event.detail?.value;
+    if (value === "catalog") {
+      window.open(new URL("./kit/catalog", location.href).href, "_blank", "noopener");
+      return;
+    }
+    const change = THEMES.includes(value) ? { theme: value } : DENSITIES.includes(value) ? { density: value } : null;
+    if (!change) return;
+    savePreferences(change).catch(() => showToast("The appearance applies here, but the review app could not store it."));
+  });
 }
 
 function showToast(message) {
@@ -1347,6 +1373,8 @@ let recordStoreStatus = null;
 function renderStoreSync(data) {
   recordStoreStatus?.update(data.recordStore, data.storeSync);
 }
+
+startAppearanceMenu();
 
 async function initialize() {
   const data = await fetchJson("./api/index");

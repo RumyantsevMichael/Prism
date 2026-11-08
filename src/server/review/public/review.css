@@ -416,6 +416,13 @@ a.project-cluster-head[aria-current] .project-cluster-name {
   flex: 1 1 auto;
 }
 
+/* The Appearance button ends the status bar, centered on its height. */
+.statusbar-appearance {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+}
+
 .status-item,
 .statusbar .indexing-chip {
   align-items: center;
