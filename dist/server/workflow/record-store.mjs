@@ -502,13 +502,15 @@ async function migrate(root) {
 // A checkout's existing artifacts move into its repository's scope on its first access to the store in a server process, after its records moved,
 // so a later access in the same process reports nothing again; a move that failed, or that waits for a pull, is tried again by the next access.
 const artifactMigrations = new Map();
-// Moves that wait for a pull, by checkout and store: { after, state, retry, pulled }, where after is when the last pull that did not complete ended, state is its outcome,
-// retry is the sync that a later access started and that runs on in the background, and pulled says that a sync completed the pull since.
+// Moves that wait for a pull, by checkout and store: { state, retry }, where state is the outcome of the last pull that did not complete,
+// and retry is the pull, and the move right after it, that a later access started and that runs on in the background.
 const deferredMoves = new Map();
 // How long a later access of a deferred move waits for its retry before it proceeds, so a remote that hangs never holds up each tool call.
 const RETRY_WAIT_MS = 1000;
 // The sync outcomes after which the store holds what its remote held: a completed fetch and merge, whether or not the push went through, or no remote to pull from.
 const PULLED = new Set(["ok", "conflicts", "push_rejected", "no_upstream", "not_a_repository"]);
+// What a checkout's later accesses find once a retry in the background moved its artifacts: nothing left to move or report.
+const MOVED = Promise.resolve(null);
 function migrateArtifactsOnce(root, store, config) {
   const key = `${root}\0${store.base}`;
   if (artifactMigrations.has(key)) return artifactMigrations.get(key).then(() => null);
@@ -516,10 +518,11 @@ function migrateArtifactsOnce(root, store, config) {
     const { migrateArtifacts } = await import("./artifact-migration.mjs");
     return migrateArtifacts({
       root, kinds: artifactKinds(config), store: store.base, repository: store.repository,
-      // With store sync on, the move decides against the store as pulled from its remote, so it reads what other machines pushed.
-      pull: store.sync ? () => pullBeforeMove(store, key) : null,
-      prepare: async () => {
-        await synced(store);
+      // With store sync on, the move decides against the store as its own pull left it, so it reads what other machines pushed.
+      pull: store.sync ? (move) => pullThenMove(root, store, key, move) : null,
+      prepare: async ({ pulled }) => {
+        // Right after a pull, the move runs while the sync holds the store's sync lock, so no sync prepares the store's files or replaces them meanwhile.
+        if (!pulled) await synced(store);
         return {
           seen: await scopesOf(root, config, store),
           recordSources: new Set((await legacyRecords(root, store, config)).map((move) => move.from)),
@@ -534,38 +537,54 @@ function migrateArtifactsOnce(root, store, config) {
   return pending;
 }
 
-const pullOutcome = (status) => ({ pulled: PULLED.has(status?.state), state: typeof status?.state === "string" ? status.state : "git_failed" });
-const syncOutcome = (store) => syncRecordStoreNow(store.base).then(pullOutcome, () => pullOutcome({ state: "git_failed" }));
+/**
+ * Complete a sync of the store and run move while the sync still holds the store's sync lock, so the move decides against the store exactly as this pull left it:
+ * { pulled, state, outcome } or { pulled, state, error } with move's outcome or error, where pulled says whether the store held what its remote held, so move ran,
+ * and state is the sync's outcome without Git's output.
+ */
+async function pullAndMove(store, move) {
+  let moved = null;
+  const whileLocked = async (status) => {
+    if (PULLED.has(status?.state)) moved = await move().then((outcome) => ({ outcome }), (error) => ({ error }));
+  };
+  const status = await syncRecordStoreNow(store.base, { whileLocked }).catch(() => ({ state: "git_failed" }));
+  const state = typeof status?.state === "string" ? status.state : "git_failed";
+  return moved ? { pulled: true, state, ...moved } : { pulled: false, state };
+}
+
+const settledMove = (result) => { if (result.error) throw result.error; return result; };
 
 /**
- * A completed sync of the store: { pulled, state }, where pulled says whether the store now holds what its remote held, and state is the sync's outcome without Git's output.
- * The first access waits for its sync. After a deferral, a sync that completed the pull since, in the background or in another process, is enough;
- * otherwise a later access starts one retry at a time and waits for it at most RETRY_WAIT_MS, and the retry runs on so that a later access finds its outcome.
+ * Pull the store and run the move right after the pull, as pullAndMove does; a move decides only against a pull that it completed itself, never an earlier one.
+ * The first access waits for its pull. After a deferral, a later access starts one retry at a time and waits for it at most RETRY_WAIT_MS;
+ * a retry that ends later runs its move in the background as soon as its pull completes, and the next tool result reports what it moved.
  */
-async function pullBeforeMove(store, key) {
+async function pullThenMove(root, store, key, move) {
   await prepareStoreFiles(store.base).catch(() => {});
   const deferred = deferredMoves.get(key);
   if (!deferred) {
-    const outcome = await syncOutcome(store);
-    if (!outcome.pulled) deferredMoves.set(key, { after: Date.now(), state: outcome.state, retry: null, pulled: false });
-    return outcome;
+    const result = await pullAndMove(store, move);
+    if (!result.pulled) deferredMoves.set(key, { state: result.state, retry: null });
+    return settledMove(result);
   }
-  const status = await readSyncStatus(store.base);
-  if (deferred.pulled || (PULLED.has(status?.state) && Date.parse(status.at) >= deferred.after)) return { pulled: true, state: deferred.pulled ? "ok" : status.state };
   if (!deferred.retry) {
-    const retry = syncOutcome(store);
-    deferred.retry = retry;
-    retry.then((outcome) => {
-      if (deferredMoves.get(key) !== deferred) return;
+    deferred.retry = pullAndMove(store, move).then((result) => {
       deferred.retry = null;
-      if (outcome.pulled) deferred.pulled = true;
-      else Object.assign(deferred, { after: Date.now(), state: outcome.state });
+      if (!result.pulled) { deferred.state = result.state; return result; }
+      // A move that failed is tried again by the next access, with a pull of its own.
+      if (result.error) return result;
+      if (deferredMoves.get(key) === deferred) {
+        deferredMoves.delete(key);
+        artifactMigrations.set(key, MOVED);
+      }
+      if (result.outcome) unreportedMoves.push({ root, store: store.base, moved: [], conflicts: [], artifacts: result.outcome });
+      return { ...result, outcome: null };
     });
   }
   let timer;
   const waited = await Promise.race([deferred.retry, new Promise((resolve) => { timer = setTimeout(resolve, RETRY_WAIT_MS, null); })]);
   clearTimeout(timer);
-  return waited ?? { pulled: false, state: deferred.state };
+  return waited ? settledMove(waited) : { pulled: false, state: deferred.state };
 }
 
 // The frozen tests of every accepted design that the store's initiative records hold, as project-relative paths; an unreadable record names none.

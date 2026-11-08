@@ -312,14 +312,20 @@ async function writeStatus(base, status) {
 /**
  * Commit the store's record changes, merge its upstream, and push, holding the store-wide sync lock.
  * A process that finds the lock held skips and schedules another sync, so a change made after the holder committed is not left behind.
- * Options let tests act between steps: beforeApply runs while the working-tree marker is held, beforePush before each push.
+ * Options let tests act between steps: beforeApply runs while the working-tree marker is held, beforePush before each push;
+ * whileLocked(status) runs after the sync, while the lock is still held, and must not throw.
  */
 export function syncRecordStore(base, options = {}) {
   if (running.has(base)) return running.get(base);
   const pending = (async () => {
     await mkdir(syncPath(base), { recursive: true });
     try {
-      return await withFileLock(syncPath(base, "sync"), () => sync(base, options), undefined, { ...syncLockOptions(), timeoutMs: 1 });
+      return await withFileLock(syncPath(base, "sync"), async () => {
+        const status = await sync(base, options);
+        // A caller that must act on the store exactly as this sync left it, such as a move that decides against this pull, does so before the lock is released.
+        await options.whileLocked?.(status);
+        return status;
+      }, undefined, { ...syncLockOptions(), timeoutMs: 1 });
     } catch (error) {
       // The holder may have committed before this process wrote, so a later sync picks the change up.
       if (error.code === "lock_timeout") { scheduleRecordSync(base); return { state: "skipped" }; }

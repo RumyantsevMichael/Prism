@@ -113,9 +113,11 @@ async function readLedgers(seen) {
 
 /**
  * Move a checkout's tracked files under its artifact paths into its repository's scope.
- * The caller gives the checkout's root and artifact kinds, the store's folder and the repository's accepted name, pull, which completes a pull of a synced store
- * and returns { pulled, state }, or null without sync, and prepare, which returns { seen, recordSources, frozenTests } once the store is as pulled:
- * the scopes the checkout sees, the record files that the record move takes, and the frozen tests of accepted designs, which all stay in the checkout.
+ * The caller gives the checkout's root and artifact kinds, the store's folder and the repository's accepted name, pull, or null without sync,
+ * and prepare({ pulled }), which returns { seen, recordSources, frozenTests }: the scopes the checkout sees, the record files that the record move takes,
+ * and the frozen tests of accepted designs, which all stay in the checkout; pulled says that prepare runs right after a pull, while the store's sync lock is held.
+ * pull(move) completes a pull of a synced store and, while it still holds the store's sync lock, runs move, so the move decides against no older pull;
+ * it returns { pulled, state, outcome }, where outcome is what move returned, or null when the tool result already carries it, and rejects with move's error.
  * Returns null when there is nothing to report, else { repository, store, moved, kept, untracked, ignored, references, moreReferences, ledger },
  * or { repository, store, deferred } when the pull did not complete, or { repository, store, unlisted: true } when Git cannot list the checkout's files:
  * moved lists { from, to } from checkout path to location below artifacts/, kept lists { path, reason, location?, other?, size? }, untracked lists checkout paths,
@@ -124,51 +126,68 @@ async function readLedgers(seen) {
 export async function migrateArtifacts({ root, kinds, store, repository, pull = null, prepare }) {
   const listing = await checkoutListing(root, kinds);
   if (listing === null) return await holdsArtifactPaths(root, kinds) ? { repository, store, unlisted: true } : null;
-  const report = (outcome) => ({ repository, store, untracked: listing.untracked, ignored: listing.ignored, references: [], moreReferences: 0, moved: [], kept: [], ledger: null, ...outcome });
-  const quiet = () => listing.untracked.length || listing.ignored ? report({}) : null;
-  if (!listing.candidates.length) return quiet();
-  // A pull runs only when some file's decision can depend on the store, so files that every move keeps or passes over never make an access wait for the remote.
+  const report = (listing, outcome) => ({ repository, store, untracked: listing.untracked, ignored: listing.ignored, references: [], moreReferences: 0, moved: [], kept: [], ledger: null, ...outcome });
+  const quiet = (listing) => listing.untracked.length || listing.ignored ? report(listing, {}) : null;
+  const decide = async (listing, { seen, recordSources, frozenTests }) => {
+    const files = listing.candidates.filter((file) => !recordSources.has(file) && !frozenTests.has(file));
+    if (!files.length) return quiet(listing);
+    const decided = await withArtifactStoreLock(seen, () => moveIntoStore(seen, files), MOVE_LOCK);
+    const outcome = await removeMoved(seen.root, decided);
+    await pruneCheckoutFolders(root, kinds, outcome.moved.map((move) => move.from));
+    const removed = new Set(outcome.moved.map((move) => move.from));
+    const { references, moreReferences } = await referencesOf(root, kinds, listing.tracked.filter((file) => !removed.has(file)), outcome.moved.map((move) => move.from));
+    return report(listing, { moved: outcome.moved, kept: outcome.kept, references, moreReferences, ledger: decided.ledger });
+  };
+  if (!listing.candidates.length) return quiet(listing);
+  // A pull runs only when some file's decision reads the store, so files that every move keeps or passes over never make an access wait for the remote.
   if (pull && await anyDependsOnStore(root, kinds, repository, listing.candidates)) {
-    const pulled = await pull();
+    // The move runs right after the pull that pull completes, and lists the checkout again, since a retry's pull can end long after this access.
+    const pulled = await pull(async () => {
+      const fresh = await checkoutListing(root, kinds);
+      if (fresh === null) return { repository, store, unlisted: true };
+      return fresh.candidates.length ? decide(fresh, await prepare({ pulled: true })) : quiet(fresh);
+    });
     if (!pulled.pulled) return { repository, store, deferred: { state: pulled.state } };
+    return pulled.outcome;
   }
-  const { seen, recordSources, frozenTests } = await prepare();
-  const files = listing.candidates.filter((file) => !recordSources.has(file) && !frozenTests.has(file));
-  if (!files.length) return quiet();
-  const decided = await withArtifactStoreLock(seen, () => moveIntoStore(seen, files), MOVE_LOCK);
-  const outcome = await removeMoved(seen.root, decided);
-  await pruneCheckoutFolders(root, kinds, outcome.moved.map((move) => move.from));
-  const removed = new Set(outcome.moved.map((move) => move.from));
-  const { references, moreReferences } = await referencesOf(root, kinds, listing.tracked.filter((file) => !removed.has(file)), outcome.moved.map((move) => move.from));
-  return report({ moved: outcome.moved, kept: outcome.kept, references, moreReferences, ledger: decided.ledger });
+  return decide(listing, await prepare({ pulled: false }));
 }
 
 /**
- * Whether the decision for any of the files can depend on what the store holds.
- * A file whose name breaks the name form, that is above the size limit or not UTF-8 text, whose location in no scope it could move to fits the location limit,
- * or that the move passes over because it is gone from the work tree or sits below a symbolic link, gets the same decision whatever the store holds.
+ * What decides a file before the store is read: null when the move passes over it, because it is gone from the work tree, is no regular file, or sits below a symbolic link;
+ * { address, kept, details } for a file that every move keeps whatever the store holds; { address, size, roadmap: true } for a roadmap view;
+ * and otherwise { address, size, bytes, text, location }, a file that the store decides.
+ * The move checks these first, and the pull is skipped only for files these keep or pass over, so a file whose decision reads the store is always decided against a pull.
  */
-async function anyDependsOnStore(root, kinds, repository, files) {
-  const folders = new Map();
-  for (const file of files) {
-    try { if (await dependsOnStore(root, kinds, repository, file, folders)) return true; }
-    catch { return true; }
-  }
-  return false;
+async function decideLocally(root, kinds, own, file, folders) {
+  const address = artifactAddress(kinds, file);
+  if (malformedArtifactName(address) !== null) return { address, kept: "name_invalid" };
+  if (!(await realFolders(root, file, folders))) return null;
+  const size = await checkoutSize(root, file);
+  if (size === null) return null;
+  if (address.kind === "roadmap") return { address, size, roadmap: true };
+  if (size > ARTIFACT_CONTENT_MAX) return { address, kept: "too_large", details: { size } };
+  const bytes = await checkoutBytes(root, file, ARTIFACT_CONTENT_MAX);
+  if (bytes === null) return null;
+  const text = artifactText(bytes);
+  if (text === null) return { address, kept: "not_text" };
+  // A location that is too long keeps the file whatever the store holds, so the store is never read for it, and a copy there decides nothing.
+  const location = artifactLocation(own, address);
+  if (location.length > ARTIFACT_LOCATION_MAX) return { address, kept: "path_too_long", details: { location } };
+  return { address, size, bytes, text, location };
 }
 
-async function dependsOnStore(root, kinds, repository, file, folders) {
-  const address = artifactAddress(kinds, file);
-  if (malformedArtifactName(address) !== null) return false;
-  if (!(await realFolders(root, file, folders))) return false;
-  const size = await checkoutSize(root, file);
-  if (size === null) return false;
-  if (address.kind === "roadmap") return true;
-  if (size > ARTIFACT_CONTENT_MAX) return false;
-  const bytes = await checkoutBytes(root, file, ARTIFACT_CONTENT_MAX);
-  if (bytes === null || artifactText(bytes) === null) return false;
-  // A component's location is longer than its repository's, so a file whose location in its repository's scope and in the workspace scope are both too long stays whatever the store holds.
-  return [repositoryScope(repository), WORKSPACE_SCOPE].some((scope) => artifactLocation(scope, address).length <= ARTIFACT_LOCATION_MAX);
+// Whether the decision for any of the files reads the store, which a file that the move keeps or passes over before reading it never does.
+async function anyDependsOnStore(root, kinds, repository, files) {
+  const own = repositoryScope(repository);
+  const folders = new Map();
+  for (const file of files) {
+    try {
+      const local = await decideLocally(root, kinds, own, file, folders);
+      if (local !== null && !local.kept) return true;
+    } catch { return true; }
+  }
+  return false;
 }
 
 // Decide every file, write the store copies and status records, then the ledger, all while holding the store's artifact lock; the checkout's files are removed afterwards.
@@ -182,19 +201,12 @@ async function moveIntoStore(seen, files) {
   const keep = (file, reason, details = {}) => kept.push({ path: file, reason, ...details });
   const folders = new Map();
   for (const file of files) {
-    const address = artifactAddress(seen.kinds, file);
-    if (malformedArtifactName(address) !== null) { keep(file, "name_invalid"); continue; }
-    if (!(await realFolders(seen.root, file, folders))) continue;
-    const size = await checkoutSize(seen.root, file);
-    if (size === null) continue;
-    if (address.kind === "roadmap") { await decideRoadmapView(seen, file, address, size, { moved, keep }); continue; }
-    if (size > ARTIFACT_CONTENT_MAX) { keep(file, "too_large", { size }); continue; }
-    const bytes = await checkoutBytes(seen.root, file, ARTIFACT_CONTENT_MAX);
-    if (bytes === null) continue;
-    const text = artifactText(bytes);
-    if (text === null) { keep(file, "not_text"); continue; }
+    const local = await decideLocally(seen.root, seen.kinds, own, file, folders);
+    if (local === null) continue;
+    if (local.kept) { keep(file, local.kept, local.details); continue; }
+    const { address, size, bytes, text, location } = local;
+    if (local.roadmap) { await decideRoadmapView(seen, file, address, size, { moved, keep }); continue; }
     const version = artifactVersion(bytes);
-    const location = artifactLocation(own, address);
     const holders = heldAt.get(file) ?? [];
     // The repository's scope, or one of its component scopes, already holding the path is where the file belongs; the workspace scope holding it keeps the file apart.
     const holder = holders.find((entry) => entry.scope.kind === "repository") ?? holders.find((entry) => entry.scope.kind === "component");
@@ -208,7 +220,6 @@ async function moveIntoStore(seen, files) {
     }
     if (holders.some((entry) => entry.scope.kind === "workspace")) { keep(file, "workspace_holds", { location: artifactLocation(WORKSPACE_SCOPE, address) }); continue; }
     if (ledger.moved.has(location)) { keep(file, "removed_in_store", { location }); continue; }
-    if (location.length > ARTIFACT_LOCATION_MAX) { keep(file, "path_too_long", { location }); continue; }
     creates.push({ file, address, scope: own, location, size: bytes.length });
   }
   // A file that the move would create in another letter case than a path a seen scope holds, or than another file it would create, stays, and so does that other file.

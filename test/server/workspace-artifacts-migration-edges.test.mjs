@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { checkout, commitFiles, eventually, exists, git, isolateGit, notes, ok, remoteFile, server, syncedWorkspace, text, workspace } from "./fixtures/workspace-artifacts.mjs";
+import { checkout, cloneOf, commitFiles, eventually, exists, git, isolateGit, notes, ok, remoteFile, server, syncedWorkspace, text, workspace } from "./fixtures/workspace-artifacts.mjs";
 
 // The move of a checkout's existing artifacts keeps every byte it moves, leaves the files it must not take, and reports once per server process.
 const environment = await isolateGit();
+const { syncRecordStoreNow } = await import("../../dist/server/workflow/record-store-sync.mjs");
 test.after(() => rm(environment, { recursive: true, force: true }));
 
 const scoped = (store, location) => path.join(store, "artifacts", "repositories", "api", location);
@@ -151,4 +152,77 @@ test("with store sync on, after a deferred move each later access waits for no f
     return ok(later).artifacts.some((entry) => entry.path === file) && !(await exists(path.join(api, file)));
   }, 60000, "the move after a completed pull");
   assert.equal(await text(scoped(place.storeA, "plans/reports/slice.md")), "# Reports\n");
+});
+
+test("with store sync on, after a deferred move a pull that another sync completed earlier decides nothing, so a file that another machine moved since with other bytes stays as differs", async (context) => {
+  const place = await syncedWorkspace(context);
+  const file = "docs/plans/reports/slice.md";
+  const location = "artifacts/repositories/api/plans/reports/slice.md";
+  const api = await checkout(place.a, "api", { files: {} });
+  const onB = await cloneOf(api, place.parent, "api-b", { remote: "https://github.com/acme/api.git", store: "../store-b", repository: "api", sync: "on" });
+  const registering = await server(context, place.a, api);
+  ok(await registering.call("get_artifact", {}));
+  await registering.close();
+  await eventually(() => remoteFile(place.remote, "repositories/api.json"), 30000, "the registration on the remote");
+  const joining = await server(context, place.b, onB);
+  ok(await joining.call("get_artifact", {}));
+  await joining.close();
+  git(place.storeB, "pull", "-q", "--no-rebase", "origin", "main");
+  await commitFiles(api, { [file]: "# Reports from a\n" });
+  await commitFiles(onB, { [file]: "# Reports with b's own notes\n" });
+
+  // b cannot reach the remote at its first access, so its move is deferred.
+  git(place.storeB, "remote", "set-url", "origin", path.join(place.parent, "unreachable.git"));
+  const prismB = await server(context, place.b, onB);
+  assert.match(notes(await prismB.call("get_artifact", {})), /wait for a pull/);
+  // Once the remote is back, a sync of b's store in another process completes a pull; only then does a move the same file with its own bytes and push it.
+  git(place.storeB, "remote", "set-url", "origin", place.remote);
+  assert.equal((await syncRecordStoreNow(place.storeB)).state, "ok");
+  const prismA = await server(context, place.a, api);
+  assert.match(notes(await prismA.call("get_artifact", {})), /docs\/plans\/reports\/slice\.md -> /);
+  await eventually(() => remoteFile(place.remote, location), 30000, "a's move on the remote");
+  await prismA.close();
+
+  // b's later accesses decide against a pull of their own, which holds a's bytes.
+  await pastMigrationCache();
+  let reported = "";
+  await eventually(async () => {
+    reported += notes(await prismB.call("get_artifact", {}));
+    return /slice\.md[^\n]*differs/.test(reported);
+  }, 60000, "b's move after a pull of its own");
+  assert.doesNotMatch(reported, /docs\/plans\/reports\/slice\.md -> /, "b's file is never reported as moved");
+  assert.equal(await text(path.join(onB, file)), "# Reports with b's own notes\n", "b's differing file stays in its checkout");
+  assert.equal(await text(path.join(place.storeB, location)), "# Reports from a\n");
+  assert.equal(remoteFile(place.remote, location), "# Reports from a");
+});
+
+test("with store sync on, a file whose location is too long stays in the checkout even where the store, not yet pulled, still holds that location", async (context) => {
+  const place = await syncedWorkspace(context);
+  const rest = `reports/${"abcdefghij/".repeat(11)}x.md`;
+  const file = `docs/plans/${rest}`;
+  const location = `artifacts/repositories/api/plans/${rest}`;
+  const api = await checkout(place.a, "api");
+  const registering = await server(context, place.a, api);
+  ok(await registering.call("get_artifact", {}));
+  await registering.close();
+  await eventually(() => remoteFile(place.remote, "repositories/api.json"), 30000, "the registration on the remote");
+  // The store holds the over-long location, as an earlier version or a hand-made commit could leave it; then another machine removes it, and a's store has not pulled that.
+  git(place.storeA, "pull", "-q");
+  await mkdir(path.dirname(path.join(place.storeA, location)), { recursive: true });
+  await writeFile(path.join(place.storeA, location), "# Long\n");
+  git(place.storeA, "add", "-A");
+  git(place.storeA, "commit", "-q", "-m", "long");
+  git(place.storeA, "push", "-q");
+  git(place.storeB, "pull", "-q");
+  git(place.storeB, "rm", "-q", location);
+  git(place.storeB, "commit", "-q", "-m", "remove");
+  git(place.storeB, "push", "-q");
+  await commitFiles(api, { [file]: "# Long\n" });
+
+  const prism = await server(context, place.a, api);
+  const report = notes(await prism.call("get_artifact", {}));
+  assert.match(report, /path_too_long/);
+  assert.equal(await text(path.join(api, file)), "# Long\n", "the file stays in the checkout");
+  await eventually(async () => !(await exists(path.join(place.storeA, location))), 30000, "the pull of the other machine's removal");
+  assert.equal(await text(path.join(api, file)), "# Long\n", "the file is still in the checkout once the store copy is gone");
 });
