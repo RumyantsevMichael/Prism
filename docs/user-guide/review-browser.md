@@ -20,6 +20,8 @@ The browser opens on Attention, or on the artifact you name, and later visits re
 
 `Review browser: auto` in `.prism/workflow.md` uses the internal browser in desktop sessions and the system browser in CLI sessions.
 Set `internal` or `external` to override this choice.
+The agent opens the internal browser on a review URL that carries no grant, so that tab can only read, as [Which tabs can make changes](#which-tabs-can-make-changes) explains.
+Answer the agent in the conversation instead, or ask it to present the review, which opens the system browser, or run `prism review` in the project.
 When the selected browser is unavailable, Prism presents the URL and source artifacts.
 
 ## Layout
@@ -81,7 +83,7 @@ When Prism opens the browser, for a presentation, a session start, or `prism rev
 The grant works once and only within two minutes, and the write session stays with that one browser tab, also across reloads and when you switch it to another checkout of the same review app.
 A review URL that an agent prints, or that a tool returns, carries no grant, so a tab opened from it, a second tab on the same address, or a bookmark can only read.
 A read-only tab says `This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.`, and its controls are disabled.
-To get a tab that can make changes, run `prism review` in the project, or ask the agent to present the review while no tab that can make changes is open.
+To get a tab that can make changes, run `prism review` in the project, or ask the agent to present the review, which opens the system browser, while no tab that can make changes is open.
 The review app keeps the write sessions it issued when a newer session replaces it on the same port, and accepts none after it exits and starts again, so after such a restart open the review again the same way.
 Only a tab that can make changes counts as an open review tab, so a read-only tab never stops Prism from opening a tab that can.
 
@@ -212,7 +214,7 @@ Choose the workspace's name to open its records through the checkout already ope
 Every checkout of a workspace shows the same roadmap, initiatives, and questions, so choose a checkout only for its own source files and index.
 Every other recent project is listed under its repository, even a repository with one checkout, with its open questions.
 The switcher marks the projects an agent session is using now, and lists workspaces first and then repositories, each in name order, so entries never move while you look.
-When an agent presents a review for another project while a tab is open, that tab shows a notice with a link instead of a second tab opening.
+When an agent presents a review for another project while a tab that can make changes is open, that tab shows a notice with a link instead of a second tab opening.
 
 The app starts with the MCP server of the first Prism session, outlives that session, and exits after 30 minutes with no session and no open viewer.
 A session of a newer Prism release replaces an app of an older release on the same port, and open tabs reload into the new version.
@@ -222,14 +224,14 @@ A new session opens the review browser on its project when no review tab of any 
 Starting several sessions at once opens at most one window.
 Cloud, CI, print-mode, and display-less sessions open nothing.
 Add `- Review browser on start: off` under `## Interaction` in `.prism/workflow.md` to turn this off for a project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every project you work on.
-`Review browser: internal` also turns it off, because only the agent can open the internal browser.
+`Review browser: internal` also turns it off, because only the agent can open the internal browser, and a tab there can only read.
 It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.
 A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
 When a session falls back on its own, its page shows a banner with the reason, and the agent's review links say that the link belongs to that session, because another session may show the same project at a different link.
 Each fallback also adds a line with the time, project, and reason to `fallbacks.log` in that state directory and to the session's error output.
 
 `prism review` opens the project in the shared review app and returns.
-It opens the system browser only when no review tab is open, and an open tab shows the project or a notice with a link to it instead.
+It opens the system browser only when no review tab that can make changes is open, and such a tab shows the project or a notice with a link to it instead.
 When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
 
 ## Security
