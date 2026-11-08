@@ -23,6 +23,9 @@ export class PrismSpinner extends Base {
   }
 
   attributeChangedCallback() {
-    this.root.querySelector(".label").textContent = this.getAttribute("label") || "Loading";
+    const label = this.getAttribute("label") || "Loading";
+    this.root.querySelector(".label").textContent = label;
+    // A status takes its name from the author, not from its content.
+    setAttribute(this, "aria-label", label);
   }
 }

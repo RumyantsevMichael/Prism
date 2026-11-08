@@ -100,3 +100,43 @@ export function deepActiveElement(root = globalThis.document) {
 export function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 }
+
+/**
+ * Moves a light-DOM host's direct children into the region its `slot` attribute names, or into `regions.default`, now and whenever children are added later,
+ * so a page can append content to a container after it renders. `own` lists the nodes the host renders itself, which stay where they are.
+ * Returns the observer, which the host keeps for as long as it lives.
+ */
+export function distribute(host, regions, own = []) {
+  const keep = new Set(own);
+  const place = () => {
+    for (const node of [...host.childNodes]) {
+      if (keep.has(node)) continue;
+      const slot = node.nodeType === 1 ? node.getAttribute("slot") : null;
+      const target = (slot && regions[slot]) || regions.default;
+      if (target && target !== node) target.append(node);
+    }
+  };
+  place();
+  const observer = new MutationObserver(place);
+  observer.observe(host, { childList: true });
+  return observer;
+}
+
+/** Creates an element with a class name and optional attributes in the host's document. */
+export function make(host, tag, className, attributes = {}) {
+  const element = host.ownerDocument.createElement(tag);
+  if (className) element.className = className;
+  for (const [name, value] of Object.entries(attributes)) setAttribute(element, name, value);
+  return element;
+}
+
+const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1']), prism-button:not([disabled]), prism-chip[href], prism-chip[interactive]";
+
+/** The elements below `root` that Tab reaches, in order, leaving out hidden ones; a kit control counts as its host. */
+export function focusables(root) {
+  return [...root.querySelectorAll(FOCUSABLE)].filter((element) => {
+    if (element.closest("[hidden], [inert]") || element.getClientRects().length === 0) return false;
+    // A control inside a kit button or tab is reached through its host.
+    return !element.parentElement?.closest("prism-button, prism-tab, prism-chip");
+  });
+}

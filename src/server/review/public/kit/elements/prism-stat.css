@@ -1,9 +1,11 @@
-/* prism-stat: a label above a large figure. */
+/* prism-stat: a sunken tile with a large figure, its label, and a quieter hint. */
 
 :host {
   --tone: var(--prism-color-ink);
-  display: block;
+  display: inline-block;
   min-width: 0;
+  max-width: 100%;
+  vertical-align: top;
 }
 
 :host([tone="accent"]) { --tone: var(--prism-color-accent-text); }
@@ -14,19 +16,24 @@
 
 .stat {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--prism-space-1);
   min-width: 0;
+  padding: var(--prism-space-3) var(--prism-space-5);
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-md);
+  background: var(--prism-color-sunken);
 }
 
-.label,
-.hint {
+::slotted([slot="label"]),
+::slotted([slot="hint"]) {
   min-width: 0;
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-xs);
   overflow-wrap: anywhere;
 }
 
-.value {
+::slotted([slot="value"]) {
   min-width: 0;
   color: var(--tone);
   font-size: var(--prism-font-size-xl);

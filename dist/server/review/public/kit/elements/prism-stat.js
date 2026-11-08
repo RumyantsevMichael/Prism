@@ -1,5 +1,5 @@
 // prism-stat: one figure with its label, a hint, and a tone.
-import { Base, escapeHtml, shadow } from "./base.js";
+import { Base, shadow } from "./base.js";
 
 export class PrismStat extends Base {
   static tag = "prism-stat";
@@ -19,7 +19,8 @@ export class PrismStat extends Base {
 
   constructor() {
     super();
-    this.root = shadow(this, PrismStat.styles, "");
+    // The words live in light DOM, slotted into the tile, so they read as the element's own text.
+    this.root = shadow(this, PrismStat.styles, `<div class="stat" part="stat"><slot name="label"></slot><slot name="value"></slot><slot name="hint"></slot></div>`);
   }
 
   connectedCallback() {
@@ -31,7 +32,12 @@ export class PrismStat extends Base {
   }
 
   render() {
-    const read = (name) => escapeHtml(this.getAttribute(name) ?? "");
-    this.root.innerHTML = `<div class="stat" part="stat"><span class="label">${read("label")}</span><span class="value">${read("value")}</span>${this.getAttribute("hint") ? `<span class="hint">${read("hint")}</span>` : ""}</div>`;
+    const parts = ["label", "value", "hint"].filter((name) => this.getAttribute(name)).map((name) => {
+      const part = this.ownerDocument.createElement("span");
+      part.slot = name;
+      part.textContent = this.getAttribute(name);
+      return part;
+    });
+    this.replaceChildren(...parts);
   }
 }

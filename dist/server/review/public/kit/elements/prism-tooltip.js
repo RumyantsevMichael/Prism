@@ -4,12 +4,14 @@ import { Base, deepActiveElement, setAttribute, shadow } from "./base.js";
 
 const TOOLTIP_ID = "prism-kit-tooltip";
 
-// The kit element an event concerns: the nearest prism-* element on its path that has a tip or shortened text.
+// The kit element an event concerns: the nearest element on its path that has shortened text, or a prism-* element with a tip.
+// An item of a tree or listbox is a boundary: its own text decides, so a child item never shows its parent's tooltip.
 function subjectOf(event) {
   for (const node of event.composedPath()) {
     if (node.nodeType !== 1) continue;
     if (node.tagName === "PRISM-TOOLTIP") return null;
-    if (node.tagName.startsWith("PRISM-") && (node.hasAttribute("tip") || node.hasAttribute("shortened"))) return node;
+    if (node.hasAttribute("shortened") || (node.tagName.startsWith("PRISM-") && node.hasAttribute("tip"))) return node;
+    if (node.constructor?.tooltipBoundary) return null;
   }
   return null;
 }
@@ -17,6 +19,8 @@ function subjectOf(event) {
 function fullText(element) {
   const tip = element.getAttribute("tip");
   if (tip) return tip;
+  // An element whose text holds more than its one line, such as a tree item with child items, names its own full text.
+  if (typeof element.tooltipText === "string" && element.tooltipText) return element.tooltipText;
   return (element.getAttribute("label") && !element.textContent.trim() ? element.getAttribute("label") : element.textContent).replace(/\s+/g, " ").trim();
 }
 
