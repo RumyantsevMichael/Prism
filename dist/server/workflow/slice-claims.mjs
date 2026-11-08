@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
-import os from "node:os";
 import { runGit } from "./record-store-sync.mjs";
+import { hostLabel } from "../review/workspace-identity.mjs";
 
 // A claim names the host session, or without one the Prism server process, that works on a slice, so no two agents in any checkout or machine that shares the records start one slice.
 // Each claim is a record of its own beside the initiative record, covers the slice's descendants, and lapses unless its holder renews it.
@@ -52,7 +52,7 @@ export async function claimLabel(folder) {
   if (identity.label) return identity.label;
   if (!labels.has(folder)) {
     const name = (await runGit(folder, ["config", "user.name"])).text.replace(/\s+/g, " ").trim();
-    const host = os.hostname().split(".")[0] || "an unnamed host";
+    const host = hostLabel();
     labels.set(folder, (name ? `${name} on ${host}` : host).slice(0, 200));
   }
   return labels.get(folder);

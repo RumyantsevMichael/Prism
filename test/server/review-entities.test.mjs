@@ -79,6 +79,24 @@ function post(url, body, headers = { "Content-Type": "application/json" }) {
   });
 }
 
+// A review server whose page Prism opened, so it holds the write session that the opened URL's grant gives.
+async function startWritableReview(projectRoot) {
+  const opened = [];
+  const review = await startReviewServer({ projectRoot, openBrowser: (url) => { opened.push(url); return true; } });
+  await review.open([]);
+  const grant = new URLSearchParams(new URL(opened.at(-1)).hash.slice(1)).get("write");
+  const exchanged = await post(`${review.baseUrl}/api/write-session`, { grant });
+  review.writeHeaders = { "X-Prism-Write": JSON.parse(exchanged.text).token };
+  return review;
+}
+
+// Answers a gate through the review app's apply route, with the page's write session, against the revision that the gate's action listing shows.
+async function answerGate(review, initiative, id, input, headers = { "Content-Type": "application/json" }) {
+  const listed = await get(`${review.baseUrl}/api/actions?target=${encodeURIComponent(`gate:${initiative}/${id}`)}`);
+  const revision = listed.status === 200 ? listed.json().actions[0].revision : null;
+  return post(`${review.baseUrl}/api/actions/apply`, { action: "gate.answer", target: `gate:${initiative}/${id}`, input, revision }, { ...headers, ...review.writeHeaders });
+}
+
 function put(url, body) {
   return new Promise((resolve, reject) => {
     const request = http.request(url, { method: "PUT", headers: { "Content-Type": "application/json" } }, (response) => {
@@ -224,26 +242,25 @@ test("keeps the preview and the human's tabs when an agent presents artifacts", 
 
 test("records a browser answer and lists it apart from open questions", async (context) => {
   const projectRoot = await fixture(context);
-  const review = await startReviewServer({ projectRoot });
+  const review = await startWritableReview(projectRoot);
   try {
     const before = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
     const gate = before.needsYou.find((item) => item.type === "gate");
-    const endpoint = `${review.baseUrl}/api/gates/answer`;
-    assert.equal((await post(endpoint, { initiative: "reports", id: gate.id, choice: "approve" }, { "Content-Type": "text/plain" })).status, 403);
-    assert.equal((await post(endpoint, { initiative: "reports", id: gate.id, choice: "approve" }, { "Content-Type": "application/json", Origin: "https://attacker.example" })).status, 403);
-    assert.equal((await post(endpoint, { initiative: "../reports", id: gate.id, choice: "approve" })).status, 400);
-    const invalid = await post(endpoint, { initiative: "reports", id: gate.id, choice: "request-changes" });
-    assert.deepEqual([invalid.status, JSON.parse(invalid.text).code], [400, "invalid_answer"]);
-    const noteOnly = await post(endpoint, { initiative: "reports", id: gate.id, choice: null, note: "The arrows point the wrong way." });
-    assert.deepEqual([noteOnly.status, JSON.parse(noteOnly.text).code], [400, "invalid_answer"], "a review answer is never guessed from its note");
-    assert.match(JSON.parse(noteOnly.text).message, /choice must be approve or request-changes/);
-    const answered =await post(endpoint, { initiative: "reports", id: gate.id, choice: "approve", note: "Looks right." });
+    const answer = (initiative, id, input, headers) => answerGate(review, initiative, id, input, headers);
+    assert.equal((await answer("reports", gate.id, { choice: "approve" }, { "Content-Type": "text/plain" })).status, 403);
+    assert.equal((await answer("reports", gate.id, { choice: "approve" }, { "Content-Type": "application/json", Origin: "https://attacker.example" })).status, 403);
+    assert.equal((await answer("../reports", gate.id, { choice: "approve" })).status, 404);
+    const invalid = await answer("reports", gate.id, { choice: "request-changes" });
+    assert.deepEqual([invalid.status, JSON.parse(invalid.text).code, JSON.parse(invalid.text).field], [400, "invalid_input", "note"]);
+    const noteOnly = await answer("reports", gate.id, { choice: null, note: "The arrows point the wrong way." });
+    assert.deepEqual([noteOnly.status, JSON.parse(noteOnly.text).code, JSON.parse(noteOnly.text).field], [400, "invalid_input", "choice"], "a review answer is never guessed from its note");
+    const answered = await answer("reports", gate.id, { choice: "approve", note: "Looks right." });
     assert.equal(answered.status, 200, answered.text);
-    assert.equal(JSON.parse(answered.text).gate.answer.choice, "approve");
-    const again = await post(endpoint, { initiative: "reports", id: gate.id, choice: "approve" });
-    assert.deepEqual([again.status, JSON.parse(again.text).code], [409, "gate_answered"]);
-    const missing = await post(endpoint, { initiative: "reports", id: "gate-000000000000", choice: "approve" });
-    assert.deepEqual([missing.status, JSON.parse(missing.text).code], [409, "unknown_gate"]);
+    assert.deepEqual(JSON.parse(answered.text).applied.after, { choice: "approve", note: "Looks right." });
+    const again = await answer("reports", gate.id, { choice: "approve" });
+    assert.deepEqual([again.status, JSON.parse(again.text).code, JSON.parse(again.text).reason], [409, "action_unavailable", "The question already has an answer."]);
+    const missing = await answer("reports", "gate-000000000000", { choice: "approve" });
+    assert.deepEqual([missing.status, JSON.parse(missing.text).code], [404, "unknown_target"]);
     const after = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
     assert.equal(after.needsYou.some((item) => item.type === "gate"), false);
     assert.deepEqual(after.answered.map((item) => [item.id, item.answer.note]), [[gate.id, "Looks right."]]);
@@ -264,20 +281,19 @@ test("accepts a decision answered by a note alone and an assistance gate marked 
       { op: "ask", kind: "assistance", question: "Install the signing key.", context: "The run reached a choice that needs the person, for example which behavior to keep.", artifacts: [] }
     ]
   } });
-  const review = await startReviewServer({ projectRoot });
+  const review = await startWritableReview(projectRoot);
   try {
     const gates = (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data.needsYou.filter((item) => item.type === "gate");
     const decision = gates.find((item) => item.kind === "decision");
     const assistance = gates.find((item) => item.kind === "assistance");
-    const endpoint = `${review.baseUrl}/api/gates/answer`;
-    const empty = await post(endpoint, { initiative: "reports", id: decision.id, choice: null, note: "  " });
-    assert.deepEqual([empty.status, JSON.parse(empty.text).code], [400, "invalid_answer"]);
-    const free = await post(endpoint, { initiative: "reports", id: decision.id, choice: null, note: "Keep it for one release." });
+    const empty = await answerGate(review, "reports", decision.id, { choice: null, note: "  " });
+    assert.deepEqual([empty.status, JSON.parse(empty.text).code, JSON.parse(empty.text).field], [400, "invalid_input", "note"]);
+    const free = await answerGate(review, "reports", decision.id, { choice: null, note: "Keep it for one release." });
     assert.equal(free.status, 200, free.text);
-    assert.deepEqual(JSON.parse(free.text).gate.answer.choice, null);
-    const done = await post(endpoint, { initiative: "reports", id: assistance.id, choice: "done", note: "" });
+    assert.deepEqual(JSON.parse(free.text).applied.after.choice, null);
+    const done = await answerGate(review, "reports", assistance.id, { choice: "done", note: "" });
     assert.equal(done.status, 200, done.text);
-    assert.deepEqual([JSON.parse(done.text).gate.answer.choice, JSON.parse(done.text).gate.answer.note], ["done", null]);
+    assert.deepEqual(JSON.parse(done.text).applied.after, { choice: "done", note: null });
   } finally {
     await review.close();
   }
@@ -291,7 +307,7 @@ test("lists the newest open question and the newest answer first", async (contex
     await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", question, context: "The run reached a choice that needs the person.", artifacts: [], options: [{ id: "yes", label: "Yes", consequence: "The run continues with this choice." }], recommended: { option: "yes", reason: "It keeps the current behavior." } }] } });
     await new Promise((resolve) => setTimeout(resolve, 15));
   }
-  const review = await startReviewServer({ projectRoot });
+  const review = await startWritableReview(projectRoot);
   try {
     const attention = async () => (await get(`${review.baseUrl}/api/entity?ref=attention`)).json().data;
     const gates = (await attention()).needsYou.filter((item) => item.type === "gate");
@@ -299,7 +315,7 @@ test("lists the newest open question and the newest answer first", async (contex
     assert.deepEqual(asked.map((item) => item.question), ["Asked second?", "Asked first?"]);
     for (const item of gates) assert.ok(gates.indexOf(item) === 0 || Date.parse(gates[gates.indexOf(item) - 1].askedAt) >= Date.parse(item.askedAt));
     for (const item of [asked[1], asked[0]]) {
-      const answer = await post(`${review.baseUrl}/api/gates/answer`, { initiative: "reports", id: item.id, choice: "yes", note: "" });
+      const answer = await answerGate(review, "reports", item.id, { choice: "yes", note: "" });
       assert.equal(answer.status, 200, answer.text);
       await new Promise((resolve) => setTimeout(resolve, 15));
     }

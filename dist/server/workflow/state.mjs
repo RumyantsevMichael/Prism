@@ -6,13 +6,46 @@ import path from "node:path";
 import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { locateRecord, moveLegacyRecords, sliceDocumentFolder, writeRecord } from "./record-store.mjs";
+import { canonicalJson, mergeOrder, mergeScalars, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 
 const SCHEMA_VERSION = 1;
 
-const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed"]);
-const SETTING_KEYS = new Set(["autonomy", "commit", "push", "continuation", "review", "models"]);
+const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending", "next", "evidence", "closed", "history", "personSettings"]);
+// Only the review app's action registry writes the person's history and setting marks, so agents' state changes never carry them.
+const REGISTRY_KEYS = new Set(["history", "personSettings"]);
+// The initiative settings that coordination state accepts, in the order the review app lists their actions.
+export const INITIATIVE_SETTINGS = Object.freeze(["autonomy", "commit", "push", "continuation", "review", "models"]);
+const SETTING_KEYS = new Set(INITIATIVE_SETTINGS);
+
+/** The six effective setting values, each stored or else its default, and personSettings, the names of the settings the person set. */
+export function effectiveSettings(state) {
+  const stored = isRecord(state?.settings) ? state.settings : {};
+  const autonomy = stored.autonomy ?? "conservative";
+  return {
+    autonomy,
+    commit: stored.commit ?? (autonomy === "full" ? "on" : "off"),
+    push: stored.push ?? "off",
+    continuation: stored.continuation ?? "auto",
+    review: stored.review ?? "marked",
+    models: stored.models === undefined || stored.models === "defaults" ? "host defaults" : stored.models,
+    personSettings: INITIATIVE_SETTINGS.filter((name) => isRecord(state?.personSettings) && Object.hasOwn(state.personSettings, name))
+  };
+}
+
+// An agent's settings write keeps each setting the person changed in the review app, and lists what it kept.
+function keepPersonSettings(before, requested) {
+  const marks = isRecord(before.personSettings) ? before.personSettings : {};
+  const settings = { ...requested };
+  const kept = [];
+  for (const [name, value] of Object.entries(requested)) {
+    if (!Object.hasOwn(marks, name) || !Object.hasOwn(before.settings, name) || JSON.stringify(value) === JSON.stringify(before.settings[name])) continue;
+    settings[name] = before.settings[name];
+    kept.push({ setting: name, kept: before.settings[name], requested: value });
+  }
+  return { settings, kept };
+}
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
 const GATE_KEYS = new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "answer"]);
@@ -26,11 +59,16 @@ const RECOMMENDATION_LIMIT = 500;
 const CONTEXT_KINDS = new Set(["decision", "assistance"]);
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
 const OPTION_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
-const ANSWER_KEYS = new Set(["choice", "note", "via", "answeredAt"]);
+const ANSWER_KEYS = new Set(["choice", "note", "via", "answeredAt", "by", "entry"]);
+const ENTRY_ID = /^[0-9a-f]{32}$/;
+const ENTRY_KEYS = new Set(["id", "action", "target", "before", "after", "at", "by", "via"]);
+const AUTHOR_KEYS = new Set(["name", "email", "checkout"]);
+export const HISTORY_LIMIT = 200;
 // Closed gates stay readable so the user can see what they answered and why a question went away.
 const CLOSED_LIMIT = 20;
 const REASON_LIMIT = 1000;
 const REVIEW_CHOICES = new Set(["approve", "request-changes"]);
+const STATE_MAX_BYTES = 1024 * 1024;
 const SETTING_VALUES = {
   autonomy: new Set(["conservative", "broad", "full"]),
   commit: new Set(["on", "off"]),
@@ -132,7 +170,9 @@ function normalizeState(raw) {
     pending: raw.pending ?? [],
     next: raw.next ?? [],
     evidence: raw.evidence ?? [],
-    ...(raw.closed === undefined ? {} : { closed: raw.closed })
+    ...(raw.closed === undefined ? {} : { closed: raw.closed }),
+    ...(raw.history === undefined ? {} : { history: raw.history }),
+    ...(raw.personSettings === undefined ? {} : { personSettings: raw.personSettings })
   };
   for (const [key, value] of Object.entries(raw)) {
     if (!TOP_LEVEL_KEYS.has(key)) {
@@ -364,12 +404,14 @@ function validateGate(entry, entryPath, errors) {
   }
   if (entry.answer !== undefined) {
     if (!isRecord(entry.answer) || Object.keys(entry.answer).some((key) => !ANSWER_KEYS.has(key))) {
-      addError(errors, `${entryPath}.answer`, "must contain only choice, note, via, and answeredAt");
+      addError(errors, `${entryPath}.answer`, "must contain only choice, note, via, answeredAt, by, and entry");
     } else {
       const problem = answerProblem(entry, entry.answer.choice, entry.answer.note);
       if (problem) addError(errors, `${entryPath}.answer`, problem);
       if (entry.answer.via !== "browser") addError(errors, `${entryPath}.answer.via`, "must be browser");
       if (typeof entry.answer.answeredAt !== "string" || Number.isNaN(Date.parse(entry.answer.answeredAt))) addError(errors, `${entryPath}.answer.answeredAt`, "must be an ISO timestamp");
+      if (entry.answer.by !== undefined && !validAuthor(entry.answer.by)) addError(errors, `${entryPath}.answer.by`, "must be an author { name, email, checkout }");
+      if (entry.answer.entry !== undefined && (typeof entry.answer.entry !== "string" || !ENTRY_ID.test(entry.answer.entry))) addError(errors, `${entryPath}.answer.entry`, "must be a history entry id of 32 lowercase hexadecimal characters");
     }
   }
 }
@@ -525,6 +567,69 @@ function assertAnswersUnchanged(before, after) {
   }
 }
 
+const nullableText = (value) => value === null || (typeof value === "string" && value.length <= 200);
+
+function validAuthor(value) {
+  return isRecord(value) && Object.keys(value).every((key) => AUTHOR_KEYS.has(key)) && nullableText(value.name) && nullableText(value.email) && typeof value.checkout === "string" && value.checkout.trim() !== "" && value.checkout.length <= 400;
+}
+
+const validTime = (value) => typeof value === "string" && !Number.isNaN(Date.parse(value));
+
+/** The order of a history: ascending by the time of the machine that applied each entry, and then by id. */
+export function historyOrder(left, right) {
+  if (left.at !== right.at) return left.at < right.at ? -1 : 1;
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+}
+
+/** A history with one more entry at its place in history order, keeping the newest entries within the limit. */
+export function insertHistoryEntry(history, entry, limit = HISTORY_LIMIT) {
+  const entries = [...(history ?? [])];
+  let position = entries.length;
+  while (position > 0 && historyOrder(entries[position - 1], entry) > 0) position -= 1;
+  entries.splice(position, 0, entry);
+  return entries.slice(-limit);
+}
+
+/** The problem of a history entry, or null when it is well formed. */
+export function historyEntryProblem(entry) {
+  if (!isRecord(entry) || Object.keys(entry).some((key) => !ENTRY_KEYS.has(key))) return "must contain only id, action, target, before, after, at, by, and via";
+  if (typeof entry.id !== "string" || !ENTRY_ID.test(entry.id)) return "id must be 32 lowercase hexadecimal characters";
+  for (const key of ["action", "target", "via"]) if (typeof entry[key] !== "string" || !entry[key].trim() || entry[key].length > 400) return `${key} must be a non-empty text`;
+  if (!Object.hasOwn(entry, "before") || !Object.hasOwn(entry, "after")) return "before and after must be present";
+  if (!validTime(entry.at)) return "at must be an ISO timestamp";
+  if (!validAuthor(entry.by)) return "by must be an author { name, email, checkout }";
+  return null;
+}
+
+function validateHistory(value, errors) {
+  if (!Array.isArray(value) || value.length > HISTORY_LIMIT) {
+    addError(errors, "history", `must be an array of at most ${HISTORY_LIMIT} history entries`);
+    return;
+  }
+  const seen = new Set();
+  value.forEach((entry, index) => {
+    const problem = historyEntryProblem(entry);
+    if (problem) {
+      addError(errors, `history[${index}]`, problem);
+      return;
+    }
+    if (seen.has(entry.id)) addError(errors, `history[${index}].id`, "must not duplicate another entry");
+    seen.add(entry.id);
+    if (index > 0 && historyEntryProblem(value[index - 1]) === null && historyOrder(value[index - 1], entry) > 0) addError(errors, `history[${index}]`, "must follow the entries before it by time and then by id");
+  });
+}
+
+function validatePersonSettings(value, errors) {
+  if (!isRecord(value)) {
+    addError(errors, "personSettings", "must be an object");
+    return;
+  }
+  for (const [key, mark] of Object.entries(value)) {
+    if (!SETTING_KEYS.has(key)) addError(errors, `personSettings.${key}`, "is not an initiative setting");
+    else if (!isRecord(mark) || Object.keys(mark).some((name) => name !== "at" && name !== "entry") || !validTime(mark.at) || typeof mark.entry !== "string" || !ENTRY_ID.test(mark.entry)) addError(errors, `personSettings.${key}`, "must be { at, entry } with an ISO time and a history entry id");
+  }
+}
+
 function validateStateValue(raw) {
   const errors = [];
   const warnings = [];
@@ -548,6 +653,12 @@ function validateStateValue(raw) {
   if (raw.closed !== undefined) {
     validateClosed(raw.closed, errors);
   }
+  if (raw.history !== undefined) {
+    validateHistory(raw.history, errors);
+  }
+  if (raw.personSettings !== undefined) {
+    validatePersonSettings(raw.personSettings, errors);
+  }
   for (const key of ["next", "evidence"]) {
     if (raw[key] !== undefined) {
       validateStringArray(raw[key], key, errors);
@@ -566,6 +677,9 @@ function validateChanges(changes) {
     throw error("invalid_changes", "The changes argument must contain at least one managed state field.");
   }
   for (const key of Object.keys(changes)) {
+    if (REGISTRY_KEYS.has(key)) {
+      throw error("invalid_changes", `The state field ${key} records the person's changes in the review app, so only the review app's actions write it.`);
+    }
     if ((!TOP_LEVEL_KEYS.has(key) && key !== "activeOperations" && key !== "gateOperations") || key === "schemaVersion" || key === "closed") {
       throw error("invalid_changes", `The state field ${key} cannot be changed through this capability.`);
     }
@@ -638,8 +752,197 @@ function publicStateResult(resolved, loaded) {
   };
 }
 
+const serialize = (state) => `${JSON.stringify(state, null, 2)}\n`;
+const fits = (contents) => Buffer.byteLength(contents) <= STATE_MAX_BYTES;
+
+// The smallest count in [0, max] whose drop makes the state fit, or null when even max does not; a larger drop never grows the state.
+function fewestDrops(max, contentsAfter) {
+  if (!fits(contentsAfter(max))) return null;
+  let [low, high] = [0, max];
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (fits(contentsAfter(middle))) high = middle;
+    else low = middle + 1;
+  }
+  return low;
+}
+
+/**
+ * A coordination state fitted to 1 MiB: the oldest history entries other than `keep` give way first, and then the oldest closed gates,
+ * so pending gates, settings, the person's marks, and every other part stay. Null when the state exceeds the limit with both dropped.
+ */
+function fitState(state, keep = null) {
+  const contents = serialize(state);
+  if (fits(contents)) return { state, contents };
+  const history = Array.isArray(state.history) ? state.history : [];
+  const droppable = history.filter((item) => item?.id !== keep);
+  const withoutHistory = (count) => {
+    const gone = new Set(droppable.slice(0, count));
+    return { ...state, ...(state.history === undefined ? {} : { history: history.filter((item) => !gone.has(item)) }) };
+  };
+  const historyDrops = fewestDrops(droppable.length, (count) => serialize(withoutHistory(count)));
+  if (historyDrops !== null) {
+    const fitted = withoutHistory(historyDrops);
+    return { state: fitted, contents: serialize(fitted) };
+  }
+  const trimmed = withoutHistory(droppable.length);
+  const closed = Array.isArray(state.closed) ? state.closed : [];
+  const withoutClosed = (count) => ({ ...trimmed, ...(state.closed === undefined ? {} : { closed: closed.slice(count) }) });
+  const closedDrops = fewestDrops(closed.length, (count) => serialize(withoutClosed(count)));
+  if (closedDrops === null) return null;
+  const fitted = withoutClosed(closedDrops);
+  return { state: fitted, contents: serialize(fitted) };
+}
+
+// Every coordination state write serializes through here, so no state that a writer accepts exceeds the limit a merge applies.
+function stateContents(state, keep = null) {
+  const fitted = fitState(state, keep);
+  if (fitted === null) throw error("artifact_too_large", "The coordination state exceeds 1 MiB with its history and closed gates dropped and was not written.");
+  return fitted.contents;
+}
+
 function changedFields(before, after) {
   return ["settings", "active", "pending", "next", "evidence", "closed"].filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after[key]));
+}
+
+const ABSENT = Symbol("absent");
+const sameJson = (left, right) => (left === ABSENT ? "\0absent" : canonicalJson(left)) === (right === ABSENT ? "\0absent" : canonicalJson(right));
+const valueOf = (record, key) => isRecord(record) && Object.hasOwn(record, key) ? record[key] : ABSENT;
+
+// A person's mark orders by its time and then by its entry id; a side without a mark comes before any mark.
+function laterMark(left, right) {
+  if (left === ABSENT || right === ABSENT) return left === ABSENT ? (right === ABSENT ? 0 : -1) : 1;
+  if (left.at !== right.at) return left.at < right.at ? -1 : 1;
+  return left.entry < right.entry ? -1 : left.entry > right.entry ? 1 : 0;
+}
+
+// Each setting merges with its person mark: a setting both sides changed differently takes the side the person changed later.
+function mergeSettings(base, local, upstream) {
+  const names = [...new Set([...Object.keys(upstream.settings), ...Object.keys(local.settings), ...Object.keys(base.settings)])];
+  const settings = {};
+  const marks = {};
+  const marksOf = (state) => isRecord(state.personSettings) ? state.personSettings : {};
+  const [baseMarks, localMarks, upstreamMarks] = [base, local, upstream].map(marksOf);
+  for (const name of [...new Set([...names, ...Object.keys(upstreamMarks), ...Object.keys(localMarks), ...Object.keys(baseMarks)])]) {
+    const pair = (state, stateMarks) => ({ value: valueOf(state.settings, name), mark: valueOf(stateMarks, name) });
+    const [b, l, u] = [pair(base, baseMarks), pair(local, localMarks), pair(upstream, upstreamMarks)];
+    const same = (left, right) => sameJson(left.value, right.value) && sameJson(left.mark, right.mark);
+    let chosen;
+    if (same(l, u) || same(u, b)) chosen = l;
+    else if (same(l, b)) chosen = u;
+    else if (!sameJson(l.mark, b.mark) || !sameJson(u.mark, b.mark)) {
+      const order = laterMark(l.mark, u.mark);
+      if (order === 0) throw new MergeConflict(`The setting ${name} changed differently on both sides.`);
+      chosen = order > 0 ? l : u;
+    } else {
+      throw new MergeConflict(`The setting ${name} changed differently on both sides.`);
+    }
+    if (chosen.value !== ABSENT) settings[name] = chosen.value;
+    if (chosen.mark !== ABSENT) marks[name] = chosen.mark;
+  }
+  return { settings, personSettings: marks };
+}
+
+const gateKey = (item) => isRecord(item) ? item.id : item;
+const askedPart = (gate) => {
+  if (!isRecord(gate)) return gate;
+  const { answer, ...asked } = gate;
+  return asked;
+};
+
+// A gate keeps what it was asked with; answers on both sides keep the earlier one, and the upstream's on equal times.
+function mergeGate(id, base, local, upstream) {
+  if (!sameJson(askedPart(local), askedPart(upstream))) throw new MergeConflict(`The user gate ${id} differs between the sides.`);
+  if (!isRecord(local)) return local;
+  const [b, l, u] = [base, local, upstream].map((gate) => valueOf(gate, "answer"));
+  let answer;
+  if (sameJson(l, u) || sameJson(u, b)) answer = l;
+  else if (sameJson(l, b)) answer = u;
+  else if (isRecord(l) && isRecord(u)) answer = String(l.answeredAt) < String(u.answeredAt) ? l : u;
+  else throw new MergeConflict(`The user gate ${id} changed differently on both sides.`);
+  const { answer: _, ...asked } = local;
+  return answer === ABSENT ? asked : { ...asked, answer };
+}
+
+// Merge a list of items keyed by id: an item one side removed stays removed, and the merged order follows mergeOrder with upstream additions first.
+function mergeList(label, base, local, upstream, keyOf, mergeItem) {
+  const index = (list) => new Map(list.map((item) => [keyOf(item), item]));
+  const [b, l, u] = [base, local, upstream].map(index);
+  const merged = new Map();
+  for (const key of new Set([...u.keys(), ...l.keys(), ...b.keys()])) {
+    const inBase = b.has(key);
+    if (inBase && (!l.has(key) || !u.has(key))) continue;
+    if (!l.has(key)) merged.set(key, u.get(key));
+    else if (!u.has(key)) merged.set(key, l.get(key));
+    else merged.set(key, mergeItem(key, inBase ? b.get(key) : ABSENT, l.get(key), u.get(key)));
+  }
+  const ids = (map) => [...map.keys()];
+  return mergeOrder(label, ids(b), ids(l), ids(u), new Set(merged.keys()), { upstreamFirst: true }).map((key) => merged.get(key));
+}
+
+// Entries of either side once by id, except a base entry that either side dropped, ordered by `order` and cut to the newest `limit`.
+function mergeUnion(base, local, upstream, keyOf, order, limit) {
+  const held = (list) => new Set(list.map(keyOf));
+  const [inLocal, inUpstream] = [held(local), held(upstream)];
+  const dropped = new Set(base.map(keyOf).filter((key) => !inLocal.has(key) || !inUpstream.has(key)));
+  const entries = new Map();
+  for (const item of [...local, ...upstream]) if (!dropped.has(keyOf(item))) entries.set(keyOf(item), item);
+  return [...entries.values()].sort(order).slice(-limit);
+}
+
+const closedOrder = (left, right) => {
+  if (left.closedAt !== right.closedAt) return String(left.closedAt) < String(right.closedAt) ? -1 : 1;
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+};
+
+const STRUCTURED = ["settings", "personSettings", "pending", "history", "active", "closed", "evidence"];
+
+/**
+ * The structural merge of a coordination state that changed on two machines: { path, base, local, upstream } as UTF-8 text,
+ * base null for a state new on both sides, answering { contents } or { conflict }.
+ */
+export function mergeCoordinationState(versions) {
+  try {
+    const parsed = parseVersions(versions, defaultState);
+    if (Object.values(parsed).some((state) => !isRecord(state))) throw new MergeConflict("A version of the coordination state is not a JSON object.");
+    const [base, local, upstream] = [parsed.base, parsed.local, parsed.upstream].map(normalizeState);
+    for (const state of [base, local, upstream]) {
+      if (!isRecord(state.settings) || (state.personSettings !== undefined && !isRecord(state.personSettings))) throw new MergeConflict("A version of the coordination state has malformed settings.");
+      for (const key of ["active", "pending", "evidence", "closed", "history"]) {
+        if (state[key] !== undefined && !Array.isArray(state[key])) throw new MergeConflict(`A version of the coordination state has a malformed ${key}.`);
+      }
+    }
+    const list = (state, key) => state[key] ?? [];
+    const has = (key) => [base, local, upstream].some((state) => state[key] !== undefined);
+    const { settings, personSettings } = mergeSettings(base, local, upstream);
+    const pending = mergeList("The pending user gates", base.pending, local.pending, upstream.pending, gateKey, mergeGate);
+    const active = mergeList("The active work", base.active, local.active, upstream.active, (item) => isRecord(item) ? item.slice : item,
+      (slice, b, l, u) => mergeUnit(`The active work of ${slice}`, b, l, u));
+    const history = mergeUnion(list(base, "history"), list(local, "history"), list(upstream, "history"), (item) => item?.id, historyOrder, HISTORY_LIMIT);
+    const closed = mergeUnion(list(base, "closed"), list(local, "closed"), list(upstream, "closed"), (item) => item?.id, closedOrder, CLOSED_LIMIT);
+    const removed = new Set(base.evidence.filter((item) => !local.evidence.includes(item) || !upstream.evidence.includes(item)));
+    const evidence = [...upstream.evidence.filter((item) => !removed.has(item)), ...local.evidence.filter((item) => !removed.has(item) && !upstream.evidence.includes(item))];
+    const rest = mergeScalars(base, local, upstream, STRUCTURED);
+    const merged = normalizeState({
+      ...rest,
+      settings,
+      active,
+      pending,
+      evidence,
+      ...(has("closed") || closed.length ? { closed } : {}),
+      ...(has("history") ? { history } : {}),
+      ...(has("personSettings") || Object.keys(personSettings).length ? { personSettings } : {})
+    });
+    // No entry is protected here, so both machines fit the same three versions to the same bytes.
+    const fitted = fitState(merged);
+    if (fitted === null) return { conflict: "The merged coordination state exceeds 1 MiB with its history and closed gates dropped." };
+    const { contents } = fitted;
+    const { errors } = validateStateValue(JSON.parse(contents));
+    if (errors.length) return { conflict: `The merged coordination state is invalid: ${errors[0]}` };
+    return { contents };
+  } catch (caught) {
+    return { conflict: caught instanceof MergeConflict ? caught.message : `The coordination state versions could not be merged: ${caught.message}` };
+  }
 }
 
 export async function readCoordinationState({ projectRoot, initiative }) {
@@ -684,10 +987,11 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
     assertAnswersUnchanged(before.pending, gateResult.pending);
     const closed = [...(before.closed ?? []), ...dropped, ...gateResult.closed].slice(-CLOSED_LIMIT);
+    const requested = changes.settings === undefined ? null : keepPersonSettings(before, changes.settings);
     const candidate = normalizeState({
       ...before,
       active: activeResult.active,
-      ...(changes.settings === undefined ? {} : { settings: { ...before.settings, ...changes.settings } }),
+      ...(requested === null ? {} : { settings: { ...before.settings, ...requested.settings } }),
       pending: gateResult.pending,
       ...(changes.next === undefined ? {} : { next: changes.next }),
       ...(changes.evidence === undefined ? {} : { evidence: changes.evidence }),
@@ -697,7 +1001,7 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     if (validation.errors.length > 0) {
       throw error("invalid_state", "The proposed state is invalid and was not written.", { errors: validation.errors, warnings: validation.warnings });
     }
-    const contents = `${JSON.stringify(candidate, null, 2)}\n`;
+    const contents = stateContents(candidate);
     if (!current.exists || contents !== current.contents) {
       await writeRecord(resolved.root, { kind: "state", initiative: resolved.initiative }, contents);
     }
@@ -708,7 +1012,8 @@ async function applyStateChange(resolved, expectedRevision, changes) {
       changedFields: changedFields(before, updated.state),
       previousRevision: current.revision
       ,completions: activeResult.completions,
-      openedGates: gateResult.opened
+      openedGates: gateResult.opened,
+      ...(requested?.kept.length ? { keptSettings: requested.kept } : {})
     };
     });
 }
@@ -742,9 +1047,63 @@ export async function answerUserGate({ projectRoot, initiative, id, choice = nul
     if (validation.errors.length > 0) {
       throw error("invalid_state", "The answered state is invalid and was not written.", { errors: validation.errors });
     }
-    await write(resolved.root, { kind: "state", initiative: resolved.initiative }, `${JSON.stringify(candidate, null, 2)}\n`);
+    await write(resolved.root, { kind: "state", initiative: resolved.initiative }, stateContents(candidate));
     const updated = await loadState(resolved.path);
     return { ...publicStateResult(resolved, updated), gate: pending[position] };
+  }, error));
+}
+
+/**
+ * The review app's one write of a person's action on coordination state, under the state lock.
+ * prepare(current) sees { exists, revision, state, valid } as the lock found it and returns null to change nothing,
+ * or { entry, setting?: { name, value }, answer?: { id, choice, note } }: a setting is stored and marked in personSettings, an answer is recorded on its gate with its author and entry,
+ * and the entry joins history at its place, in the same write.
+ */
+export async function recordPersonAction({ projectRoot, initiative, prepare }) {
+  const decide = async (resolved, current) => {
+    const change = await prepare({ exists: current.exists, revision: current.revision, state: current.state, valid: current.valid });
+    if (change !== null && current.exists && !current.valid) {
+      throw error("invalid_state", "The existing state is invalid and was not changed.", { validation: publicStateResult(resolved, current) });
+    }
+    return change;
+  };
+  // The checks run first on the state as it is read, so a refused or unchanged action moves no legacy record and creates no folder.
+  const preview = await resolveState(projectRoot, initiative);
+  const previewed = await loadState(preview.path);
+  if (await decide(preview, previewed) === null) return { ...publicStateResult(preview, previewed), entry: null };
+  await moveLegacyRecords(projectRoot);
+  const resolved = await resolveState(projectRoot, initiative);
+  await mkdir(path.dirname(resolved.path), { recursive: true });
+  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+    const current = await loadState(resolved.path);
+    const change = await decide(resolved, current);
+    if (change === null) return { ...publicStateResult(resolved, current), entry: null };
+    const { entry, setting, answer } = change;
+    const problem = historyEntryProblem(entry);
+    if (problem) throw error("invalid_changes", `The history entry is invalid: ${problem}.`);
+    const before = current.state ?? defaultState();
+    const candidate = { ...before, history: insertHistoryEntry(before.history, entry) };
+    if (setting) {
+      if (!SETTING_KEYS.has(setting.name)) throw error("invalid_changes", `${setting.name} is not an initiative setting.`);
+      candidate.settings = { ...before.settings, [setting.name]: setting.value };
+      candidate.personSettings = { ...(before.personSettings ?? {}), [setting.name]: { at: entry.at, entry: entry.id } };
+    }
+    if (answer) {
+      const position = before.pending.findIndex((item) => isRecord(item) && item.id === answer.id);
+      if (position === -1) throw error("unknown_gate", "The question is no longer open; the agent resolved or withdrew it.");
+      if (before.pending[position].answer) throw error("gate_answered", "The question already has an answer.");
+      const answerProblemText = answerProblem(before.pending[position], answer.choice, answer.note);
+      if (answerProblemText) throw error("invalid_answer", `The answer is invalid: ${answerProblemText}.`);
+      candidate.pending = [...before.pending];
+      candidate.pending[position] = { ...before.pending[position], answer: { choice: answer.choice, note: answer.note, via: "browser", answeredAt: entry.at, by: entry.by, entry: entry.id } };
+    }
+    const normalized = normalizeState(candidate);
+    const validation = validateStateValue(normalized);
+    if (validation.errors.length > 0) {
+      throw error("invalid_state", "The changed state is invalid and was not written.", { errors: validation.errors });
+    }
+    await writeRecord(resolved.root, { kind: "state", initiative: resolved.initiative }, stateContents(normalized, entry.id));
+    return { ...publicStateResult(resolved, await loadState(resolved.path)), created: !current.exists, entry };
   }, error));
 }
 

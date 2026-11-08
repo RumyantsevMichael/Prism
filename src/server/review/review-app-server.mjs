@@ -29,6 +29,7 @@ import { readIndexingStatus } from "../repository-intelligence/index-status.mjs"
 import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send } from "./review-server.mjs";
 import { loadAttention } from "./workspace-model.mjs";
 import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
+import { createWriteSessions } from "./write-sessions.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
 const IDLE_MS = 30 * 60 * 1000;
@@ -113,12 +114,20 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   let published = null;
   let idleSince = Date.now();
   let closing = null;
+  // One write session store serves every checkout's page, so a tab that switches checkouts keeps its write session.
+  let writeSessions = null;
 
   const viewerPrefix = () => `/session/${viewerToken}`;
 
   function viewerCount() {
     let count = 0;
     for (const project of projects.values()) count += project.review.viewerCount();
+    return count;
+  }
+
+  function writableViewerCount() {
+    let count = 0;
+    for (const project of projects.values()) count += project.review.writableViewerCount();
     return count;
   }
 
@@ -245,36 +254,52 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     if (!project) {
       const baseUrl = `http://127.0.0.1:${port}${viewerPrefix()}/p/${id}`;
       const onViewer = (sendNotice) => deliverPendingNotices(id, sendNotice);
+      const onAction = (event, { shared }) => announceAction(project, event, shared);
       // A new project starts as the most recent, so the recent limit never drops the project being registered.
       project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [], intelligenceDirectories: [], recordStoreDirectories: [] };
-      project.review = createProjectReview({ projectRoot: root, baseUrl, instance, appVersion: pluginVersion, onViewer, evidenceStore: () => evidenceStoreOf(project),
-        intelligenceDirectories: () => intelligenceDirectoriesOf(project) });
+      project.review = createProjectReview({ projectRoot: root, baseUrl, instance, appVersion: pluginVersion, onViewer, onAction, evidenceStore: () => evidenceStoreOf(project),
+        intelligenceDirectories: () => intelligenceDirectoriesOf(project), writeSessions });
       projects.set(id, project);
       if (persist) await rememberProjects();
     }
     return project;
   }
 
-  // Grants one browser open while no tab of any project is connected and no other open was granted within the open lease.
-  function grantOpen(now = Date.now()) {
-    const open = viewerCount() === 0 && now - openGrantedAt >= OPEN_LEASE_MS;
+  // Grants one browser open while no writable tab of any project is connected and no other open was granted within the open lease.
+  // A client that does not declare acceptsGrant opens a tab that can never take a write session, so for it every connected tab counts, as before write sessions.
+  function grantOpen(acceptsGrant, now = Date.now()) {
+    const connected = acceptsGrant ? writableViewerCount() : viewerCount();
+    const open = connected === 0 && now - openGrantedAt >= OPEN_LEASE_MS;
     if (open) openGrantedAt = now;
     return open;
   }
 
   // Answers whether the presenting session should open a browser, and tells every other project's tabs about the presentation.
   // A browser opens only while no tab of any project is connected, once per lease, so one window serves every project.
-  function announce(project, url, name) {
+  function announce(project, url, name, acceptsGrant) {
     const notice = { projectId: project.id, name, projectRoot: project.root, url, at: new Date().toISOString() };
     for (const other of projects.values()) {
       if (other !== project) other.review.notify("notice", notice);
     }
     const now = Date.now();
     const watched = viewerCount() > 0;
-    const open = grantOpen(now);
+    const open = grantOpen(acceptsGrant, now);
     if (open || project.review.viewerCount() > 0) pendingNotices.delete(project.id);
     else if (!watched) pendingNotices.set(project.id, { notice, expiresAt: now + noticeMs });
     return open;
+  }
+
+  // An applied action reaches every checkout's page whose records resolve to the same record store, since those pages show the same records;
+  // an index rebuild, and any action of a page whose store cannot be resolved, reaches only the applying page.
+  async function announceAction(project, event, shared) {
+    project.review.notify("action", event);
+    if (!shared) return;
+    const storeOf = (root) => describeRecordStore(root).then((store) => store.location ?? null, () => null);
+    const location = await storeOf(project.root);
+    if (!location) return;
+    await Promise.all([...projects.values()].filter((other) => other !== project && other.review.viewerCount() > 0).map(async (other) => {
+      if (await storeOf(other.root) === location) other.review.notify("action", event);
+    }));
   }
 
   // A project folder that is gone or records that cannot be read give an unknown count rather than a misleading zero.
@@ -316,6 +341,11 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     return true;
   }
 
+  // A present answer that tells a presenting process that declared acceptsGrant to open a browser carries the one-time grant that process adds to the URL it opens.
+  function withGrant(answer, acceptsGrant) {
+    return answer.open && acceptsGrant ? { ...answer, writeGrant: writeSessions.issueGrant() } : answer;
+  }
+
   async function controlAnswer(request, route, text) {
     const lease = /^\/control\/projects\/([A-Za-z0-9_-]{1,64})$/.exec(route)?.[1];
     if (route === "/control/health" && request.method === "GET") {
@@ -344,17 +374,18 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const project = await projectFor(body.projectRoot);
       await reportDirectories(project, body);
       const review = project.review;
+      const acceptsGrant = body.acceptsGrant === true;
       // A session start asks only whether to open a window, and leaves tabs and other projects' notices alone.
       if (body.open === true && body.start === true) {
         await touch(project);
-        return { url: review.reviewUrl([]), open: grantOpen(), session: review.getSession() };
+        return withGrant({ url: review.reviewUrl([]), open: grantOpen(acceptsGrant), session: review.getSession() }, acceptsGrant);
       }
       if (body.open === true) {
         const tabs = normalizeTabs(body.tabs);
         await review.presentTabs(tabs);
         await touch(project);
         const url = review.reviewUrl(tabs);
-        return { url, open: announce(project, url, workspaceLabel(await readWorkspaceIdentity(project.root))), session: review.getSession() };
+        return withGrant({ url, open: announce(project, url, workspaceLabel(await readWorkspaceIdentity(project.root)), acceptsGrant), session: review.getSession() }, acceptsGrant);
       }
       if (body.tabs !== undefined) {
         await review.setOpenTabs(body.tabs);
@@ -449,6 +480,8 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       if (error.code !== "EADDRINUSE" && error.code !== "EACCES") throw error;
     }
   }
+  // Only a successor that reuses the viewer credential accepts the write sessions its predecessor issued; any other start accepts none.
+  writeSessions = await createWriteSessions({ directory, restore: bound });
   // A cold restart tries the last bound port, so the browser keeps the origin's permissions and storage, while the viewer credential is always new.
   const last = bound ? null : await readLastPort(directory);
   if (last) {
