@@ -18,7 +18,7 @@ Choosing the workspace there opens its records, which every checkout shares.
 ## Share records between machines
 
 1. Create an empty repository for the store on your Git host, for example `you/prism-store`, and give everyone who works on the project push access to it.
-   A README or a license that the Git host adds is fine, but leave out any other file, because a store holds only the files Prism writes.
+   A README or a license that the Git host adds is fine, and Prism keeps any other file in Git only, never on disk.
 
 2. Add a `Workspace` section to `.prism/workflow.md` that names the store's remote and this repository:
 
@@ -46,19 +46,24 @@ Store sync is on by default for a remote store, so Prism keeps the clone in step
 
 `- Store sync: off` keeps the clone but never fetches, commits, or pushes after the first clone.
 Prism never deletes, replaces, or rewrites the history of a clone it made.
+Prism shares the regular files at the paths it writes in a store: the records under `initiatives/`, `roadmap.json`, the registrations under `repositories/`, the migration files under `migrations/`, the artifacts under `artifacts/` whose every name follows the artifact name form, and the store's `.gitignore` and `.gitattributes`.
+It also shares a `README`, `README.md`, `README.txt`, `LICENSE`, `LICENSE.md`, `LICENSE.txt`, or `COPYING` at the store's root, spelled exactly so, which Prism never reads.
+Prism uses Git in the store only to keep these files' bytes: the clone and every sync write each file as the remote's branch holds it, and every commit holds each file as it is on disk.
+So no `.gitignore` or `.gitattributes` line, in the store or in your Git configuration, and no line-ending setting such as `core.autocrlf`, changes what Prism commits or writes.
+Prism runs each Git command in the store with `core.autocrlf=false`, `core.eol=lf`, `core.safecrlf=false`, and an empty `core.attributesFile` and `core.excludesFile` for that command only, without changing your Git configuration.
 Before the clone writes any file, Prism checks the remote's whole branch, and every sync checks the upstream's whole branch the same way before it takes any of it.
-The branch may hold only regular files at the paths Prism writes in a store: the records under `initiatives/`, `roadmap.json`, the registrations under `repositories/`, the migration files under `migrations/`, the artifacts under `artifacts/` whose every name follows the artifact name form, and the store's `.gitignore` and `.gitattributes`.
-It may also hold a plain, non-executable `README`, `README.md`, `README.txt`, `LICENSE`, `LICENSE.md`, `LICENSE.txt`, or `COPYING` at its root, spelled exactly so, which Prism never reads or writes.
-A symbolic link, a submodule link, or a file at any other path, such as a README below the root, a lock file, or anything in the sync folder `.prism-sync/` in any spelling, fails the clone, or refuses the sync as a whole, and the message names the path.
-An entry that the store's own branch already holds unchanged, such as a notes file in a store cloned before this check, does not stop a sync.
-A sync commits only those files, so another file or a link you put in the store stays on your machine and never reaches the remote.
+A symbolic link, a submodule link, a path that some file system reads as leading outside the store, such as one with a `..` part, a backslash, or a drive form, Git's folder or the sync folder `.prism-sync/` in any spelling, an entry where Prism keeps a folder, such as a file named `initiatives/<slug>/slices`, or an entry below a file Prism keeps, such as `roadmap.json/x`, fails the clone, or refuses the sync as a whole, and the message names the path.
+Any other file on the branch, such as a `.DS_Store` or a notes file that an earlier Prism committed, a README below the root, or a lock file, stays in Git only: Prism never writes it to disk, and no sync of any machine changes or removes it, so it never stops a sync.
+Remove such a file with a commit that you push to the remote's branch yourself.
+A sync commits only the files Prism shares, so another file or a link you put in the store stays on your machine and never reaches the remote, even when a commit of yours made by hand holds it.
+A file that a clone made by an earlier Prism checked out with CR LF line endings counts as unchanged until a sync takes a new version of it.
 Syncing requires Git 2.25 or later.
 SSH runs in batch mode unless you configured an SSH command, and Git never prompts, so a remote that needs a passphrase or password prompt fails instead of hanging.
 Use an SSH agent or a Git credential helper for a remote that needs credentials, because a token in the URL stays in the clone's Git configuration, although Prism leaves it out of every message and status.
 
 These problems make every record operation fail with `store_unavailable`, and the message names the remote without any user name or token:
 
-- The clone failed, for example because the remote cannot be reached, sent an object that fails Git's object checks, or holds a path that a store does not share; Prism leaves no partial clone behind and tries again on the next access.
+- The clone failed, for example because the remote cannot be reached, sent an object that fails Git's object checks, or holds an entry that no store may hold; Prism leaves no partial clone behind and tries again on the next access.
 - A folder already sits at the clone path with another origin; Prism leaves it untouched, so move it away.
 
 The first record access from a checkout moves its existing records into the store, as described below.
@@ -236,7 +241,7 @@ The list shows saved records, while a saved artifact is named in the next tool r
 | `no_upstream` | A path store's branch has no upstream, so Prism only commits locally; a remote store sets its upstream on its first sync instead. | Set an upstream with `git branch --set-upstream-to`. |
 | `not_a_repository` | Sync is on, but the store is not the top of a Git checkout. | Clone the store, or turn sync off. |
 | `fetch_failed` or `push_rejected` | The remote could not be reached, sent an object that fails Git's object checks, refused the push, or kept moving for three attempts. | Check access to the remote; Prism retries on the next write or read, and a commit whose objects fail the checks needs removing from the remote's history. |
-| `merge_failed` | A file other than a record or an artifact conflicted, a record or an artifact stayed locked through every attempt, the store's branch and its upstream share no commit, or the upstream's branch holds an entry that a store does not share, such as a symbolic link, a submodule link, or a file at a path Prism does not write. | Read the status message; a busy record clears on its own, and an entry that a store does not share needs a commit on the remote's branch that removes the path the message names. |
+| `merge_failed` | A file other than a record or an artifact conflicted, a record or an artifact stayed locked through every attempt, the store's branch and its upstream share no commit, or the upstream's branch holds an entry that no store may hold, such as a symbolic link, a submodule link, or the sync folder. | Read the status message; a busy record clears on its own, and an entry that no store may hold needs a commit on the remote's branch that removes the path the message names. |
 | `git_failed` | Git failed for another reason, such as a leftover `.git/index.lock`. | Fix the store with Git; Prism never deletes Git's locks. |
 
 ## Cloud sessions

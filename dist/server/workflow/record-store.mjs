@@ -112,6 +112,21 @@ export function isStoreFile(relative) {
   return names.length === 6 && names[5].endsWith(".json") && ENTRY_ID.test(names[5].slice(0, -".json".length));
 }
 
+/**
+ * Whether a store-relative path is a folder that holds files Prism writes in a record store:
+ * a top folder of the layout, a folder below artifacts/ whose every name follows the artifact name form, or an initiative's folder, its claims, slices, one slice, or that slice's runs.
+ */
+export function isStoreFolder(relative) {
+  if (typeof relative !== "string") return false;
+  const names = relative.split("/");
+  if (names.length === 1) return ["initiatives", ARTIFACTS, "migrations", REPOSITORIES].includes(names[0]);
+  if (names[0] === ARTIFACTS) return names.slice(1).every(wellFormedName);
+  if (names[0] !== "initiatives" || !SLUG_PATTERN.test(names[1])) return false;
+  if (names.length === 2) return true;
+  if (names.length === 3) return names[2] === CLAIMS || names[2] === "slices";
+  return names[2] === "slices" && SLUG_PATTERN.test(names[3]) && (names.length === 4 || (names.length === 5 && names[4] === "runs"));
+}
+
 function inside(root, target) {
   const relative = path.relative(root, target);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));

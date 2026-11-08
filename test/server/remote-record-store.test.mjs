@@ -164,9 +164,10 @@ test("a clone Prism 0.16 kept under plugin data moves to the app folder with its
   const root = await project(parent, "project", remoteConfig(url));
   assert.deepEqual(await listInitiatives(root), []);
   assert.equal(await exists(legacy), false);
-  // The first access registers the repository name, which the store's sync commits on top of the unpushed commit.
-  assert.equal(git(clone, "rev-list", "--count", `${head}..HEAD`), "1");
+  // The first access registers the repository name, which the store's sync commits on top of the unpushed commit,
+  // and local.txt is no file Prism writes, so the commit the sync pushes leaves it out while the file stays on disk.
   assert.equal(git(clone, "merge-base", "--is-ancestor", head, "HEAD"), "");
+  assert.equal(git(clone, "ls-tree", "HEAD", "local.txt"), "");
   assert.equal(await readFile(path.join(clone, "local.txt"), "utf8"), "not pushed\n");
 });
 
@@ -259,17 +260,68 @@ test("a managed clone refuses a remote whose branch holds the sync folder, so no
 });
 
 for (const [label, plant, named] of [
-  ["a file Prism does not write at its root", (seed) => writeFile(path.join(seed, "NOTES.md"), "# Store\n"), "NOTES.md"],
-  ["a README in another letter case", (seed) => writeFile(path.join(seed, "Readme.md"), "# Store\n"), "Readme.md"],
-  ["a README below the root", async (seed) => { await mkdir(path.join(seed, "initiatives")); await writeFile(path.join(seed, "initiatives", "README.md"), "# Store\n"); }, "initiatives/README.md"],
-  ["an executable license file", async (seed) => { await writeFile(path.join(seed, "COPYING"), "#!/bin/sh\n", { mode: 0o755 }); }, "COPYING"],
-  ["a lock file beside a record", async (seed) => { await mkdir(path.join(seed, "initiatives", "reports"), { recursive: true }); await writeFile(path.join(seed, "initiatives", "reports", "initiative.json.lock"), "{}\n"); }, "initiatives/reports/initiative.json.lock"],
   ["a lookalike of the sync folder", async (seed) => { await mkdir(path.join(seed, "PRISM-~1")); await writeFile(path.join(seed, "PRISM-~1", "status.json"), "{}\n"); }, "PRISM-~1/status.json"],
+  ["a file where Prism keeps a folder", async (seed) => { await mkdir(path.join(seed, "initiatives", "reports"), { recursive: true }); await writeFile(path.join(seed, "initiatives", "reports", "slices"), "{}\n"); }, "initiatives/reports/slices"],
+  ["a file below a record's path", async (seed) => { await mkdir(path.join(seed, "roadmap.json")); await writeFile(path.join(seed, "roadmap.json", "x"), "{}\n"); }, "roadmap.json/x"],
   ["a submodule link", async (seed) => { await mkdir(path.join(seed, "artifacts", "plans", "sub"), { recursive: true }); execFileSync("git", ["update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},artifacts/plans/sub`], { cwd: seed }); }, "artifacts/plans/sub"]
 ]) {
   test(`a managed clone refuses a remote whose branch holds ${label}, and leaves no folder`, async (context) => {
     const { refusal } = await refusedClone(context, plant);
     assert.ok(refusal.message.includes(JSON.stringify(named)), refusal.message);
+  });
+}
+
+test("a managed clone keeps files Prism does not write in Git only, and its syncs carry them unchanged", async (context) => {
+  const parent = await folder(context);
+  const { remote, url, clone } = bareRemote(parent);
+  const seed = seedOf(parent, remote);
+  const planted = { "NOTES.md": "# Store\n", "Readme.md": "# Store\n", "initiatives/README.md": "# Store\n", "initiatives/reports/initiative.json.lock": "{}\n", "artifacts/plans/x/.DS_Store": "finder\n" };
+  for (const [file, contents] of Object.entries(planted)) {
+    await mkdir(path.dirname(path.join(seed, file)), { recursive: true });
+    await writeFile(path.join(seed, file), contents);
+  }
+  await writeFile(path.join(seed, "COPYING"), "#!/bin/sh\n", { mode: 0o755 });
+  git(seed, "add", "-f", ".");
+  git(seed, "commit", "-q", "-m", "planted");
+  git(seed, "push", "-q", "origin", "main");
+  const root = await project(parent, "project", remoteConfig(url, "on"));
+  await create(root);
+  for (const file of Object.keys(planted)) assert.equal(await exists(path.join(clone, file)), false, `${file} is not written to disk`);
+  assert.equal(await readFile(path.join(clone, "COPYING"), "utf8"), "#!/bin/sh\n", "a license file Prism shares is written, executable or not");
+  assert.equal((await syncRecordStore(clone)).state, "ok");
+  git(seed, "pull", "-q", "origin", "main");
+  for (const [file, contents] of Object.entries(planted)) assert.equal(await readFile(path.join(seed, file), "utf8"), contents, `${file} stays on the remote unchanged`);
+  assert.equal(await exists(path.join(seed, "initiatives", "reports", "initiative.json")), true);
+});
+
+for (const [label, config, attributes] of [
+  ["with core.autocrlf=true", "[core]\n\tautocrlf = true\n", "/roadmap.json linguist-generated=true\n"],
+  ["whose attributes ask for CR LF line endings and another encoding", "", "* text eol=crlf\n/roadmap.json working-tree-encoding=UTF-16LE\n"]
+]) {
+  test(`a managed clone ${label} holds every file's blob bytes exactly, so a later upstream change syncs`, async (context) => {
+    await writeFile(gitconfig, config);
+    context.after(() => writeFile(gitconfig, ""));
+    const parent = await folder(context);
+    const { remote, url, clone } = bareRemote(parent);
+    const seed = seedOf(parent, remote);
+    const put = (file, contents) => git(seed, "update-index", "--add", "--cacheinfo", `100644,${execFileSync("git", ["hash-object", "-w", "--no-filters", "--stdin"], { cwd: seed, input: contents }).toString().trim()},${file}`);
+    put(".gitattributes", attributes);
+    put("roadmap.json", "{}\n");
+    git(seed, "commit", "-q", "-m", "attributes");
+    git(seed, "push", "-q", "origin", "main");
+    const root = await project(parent, "project", remoteConfig(url, "on"));
+    await listInitiatives(root);
+    assert.deepEqual(await readFile(path.join(clone, "roadmap.json")), Buffer.from("{}\n"));
+    assert.deepEqual(await readFile(path.join(clone, "README.md")), Buffer.from("Prism records\n"));
+    assert.equal((await syncRecordStore(clone)).state, "ok");
+    git(seed, "fetch", "-q", "origin");
+    git(seed, "reset", "-q", "origin/main");
+    put("roadmap.json", "{\"later\":true}\n");
+    git(seed, "commit", "-q", "-m", "later");
+    git(seed, "push", "-q", "origin", "main");
+    const status = await syncRecordStore(clone);
+    assert.equal(status.state, "ok", JSON.stringify(status));
+    assert.deepEqual(await readFile(path.join(clone, "roadmap.json")), Buffer.from("{\"later\":true}\n"));
   });
 }
 
