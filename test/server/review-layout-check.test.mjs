@@ -17,7 +17,7 @@ const BROKEN = `<!doctype html><html><head><meta charset="utf-8"><style>
   section { border: 1px solid gray; margin: 8px; }
   .wide { width: 900px; height: 20px; background: silver; }
   .clip { overflow: hidden; width: 80px; } .clip button { margin-left: 120px; }
-  @media (prefers-color-scheme: dark) { .dark-only { width: 1200px; height: 10px; } }
+  @media (prefers-color-scheme: dark) { .dark-only { width: 2400px; height: 10px; } }
 </style></head><body>
   <section data-catalog-entry="prism-fine"><p>Fits at every width.</p></section>
   <section data-catalog-entry="prism-escapes"><div class="wide"></div></section>

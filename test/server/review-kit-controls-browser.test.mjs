@@ -384,11 +384,13 @@ test("clause 36: a menu near the bottom of the window opens above its button and
 test("clauses 37, 38: shortened text shows its full text in a tooltip on hover and on keyboard focus", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-button id="before">Before</prism-button>
-    <div style="width: 140px"><prism-chip id="long">${LONG}</prism-chip></div>
-    <div style="width: 140px"><prism-chip id="unbroken">${UNBROKEN}</prism-chip></div>
-    <div style="width: 140px"><prism-button id="wide">${LONG}</prism-button></div>
+    <div class="narrow"><prism-chip id="long">${LONG}</prism-chip></div>
+    <div class="narrow"><prism-chip id="unbroken">${UNBROKEN}</prism-chip></div>
+    <div class="narrow"><prism-button id="wide">${LONG}</prism-button></div>
     <prism-chip id="short">Short</prism-chip>
     <prism-button id="tipped" tip="Opens the roadmap">Roadmap</prism-button>`);
+  // The page's style policy refuses inline style attributes, so the narrow widths go through the CSSOM.
+  await page.evaluate(() => { for (const box of document.querySelectorAll("#fixture .narrow")) box.style.setProperty("width", "140px"); });
   await page.waitForTimeout(200);
   assert.deepEqual(await escapes(page, "#fixture"), [], "shortened elements stay inside their containers");
   const attribute = (id) => page.evaluate((id) => document.getElementById(id).hasAttribute("shortened"), id);
