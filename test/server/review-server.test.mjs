@@ -228,7 +228,12 @@ test("uses an injected browser opener when it presents a review", async (context
   try {
     const presented = await review.open("docs/roadmap.md");
     assert.equal(presented.opened, true);
-    assert.deepEqual(openedUrls, [presented.url]);
+    // The opened URL is the presented URL with a one-time write grant in its fragment.
+    assert.equal(openedUrls.length, 1);
+    const opened = new URL(openedUrls[0]);
+    assert.match(new URLSearchParams(opened.hash.slice(1)).get("write"), /^[A-Za-z0-9_-]{43}$/);
+    opened.hash = "";
+    assert.equal(opened.href, presented.url);
   } finally {
     await review.close();
   }

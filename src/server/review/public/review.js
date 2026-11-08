@@ -16,6 +16,7 @@ import { createPageBar } from "./views/page-bar.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
 import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
+import { shownActionEntries } from "./views/actions.js";
 
 const project = document.getElementById("project");
 const navRoot = document.getElementById("nav");
@@ -169,6 +170,82 @@ function goForward() {
 
 function showHistory() {
   pageBar?.setHistory({ back: pages.index > 0, forward: pages.index < pages.top });
+}
+
+// A tab writes only with the write session it took from the one-time grant in the URL Prism opened; the tab's session storage keeps it,
+// which no other tab shares, so a tab opened from a link an agent handed over stays read-only.
+const WRITE_SESSION_KEY = "prism-write-session";
+
+function writeSession() {
+  try {
+    return sessionStorage.getItem(WRITE_SESSION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeHeaders() {
+  const token = writeSession();
+  return token ? { "X-Prism-Write": token } : {};
+}
+
+// The action registry as the views use it: listings carry whether this tab can write, and every change goes through the apply route with the write session.
+const actionApi = {
+  async list(target) {
+    if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
+    const response = await fetch(`./api/actions?target=${encodeURIComponent(target)}`, { cache: "no-store", headers: writeHeaders() });
+    const listing = await response.json().catch(() => ({}));
+    if (!response.ok) throw Object.assign(new Error(listing.message ?? "The actions could not be read."), { code: listing.code });
+    return listing;
+  },
+  async apply(request) {
+    if (connection === "stopped") return { status: 0, json: { message: STOPPED_MESSAGE } };
+    const response = await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request) })
+      .catch(() => null);
+    if (!response) return { status: 0, json: { message: "The review app did not answer, so the change was not applied. Try again in a moment." } };
+    return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };
+  },
+  confirm: confirmAction,
+  toast: (message) => showToast(message)
+};
+
+// A change that needs the person's confirmation asks in the page's kit dialog; Escape, the scrim, Close, and Cancel decline, and only Confirm resolves true.
+// The dialog opens on Cancel and returns focus to the control that asked.
+function confirmAction({ title, message }) {
+  const dialog = document.getElementById("action-dialog");
+  const confirm = document.getElementById("action-dialog-confirm");
+  const cancel = document.getElementById("action-dialog-cancel");
+  return new Promise((resolve) => {
+    let accepted = false;
+    const onConfirm = () => {
+      accepted = true;
+      dialog.close();
+    };
+    const onCancel = () => dialog.close();
+    confirm.addEventListener("click", onConfirm);
+    cancel.addEventListener("click", onCancel);
+    dialog.addEventListener("prism-close", () => {
+      confirm.removeEventListener("click", onConfirm);
+      cancel.removeEventListener("click", onCancel);
+      resolve(accepted);
+    }, { once: true });
+    dialog.setAttribute("heading", title);
+    document.getElementById("action-dialog-message").textContent = message;
+    dialog.show();
+  });
+}
+
+// Exchanges a grant in the address fragment once, and removes the fragment without a new history entry so a reload or a copied address holds no grant.
+async function takeWriteGrant() {
+  const grant = new URLSearchParams(location.hash.slice(1)).get("write");
+  if (!grant) return;
+  history.replaceState(history.state, "", `${location.pathname}${location.search}`);
+  try {
+    const response = await fetch("./api/write-session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant }) });
+    const answer = await response.json().catch(() => ({}));
+    if (response.ok && typeof answer.token === "string") sessionStorage.setItem(WRITE_SESSION_KEY, answer.token);
+  } catch {
+  }
 }
 
 function updateLocation(path, push = false) {
@@ -532,7 +609,8 @@ function renderNotices() {
 }
 
 function connectSessionEvents() {
-  sessionStream = new EventSource("./api/events");
+  const token = writeSession();
+  sessionStream = new EventSource(token ? `./api/events?write=${encodeURIComponent(token)}` : "./api/events");
   sessionStream.onopen = () => {
     sessionConnected = true;
     reportRefresh(true);
@@ -546,6 +624,13 @@ function connectSessionEvents() {
       notices.delete(notice.projectId);
       notices.set(notice.projectId, notice);
       renderNotices();
+    } catch {
+    }
+  });
+  // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload.
+  sessionStream.addEventListener("action", (event) => {
+    try {
+      document.dispatchEvent(new CustomEvent("prism:action", { detail: JSON.parse(event.data) }));
     } catch {
     }
   });
@@ -1278,6 +1363,7 @@ function viewContext(path, state) {
       openRef(artifactPath, rest);
     },
     openEvidence: (id, label) => openEvidence(id, label, viewContext(path, state)),
+    actionApi,
     // A view embeds a PlantUML file as the same diagram card that opening the file shows.
     async mountDiagram(target, diagramPath) {
       const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(diagramPath)}`);
@@ -1287,14 +1373,25 @@ function viewContext(path, state) {
         await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section);
       }
     },
-    async answerGate(payload) {
+    // A gate answer is the gate's answer action, applied against the revision its listing shows.
+    async answerGate({ initiative, id, choice, note }) {
       if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-      const response = await fetch("./api/gates/answer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(() => {
+      const target = `gate:${initiative}/${id}`;
+      const unanswered = () => {
         throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
-      });
+      };
+      const listed = await fetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
+      const listing = await listed.json().catch(() => ({}));
+      if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
+      const action = (listing.actions ?? []).find((item) => item.id === "gate.answer");
+      const names = new Set((action?.fields ?? []).map((field) => field.name));
+      const input = Object.fromEntries([["choice", choice], ["note", note]].filter(([name, value]) => names.has(name) && value !== null && value !== undefined && value !== ""));
+      const response = await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
       const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
       if (!response.ok) {
-        throw Object.assign(new Error(result.message ?? "The answer was not recorded."), { code: result.code });
+        // The answer form names an answered or withdrawn question as it always has.
+        const code = result.code === "action_unavailable" ? "gate_answered" : result.code === "unknown_target" ? "unknown_gate" : result.code;
+        throw Object.assign(new Error(result.message ?? "The answer was not recorded."), { code });
       }
       return result;
     },
@@ -1324,7 +1421,7 @@ function paletteEntries() {
     if (named.owner) return { ref: file, label: named.kind, kind: "record", kindLabel: "Record", detail: named.owner, preview: { kind: named.kind, title: named.owner } };
     return { ref: file, label: named.label, kind: "record", kindLabel: named.kind };
   });
-  return [...places, ...indexed, ...files];
+  return [...shownActionEntries(), ...places, ...indexed, ...files];
 }
 
 let recordStoreStatus = null;
@@ -1368,6 +1465,7 @@ function watchDrawerWidth() {
 }
 
 async function initialize() {
+  await takeWriteGrant();
   const data = await fetchJson("./api/index");
   startHistory();
   watchHistoryLeave();
@@ -1423,7 +1521,8 @@ async function initialize() {
     detail: document.getElementById("indexing-detail"),
     meter: document.getElementById("indexing-meter"),
     panel: document.getElementById("indexing-panel"),
-    fetchJson
+    fetchJson,
+    actionApi
   });
   prismRecords = new Set(data.artifacts);
   availableArtifacts = new Set([...data.artifacts, ...(data.sources ?? [])]);
@@ -1601,7 +1700,10 @@ async function initialize() {
     setBusy(true);
     await showArtifact(selectedPath);
   }
+  let polls = 0;
   setInterval(async () => {
+    // Shown action lists check their listing every few seconds, so a change an agent made shows without a reload.
+    if (++polls % 3 === 0 && connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
     try {
       const refreshed = await fetch("./api/index", { cache: "no-store" }).catch(() => null);
       reportRefresh(Boolean(refreshed?.ok));

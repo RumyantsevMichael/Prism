@@ -1,4 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 // A detached HEAD reports its short commit as the branch and sets detached.
@@ -38,4 +39,14 @@ export function workspaceName(identity) {
 export function workspaceLabel(identity) {
   const name = workspaceName(identity);
   return name ? `${identity.repository}/${name}` : identity.repository;
+}
+
+/** This machine's host name without its domain, as claim labels and history entries name the machine. */
+export function hostLabel() {
+  return os.hostname().split(".")[0] || "an unnamed host";
+}
+
+/** A checkout as a history entry records it: its <repository>/<branch> label, as the project switcher names it, on this machine's host. */
+export function checkoutLabel(identity, host = hostLabel()) {
+  return `${workspaceLabel(identity)} on ${host}`;
 }

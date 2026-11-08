@@ -20,6 +20,8 @@ The browser opens on Attention, or on the artifact you name, and later visits re
 
 `Review browser: auto` in `.prism/workflow.md` uses the internal browser in desktop sessions and the system browser in CLI sessions.
 Set `internal` or `external` to override this choice.
+The agent opens the internal browser on a review URL that carries no grant, so that tab can only read, as [Which tabs can make changes](#which-tabs-can-make-changes) explains.
+Answer the agent in the conversation instead, or ask it to present the review, which opens the system browser, or run `prism review` in the project.
 When the selected browser is unavailable, Prism presents the URL and source artifacts.
 
 ## Layout
@@ -79,9 +81,71 @@ Codex runs that hook only after you trust Prism's current hook definition throug
 Elsewhere, or after the 55 minutes, the agent receives the answer with your next message, even a short one such as "go".
 Attention also lists blocked slices, open findings, and active work.
 Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
+Under Recent changes it shows the 20 newest actions applied from the review app, newest first: setting changes and answers of every initiative in the project's records, and index rebuilds of this checkout.
+Each change shows the value before and after it, the author's Git name, or email when no name is set, and the checkout label and host the change came from.
+A change applied in any tab joins the top of the list at once, also a setting change or answer from another checkout whose records live in the same record store, while another checkout's index rebuild never appears.
+A change that a record store sync brings from another machine appears the next time Attention loads.
 
-Anyone who can open the review page's URL can answer for you, so do not share that URL.
+Only a tab that Prism opened can answer; see [Which tabs can make changes](#which-tabs-can-make-changes).
 See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-the-browser) for the tool timeout that the Claude Code wait needs.
+
+## Changes you make in the page
+
+Every change that the review page makes to Prism's records is an action: answering a question, changing an initiative setting, or rebuilding an index.
+The page sends each action with the version of the record it showed you, so when an agent or another tab changed that record in the meantime, Prism refuses your action and changes nothing.
+An action changes only Prism's records, and apart from a rebuild starting Prism's own indexer, it never runs a command, changes a project file, or writes to Git.
+
+### Which tabs can make changes
+
+Only a tab that Prism opened for you can make changes.
+When Prism opens the browser, for a presentation, a session start, or `prism review`, the address it opens carries a one-time grant after `#write=`, which the tab exchanges for a write session as it loads and then removes from its address.
+The grant works once and only within two minutes, and the write session stays with that one browser tab, also across reloads and when you switch it to another checkout of the same review app.
+A review URL that an agent prints, or that a tool returns, carries no grant, so a tab opened from it, a second tab on the same address, or a bookmark can only read.
+A read-only tab says `This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.`, and its controls are disabled.
+To get a tab that can make changes, run `prism review` in the project, or ask the agent to present the review, which opens the system browser, while no tab that can make changes is open.
+The review app keeps the write sessions it issued when a newer session replaces it on the same port, and accepts none after it exits and starts again, so after such a restart open the review again the same way.
+Only a tab that can make changes counts as an open review tab, so a read-only tab never stops Prism from opening a tab that can.
+A session of an earlier Prism release that presents through a newer review app opens only tabs that can read, so for that session any open review tab still counts and it opens no further tab.
+
+Prism records each action with when it happened and who made it.
+The author is the `user.name` and `user.email` that Git reports in the checkout whose page you used, with that checkout's `repository/branch` label and this machine's host name.
+That author is what the checkout's Git configuration claims, so Prism shows it as information and never as proof of who made the change.
+Answers and setting changes go into the initiative's history, which every checkout of a workspace shares, and which keeps the newest 200 entries.
+An index rebuild goes into the checkout's own index history, `index-history/<checkout>.json` in Prism's state directory, which stays on this machine.
+
+An initiative has these settings, each with its default and the moment an agent acts on a change:
+
+| Setting | Values | Default | Takes effect |
+| --- | --- | --- | --- |
+| Autonomy | `conservative`, `broad`, `full` | `conservative` | Decides which later gates wait for you; a gate already open keeps waiting for you. |
+| Commit | `off`, `on` | `on` with `full` autonomy, otherwise `off` | For child sessions started after the change. |
+| Push | `off`, `on` | `off` | For child sessions started after the change. |
+| Continuation | `auto`, `stepwise` | `auto` | When the slice in progress finishes. |
+| Review | `marked`, `recommended`, `all` | `marked` | Sets the review mark of slices whose design is not yet accepted. |
+| Models | `host defaults`, or a delivery, review, and security review model with an optional examples model | `host defaults` | For child sessions started after the change. |
+
+Turning autonomy to `full`, commit on, or push on asks you to confirm first, because it lets agents act further without you.
+
+Every setting can change at any time, including after work on the initiative started.
+
+### Initiative settings card
+
+The initiative page, and every slice page of the initiative, ends with an **Initiative settings** card.
+On a slice page the card names the initiative above its title, because the settings belong to the whole initiative and a change there applies to every slice.
+Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
+Picking an option applies it at once, except for Models, whose model names you type and then send with **Apply** or Enter; **Reset** drops what you typed.
+Choosing **Custom** for Models shows the delivery, review, security review, and examples model fields, and **Apply** stays disabled with a hint such as `Fill in Delivery model.` until every required name is filled in.
+A change that needs your confirmation opens a dialog that says what it lets agents do, with **Confirm** and **Cancel**; Esc or **Cancel** leaves the setting as it was.
+Every control works with Tab, Enter, and Space.
+When an agent or another tab changed the setting after the page showed it, the page refuses your change, shows the current value, and says `Someone changed this since you opened it; it now shows the current value.`
+The card checks for changes every few seconds and at once when any tab applies an action, so it shows a value an agent set without a reload.
+In a tab that can only read, the card shows the read-only notice and its controls are disabled.
+A question's answer shows the situation the agent described, what each option does, and the option the agent recommends with its reason, when the agent gave them.
+
+Each component that `## Components` declares has its own index target, named `<repository>/<component>`, after the root component of the checkout.
+Rebuilding a component's index prepares only that component, also one that has no index yet, retries it when its last build failed, and reuses its index without a build while it is up to date.
+A rebuild is refused while that component's index is already being built, and a rebuild of another component waits for the running build without stopping it.
+In a repository without components, the root component's rebuild prepares the checkout's one index.
 
 ## Roadmap, initiatives, and slices
 
@@ -165,13 +229,16 @@ A slice's result shows who holds a claim on it, and beside the results a preview
 A query of three or more characters also searches the text of Prism artifacts, never source files, and every word must occur in a matching file.
 Opening a text match scrolls to and highlights the first occurrence.
 When the match is not visible in the rendered view, try the Raw view.
+On an initiative or slice page, the palette also lists the page's settings as entries such as `Push: Off`, and choosing one moves the focus to that setting's control.
 In the palette, the arrow keys move through the results, Enter opens one, and Esc closes the palette.
 
 ## Index status
 
 The index item at the right of the status bar shows the open project's native index, and its panel lists every build step.
-In a repository with components, the item combines every component's index and names the component being built, and its panel lists each component with its state.
-A long component identity ends in an ellipsis, and the item's tooltip names it whole.
+Its panel lists each index target of the checkout, the root component first and then each declared component, with its indexing state and a **Rebuild** button that rebuilds only that component's index.
+While a component's index is being built, its row says `An index build is already running.` in place of the button.
+In a repository with components, the item combines every component's index and names the component being built.
+A long component identity ends in an ellipsis, and its tooltip names it whole.
 See [Watch an index build in the review browser](repository-intelligence.md#watch-an-index-build-in-the-review-browser) for what each state means.
 
 ## Several projects
@@ -184,24 +251,24 @@ Choose the workspace's name to open its records through the checkout already ope
 Every checkout of a workspace shows the same roadmap, initiatives, and questions, so choose a checkout only for its own source files and index.
 Every other recent project is listed under its repository, even a repository with one checkout, with its open questions.
 The switcher marks the projects an agent session is using now, and lists workspaces first and then repositories, each in name order, so entries never move while you look.
-When an agent presents a review for another project while a tab is open, that tab shows a notice with a link instead of a second tab opening.
+When an agent presents a review for another project while a tab that can make changes is open, that tab shows a notice with a link instead of a second tab opening.
 
 The app starts with the MCP server of the first Prism session, outlives that session, and exits after 30 minutes with no session and no open viewer.
 A session of a newer Prism release replaces an app of an older release on the same port, and open review pages reload into the new version.
 A session never replaces a newer app.
 
-A new session opens the review browser on its project when no review tab of any project is open.
+A new session opens the review browser on its project when no review tab of any project that can make changes is open.
 Starting several sessions at once opens at most one window.
 Cloud, CI, print-mode, and display-less sessions open nothing.
 Add `- Review browser on start: off` under `## Interaction` in `.prism/workflow.md` to turn this off for a project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every project you work on.
-`Review browser: internal` also turns it off, because only the agent can open the internal browser.
+`Review browser: internal` also turns it off, because only the agent can open the internal browser, and a tab there can only read.
 It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere.
 A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
 When a session falls back on its own, its page shows a banner with the reason, and the agent's review links say that the link belongs to that session, because another session may show the same project at a different link.
 Each fallback also adds a line with the time, project, and reason to `fallbacks.log` in that state directory and to the session's error output.
 
 `prism review` opens the project in the shared review app and returns.
-It opens the system browser only when no review tab is open, and an open tab shows the project or a notice with a link to it instead.
+It opens the system browser only when no review tab that can make changes is open, and such a tab shows the project or a notice with a link to it instead.
 When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
 
 ## Security

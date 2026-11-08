@@ -3,7 +3,8 @@
 // and the record store, its sync, and the record modules form no import cycle.
 const MERGES = [
   { matches: (relative) => relative === "roadmap.json", load: async () => (await import("./roadmap.mjs")).mergeRoadmapRecord },
-  { matches: (relative) => /^initiatives\/[A-Za-z0-9_-]+\/initiative\.json$/.test(relative), load: async () => (await import("./initiative.mjs")).mergeInitiativeRecord }
+  { matches: (relative) => /^initiatives\/[A-Za-z0-9_-]+\/initiative\.json$/.test(relative), load: async () => (await import("./initiative.mjs")).mergeInitiativeRecord },
+  { matches: (relative) => /^initiatives\/[A-Za-z0-9_-]+\/state\.json$/.test(relative), load: async () => (await import("./state.mjs")).mergeCoordinationState }
 ];
 
 /** Whether a store-relative record path has a structural merge. */
@@ -91,15 +92,16 @@ export function mergeHistory(base, local, upstream, limit) {
 /**
  * Merge the order of ids: the relative order of ids on all three sides comes from the side that changed it,
  * and an id that one side added goes right after its nearest preceding id in that side's list, or first.
+ * Where both sides added after the same id, the local addition comes first unless `upstreamFirst` is set.
  */
-export function mergeOrder(label, base, local, upstream, survivors) {
+export function mergeOrder(label, base, local, upstream, survivors, { upstreamFirst = false } = {}) {
   const everywhere = base.filter((id) => local.includes(id) && upstream.includes(id));
   const relative = (list) => list.filter((id) => everywhere.includes(id)).join("\0");
   const [b, l, u] = [base, local, upstream].map(relative);
   if (l !== b && u !== b && l !== u) throw new MergeConflict(`${label} was reordered differently on both sides.`);
   const order = (l !== b ? local : upstream).filter((id) => everywhere.includes(id) && survivors.has(id));
-  // Upstream additions are placed first, so a local addition after the same id lands before them.
-  for (const side of [upstream, local]) {
+  // The side placed first ends up last after a shared predecessor, because the other side's addition is spliced in right after that predecessor.
+  for (const side of upstreamFirst ? [local, upstream] : [upstream, local]) {
     for (const [index, id] of side.entries()) {
       if (order.includes(id) || !survivors.has(id)) continue;
       const before = side.slice(0, index).reverse().find((candidate) => order.includes(candidate));

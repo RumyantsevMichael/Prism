@@ -444,6 +444,10 @@ a.code-link:hover {
   flex: 0 0 auto;
 }
 
+.indexing-component-row .tool-button {
+  flex: 0 0 auto;
+}
+
 .indexing-component-row[data-state="ready"] .indexing-dot { background: var(--good); }
 .indexing-component-row[data-state="interrupted"] .indexing-dot { background: var(--prism-color-warning); }
 .indexing-component-row[data-state="failed"] .indexing-dot { background: var(--danger); }
@@ -4419,4 +4423,271 @@ mark.find-hit {
 .link-preview:has(.preview-diagram) {
   max-height: min(32rem, 80vh);
   max-width: min(37rem, calc(100vw - 1rem));
+}
+
+/* Action lists, such as Initiative settings: each action is a row of its name and effect beside its control, built from the existing components. */
+
+.action-list {
+  display: grid;
+  min-width: 0;
+}
+
+.action-row {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.35rem 1.5rem;
+  grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr);
+  min-width: 0;
+  padding: 0.75rem 0;
+}
+
+.action-row:first-child {
+  border-top: 0;
+  padding-top: 0.15rem;
+}
+
+.action-row:last-child {
+  padding-bottom: 0.15rem;
+}
+
+.action-meta {
+  align-content: start;
+  display: grid;
+  gap: 0.2rem;
+  justify-items: start;
+  min-width: 0;
+}
+
+.action-label {
+  font-size: 0.84rem;
+  font-weight: 650;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.action-row.is-unavailable .action-label {
+  color: var(--ink-muted);
+}
+
+.action-effect {
+  color: var(--ink-muted);
+  font-size: 0.74rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.action-control {
+  align-content: start;
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.action-fields {
+  display: grid;
+  gap: 0.55rem 0.75rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr));
+  min-width: 0;
+}
+
+.action-choice {
+  display: grid;
+  gap: 0.3rem;
+  grid-column: 1 / -1;
+  justify-items: start;
+  min-width: 0;
+}
+
+/* A group whose options do not fit one line wraps, so its outline follows rows rather than a pill. */
+.action-options {
+  border-radius: 0.5rem;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.action-options button {
+  min-height: 1.9rem;
+  overflow-wrap: anywhere;
+}
+
+.action-options button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.action-options button:disabled {
+  cursor: default;
+}
+
+.action-options button:disabled:not([aria-pressed="true"]) {
+  opacity: 0.6;
+}
+
+.action-consequence {
+  font-size: 0.76rem;
+  margin: 0;
+}
+
+.action-field {
+  min-width: 0;
+}
+
+.gate-note input {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  font-size: 0.82rem;
+  min-height: 2.1rem;
+  min-width: 0;
+  padding: 0.35rem 0.65rem;
+  width: 100%;
+}
+
+.gate-note input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: 0;
+}
+
+.gate-note input:disabled,
+.gate-note textarea:disabled {
+  color: var(--ink-muted);
+}
+
+.action-control .gate-actions .tool-button {
+  height: 2rem;
+}
+
+.action-control .gate-hint {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.action-reason {
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.action-notice {
+  font-size: 0.8rem;
+  margin: 0 0 0.65rem;
+  overflow-wrap: anywhere;
+}
+
+.action-loading {
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .action-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* In the index panel each component is one line: its identity and state, then its rebuild control. */
+.index-actions {
+  margin-top: 0.4rem;
+}
+
+.action-list.is-compact .action-row {
+  align-items: center;
+  gap: 0.25rem 0.6rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0.4rem 0;
+}
+
+.action-list.is-compact .action-meta {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.action-list.is-compact .action-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-list.is-compact .action-detail {
+  flex: none;
+}
+
+.action-list.is-compact .action-effect {
+  display: none;
+}
+
+.action-list.is-compact .action-control {
+  justify-items: end;
+}
+
+.action-list.is-compact .gate-actions {
+  flex-wrap: nowrap;
+}
+
+.indexing-panel .action-list.is-compact p.gate-error,
+.indexing-panel .action-list.is-compact p.action-reason {
+  margin: 0;
+  text-align: right;
+}
+
+.action-dialog {
+  width: 30rem;
+}
+
+.action-dialog form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.action-dialog .store-dialog-body p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.action-dialog .store-dialog-header h2 {
+  overflow-wrap: anywhere;
+}
+
+.action-dialog-buttons {
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding: 0.7rem 1rem;
+}
+
+/* Recent changes on Attention: what changed, from what to what, and who says they changed it. */
+.recent-change {
+  border-left-color: var(--info);
+}
+
+.recent-change-values {
+  font-size: 0.84rem;
+  margin: 0.35rem 0 0.2rem;
+  overflow-wrap: anywhere;
+}
+
+.recent-change-before {
+  color: var(--ink-muted);
+}
+
+.recent-change-after {
+  font-weight: 650;
+}
+
+.recent-change-by {
+  font-size: 0.74rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.recent-change-target {
+  overflow-wrap: anywhere;
 }

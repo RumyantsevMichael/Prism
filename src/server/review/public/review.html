@@ -114,6 +114,11 @@
   <prism-dialog id="nav-drawer" heading="Navigation" placement="start"></prism-dialog>
   <prism-dialog id="side-panel-sheet" heading="Side panel" placement="bottom"></prism-dialog>
   <prism-dialog id="store-dialog" heading="Record store" size="lg"></prism-dialog>
+  <prism-dialog id="action-dialog" heading="Confirm the change">
+    <p id="action-dialog-message" class="action-dialog-message"></p>
+    <prism-button slot="footer" id="action-dialog-cancel">Cancel</prism-button>
+    <prism-button slot="footer" id="action-dialog-confirm" variant="primary">Confirm</prism-button>
+  </prism-dialog>
   <prism-dialog id="palette" class="palette" heading="Command palette" size="lg">
     <prism-field id="palette-input" type="search" label="Search or jump to" placeholder="An initiative, slice, document, or file, or text in a document"></prism-field>
     <div class="palette-body">

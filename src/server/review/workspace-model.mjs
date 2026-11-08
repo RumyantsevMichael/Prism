@@ -5,7 +5,8 @@ import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workfl
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
-import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
+import { historyOrder, readCoordinationState } from "../workflow/state.mjs";
+import { readIndexHistory } from "../workflow/index-history.mjs";
 import { keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, locateRecord, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
@@ -14,6 +15,7 @@ import { loadDesignView } from "../workflow/design-view.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 
 const LIBRARY_LIMIT = 500;
+const RECENT_CHANGES_LIMIT = 20;
 const SLICE_FILE_LIMIT = 200;
 const UNRESOLVED = new Set(["OPEN", "IN PROGRESS", "REOPENED"]);
 // Each open page polls every 1.5 s, and one poll reads every record several times, so results are shared for a second.
@@ -437,10 +439,13 @@ async function computeAttention(projectRoot) {
   const answered = [];
   const earlier = [];
   const watch = [];
+  // The person's applied actions: every initiative history of these records, and this checkout's own index history, which no other checkout shares.
+  const changes = (await readIndexHistory(projectRoot).catch(() => ({ history: [] }))).history.map((entry) => ({ ...entry, initiative: null }));
   for (const id of ids) {
     const snapshot = await initiativeSnapshot(projectRoot, config, id, items.get(id));
     const initiative = { id, title: snapshot.title };
     const state = snapshot.state;
+    if (state?.valid) for (const entry of state.state?.history ?? []) changes.push({ ...entry, initiative: id });
     if (state?.exists && !state.valid) {
       watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "state", initiative: id }), message: state.errors.join(" ") });
     }
@@ -500,18 +505,8 @@ async function computeAttention(projectRoot) {
   answered.sort((left, right) => newestFirst(left.answer.answeredAt, right.answer.answeredAt));
   // The newest closed questions come first, across initiatives, so the list stays short.
   earlier.sort((left, right) => newestFirst(left.closedAt, right.closedAt));
-  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
-}
-
-// The browser names the initiative and gate; the state record is always the initiative's own, never a client path.
-export async function answerGate(projectRoot, body) {
-  if (!body || typeof body !== "object" || !SLUG_PATTERN.test(body.initiative ?? "") || typeof body.id !== "string") {
-    throw Object.assign(new Error("An initiative and a gate id are required."), { code: "invalid_answer" });
-  }
-  const choice = typeof body.choice === "string" && body.choice ? body.choice : null;
-  const note = typeof body.note === "string" ? body.note : null;
-  const result = await answerUserGate({ projectRoot, initiative: body.initiative, id: body.id, choice, note });
-  return { gate: result.gate, revision: result.revision };
+  const recentChanges = changes.sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
+  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, recentChanges, gateCount: needsYou.filter((item) => item.type === "gate").length };
 }
 
 function glossaryTerms(content) {

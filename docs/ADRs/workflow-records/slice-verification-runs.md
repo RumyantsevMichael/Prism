@@ -49,7 +49,7 @@ Requiring review for every slice was rejected because the benchmark found no qua
 Completion now proves that the configured tests passed on the content being marked done.
 Projects need a git work tree and a configured test command to use the leaner flow.
 A long test suite holds a tool call open, so hosts that cannot keep it open receive an early running answer and call again to keep waiting.
-Anyone who can open the review session URL can allow a command for the user, as with any other gate answer.
+Only a review tab that holds a write session, which Prism opens with a one-time grant, can allow a command for the user, as with any other gate answer.
 In a cloud session the agent records the user's approval, so the approval rests on the agent quoting the user truthfully; that session's agent can already run commands through the host's own shell tool.
 
 ## Mechanism

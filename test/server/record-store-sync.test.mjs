@@ -421,15 +421,32 @@ test("caps a merged roadmap history at 500 entries and keeps both new entries", 
 
 test("keeps Git's line merge for a record kind without a structural merge", async (context) => {
   const value = await machines(context);
+  const claim = { kind: "claim", initiative: "reports", slice: "s1" };
   const lines = (first, last) => `{\n"first": ${first},\n"second": 0,\n"third": 0,\n"fourth": 0,\n"last": ${last}\n}\n`;
-  await writeRecord(value.a, STATE, lines(0, 0));
+  await writeRecord(value.a, claim, lines(0, 0));
   await syncRecordStore(value.storeA);
   await syncRecordStore(value.storeB);
-  await writeRecord(value.a, STATE, lines(1, 0));
-  await writeRecord(value.b, STATE, lines(0, 2));
+  await writeRecord(value.a, claim, lines(1, 0));
+  await writeRecord(value.b, claim, lines(0, 2));
   const status = await syncBoth(value);
   assert.equal(status.state, "ok");
-  assert.equal(await storeBytes(value.storeB, STATE_FILE), lines(1, 2));
+  assert.equal(await storeBytes(value.storeB, "initiatives/reports/claims/s1.json"), lines(1, 2));
+  assert.equal(await savedConflicts(value.storeB), false);
+});
+
+test("merges a coordination state by its structure where Git's line merge would conflict", async (context) => {
+  const value = await machines(context);
+  const entry = (id, at) => ({ id: id.padEnd(32, "0"), action: "initiative.push", target: "initiative:reports", before: "off", after: "on", at, by: { name: "Ada", email: null, checkout: "reports/main on a" }, via: "review-app" });
+  const state = (history, extra = {}) => `${JSON.stringify({ schemaVersion: 1, settings: {}, active: [], pending: [], next: [], evidence: [], history, ...extra }, null, 2)}\n`;
+  const [a, b] = [entry("a1", "2026-11-05T10:00:00.000Z"), entry("b1", "2026-11-05T10:00:01.000Z")];
+  await writeRecord(value.a, STATE, state([]));
+  await syncRecordStore(value.storeA);
+  await syncRecordStore(value.storeB);
+  await writeRecord(value.a, STATE, state([a]));
+  await writeRecord(value.b, STATE, state([b], { next: ["Implement reports."] }));
+  const status = await syncBoth(value);
+  assert.equal(status.state, "ok");
+  assert.equal(await storeBytes(value.storeB, STATE_FILE), state([a, b], { next: ["Implement reports."] }));
   assert.equal(await savedConflicts(value.storeB), false);
 });
 

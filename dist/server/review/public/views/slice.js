@@ -4,6 +4,7 @@ import { sliceRunTotalsHtml } from "./run-totals.js";
 import { codeParts } from "./code-location.js";
 import { claimChip } from "./claims.js";
 import { componentChip } from "./components.js";
+import { mountInitiativeSettings } from "./actions.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
@@ -316,7 +317,10 @@ export async function render(container, entity, ctx) {
       ${reviewCard(artifacts.review, ctx)}
       ${slice.design ? "" : legacyChangeMapCard(artifacts.changeMap, ctx)}
     </div>
-    ${card("Slice folder", artifacts.files.length ? `<ul class="plain-list">${artifacts.files.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder is empty."), { eyebrow: plural(artifacts.files.length, "file") })}`;
+    ${card("Slice folder", artifacts.files.length ? `<ul class="plain-list">${artifacts.files.map((file) => `<li>${artifactChip(file, ctx, file.slice(artifacts.folder.length + 1))}</li>`).join("")}</ul>` : emptyNote("The slice folder is empty."), { eyebrow: plural(artifacts.files.length, "file") })}
+    <div data-initiative-settings></div>`;
+  // A slice page changes its initiative's settings, so the card names the initiative they belong to.
+  mountInitiativeSettings(container.querySelector("[data-initiative-settings]"), { target: `slice:${data.id}/${data.slug}`, eyebrow: `Initiative: ${data.initiativeTitle}`, ctx });
   bindLinks(container, ctx);
   container.addEventListener("click", (event) => {
     const link = event.target.closest("[data-clause]");

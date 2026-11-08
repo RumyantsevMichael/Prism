@@ -22,6 +22,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 
 ### Shipped
 
+- **Initiative settings from the review app** (`initiative-settings-actions`): Let the person change an initiative's orchestration settings from the review app through a generic, revision-checked action mechanism that only the person's page can write and that later actions reuse unchanged. Shipped 2026-11-08.
 - **Components in one repository** (`components`): Let a repository declare components with their own test commands and dependencies, keep each leaf slice inside one component, run dependents' tests when a spanning scope finishes, and prepare the native index per component so a large monorepo fits its limits. Shipped 2026-11-07.
 - **Repository names in a shared store** (`repository-names`): Name each repository that shares a record store by a committed name the store registers with its remote, and let each machine know where its checkouts of each repository are. Shipped 2026-11-03.
 

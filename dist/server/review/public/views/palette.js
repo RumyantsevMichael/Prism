@@ -3,9 +3,9 @@
 // Above 720px a preview of the active result sits beside the results.
 import { claimElement } from "./claim-index.js";
 
-const KIND_ORDER = ["place", "initiative", "slice", "requirement", "decision", "term", "record", "file"];
-const GROUPS = { place: "Places", initiative: "Initiatives", slice: "Slices", requirement: "Requirements", decision: "Decisions", term: "Glossary terms", record: "Records", file: "Files", text: "Text in documents" };
-const KINDS = { place: "Place", initiative: "Initiative", slice: "Slice", requirement: "Requirement", decision: "Decision", term: "Term", file: "File" };
+const KIND_ORDER = ["action", "place", "initiative", "slice", "requirement", "decision", "term", "record", "file"];
+const GROUPS = { action: "Settings on this page", place: "Places", initiative: "Initiatives", slice: "Slices", requirement: "Requirements", decision: "Decisions", term: "Glossary terms", record: "Records", file: "Files", text: "Text in documents" };
+const KINDS = { action: "Setting", place: "Place", initiative: "Initiative", slice: "Slice", requirement: "Requirement", decision: "Decision", term: "Term", file: "File" };
 const RESULT_LIMIT = 40;
 const TEXT_SEARCH_DELAY_MS = 200;
 const TEXT_SEARCH_MINIMUM = 3;
@@ -58,7 +58,7 @@ export function createPalette({ dialog, field, results, preview, entries, onOpen
     const all = entries();
     matches = text
       ? all.map((entry) => ({ entry, rank: rank(entry, text, tokens) })).filter((item) => item.rank).sort(compare).slice(0, RESULT_LIMIT).map((item) => item.entry)
-      : all.filter((entry) => entry.kind === "place" || entry.kind === "initiative").slice(0, RESULT_LIMIT);
+      : all.filter((entry) => entry.kind === "action" || entry.kind === "place" || entry.kind === "initiative").slice(0, RESULT_LIMIT);
     textMatches = [];
     clearTimeout(searchTimer);
     const current = ++searchRequest;
@@ -166,7 +166,9 @@ export function createPalette({ dialog, field, results, preview, entries, onOpen
     const entry = all()[index];
     if (!entry) return;
     hide();
-    onOpen(entry.ref, { find: entry.find ?? null });
+    // An action entry of the shown page moves focus to that action's control instead of opening anything.
+    if (entry.run) entry.run();
+    else onOpen(entry.ref, { find: entry.find ?? null });
   }
 
   function show() {

@@ -200,14 +200,14 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
   }
 
   function present(projectRoot, { tabs, open }) {
-    return call("POST", "/control/present", { projectRoot, ...(tabs === undefined ? {} : { tabs }), open, ...storage });
+    return call("POST", "/control/present", { projectRoot, ...(tabs === undefined ? {} : { tabs }), open, acceptsGrant: true, ...storage });
   }
 
   // Opens a browser at session start only while no tab of any project is connected, so many sessions open at most one window.
   async function openAtStart(projectRoot) {
     await register(projectRoot);
     if (replaced) await sleep(reconnectGraceMs);
-    return call("POST", "/control/present", { projectRoot, open: true, start: true, ...storage });
+    return call("POST", "/control/present", { projectRoot, open: true, start: true, acceptsGrant: true, ...storage });
   }
 
   // Starts the app without a project, for a host that names its project only with its first tool call.

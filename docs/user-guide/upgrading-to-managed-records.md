@@ -53,4 +53,4 @@ Attention lists every recorded question with the artifacts to inspect, including
 In Claude Code the agent waits for your browser answer in a background tool call and resumes on its own.
 The wait needs a tool timeout longer than Claude Code's background handoff: keep `MCP_TOOL_TIMEOUT` unset or above two minutes.
 Elsewhere, or when the wait cannot run in the background, send any message after answering, and the agent receives the answer with it.
-Anyone who can open the review page's URL can answer for you, so do not share that URL.
+Only a tab that Prism opened can answer; a tab opened from a review URL that an agent printed can only read, as [Which tabs can make changes](review-browser.md#which-tabs-can-make-changes) explains.
