@@ -3,7 +3,7 @@ import { cp, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promise
 import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { gitTransportPath } from "./git-local-repository.mjs";
-import { describeUnsafeEntry, gitTimeoutMs, gitTooOld, helperForRepositories, localRemoteRepository, markManagedStore, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
+import { describeUnsafeEntry, gitTimeoutMs, gitTooOld, gitUrlText, helperForRepository, localRemoteRepository, markManagedStore, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
 import { legacyStoresDirectory, managedStoreId, managedStoresDirectory, normalizeRemote, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 
 // A record store named by its remote lives in a clone Prism keeps in its application folder, one per remote, shared by every checkout and host that names it.
@@ -99,10 +99,14 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
       // The remote is named origin, as every sync of a managed clone expects, whatever the person's clone.defaultRemoteName.
       // A local remote's upload-pack runs on this machine, so it reads no hook or command that the remote's own files name, as in every sync,
       // and the clone names the repository that Git enters for the remote's URL by its path, with --no-local so Git still checks every object, then records the remote as Git records it.
+      // A remote whose URL Git reaches as a local path where it finds no repository is not cloned, so no helper starts anywhere for it.
       const url = await runGit(directory, ["ls-remote", "--get-url", configured]);
-      const local = await localRemoteRepository(url.ok && url.text ? url.text : configured, directory, { clone: true }).catch((error) => { throw unavailable(error.message); });
-      const helper = local ? await helperForRepositories("--upload-pack", local.path ? [local.path] : []).catch((error) => { throw unavailable(error.message); }) : [];
-      const source = local?.path ? ["--no-local", "--", local.path] : ["--", configured];
+      let reached = configured;
+      try { if (url.ok && url.text) reached = gitUrlText(url); } catch (error) { throw unavailable(error.message); }
+      const local = await localRemoteRepository(reached, directory).catch((error) => { throw unavailable(error.message); });
+      if (local?.stops) throw unavailable(`Git could not clone it: no Git repository is found at the local remote ${withoutCredentials(reached)}.`);
+      const helper = local ? await helperForRepository("--upload-pack", local.path, directory).catch((error) => { throw unavailable(error.message); }) : [];
+      const source = local ? ["--no-local", "--", local.path] : ["--", configured];
       const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--no-checkout", "--origin", "origin", "--config", "core.longpaths=true", "--config", "core.symlinks=false", ...helper, ...source, temporary]);
       if (cloned.missing) throw unavailable("Git is not available, so the remote store cannot be cloned.");
       if (!cloned.ok) throw unavailable(`Git could not clone it: ${withoutCredentials(cloned.stderr) || `git clone exited with code ${cloned.code}.`}`);

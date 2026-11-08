@@ -781,7 +781,7 @@ async function unpublished(base) {
 // and an alternate refs command that lists nothing, since an empty one makes every push's connectivity check print that it cannot run it.
 // A -c setting reaches the helper's own children too, since Git passes it on to every Git command it starts.
 // An SSH server or a Git daemon takes that command as the service to run and refuses it, and HTTP ignores it, so only a local transport gets it.
-// The command names such a remote by the path of the repository Git enters for its URL, so the hook names come from the repository that the helper opens.
+// The command names such a remote by the path of the repository Git enters for its URL, and the helper enters that same repository whatever path Git hands it, so the hook names come from the repository that the helper opens.
 // A remote.<name>.uploadpack or remote.<name>.receivepack that the person set is a transport setting of theirs, so it runs as they set it.
 const NO_HOOKS = "no-hooks";
 // Every hook event that Git's documentation lists, so no event the helper or a command it starts runs has a configured hook left on.
@@ -791,6 +791,12 @@ const HOOK_EVENTS = ["applypatch-msg", "commit-msg", "fsmonitor-watchman", "post
 const REMOTE_HELPER_CONFIG = ["core.alternateRefsCommand=exit 0;", "core.alternateRefsPrefixes=", "receive.denyCurrentBranch=refuse", "core.fsmonitor=",
   "receive.autogc=false", "gc.auto=0", "gc.autoPackLimit=0", "maintenance.auto=false", ...HOOK_EVENTS.map((event) => `hook.${event}.enabled=false`)];
 const shellQuoted = (text) => `'${text.replaceAll("'", "'\\''")}'`;
+// Git starts a local transport's helper through the shell as one command line, the helper's text, a space, and the path Git reached quoted for the shell
+// (connect.c's git_connect and run-command.c's prepare_shell_cmd, from Git 2.25 through the current release and in Git for Windows).
+// So the helper is a shell function that runs Git's helper in the repository its own text names, and the path Git appends is only the function's argument, which it ignores:
+// no url.<base>.insteadOf or url.<base>.pushInsteadOf rule, and no other rewrite of the path, changes the repository that the helper enters.
+const PINNED_HELPER = "prism_pinned_helper";
+const UTF8_EXACT = new TextDecoder("utf-8", { fatal: true });
 
 // Whether Git reaches a remote URL by its local transport, by Git's own rules in transport.c and connect.c.
 export { localTransport };
@@ -811,83 +817,130 @@ async function configuredHooks(repository) {
   // Git exits with 1 when no key matches.
   const listed = await git(repository, [`--git-dir=${repository}`, "config", "--null", "--get-regexp", "^hook\\."]);
   const names = new Set();
-  for (const entry of listed.ok ? listed.stdout.toString("utf8").split("\0") : []) {
-    const key = entry.split("\n", 1)[0];
-    const match = /^hook\.(.+)\.(command|event|parallel)$/i.exec(key);
+  for (const entry of listed.ok ? listed.stdout.toString("latin1").split("\0") : []) {
+    const key = Buffer.from(entry.split("\n", 1)[0], "latin1");
+    let text;
+    // A -c setting is passed as UTF-8 text, so a hook whose name is not UTF-8 cannot be turned off by name.
+    try { text = UTF8_EXACT.decode(key); }
+    catch { throw new Error("The remote store's Git configuration sets up a hook whose name is not UTF-8, which Prism cannot turn off, so it does not sync with that remote. Remove that hook's settings from the remote repository's configuration."); }
+    const match = /^hook\.(.+)\.(command|event|parallel)$/i.exec(text);
     if (match) names.add(match[1]);
   }
   return [...names];
 }
 
 /**
- * The options that name the remote-side helper, --upload-pack or --receive-pack, for the Git directories it enters, each by the absolute path that localRepository found and Git takes on its command line.
- * Git runs the helper through the shell, so each setting is quoted for it.
+ * Refuse a repository path that one of the person's url.<base>.insteadOf rules, or for a push url.<base>.pushInsteadOf rules, would rewrite when Git reads it from the command line, as remote.c's alias_url does for any URL, from a folder.
+ * Git would then reach another place than the repository whose hook names were read, by another transport too, so Prism does not use that path.
  */
-export async function helperForRepositories(option, repositories) {
+async function refuseRewrite(option, repository, base) {
+  const listed = await git(base, ["config", "--null", "--get-regexp", "^url\\..*\\.(push)?insteadof$"]);
+  if (!listed.ok) return;
+  const bytes = Buffer.from(repository);
+  for (const entry of listed.stdout.toString("latin1").split("\0")) {
+    const split = entry.indexOf("\n");
+    if (split < 0) continue;
+    const kind = entry.slice(0, split).endsWith(".pushinsteadof") ? "pushInsteadOf" : "insteadOf";
+    if (kind === "pushInsteadOf" && option !== "--receive-pack") continue;
+    const prefix = Buffer.from(entry.slice(split + 1), "latin1");
+    if (bytes.subarray(0, prefix.length).equals(prefix)) {
+      throw new Error(`A url.<base>.${kind} rule in Git's configuration matches ${repository}, the repository that the store's local remote reaches, so Git would reach another place for that path than the repository Prism checked, and Prism does not sync with that remote. Change the rule so that it no longer matches that path.`);
+    }
+  }
+}
+
+/**
+ * The options that name the remote-side helper, --upload-pack or --receive-pack, for the Git directory it enters, by the absolute path that localRepository found and Git takes on its command line, run from a folder.
+ * The helper runs Git's helper in that repository whatever path Git hands it, and each setting is quoted for the shell.
+ */
+export async function helperForRepository(option, repository, base) {
   const program = option === "--receive-pack" ? "receive-pack" : "upload-pack";
-  const named = [...new Set((await Promise.all(repositories.map(configuredHooks))).flat())];
+  await refuseRewrite(option, repository, base);
+  const named = await configuredHooks(repository);
   // A -c setting splits its key from its value at the first equals sign, so a hook whose name holds one cannot be turned off by name.
   const unnamed = named.find((name) => name.includes("="));
   if (unnamed !== undefined) throw new Error(`The remote store's Git configuration sets up a hook named "${unnamed}", which Prism cannot turn off, so it does not sync with that remote. Remove the hook.${unnamed}.* settings from the remote repository's configuration.`);
   const settings = [`core.hooksPath=${await noHooksFolder()}`, ...REMOTE_HELPER_CONFIG, ...named.map((name) => `hook.${name}.enabled=false`)].map((setting) => `-c ${shellQuoted(setting)}`);
+  const command = `git ${settings.join(" ")} ${program} ${shellQuoted(repository)}`;
   // receive-pack checks a signed push's certificate with the gpg program the remote's configuration names, and only the remote's hooks, which never run, read the result, so a push sends none.
-  return [`${option}=git ${settings.join(" ")} ${program}`, ...(program === "receive-pack" ? ["--no-signed"] : [])];
+  return [`${option}=${PINNED_HELPER}() { exec ${command}; }; ${PINNED_HELPER}`, ...(program === "receive-pack" ? ["--no-signed"] : [])];
 }
 
 /**
- * The repository that Git enters for a remote URL from a folder, as localRepository finds it: null for another transport, { path }, or { stops: true } when Git finds none and fails on its own.
+ * The repository that Git enters for a remote URL from a folder, as localRepository finds it: null for another transport, { path }, or { stops: true } when Git finds none.
  * A local URL whose repository Prism cannot find the way Git does is refused with a message that names it.
  */
-export async function localRemoteRepository(url, base, options) {
-  try { return await localRepository(url, base, options); }
+export async function localRemoteRepository(url, base) {
+  try { return await localRepository(url, base); }
   catch (error) {
     if (!(error instanceof UnresolvableLocalRemote)) throw error;
-    throw new Error(`Prism cannot tell which repository Git opens for the local remote ${url}, because ${error.message}, so it does not use that remote. Name the remote repository by its absolute path or by a file:// URL of that path.`);
+    throw new Error(`Prism cannot tell which repository Git opens for the local remote ${withoutCredentials(url)}, because ${error.message}, so it does not use that remote. ${error.hint ?? "Name the remote repository by its absolute path or by a file:// URL of that path."}`);
+  }
+}
+
+/** Why a sync neither fetches from nor pushes to a local remote URL at which Git finds no repository, so no helper ever starts there. */
+export const noLocalRepository = (url) => `No Git repository is found at the local remote ${withoutCredentials(url)}, so Prism neither fetched from it nor pushed to it.`;
+
+/**
+ * The URLs that Git printed, one per line, as text when they are UTF-8; a local path that is not, which Node would read as another path, is refused.
+ */
+export function gitUrlText(result) {
+  const bytes = result.stdout.subarray(0, result.stdout.length - (result.stdout.at(-1) === 0x0a ? 1 : 0));
+  try { return UTF8_EXACT.decode(bytes); }
+  catch {
+    if (!bytes.toString("latin1").split("\n").some((url) => localTransport(url))) return result.text;
+    throw new Error("The store's remote URL is a local path that is not UTF-8, so Prism cannot tell which repository Git opens for it and does not use that remote. Rename the folders on the way to the remote repository so that every name is UTF-8.");
   }
 }
 
 /**
  * The options that name the remote-side helper, --upload-pack or --receive-pack, of a fetch, clone, or push from a folder whose remote Git reaches at any of these URLs by its local transport; none for any other remote.
- * The hook names come from each repository that Git enters for those URLs.
+ * The hook names come from the one repository that Git enters for those URLs, and a local URL at which Git finds none, or URLs that reach two repositories, are refused.
  */
 export async function remoteHelperOption(option, urls, base = process.cwd()) {
   const found = await Promise.all(urls.map((url) => localRemoteRepository(url, base)));
   if (found.every((entry) => entry === null)) return [];
-  return helperForRepositories(option, found.filter((entry) => entry?.path).map((entry) => entry.path));
+  const missing = urls.find((url, at) => found[at]?.stops);
+  if (missing !== undefined) throw new Error(noLocalRepository(missing));
+  const paths = [...new Set(found.filter((entry) => entry?.path).map((entry) => entry.path))];
+  if (paths.length > 1) throw new Error(`The URLs ${urls.map(withoutCredentials).join(", ")} reach more than one local repository, and a helper enters only one.`);
+  return helperForRepository(option, paths[0], base);
 }
 
 /**
- * What a fetch or a push of a remote names on its command line, one { target, helper } for each repository it reaches.
- * A remote that Git reaches by its local transport is named by the absolute path of the repository Git enters for it, which Git enters again for that path, so the helper's hook names are read from the very repository the fetch or push opens,
+ * What a fetch or a push of a remote names on its command line: { targets }, one { target, helper } for each repository it reaches, or { missing } with why it reaches none.
+ * A remote that Git reaches by its local transport is named by the absolute path of the repository Git enters for it, and its helper enters that repository whatever path Git hands it, so the helper's hook names are read from the very repository the fetch or push opens,
  * and the person's remote, URLs, url.<base>.insteadOf, and url.<base>.pushInsteadOf settings stay as they are, since only the command line changes.
+ * A local URL at which Git finds no repository is neither fetched nor pushed, so no helper starts anywhere for it.
  * Any other remote, and one whose remote.<name>.uploadpack, remote.<name>.receivepack, or remote.<name>.vcs the person set, is named as it is.
  */
 async function remoteTargets(base, remote, option) {
-  const asIs = [{ target: remote, helper: [] }];
+  const asIs = { targets: [{ target: remote, helper: [] }] };
   const key = option === "--receive-pack" ? "receivepack" : "uploadpack";
   for (const setting of [key, "vcs"]) if ((await git(base, ["config", "--get", `remote.${remote}.${setting}`])).ok) return asIs;
   const urls = option === "--receive-pack" ? await pushUrls(base, remote) : [await fetchUrl(base, remote)];
   const found = await Promise.all(urls.map((url) => localRemoteRepository(url, base)));
   if (found.every((entry) => entry === null)) return asIs;
-  const paths = found.filter((entry) => entry?.path).map((entry) => entry.path);
-  const helper = await helperForRepositories(option, paths);
-  // Git finds no repository at the remote's local URL, so the command names the remote as it is and fails with Git's own message.
-  if (!paths.length) return [{ target: remote, helper }];
+  const missing = urls.find((url, at) => found[at]?.stops);
+  if (missing !== undefined) return { missing: noLocalRepository(missing) };
   const other = urls.find((url, at) => !found[at]?.path);
-  if (other !== undefined) throw new Error(`A push to the remote ${remote} reaches ${other} as well as a local repository, and Prism names a local repository by its own path, so it does not push to that remote. Give each repository a remote of its own.`);
-  return [...new Set(paths)].map((target) => ({ target, helper }));
+  if (other !== undefined) throw new Error(`A push to the remote ${remote} reaches ${withoutCredentials(other)} as well as a local repository, and Prism names a local repository by its own path, so it does not push to that remote. Give each repository a remote of its own.`);
+  const paths = [...new Set(found.map((entry) => entry.path))];
+  // Every helper is built, and every hook name checked, before any repository is fetched or pushed.
+  const helpers = await Promise.all(paths.map((target) => helperForRepository(option, target, base)));
+  return { targets: paths.map((target, at) => ({ target, helper: helpers[at] })) };
 }
 
 // The URL a fetch reaches, after url.<base>.insteadOf, for a configured remote or a URL.
 async function fetchUrl(base, remote) {
   const url = await git(base, ["ls-remote", "--get-url", remote]);
-  return url.ok && url.text ? url.text : remote;
+  return url.ok && url.text ? gitUrlText(url) : remote;
 }
 
 // Every URL a push reaches, after pushurl and url.<base>.pushInsteadOf; a push to a configured remote goes to each.
 async function pushUrls(base, remote) {
   const named = await git(base, ["remote", "get-url", "--push", "--all", remote]);
-  return named.ok && named.text ? named.text.split("\n") : [await fetchUrl(base, remote)];
+  return named.ok && named.text ? gitUrlText(named).split("\n") : [await fetchUrl(base, remote)];
 }
 
 // Git checks every object a fetch receives, so a tree that a teammate built with a name such as "..", ".git", or an empty one fails the fetch, and the sync's own check of the upstream's tree still guards every write.
@@ -895,11 +948,14 @@ async function pushUrls(base, remote) {
 // A configured remote is fetched with its branches mapped to refs/remotes/<remote>/ on the command line, so the fetch removes the remote-tracking branches that the remote no longer holds,
 // and the commits the push check takes as known are ones the remote still has, while no remote.<name>.fetch refspec of the person's decides which other refs it removes.
 // It fetches no tag, removes no tag, writes no commit-graph file, and fetches no submodule, whatever the person's fetch settings.
-async function fetchCommand(base, remote) {
+// Returns Git's result, or a failed one whose message says why a local remote with no repository was not fetched.
+async function fetchRemote(base, remote) {
   const named = (await git(base, ["remote", "get-url", remote])).ok;
-  const [{ target, helper }] = await remoteTargets(base, remote, "--upload-pack");
-  return ["-c", "fetch.fsckObjects=true", "fetch", "--quiet", "--prune", "--no-prune-tags", "--no-tags", "--no-recurse-submodules", "--no-write-commit-graph",
-    ...helper, target, ...(named ? [`+refs/heads/*:refs/remotes/${remote}/*`] : [])];
+  const { targets, missing } = await remoteTargets(base, remote, "--upload-pack");
+  if (missing) return { ok: false, stderr: missing };
+  const [{ target, helper }] = targets;
+  return git(base, ["-c", "fetch.fsckObjects=true", "fetch", "--quiet", "--prune", "--no-prune-tags", "--no-tags", "--no-recurse-submodules", "--no-write-commit-graph",
+    ...helper, target, ...(named ? [`+refs/heads/*:refs/remotes/${remote}/*`] : [])]);
 }
 
 // A remote named in the store's configuration, whose remote.<name>.mirror setting would make Git refuse a push of one refspec, rather than a URL, which has no such setting.
@@ -912,7 +968,8 @@ const REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  * Returns Git's result for the first push that failed, or for the last one.
  */
 async function pushBranch(base, remote, destination, { setUpstream } = {}) {
-  const targets = await remoteTargets(base, remote, "--receive-pack");
+  const { targets, missing } = await remoteTargets(base, remote, "--receive-pack");
+  if (missing) return { ok: false, stderr: missing };
   const byName = targets.length === 1 && targets[0].target === remote;
   const named = (await git(base, ["remote", "get-url", remote])).ok;
   const pushed = (await required(base, ["rev-parse", "--verify", "HEAD"])).text;
@@ -954,7 +1011,7 @@ async function sync(base, options) {
   for (let attempt = 1; attempt <= PUSH_ATTEMPTS; attempt++) {
     // A merge left unapplied keeps the branch where it was, so files it replaced and local writes are committed and merged again.
     if (attempt > 1) await commitLocal(base, author, run);
-    const fetched = await git(base, await fetchCommand(base, upstream.remote));
+    const fetched = await fetchRemote(base, upstream.remote);
     if (!fetched.ok) return report({ state: "fetch_failed", message: fetched.stderr, ...await counts(base) });
     lastFetch.set(base, Date.now());
     const merged = await merge(base, author, options, run);
@@ -1001,7 +1058,7 @@ function withheldIn(status, withheld) {
 async function publishBranch(base, author, options) {
   const branch = (await git(base, ["symbolic-ref", "--quiet", "--short", "HEAD"])).text;
   if (!branch || !(await git(base, ["config", "--local", "--get", "remote.origin.url"])).ok) return { upstream: null };
-  const fetched = await git(base, await fetchCommand(base, "origin"));
+  const fetched = await fetchRemote(base, "origin");
   if (!fetched.ok) return { status: { state: "fetch_failed", message: fetched.stderr } };
   lastFetch.set(base, Date.now());
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);

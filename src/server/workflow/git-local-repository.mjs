@@ -8,14 +8,38 @@ import path from "node:path";
 // as Git 2.25 through the current release do.
 // A sync names that repository on Git's command line and reads its settings, so the repository whose settings Prism reads is the one Git opens.
 
-/** A local URL whose repository Prism cannot find the way Git would; the sync or the first clone refuses it. */
-export class UnresolvableLocalRemote extends Error {}
+/** A local URL whose repository Prism cannot find the way Git would; the sync or the first clone refuses it, and hint, when set, says what the person can change. */
+export class UnresolvableLocalRemote extends Error {
+  constructor(message, hint) {
+    super(message);
+    this.hint = hint;
+  }
+}
 
 // Git stops before it starts any helper for the URL, as when it finds no repository, so the command can name the URL as it is and fail with Git's own message.
 const STOPS = Object.freeze({ stops: true });
 // The longest path, in bytes, that enter_repo takes; Git for Windows' limit is not known here, so a longer path there cannot be resolved.
 const PATH_MAX = { linux: 4096, darwin: 1024, freebsd: 1024, openbsd: 1024 };
 const SCHEME = "[A-Za-z0-9][A-Za-z0-9+.-]*";
+const UTF8 = new TextDecoder("utf-8", { fatal: true });
+const NOT_UTF8_HINT = "Rename the folders on the way to the remote repository so that every name is UTF-8, then name the repository by its path.";
+
+// Node opens a path by its UTF-8 text, so a name that is not UTF-8, which Node would decode with replacement characters into another path, is refused rather than read as one.
+function exactText(bytes, where) {
+  try { return UTF8.decode(bytes); }
+  catch { throw new UnresolvableLocalRemote(`${where} holds a name that is not UTF-8`, NOT_UTF8_HINT); }
+}
+
+// A real path, as its bytes spell it.
+async function realPathText(file) {
+  return exactText(await realpath(file, { encoding: "buffer" }), `the path ${file}`);
+}
+
+// A home folder that Node read from the environment or the password database, where a name that is not UTF-8 is already replaced.
+function exactHome(home, where) {
+  if (home.includes("\uFFFD")) throw new UnresolvableLocalRemote(`${where} holds a name that is not UTF-8`, NOT_UTF8_HINT);
+  return home;
+}
 
 const isDirSep = (platform, character) => character === "/" || (platform === "win32" && character === "\\");
 
@@ -66,7 +90,7 @@ function urlDecode(url) {
     out.push(bytes[at]);
   }
   try { return url.slice(0, colon) + new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(out)); }
-  catch { throw new UnresolvableLocalRemote(`"${url}" decodes to a path that is not UTF-8`); }
+  catch { throw new UnresolvableLocalRemote(`"${url}" decodes to a path that is not UTF-8`, NOT_UTF8_HINT); }
 }
 
 // host_end without unwrapping: an IPv6-style [host], after the last @ when one is followed by [, ends at its closing bracket, and any other host ends where it starts.
@@ -151,7 +175,7 @@ const GIT_SPACE = new Set([0x20, 0x09, 0x0a, 0x0d]);
 async function validHead(platform, cwd, file) {
   const found = await lstat(onDisk(platform, cwd, file)).catch(() => null);
   if (!found) return false;
-  if (found.isSymbolicLink()) return (await readlink(onDisk(platform, cwd, file)).catch(() => "")).startsWith("refs/");
+  if (found.isSymbolicLink()) return (await readlink(onDisk(platform, cwd, file), { encoding: "buffer" }).catch(() => Buffer.alloc(0))).subarray(0, 5).toString("latin1") === "refs/";
   if (found.isDirectory()) return false;
   if (!found.isFile()) throw new UnresolvableLocalRemote(`its HEAD ${file} is not a file`);
   const handle = await open(onDisk(platform, cwd, file), "r").catch(() => null);
@@ -172,13 +196,17 @@ async function validHead(platform, cwd, file) {
 
 // strbuf_realpath with die_on_error: every component must resolve except a missing last one.
 async function gitRealPath(platform, file) {
-  try { return await realpath(file); }
+  let found;
+  try { found = await realpath(file, { encoding: "buffer" }); }
   catch (error) {
     if (error.code !== "ENOENT") throw STOPS;
     const parent = platform === "win32" ? path.win32.dirname(file) : path.posix.dirname(file);
     if (parent === file) throw STOPS;
-    try { return path.join(await realpath(parent), path.basename(file)); } catch { throw STOPS; }
+    let real;
+    try { real = await realpath(parent, { encoding: "buffer" }); } catch { throw STOPS; }
+    return path.join(exactText(real, `the path ${parent}`), path.basename(file));
   }
+  return exactText(found, `the path ${file}`);
 }
 
 // is_git_directory: a valid HEAD, and objects and refs folders in the repository's common folder, which a commondir file names for a linked worktree's Git directory.
@@ -190,8 +218,11 @@ async function isGitDirectory(platform, cwd, suspect) {
     let data;
     try { data = await readFile(onDisk(platform, cwd, commondir)); } catch { throw STOPS; }
     if (!data.length) throw STOPS;
-    let text = data.toString("utf8").replace(/[\r\n]+$/, "");
-    if (text.includes("\0")) text = text.slice(0, text.indexOf("\0"));
+    let length = data.length;
+    while (data[length - 1] === 0x0a || data[length - 1] === 0x0d) length--;
+    let named = data.subarray(0, length);
+    if (named.includes(0)) named = named.subarray(0, named.indexOf(0));
+    const text = exactText(named, `its commondir file ${commondir}`);
     common = await gitRealPath(platform, onDisk(platform, cwd, isAbsolute(platform, text) ? text : `${suspect}/${text}`));
   } else {
     common = onDisk(platform, cwd, suspect);
@@ -212,7 +243,7 @@ async function gitFileTarget(platform, cwd, file) {
   if (length < 9) throw STOPS;
   let named = contents.subarray(8, length);
   if (named.includes(0)) named = named.subarray(0, named.indexOf(0));
-  let directory = named.toString("utf8");
+  let directory = exactText(named, `its .git file ${file}`);
   const slash = file.lastIndexOf("/");
   if (!isAbsolute(platform, directory) && slash >= 0) directory = `${file.slice(0, slash + 1)}${directory}`;
   if (!(await isGitDirectory(platform, cwd, directory))) throw STOPS;
@@ -239,13 +270,14 @@ async function enterRepo(text, { platform, cwd, env }) {
       home = env.HOME;
       if (home === undefined && platform === "win32") throw new UnresolvableLocalRemote("HOME is not set, and Git for Windows then finds a home folder of its own");
       if (home === undefined) return STOPS;
+      exactHome(home, "HOME");
     } else {
       // Git for Windows has no password database, so ~user names no folder there.
       if (platform === "win32") return STOPS;
       let me = null;
       try { me = os.userInfo(); } catch { me = null; }
       if (!me || me.username !== user) throw new UnresolvableLocalRemote(`Prism cannot look up the home folder of the user ${user}`);
-      home = me.homedir;
+      home = exactHome(me.homedir, `the home folder of ${user}`);
     }
     used = `${home}${used.slice(slash)}`;
   }
@@ -254,7 +286,8 @@ async function enterRepo(text, { platform, cwd, env }) {
     const found = await statOf(onDisk(platform, cwd, candidate));
     if (!found || !(found.isFile() || (found.isDirectory() && await isGitDirectory(platform, cwd, candidate)))) continue;
     const target = (await gitFileTarget(platform, cwd, candidate)) ?? onDisk(platform, cwd, candidate);
-    const entered = await realpath(target).catch(() => null);
+    const real = await realpath(target, { encoding: "buffer" }).catch(() => null);
+    const entered = real && exactText(real, `the path ${target}`);
     if (!entered || !(await statOf(entered))?.isDirectory()) return STOPS;
     return (await isGitDirectory(platform, entered, entered)) ? entered : STOPS;
   }
@@ -264,20 +297,20 @@ async function enterRepo(text, { platform, cwd, env }) {
 /**
  * The repository that Git's receive-pack and upload-pack enter for a remote URL when Git runs from a folder: null for a remote that Git reaches by another transport or a bundle file,
  * { path } with the repository's absolute real path, which Git takes on its command line for the same repository, or { stops: true } when Git finds no repository there and fails on its own.
- * For a first clone, clone makes a plain path absolute before any helper sees it, so it gets no ~ expansion.
- * It throws UnresolvableLocalRemote when Prism cannot find the repository the way Git would.
+ * A first clone of a managed store gets a plain path only from a url.<base>.insteadOf rule, and Git hands that path to upload-pack as it is, which expands a leading ~, so a clone resolves it as a fetch does.
+ * It throws UnresolvableLocalRemote when Prism cannot find the repository the way Git would, including when a name on the way is not UTF-8.
  */
-export async function localRepository(url, base, { platform = process.platform, env = process.env, clone = false } = {}) {
+export async function localRepository(url, base, { platform = process.platform, env = process.env } = {}) {
   const transport = gitTransportPath(url, platform);
   if (!transport) return null;
   if (transport.stops) return STOPS;
-  const cwd = await realpath(base).catch(() => path.resolve(base));
-  const context = { platform, cwd, env };
+  const context = { platform, env };
   try {
+    const cwd = await realPathText(base).catch((error) => { if (error instanceof UnresolvableLocalRemote) throw error; return path.resolve(base); });
+    context.cwd = cwd;
     // A local path to a bundle file reaches the bundle transport, which starts no helper.
     if (transport.plain && (await statOf(onDisk(platform, cwd, url)))?.isFile() && await isBundle(onDisk(platform, cwd, url))) return null;
-    const given = clone && transport.plain && !isAbsolute(platform, transport.path) ? `${platform === "win32" ? cwd.replaceAll("\\", "/") : cwd}/${transport.path}` : transport.path;
-    const entered = await enterRepo(given, context);
+    const entered = await enterRepo(transport.path, context);
     if (entered === STOPS) return STOPS;
     const named = platform === "win32" ? entered.replaceAll("\\", "/") : entered;
     // Git takes the repository's own path as the same repository only when it parses back to itself and holds no .git that Git would enter instead.

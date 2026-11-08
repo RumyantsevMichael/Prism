@@ -72,9 +72,11 @@ Git trusts that repository's own settings by design, so Prism runs Git's `receiv
   A hook whose name holds an equals sign cannot be turned off this way, so a sync with that remote fails with `git_failed` and names the hook, and you remove its `hook.<name>.*` settings from the remote repository's configuration.
 - A push sends no push certificate, because the remote's side would check one with the `gpg.program` that the remote's configuration names, and only the remote's hooks, which never run, would read it.
 
-Prism finds that repository the way Git does, so a `file://` URL with `%20` for a space, a path with trailing slashes, and a folder whose `.git` is a file all work, and a path that starts with `~/` works for a sync, while a first clone, like `git clone`, takes the `~` literally.
-It then gives Git the repository's absolute path for the sync's fetch and push and for the first clone, and reads the hook names from that same repository, while your remote's URL and your URL settings stay as you set them.
-If Prism cannot tell which repository Git would open, as for `~otheruser/` or, on Windows, a path with a reserved name such as `con`, the sync fails with `git_failed` and the first clone with `store_unavailable`, and the message names the URL; name the repository by its absolute path or a `file://` URL of it instead.
+Prism finds that repository the way Git does, so a `file://` URL with `%20` for a space, a path with trailing slashes, a path that starts with `~/`, and a folder whose `.git` is a file all work, for a sync and for a first clone whose URL a `url.<base>.insteadOf` rule of yours turns into such a path.
+It then gives Git the repository's absolute path for the sync's fetch and push and for the first clone, reads the hook names from that repository, and names a helper that enters that same repository whatever path Git hands it, while your remote's URL and your URL settings stay as you set them.
+If one of your `url.<base>.insteadOf` rules, or for a push one of your `url.<base>.pushInsteadOf` rules, matches that absolute path, Git would reach another place for it, so the sync fails with `git_failed` and the first clone with `store_unavailable`, and the message names the path; change the rule so that it no longer matches.
+If Prism cannot tell which repository Git would open, as for `~otheruser/`, a folder on the way whose name is not UTF-8, or, on Windows, a path with a reserved name such as `con`, the sync fails with `git_failed` and the first clone with `store_unavailable`, and the message names the URL; name the repository by its absolute path or a `file://` URL of it, or rename the folder, instead.
+If Git finds no repository at such a URL, for example because the shared folder is not mounted, no helper starts: the sync neither fetches nor pushes and reports `fetch_failed`, or `push_rejected` for a push URL, and the first clone fails with `store_unavailable`.
 A push whose URLs reach both such a repository and an SSH or HTTPS remote also fails with `git_failed`, so give each of them a remote of its own.
 
 These settings narrow what the folder's repository can make Git do, but they do not make the folder safe to share with anyone.
@@ -83,7 +85,6 @@ So make such a folder writable only by people you trust that far, and use an SSH
 
 A remote that Git reaches by SSH, `git://`, or HTTP runs its own server's side of the push or fetch, so Prism leaves it as it is.
 A `remote.<name>.uploadpack` or `remote.<name>.receivepack` that you set in the store is your own transport setting, so Prism runs that program as you set it, without these settings.
-When a remote has several push URLs and any of them is local, every one of them gets the local helper, which an SSH or `git://` server refuses, so give such a store a remote with local URLs only.
 
 Before the clone writes any file, Prism checks the remote's whole branch, and every sync checks the upstream's whole branch the same way before it takes any of it.
 A symbolic link, a submodule link, a path that some file system reads as leading outside the store, such as one with a `..` part, a backslash, or a drive form, Git's folder or the sync folder `.prism-sync/` in any spelling, an entry where Prism keeps a folder, such as a file named `initiatives/<slug>/slices`, or an entry below a file Prism keeps, such as `roadmap.json/x`, fails the clone, or refuses the sync as a whole, and the message names the path.
