@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, realpath } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { boundaryFailures, contrastFailures, demoProject, escapes, launch, openPage, reviewUrl, serveProject, skip, stateFileNames, useAppDirectory, waitForView, writeClaim } from "./fixtures/kit-browser.mjs";
 
@@ -59,12 +62,20 @@ test("clauses 38, 77: every workflow view with long names stays inside a phone w
 
 test("clause 81: a gate is answered from the keyboard alone", { skip }, async (context) => {
   await useAppDirectory(context);
-  const { base } = await serveProject(context, await demoProject(context));
+  // Only a tab the server opened holds a write grant, so the server opens this one and the test records its address.
+  if (!process.env.PLUGIN_DATA) process.env.PLUGIN_DATA = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-kit-data-")));
+  delete process.env.CLAUDE_PLUGIN_DATA;
+  const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
+  const opened = [];
+  const review = await startReviewServer({ projectRoot: await demoProject(context), openBrowser: async (url) => { opened.push(url); return true; } });
+  context.after(() => review.close());
+  const base = review.baseUrl.replace(/\/$/, "");
+  await review.open(["attention"]);
   const gates = async () => (await (await fetch(`${base}/api/entity?ref=attention`)).json()).data.gateCount;
   const before = await gates();
   assert.ok(before > 0, "the demo has open gates");
   const browser = await launch(context);
-  const page = await openPage(browser, reviewUrl(base, "attention"));
+  const page = await openPage(browser, opened.at(-1));
   await waitForView(page);
   const choice = page.locator("#artifact").getByRole("radiogroup").first();
   await choice.getByRole("radio").first().focus();
@@ -75,7 +86,7 @@ test("clause 81: a gate is answered from the keyboard alone", { skip }, async (c
     const name = await page.evaluate(() => {
       let element = document.activeElement;
       while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
-      return element?.closest?.("button") ? element.textContent.trim() : element?.textContent?.trim() ?? "";
+      return ((element?.getRootNode?.().host ?? element)?.textContent ?? "").trim();
     });
     if (/^Send/.test(name)) {
       await page.keyboard.press("Enter");
@@ -83,15 +94,19 @@ test("clause 81: a gate is answered from the keyboard alone", { skip }, async (c
     }
   }
   assert.ok(sent, "the Send button is reachable with Tab");
-  await page.waitForFunction(async ([base, before]) => (await (await fetch(`${base}/api/entity?ref=attention`)).json()).data.gateCount < before, [base, before], { timeout: 10000, polling: 300 });
-  assert.equal(await gates(), before - 1);
+  let after = before;
+  for (let tries = 0; tries < 40 && after >= before; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    after = await gates();
+  }
+  assert.equal(after, before - 1, "the answer closes the gate");
 });
 
 test("clauses 66, 67: the roadmap, the slice page, the gate, and Attention show the slice's claims read-only", { skip, timeout: 120000 }, async (context) => {
   const { base, browser } = await claimed(context);
   const roadmap = await openPage(browser, reviewUrl(base, "roadmap"));
   await waitForView(roadmap);
-  const card = roadmap.locator("#artifact").locator("article, li, section, prism-panel").filter({ hasText: "Harden request retries" }).last();
+  const card = roadmap.locator("#artifact").locator("article, li, section, prism-panel").filter({ hasText: "Harden request retries" }).filter({ hasText: "1 working" }).filter({ hasText: "1 claim expired" }).last();
   const cardText = await card.innerText();
   assert.match(cardText, /1 working/, "the initiative card counts its live claims");
   assert.match(cardText, /1 claim expired/, "the initiative card counts its expired claims");
@@ -116,7 +131,7 @@ test("clauses 66, 67: the roadmap, the slice page, the gate, and Attention show 
   for (const page of [roadmap, slice, attention]) {
     const offered = await page.evaluate(() => {
       const deep = (root) => [...root.querySelectorAll("*")].flatMap((node) => node.shadowRoot ? [node, ...deep(node.shadowRoot)] : [node]);
-      return deep(document.querySelector("#artifact")).filter((node) => ["button", "link", "menuitem"].includes(node.getAttribute("role")) || ["BUTTON", "A"].includes(node.tagName)).map((node) => (node.getAttribute("aria-label") ?? node.textContent).trim()).filter((name) => /^(take|release|renew|remind|follow|claim)\b/i.test(name));
+      return deep(document.querySelector("#artifact")).filter((node) => ["button", "link", "menuitem"].includes(node.getAttribute("role")) || ["BUTTON", "A", "PRISM-BUTTON", "PRISM-MENU-ITEM"].includes(node.tagName)).map((node) => { const named = node.getRootNode().host ?? node; return (node.getAttribute("aria-label") ?? named.getAttribute("aria-label") ?? named.textContent ?? "").trim(); }).filter((name) => /^(take|release|renew|remind|follow|claim)\b/i.test(name));
     });
     assert.deepEqual(offered, [], "no view offers a claim action");
   }
@@ -173,12 +188,12 @@ test("clauses 69, 80: every workflow view names Prism's records by title and kin
   assert.deepEqual(failures, []);
   const page = await openPage(browser, reviewUrl(base, "attention"));
   await waitForView(page);
-  const gate = page.locator("#artifact").locator("article, section, prism-panel").filter({ hasText: "Review the change map and the total-deadline ADR" }).last();
+  const gate = page.locator("#artifact").locator("article, section, prism-panel").filter({ hasText: "Review the change map and the total-deadline ADR" }).filter({ hasText: /Change map · / }).last();
   const text = await gate.innerText();
   assert.match(text, /Design · \d+ clauses? · \d+ frozen tests?/, "the slice's design is named by kind with its counts");
   assert.match(text, /· Decision · (Proposed|Accepted|Superseded)/, "the decision is named by title and kind");
   assert.match(text, /Change map · \d+ planned changes?/, "the change map is named by kind with its count");
-  const decision = page.locator("#artifact").locator("article, section, prism-panel").filter({ hasText: "deletes the only handler that retries dropped connections" }).last();
+  const decision = page.locator("#artifact").locator("article, section, prism-panel").filter({ hasText: "deletes the only handler that retries dropped connections" }).filter({ hasText: /Review ledger · / }).last();
   const other = await decision.innerText();
   assert.match(other, /Review ledger · \d+ open findings?/, "the review ledger is named by kind with its count");
   assert.match(other, /· Requirements/, "the requirements file is named by title and kind");
