@@ -34,7 +34,7 @@ A grant or a write session token MUST NOT appear in any tool result, review URL,
 The shared app MUST accept earlier write sessions only after a handoff in which it also reuses the viewer credential.
 A tab without a write session MUST stay readable and MUST say how to get a tab that can write.
 Each agent session MUST be told, in its coordinator's next Prism result about the initiative, of every history entry whose id the session has not been shown, with the entry's author, and only once, whichever machine applied it, also when the session's calls run concurrently or in several server processes; a gate wait of the coordinator MUST end when such an entry reaches its initiative.
-The coordinator of an initiative in a session MUST be the agent of that session that last claimed a scope or started a slice of the initiative, or the session's main agent until one has, and any other agent of the session MUST NOT be shown a notice or count one as shown.
+The coordinator of an initiative in a session MUST be the agent of that session that last claimed a scope or started a slice of the initiative, or the session's main agent until one has, and any other agent of the session MUST NOT be shown a notice or count one as shown, except that a gate wait that returns answers counts the history entries of those answers as shown, whichever agent waited.
 A notice MUST write each recorded value so that it cannot start a line, because history entries arrive through store sync from any machine that can write the store.
 
 ## Rationale
