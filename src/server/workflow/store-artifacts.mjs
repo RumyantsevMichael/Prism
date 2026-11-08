@@ -413,18 +413,21 @@ async function checkLayout(seen, writes, state, names) {
 }
 
 /**
- * Files that a file manager writes into a folder on its own and writes again when it needs them: Finder's view settings and Windows Explorer's thumbnail cache.
+ * Files that a file manager writes into a folder on its own and writes again when it needs them: Finder's view settings.
  * A removal deletes them with the folder it emptied, so no folder lingers whose letter case a later create in another case would land in.
+ * Only a name that the artifact name form refuses is among them, so no file that is or could be an artifact is ever deleted without an operation naming it:
+ * Windows Explorer's Thumbs.db meets the name form, so it keeps its folder, and a later create in another letter case there is refused before any change.
  * Lock and temporary files are not among them, since one may belong to a lock or a write that another process holds now.
  */
-const FILE_MANAGER_FILES = new Set([".DS_Store", "Thumbs.db"]);
+const FILE_MANAGER_FILES = new Set([".DS_Store"]);
+const prunable = (entry) => entry.isFile() && FILE_MANAGER_FILES.has(entry.name) && !wellFormedName(entry.name);
 
 // Remove the folders that a removal left empty, or holding only file manager files, up to the artifacts folder.
 async function pruneParents(base, target) {
   for (let folder = path.dirname(target); folder !== base && folder.startsWith(`${base}${path.sep}`); folder = path.dirname(folder)) {
     try {
       const entries = await readdir(folder, { withFileTypes: true });
-      if (!entries.every((entry) => entry.isFile() && FILE_MANAGER_FILES.has(entry.name))) return;
+      if (!entries.every(prunable)) return;
       for (const entry of entries) await rm(path.join(folder, entry.name));
       await rmdir(folder);
     } catch { return; }

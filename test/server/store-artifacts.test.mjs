@@ -63,6 +63,19 @@ test("a removal leaves no empty folders behind", async (context) => {
   assert.equal(await exists(path.join(place.store, "artifacts", "plans", "reports")), false);
 });
 
+test("a removal never deletes another artifact in its folder, even one named like a file manager's file", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const prism = await server(context, place, api);
+  await writeArtifact(prism, "docs/plans/x/Thumbs.db", "kept\n");
+  const other = await writeArtifact(prism, "docs/plans/x/a.md", "# A\n");
+  const result = ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: "docs/plans/x/a.md", expectedVersion: other.version }] }));
+  assert.deepEqual(result.artifacts.map((entry) => entry.path), ["docs/plans/x/a.md"]);
+  assert.equal(await text(path.join(place.store, "artifacts", "plans", "x", "Thumbs.db")), "kept\n");
+  assert.deepEqual(ok(await prism.call("get_artifact", {})).artifacts.map((entry) => entry.path), ["docs/plans/x/Thumbs.db"]);
+  assert.equal(ok(await prism.call("get_artifact", { path: "docs/plans/x/Thumbs.db" })).content, "kept\n");
+});
+
 test("an update whose write lands on a folder, below a stored file, or below another of its writes is refused before any file changes", async (context) => {
   const place = await workspace(context);
   const api = await checkout(place, "api");
