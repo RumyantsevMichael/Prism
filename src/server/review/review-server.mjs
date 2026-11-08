@@ -8,8 +8,9 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, describeRecordStore, inArtifactStore, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, artifactPathTest, describeRecordStore, inArtifactStore, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
 import { readStoreArtifact } from "../workflow/store-artifacts.mjs";
+import { withoutCredentials } from "../workflow/remote-url.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
@@ -137,12 +138,23 @@ export async function listSourceFiles(projectRoot) {
 }
 
 // With a record store, the descriptive artifacts the checkout sees come from the store, by path, while the checkout's own files under those paths are not artifacts.
-// An unavailable store or a refused repository name hides only the records, so the checkout's documents still list, as they do without a store.
+// An unavailable store or a refused repository name lists no artifact, and never the checkout's files in their place; null means the project names no store.
 async function storeArtifactEntries(projectRoot) {
   return listStoreArtifacts(projectRoot).catch((error) => {
-    if (recordsUnavailable(error) || error?.name === "ArtifactError") return null;
+    if (recordsUnavailable(error) || error?.name === "ArtifactError") return [];
     throw error;
   });
+}
+
+/** Why the record store cannot serve the checkout's artifacts, as describeRecordStore reports it with the store named as configured, or null when it can or the project names no store. */
+async function artifactStoreRefusal(projectRoot) {
+  return (await describeRecordStore(projectRoot).catch(() => null))?.unavailable ?? null;
+}
+
+/** The source files the review shows, without a checkout file at an artifact path of a project with a store, which is never the artifact. */
+async function listReviewSources(projectRoot) {
+  const isArtifact = await artifactPathTest(projectRoot);
+  return (await listSourceFiles(projectRoot)).filter((file) => !isArtifact(file));
 }
 
 /** The scope label of each store artifact the checkout sees, by path, or an empty object without a store; a path that several scopes hold names the first by label. */
@@ -160,7 +172,8 @@ export async function listArtifacts(projectRoot) {
   }
   const stored = await storeArtifactEntries(projectRoot);
   if (stored !== null) {
-    for (const file of [...results]) if (await inArtifactStore(projectRoot, file)) results.delete(file);
+    const isArtifact = await artifactPathTest(projectRoot);
+    for (const file of [...results]) if (isArtifact(file)) results.delete(file);
     for (const entry of stored) if (TEXT_EXTENSIONS.has(path.posix.extname(entry.path).toLowerCase())) results.add(entry.path);
   }
   // Machine records live under .prism, which the walk above skips as a hidden folder.
@@ -306,17 +319,19 @@ export async function loadEvidence(projectRoot, evidenceId, store = conservation
 }
 
 // A store artifact is read from the store, and every other file from the project or the record store as its path decides.
-// An unavailable store or a refused repository name shows the checkout's file, as the listing does.
+// An unavailable store or a refused repository name throws its refusal rather than read the checkout's file.
 async function readReviewed(projectRoot, file) {
-  const stored = await inArtifactStore(projectRoot, file) ? await readStoreArtifact(projectRoot, file).catch((error) => { if (recordsUnavailable(error)) return undefined; throw error; }) : undefined;
-  if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
-  if (stored !== undefined) return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, scope: stored.scope };
+  if (await inArtifactStore(projectRoot, file)) {
+    const stored = await readStoreArtifact(projectRoot, file);
+    if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
+    return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, scope: stored.scope };
+  }
   const absolutePath = await resolveProjectFile(projectRoot, file);
   return { content: await readFile(absolutePath, "utf8"), modifiedAt: (await stat(absolutePath)).mtimeMs, absolutePath };
 }
 
 export async function loadArtifact(projectRoot, artifactPath) {
-  if (await inArtifactStore(projectRoot, artifactPath) && await listStoreArtifacts(projectRoot).then(() => true, (error) => { if (recordsUnavailable(error)) return false; throw error; })) {
+  if (await inArtifactStore(projectRoot, artifactPath)) {
     const { content, modifiedAt } = await readReviewed(projectRoot, artifactPath);
     if (path.extname(artifactPath).toLowerCase() === ".json") return { path: artifactPath, content, diagrams: [], modifiedAt, ...(await loadJsonArtifact(projectRoot, artifactPath, content)) };
     return { path: artifactPath, content, diagrams: await linkedDiagrams(projectRoot, artifactPath, content), modifiedAt };
@@ -343,8 +358,8 @@ async function linkedDiagrams(projectRoot, artifactPath, content) {
     try {
       diagrams.push({ path: diagramPath, source: (await readReviewed(projectRoot, diagramPath)).content });
     } catch (error) {
-      // A missing diagram, or a store diagram the checkout cannot read, is left out.
-      if (error.code !== "ENOENT" && error.name !== "ArtifactError") {
+      // A missing diagram, or a store diagram the checkout cannot read or reach, is left out.
+      if (error.code !== "ENOENT" && error.name !== "ArtifactError" && !recordsUnavailable(error)) {
         throw error;
       }
     }
@@ -555,7 +570,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   async function reviewableFiles() {
-    return new Set([...await listArtifacts(projectRoot), ...await listSourceFiles(projectRoot)]);
+    return new Set([...await listArtifacts(projectRoot), ...await listReviewSources(projectRoot)]);
   }
 
   async function assertAvailable(tabs, availableArtifacts) {
@@ -687,7 +702,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/events" && request.method === "GET") {
       openViewerStream(response);
     } else if (route === "/api/index") {
-      const artifacts = await listArtifacts(projectRoot), sources = await listSourceFiles(projectRoot);
+      const artifacts = await listArtifacts(projectRoot), sources = await listReviewSources(projectRoot);
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
@@ -750,7 +765,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       await resolveProjectFile(projectRoot, artifactPath).catch((error) => {
         if (error.code !== "ENOENT") throw error;
       });
-      if (!(await listArtifacts(projectRoot)).includes(artifactPath) && !(await listSourceFiles(projectRoot)).includes(artifactPath)) {
+      // An artifact path whose store cannot be reached is refused with the store's reason, never answered with the checkout's bytes.
+      const refusal = await inArtifactStore(projectRoot, artifactPath) ? await artifactStoreRefusal(projectRoot) : null;
+      if (refusal !== null) {
+        send(response, 503, refusal);
+        return;
+      }
+      if (!(await listArtifacts(projectRoot)).includes(artifactPath) && !(await listReviewSources(projectRoot)).includes(artifactPath)) {
         send(response, 404, "The file is not available for review.");
         return;
       }
@@ -758,6 +779,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       try {
         loaded = await loadArtifact(projectRoot, artifactPath);
       } catch (error) {
+        if (recordsUnavailable(error)) {
+          send(response, 503, await artifactStoreRefusal(projectRoot) ?? withoutCredentials(error.message));
+          return;
+        }
         // A file deleted after the listing above answers the same as an unlisted one.
         if (error.code !== "ENOENT") throw error;
         send(response, 404, "The file is not available for review.");

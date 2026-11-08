@@ -47,12 +47,8 @@ async function recordFile(root, key) {
 // With a record store, a descriptive artifact such as a requirement, an ADR, the glossary, or a plan file is read from the store, and a record where it lives.
 async function readText(root, relative) {
   try {
-    if (await inArtifactStore(root, relative)) {
-      // An unavailable store or a refused repository name shows the checkout's documents, as the listing does.
-      const stored = await readArtifactText(root, relative).catch((error) => { if (recordsUnavailable(error)) return undefined; throw error; });
-      if (stored !== undefined) return stored;
-      return await readFile(path.join(root, relative), "utf8");
-    }
+    // An unavailable store or a refused repository name shows the artifact as missing, never the checkout's file in its place.
+    if (await inArtifactStore(root, relative)) return await readArtifactText(root, relative);
     return await readFile((await resolveRecordFile(root, relative)).target, "utf8");
   } catch (error) {
     // An unavailable store, or a store artifact that cannot be read, shows as missing.
@@ -63,8 +59,8 @@ async function readText(root, relative) {
 
 // The store artifacts below a folder, up to depth folders down, in the order a walk of the folder lists them, or null when the project names no store.
 async function storeWalk(root, relative, depth, accept, limit) {
-  // An unavailable store or a refused repository name lists the checkout's documents instead.
-  const stored = await listStoreArtifacts(root, relative).catch((error) => { if (recordsUnavailable(error)) return null; if (error?.name === "ArtifactError") return []; throw error; });
+  // An unavailable store or a refused repository name lists no artifact, and never the checkout's documents in their place.
+  const stored = await listStoreArtifacts(root, relative).catch((error) => { if (recordsUnavailable(error) || error?.name === "ArtifactError") return []; throw error; });
   if (stored === null) return null;
   const prefix = relative ? `${relative}/` : "";
   const files = [...new Set(stored.map((entry) => entry.path))].filter((file) => {
@@ -415,6 +411,7 @@ export async function loadGlossary(projectRoot) {
 
 async function isFile(root, relative) {
   try {
+    if (await inArtifactStore(root, relative)) return (await readArtifactText(root, relative)) !== null;
     return (await stat((await resolveRecordFile(root, relative)).target)).isFile();
   } catch {
     return false;

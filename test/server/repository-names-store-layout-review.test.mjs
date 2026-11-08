@@ -18,7 +18,7 @@ const { listArtifacts } = await import("../../dist/server/review/review-server.m
 const { loadNavigation } = await import("../../dist/server/review/workspace-model.mjs");
 
 for (const [label, place] of [["a file", (store) => writeFile(path.join(store, "repositories"), "not a folder\n")], ["a link out of the store", async (store) => { const outside = path.join(store, "..", "outside"); await mkdir(outside); await symlink(outside, path.join(store, "repositories")); }]]) {
-  test(`R4: the review browser still lists a named checkout's documents when the store's repositories entry is ${label}`, async (context) => {
+  test(`R4: the review browser opens without a named checkout's copies of its artifacts when the store's repositories entry is ${label}`, async (context) => {
     const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-repository-layout-")));
     context.after(() => rm(parent, { recursive: true, force: true }));
     const store = await storeFolder(parent);
@@ -26,7 +26,7 @@ for (const [label, place] of [["a file", (store) => writeFile(path.join(store, "
     const api = await repository(parent, "api", { remote: "https://github.com/acme/api.git", repository: "api" });
     await mkdir(path.join(api, "docs", "plans", "reports"), { recursive: true });
     await writeFile(path.join(api, "docs", "plans", "reports", "slice.md"), "# Reports\n");
-    assert.ok((await listArtifacts(api)).includes("docs/plans/reports/slice.md"), "documents still list");
+    assert.equal((await listArtifacts(api)).includes("docs/plans/reports/slice.md"), false, "an unusable store shows no checkout copy of an artifact");
     assert.ok(await loadNavigation(api), "navigation loads with the records hidden");
   });
 }

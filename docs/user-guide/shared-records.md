@@ -77,7 +77,8 @@ The first record access from a checkout moves its existing records into the stor
 A `Store` path is relative to the project root or absolute.
 It must not resolve inside the project or contain it, and Prism never creates it.
 A missing or misplaced store makes every record operation fail with `store_unavailable`, because silently falling back to `.prism` would split state between checkouts.
-The review browser still lists the project's human documents while the store is unavailable.
+While the store is unavailable, the review browser opens without the project's requirements, ADRs, plans, glossary, and roadmap view, which live in the store, and never shows the checkout's copies of them in their place.
+It names the store as the reason, and opening one of those files answers with the same reason.
 
 The first record access from a checkout moves its existing records into the store, and each record moves only once, from whichever checkout brings it first.
 Prism lists every moved record in the store's `migrations` folder, together with any record whose bytes differed from a copy already in the store, and it leaves both copies of such a record in place.
@@ -143,7 +144,7 @@ These refusals make every record operation of the checkout fail, and each error'
 | `repository_unconfirmed` | Store sync is on, and the sync that confirms a new registration failed, for example because the store's remote cannot be reached, so the registration was withdrawn; or, whatever the checkout's own store sync setting, another check's new registration that decides this check is still being confirmed. The message names the sync state, and `proposed` is the name itself. | Try again once the remote is reachable, or in a moment while a registration is being confirmed. |
 
 The proposed name is the registered name that would accept the checkout, or else the last part of its remote's path without `.git`, or its folder name without a network remote, made valid and given a suffix such as `-2` when another repository holds it.
-The review browser hides the records of a refused checkout as it does for an unavailable store, shows the refusal's message as the reason, and still lists its documents.
+The review browser hides the records and artifacts of a refused checkout as it does for an unavailable store, and shows the refusal's message as the reason.
 
 Each machine remembers where its checkouts of each named repository are, in `checkouts.json` in Prism's application folder, beside the store clones.
 A server lists its checkout once its name is first accepted: at start when the host names the project, as Claude Code does, or else at its first tool call, as in Codex.

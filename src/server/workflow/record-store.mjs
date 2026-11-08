@@ -755,12 +755,20 @@ const storeArtifacts = () => import("./store-artifacts.mjs");
 
 /** Whether a project-relative path is an artifact path of a project whose .prism/workflow.md names a record store, so its file lives in the store and never in the checkout. */
 export async function inArtifactStore(projectRootPath, file) {
+  return (await artifactPathTest(projectRootPath))(file);
+}
+
+/** A test of whether a project-relative path is an artifact path, as inArtifactStore decides, reading the configuration once; it accepts no path in a project without a store. */
+export async function artifactPathTest(projectRootPath) {
   const config = await readWorkflowConfig(await projectRoot(projectRootPath));
-  if ((config.workspace?.store ?? null) === null) return false;
-  const normalized = normalizeArtifactPath(file);
-  if (normalized === null || normalized === "") return false;
-  const address = artifactAddress(artifactKinds(config), normalized);
-  return address !== null && address.rest !== "";
+  if ((config.workspace?.store ?? null) === null) return () => false;
+  const kinds = artifactKinds(config);
+  return (file) => {
+    const normalized = normalizeArtifactPath(file);
+    if (normalized === null || normalized === "") return false;
+    const address = artifactAddress(kinds, normalized);
+    return address !== null && address.rest !== "";
+  };
 }
 
 /**
