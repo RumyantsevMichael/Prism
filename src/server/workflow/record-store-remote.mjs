@@ -88,7 +88,7 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
       // The remote is named origin, as every sync of a managed clone expects, whatever the person's clone.defaultRemoteName.
       // A file:// remote's upload-pack runs on this machine, so it reads no hook or command that the remote's own files name, as in every sync.
       const url = await runGit(directory, ["ls-remote", "--get-url", configured]);
-      const helper = await remoteHelperOption("--upload-pack", [url.ok && url.text ? url.text : configured]);
+      const helper = await remoteHelperOption("--upload-pack", [url.ok && url.text ? url.text : configured], directory).catch((error) => { throw unavailable(error.message); });
       const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--no-checkout", "--origin", "origin", "--config", "core.longpaths=true", "--config", "core.symlinks=false", ...helper, "--", configured, temporary]);
       if (cloned.missing) throw unavailable("Git is not available, so the remote store cannot be cloned.");
       if (!cloned.ok) throw unavailable(`Git could not clone it: ${withoutCredentials(cloned.stderr) || `git clone exited with code ${cloned.code}.`}`);

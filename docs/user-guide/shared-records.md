@@ -62,11 +62,19 @@ Your Git configuration, the variables Prism's process inherits, and the store's 
 Prism keeps the settings that only choose how Git reaches the remote or who you are, such as credentials, `url.<base>.insteadOf`, `remote.<name>.pushurl`, `core.sshCommand`, proxies, and the store's own hooks, so a push that your own settings or a hook refuse fails with `push_rejected` and Git's message.
 
 A remote that Git reaches by a path or a `file://` URL, such as a bare repository on a shared or synced folder, is different, because Git then runs the remote's side of a push or fetch on your machine, inside that repository and with its configuration.
-Anyone who can write that folder could otherwise make every sync run a command on every machine that syncs, so Prism runs Git's `receive-pack` and `upload-pack` there with settings of its own, for every sync and the first clone:
+Git trusts that repository's own settings by design, so Prism runs Git's `receive-pack` and `upload-pack` there with settings of its own, for every sync and the first clone, that turn off every remote-side program Prism knows of:
 
 - `core.hooksPath` names the empty folder `no-hooks` in Prism's application folder, so no hook in the remote's `hooks` folder or in a `core.hooksPath` its configuration names runs.
 - `core.alternateRefsCommand` is a command that lists nothing, and `core.alternateRefsPrefixes` is empty, so no command that the remote's configuration names runs for an `objects/info/alternates` file.
 - `receive.denyCurrentBranch` is `refuse`, so a push never checks out a non-bare remote's branch with that repository's filters or `core.fsmonitor`, and a push to a branch that a non-bare remote has checked out fails with `push_rejected` and Git's message.
+- `receive.autogc` is `false`, `gc.auto` and `gc.autoPackLimit` are `0`, and `maintenance.auto` is `false`, so a push starts no automatic maintenance, which would run commands that the remote's configuration names, such as `gc.recentObjectsHook`.
+- On Git 2.54 and later, every hook event is turned off with `hook.<event>.enabled=false`, and each hook that the remote's configuration sets up with `hook.<name>.command` or `hook.<name>.event` is turned off by name, so no configured hook runs either.
+  A hook whose name holds an equals sign cannot be turned off this way, so a sync with that remote fails with `git_failed` and names the hook, and you remove its `hook.<name>.*` settings from the remote repository's configuration.
+- A push sends no push certificate, because the remote's side would check one with the `gpg.program` that the remote's configuration names, and only the remote's hooks, which never run, would read it.
+
+These settings narrow what the folder's repository can make Git do, but they do not make the folder safe to share with anyone.
+Anyone who can write a folder store's repository can still affect what Git does on every machine that syncs with it, for example through a setting a later Git adds or one changed while a sync runs.
+So make such a folder writable only by people you trust that far, and use an SSH or HTTPS remote to share a store with anyone else.
 
 A remote that Git reaches by SSH, `git://`, or HTTP runs its own server's side of the push or fetch, so Prism leaves it as it is.
 A `remote.<name>.uploadpack` or `remote.<name>.receivepack` that you set in the store is your own transport setting, so Prism runs that program as you set it, without these settings.
