@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { cp, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
-import { gitTimeoutMs, markManagedStore, runGit } from "./record-store-sync.mjs";
+import { gitTransportPath } from "./git-local-repository.mjs";
+import { describeUnsafeEntry, gitTimeoutMs, gitTooOld, gitUrlText, helperForRepository, localRemoteRepository, markManagedStore, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
 import { legacyStoresDirectory, managedStoreId, managedStoresDirectory, normalizeRemote, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 
 // A record store named by its remote lives in a clone Prism keeps in its application folder, one per remote, shared by every checkout and host that names it.
@@ -66,6 +67,16 @@ async function moveLegacyClone(directory, id, target, configured) {
   }
 }
 
+// The origin URL that git clone records for a remote: a local path made absolute from the folder the clone ran in, as clone's absolute_pathdup does, or the URL as it is.
+async function clonedUrl(directory, configured) {
+  let local = null;
+  try { local = gitTransportPath(configured); } catch { local = null; }
+  const absolute = process.platform === "win32" ? /^(?:[\\/]|[^\0]:)/u.test(configured) : configured.startsWith("/");
+  if (!local?.plain || absolute) return configured;
+  const cwd = await realpath(directory);
+  return `${process.platform === "win32" ? cwd.replaceAll("\\", "/") : cwd}/${configured}`;
+}
+
 // One process at a time clones a remote, into a temporary sibling that is renamed into place, so the clone path never holds a partial clone.
 async function cloneOnce(directory, id, target, configured, unavailable) {
   const found = await adopt(target, configured, unavailable);
@@ -82,9 +93,33 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
     const temporary = path.join(directory, `.${id}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
     try {
       // Long paths keep deep record paths usable on Windows, where Git otherwise stops at 260 characters.
-      const cloned = await runGit(directory, ["clone", "--quiet", "--config", "core.longpaths=true", "--", configured, temporary]);
+      // Git checks every object the remote sends, so a tree that a teammate built with a name such as ".." or ".git" fails the clone,
+      // and the clone writes no file until the remote's whole tree holds no entry that a store may not hold, as every sync checks an upstream's tree.
+      // The files are written from their blobs' bytes, never checked out, so no line-ending setting or attributes file makes a file differ from what every sync expects.
+      // The remote is named origin, as every sync of a managed clone expects, whatever the person's clone.defaultRemoteName.
+      // A local remote's upload-pack runs on this machine, so it reads no hook or command that the remote's own files name, as in every sync,
+      // and the clone names the repository that Git enters for the remote's URL by its path, with --no-local so Git still checks every object, then records the remote as Git records it.
+      // A remote whose URL Git reaches as a local path where it finds no repository is not cloned, so no helper starts anywhere for it.
+      const url = await runGit(directory, ["ls-remote", "--get-url", configured]);
+      let reached = configured;
+      try { if (url.ok && url.text) reached = gitUrlText(url); } catch (error) { throw unavailable(error.message); }
+      const local = await localRemoteRepository(reached, directory).catch((error) => { throw unavailable(error.message); });
+      if (local?.stops) throw unavailable(`Git could not clone it: no Git repository is found at the local remote ${withoutCredentials(reached)}.`);
+      const helper = local ? await helperForRepository("--upload-pack", local.path, directory).catch((error) => { throw unavailable(error.message); }) : [];
+      const source = local ? ["--no-local", "--", local.path] : ["--", configured];
+      const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--no-checkout", "--origin", "origin", "--config", "core.longpaths=true", "--config", "core.symlinks=false", ...helper, ...source, temporary]);
       if (cloned.missing) throw unavailable("Git is not available, so the remote store cannot be cloned.");
       if (!cloned.ok) throw unavailable(`Git could not clone it: ${withoutCredentials(cloned.stderr) || `git clone exited with code ${cloned.code}.`}`);
+      if (local?.path) {
+        const recorded = await runGit(temporary, ["config", "remote.origin.url", await clonedUrl(directory, configured)]);
+        if (!recorded.ok) throw unavailable(`Git could not record its remote: ${recorded.stderr}`);
+      }
+      const head = await runGit(temporary, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+      if (head.ok) {
+        const unsafe = await unsafeStoreEntry(temporary, head.text);
+        if (unsafe) throw unavailable(`Its branch holds ${describeUnsafeEntry(unsafe)}, so it was not cloned. Remove that path from the remote's branch.`);
+        await writeCommitFiles(temporary, head.text).catch((error) => { throw unavailable(`Git could not write its files: ${withoutCredentials(error.message)}`); });
+      }
       await rename(temporary, target);
     } finally {
       await rm(temporary, { recursive: true, force: true });
@@ -103,6 +138,9 @@ export async function managedRecordStore(projectRoot, configured, makeUnavailabl
   const directory = managedStoresOf(projectRoot);
   const id = managedStoreId(configured);
   if (!id) throw unavailable("It is not a usable remote address.");
+  // A Git older than the store sync needs would fail some of the clone's or a sync's commands midway, so the store is refused before either runs.
+  const tooOld = await gitTooOld();
+  if (tooOld) throw unavailable(tooOld);
   const target = path.join(directory, id);
   const cached = clones.get(target);
   // A clone that disappeared since it was cached is looked for again, so the access reports what is there now.
