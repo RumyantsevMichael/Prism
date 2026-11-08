@@ -4,10 +4,10 @@ import { lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
-import { ARTIFACT_ACCEPTED, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, collideInLetterCase, componentScope, holdsArtifactPaths, kindInScope, locationArtifact, malformedArtifactName, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, kindInScope, letterCaseKey, locationArtifact, malformedArtifactName, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { acceptedLocation, answerApproval, askApproval, hasStatus, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
-import { recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
+import { checkArtifactFolders, recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
 import { pruneArtifactFolders, scheduleRecordSync } from "./record-store-sync.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
 
@@ -83,7 +83,7 @@ export const ARTIFACT_TOOLS = Object.freeze([
 async function refusing(action) {
   try { return await action(); }
   catch (error) {
-    if (error?.name === "RecordStoreError" || error instanceof ComponentError) throw fail(error.code, error.message, Object.fromEntries(["proposed", "store"].filter((key) => error[key] !== undefined).map((key) => [key, error[key]])));
+    if (error?.name === "RecordStoreError" || error instanceof ComponentError) throw fail(error.code, error.message, Object.fromEntries(["proposed", "store", "key", "folder", "component"].filter((key) => error[key] !== undefined).map((key) => [key, error[key]])));
     throw error;
   }
 }
@@ -103,6 +103,7 @@ const notAnArtifact = (given) => fail("not_an_artifact", `${JSON.stringify(given
 async function configuration(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   if ((config.workspace?.store ?? null) === null) throw fail("store_not_configured", "This project's .prism/workflow.md names no record store under ## Workspace, so its descriptive artifacts stay in the checkout: read and edit them there with your own file tools.");
+  checkArtifactFolders(config);
   return { config, kinds: artifactKinds(config) };
 }
 
@@ -491,14 +492,45 @@ function checkComponentName(file, scope) {
  */
 function checkLetterCase(item, held, checked) {
   const { file, address } = item;
-  const others = [
-    ...held.filter((entry) => entry.kind === address.kind).map((entry) => entry.path),
-    ...checked.filter((other) => other !== item && other.operation.op === "write" && other.address.kind === address.kind).map((other) => other.file)
-  ];
-  const other = others.find((candidate) => collideInLetterCase(file, candidate));
+  const other = collidingPath(letterCaseIndex(held, (entry) => entry), address.kind, file)
+    ?? collidingPath(letterCaseIndex(checked, (candidate) => candidate.operation.op === "write" ? { kind: candidate.address.kind, path: candidate.file } : null), address.kind, file);
   if (other === undefined) return;
   throw fail("artifact_name_conflict", `${file} differs only in letter case from ${other}, which ${held.some((entry) => entry.path === other) ? "the record store holds" : "this update also writes"}, and the two would be one file on a file system that ignores letter case, as macOS and Windows do by default; nothing changed. Choose another name, or change the letter case of an artifact by removing it in one update and writing it in the next.`, { path: other });
 }
+
+// Two paths collide in letter case exactly when some leading part of both, the same number of names long, is equal with letter case ignored and differs without, so an index of every leading part finds a collision with one lookup per name.
+// The index of one list of paths is built once, so an update or a move that writes thousands of files never compares each with every other.
+const letterCaseIndexes = new WeakMap();
+function letterCaseIndex(list, pathOf) {
+  if (letterCaseIndexes.has(list)) return letterCaseIndexes.get(list);
+  const index = new Map();
+  for (const entry of list) {
+    const named = pathOf(entry);
+    if (!named) continue;
+    const names = named.path.split("/");
+    for (let depth = 1; depth <= names.length; depth += 1) {
+      const key = `${named.kind}\0${names.slice(0, depth).map(letterCaseKey).join("/")}`;
+      const exact = names.slice(0, depth).join("/");
+      if (!index.has(key)) index.set(key, new Map());
+      if (!index.get(key).has(exact)) index.get(key).set(exact, named.path);
+    }
+  }
+  letterCaseIndexes.set(list, index);
+  return index;
+}
+
+/** A path of an index that collides in letter case with a path of a kind, as collideInLetterCase decides, or undefined. */
+export function collidingPath(index, kind, file) {
+  const names = file.split("/");
+  for (let depth = 1; depth <= names.length; depth += 1) {
+    const exact = names.slice(0, depth).join("/");
+    for (const [prefix, other] of index.get(`${kind}\0${names.slice(0, depth).map(letterCaseKey).join("/")}`) ?? []) if (prefix !== exact) return other;
+  }
+  return undefined;
+}
+
+/** An index of { kind, path } entries for collidingPath. */
+export const pathIndex = (entries) => letterCaseIndex(entries, (entry) => entry);
 
 /** Apply checked artifact operations to the store as one update: every operation is checked against the store before any file changes. */
 export async function updateArtifact(input) {
@@ -515,7 +547,7 @@ export async function updateArtifact(input) {
  * Apply checked operations while the store's artifact lock is held: every operation is checked against the store before any file changes.
  * Every change to a store artifact, an agent's update and Prism's own plan files and views alike, goes through here.
  */
-async function applyOperations(seen, checked) {
+async function applyOperations(seen, checked, { held = null } = {}) {
   // Each file's bytes as the earlier operations of this update leave them, so later operations see their effect.
   const original = new Map();
   const state = new Map();
@@ -531,7 +563,8 @@ async function applyOperations(seen, checked) {
   };
   // The artifact paths every seen scope held before the update, found once when a write creates an artifact or a move_scope runs.
   let before;
-  const heldBefore = async () => before ??= await holdings(seen, "", null);
+  // The move of a checkout's files, which holds the lock across its updates, passes the listing it took once.
+  const heldBefore = async () => before ??= held ?? await holdings(seen, "", null);
   const one = async ({ file, address }, scopes) => {
     const held = await holders(seen, address, scopes, read);
     if (held.length > 1) throw ambiguous(file, held);
@@ -824,17 +857,42 @@ export async function storedArtifactIn(seen, scope, address) {
 /** The most characters an artifact's location may hold when Prism creates it. */
 export const ARTIFACT_LOCATION_MAX = LOCATION_MAX;
 
+/** The most bytes an artifact's content may hold when it is written. */
+export const ARTIFACT_CONTENT_MAX = CONTENT_MAX;
+
+/** The text of bytes that are UTF-8 text as a read decides it, or null when get_artifact would refuse them with artifact_not_text. */
+export function artifactText(bytes) {
+  try { return decoder.decode(bytes); }
+  catch { return null; }
+}
+
 /**
  * Create artifacts in the store for the move of a checkout's files, while the caller holds the store's artifact lock: each of writes,
- * { file, address, scope, bytes, writtenStatus }, is created with its exact bytes in its scope, and a requirement or ADR records its written status.
+ * { file, address, scope, bytes, text, writtenStatus }, is created with its exact bytes in its scope, and a requirement or ADR records its written status.
+ * held is the listing the move took of every seen scope, which stays valid while the move holds the lock, so no write lists the store again.
  * The writes take every check that an update's write takes, and a refused one refuses them all; returns the result's artifacts.
  */
-export async function createMovedArtifacts(seen, writes) {
-  const items = writes.map(({ file, address, scope, bytes, writtenStatus }) => ({
-    operation: { op: "write", path: file, content: hasStatus(address.kind) ? bytes.toString("utf8") : "", bytes, expectedVersion: null, writtenStatus, ...scopeFieldsOf(scope) },
+export async function createMovedArtifacts(seen, writes, { held = null } = {}) {
+  const items = writes.map(({ file, address, scope, bytes, text, writtenStatus }) => ({
+    operation: { op: "write", path: file, content: text, bytes, expectedVersion: null, writtenStatus, ...scopeFieldsOf(scope) },
     file, address, given: scope.kind === "component" ? { kind: "component", component: scope.component } : { kind: scope.kind }
   }));
-  return items.length ? (await applyOperations(seen, items)).artifacts : [];
+  return items.length ? (await applyOperations(seen, items, { held })).artifacts : [];
+}
+
+/**
+ * Record the written status of a moved requirement or ADR whose store location already holds its bytes but no status record, as a move interrupted between the two leaves it,
+ * while the caller holds the store's artifact lock; returns whether it wrote the record.
+ */
+export async function recordMovedStatus(seen, scope, address, written) {
+  if (!hasStatus(address.kind)) return false;
+  const target = await resolveStatusFile(seen, statusRecordLocation(scope, address));
+  if ((await locationKind(target, baseFor(seen, target))) !== "missing") return false;
+  await mkdir(path.dirname(target), { recursive: true });
+  await resolveAgain(seen, target);
+  await writeAtomically(target, serializeRecord(newRecord(address.kind, written ?? null)));
+  if (seen.store.sync) scheduleRecordSync(seen.store.base);
+  return true;
 }
 
 /** Write a view that Prism generates into one scope for the move of a checkout's files, while the caller holds the store's artifact lock, replacing the version that was read. */

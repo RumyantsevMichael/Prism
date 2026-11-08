@@ -36,7 +36,8 @@ import { checkpointPause, readCoordinationState, updateCoordinationState, valida
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
-import { keptExplanation } from "./workflow/artifact-migration.mjs";
+import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
+import { ARTIFACT_MIGRATIONS } from "./workflow/artifact-paths.mjs";
 import { forgetAskedGates, recordAskedGates } from "./workflow/approval-deliveries.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
 import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
@@ -316,6 +317,10 @@ function stateErrorData(error) {
   // A refused repository name carries the name the store would accept, so a client can offer the line to commit.
   if (error?.name === "RecordStoreError" && REPOSITORY_REFUSALS.includes(error.code)) {
     return { code: error.code, proposed: error.proposed ?? null };
+  }
+  // A configured artifact folder that would take the source tree names its key, the folder as resolved, and the component whose folder it is or holds.
+  if (error?.code === "artifact_folder_invalid" && ["RecordStoreError", "ArtifactError"].includes(error?.name)) {
+    return { code: error.code, key: error.key, folder: error.folder, ...(error.component === undefined ? {} : { component: error.component }) };
   }
   // A refused artifact read or update names the current version, the scopes that hold a path, the scope that already holds it, the edit that did not apply, the name that breaks the artifact name form, or the declared components.
   if (error?.name === "ArtifactError") {
@@ -1150,19 +1155,44 @@ async function savedArtifactLine(item, argumentsValue) {
 }
 
 // The move of a checkout's existing artifacts into its repository's scope says which files left the checkout, which stayed and why, and which tracked files still name them.
-function artifactMoveLines(move) {
-  const lines = [];
-  if (move.moved.length) {
-    lines.push(`Prism moved ${plural(move.moved.length, "descriptive file")} of this checkout into the record store at ${move.store}, scope ${move.repository}, and removed ${move.moved.length === 1 ? "it" : "them"} from the checkout; read and change ${move.moved.length === 1 ? "it" : "them"} with get_artifact and update_artifact by the same paths, and commit the removal on its own, apart from the task's changes.`, ...move.moved.map((item) => `- ${item.from} -> artifacts/${item.to}`));
-  }
-  if (move.kept.length) {
-    lines.push(`Prism kept ${plural(move.kept.length, "file")} under the artifact paths in the checkout, where ${move.kept.length === 1 ? "it stays" : "they stay"} until a person settles ${move.kept.length === 1 ? "it" : "each"}:`, ...move.kept.map((item) => `- ${item.path} (${item.reason}): ${keptExplanation(item)}.`));
-  }
+// Its text holds at most ARTIFACT_MOVE_NOTE_MAX bytes: entries past that are left out from the end, and its last line counts them and names the ledger, which lists every move and kept file.
+// Every path it prints goes through shownPath, so no file name begins or ends a line of Prism's text.
+const ARTIFACT_MOVE_NOTE_MAX = 32 * 1024;
+function artifactMoveNote(move) {
+  const store = shownPath(move.store);
+  if (move.unlisted) return `Git could not list this checkout's files, so Prism moved none of the files under its artifact paths into the record store at ${store}; they stay in the checkout until a later first access in a checkout that Git lists.`;
+  if (move.deferred) return `This checkout's descriptive files wait for a pull from the record store's remote before they move into the record store at ${store}: the store's sync could not complete the pull (sync state ${move.deferred.state}), so Prism moved, removed, and recorded nothing, the files stay in the checkout, and a later access tries again.`;
+  const them = (count) => count === 1 ? "it" : "them";
+  const sections = [];
+  // Kept and untracked files come first, since each waits for a person, and a long move's list of moves is what the closing line leaves to the ledger.
+  if (move.kept.length) sections.push({ header: `Prism kept ${plural(move.kept.length, "tracked file")} under the artifact paths in the checkout, where ${move.kept.length === 1 ? "it stays" : "they stay"} until a person settles ${move.kept.length === 1 ? "it" : "each"}:`, entries: move.kept.map((item) => `- ${shownPath(item.path)} (${item.reason}): ${keptExplanation(item)}.`) });
+  if (move.untracked.length) sections.push({ header: `${plural(move.untracked.length, "file")} under the artifact paths ${move.untracked.length === 1 ? "is" : "are"} not tracked by Git, so ${move.untracked.length === 1 ? "it stays" : "they stay"} in the checkout and no ledger names ${them(move.untracked.length)}; a person commits such a file for a later first access to move it, or writes it into the store with update_artifact:`, entries: move.untracked.map((file) => `- ${shownPath(file)} (untracked)`) });
+  if (move.moved.length) sections.push({ header: `Prism moved ${plural(move.moved.length, "descriptive file")} of this checkout into the record store at ${store}, scope ${shownPath(move.repository)}, and removed ${them(move.moved.length)} from the checkout; read and change ${them(move.moved.length)} with get_artifact and update_artifact by the same paths, and commit the removal on its own, apart from the task's changes.`, entries: move.moved.map((item) => `- ${shownPath(item.from)} -> ${shownPath(`artifacts/${item.to}`)}`) });
+  const fixed = move.ignored ? [`${plural(move.ignored, "ignored file")} under the artifact paths ${move.ignored === 1 ? "stays" : "stay"} in the checkout: Git ignores ${them(move.ignored)}, so Prism neither moves nor names ${them(move.ignored)}.`] : [];
   if (move.references.length) {
-    const more = move.moreReferences ? `, and ${plural(move.moreReferences, "more file")}` : "";
-    lines.push(`${plural(move.references.length + move.moreReferences, "tracked file")} in the checkout still ${move.references.length + move.moreReferences === 1 ? "names" : "name"} a moved file's former path or a configured folder that lost files, by line; the configured paths stay the artifacts' addresses, so update only text that tells readers to open these files in the checkout:`, ...move.references.map((item) => `- ${item}`), ...(more ? [`- ...${more}`] : []));
+    const total = move.references.length + move.moreReferences;
+    const entries = move.references.map((item) => `- ${shownPath(item.file)}:${item.lines.join(",")}${item.more ? ` and ${item.more} more ${item.more === 1 ? "line" : "lines"}` : ""}`);
+    if (move.moreReferences) entries.push(`- and ${plural(move.moreReferences, "more file")}`);
+    sections.push({ header: `${plural(total, "tracked file")} in the checkout still ${total === 1 ? "names" : "name"} a moved file's former path or a configured folder that lost files, by line; the configured paths stay the artifacts' addresses, so update only text that tells readers to open these files in the checkout:`, entries });
   }
-  return lines;
+  if (!sections.length && !fixed.length) return null;
+  const ledger = move.ledger ? ` and the ledger ${shownPath(`${ARTIFACT_MIGRATIONS}/${move.ledger}`)} in the record store at ${store} lists every move and kept file` : "";
+  const closing = (count) => `Prism left ${count} more ${count === 1 ? "entry" : "entries"} out of this report to keep it short${ledger}.`;
+  const bytes = (line) => Buffer.byteLength(line, "utf8") + 1;
+  // Room for the closing line, which names the ledger and counts what was left out.
+  let budget = ARTIFACT_MOVE_NOTE_MAX - bytes(closing(Number.MAX_SAFE_INTEGER));
+  const lines = [];
+  const take = (line) => { if (bytes(line) > budget) return false; lines.push(line); budget -= bytes(line); return true; };
+  for (const line of fixed) take(line);
+  let omitted = 0;
+  for (const section of sections) {
+    if (omitted || !take(section.header)) { omitted += section.entries.length; continue; }
+    for (const [index, entry] of section.entries.entries()) {
+      if (!take(entry)) { omitted += section.entries.length - index; break; }
+    }
+  }
+  if (omitted) lines.push(closing(omitted));
+  return lines.join("\n");
 }
 
 // A sync that found the same record, or the same lines of an artifact, changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
@@ -1178,8 +1208,10 @@ async function withRecordNotes(value, argumentsValue) {
   const files = taken.filter((item) => item.file);
   if (!reports.length && !taken.length) return none;
   const lines = [];
+  // Each move of a checkout's artifacts is a text item of its own, after the other notes, so its bound and its closing line are its own.
+  const moveNotes = [];
   for (const report of reports) {
-    if (report.artifacts) { lines.push(...artifactMoveLines(report.artifacts)); continue; }
+    if (report.artifacts) { const note = artifactMoveNote(report.artifacts); if (note) moveNotes.push(note); continue; }
     const into = report.store ? `the record store at ${report.store}` : ".prism";
     const kept = report.store ? "the record store" : ".prism";
     if (report.moved.length) {
@@ -1199,7 +1231,7 @@ async function withRecordNotes(value, argumentsValue) {
     lines.push(`Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, ...files.map((item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})`));
   }
   return {
-    value: { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] },
+    value: { ...value, content: [...value.content, ...(lines.length ? [{ type: "text", text: lines.join("\n") }] : []), ...moveNotes.map((text) => ({ type: "text", text }))] },
     written: () => confirmSavedConflicts(taken).catch(() => {}),
     unwritten: () => { restoreMigrationReports(reports); releaseSavedConflicts(taken); }
   };

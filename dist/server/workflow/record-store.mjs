@@ -4,12 +4,12 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { gitTooOld, listSavedConflicts, prepareStoreFiles, pullRecordStoreIfStale, readSavedConflict, readSyncStatus, scheduleRecordSync, waitForStableStore } from "./record-store-sync.mjs";
+import { gitTooOld, listSavedConflicts, prepareStoreFiles, pullRecordStoreIfStale, readSavedConflict, readSyncStatus, scheduleRecordSync, syncRecordStoreNow, waitForStableStore } from "./record-store-sync.mjs";
 import { managedRecordStore } from "./record-store-remote.mjs";
 import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 import { checkRepositoryName, portableRepositoryName, REPOSITORIES, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
 import { ARTIFACT_ACCEPTED, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, STATUS_RECORD_NAME, artifactAddress, componentScope, normalizeArtifactPath, repositoryScope, scopeFolder, wellFormedName, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
-import { COMPONENT_NAME } from "./components.mjs";
+import { COMPONENT_NAME, readComponents } from "./components.mjs";
 import { artifactKinds, initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
 // Machine records live under .prism beside the workflow config, or in the record store the workflow config names; human documents and generated views stay under the configured paths.
@@ -167,9 +167,11 @@ export async function recordStoreOf(projectRootPath) {
 
 async function resolveStore(projectRootPath) {
   const root = await projectRoot(projectRootPath);
-  const { workspace } = await readWorkflowConfig(root);
+  const config = await readWorkflowConfig(root);
+  const { workspace } = config;
   const configured = workspace?.store ?? null;
   if (configured === null) return { root, base: path.join(root, RECORD_DIRECTORY), contain: root, external: false, sync: false };
+  checkArtifactFolders(config);
   if (isRemoteStore(configured)) {
     const base = await managedRecordStore(root, configured, (message, store) => fail("store_unavailable", message, { store }));
     if (inside(root, base) || inside(base, root)) throw fail("store_unavailable", `The clone ${base} of the record store named under Workspace in .prism/workflow.md overlaps the project root. Keep the host's plugin data directory outside the project.`, { resolved: base });
@@ -211,9 +213,29 @@ async function checkedRepository(store) {
   return (await pending).repository;
 }
 
-/** Whether an error means a project's records cannot be used, as an unavailable store, a refused repository name, or a registrations entry that is no folder of the store does, so a view hides only the records. */
+// With a store, the move of a checkout's artifacts takes every tracked file below the Requirements, ADRs, and Plans folders, so none of them may be the project root or hold a component's folder, which would take the source tree.
+const ARTIFACT_FOLDERS = Object.freeze([["requirements", "Requirements"], ["adrs", "ADRs"], ["plans", "Plans"]]);
+
+/**
+ * Refuse, with artifact_folder_invalid, a configuration with a store whose Requirements, ADRs, or Plans folder is the project root or is or holds the folder of a component declared under ## Components.
+ * It reads only the parsed configuration, so it runs before Prism registers the repository or moves, removes, or writes any file; a component declaration that cannot be read names no folder here.
+ */
+export function checkArtifactFolders(config) {
+  let components = [];
+  try { components = readComponents(config).declared; } catch { components = []; }
+  for (const [key, label] of ARTIFACT_FOLDERS) {
+    const folder = config?.paths?.[key];
+    if (typeof folder !== "string") continue;
+    const component = folder === "" ? null : components.find((candidate) => candidate.folder === folder || candidate.folder.startsWith(`${folder}/`)) ?? null;
+    if (folder !== "" && component === null) continue;
+    const what = folder === "" ? "is the project root" : `${component.folder === folder ? "is" : "holds"} the folder ${component.folder} of the component ${component.name}`;
+    throw fail("artifact_folder_invalid", `The ${label} folder ${JSON.stringify(folder === "" ? "." : folder)} configured under ## Paths in .prism/workflow.md ${what}, so moving its files into the record store would take the source tree; Prism moved, removed, and wrote no file. Set ${label} to a folder below the project root that holds no component's folder, or to n/a.`, { key: label, folder: folder === "" ? "." : folder, ...(component ? { component: component.name } : {}) });
+  }
+}
+
+/** Whether an error means a project's records cannot be used, as an unavailable store, a refused repository name, an artifact folder that would take the source tree, or a registrations entry that is no folder of the store does, so a view hides only the records. */
 export function recordsUnavailable(error) {
-  return error?.code === "store_unavailable" || REPOSITORY_REFUSALS.includes(error?.code) || (error?.code === "invalid_path" && error.storeLayout === true);
+  return error?.code === "store_unavailable" || error?.code === "artifact_folder_invalid" || REPOSITORY_REFUSALS.includes(error?.code) || (error?.code === "invalid_path" && error.storeLayout === true);
 }
 
 /** The latest sync outcome of a project's record store, or null when the store does not sync or has not synced yet. */
@@ -478,21 +500,40 @@ async function migrate(root) {
 }
 
 // A checkout's existing artifacts move into its repository's scope on its first access to the store in a server process, after its records moved,
-// so a later access in the same process reports nothing again; a move that failed is tried again by the next access.
+// so a later access in the same process reports nothing again; a move that failed, or that waits for a pull, is tried again by the next access.
 const artifactMigrations = new Map();
+// The sync outcomes after which the store holds what its remote held: a completed fetch and merge, whether or not the push went through, or no remote to pull from.
+const PULLED = new Set(["ok", "conflicts", "push_rejected", "no_upstream", "not_a_repository"]);
 function migrateArtifactsOnce(root, store, config) {
   const key = `${root}\0${store.base}`;
   if (artifactMigrations.has(key)) return artifactMigrations.get(key).then(() => null);
   const pending = (async () => {
-    await synced(store);
-    const seen = await scopesOf(root, config, store);
-    const recordSources = new Set((await legacyRecords(root, store, config)).map((move) => move.from));
     const { migrateArtifacts } = await import("./artifact-migration.mjs");
-    return migrateArtifacts(seen, { recordSources, frozenTests: await storedFrozenTests(store) });
+    return migrateArtifacts({
+      root, kinds: artifactKinds(config), store: store.base, repository: store.repository,
+      // With store sync on, the move decides against the store as pulled from its remote, so it reads what other machines pushed.
+      pull: store.sync ? () => pullBeforeMove(store) : null,
+      prepare: async () => {
+        await synced(store);
+        return {
+          seen: await scopesOf(root, config, store),
+          recordSources: new Set((await legacyRecords(root, store, config)).map((move) => move.from)),
+          frozenTests: await storedFrozenTests(store)
+        };
+      }
+    });
   })();
   artifactMigrations.set(key, pending);
-  pending.catch(() => { if (artifactMigrations.get(key) === pending) artifactMigrations.delete(key); });
+  const forget = () => { if (artifactMigrations.get(key) === pending) artifactMigrations.delete(key); };
+  pending.then((outcome) => { if (outcome?.deferred) forget(); }, forget);
   return pending;
+}
+
+// A completed sync of the store: { pulled, state }, where pulled says whether the store now holds what its remote held, and state is the sync's outcome without Git's output.
+async function pullBeforeMove(store) {
+  await prepareStoreFiles(store.base).catch(() => {});
+  const status = await syncRecordStoreNow(store.base).catch(() => ({ state: "git_failed" }));
+  return { pulled: PULLED.has(status?.state), state: typeof status?.state === "string" ? status.state : "git_failed" };
 }
 
 // The frozen tests of every accepted design that the store's initiative records hold, as project-relative paths; an unreadable record names none.
@@ -861,13 +902,16 @@ export async function resolveLedgerFile(seen, name) {
   return target;
 }
 
-/** Run an action that changes a seen store's artifacts while holding the store's artifact lock, so each update checks and changes the files it touches alone. */
-export async function withArtifactStoreLock(seen, action) {
+/**
+ * Run an action that changes a seen store's artifacts while holding the store's artifact lock, so each update checks and changes the files it touches alone.
+ * Options pass through to the file lock: a long action, such as the move of a checkout's artifacts, renews the lock, so no waiting process takes it as abandoned while the action runs.
+ */
+export async function withArtifactStoreLock(seen, action, options = {}) {
   const lock = path.join(seen.store.base, ARTIFACTS);
   return withArtifactLock(lock, () => withFileLock(lock, async () => {
     await ensureHousekeeping(seen.store);
     return action();
-  }, fail));
+  }, fail, options));
 }
 
 // The store functions check names, scopes, and layout and take the artifact lock, and they import this module, so they load when first used.
