@@ -1,5 +1,7 @@
 @startuml
 title agent-change-notices - code
+component "hooks/record-call-agent.mjs\nPreToolUse record" as AgentHook
+component "call-agent.mjs\ncallAgent, coordinator" as Agent
 component "change-notices.mjs\ntakePersonChanges" as Notices
 component "mcp.mjs\nresult decoration" as Mcp
 component "gate-wait.mjs\nchanged status" as Wait
@@ -8,8 +10,10 @@ component "hooks/wait-for-gate-answers.mjs" as Hook
 component "state.mjs\nkeptSettings" as State
 component "initiative.mjs\nsettings in results,\nreview marks" as Initiative
 component "skills/orchestrate/SKILL.md" as Skill
+Agent ..> AgentHook : reads records
+Mcp --> Agent : agent, coordinator
 Mcp --> Notices
-Wait --> Notices : marks shown
+Wait --> Notices : takes shown
 Wait ..> State : history
 Hook --> Wait
 Hook ..> Requests
