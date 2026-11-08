@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -18,6 +18,15 @@ test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive:
 
 const git = (cwd, args, input) => execFileSync("git", ["-C", cwd, ...args], { input, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
 const exists = (target) => access(target).then(() => true, () => false);
+// Whether a path is stored on disk in exactly this spelling, as folder listings show it, which a file system that ignores letter case tells apart only that way.
+async function stored(base, ...names) {
+  let folder = base;
+  for (const name of names) {
+    if (!(await readdir(folder).catch(() => [])).includes(name)) return false;
+    folder = path.join(folder, name);
+  }
+  return true;
+}
 
 // Two stores cloned from one bare remote, each one level below its own folder, so a path that climbs out of store b lands in a folder the test owns.
 async function stores(context) {
@@ -82,7 +91,9 @@ const CRAFTED = [
   { label: "a name ending in a dot", names: ["artifacts", "plans", "end."], target: (store) => path.join(store, "artifacts", "plans", "end.") },
   { label: "a name ending in a space", names: ["notes", "trailing "], target: (store) => path.join(store, "notes", "trailing ") },
   { label: "a character Windows refuses", names: ["notes", "what?.md"], target: (store) => path.join(store, "notes", "what?.md") },
-  { label: "a control character", names: ["notes", "bell\u0007.md"], target: (store) => path.join(store, "notes", "bell\u0007.md") }
+  { label: "a control character", names: ["notes", "bell\u0007.md"], target: (store) => path.join(store, "notes", "bell\u0007.md") },
+  // A name of a file Prism shares is written through a temporary file about 30 bytes longer, so one over 200 bytes is too long for some machine to write.
+  { label: "an artifact name too long for some machine to write", names: ["artifacts", "plans", `${"n".repeat(230)}.md`], target: (store) => path.join(store, "artifacts", "plans", `${"n".repeat(230)}.md`) }
 ];
 
 // Regular files at safe paths that Prism does not write, as an earlier Prism or a Git host may have left them: a sync carries them in Git and never writes them.
@@ -281,7 +292,7 @@ for (const [label, names, pair] of [
     assert.equal(status.state, "merge_failed", JSON.stringify(status));
     for (const place of pair) assert.ok(status.message.includes(JSON.stringify(place)), status.message);
     assert.equal(isAncestor(storeB, crafted), false, "the branch stays where it was");
-    assert.equal(await exists(path.join(storeB, ...names)), false);
+    assert.equal(await stored(storeB, ...names), false);
   });
 }
 
@@ -296,7 +307,7 @@ test("two machines that write artifacts whose paths differ only in letter case k
   const tree = git(storeB, ["ls-tree", "-r", "--name-only", "origin/main"]).split("\n");
   assert.ok(tree.includes("artifacts/plans/notes.md") && !tree.includes("artifacts/plans/Notes.md"), tree.join(", "));
   assert.equal(await readFile(path.join(storeB, "artifacts", "plans", "notes.md"), "utf8"), "# Notes from a\n");
-  assert.equal(await exists(path.join(storeB, "artifacts", "plans", "Notes.md")), false);
+  assert.equal(await stored(storeB, "artifacts", "plans", "Notes.md"), false);
   assert.equal((await syncRecordStore(storeA)).state, "ok", "the other machine takes the result");
 });
 
@@ -318,4 +329,69 @@ test("a branch that took an unportable upstream entry by hand pushes nothing unt
   const status = await syncRecordStore(storeB);
   assert.equal(status.state, "ok", JSON.stringify(status));
   assert.equal(git(storeB, ["show", "origin/main:roadmap.json"]), "{\"local\":true}");
+});
+
+test("a file Prism shares whose name is too long for some machine to write is never committed, the sync names it, and every other change still syncs", async (context) => {
+  const { storeA, storeB } = await stores(context);
+  const long = `${"n".repeat(230)}.md`;
+  await writeFile(path.join(storeB, "artifacts", "plans", long), "# Long\n");
+  await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
+  const status = await syncRecordStore(storeB);
+  assert.equal(status.state, "ok", JSON.stringify(status));
+  assert.deepEqual(status.withheld.map((entry) => entry.path), [`artifacts/plans/${long}`]);
+  assert.ok(status.message.includes(JSON.stringify(`artifacts/plans/${long}`)), status.message);
+  assert.equal(git(storeB, ["show", "origin/main:roadmap.json"]), "{\"b\":true}", "the other change is pushed");
+  assert.ok(!git(storeB, ["ls-tree", "-r", "--name-only", "origin/main"]).includes(long), "the long name never reaches the remote");
+  assert.equal(await exists(path.join(storeB, "artifacts", "plans", long)), true, "the file stays on disk");
+  git(storeA, ["pull", "-q", "origin", "main"]);
+  assert.equal((await syncRecordStore(storeA)).state, "ok", "the other machine takes the push");
+  await rm(path.join(storeB, "artifacts", "plans", long));
+  await writeFile(path.join(storeB, "artifacts", "plans", "short.md"), "# Long\n");
+  const renamed = await syncRecordStore(storeB);
+  assert.equal(renamed.state, "ok", JSON.stringify(renamed));
+  assert.equal(renamed.withheld, undefined);
+  assert.equal(git(storeB, ["show", "origin/main:artifacts/plans/short.md"]), "# Long");
+});
+
+// An older Git on Windows could commit a name in the machine's code page, so the remote's branch can hold names that are not UTF-8, which macOS and Windows cannot hold.
+function pushLegacyNames(storeA) {
+  git(storeA, ["fetch", "-q", "origin"]);
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(storeA, ".git", "teammate-index") };
+  execFileSync("git", ["-C", storeA, "read-tree", "origin/main"], { env });
+  const blob = (text) => git(storeA, ["hash-object", "-w", "--stdin"], text);
+  const records = Buffer.concat([
+    Buffer.from(`100644 ${blob("first\n")}\tnotes/caf`), Buffer.from([0xe8]), Buffer.from(".md\0"),
+    Buffer.from(`100644 ${blob("second\n")}\tnotes/caf`), Buffer.from([0xe9]), Buffer.from(".md\0")
+  ]);
+  execFileSync("git", ["-C", storeA, "update-index", "-z", "--index-info"], { env, input: records });
+  const tree = execFileSync("git", ["-C", storeA, "write-tree"], { env }).toString().trim();
+  const commit = git(storeA, ["commit-tree", tree, "-p", "origin/main", "-m", "legacy names"]);
+  git(storeA, ["push", "-q", "origin", `${commit}:refs/heads/main`]);
+  return commit;
+}
+const namesOf = (cwd, commit) => execFileSync("git", ["-C", cwd, "ls-tree", "-r", "-z", "--name-only", commit]).toString("latin1").split("\0").filter(Boolean);
+
+test("a sync refuses an upstream entry whose name is not UTF-8, names it with its bytes escaped, and the branch stays", async (context) => {
+  const { storeA, storeB } = await stores(context);
+  const crafted = pushLegacyNames(storeA);
+  await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
+  const status = await syncRecordStore(storeB);
+  assert.equal(status.state, "merge_failed", JSON.stringify(status));
+  assert.ok(status.message.includes(String.raw`"notes/caf\xe8.md"`), status.message);
+  assert.equal(isAncestor(storeB, crafted), false, "the branch stays where it was");
+  assert.deepEqual(namesOf(storeA, "origin/main").filter((name) => name.startsWith("notes/")), ["notes/caf\xe8.md", "notes/caf\xe9.md"]);
+  assert.equal(git(storeA, ["ls-remote", "origin", "main"]).split("\t")[0], crafted, "nothing was pushed");
+});
+
+test("a branch that took entries whose names are not UTF-8 by hand keeps each name's bytes in its commits and pushes nothing until the remote drops them", async (context) => {
+  const { storeA, storeB } = await stores(context);
+  const crafted = pushLegacyNames(storeA);
+  git(storeB, ["pull", "-q", "origin", "main"]);
+  await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
+  const refused = await syncRecordStore(storeB);
+  assert.equal(refused.state, "merge_failed", JSON.stringify(refused));
+  assert.ok(refused.message.includes(String.raw`"notes/caf\xe8.md"`), refused.message);
+  assert.deepEqual(namesOf(storeB, "HEAD").filter((name) => name.startsWith("notes/")), ["notes/caf\xe8.md", "notes/caf\xe9.md"], "the local commit keeps both names byte for byte");
+  assert.equal(git(storeB, ["show", "HEAD:roadmap.json"]), "{\"b\":true}", "the local change is committed");
+  assert.equal(git(storeA, ["ls-remote", "origin", "main"]).split("\t")[0], crafted, "nothing was pushed");
 });

@@ -17,8 +17,9 @@ async function wait(milliseconds) {
 async function acquireFileLock(artifactPath, makeError, options) {
   const lockPath = `${artifactPath}.lock`;
   const deadline = Date.now() + (options.timeoutMs ?? LOCK_TIMEOUT_MS);
-  // The first attempt always runs, so a short timeout such as the sync lock's one millisecond never times out untried.
-  for (let first = true; first || Date.now() < deadline; first = false) {
+  // The first attempt always runs, so a short timeout such as the sync lock's one millisecond never times out untried, and so does the attempt after an abandoned lock is removed.
+  for (let first = true; first || Date.now() < deadline;) {
+    first = false;
     try {
       const handle = await open(lockPath, "wx", 0o600);
       const token = randomBytes(16).toString("hex");
@@ -46,6 +47,7 @@ async function acquireFileLock(artifactPath, makeError, options) {
           // Another starter may have reclaimed the lock since it was read, so only the judged owner's file is removed.
           const current = await readFile(lockPath, "utf8").then(JSON.parse).catch(() => ({}));
           if (current.token === owner.token) await rm(lockPath, { force: true });
+          first = true;
           continue;
         }
       } catch (lockError) {

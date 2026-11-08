@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { checkout, exists, isolateGit, ok, remoteFile, server, syncedWorkspace, text, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { checkout, isolateGit, ok, remoteFile, server, syncedWorkspace, text, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Store sync of artifacts whose layout differs between two machines: a file on one side and a folder on the other, and a folder that a file manager kept alive.
 // Each checkout's server leaves sync off, and the test syncs each machine's store on demand, so every step runs in a known order.
@@ -153,7 +153,8 @@ test("a sync that removes the last artifact of a folder holding only Finder's .D
   await writeArtifact(onA, "docs/plans/x/b.md", "# In lower case\n");
   assert.equal((await syncRecordStore(place.storeA)).state, "ok");
   assert.equal((await syncRecordStore(place.storeB)).state, "ok");
-  assert.equal(await exists(path.join(place.storeB, "artifacts/plans/X")), false);
+  // A folder listing shows a name's stored spelling, which a file system that ignores letter case would find "X" by even after the folder became "x".
+  assert.deepEqual(await readdir(path.join(place.storeB, "artifacts/plans")), ["x"]);
   assert.equal(await text(path.join(place.storeB, "artifacts/plans/x/b.md")), "# In lower case\n");
 });
 

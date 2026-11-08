@@ -32,8 +32,14 @@ if (root !== null) {
     const original = calls[name];
     calls[name] = (target, ...rest) => original(resolveName(target), ...rest);
   }
+  // A rename to another spelling of the same entry changes the stored spelling of its name, as such a file system does.
   const rename = calls.rename;
-  calls.rename = (from, to) => rename(resolveName(from), resolveName(to));
+  calls.rename = (from, to) => {
+    const source = resolveName(from);
+    const target = resolveName(to);
+    if (typeof to !== "string" || source !== target || path.basename(target) === path.basename(to)) return rename(source, target);
+    return rename(source, path.join(path.dirname(target), path.basename(to)));
+  };
   syncBuiltinESMExports();
   if (process.env.PRISM_TEST_CASE_INSENSITIVE_MARKER) fs.writeFileSync(process.env.PRISM_TEST_CASE_INSENSITIVE_MARKER, `${process.pid}\n`);
 }

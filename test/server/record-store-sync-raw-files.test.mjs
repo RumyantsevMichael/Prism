@@ -207,3 +207,39 @@ test("a branch whose remote branch was deleted publishes it again without a link
   await ok(storeA);
   assert.equal(await readFile(path.join(storeA, "roadmap.json"), "utf8"), "{\"local\":true}\n", "another machine takes the published branch");
 });
+
+// Git 2.43 and later refuse, in every fetch and clone that checks objects, a .gitattributes blob with a line over 2048 bytes, and a pushed object stays in the remote's history for good.
+const refusedAttributes = `${"*.md".padEnd(3000, " ")} text\n`;
+const checkedClone = (remote, target) => execFileSync("git", ["-c", "transfer.fsckObjects=true", "clone", "-q", `file://${remote}`, target], { stdio: "pipe" });
+
+test("a store file whose object Git's object check refuses is never committed, the sync names it, and every other change still syncs", async (context) => {
+  const { parent, remote, storeA, storeB } = await stores(context);
+  await writeFile(path.join(storeB, ".gitattributes"), refusedAttributes);
+  await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
+  const status = await ok(storeB);
+  assert.deepEqual(status.withheld.map((entry) => entry.path), [".gitattributes"]);
+  assert.match(status.withheld[0].reason, /gitattributesLineLength/);
+  assert.ok(status.message.includes("\".gitattributes\""), status.message);
+  assert.equal(remoteBytes(remote, "roadmap.json").toString(), "{\"b\":true}\n", "the other change is pushed");
+  assert.equal(remoteTree(remote)[".gitattributes"], undefined, "the refused file never reaches the remote");
+  assert.equal(git(storeB, ["rev-list", "--objects", "HEAD"]).includes(git(storeB, ["hash-object", "--no-filters", ".gitattributes"])), false, "no local commit holds it");
+  checkedClone(remote, path.join(parent, "fresh"));
+  await ok(storeA);
+  await writeFile(path.join(storeB, ".gitattributes"), "* -text\n");
+  const fixed = await ok(storeB);
+  assert.equal(fixed.withheld, undefined);
+  assert.equal(remoteBytes(remote, ".gitattributes").toString(), "* -text\n");
+});
+
+test("a sync refuses to push a commit made by hand whose objects Git's object check refuses, and names the file", async (context) => {
+  const { parent, remote, storeB } = await stores(context);
+  const before = git(remote, ["rev-parse", "main"]);
+  await writeFile(path.join(storeB, ".gitattributes"), refusedAttributes);
+  git(storeB, ["add", ".gitattributes"]);
+  git(storeB, ["commit", "-q", "-m", "by hand"]);
+  const status = await syncRecordStore(storeB);
+  assert.equal(status.state, "merge_failed", JSON.stringify(status));
+  assert.ok(status.message.includes("\".gitattributes\"") && status.message.includes("gitattributesLineLength"), status.message);
+  assert.equal(git(remote, ["rev-parse", "main"]), before, "nothing was pushed");
+  checkedClone(remote, path.join(parent, "fresh"));
+});

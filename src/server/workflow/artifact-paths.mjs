@@ -30,6 +30,14 @@ export const windowsDeviceName = (name) => DEVICE_NAME.test(name);
  */
 export const portableName = (name) => typeof name === "string" && name !== "" && !WINDOWS_REFUSED.test(name) && !/[. ]$/.test(name) && !DEVICE_NAME.test(name);
 
+// ext4 and APFS hold a name of at most 255 bytes and NTFS one of 255 UTF-16 units, and every write of a store file goes through a temporary file ".<name>.<process id>.<16 hex digits>.tmp" beside it, up to 33 bytes longer.
+// So a name that a store shares holds at most 200 bytes, and its whole path at most 512, which leaves room below the 1024 bytes macOS allows for the store's own folder and the sync folder's saved copies.
+export const STORE_NAME_BYTES_MAX = 200;
+export const STORE_PATH_BYTES_MAX = 512;
+
+/** Whether every machine Prism supports can write a store-relative path and the temporary file beside it: each name holds at most STORE_NAME_BYTES_MAX bytes and the path at most STORE_PATH_BYTES_MAX. */
+export const storePathFits = (file) => Buffer.byteLength(file) <= STORE_PATH_BYTES_MAX && file.split("/").every((name) => Buffer.byteLength(name) <= STORE_NAME_BYTES_MAX);
+
 /** Whether one path component follows the artifact name form. */
 export const wellFormedName = (name) => NAME_FORM.test(name) && portableName(name) && !LOCK_ENDING.test(name);
 
