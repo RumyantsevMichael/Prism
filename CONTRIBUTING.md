@@ -117,6 +117,14 @@ To change a shade, change it in both themes when both need it, and keep the cont
 The fonts, Geist and Geist Mono under the SIL Open Font License, ship in `kit/fonts/` and load from the review app, never from another host.
 The review app stores the user's theme and density in `review-preferences.json` in the review app folder, so the choice survives a restart on another port.
 
+The kit's elements live in `src/server/review/public/kit/elements/`, one `prism-<name>.js` per element, and `kit/kit.js` lists them in `KIT_ELEMENTS` and defines them.
+An element that renders in shadow DOM names its stylesheets in a static `styles` list, such as `prism-button.css` beside it, and the kit fetches each one once and adopts it in every shadow root.
+An element that renders in light DOM is styled in `kit/kit.css`.
+Each element class also carries a static `tag` and a static `catalog` of its purpose, options, states, and keys.
+The component catalog at `<review URL>/kit/catalog` shows one entry per element from that `catalog`, with a live specimen per state from `SPECIMENS` in `kit/catalog.js`, plus long text and an unbroken name.
+To add an element, add its file, list it in `KIT_ELEMENTS`, and add its specimens to `SPECIMENS`.
+The review page's **Appearance** button, at the end of the status bar, links to the catalog.
+
 The kit guard names each raw design value and each control styled or written around the kit:
 
 ```bash
@@ -155,6 +163,8 @@ node scripts/review-demo/layout-check.mjs
 
 The check opens every page of the demo, edge-case, and an empty project at phone, tablet, laptop, and wide window sizes, plus the menus, palette, and maximized views.
 It fails on content that escapes its container, a page that scrolls the whole window, a control cut off by its container, and browser errors.
+It also checks the component catalog of the empty project at each viewport and theme, and prints each catalog problem as `catalog <entry>: <problem> at <viewport> (<width>px), <theme>`.
+`--catalog <url>` checks only the catalog at that URL.
 `--viewports`, `--themes`, and `--screenshots <directory>` widen the run or keep screenshots for a visual pass.
 Playwright is not a repository dependency, so the check uses an installed copy and is not part of CI.
 

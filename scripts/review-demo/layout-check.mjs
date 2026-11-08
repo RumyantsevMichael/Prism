@@ -1,73 +1,45 @@
-// Check the review browser layout on every page of the demo, edge-case, and empty projects at several window sizes.
+// Check the review browser layout on every page of the demo, edge-case, and empty projects at several window sizes, and the component catalog at each of them.
 // The check fails on content that escapes its container, a page that scrolls the whole window, a control cut off by its container, and browser errors.
-// Usage: node scripts/review-demo/layout-check.mjs [--viewports phone,tablet,laptop,wide] [--themes light,dark] [--screenshots directory]
+// Usage: node scripts/review-demo/layout-check.mjs [--viewports phone,tablet,laptop,wide] [--themes light,dark] [--screenshots directory] [--catalog url]
+// With --catalog it checks only the catalog at that URL. Each catalog problem prints as `catalog <entry>: <problem> at <viewport> (<width>px), <theme>`.
 // Playwright is not a dependency of this repository; the check uses an installed copy, local or global.
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { ROOT } from "./project.mjs";
+import { auditPage as audit, checkCatalog, checkNames, loadPlaywright as installedPlaywright, VIEWPORTS } from "./layout-audit.mjs";
 
-const VIEWPORTS = {
-  phone: { width: 360, height: 740 },
-  tablet: { width: 768, height: 1024 },
-  laptop: { width: 1280, height: 800 },
-  short: { width: 1280, height: 560 },
-  wide: { width: 1920, height: 1080 },
-  ultra: { width: 2560, height: 1440 }
-};
 const PLACES = ["attention", "roadmap", "requirements", "decisions", "glossary"];
 
-const { values } = parseArgs({ options: { viewports: { type: "string", default: "phone,tablet,laptop,wide" }, themes: { type: "string", default: "light" }, screenshots: { type: "string" } } });
+const { values } = parseArgs({ options: { viewports: { type: "string", default: "phone,tablet,laptop,wide" }, themes: { type: "string", default: "light" }, screenshots: { type: "string" }, catalog: { type: "string" } } });
 const viewports = values.viewports.split(",");
 const themes = values.themes.split(",");
-for (const name of viewports) {
-  if (!VIEWPORTS[name]) throw new Error(`Unknown viewport ${name}; use ${Object.keys(VIEWPORTS).join(", ")}.`);
-}
+checkNames({ viewports, themes });
 
 function loadPlaywright() {
-  for (const base of [ROOT, execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim()]) {
-    try {
-      return createRequire(path.join(base, "noop.js"))("playwright");
-    } catch {
-    }
-  }
+  const playwright = installedPlaywright();
+  if (playwright) return playwright;
   process.stderr.write("layout-check: Playwright is not installed. Install it with `npm install -g playwright` and `npx playwright install chromium`.\n");
   process.exit(2);
 }
 
-// Runs in the page: every finding names the element and the container it escapes.
-function audit() {
-  const out = [];
-  const root = document.documentElement;
-  if (root.scrollWidth > root.clientWidth + 1) out.push(`the window scrolls horizontally (${root.scrollWidth} > ${root.clientWidth})`);
-  if (root.scrollHeight > root.clientHeight + 1) out.push(`the window scrolls vertically (${root.scrollHeight} > ${root.clientHeight})`);
-  const describe = (el) => `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ""}${typeof el.className === "string" && el.className.trim() ? `.${el.className.trim().split(/\s+/).slice(0, 2).join(".")}` : ""}`;
-  const shown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden" && !el.closest("[hidden], svg, .sr-only");
-  for (const el of document.querySelectorAll("body *")) {
-    if (!shown(el) || ["absolute", "fixed"].includes(getComputedStyle(el).position)) continue;
-    const parent = el.parentElement;
-    if (!parent || parent === document.body || getComputedStyle(parent).overflowX !== "visible") continue;
-    const box = el.getBoundingClientRect();
-    const limit = parent.getBoundingClientRect();
-    if (box.width && box.right > limit.right + 2 && box.left < limit.right) out.push(`${describe(el)} overflows ${describe(parent)}`);
+const catalogLine = ({ entry, problem, viewport, width, theme }) => `catalog ${entry}: ${problem} at ${viewport} (${width}px), ${theme}`;
+
+// With --catalog, only that catalog is checked.
+if (values.catalog) {
+  const { chromium } = loadPlaywright();
+  const browser = await chromium.launch();
+  let problems;
+  try {
+    problems = await checkCatalog({ url: values.catalog, viewports, themes, browser });
+  } finally {
+    await browser.close();
   }
-  for (const el of document.querySelectorAll("button, a[href], input, textarea, select")) {
-    if (!shown(el)) continue;
-    const box = el.getBoundingClientRect();
-    for (let parent = el.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
-      const overflow = getComputedStyle(parent).overflowX;
-      if (overflow === "auto" || overflow === "scroll") break;
-      if (overflow === "hidden" || overflow === "clip") {
-        const limit = parent.getBoundingClientRect();
-        if (box.width && box.right > limit.right + 2 && box.left < limit.right) out.push(`control ${describe(el)} is cut off by ${describe(parent)}`);
-        break;
-      }
-    }
-  }
-  return [...new Set(out)];
+  for (const problem of problems) process.stdout.write(`${catalogLine(problem)}\n`);
+  process.stdout.write(`${viewports.length * themes.length} catalog checks, ${problems.length} ${problems.length === 1 ? "problem" : "problems"}.\n`);
+  process.exit(problems.length ? 1 : 0);
 }
 
 const parent = await mkdtemp(path.join(os.tmpdir(), "prism-layout-check-"));
@@ -78,6 +50,7 @@ const { chromium } = loadPlaywright();
 const browser = await chromium.launch();
 const findings = new Map();
 let pages = 0;
+let catalogProblems = [];
 
 function record(finding, where) {
   if (!findings.has(finding)) findings.set(finding, []);
@@ -168,6 +141,9 @@ try {
       await context.close();
     }
   }
+  // The component catalog of the empty project, at every checked viewport and theme.
+  const emptyProject = projects.find((project) => project.name === "empty");
+  catalogProblems = await checkCatalog({ url: new URL("kit/catalog", emptyProject.url).href, viewports, themes, browser });
 } finally {
   await browser.close();
   await Promise.all(held.map((server) => server?.close?.()));
@@ -179,8 +155,11 @@ try {
   await rm(parent, { recursive: true, force: true });
 }
 
+for (const problem of catalogProblems) process.stdout.write(`${catalogLine(problem)}\n`);
 for (const [finding, places] of findings) {
   process.stdout.write(`${finding}\n  ${places.slice(0, 5).join("\n  ")}${places.length > 5 ? `\n  and ${places.length - 5} more` : ""}\n`);
 }
-process.stdout.write(`${pages} page checks, ${findings.size} distinct ${findings.size === 1 ? "finding" : "findings"}.\n`);
-process.exit(findings.size ? 1 : 0);
+// A catalog problem counts as one finding per entry and problem, whatever the viewports and themes it shows at.
+const distinct = findings.size + new Set(catalogProblems.map((problem) => `${problem.entry}\n${problem.problem}`)).size;
+process.stdout.write(`${pages} page checks, ${viewports.length * themes.length} catalog checks, ${distinct} distinct ${distinct === 1 ? "finding" : "findings"}.\n`);
+process.exit(distinct ? 1 : 0);
