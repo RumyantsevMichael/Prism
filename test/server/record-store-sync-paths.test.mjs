@@ -369,6 +369,14 @@ function pushLegacyNames(storeA) {
   git(storeA, ["push", "-q", "origin", `${commit}:refs/heads/main`]);
   return commit;
 }
+// Whether the file system below a folder holds a name that is not UTF-8 byte for byte, as Linux does; macOS refuses it as an illegal byte sequence, and Windows stores another name.
+async function holdsNotUtf8(folder) {
+  const probe = Buffer.concat([Buffer.from("probe-caf"), Buffer.from([0xe8])]);
+  const written = await writeFile(Buffer.concat([Buffer.from(`${folder}${path.sep}`), probe]), "").then(() => true, () => false);
+  const names = await readdir(folder, { encoding: "buffer" });
+  for (const name of names.filter((entry) => entry.toString("latin1").startsWith("probe-caf"))) await rm(Buffer.concat([Buffer.from(`${folder}${path.sep}`), name]));
+  return written && names.some((name) => name.equals(probe));
+}
 const namesOf = (cwd, commit) => execFileSync("git", ["-C", cwd, "ls-tree", "-r", "-z", "--name-only", commit]).toString("latin1").split("\0").filter(Boolean);
 
 test("a sync refuses an upstream entry whose name is not UTF-8, names it with its bytes escaped, and the branch stays", async (context) => {
@@ -386,9 +394,18 @@ test("a sync refuses an upstream entry whose name is not UTF-8, names it with it
 test("a branch that took entries whose names are not UTF-8 by hand keeps each name's bytes in its commits and pushes nothing until the remote drops them", async (context) => {
   const { storeA, storeB } = await stores(context);
   const crafted = pushLegacyNames(storeA);
-  git(storeB, ["pull", "-q", "origin", "main"]);
+  // The branch and the index take the commit by hand; a pull on macOS stops because its file system refuses names that are not UTF-8, so only a host that holds them, as Linux does, writes the files.
+  git(storeB, ["fetch", "-q", "origin"]);
+  git(storeB, ["read-tree", crafted]);
+  git(storeB, ["update-ref", "HEAD", crafted]);
+  const legacy = namesOf(storeB, "HEAD").filter((name) => name.startsWith("notes/"));
+  const holds = await holdsNotUtf8(path.dirname(storeB));
+  if (holds) execFileSync("git", ["-C", storeB, "checkout-index", "-f", "-z", "--stdin"], { input: Buffer.from(`${legacy.join("\0")}\0`, "latin1") });
+  const onDisk = () => readdir(path.join(storeB, "notes"), { encoding: "buffer" }).then((names) => names.map((name) => name.toString("latin1")).sort(), () => []);
+  assert.deepEqual(await onDisk(), holds ? ["caf\xe8.md", "caf\xe9.md"] : []);
   await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
   const refused = await syncRecordStore(storeB);
+  assert.deepEqual(await onDisk(), holds ? ["caf\xe8.md", "caf\xe9.md"] : [], "the sync writes and removes neither file, whatever the host can hold");
   assert.equal(refused.state, "merge_failed", JSON.stringify(refused));
   assert.ok(refused.message.includes(String.raw`"notes/caf\xe8.md"`), refused.message);
   assert.deepEqual(namesOf(storeB, "HEAD").filter((name) => name.startsWith("notes/")), ["notes/caf\xe8.md", "notes/caf\xe9.md"], "the local commit keeps both names byte for byte");

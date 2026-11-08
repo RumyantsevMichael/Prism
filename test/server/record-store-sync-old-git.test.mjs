@@ -22,7 +22,18 @@ const git = (cwd, args, input) => execFileSync("git", ["-C", cwd, ...args], { in
 // and index-pack --strict leaves out the .gitattributes checks, which Git before 2.39.1 does not have, the .gitmodules URL check, which Git before 2.30.1 makes of fewer URLs,
 // the check of a tree entry name over 4096 bytes, which Git before 2.43 does not have, and any further checks that IGNORE_CHECKS lists, as an older release lacks them.
 // It also walks trees of any depth, as Git before 2.43, which has no core.maxTreeDepth, does, whatever limit the sync sets.
+// index-pack stops at a check whose name its Git does not know, and a Git that does not know a check lacks it already, so the wrapper leaves out only the checks this machine's Git knows.
 const realGit = execFileSync("sh", ["-c", "command -v git"]).toString().trim();
+const LEFT_OUT = ["gitattributesLineLength", "gitattributesLarge", "gitattributesMissing", "gitattributesBlob", "gitmodulesUrl", "largePathname"];
+const probe = path.join(environment, "probe.git");
+execFileSync(realGit, ["init", "-q", "--bare", probe], { stdio: "pipe" });
+const knownChecks = new Map();
+// Whether this machine's Git knows a check by name: index-pack reads its --strict list before its input, so an empty input fails on any other ground once every name is known.
+function knowsCheck(id) {
+  if (!knownChecks.has(id)) knownChecks.set(id, !spawnSync(realGit, ["-C", probe, "index-pack", `--strict=${id}=ignore`, "--stdin"], { input: "", encoding: "utf8" }).stderr.includes("Unhandled message id"));
+  return knownChecks.get(id);
+}
+const leftOut = LEFT_OUT.filter(knowsCheck).map((id) => `${id}=ignore`).join(",");
 const wrapper = path.join(environment, "bin", "git");
 await mkdir(path.dirname(wrapper), { recursive: true });
 await writeFile(wrapper, `#!/bin/bash
@@ -31,12 +42,25 @@ if [[ " $* " == *" pack-objects "* && " $* " == *" --filter="* && " $* " != *" -
 args=("$@")
 for i in "\${!args[@]}"; do [[ "\${args[$i]}" == core.maxTreeDepth=* ]] && args[$i]="core.maxTreeDepth=1000000"; done
 if [[ " $* " == *" index-pack "* ]]; then
-  for i in "\${!args[@]}"; do [[ "\${args[$i]}" == "--strict" ]] && args[$i]="--strict=gitattributesLineLength=ignore,gitattributesLarge=ignore,gitattributesMissing=ignore,gitattributesBlob=ignore,gitmodulesUrl=ignore,largePathname=ignore\${IGNORE_CHECKS:+,$IGNORE_CHECKS}"; done
+  ignored=${JSON.stringify(leftOut)}
+  [[ -n "$IGNORE_CHECKS" ]] && ignored="\${ignored:+$ignored,}$IGNORE_CHECKS"
+  for i in "\${!args[@]}"; do [[ "\${args[$i]}" == "--strict" ]] && args[$i]="--strict\${ignored:+=$ignored}"; done
 fi
 exec "${realGit}" "\${args[@]}"
 `);
 await chmod(wrapper, 0o755);
-const oldGit = (version, ignored) => ({ ...process.env, PATH: `${path.dirname(wrapper)}:${process.env.PATH}`, ...(version ? { FAKE_GIT_VERSION: version } : {}), ...(ignored ? { IGNORE_CHECKS: ignored } : {}) });
+// Further checks a test leaves out, as id=ignore pairs, of which only the ones this machine's Git knows reach index-pack.
+const oldGit = (version, ignored) => {
+  const known = (ignored ?? "").split(",").filter((pair) => pair && knowsCheck(pair.split("=")[0])).join(",");
+  return { ...process.env, PATH: `${path.dirname(wrapper)}:${process.env.PATH}`, ...(version ? { FAKE_GIT_VERSION: version } : {}), ...(known ? { IGNORE_CHECKS: known } : {}) };
+};
+
+test("the older Git leaves out every check that this machine's Git knows by name, which on Git 2.43 or later is each of them", () => {
+  assert.equal(knowsCheck("prismNoSuchCheck"), false, "a name no Git knows is told apart");
+  const [major, minor] = (/(\d+)\.(\d+)/.exec(execFileSync(realGit, ["--version"]).toString()) ?? [0, 0, 0]).slice(1).map(Number);
+  if (major > 2 || (major === 2 && minor >= 43)) assert.deepEqual(LEFT_OUT.filter((id) => !knowsCheck(id)), []);
+  assert.ok(knowsCheck("gitmodulesUrl") && knowsCheck("duplicateEntries") && knowsCheck("badDate"), "Git from 2.25 knows these checks");
+});
 
 // Run a script in a process whose git is the older one, and return what it printed as JSON.
 function withOldGit(script, version, ignored) {
