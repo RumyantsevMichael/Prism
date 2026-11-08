@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, readFile, rename, rm, rmdir } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rename, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { ARTIFACTS, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
@@ -246,6 +246,8 @@ export function syncRecordStore(base, options = {}) {
     } catch (error) {
       // The holder may have committed before this process wrote, so a later sync picks the change up.
       if (error.code === "lock_timeout") { scheduleRecordSync(base); return { state: "skipped" }; }
+      // An upstream path that leads outside the store stops the merge before any file changes, so the branch stays and every sync reports it until the upstream drops it.
+      if (error.unsafePath) return writeStatus(base, { state: "merge_failed", message: error.message, ...await counts(base) });
       // A Git error outside fetch, merge, and push, such as a leftover index lock, is reported as it is and never repaired here.
       return writeStatus(base, { state: "git_failed", message: error.message }).catch(() => ({ state: "git_failed", message: withoutCredentials(error.message) }));
     }
@@ -327,6 +329,10 @@ async function unpublished(base) {
   return !(await git(base, ["rev-parse", "--verify", "--quiet", "@{upstream}"])).ok && (await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"])).ok;
 }
 
+// Git checks every object a fetch receives, so a tree that a teammate built with a name such as "..", ".git", or an empty one fails the fetch, and the sync's own path check still guards every write.
+// Only the objects new to the store are checked, so a history that this machine already holds never stops its syncs.
+const CHECKED_FETCH = ["-c", "fetch.fsckObjects=true"];
+
 async function sync(base, options) {
   const top = await git(base, ["rev-parse", "--show-toplevel"]);
   if (top.missing) return writeStatus(base, { state: "not_a_repository", message: "Git is not available, so the record store is not synced." });
@@ -346,7 +352,7 @@ async function sync(base, options) {
   for (let attempt = 1; attempt <= PUSH_ATTEMPTS; attempt++) {
     // A merge left unapplied keeps the branch where it was, so files it replaced and local writes are committed and merged again.
     if (attempt > 1) await commitLocal(base, author, run);
-    const fetched = await git(base, ["fetch", "--quiet", upstream.remote]);
+    const fetched = await git(base, [...CHECKED_FETCH, "fetch", "--quiet", upstream.remote]);
     if (!fetched.ok) return writeStatus(base, { state: "fetch_failed", message: fetched.stderr, ...await counts(base) });
     lastFetch.set(base, Date.now());
     const merged = await merge(base, author, options);
@@ -376,7 +382,7 @@ async function sync(base, options) {
 async function publishBranch(base, options) {
   const branch = (await git(base, ["symbolic-ref", "--quiet", "--short", "HEAD"])).text;
   if (!branch || !(await git(base, ["config", "--local", "--get", "remote.origin.url"])).ok) return { upstream: null };
-  const fetched = await git(base, ["fetch", "--quiet", "origin"]);
+  const fetched = await git(base, [...CHECKED_FETCH, "fetch", "--quiet", "origin"]);
   if (!fetched.ok) return { status: { state: "fetch_failed", message: fetched.stderr } };
   lastFetch.set(base, Date.now());
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
@@ -404,6 +410,7 @@ async function merge(base, author, options) {
   const theirs = upstream.text;
   if (head.ok && (await git(base, ["merge-base", "--is-ancestor", theirs, head.text])).ok) return { applied: true, conflicts: [] };
   if (!head.ok || (await git(base, ["merge-base", "--is-ancestor", head.text, theirs])).ok) return { applied: await apply(base, head.ok ? head.text : null, theirs, options), conflicts: [] };
+  await refuseUnsafePaths(base, await changedPaths(base, head.text, theirs));
   const result = await git(base, ["merge-tree", "--write-tree", "--name-only", "-z", "--no-messages", head.text, theirs]);
   if (result.code !== 0 && result.code !== 1) return { failed: result.stderr || "Git could not merge the upstream; Git 2.38 or later is required.", conflicts: [] };
   const [mergedTree, ...listed] = result.stdout.toString("utf8").split("\0").filter(Boolean);
@@ -546,6 +553,35 @@ async function holdLocks(targets, action) {
   return withFileLock(targets[0], () => holdLocks(targets.slice(1), action), undefined, { timeoutMs: SETTINGS.applyLockMs });
 }
 
+// Git keeps a tree entry that a teammate pushed even when its name is empty, "." or "..", since fsck is off by default, and prints it in a diff,
+// so a path from the upstream is written into the store only when each part is a name that stays below the store on every system:
+// not empty or made only of dots and spaces, with no backslash or drive form, never Git's own folder or the sync folder, and no part of it in the store a symbolic link.
+function unsafeName(name) {
+  if (name.includes("\\") || /^[A-Za-z]:/.test(name)) return true;
+  const plain = name.replace(/[. ]+$/, "").toLowerCase();
+  return plain === "" || plain === ".git" || /^git~\d+$/.test(plain);
+}
+
+async function unsafePath(base, file) {
+  const parts = file.split("/");
+  if (parts.some(unsafeName) || parts[0] === SYNC_DIRECTORY) return true;
+  const root = path.resolve(base);
+  if (!path.resolve(root, ...parts).startsWith(`${root}${path.sep}`)) return true;
+  for (let at = 1; at <= parts.length; at++) {
+    const stats = await lstat(path.join(root, ...parts.slice(0, at))).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; });
+    if (!stats) return false;
+    if (stats.isSymbolicLink()) return true;
+  }
+  return false;
+}
+
+/** Refuse a merge whose files include a path that would leave the store, before any file is written or removed, so the branch stays where it was. */
+async function refuseUnsafePaths(base, files) {
+  for (const file of files) {
+    if (await unsafePath(base, file)) throw Object.assign(new Error(`The upstream holds the path ${JSON.stringify(file)}, which leads outside the store's files, so the store was left as it was.`), { unsafePath: true });
+  }
+}
+
 /**
  * Replace the files that differ between two commits by atomic renames, then move the branch and index to the target commit.
  * The branch moves only when every changed file held the previous commit's bytes and holds the target's bytes afterwards.
@@ -558,6 +594,7 @@ async function apply(base, from, to, options) {
   try {
     await options.beforeApply?.();
     files = from ? await changedPaths(base, from, to) : (await required(base, ["ls-tree", "-r", "--name-only", "-z", to])).stdout.toString("utf8").split("\0").filter(Boolean);
+    await refuseUnsafePaths(base, files);
     const targets = files.map((file) => path.join(base, file));
     const artifacts = path.join(base, ARTIFACTS);
     const artifactLock = files.some(isArtifactFile) ? [artifacts] : [];

@@ -225,8 +225,8 @@ The list shows saved records, while a saved artifact is named in the next tool r
 | `conflicts` | A record or an artifact changed on both sides in a way that does not merge; the local version is saved under `.prism-sync/conflicts/`. | Review the saved file. |
 | `no_upstream` | A path store's branch has no upstream, so Prism only commits locally; a remote store sets its upstream on its first sync instead. | Set an upstream with `git branch --set-upstream-to`. |
 | `not_a_repository` | Sync is on, but the store is not the top of a Git checkout. | Clone the store, or turn sync off. |
-| `fetch_failed` or `push_rejected` | The remote could not be reached, refused the push, or kept moving for three attempts. | Check access to the remote; Prism retries on the next write or read. |
-| `merge_failed` | A file other than a record or an artifact conflicted, a record or an artifact stayed locked through every attempt, or Git is older than 2.38. | Read the status message; a busy record clears on its own. |
+| `fetch_failed` or `push_rejected` | The remote could not be reached, sent an object that fails Git's object checks, refused the push, or kept moving for three attempts. | Check access to the remote; Prism retries on the next write or read, and a commit whose objects fail the checks needs removing from the remote's history. |
+| `merge_failed` | A file other than a record or an artifact conflicted, a record or an artifact stayed locked through every attempt, the upstream holds a path that leads outside the store's files, such as one with a `..` part, or Git is older than 2.38. | Read the status message; a busy record clears on its own, and a path outside the store needs the commit that added it removed from the remote's history. |
 | `git_failed` | Git failed for another reason, such as a leftover `.git/index.lock`. | Fix the store with Git; Prism never deletes Git's locks. |
 
 ## Cloud sessions
