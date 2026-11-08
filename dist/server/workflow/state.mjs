@@ -18,6 +18,34 @@ const REGISTRY_KEYS = new Set(["history", "personSettings"]);
 // The initiative settings that coordination state accepts, in the order the review app lists their actions.
 export const INITIATIVE_SETTINGS = Object.freeze(["autonomy", "commit", "push", "continuation", "review", "models"]);
 const SETTING_KEYS = new Set(INITIATIVE_SETTINGS);
+
+/** The six effective setting values, each stored or else its default, and personSettings, the names of the settings the person set. */
+export function effectiveSettings(state) {
+  const stored = isRecord(state?.settings) ? state.settings : {};
+  const autonomy = stored.autonomy ?? "conservative";
+  return {
+    autonomy,
+    commit: stored.commit ?? (autonomy === "full" ? "on" : "off"),
+    push: stored.push ?? "off",
+    continuation: stored.continuation ?? "auto",
+    review: stored.review ?? "marked",
+    models: stored.models === undefined || stored.models === "defaults" ? "host defaults" : stored.models,
+    personSettings: INITIATIVE_SETTINGS.filter((name) => isRecord(state?.personSettings) && Object.hasOwn(state.personSettings, name))
+  };
+}
+
+// An agent's settings write keeps each setting the person changed in the review app, and lists what it kept.
+function keepPersonSettings(before, requested) {
+  const marks = isRecord(before.personSettings) ? before.personSettings : {};
+  const settings = { ...requested };
+  const kept = [];
+  for (const [name, value] of Object.entries(requested)) {
+    if (!Object.hasOwn(marks, name) || !Object.hasOwn(before.settings, name) || JSON.stringify(value) === JSON.stringify(before.settings[name])) continue;
+    settings[name] = before.settings[name];
+    kept.push({ setting: name, kept: before.settings[name], requested: value });
+  }
+  return { settings, kept };
+}
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
 const GATE_KEYS = new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "answer"]);
@@ -959,10 +987,11 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
     assertAnswersUnchanged(before.pending, gateResult.pending);
     const closed = [...(before.closed ?? []), ...dropped, ...gateResult.closed].slice(-CLOSED_LIMIT);
+    const requested = changes.settings === undefined ? null : keepPersonSettings(before, changes.settings);
     const candidate = normalizeState({
       ...before,
       active: activeResult.active,
-      ...(changes.settings === undefined ? {} : { settings: { ...before.settings, ...changes.settings } }),
+      ...(requested === null ? {} : { settings: { ...before.settings, ...requested.settings } }),
       pending: gateResult.pending,
       ...(changes.next === undefined ? {} : { next: changes.next }),
       ...(changes.evidence === undefined ? {} : { evidence: changes.evidence }),
@@ -983,7 +1012,8 @@ async function applyStateChange(resolved, expectedRevision, changes) {
       changedFields: changedFields(before, updated.state),
       previousRevision: current.revision
       ,completions: activeResult.completions,
-      openedGates: gateResult.opened
+      openedGates: gateResult.opened,
+      ...(requested?.kept.length ? { keptSettings: requested.kept } : {})
     };
     });
 }

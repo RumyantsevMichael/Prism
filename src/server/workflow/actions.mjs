@@ -252,6 +252,9 @@ const INDEX_REBUILD = {
 /** Every action, in listing order; a later action joins by adding its definition here. */
 const ACTIONS = [...SETTING_ACTIONS, GATE_ANSWER, INDEX_REBUILD];
 
+/** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
+export const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
+
 function view(definition, context) {
   const reason = definition.unavailable(context);
   return {

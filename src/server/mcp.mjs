@@ -41,7 +41,8 @@ import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
 import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
-import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, waitForUserGates } from "./workflow/gate-wait.mjs";
+import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, historyIds, waitForUserGates } from "./workflow/gate-wait.mjs";
+import { markPersonChangesShown, personChangesText, takePersonChanges } from "./workflow/change-notices.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
@@ -692,7 +693,7 @@ const tools = [
   },
   {
     name: "wait_for_user_gate",
-    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn.",
+    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, changed with the person's new history entries when the person changes the initiative in the review app, whether here or through a store sync, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn.",
     inputSchema: {
       type: "object",
       properties: {
@@ -864,10 +865,11 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   const hookSession = typeof metadata?.sessionId === "string" && metadata.sessionId ? metadata.sessionId : null;
   if (unsupported && hookSession) {
     // Codex names its session in the call's metadata, and its Stop hook for that session waits once this turn ends.
-    value = await waitForUserGates({ projectRoot, initiative: argumentsValue.initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0 });
+    const knownEntries = await historyIds({ projectRoot, initiative: argumentsValue.initiative });
+    value = await waitForUserGates({ projectRoot, initiative: argumentsValue.initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
-      await recordWaitRequest({ sessionId: hookSession, projectRoot, initiative: argumentsValue.initiative, gateIds: value.gateIds, maxWaitMinutes });
+      await recordWaitRequest({ sessionId: hookSession, projectRoot, initiative: argumentsValue.initiative, gateIds: value.gateIds, maxWaitMinutes, knownEntries });
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
     }
   } else if (unsupported) {
@@ -891,8 +893,11 @@ async function callGateWait(argumentsValue, metadata, requestId) {
       pendingWaits.delete(requestId);
     }
   }
+  // The changes a wait returns count as shown, so the session's next result does not repeat them.
+  if (value.status === "changed") await markPersonChangesShown({ projectRoot, initiative: argumentsValue.initiative, entries: value.changes }).catch(() => {});
   const list = value.gateIds.join(", ");
   const text = {
+    changed: () => changedText(value),
     answered: () => [...value.answered.map(answerText), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n"),
     resolved: () => `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
     timeout: () => `No answer arrived for user gates ${list} before the wait ended.`,
@@ -1129,6 +1134,19 @@ async function withRecordNotes(value) {
   return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
 }
 
+// A successful call that names an initiative tells the session, once, of the person's changes in the review app that it has not been shown.
+async function withPersonChanges(argumentsValue, value) {
+  if (typeof argumentsValue?.initiative !== "string" || !Array.isArray(value?.content) || value.structuredContent?.status === "cancelled") return value;
+  let changes;
+  try {
+    changes = await takePersonChanges({ projectRoot: await requestedProjectRoot(argumentsValue), initiative: argumentsValue.initiative });
+  } catch {
+    return value;
+  }
+  if (!changes.length) return value;
+  return { ...value, content: [...value.content, { type: "text", text: personChangesText(changes) }], structuredContent: { ...value.structuredContent, personChanges: changes } };
+}
+
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
@@ -1221,7 +1239,7 @@ input.on("line", async (line) => {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
       const meta = request.params?._meta;
-      const value = await withRecordNotes(await withCallSession(meta, () => callTool(request.params?.name, request.params?.arguments, meta, request.id)));
+      const value = await withRecordNotes(await withCallSession(meta, async () => withPersonChanges(request.params?.arguments, await callTool(request.params?.name, request.params?.arguments, meta, request.id))));
       // A cancelled request gets no response, as the MCP cancellation rules require.
       if (value.structuredContent?.status !== "cancelled") {
         result(request.id, value);
