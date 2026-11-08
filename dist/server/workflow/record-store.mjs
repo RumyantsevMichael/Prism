@@ -8,7 +8,7 @@ import { gitTooOld, listSavedConflicts, prepareStoreFiles, pullRecordStoreIfStal
 import { managedRecordStore } from "./record-store-remote.mjs";
 import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 import { checkRepositoryName, portableRepositoryName, REPOSITORIES, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
-import { ARTIFACT_ACCEPTED, ARTIFACT_STATUS, ARTIFACTS, STATUS_RECORD_NAME, artifactAddress, componentScope, normalizeArtifactPath, repositoryScope, scopeFolder, wellFormedName, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, STATUS_RECORD_NAME, artifactAddress, componentScope, normalizeArtifactPath, repositoryScope, scopeFolder, wellFormedName, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
 import { COMPONENT_NAME } from "./components.mjs";
 import { artifactKinds, initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
@@ -91,10 +91,12 @@ export function isManagedRecordFile(relative) {
 
 // The names of the migration files Prism writes: a time and random suffix, or before the ledger, the hash that names the migrated repository.
 const MIGRATION_FILE = /^(?:\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{8}|[0-9a-f]{40,64})\.json$/;
+// The names of the ledger files that a move of a checkout's artifacts writes: a time and a random suffix.
+export const ARTIFACT_LEDGER_FILE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{8}\.json$/;
 
 /**
  * Whether a store-relative path is one Prism writes in a record store, and so one that every machine of the store shares:
- * the ignore and attributes files at the root, the roadmap record, each record path an initiative's records use, each registration and migration file,
+ * the ignore and attributes files at the root, the roadmap record, each record path an initiative's records use, each registration and migration file, each artifact ledger file,
  * and each file below artifacts/ whose every name follows the artifact name form.
  * No other path is shared, so a store's history never carries the sync folder, a lock, a temporary file, Git's folder, or a name that another file system reads as one of these.
  */
@@ -107,6 +109,7 @@ export function isStoreFile(relative) {
   if (names[0] === ARTIFACT_STATUS) return names.length > 2 && names.at(-1) === STATUS_RECORD_NAME && names.slice(1).every(wellFormedName);
   if (names[0] === ARTIFACT_ACCEPTED) return names.length === 2 && /^[0-9a-f]{64}$/.test(names[1]);
   if (names[0] === "migrations") return names.length === 2 && MIGRATION_FILE.test(names[1]);
+  if (names[0] === ARTIFACT_MIGRATIONS) return names.length === 2 && ARTIFACT_LEDGER_FILE.test(names[1]);
   if (names[0] === REPOSITORIES) return names.length === 2 && names[1].endsWith(".json") && portableRepositoryName(names[1].slice(0, -".json".length));
   if (names[0] !== "initiatives") return false;
   const key = parseRecordPath(`${RECORD_DIRECTORY}/${relative}`);
@@ -122,7 +125,7 @@ export function isStoreFile(relative) {
 export function isStoreFolder(relative) {
   if (typeof relative !== "string") return false;
   const names = relative.split("/");
-  if (names.length === 1) return ["initiatives", ARTIFACTS, ARTIFACT_STATUS, ARTIFACT_ACCEPTED, "migrations", REPOSITORIES].includes(names[0]);
+  if (names.length === 1) return ["initiatives", ARTIFACTS, ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_MIGRATIONS, "migrations", REPOSITORIES].includes(names[0]);
   if (names[0] === ARTIFACTS || names[0] === ARTIFACT_STATUS) return names.slice(1).every(wellFormedName);
   if (names[0] !== "initiatives" || !SLUG_PATTERN.test(names[1])) return false;
   if (names.length === 2) return true;
@@ -456,6 +459,8 @@ async function migrate(root) {
   if (store.external) {
     await migrateIntoStore(root, store, config, report);
     if (report.moved.length || report.conflicts.length) unreportedMoves.push({ root, store: store.base, ...report });
+    const artifacts = await migrateArtifactsOnce(root, store, config);
+    if (artifacts) unreportedMoves.push({ root, store: store.base, moved: [], conflicts: [], artifacts });
     return report;
   }
   const moves = await legacyRecords(root, store, config);
@@ -470,6 +475,44 @@ async function migrate(root) {
   pendingMoves.delete(root);
   if (report.moved.length || report.conflicts.length) unreportedMoves.push({ root, ...report });
   return report;
+}
+
+// A checkout's existing artifacts move into its repository's scope on its first access to the store in a server process, after its records moved,
+// so a later access in the same process reports nothing again; a move that failed is tried again by the next access.
+const artifactMigrations = new Map();
+function migrateArtifactsOnce(root, store, config) {
+  const key = `${root}\0${store.base}`;
+  if (artifactMigrations.has(key)) return artifactMigrations.get(key).then(() => null);
+  const pending = (async () => {
+    await synced(store);
+    const seen = await scopesOf(root, config, store);
+    const recordSources = new Set((await legacyRecords(root, store, config)).map((move) => move.from));
+    const { migrateArtifacts } = await import("./artifact-migration.mjs");
+    return migrateArtifacts(seen, { recordSources, frozenTests: await storedFrozenTests(store) });
+  })();
+  artifactMigrations.set(key, pending);
+  pending.catch(() => { if (artifactMigrations.get(key) === pending) artifactMigrations.delete(key); });
+  return pending;
+}
+
+// The frozen tests of every accepted design that the store's initiative records hold, as project-relative paths; an unreadable record names none.
+async function storedFrozenTests(store) {
+  const tests = new Set();
+  let names = [];
+  try { names = (await readdir(path.join(store.base, "initiatives"), { withFileTypes: true })).filter((entry) => entry.isDirectory() && SLUG_PATTERN.test(entry.name)).map((entry) => entry.name); }
+  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
+  for (const name of names) {
+    let record;
+    try { record = JSON.parse((await readBytes(physical(store, recordPath({ kind: "initiative", initiative: name })), RECORD_MAX_BYTES))?.toString("utf8") ?? "null"); }
+    catch { continue; }
+    for (const slice of Object.values(record?.slices ?? {})) {
+      for (const test of Array.isArray(slice?.design?.frozenTests) ? slice.design.frozenTests : []) {
+        const file = normalizeArtifactPath(typeof test === "string" ? test : test?.path);
+        if (file) tests.add(file);
+      }
+    }
+  }
+  return tests;
 }
 
 // Legacy records still beside their Markdown, by the .prism path each moves to: reads resolve a record there until a write moves them all.
@@ -523,6 +566,7 @@ export function ensureRecords(root) {
 /** Forget recent migration and repository name checks, so the next record access looks for legacy records and checks the name again. */
 export function forgetMigrations() {
   migrations.clear();
+  artifactMigrations.clear();
   pendingMoves.clear();
   nameChecks.clear();
 }
@@ -759,6 +803,11 @@ export async function seenScopes(projectRootPath) {
   const store = await recordStoreOf(root);
   await ensureRecords(store.root);
   await synced(store);
+  return scopesOf(root, config, store);
+}
+
+// The scopes a checkout sees in its store, read without moving records or artifacts, so the move of a checkout's artifacts can read them itself.
+async function scopesOf(root, config, store) {
   const base = path.join(store.base, ARTIFACTS);
   const own = repositoryScope(store.repository);
   const components = path.join(base, scopeFolder(own), "components");
@@ -798,6 +847,15 @@ export async function resolveStatusFile(seen, relative) {
   if (![ARTIFACT_STATUS, ARTIFACT_ACCEPTED].includes(relative.split("/")[0])) throw fail("invalid_path", "A status file lies outside the store's status folders.");
   const target = path.join(seen.store.base, ...relative.split("/"));
   if (!inside(folder, target) || target === folder) throw fail("invalid_path", "The status location resolves outside the store's status folders.");
+  await assertUnlinked(seen.store.base, target);
+  await assertContained(seen.store.contain, target, "the record store");
+  return target;
+}
+
+/** The file of a ledger name below artifact-migrations/ in a seen store, after the checks that resolveArtifactFile makes. */
+export async function resolveLedgerFile(seen, name) {
+  if (!ARTIFACT_LEDGER_FILE.test(name)) throw fail("invalid_path", "An artifact ledger file has a time and a random suffix as its name.");
+  const target = path.join(seen.store.base, ARTIFACT_MIGRATIONS, name);
   await assertUnlinked(seen.store.base, target);
   await assertContained(seen.store.contain, target, "the record store");
   return target;

@@ -7,6 +7,8 @@ export const ARTIFACTS = "artifacts";
 export const ARTIFACT_STATUS = "artifact-status";
 export const ARTIFACT_ACCEPTED = "artifact-accepted";
 export const STATUS_RECORD_NAME = "status.json";
+// Each move of a checkout's existing artifacts into the store writes one ledger file of its own below artifact-migrations/, so two machines never change the same file.
+export const ARTIFACT_MIGRATIONS = "artifact-migrations";
 const KIND_LOCATIONS = Object.freeze({ requirements: "requirements", adrs: "adrs", plans: "plans", glossary: "glossary.md", roadmap: "roadmap.md" });
 
 export const WORKSPACE_SCOPE = Object.freeze({ kind: "workspace", label: "workspace" });

@@ -36,6 +36,7 @@ import { checkpointPause, readCoordinationState, updateCoordinationState, valida
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
+import { keptExplanation } from "./workflow/artifact-migration.mjs";
 import { forgetAskedGates, recordAskedGates } from "./workflow/approval-deliveries.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
 import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
@@ -1148,6 +1149,22 @@ async function savedArtifactLine(item, argumentsValue) {
   return `- ${where} (this machine's version: ${item.savedAs})`;
 }
 
+// The move of a checkout's existing artifacts into its repository's scope says which files left the checkout, which stayed and why, and which tracked files still name them.
+function artifactMoveLines(move) {
+  const lines = [];
+  if (move.moved.length) {
+    lines.push(`Prism moved ${plural(move.moved.length, "descriptive file")} of this checkout into the record store at ${move.store}, scope ${move.repository}, and removed ${move.moved.length === 1 ? "it" : "them"} from the checkout; read and change ${move.moved.length === 1 ? "it" : "them"} with get_artifact and update_artifact by the same paths, and commit the removal on its own, apart from the task's changes.`, ...move.moved.map((item) => `- ${item.from} -> artifacts/${item.to}`));
+  }
+  if (move.kept.length) {
+    lines.push(`Prism kept ${plural(move.kept.length, "file")} under the artifact paths in the checkout, where ${move.kept.length === 1 ? "it stays" : "they stay"} until a person settles ${move.kept.length === 1 ? "it" : "each"}:`, ...move.kept.map((item) => `- ${item.path} (${item.reason}): ${keptExplanation(item)}.`));
+  }
+  if (move.references.length) {
+    const more = move.moreReferences ? `, and ${plural(move.moreReferences, "more file")}` : "";
+    lines.push(`${plural(move.references.length + move.moreReferences, "tracked file")} in the checkout still ${move.references.length + move.moreReferences === 1 ? "names" : "name"} a moved file's former path or a configured folder that lost files, by line; the configured paths stay the artifacts' addresses, so update only text that tells readers to open these files in the checkout:`, ...move.references.map((item) => `- ${item}`), ...(more ? [`- ...${more}`] : []));
+  }
+  return lines;
+}
+
 // A sync that found the same record, or the same lines of an artifact, changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
 // A saved version stays pending until a tool result carries it, so a server that stopped before naming it leaves it to the next one.
 // Returns the result with the notes, and what to do once it was written or was not: a written result confirms the saved versions it names, and one never written leaves them for the next result.
@@ -1162,6 +1179,7 @@ async function withRecordNotes(value, argumentsValue) {
   if (!reports.length && !taken.length) return none;
   const lines = [];
   for (const report of reports) {
+    if (report.artifacts) { lines.push(...artifactMoveLines(report.artifacts)); continue; }
     const into = report.store ? `the record store at ${report.store}` : ".prism";
     const kept = report.store ? "the record store" : ".prism";
     if (report.moved.length) {

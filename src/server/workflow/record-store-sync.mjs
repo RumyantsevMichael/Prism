@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ARTIFACT_ACCEPTED, ARTIFACT_STATUS, ARTIFACTS, letterCaseKey, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, letterCaseKey, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
@@ -54,7 +54,8 @@ const isQuietConflict = (relative) => isClaimFile(relative) || isRegistrationFil
 // A person's artifact keeps the upstream version on a line conflict, as a record does, and its local version is saved and reported by its location.
 const isArtifactFile = (relative) => relative.startsWith(`${ARTIFACTS}/`);
 // An artifact's status record and its accepted bytes change with the artifact under the artifact lock, so a sync stages them with the artifacts, and a status record that changed on both sides keeps the upstream one as a record does.
-const STATUS_FOLDERS = [ARTIFACT_STATUS, ARTIFACT_ACCEPTED];
+// The ledger of a move of a checkout's artifacts is written under the same lock, so no commit holds the ledger without the artifacts it lists.
+const STATUS_FOLDERS = [ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_MIGRATIONS];
 const isStatusFile = (relative) => STATUS_FOLDERS.some((folder) => relative.startsWith(`${folder}/`));
 const isGuardedFile = (relative) => isArtifactFile(relative) || isStatusFile(relative);
 const guardedFolder = (relative) => [ARTIFACTS, ...STATUS_FOLDERS].find((folder) => relative.startsWith(`${folder}/`)) ?? null;

@@ -326,6 +326,18 @@ export async function getRoadmap(input) {
   return { ...publicResult(resolved, loaded, derived), components: await roadmapComponents(resolved.root, resolved.config) };
 }
 
+/**
+ * The roadmap view generated from the bytes of a stored roadmap record, exactly as update_roadmap writes it, or null when the record is not one that get_roadmap reports valid.
+ * The move of a checkout's artifacts writes it into the store before it compares the checkout's view with it.
+ */
+export function roadmapViewOf(bytes, recordName) {
+  if (!bytes || bytes.length > RECORD_MAX_BYTES) return null;
+  let raw;
+  try { raw = JSON.parse(bytes.toString("utf8")); }
+  catch { return null; }
+  return validateRoadmap(raw).length ? null : markdown(raw, recordName);
+}
+
 function markdown(record, recordName) {
   const lines = ["# Roadmap", "", generatedNotice(recordName), "Current progress is derived from initiative records, so read it through `get_roadmap` or the review browser.", ""];
   if (record.workspaceName) lines.push(`Workspace: ${record.workspaceName}`, "");

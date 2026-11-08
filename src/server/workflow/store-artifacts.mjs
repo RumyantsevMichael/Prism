@@ -585,7 +585,8 @@ async function applyOperations(seen, checked) {
         if (hasStatus(address.kind)) setStatus(status.target, file, newRecord(address.kind, operation.writtenStatus ?? null));
         else if (status.exists) setStatus(status.target, file, null);
       }
-      const next = Buffer.from(operation.content, "utf8");
+      // A moved checkout file keeps its exact bytes, which need not be text.
+      const next = operation.bytes ?? Buffer.from(operation.content, "utf8");
       state.set(target, stored(next));
       names.set(target, file);
       artifacts.push({ path: file, scope, version: artifactVersion(next) });
@@ -806,6 +807,40 @@ export async function writeStoreArtifact(projectRoot, file, decide, { follow = f
       return { written: true, scope: entry.scope, version: entry.version ?? null };
     });
   });
+}
+
+// The move of a checkout's existing artifacts runs inside the first access of the checkout, so it works on the scopes it was given, while holding the store's artifact lock itself.
+
+/** The artifacts that the seen scopes hold, as { path, scope, kind, target } sorted by path and then scope label, without reading them. */
+export const seenArtifacts = (seen) => holdings(seen, "", null);
+
+/** The stored file of an artifact address in one scope, as { target, location, record }, with record { bytes, size, version } or null when the scope holds no file there. */
+export async function storedArtifactIn(seen, scope, address) {
+  const location = artifactLocation(scope, address);
+  const target = await resolveArtifactFile(seen, location);
+  return { target, location, record: await readStored(target, seen.base) };
+}
+
+/** The most characters an artifact's location may hold when Prism creates it. */
+export const ARTIFACT_LOCATION_MAX = LOCATION_MAX;
+
+/**
+ * Create artifacts in the store for the move of a checkout's files, while the caller holds the store's artifact lock: each of writes,
+ * { file, address, scope, bytes, writtenStatus }, is created with its exact bytes in its scope, and a requirement or ADR records its written status.
+ * The writes take every check that an update's write takes, and a refused one refuses them all; returns the result's artifacts.
+ */
+export async function createMovedArtifacts(seen, writes) {
+  const items = writes.map(({ file, address, scope, bytes, writtenStatus }) => ({
+    operation: { op: "write", path: file, content: hasStatus(address.kind) ? bytes.toString("utf8") : "", bytes, expectedVersion: null, writtenStatus, ...scopeFieldsOf(scope) },
+    file, address, given: scope.kind === "component" ? { kind: "component", component: scope.component } : { kind: scope.kind }
+  }));
+  return items.length ? (await applyOperations(seen, items)).artifacts : [];
+}
+
+/** Write a view that Prism generates into one scope for the move of a checkout's files, while the caller holds the store's artifact lock, replacing the version that was read. */
+export async function writeMovedView(seen, file, address, scope, content, expectedVersion) {
+  const item = { operation: { op: "write", path: file, content, expectedVersion, ...scopeFieldsOf(scope) }, file, address, given: { kind: scope.kind } };
+  return (await applyOperations(seen, [item])).artifacts[0];
 }
 
 /**
