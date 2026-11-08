@@ -184,9 +184,11 @@ Prism never replaces a record that changed while a merge was running: it leaves 
 
 With store sync on, each `update_artifact` that changes a file, and each plan file or view that Prism writes into the store, is committed and pushed by the next sync without a further call.
 Changes to different lines of one artifact on two machines merge, so in a file with one sentence per line, edits to different sentences both survive.
+A file that is not text, such as an image, has no lines to merge, so a change to it on both machines counts as a change to the same line.
 When both machines change the same line differently, or one machine makes a file where the other made a folder of the same name, the first push wins.
 The machine whose push lost keeps the upstream artifact and saves its own files under `.prism-sync/conflicts/<time>/artifacts/` in the store, so no bytes are lost.
 An artifact that one machine moved, to another scope or by removing it and writing similar text at another path, merges as a removal at its old path and a new file at its new path, so a change the other machine made at the old path is saved, and a file it added to a moved folder stays where it was written.
+Each file merges by itself, so a file that only one machine wrote stays, even in a folder that takes the place of a file both machines removed.
 The next tool result of each running Prism server on that machine that uses the store names the artifact's path, its scope, and the saved copy.
 Read the artifact again with `get_artifact`, and redo the change with `update_artifact` if it still matters.
 A sync that starts while an artifact update is still writing leaves that update to the next sync, so it never merges the upstream over a change in progress.

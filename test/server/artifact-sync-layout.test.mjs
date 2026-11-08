@@ -101,6 +101,33 @@ for (const from of ["file", "folder"]) {
   }
 }
 
+// Both machines remove one file, and one or both write a folder of its name: every file that one side wrote stays, since no file sits at the folder's path in the result.
+for (const [label, upstreamFolder, localFolder] of [
+  ["only this machine writes a folder there", null, "today.md"],
+  ["only the upstream writes a folder there", "today.md", null],
+  ["each machine writes a different file in a folder there", "a.md", "b.md"]
+]) {
+  test(`a file that both machines removed, where ${label}, merges cleanly and keeps every file written on one side`, async (context) => {
+    const { place, onA, onB } = await replaced(context, "file");
+    const current = ok(await onA.call("get_artifact", { path: SHAPES.file.path }));
+    for (const [prism, file] of [[onA, upstreamFolder], [onB, localFolder]]) {
+      ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: SHAPES.file.path, expectedVersion: current.version }] }));
+      if (file) await writeArtifact(prism, `docs/plans/foo/notes/${file}`, `# ${file}\n`);
+    }
+    assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+    const merged = await syncRecordStore(place.storeB);
+    assert.equal(merged.state, "ok", merged.message);
+    assert.deepEqual(merged.conflicts, []);
+    assert.deepEqual(await saved(place.storeB), {});
+    assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+    for (const file of [upstreamFolder, localFolder].filter(Boolean)) {
+      for (const store of [place.storeA, place.storeB]) assert.equal(await text(path.join(store, `artifacts/plans/foo/notes/${file}`)), `# ${file}\n`);
+      assert.equal(remoteFile(place.remote, `artifacts/plans/foo/notes/${file}`), `# ${file}`);
+    }
+    assert.notEqual(remoteFile(place.remote, SHAPES.file.stored), SHAPES.file.text.trim(), "the removed file stays removed");
+  });
+}
+
 test("a file that the upstream edited and this machine replaced with a folder of the same name keeps the upstream file and saves the folder's file", async (context) => {
   const { place, onA, onB, replace } = await replaced(context, "file");
   const current = ok(await onA.call("get_artifact", { path: SHAPES.file.path }));
