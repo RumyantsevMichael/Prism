@@ -265,22 +265,24 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   }
 
   // Grants one browser open while no writable tab of any project is connected and no other open was granted within the open lease.
-  function grantOpen(now = Date.now()) {
-    const open = writableViewerCount() === 0 && now - openGrantedAt >= OPEN_LEASE_MS;
+  // A client that does not declare acceptsGrant opens a tab that can never take a write session, so for it every connected tab counts, as before write sessions.
+  function grantOpen(acceptsGrant, now = Date.now()) {
+    const connected = acceptsGrant ? writableViewerCount() : viewerCount();
+    const open = connected === 0 && now - openGrantedAt >= OPEN_LEASE_MS;
     if (open) openGrantedAt = now;
     return open;
   }
 
   // Answers whether the presenting session should open a browser, and tells every other project's tabs about the presentation.
   // A browser opens only while no tab of any project is connected, once per lease, so one window serves every project.
-  function announce(project, url, name) {
+  function announce(project, url, name, acceptsGrant) {
     const notice = { projectId: project.id, name, projectRoot: project.root, url, at: new Date().toISOString() };
     for (const other of projects.values()) {
       if (other !== project) other.review.notify("notice", notice);
     }
     const now = Date.now();
     const watched = viewerCount() > 0;
-    const open = grantOpen(now);
+    const open = grantOpen(acceptsGrant, now);
     if (open || project.review.viewerCount() > 0) pendingNotices.delete(project.id);
     else if (!watched) pendingNotices.set(project.id, { notice, expiresAt: now + noticeMs });
     return open;
@@ -325,9 +327,9 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     return true;
   }
 
-  // A present answer that tells the presenting process to open a browser carries the one-time grant that process adds to the URL it opens.
-  function withGrant(answer) {
-    return answer.open ? { ...answer, writeGrant: writeSessions.issueGrant() } : answer;
+  // A present answer that tells a presenting process that declared acceptsGrant to open a browser carries the one-time grant that process adds to the URL it opens.
+  function withGrant(answer, acceptsGrant) {
+    return answer.open && acceptsGrant ? { ...answer, writeGrant: writeSessions.issueGrant() } : answer;
   }
 
   async function controlAnswer(request, route, text) {
@@ -358,17 +360,18 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const project = await projectFor(body.projectRoot);
       await reportDirectories(project, body);
       const review = project.review;
+      const acceptsGrant = body.acceptsGrant === true;
       // A session start asks only whether to open a window, and leaves tabs and other projects' notices alone.
       if (body.open === true && body.start === true) {
         await touch(project);
-        return withGrant({ url: review.reviewUrl([]), open: grantOpen(), session: review.getSession() });
+        return withGrant({ url: review.reviewUrl([]), open: grantOpen(acceptsGrant), session: review.getSession() }, acceptsGrant);
       }
       if (body.open === true) {
         const tabs = normalizeTabs(body.tabs);
         await review.presentTabs(tabs);
         await touch(project);
         const url = review.reviewUrl(tabs);
-        return withGrant({ url, open: announce(project, url, workspaceLabel(await readWorkspaceIdentity(project.root))), session: review.getSession() });
+        return withGrant({ url, open: announce(project, url, workspaceLabel(await readWorkspaceIdentity(project.root)), acceptsGrant), session: review.getSession() }, acceptsGrant);
       }
       if (body.tabs !== undefined) {
         await review.setOpenTabs(body.tabs);

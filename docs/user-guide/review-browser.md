@@ -86,6 +86,7 @@ A read-only tab says `This tab can only read. To make changes, run prism review 
 To get a tab that can make changes, run `prism review` in the project, or ask the agent to present the review, which opens the system browser, while no tab that can make changes is open.
 The review app keeps the write sessions it issued when a newer session replaces it on the same port, and accepts none after it exits and starts again, so after such a restart open the review again the same way.
 Only a tab that can make changes counts as an open review tab, so a read-only tab never stops Prism from opening a tab that can.
+A session of an earlier Prism release that presents through a newer review app opens only tabs that can read, so for that session any open review tab still counts and it opens no further tab.
 
 Prism records each action with when it happened and who made it.
 The author is the `user.name` and `user.email` that Git reports in the checkout whose page you used, with that checkout's `repository/branch` label and this machine's host name.

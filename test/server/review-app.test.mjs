@@ -856,6 +856,27 @@ test("a session start opens one browser while no review tab is connected and sen
   assert.equal(JSON.stringify(events.filter((event) => event.name === "session").at(-1).data.openTabs), before);
 });
 
+// A session of an earlier release presents without acceptsGrant and opens the URL without a grant, so its tabs never take a write session.
+test("a client that does not declare grant support is held back by a read-only tab while a current client opens with a grant", async (context) => {
+  const directory = await appDirectory(context);
+  const app = await startReviewApp({ directory });
+  context.after(() => app.close());
+  const root = await project(context, "legacy-client");
+  const discovery = await readDiscovery(directory);
+  const present = async (body) => JSON.parse((await control(discovery, "present", { method: "POST", body: { projectRoot: root, open: true, ...body } })).body);
+  const { url } = JSON.parse((await control(discovery, "present", { method: "POST", body: { projectRoot: root, open: false } })).body);
+  const events = await viewerEvents(context, url);
+  await eventually(() => events.some((event) => event.name === "session"));
+  const legacy = await present({});
+  assert.equal(legacy.open, false, "an earlier client's tab would be read-only too, so the connected tab takes the presentation");
+  assert.equal(Object.hasOwn(legacy, "writeGrant"), false);
+  const legacyStart = await present({ start: true });
+  assert.equal(legacyStart.open, false, "an earlier client's session start opens no window while a tab is connected");
+  const current = await present({ acceptsGrant: true });
+  assert.equal(current.open, true, "a read-only tab does not hold back a client that adds the grant");
+  assert.match(current.writeGrant, /^[A-Za-z0-9_-]{43}$/);
+});
+
 test("a session serves its own review server when the shared app cannot start", async (context) => {
   const blocked = path.join(await mkdtemp(path.join(os.tmpdir(), "prism-app-blocked-")), "not-a-directory");
   await writeFile(blocked, "");
