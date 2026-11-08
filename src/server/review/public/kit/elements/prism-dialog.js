@@ -92,11 +92,15 @@ export class PrismDialog extends Base {
     if (!this.surface) this.build();
     this.sync();
     if (this.surface.open) return;
+    // A surface closed natively, as by Escape, sends its close event a task later; finish that opening before this one starts.
+    this.closed();
     this.returnTo = this.ownerDocument.activeElement;
+    this.pending = true;
     this.setOpenAttribute(true);
     try {
       this.surface.showModal();
     } catch {
+      this.pending = false;
       this.setOpenAttribute(false);
       return;
     }
@@ -106,10 +110,15 @@ export class PrismDialog extends Base {
 
   /** Closes the dialog; it then sends prism-close and returns focus. */
   close() {
-    if (this.surface?.open) this.surface.close();
+    if (!this.surface?.open) return;
+    this.surface.close();
+    this.closed();
   }
 
+  // Finishes one opening exactly once, whichever comes first: close() or the surface's close event. A late close event from an earlier opening finds the surface open again or the opening finished, and changes nothing.
   closed() {
+    if (!this.pending || this.surface.open) return;
+    this.pending = false;
     this.setOpenAttribute(false);
     const target = this.returnTo;
     this.returnTo = null;
