@@ -18,7 +18,7 @@ Choosing the workspace there opens its records, which every checkout shares.
 ## Share records between machines
 
 1. Create an empty repository for the store on your Git host, for example `you/prism-store`, and give everyone who works on the project push access to it.
-   Leave out a README, a license, and any other file, because a store holds only the files Prism writes.
+   A README or a license that the Git host adds is fine, but leave out any other file, because a store holds only the files Prism writes.
 
 2. Add a `Workspace` section to `.prism/workflow.md` that names the store's remote and this repository:
 
@@ -48,8 +48,9 @@ Store sync is on by default for a remote store, so Prism keeps the clone in step
 Prism never deletes, replaces, or rewrites the history of a clone it made.
 Before the clone writes any file, Prism checks the remote's whole branch, and every sync checks the upstream's whole branch the same way before it takes any of it.
 The branch may hold only regular files at the paths Prism writes in a store: the records under `initiatives/`, `roadmap.json`, the registrations under `repositories/`, the migration files under `migrations/`, the artifacts under `artifacts/` whose every name follows the artifact name form, and the store's `.gitignore` and `.gitattributes`.
-A symbolic link, a submodule link, or a file at any other path, such as a README, a lock file, or anything in the sync folder `.prism-sync/` in any spelling, fails the clone, or refuses the sync as a whole, and the message names the path.
-An entry that the store's own branch already holds unchanged, such as a README in a store cloned before this check, does not stop a sync.
+It may also hold a plain, non-executable `README`, `README.md`, `README.txt`, `LICENSE`, `LICENSE.md`, `LICENSE.txt`, or `COPYING` at its root, spelled exactly so, which Prism never reads or writes.
+A symbolic link, a submodule link, or a file at any other path, such as a README below the root, a lock file, or anything in the sync folder `.prism-sync/` in any spelling, fails the clone, or refuses the sync as a whole, and the message names the path.
+An entry that the store's own branch already holds unchanged, such as a notes file in a store cloned before this check, does not stop a sync.
 A sync commits only those files, so another file or a link you put in the store stays on your machine and never reaches the remote.
 Syncing requires Git 2.25 or later.
 SSH runs in batch mode unless you configured an SSH command, and Git never prompts, so a remote that needs a passphrase or password prompt fails instead of hanging.

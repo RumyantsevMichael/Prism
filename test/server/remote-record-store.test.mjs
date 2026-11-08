@@ -63,7 +63,7 @@ function bareRemote(parent, name = "remote.git", { empty = false } = {}) {
     const seed = path.join(parent, `${name}-seed`);
     git(parent, "clone", "-q", remote, seed);
     git(seed, "checkout", "-q", "-b", "main");
-    execFileSync("sh", ["-c", "printf '# Prism records\\n' > .gitattributes"], { cwd: seed });
+    execFileSync("sh", ["-c", "printf 'Prism records\\n' > README.md && printf 'Licensed\\n' > LICENSE"], { cwd: seed });
     git(seed, "add", ".");
     git(seed, "commit", "-q", "-m", "init");
     git(seed, "push", "-q", "-u", "origin", "main");
@@ -103,6 +103,16 @@ test("two project roots that name the same remote share one managed clone", asyn
   assert.deepEqual(await readdir(path.join(a, ".prism")), ["workflow.md"]);
 });
 
+test("a managed clone takes a README and a license that a Git host adds to a new repository, as plain files at the store root", async (context) => {
+  const parent = await folder(context);
+  const { url, clone } = bareRemote(parent);
+  const root = await project(parent, "project", remoteConfig(url, "on"));
+  await create(root);
+  assert.equal(await readFile(path.join(clone, "README.md"), "utf8"), "Prism records\n");
+  assert.equal(await readFile(path.join(clone, "LICENSE"), "utf8"), "Licensed\n");
+  assert.equal((await syncRecordStore(clone)).state, "ok");
+});
+
 test("the first access clones the remote and a second process reuses the clone without cloning again", async (context) => {
   const parent = await folder(context);
   const { remote, url, clone } = bareRemote(parent);
@@ -111,7 +121,7 @@ test("the first access clones the remote and a second process reuses the clone w
   assert.equal(await exists(clone), false);
   await create(a);
   assert.equal(git(clone, "config", "--get", "remote.origin.url"), url);
-  assert.equal(await exists(path.join(clone, ".gitattributes")), true, "the clone holds the remote's files");
+  assert.equal(await exists(path.join(clone, "README.md")), true, "the clone holds the remote's files");
   // With the remote gone, only a reused clone can answer.
   await rename(remote, `${remote}.away`);
   assert.deepEqual(await childListing(b), ["reports"]);
@@ -137,7 +147,7 @@ test("a remote store needs no plugin data directory, so a host that gives none s
   } finally {
     process.env.PLUGIN_DATA = data;
   }
-  assert.equal(await exists(path.join(clone, ".gitattributes")), true);
+  assert.equal(await exists(path.join(clone, "README.md")), true);
   assert.deepEqual(await readdir(data), before);
 });
 
@@ -171,7 +181,7 @@ test("a folder under plugin data with another origin is not moved", async (conte
   const root = await project(parent, "project", remoteConfig(url));
   assert.deepEqual(await listInitiatives(root), []);
   assert.equal(await exists(path.join(legacy, ".git")), true);
-  assert.equal(await exists(path.join(clone, ".gitattributes")), true);
+  assert.equal(await exists(path.join(clone, "README.md")), true);
 });
 
 test("a managed clone keeps long paths usable on Windows", async (context) => {
@@ -249,7 +259,10 @@ test("a managed clone refuses a remote whose branch holds the sync folder, so no
 });
 
 for (const [label, plant, named] of [
-  ["a file Prism does not write at its root", (seed) => writeFile(path.join(seed, "README.md"), "# Store\n"), "README.md"],
+  ["a file Prism does not write at its root", (seed) => writeFile(path.join(seed, "NOTES.md"), "# Store\n"), "NOTES.md"],
+  ["a README in another letter case", (seed) => writeFile(path.join(seed, "Readme.md"), "# Store\n"), "Readme.md"],
+  ["a README below the root", async (seed) => { await mkdir(path.join(seed, "initiatives")); await writeFile(path.join(seed, "initiatives", "README.md"), "# Store\n"); }, "initiatives/README.md"],
+  ["an executable license file", async (seed) => { await writeFile(path.join(seed, "COPYING"), "#!/bin/sh\n", { mode: 0o755 }); }, "COPYING"],
   ["a lock file beside a record", async (seed) => { await mkdir(path.join(seed, "initiatives", "reports"), { recursive: true }); await writeFile(path.join(seed, "initiatives", "reports", "initiative.json.lock"), "{}\n"); }, "initiatives/reports/initiative.json.lock"],
   ["a lookalike of the sync folder", async (seed) => { await mkdir(path.join(seed, "PRISM-~1")); await writeFile(path.join(seed, "PRISM-~1", "status.json"), "{}\n"); }, "PRISM-~1/status.json"],
   ["a submodule link", async (seed) => { await mkdir(path.join(seed, "artifacts", "plans", "sub"), { recursive: true }); execFileSync("git", ["update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},artifacts/plans/sub`], { cwd: seed }); }, "artifacts/plans/sub"]
@@ -270,7 +283,7 @@ test("an unreachable remote is unavailable, leaves no folder, and a later access
   assert.deepEqual(await leftovers(clone), []);
   bareRemote(parent, "late.git");
   assert.deepEqual(await listInitiatives(root), []);
-  assert.equal(await exists(path.join(clone, ".gitattributes")), true);
+  assert.equal(await exists(path.join(clone, "README.md")), true);
 });
 
 test("a folder at the clone path with another origin is unavailable and left untouched", async (context) => {

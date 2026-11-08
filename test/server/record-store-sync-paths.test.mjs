@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -72,6 +72,9 @@ const CRAFTED = [
   { label: "the sync folder's 8.3 short name", names: ["PRISM-~1", "status.json"], target: (store) => path.join(store, "PRISM-~1", "status.json") },
   { label: "a lock file beside a record", names: ["initiatives", "reports", "initiative.json.lock"], target: (store) => path.join(store, "initiatives", "reports", "initiative.json.lock") },
   { label: "a file Prism does not write at the store root", names: ["notes.md"], target: (store) => path.join(store, "notes.md") },
+  { label: "a README in another letter case", names: ["readme.md"], target: (store) => path.join(store, "readme.md") },
+  { label: "a README below the store root", names: ["initiatives", "README.md"], target: (store) => path.join(store, "initiatives", "README.md") },
+  { label: "an executable license file", names: ["LICENSE"], mode: "100755", target: (store) => path.join(store, "LICENSE") },
   { label: "an artifact name outside the artifact name form", names: ["artifacts", "plans", ".hidden.md"], target: (store) => path.join(store, "artifacts", "plans", ".hidden.md") },
   { label: "a symbolic link", names: ["artifacts", "plans", "link.md"], contents: "../../../escape.md", mode: "120000", target: (store) => path.join(store, "artifacts", "plans", "link.md") },
   { label: "a submodule link", names: ["artifacts", "plans", "sub"], mode: "160000", target: (store) => path.join(store, "artifacts", "plans", "sub") }
@@ -127,6 +130,16 @@ test("a fetch checks the objects it receives, so a crafted tree fails the fetch 
   assert.equal(status.state, "fetch_failed", JSON.stringify(status));
   assert.equal(await exists(path.join(path.dirname(storeB), "escape.txt")), false);
   assert.equal(git(storeB, ["rev-parse", "HEAD"]), before);
+});
+
+test("a sync takes a README and a license that the upstream adds at the store root, as plain files", async (context) => {
+  const { storeA, storeB } = await stores(context);
+  await writeFile(path.join(storeB, "artifacts", "plans", "local.md"), "# Local\n");
+  for (const name of ["README.md", "LICENSE", "COPYING"]) pushCrafted(storeA, [name], `${name}\n`);
+  const status = await syncRecordStore(storeB);
+  assert.equal(status.state, "ok", JSON.stringify(status));
+  for (const name of ["README.md", "LICENSE", "COPYING"]) assert.equal(await readFile(path.join(storeB, name), "utf8"), `${name}\n`);
+  assert.equal(git(storeB, ["show", "origin/main:artifacts/plans/local.md"]), "# Local");
 });
 
 test("a sync with fetch checks on still takes an ordinary upstream change", async (context) => {

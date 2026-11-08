@@ -90,7 +90,7 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
       const head = await runGit(temporary, ["rev-parse", "--verify", "--quiet", "HEAD"]);
       if (head.ok) {
         const foreign = await foreignStoreEntry(temporary, head.text);
-        if (foreign) throw unavailable(`Its branch holds ${foreign.kind} at ${JSON.stringify(foreign.path)}, but a store holds only the records, artifacts, and ignore and attributes files that Prism writes, as regular files, so it was not cloned. Remove that path from the remote's branch.`);
+        if (foreign) throw unavailable(`Its branch holds ${foreign.kind} at ${JSON.stringify(foreign.path)}, but a store holds only the records, artifacts, and ignore and attributes files that Prism writes, as regular files, and a plain README or license at its root, so it was not cloned. Remove that path from the remote's branch.`);
         const checkedOut = await runGit(temporary, ["reset", "--quiet", "--hard", "HEAD"]);
         if (!checkedOut.ok) throw unavailable(`Git could not check out its files: ${withoutCredentials(checkedOut.stderr) || `git reset exited with code ${checkedOut.code}.`}`);
       }

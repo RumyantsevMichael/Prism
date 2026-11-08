@@ -268,10 +268,12 @@ async function identity(base) {
 
 // The modes of the entries a store shares: a regular file, executable or not, and never a symbolic link or a submodule link.
 const FILE_MODES = new Set(["100644", "100755"]);
+// A Git host can add a README or a license to a new repository, so a store also shares these names at its root, as plain files that Prism never reads or writes.
+const INERT_FILES = new Set(["README", "README.md", "README.txt", "LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"]);
 // The record store module, which owns the store's layout, imports this one, so it loads when a sync first needs that layout.
 const storeLayout = async () => {
   const { isStoreFile } = await import("./record-store.mjs");
-  return { isStoreFile, sharedEntry: (file, mode) => FILE_MODES.has(mode) && isStoreFile(file) };
+  return { isStoreFile, sharedEntry: (file, mode) => (FILE_MODES.has(mode) && isStoreFile(file)) || (mode === "100644" && INERT_FILES.has(file)) };
 };
 
 // Stage the store's changes, with or without artifacts/, so that only the store's own ignore files decide what it tracks among the files it shares.
@@ -634,7 +636,7 @@ const sameEntry = (left, right) => left === right || (left !== undefined && righ
 const entryKind = (mode) => mode === "120000" ? "a symbolic link" : mode === "160000" ? "a submodule link" : FILE_MODES.has(mode) ? "a file" : "an entry";
 
 /**
- * The first entry of a commit's whole tree that no store shares, as { path, kind }, or null when every entry is a regular file at a path Prism writes in a store.
+ * The first entry of a commit's whole tree that no store shares, as { path, kind }, or null when every entry is a regular file at a path Prism writes in a store, or a plain README or license file at the root.
  * An entry that held, this machine's own commit, holds with the same mode and contents passes as it is, since taking the commit writes nothing for it.
  * The check is by what Prism writes, not by what it must avoid, so the sync folder, Git's folder, a lock, a link, or a name that another file system reads as one of them, in any spelling, never passes.
  */
@@ -649,7 +651,7 @@ export async function foreignStoreEntry(base, commit, held = new Map()) {
 /** Refuse an upstream commit whose tree holds anything a store does not share, before any file is written or removed, so the branch stays where it was. */
 async function refuseForeignTree(base, commit, held) {
   const foreign = await foreignStoreEntry(base, commit, held);
-  if (foreign) throw Object.assign(new Error(`The upstream holds ${foreign.kind} at ${JSON.stringify(foreign.path)}, but a store shares only the records, artifacts, and ignore and attributes files that Prism writes, as regular files, so the store was left as it was. Remove that path from the remote's branch.`), { unsafePath: true });
+  if (foreign) throw Object.assign(new Error(`The upstream holds ${foreign.kind} at ${JSON.stringify(foreign.path)}, but a store shares only the records, artifacts, and ignore and attributes files that Prism writes, as regular files, and a plain README or license at its root, so the store was left as it was. Remove that path from the remote's branch.`), { unsafePath: true });
 }
 
 // A changed path is written only below the store and through no symbolic link that sits in the store, whatever the upstream holds.
