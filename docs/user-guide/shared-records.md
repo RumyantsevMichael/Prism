@@ -45,7 +45,7 @@ Store sync is on by default for a remote store, so Prism keeps the clone in step
 
 `- Store sync: off` keeps the clone but never fetches, commits, or pushes after the first clone.
 Prism never deletes, replaces, or rewrites the history of a clone it made.
-Merging requires Git 2.38 or later.
+Syncing requires Git 2.25 or later.
 SSH runs in batch mode unless you configured an SSH command, and Git never prompts, so a remote that needs a passphrase or password prompt fails instead of hanging.
 Use an SSH agent or a Git credential helper for a remote that needs credentials, because a token in the URL stays in the clone's Git configuration, although Prism leaves it out of every message and status.
 
@@ -227,7 +227,7 @@ The list shows saved records, while a saved artifact is named in the next tool r
 | `no_upstream` | A path store's branch has no upstream, so Prism only commits locally; a remote store sets its upstream on its first sync instead. | Set an upstream with `git branch --set-upstream-to`. |
 | `not_a_repository` | Sync is on, but the store is not the top of a Git checkout. | Clone the store, or turn sync off. |
 | `fetch_failed` or `push_rejected` | The remote could not be reached, sent an object that fails Git's object checks, refused the push, or kept moving for three attempts. | Check access to the remote; Prism retries on the next write or read, and a commit whose objects fail the checks needs removing from the remote's history. |
-| `merge_failed` | A file other than a record or an artifact conflicted, a record or an artifact stayed locked through every attempt, the upstream holds a path that leads outside the store's files, such as one with a `..` part, or Git is older than 2.38. | Read the status message; a busy record clears on its own, and a path outside the store needs the commit that added it removed from the remote's history. |
+| `merge_failed` | A file other than a record or an artifact conflicted, a record or an artifact stayed locked through every attempt, the store's branch and its upstream share no commit, or the upstream holds a path that leads outside the store's files, such as one with a `..` part. | Read the status message; a busy record clears on its own, and a path outside the store needs the commit that added it removed from the remote's history. |
 | `git_failed` | Git failed for another reason, such as a leftover `.git/index.lock`. | Fix the store with Git; Prism never deletes Git's locks. |
 
 ## Cloud sessions
