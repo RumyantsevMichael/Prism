@@ -3,7 +3,7 @@ import { pluginPath, pluginURL } from "../plugin-root.mjs";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import readline from "node:readline";
+import { jsonLine, readJsonLines } from "../json-lines.mjs";
 import { constants } from "node:fs";
 import { mkdir, lstat, realpath, readFile, readdir, open, rename, rm, chmod, utimes } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -200,7 +200,7 @@ class Helper {
     const child = spawn(path.join(this.runtime, process.platform === "win32" ? "node.exe" : "node"), args, { env: environment, cwd: this.runtime, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     this.child = child;
     child.stderr.on("data", () => {});
-    const lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+    const lines = readJsonLines(child.stdout);
     lines.on("line", line => {
       let message: { id: number; progress?: Progress; error?: { code: string; message: string }; result?: unknown };
       try { message = JSON.parse(line); } catch { return this.stop(semanticError("preparation_failed", "The native helper returned invalid data.")); }
@@ -220,7 +220,7 @@ class Helper {
       const id = ++this.counter;
       const timeout = setTimeout(() => this.stop(semanticError("resource_limit", "Native preparation exceeded its 30 minute operation limit.")), this.options.operationMs ?? 30 * 60 * 1000);
       timeout.unref(); this.requests.set(id, { resolve: value => resolve(value as WorkerMethods[K]["output"]), reject, timeout, progress });
-      this.child!.stdin.write(`${JSON.stringify({ id, method, args })}\n`, error => { if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed.")); });
+      this.child!.stdin.write(jsonLine({ id, method, args }), error => { if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed.")); });
     });
   }
   stop(error = semanticError("preparation_failed", "The native helper stopped.")) {

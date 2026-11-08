@@ -4,7 +4,7 @@ import { pluginPath, pluginURL } from "../plugin-root.mjs";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import readline from "node:readline";
+import { jsonLine, readJsonLines } from "../json-lines.mjs";
 import { constants } from "node:fs";
 import { mkdir, lstat, realpath, readdir, open, rename, rm, chmod, utimes } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -215,7 +215,7 @@ class Helper {
     this.child = child;
     child.stderr.on("data", () => {
     });
-    const lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+    const lines = readJsonLines(child.stdout);
     lines.on("line", (line) => {
       let message;
       try {
@@ -251,8 +251,7 @@ class Helper {
       const timeout = setTimeout(() => this.stop(semanticError("resource_limit", "Native preparation exceeded its 30 minute operation limit.")), this.options.operationMs ?? 30 * 60 * 1e3);
       timeout.unref();
       this.requests.set(id, { resolve: (value) => resolve(value), reject, timeout, progress });
-      this.child.stdin.write(`${JSON.stringify({ id, method, args })}
-`, (error) => {
+      this.child.stdin.write(jsonLine({ id, method, args }), (error) => {
         if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed."));
       });
     });
