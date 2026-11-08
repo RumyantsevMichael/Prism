@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -274,6 +274,23 @@ test("a wait that names an answered and resolved gate does not hold its answer f
   assert.equal((await wait).status, "timeout");
 });
 
+// The waits that the session's notice records in directory hold, read from the files that a separate process writes.
+async function recordedWaits(directory) {
+  const names = (await readdir(directory).catch(() => [])).filter((name) => /^[0-9a-f]{32}\.json$/.test(name));
+  const records = await Promise.all(names.map((name) => readFile(path.join(directory, name), "utf8").then(JSON.parse).catch(() => ({}))));
+  return records.flatMap((record) => Array.isArray(record.waits) ? record.waits : []);
+}
+
+async function eventually(condition, message, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await condition();
+    if (value) return value;
+    assert.ok(Date.now() < deadline, message);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 test("the hold of a wait whose process was killed lapses after its lease", async (context) => {
   const { root, gateIds } = await actionProject(context);
   const directory = await temporaryDirectory(context, "prism-notices-");
@@ -282,15 +299,43 @@ test("the hold of a wait whose process was killed lapses after its lease", async
   const script = path.join(await temporaryDirectory(context, "prism-waiter-"), "wait.mjs");
   const module = fileURLToPath(new URL("../../dist/server/workflow/gate-wait.mjs", import.meta.url));
   await writeFile(script, `const { waitForUserGates } = await import(${JSON.stringify(module)});
-await waitForUserGates({ projectRoot: ${JSON.stringify(root)}, initiative: ${JSON.stringify(INITIATIVE)}, gateIds: [${JSON.stringify(gateIds.review)}], maxWaitMinutes: 720, pollMs: 50, leaseMs: 500, notices: { session: "s1", directory: ${JSON.stringify(directory)} } });
+await waitForUserGates({ projectRoot: ${JSON.stringify(root)}, initiative: ${JSON.stringify(INITIATIVE)}, gateIds: [${JSON.stringify(gateIds.review)}], maxWaitMinutes: 720, pollMs: 50, leaseMs: 1500, notices: { session: "s1", directory: ${JSON.stringify(directory)} } });
 `);
   const child = spawn(process.execPath, [script], { stdio: "ignore" });
-  await new Promise((resolve) => setTimeout(resolve, 800));
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  context.after(() => child.kill("SIGKILL"));
+  const holds = (waits) => waits.filter((wait) => wait.gates?.includes(gateIds.review));
+  await eventually(async () => holds(await recordedWaits(directory)).length, "the waiter holds its gate");
   child.kill("SIGKILL");
-  await new Promise((resolve) => child.once("exit", resolve));
+  await exited;
+  // The killed waiter renews nothing, so the hold its record keeps ends at a fixed time.
+  const lapse = Math.max(...holds(await recordedWaits(directory)).map((wait) => wait.until));
   await answerGate(root, gateIds.review, "approve");
-  await new Promise((resolve) => setTimeout(resolve, 600));
-  assert.deepEqual((await take()).map((entry) => entry.action), ["gate.answer"]);
+  let held = 0;
+  const shown = await eventually(async () => {
+    const changes = await take();
+    if (!changes.length) {
+      if (Date.now() < lapse) held += 1;
+      return null;
+    }
+    assert.ok(Date.now() >= lapse, "the answer stays held until the lease lapses");
+    return changes;
+  }, "the answer reaches the coordinator after the lease lapses");
+  assert.deepEqual(shown.map((entry) => entry.action), ["gate.answer"]);
+  if (!held) context.diagnostic("the lease lapsed before the first read after the answer, so no held read was observed");
+});
+
+test("a notice lock left by a process that was killed is taken over without waiting for it to go stale", async (context) => {
+  const { root } = await actionProject(context);
+  const directory = await temporaryDirectory(context, "prism-notices-");
+  const take = () => takePersonChanges({ projectRoot: root, initiative: INITIATIVE, session: "s1", directory });
+  await take();
+  const [record] = (await readdir(directory)).filter((name) => name.endsWith(".json"));
+  const dead = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  await new Promise((resolve) => dead.once("exit", resolve));
+  await writeFile(path.join(directory, `${record}.lock`), JSON.stringify({ pid: dead.pid, token: "0".repeat(32), renewable: false, at: new Date().toISOString() }));
+  await changeContinuation(root, "stepwise");
+  assert.equal((await take()).length, 1);
 });
 
 test("a server that closes mid-wait lets go of the wait's gates before it exits", async (context) => {

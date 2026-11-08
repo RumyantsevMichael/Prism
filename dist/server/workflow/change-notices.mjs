@@ -51,6 +51,7 @@ const recordText = ({ shown, coordinator, waits }) => `${JSON.stringify({ shown,
 // One step for the session: read its record and the coordination state, decide, and write the record, under a lock that every process of the session honors.
 // The step gets the state and its well-formed history entries in history order; while the state reads invalid it gets no state and no history, so it shows nothing from the history,
 // and the first call's starting point stays unset.
+// The lock of a process that stopped while it held it, such as a killed wait, is taken over at once, so it never outlasts the wait's hold.
 async function withNotice({ projectRoot, initiative, session, directory }, step) {
   await prepareDirectory(directory);
   const file = noticeFile(directory, session, projectRoot, initiative);
@@ -69,7 +70,7 @@ async function withNotice({ projectRoot, initiative, session, directory }, step)
     const next = recordText({ shown: kept, coordinator, waits });
     if (next !== recordText(record)) await writeAtomically(file, next, { mode: 0o600 });
     return result;
-  }));
+  }, undefined, { renew: true, abandonWhenUnrenewed: true }));
 }
 
 // The history targets of the answers that the session's running waits hold for themselves, and the ids of the answer entries they found.
