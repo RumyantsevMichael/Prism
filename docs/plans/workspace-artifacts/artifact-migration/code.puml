@@ -6,9 +6,11 @@ component "artifact-migration\nmigrateArtifacts, reference scan" as migration
 component "artifact-paths" as paths
 component "artifact-status\nrecorded status of moved files" as status
 component "mcp\nmigration note" as mcp
+component "roadmap\nview from the stored record" as roadmap
 
 store --> migration
 migration --> paths
 migration --> status
+migration --> roadmap
 mcp --> store
 @enduml

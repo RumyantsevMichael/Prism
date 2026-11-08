@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { checkout, cloneOf, commitFiles, git, exists, isolateGit, notes, ok, requirementFile, server, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing artifacts move into the store once, and files with malformed or colliding names stay in the checkout.
+// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing artifacts move into the store once, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, and files with malformed or colliding names stay in the checkout.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -14,7 +14,6 @@ const DESCRIPTIVE = {
   "docs/ADRs/payments/ledger.puml": "@startuml\ncomponent Ledger\n@enduml\n",
   "docs/plans/reports/slice.md": "# Reports\n\nSee [the ledger](../../ADRs/payments/ledger.md).\n",
   "docs/plans/reports/probes/size.mjs": "console.log(1);\n",
-  "docs/roadmap.md": "# Roadmap\n",
   "docs/Glossary.md": "# Glossary\n"
 };
 const EXECUTABLE = {
@@ -27,7 +26,6 @@ const LOCATIONS = {
   "docs/ADRs/payments/ledger.puml": "adrs/payments/ledger.puml",
   "docs/plans/reports/slice.md": "plans/reports/slice.md",
   "docs/plans/reports/probes/size.mjs": "plans/reports/probes/size.mjs",
-  "docs/roadmap.md": "roadmap.md",
   "docs/Glossary.md": "glossary.md"
 };
 const scoped = (store, location) => path.join(store, "artifacts", "repositories", "api", location);
@@ -90,8 +88,8 @@ test("clauses 27 and 28: another checkout's identical files are removed, differi
   const access = await onSecond.call("get_artifact", {});
   ok(access);
   const report = notes(access);
-  assert.equal(await exists(path.join(second, "docs/roadmap.md")), false, "an identical file is removed");
-  assert.match(report, /docs\/roadmap\.md/, "an identical file is reported as moved");
+  assert.equal(await exists(path.join(second, "docs/ADRs/payments/ledger.md")), false, "an identical file is removed");
+  assert.match(report, /docs\/ADRs\/payments\/ledger\.md/, "an identical file is reported as moved");
   assert.equal(await text(path.join(second, "docs/requirements/billing.md")), edited, "a differing file stays");
   assert.equal(await text(scoped(place.store, "requirements/billing.md")), DESCRIPTIVE["docs/requirements/billing.md"], "the store keeps its own copy");
   assert.match(report, /differs/);
@@ -109,6 +107,62 @@ test("clauses 27 and 28: another checkout's identical files are removed, differi
   assert.match(notes(later), /removed_in_store/);
   assert.equal(await exists(path.join(third, "docs/requirements/billing.md")), false, "the third clone's identical files are removed");
   assert.equal(version(await text(scoped(place.store, "requirements/billing.md"))), version(DESCRIPTIVE["docs/requirements/billing.md"]));
+});
+
+test("clause 28: a checkout's roadmap view is removed when the store's roadmap record generates the same view, and kept when it differs or the store holds no roadmap record", async (context) => {
+  const place = await workspace(context);
+  // A project without a store keeps its roadmap record and the view generated from it in the checkout, as an existing project does.
+  const plain = await checkout(place, "plain", { store: null });
+  ok(await (await server(context, place, plain)).call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
+  const record = await text(path.join(plain, ".prism", "roadmap.json"));
+  const view = await text(path.join(plain, "docs", "roadmap.md"));
+  assert.ok(record && view, "the project without a store holds the roadmap record and its view");
+
+  const api = await checkout(place, "api", { files: { ".prism/roadmap.json": record, "docs/roadmap.md": view, "docs/plans/reports/slice.md": "# Reports\n" } });
+  const onApi = await server(context, place, api);
+  const first = await onApi.call("get_artifact", {});
+  assert.deepEqual(ok(first).artifacts.map((entry) => [entry.path, entry.scope.label]), [["docs/plans/reports/slice.md", "api"], ["docs/roadmap.md", "workspace"]]);
+  assert.equal(await text(path.join(place.store, "artifacts", "roadmap.md")), view, "the store holds the view generated from the moved record");
+  assert.equal(await exists(path.join(api, "docs/roadmap.md")), false, "the checkout's identical view is removed");
+  assert.equal(await exists(scoped(place.store, "roadmap.md")), false, "no roadmap view enters the repository's scope");
+  assert.match(notes(first), /docs\/roadmap\.md/, "the removed view is reported as moved");
+  assert.doesNotMatch(notes(first), /view_differs|no_roadmap_record/);
+  const [ledger] = await ledgerFiles(place.store);
+  assert.ok(JSON.stringify(ledger).includes("docs/roadmap.md"), "the ledger lists the removed view");
+  assert.equal(ok(await onApi.call("get_artifact", { path: "docs/roadmap.md" })).content, view, "the roadmap view resolves to the workspace scope alone");
+
+  // The record changes after the move, so a checkout still holding the earlier view holds a stale one.
+  ok(await onApi.call("update_roadmap", { expectedRevision: ok(await onApi.call("get_roadmap", {})).revision, operations: [{ op: "add_initiative", id: "billing", title: "Billing", intent: "Billing ships.", band: "Next", requirements: ["r.md§2"] }] }));
+  const current = await text(path.join(place.store, "artifacts", "roadmap.md"));
+  assert.match(current, /Billing/);
+  const edited = `${view}\nA note written by hand.\n`;
+  for (const [name, contents] of [["web", view], ["site", edited]]) {
+    const root = await checkout(place, name, { files: { "docs/roadmap.md": contents } });
+    const access = await (await server(context, place, root)).call("get_artifact", {});
+    ok(access);
+    assert.equal(await text(path.join(root, "docs/roadmap.md")), contents, `${name}'s differing view stays in the checkout with its bytes`);
+    assert.equal(await text(path.join(place.store, "artifacts", "roadmap.md")), current, "the store keeps the view of its record");
+    assert.equal(await exists(path.join(place.store, "artifacts", "repositories", name, "roadmap.md")), false);
+    const report = notes(access);
+    assert.match(report, /view_differs/);
+    assert.match(report, /update_roadmap/, "the report says that content the record lacks goes in through update_roadmap");
+    assert.ok(report.includes("docs/roadmap.md"), "the report names the checkout path");
+    const kept = (await ledgerFiles(place.store)).find((entry) => entry.repository === name);
+    assert.ok(JSON.stringify(kept).includes("docs/roadmap.md"), `the ledger lists ${name}'s view as kept`);
+  }
+
+  // A store without a roadmap record has no view to compare, so a hand-written roadmap stays.
+  const empty = await workspace(context);
+  const ops = await checkout(empty, "ops", { files: { "docs/roadmap.md": "# Roadmap\n\nWritten by hand.\n" } });
+  const access = await (await server(context, empty, ops)).call("get_artifact", {});
+  assert.deepEqual(ok(access).artifacts, []);
+  assert.equal(await text(path.join(ops, "docs/roadmap.md")), "# Roadmap\n\nWritten by hand.\n");
+  assert.equal(await exists(path.join(empty.store, "artifacts", "roadmap.md")), false);
+  assert.equal(await exists(scoped(empty.store, "roadmap.md")), false);
+  assert.match(notes(access), /no_roadmap_record/);
+  assert.match(notes(access), /update_roadmap/);
+  const [kept] = await ledgerFiles(empty.store);
+  assert.ok(JSON.stringify(kept).includes("docs/roadmap.md"), "the ledger lists the hand-written roadmap as kept");
 });
 
 test("clause 28: a checkout file whose path the workspace scope holds stays in the checkout", async (context) => {
