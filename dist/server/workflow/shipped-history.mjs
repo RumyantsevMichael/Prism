@@ -123,6 +123,8 @@ export function markDocument(content, initiative, date) {
   const mark = historyMark(initiative, date);
   const end = content.indexOf("\n");
   if (/^# /.test(content) && end !== -1) return `${content.slice(0, end + 1)}\n${mark}${content.slice(end + 1)}`;
+  // A document that is only a heading without a newline keeps none after the mark, so removing the mark returns it exactly.
+  if (/^# /.test(content)) return `${content}\n\n${mark.slice(0, -1)}`;
   return `${mark}\n${content}`;
 }
 
@@ -173,7 +175,8 @@ export const documentDigests = (documents) => documents.map((document) => ({ pat
 
 /**
  * Write the history mark into documents read by readSliceDocuments; returns marked, the paths written in path order,
- * and problems { path, reason } for each that could not be written. A document that already holds a mark is left as it is.
+ * and problems { path, reason } for each that could not be written. A document that already holds a mark is left as it is,
+ * and so is one whose content changed since it was read, which is listed under problems, so the mark never overwrites an edit.
  */
 export async function writeHistoryMarks(projectRoot, initiative, decision, documents) {
   const marked = [];
@@ -182,6 +185,12 @@ export async function writeHistoryMarks(projectRoot, initiative, decision, docum
     const next = markDocument(document.content, initiative, shipDate(decision));
     if (next === document.content) continue;
     try {
+      const current = await readDocument(projectRoot, document.path);
+      if (current.content !== document.content) {
+        const markedMeanwhile = current.content !== undefined && markLines(current.content.split("\n")) !== null && unmarkedContent(current.content) === document.unmarked;
+        if (!markedMeanwhile) problems.push({ path: document.path, reason: current.problem ?? (current.absent ? "it was removed after it was read, so it was not marked" : "it changed after it was read, so it was not marked and its recorded content is the content read") });
+        continue;
+      }
       await writeAtomically(path.join(projectRoot, document.path), next);
       marked.push(document.path);
     } catch (error) {
@@ -264,7 +273,9 @@ export async function shippedHistory(projectRoot, initiative) {
   let marked = [];
   if (!Array.isArray(decision.documents)) {
     const recorded = await recordShipDocuments(projectRoot, initiative);
+    // A read that recorded nothing may have lost the race to another read, so it answers from the decision as recorded now.
     if (recorded) ({ decision, marked } = recorded);
+    else decision = (await shippedDecision(projectRoot, initiative)) ?? decision;
   }
   const recorded = Array.isArray(decision.documents) ? decision.documents.filter((item) => typeof item?.path === "string").sort(byPath) : [];
   const changedAfterShip = Array.isArray(decision.documents) ? await documentChanges(projectRoot, initiative, recorded).catch(() => []) : [];

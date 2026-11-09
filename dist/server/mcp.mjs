@@ -689,7 +689,7 @@ const tools = [
       required: ["projectRoot", "initiative"],
       additionalProperties: false
     },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "validate_coordination_state",

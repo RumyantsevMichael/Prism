@@ -1155,7 +1155,7 @@ export const INITIATIVE_TOOLS = [
     name: "get_initiative",
     description: "Read an initiative's MCP-managed slice record with derived leaves, effective dependencies, completion, design candidates, and readiness to ship, plus run totals computed from run records for each slice, each split parent with its descendants, and the initiative, and each live claim: on its slice in the record view and under claims with its label, activity, and expiry, where heldHere marks this server's claims; lostClaims lists, once, claims this server held that expired or were released or taken over. Reads never create files. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip }, where documents lists the slice documents its ship decision recorded and changedAfterShip each one changed, removed, or added since, ignoring the history mark; the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked, to commit apart from the task's changes.",
     inputSchema: GET_INITIATIVE_SCHEMA,
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_initiative",
