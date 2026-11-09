@@ -1,0 +1,181 @@
+# Navigate the review app by places
+
+The review app's navigation becomes five places, Attention, Work, Roadmap, Knowledge, and History, switched from an icon rail at the left edge, with the sidebar showing only the current place.
+[mockup/mockup.html](mockup/mockup.html) is the approved mockup in the repository, built from [mockup/tokens.css](mockup/tokens.css), which is the kit's own design values file, and the fonts in [mockup/fonts/](mockup/fonts/).
+It is Michael's approved `proposal-5-places.html` with the parts that are later work removed (Waiting for approval, By area and the Area column, Applies to the code you change, Artifact changes, Sessions needing input, Asks routed to me, and the `/` hints of the filter fields), and with the screens the requirements need that the approved file does not draw: Attention filtered to one kind, History, the Roadmap place, the collapsed sidebar, and the drawer at 820 and 390 pixels; every scene previews the dark theme with `?theme=dark`.
+The architecture is recorded in [navigate-by-places.md](../../ADRs/review-ui-kit/navigate-by-places.md), which supersedes the navigation clause of [own-ui-kit.md](../../ADRs/review-ui-kit/own-ui-kit.md).
+
+The requirements' design questions are answered here.
+Changed this week reads the repository's Git history of the record files, because requirements, decisions, the glossary, and diagrams live in the repository and the shared store holds none of them; a record file with an uncommitted change counts as changed and is listed first as not committed (clauses 61 to 64).
+Work lists the other unfinished slices of an expanded initiative with those in progress or claimed first, then blocked ones, then the rest, each part in the order of the initiative's slice tree (clause 33).
+The Knowledge search has its own results in the sidebar, grouped by kind, and reads one server search of records that also finds diagrams and glossary terms, rather than reusing the Jump palette (clause 52).
+
+In this contract `<base>` is a project's review URL without its trailing slash, a page's address is `<base>/review?artifact=<ref>` with the ref URL-encoded, the demo is the project that `scripts/review-demo/seed.mjs` builds, and each frozen test names the clauses it checks at the start of its title.
+Wide means a window wider than 1100 pixels and narrow means 1100 pixels or less.
+
+## Contract
+
+### Places and the rail
+
+1. The places are, in this order, `Attention`, `Work`, `Roadmap`, `Knowledge`, and `History`, with the icons `bell`, `tree`, `roadmap`, `book`, and `clock`, and the heads of their sidebars are, title then subtitle: `Attention` / `What waits on you`, `Work` / `Designed and not shipped`, `Roadmap` / `Priorities by lane`, `Knowledge` / `Requirements, decisions, glossary`, and `History` / `Shipped and superseded`.
+2. On a wide window every page shows at its left edge, left of the sidebar, a rail that is a `nav` named `Places` holding one button per place in that order, whose accessible name starts with the place's name, which shows the place's name as a tooltip on hover and on keyboard focus, and which carries `aria-pressed="true"` only on the current place, followed after a flexible gap by the sidebar button.
+3. The rail draws no border, its background is the canvas behind the islands, and the current place's button paints `--prism-color-selected` with an accent bar at its left as the mockup draws it.
+4. The Attention button shows a count badge with the number of recorded questions that wait for an answer, the number the tab title already shows, and no badge when that number is 0, and its accessible name is `Attention, <n> questions` with `1 question` in the singular.
+5. On a wide window the top bar shows no Attention bell, and the sidebar button moves from the top bar to the end of the rail.
+6. Choosing a place on the rail makes it the current place, and the sidebar then shows the place's head, a `heading` level 2 with the place's title followed by its subtitle, and that place's own navigation, and nothing of another place.
+7. Choosing `Roadmap` on the rail also opens the Roadmap page in the selected tab as a sidebar link would, and choosing any other place leaves the open page as it is.
+8. Choosing the current place again keeps the sidebar shown and changes nothing.
+9. The current place does not change when a tab is selected, a link is followed, the palette opens a page, or the page bar goes back or forward; the sidebar then marks the open page with `aria-selected="true"` or `aria-current` only when the current place lists that page.
+10. The review page stores the current place in the browser's local storage, so a reload, a new window, or another visit at the same origin shows the place it showed last, and shows `Attention` when it stored none or stored a value that is not a place.
+11. A review address with `place=<name>`, where name is `attention`, `work`, `roadmap`, `knowledge`, or `history`, shows that place when the page loads and stores it, and any other value is ignored.
+12. A place, filter, entry point, count, or label that Prism does not provide appears in no rail and no sidebar, and no entry is drawn disabled or marked as planned.
+13. No text, accessible name, or tooltip of the rail, the sidebars, or the new pages of this contract holds the word `concept`, a Prism state file name such as `initiative.json`, `state.json`, `review.json`, or `change-map.json`, or a path under `.prism/`, except inside content marked `data-code-subject`.
+
+### Collapse, links, and the trail
+
+14. On a wide window, `[` pressed outside a field and outside an open overlay, or the sidebar button, hides the sidebar and keeps the rail, and does it again to show the sidebar; the button is named `Collapse the sidebar` or `Expand the sidebar`, carries `aria-expanded`, and its tooltip ends with `([)`.
+15. The collapsed or shown state is kept in local storage and restored on reload, and on a narrow window `[` and the stored state change nothing.
+16. Choosing a place on the rail while the sidebar is hidden shows the sidebar with that place and stores the sidebar as shown.
+17. Every sidebar entry that leads to a page or a filtered list is a `treeitem` whose row is an anchor with the `href` of that page's address, so that a middle click or a Shift click opens it in a new browser tab or window without changing this page, a Ctrl or Cmd click opens it in a kept tab of the strip, a plain click opens it in the preview tab, a double click keeps the tab it opened, and the browser's context menu can copy the address.
+18. `GET <base>/api/context?ref=<ref>` answers the page's trail and scope as today plus `place`, which is `attention`, `work`, `roadmap`, `knowledge`, `history`, or `null`, by the table in clause 19.
+19. A page belongs to a place by its ref or file:
+    `attention` and every `attention:` ref belong to `attention`;
+    `roadmap` and the roadmap's record and Markdown files belong to `roadmap`;
+    an initiative or slice page, and a file under that initiative's plans folder or its Prism records, belong to `work` while the initiative has an initiative record and no shipped or superseded decision, to `history` once it has one of those decisions, and to `roadmap` when it has neither a record nor a decision;
+    `requirements`, `decisions`, `glossary`, every `knowledge:` ref, every requirement or decision document, the glossary file, and every diagram under the decisions folder belong to `knowledge`;
+    every other file belongs to no place.
+20. The trail of a page that belongs to a place starts with a crumb labeled with the place's name and carrying `place`, which replaces the `Roadmap` crumb of initiative and slice pages and the `Library` crumb of Knowledge pages; the trail of `attention` and `roadmap` is that one crumb, and a page of no place keeps its trail `Files`, then its path.
+21. The page bar draws that first crumb as a link whose address is the open page's address with `place=<name>`, and a plain click on it makes that place current without changing the open page.
+
+### Narrow windows
+
+22. On a narrow window the rail and the sidebar are hidden, the top bar shows the Navigation button and the Attention bell with the count of clause 4, and the bell opens the Attention page.
+23. The Navigation button opens the navigation drawer, which holds the rail at its left and the current place's sidebar beside it, both as clauses 2 to 9 describe, and gives focus to the current place's button or the sidebar's selected item.
+24. Choosing a place in the drawer switches the drawer's sidebar and keeps the drawer open, and choosing a page in the drawer opens it and closes the drawer.
+25. Widening the window past 1100 pixels while the drawer is open closes it and gives the rail and the sidebar back to the shell, with focus in them when it was in the drawer.
+26. At 390, 820, and 1440 pixels, with the demo and with the edge-case project of `scripts/review-demo/seed-stress.mjs`, the rail, the drawer, and every sidebar stay inside the window and the page does not scroll sideways.
+
+### Kept features
+
+27. These keep working as they do before this contract: the strip of open documents with its one preview tab, `Keep`, close buttons, middle-click close, kept tabs from Ctrl or Cmd click, agent-presented tabs, and tabs restored after a reload; the page bar's Back and Forward and Alt+arrow keys; the Jump palette from Ctrl K, Cmd K, the search button, and `/` pressed outside a field; Appearance from Ctrl+, and from its status bar button; Who's working; the status bar; the connection banner when the review server stops answering; the project menu; and the side panel.
+28. Every page the review app served before this contract is reachable without the palette from the rail, a place's sidebar, or a page those lead to: Attention, the Roadmap, every initiative and slice page, every requirement and decision document, the Requirements and Decisions lists, the Glossary, every diagram, and the component catalog through Appearance.
+29. Every test of the review app's browser and server test files that exists when this design is accepted keeps its title and at least as many `assert` calls, except tests whose title [kept-tests.json](kept-tests.json) lists with the frozen test that replaces them, and a test that reached a page through the old sidebar may change only the steps that reach it.
+
+### Work
+
+30. The Work sidebar shows, below its head, a filter field labeled `Filter work`, then its groups in this order, each a `heading` level 3 with the group's name and its count of initiatives, leaving out an empty group: `In progress`, `Blocked`, `Designed, not started`, and `Not on the roadmap`, then the note `Shipped work moves to History. Emerging and unplanned items stay on the Roadmap.`
+31. An initiative is listed only when it has an initiative record and no shipped or superseded decision; one not on the roadmap goes under `Not on the roadmap`; otherwise one with at least one blocked slice and no slice in progress or under a live claim goes under `Blocked`; otherwise one whose roadmap state is in progress goes under `In progress`; and every other goes under `Designed, not started`; inside a group the initiatives keep the roadmap's order, and those not on the roadmap are ordered by title.
+32. An initiative row shows its state glyph, its title, and its shipped leaf slices out of all as `<done>/<total>`, and its tooltip is its title, state, and `<done> of <total> shipped`; a slice row shows its phase glyph in its phase color, its title, `Blocked` when it is blocked, and its holder's avatar when a live or expired claim covers it, and its tooltip is its title, phase and status, and the claim's holder, activity, and time; a row's accessible name starts with its title.
+33. An expanded initiative shows below it at most five of its unfinished leaf slices: the slice open in the selected tab first when it is one of them, then those in progress or under a live claim, then blocked ones, then the rest, each part in the order of the slice tree; then, when it has more unfinished leaf slices or any done ones, one row labeled `<n> more unfinished` when n is above 0 and `All slices` otherwise, with `<m> done` at its end when m is above 0, which links to the initiative's page.
+34. An initiative is expanded when the person expanded it, when the selected tab is its page or one of its slices' pages, or when one of its slices is in progress or claimed, and the person can collapse it.
+35. Typing in the filter field shows only the initiatives whose title contains the typed text and those with a slice whose title contains it, ignoring case, each matching slice listed under its initiative, the group headings showing the counts of what remains; clearing the field restores the groups, and a filter that matches nothing shows `No work matches "<text>".`
+
+### Attention
+
+36. The Attention sidebar shows, below its head, the entry `Everything` with the number of items of every kind, then the group `By kind` with the entries `Questions`, `Review findings`, `Failed verifications`, `Blocked work`, `Ready to ship`, and `Problems`, each with its count, including 0, then the group `By work`, then the group `Answered` with the entry `Answered in the last 7 days` and its count.
+37. Questions are the recorded questions that wait for an answer and the notes left for the person; review findings are the slices whose review ledger holds unresolved findings; failed verifications follow clause 41; blocked work is each blocked slice; ready to ship is each initiative ready to ship; problems are the unreadable or invalid records, a missing or invalid roadmap, initiatives with a record that the roadmap does not list, the roadmap's open questions, and workflow settings warnings.
+38. `By work` lists each initiative that has items of those kinds, by title with its count, the three with the most items first, ties by title, and when more initiatives have items, one more row labeled `<n> more` with their total count, which shows them in the same order below it when chosen; the group is left out when no item belongs to an initiative.
+39. Choosing a kind or an initiative opens the address `attention:<kind>` (`questions`, `findings`, `failed`, `blocked`, `ready`, or `problems`) or `attention:work/<initiative>`, and that page shows only the items of that kind or that initiative, says above them `<filter> · <n> of <total> items`, where filter is the entry's label, and offers the link `Show everything`, which opens `attention`; the trail is `Attention`, then the filter.
+40. Choosing `Answered in the last 7 days` opens `attention:answered`, which lists the questions answered or closed in the last 7 days that Prism keeps, newest first by the time of the answer or the closing, each with its question, its initiative and slice, the answer, or the reason it was closed, and says `No question was answered or closed in the last 7 days.` when there is none.
+41. While the latest verification run of a slice that is not done has failed, Attention lists the slice as a failed verification titled `<slice title> failed verification` with its initiative, the run's reason in words (`The tests failed`, `The tests timed out`, `The run was cancelled`, or `The run changed tracked files`, followed by `, <n> tests failed` when the run names failing tests), and the time the run finished, as a link to the slice's page, until a later run of the slice passes or the slice is done.
+42. `GET <base>/api/index` answers `navigation.places.attention` as `{ "everything": n, "questions": n, "kinds": { "questions": n, "findings": n, "failed": n, "blocked": n, "ready": n, "problems": n }, "work": [{ "id", "title", "count" }], "answered": n }`, where `questions` is the count of clause 4, `everything` is the sum of the kinds, and `work` is ordered as clause 38 orders it.
+43. `GET <base>/api/entity?ref=attention` answers its data as today plus, in `watch`, one item `{ "type": "failed-verification", "initiative": { "id", "title" }, "slice": { "slug", "title" }, "reason", "failingCount", "finishedAt" }` per failed verification of clause 41, and `GET <base>/api/entity?ref=attention:answered` answers `{ "ref", "kind": "attention", "data": { "answered": [{ "question", "initiative": { "id", "title" }, "slice": { "slug", "title" } | null, "answer": <answer> | null, "reason": text | null, "at" }] } }`.
+
+### Roadmap and History
+
+44. The Roadmap sidebar shows, below its head, the group `View` with a choice of `Board`, `List`, and `Graph` that switches the Roadmap page's view as the page's own control does, and marks the view the page shows, and the group `Lanes` with one entry each for `Now`, `Next`, `Later`, and `Parked` and the count of open initiatives in that lane, and no entry for a single initiative.
+45. A lane entry links to `<base>/review?artifact=roadmap&lane=<now|next|later|parked>`, which opens the Roadmap page in its board view with that lane's heading scrolled into view, and following it again while the page is open scrolls again.
+46. The Roadmap page's board, list, and graph are otherwise as they are before this contract.
+47. The History sidebar lists every initiative with a shipped or superseded decision, newest decision first, each as a link to its initiative page with its title, the label `Superseded` when superseded, and the decision's date as `<day> <month>` in the current year and `<day> <month> <year>` otherwise, with months as `Jan` to `Dec`, and its tooltip is its title with `Shipped <date>` or `Superseded <date>`; it says `Nothing has shipped yet.` when there is none.
+48. `GET <base>/api/index` answers `navigation.places.history` as `[{ "id", "title", "decision": "shipped" | "superseded", "at", "by": id | null }]` in the order of clause 47, and `navigation.places.work` as `{ "groups": [{ "key": "in-progress" | "blocked" | "designed" | "unlisted", "label", "initiatives": [{ "id", "title" }] }] }` in the order of clauses 30 and 31.
+
+### Knowledge
+
+49. The Knowledge sidebar shows, below its head, a search field labeled `Search <n> records`, where n is the number of requirements, decisions, glossary terms, and diagrams, then the group `Start from` with the entries `Touched by my work` and `Changed this week`, each with its count, then the group `Browse by kind` with `Requirements`, `Decisions`, `Glossary`, and `Diagrams`, each with its count, and no entry for a single record.
+50. `Requirements`, `Decisions`, and `Glossary` open the pages `requirements`, `decisions`, and `glossary` as before, `Diagrams` opens `knowledge:diagrams`, `Touched by my work` opens `knowledge:touched`, and `Changed this week` opens `knowledge:changed`.
+51. `knowledge:diagrams` lists every PlantUML file in the plans folder and the decisions folder by the diagram's name, which is the name after `@startuml` or else the file name without `.puml`, with its owner as `<initiative title> · <slice title>` for a file in a slice's folder, `<initiative title>` for a file in an initiative's folder, or, for a file in the decisions folder, the title of the decision whose Markdown file has the same name in the same folder, or else the file's folder, each opening the diagram, ordered by owner and then name, and `GET <base>/api/entity?ref=knowledge:diagrams` answers `{ "ref", "kind": "diagrams", "data": { "diagrams": [{ "path", "name", "owner": { "kind": "slice" | "initiative" | "decision", "title" } }] } }`.
+52. Typing two or more characters in the search field replaces the sidebar's groups with the matching records grouped under `Requirements`, `Decisions`, `Glossary`, and `Diagrams`, leaving out an empty group, each record named by its title and opening its page when chosen, a glossary term opening the Glossary; a record matches when every word typed occurs in its title or its text, ignoring case; no match shows `No record matches "<text>".`; clearing the field or pressing Escape in it restores the groups.
+53. `GET <base>/api/records/search?q=<text>` answers `{ "query", "groups": [{ "kind": "requirement" | "decision" | "glossary-term" | "diagram", "results": [{ "title", "ref" }] }] }` in that kind order, matching as clause 52 says, with `ref` the record file's path for a requirement, decision, or diagram and `glossary` for a term, leaving out empty groups, with at most 20 results per group, titles first that contain the text, and an empty `groups` for text shorter than two characters.
+
+### Touched by my work
+
+54. The slice of `knowledge:touched` is the slice whose page is in the selected tab, or else the slice whose page the person selected last since the review page loaded.
+55. The page names above its list `Records behind the slice you have open: <initiative title>, slice <slice title>` and lists two groups, each with its count and a line that says where it comes from: `The contract cites`, from the slice's design, and `This work changes`, planned by the design or changed by the verified result; a group with no records says `Nothing yet.` under its heading.
+56. `The contract cites` lists each requirements file whose sections the slice cites, each decision, requirements file, and diagram its `slice.md` links to, and each glossary term whose name occurs, ignoring case, as a whole word in the text of the contract clauses that the slice's design view lists.
+57. `This work changes` lists each requirements file, decision, glossary file, and diagram that a `Changes` line of the slice's `slice.md` names, and each such record file that differs between the content the slice started from and the content its latest passing verification run tested.
+58. Each record shows its title as a link to the record, its kind as `Requirement`, `Decision`, `Glossary term`, `Glossary` for the glossary file, or `Diagram`, its status from its `Status:` line, `Defined` for a glossary term, and nothing for a diagram, the glossary file, or a file without a status, and why it is listed: `Section <n>` or `Sections <n>, <m>` for cited sections, `Clause <n>` or `Clauses <n>, <m>` for a term, `Linked from the design`, `Planned by the design`, or `Changed by the verified result`; a record listed for several reasons shows them joined by `; `.
+59. Without a slice by clause 54, the page says `This page lists the records behind the slice you have open. Open a slice to see them.` and lists every slice in progress as a link to its page, or says `No slice is in progress.`
+60. `GET <base>/api/touched?slice=<initiative>/<slug>` answers `{ "initiative": { "id", "title" }, "slice": { "slug", "title" }, "groups": [{ "reason": "cites" | "changes", "records": [{ "kind": "requirement" | "decision" | "glossary-term" | "glossary" | "diagram", "title", "status": text | null, "ref", "why": [text] }] }] }`, answers 404 with `{ "code": "unknown_slice" }` for a slice that does not exist, and 400 with `{ "code": "invalid_slice" }` without the parameter.
+
+### Changed this week
+
+61. `knowledge:changed` lists each requirements file, decision, the glossary file, and each diagram whose content changed in the last 7 days, those with an uncommitted change first, labeled `Not committed`, then the rest newest change first, each by title and kind with the time of its last change as the page's other times show it and its author's name when the history records one.
+62. A record file changed in the last 7 days when a commit of the repository's history in that time changed it, or when Git reports it modified, added, or untracked against the index, and a file changed by a commit only in its name counts as changed.
+63. When the project is not a Git repository, has no commit, or Git cannot be run, the page says `Change history is unavailable: <reason>.` with the reason `the project is not a Git repository`, `the repository has no commits`, or `Git could not be run`, lists no record as changed, and names the records it could not date, and the sidebar shows no count for `Changed this week`.
+64. `GET <base>/api/changed` answers `{ "available": boolean, "reason": text | null, "records": [{ "kind", "title", "ref", "at": time | null, "author": name | null, "uncommitted": boolean }], "undated": [{ "kind", "title", "ref" }] }`, with `records` empty and `undated` listing every record file when history is unavailable.
+
+### Kit
+
+65. The rail, its buttons with their badge, and the place head are kit elements, each listed in `KIT_ELEMENTS` and shown in the component catalog with a specimen per state, including a long title and an unbroken name, and every value they paint comes from `kit/tokens.css`; no file outside `kit/` styles them.
+66. The kit guard finds nothing in the review app, and the layout check passes for every place at its four widths.
+
+### Comparison with the mockup
+
+67. `node scripts/review-demo/places-compare.mjs --out <dir>` renders each scene of [mockup/mockup.html](mockup/mockup.html) and the demo app put into the same state, at the same window width and theme, in the compact density, and writes into the folder one `<scene>-<width>-<theme>.png` with the mockup on the left and the app on the right, one `<scene>-<width>-<theme>.json` with both outlines and their differences, a `report.json` of `{ "pairs": [{ "scene", "width", "theme", "png", "differences": [text] }] }`, and an `index.html` that shows each pair with its differences.
+68. The scenes, their app states, and their widths are: `work`, a slice page of `Harden request retries` with Work current; `attention`, the Attention page with Attention current; `attention-filtered`, `attention:findings`; `knowledge`, `knowledge:touched` after a slice page; `history`, a shipped initiative's page with History current; `roadmap`, the Roadmap page with Roadmap current; `collapsed`, the `work` state with the sidebar hidden; each at 1440, 820, and 390 pixels; and `drawer-tablet` at 820 and `drawer-phone` at 390, the `work` state with the drawer open; each in the `light` and `dark` themes.
+69. `--scenes`, `--widths`, `--themes`, and `--parts` narrow the run to comma-separated values, `--mockup <file>` reads another mockup, and `--app-mockup <file>` renders that mockup file in place of the app so the comparison can check itself.
+70. An outline holds these parts:
+    `rail`, whether the rail is visible, its entries' place names in order, the current place, and whether the Attention entry shows a count;
+    `head`, the place head's title and subtitle;
+    `sidebar`, its groups in order, each with its heading without the count, whether it shows a count, the labels of its rows that the mockup marks `data-fixed`, and for its first row the kinds of parts it shows in order, from twisty, glyph, label, flag, holder, and count;
+    `topbar`, which of the Navigation button, the Attention bell, and the sidebar button are visible and whether the bell shows a count;
+    `trail`, the first crumb's label;
+    `geometry`, in pixels, the rail's width, a rail button's width and height, the sidebar's left edge and width, the place title's font size, a sidebar row's height, and the main island's left edge;
+    `tokens`, the computed background colors of the rail, the sidebar, the current rail button, and the selected sidebar row, and the color of the current rail button's icon.
+71. Two outlines differ where a `rail`, `head`, `topbar`, or `trail` value differs; where the app's sidebar groups are not the mockup's groups in the mockup's order, a mockup group marked `data-optional` being allowed to be absent; where a group's fixed row labels or first-row parts differ; where a geometry value differs by more than 2 pixels; or where a token color differs; and each difference is written as `<scene> <width> <theme> <part>: mockup <value>, app <value>`.
+72. The command exits 0 when no pair differs, 1 when one does, after printing each difference, and 2 with a message on stderr for a missing `--out`, an unknown scene, part, width, or theme, an unreadable mockup, or no Playwright.
+73. A slice that changes a screen that a scene shows is done only when its frozen tests run the comparison for its scenes and parts at 390, 820, and 1440 pixels in both themes, it passes, and the implementer has looked at every pair it wrote and names in the pull request each difference that the outline does not measure.
+
+## Assumptions
+
+- Probed: the demo seeds in about 1.4 seconds, and its records are plain JSON files that a test can change before the review server starts (`node scripts/review-demo/seed.mjs <dir>`, observed `.prism/initiatives/retry-hardening/initiative.json` and `.prism/roadmap.json` with `decision.kind` `shipped` and `at`).
+- Probed: shipped and superseded decisions carry their time in `decision.at` of the roadmap record (`src/server/workflow/roadmap.mjs`, `ship` and `supersede` set `at`; observed in the seeded `roadmap.json`).
+- Probed: a verification run is a `runs` record entry with `kind: "verification"`, `passed`, `reason`, `finishedAt`, and `failingCount`, and `latestVerification` returns the last one (`src/server/workflow/verification.mjs`, `src/server/workflow/slice-design.mjs`); a test writes one through `appendRecord` from `dist/server/workflow/record-store.mjs`.
+- Probed: the demo is a Git repository with no commit (`git -C <demo> rev-parse HEAD` fails), so Changed this week on the plain demo exercises clause 63, and a test that commits with `git -c user.name=… commit --date` exercises clause 61.
+- Probed: the places mockup renders each scene in a window of the scene's width when its frame fills the window (`placesmock/shoot.cjs` in the design session, observed the drawer layout at 820 and 390 from the mockup's own container queries).
+- Probed: `prism-tree-item` with `href` renders its row as an anchor with that address, and a Shift click is left to the browser (`src/server/review/public/kit/elements/prism-tree-item.js`).
+- Probed: a test gives a demo slice a contract and a design view by writing its `slice.md` and calling `updateDesignView` from `dist/server/workflow/design-view.mjs`, which needs only an existing test file because the demo slice has no accepted design (`test/server/fixtures/places-touched.mjs`, run in the design session).
+- Unprobed: the review server looks Git up through `PATH` on each request, so a test that empties `PATH` around one request sees `Git could not be run`.
+- Unprobed: Git reports a rename within the last 7 days for every renamed record file; a file Git cannot attribute to a commit is listed with its uncommitted or committed change only, never guessed from file times.
+- Unprobed: the difference between a slice's start content and its passing run's content is readable for every slice; when Git cannot read either, `This work changes` lists only what the design plans and the page says `The verified result could not be read.`
+
+## Slices
+
+| Slug | Outcome | Component | Requirements | Depends on | Frozen tests | Review |
+| --- | --- | --- | --- | --- | --- | --- |
+| `places-compare` | The places mockup lives in the repository and a comparison renders each of its scenes beside the demo app and fails on any difference in structure, geometry, or design values. | `prism` | `review-app-places.md§34` | | `test/server/review-places-compare.test.mjs` | none |
+| `places-shell` | A rail switches five places, the sidebar shows only the current place and keeps it while pages change, the sidebar collapses to the rail, the drawer holds both on narrow windows, the trail names the place, and every kept feature and page still works. | `prism` | `review-app-places.md§1`, `§2`, `§3`, `§4`, `§5`, `§6`, `§7`, `§8`, `§9`, `§23`, `§24`, `§33`, `§34`, `§35`, `§36` | `places-compare` | `test/server/review-places-shell-browser.test.mjs`, `test/server/review-places-kept-browser.test.mjs`, `test/server/review-places-kept-tests.test.mjs`, `docs/plans/review-app-places/kept-tests.json`, `test/server/fixtures/places-browser.mjs` | required: it replaces the navigation every screen uses, where the UI kit lost features |
+| `work-place` | Work lists only designed, unshipped work grouped by state, with a short slice list and a filter. | `prism` | `review-app-places.md§15`, `§16`, `§17`, `§18`, `§19`, `§34` | `places-shell` | `test/server/review-places-work-browser.test.mjs` | required: the screen Michael compares first, and grouping decides what people see |
+| `attention-place` | Attention filters by kind and by initiative, lists failed verifications, and shows what was answered this week. | `prism` | `review-app-places.md§10`, `§11`, `§12`, `§13`, `§14`, `§34` | `places-shell` | `test/server/review-places-attention.test.mjs`, `test/server/review-places-attention-browser.test.mjs`, `test/server/fixtures/places-attention.mjs` | none |
+| `history-roadmap-places` | History lists shipped and superseded work by date, and the Roadmap place switches the page's views and jumps to lanes. | `prism` | `review-app-places.md§20`, `§21`, `§37`, `§34` | `places-shell` | `test/server/review-places-history-roadmap-browser.test.mjs` | none |
+| `knowledge-place` | Knowledge shows search and entry points instead of lists, finds records of every kind, and lists diagrams by name. | `prism` | `review-app-places.md§22`, `§25`, `§32`, `§34` | `places-shell` | `test/server/review-places-knowledge.test.mjs`, `test/server/review-places-knowledge-browser.test.mjs` | none |
+| `knowledge-entry-points` | Touched by my work shows the records behind the open slice and why, and Changed this week lists this week's record changes or says plainly why it cannot. | `prism` | `review-app-places.md§26`, `§27`, `§28`, `§29`, `§30`, `§31`, `§34` | `knowledge-place` | `test/server/review-places-touched.test.mjs`, `test/server/review-places-changed.test.mjs`, `test/server/review-places-entry-points-browser.test.mjs`, `test/server/fixtures/places-touched.mjs` | required: it runs Git in the project and reads slice designs and verified content |
+
+## Clause coverage
+
+| Clauses | Frozen test |
+| --- | --- |
+| 67, 68, 69, 70, 71, 72 | `review-places-compare.test.mjs` |
+| 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 65, 73 | `review-places-shell-browser.test.mjs` |
+| 27, 28 | `review-places-kept-browser.test.mjs` |
+| 29 | `review-places-kept-tests.test.mjs` |
+| 30, 31, 32, 33, 34, 35, 48, 73 | `review-places-work-browser.test.mjs` |
+| 36, 37, 38, 41, 42, 43 | `review-places-attention.test.mjs` |
+| 36, 38, 39, 40, 41, 73 | `review-places-attention-browser.test.mjs` |
+| 44, 45, 46, 47, 48, 73 | `review-places-history-roadmap-browser.test.mjs` |
+| 51, 53 | `review-places-knowledge.test.mjs` |
+| 49, 50, 51, 52, 73 | `review-places-knowledge-browser.test.mjs` |
+| 56, 57, 58, 60 | `review-places-touched.test.mjs` |
+| 61, 62, 63, 64 | `review-places-changed.test.mjs` |
+| 54, 55, 58, 59, 61, 63, 73 | `review-places-entry-points-browser.test.mjs` |
+| 66 | the kit guard and `review-kit-everywhere.test.mjs`, which every slice keeps passing |
