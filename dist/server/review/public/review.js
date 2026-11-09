@@ -48,6 +48,13 @@ const noticeBanner = document.getElementById("notice");
 const notices = new Map();
 let projectListing = "";
 let selectedPath = new URLSearchParams(location.search).get("artifact");
+// The app sends a page of a project it no longer lists to the project used last, marked so this page says why; the mark leaves the address at once.
+if (new URLSearchParams(location.search).get("missing") === "project") {
+  document.getElementById("missing-project").hidden = false;
+  const kept = new URLSearchParams(location.search);
+  kept.delete("missing");
+  history.replaceState(history.state, "", `${location.pathname}${kept.size ? `?${kept}` : ""}${location.hash}`);
+}
 // The server keeps the session's open tabs for every window and for the agent: the selected tab, one preview tab that ordinary navigation replaces, and the tabs an agent presented.
 let openTabs = [];
 let previewTab = null;

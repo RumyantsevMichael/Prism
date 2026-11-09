@@ -7,7 +7,10 @@ import { hostLabel } from "../review/workspace-identity.mjs";
 // Each claim is a record of its own beside the initiative record, covers the slice's descendants, and lapses unless its holder renews it.
 // Lease checks use this machine's clock.
 export const CLAIM_ACTIVITIES = Object.freeze(["design", "implementation"]);
-const CLAIM_FIELDS = ["schemaVersion", "slug", "holder", "label", "activity", "claimedAt", "renewedAt", "expiresAt", "nonce"];
+// host is optional: the name of the harness the holder runs in, such as Claude Code or Codex, shown to people and never used to decide anything.
+// Prism reads it before any release writes it, because releases up to 0.20 refuse a claim with a field they do not know; later releases leave such a field out instead.
+const CLAIM_FIELDS = ["schemaVersion", "slug", "holder", "label", "host", "activity", "claimedAt", "renewedAt", "expiresAt", "nonce"];
+const HOST_LIMIT = 64;
 const SETTINGS = { leaseMs: 30 * 60 * 1000, renewMs: 10 * 60 * 1000 };
 /**
  * The holder for a host session identifier, or null without one.
@@ -62,7 +65,7 @@ export async function claimLabel(folder) {
 export const isLive = (claim, now = Date.now()) => Boolean(claim) && Date.parse(claim.expiresAt) > now;
 
 /** What a result shows of a claim. */
-export const claimView = (claim) => ({ slug: claim.slug, holder: claim.holder, label: claim.label, activity: claim.activity, expiresAt: claim.expiresAt });
+export const claimView = (claim) => ({ slug: claim.slug, holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), activity: claim.activity, expiresAt: claim.expiresAt });
 
 /** A claim's stored bytes, with its fields in a fixed order. */
 export function serializeClaim(claim) {
@@ -76,14 +79,15 @@ export function parseClaim(slug, bytes) {
   catch { return { problem: `${slug}: the claim record must contain valid JSON.` }; }
   const problems = [];
   if (claim === null || typeof claim !== "object" || Array.isArray(claim)) return { problem: `${slug}: the claim record must be a JSON object.` };
-  const extra = Object.keys(claim).filter((key) => !CLAIM_FIELDS.includes(key));
-  if (extra.length) problems.push(`unknown fields ${extra.join(", ")}`);
+  // A field this release does not know, which a later release may add, is left out rather than refused, so a new field never hides a claim from an older release.
   if (claim.schemaVersion !== 1) problems.push("schemaVersion must be 1");
   if (claim.slug !== slug) problems.push(`slug must be ${slug}`);
+  if (claim.host !== undefined && (typeof claim.host !== "string" || !claim.host.trim() || claim.host.length > HOST_LIMIT)) problems.push(`host must be a non-empty string of at most ${HOST_LIMIT} characters when present`);
   for (const key of ["holder", "label", "nonce"]) if (typeof claim[key] !== "string" || !claim[key].trim() || claim[key].length > 200) problems.push(`${key} must be a non-empty string of at most 200 characters`);
   for (const key of ["claimedAt", "renewedAt", "expiresAt"]) if (typeof claim[key] !== "string" || !Number.isFinite(Date.parse(claim[key]))) problems.push(`${key} must be a date-time`);
   if (!CLAIM_ACTIVITIES.includes(claim.activity)) problems.push(`activity must be ${CLAIM_ACTIVITIES.join(" or ")}`);
-  return problems.length ? { problem: `${slug}: the claim record is invalid: ${problems.join("; ")}.` } : { claim };
+  if (problems.length) return { problem: `${slug}: the claim record is invalid: ${problems.join("; ")}.` };
+  return { claim: Object.fromEntries(CLAIM_FIELDS.filter((key) => Object.hasOwn(claim, key)).map((key) => [key, claim[key]])) };
 }
 
 /** A claim taken now with a fresh nonce; a holder that takes its own live claim again for the same activity keeps when it was first claimed. */

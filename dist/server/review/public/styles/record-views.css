@@ -240,6 +240,10 @@ mark.find-hit {
 .doc-toc .toc-depth-2 { padding-inline-start: var(--prism-space-8); }
 
 /* A foldable heading carries its toggle in the left gutter, so heading text keeps its alignment. */
+.document-content.has-folds {
+  padding-inline-start: calc(var(--prism-control-height-sm) + var(--prism-space-1));
+}
+
 .document-content .md-foldable {
   position: relative;
 }

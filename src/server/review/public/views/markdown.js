@@ -234,6 +234,8 @@ export function decorateFolds(content, folds) {
     });
     heading.classList.add("md-foldable");
     heading.prepend(button);
+    // The toggles sit in a gutter that the content keeps for them, so they never reach past the card, panel, or preview that holds the document.
+    content.classList.add("has-folds");
     if (folds?.has(heading.id)) heading.classList.add("is-folded");
     const folded = heading.classList.contains("is-folded");
     button.setAttribute("aria-expanded", String(!folded));

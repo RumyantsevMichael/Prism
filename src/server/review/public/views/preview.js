@@ -122,6 +122,8 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
   let showTimer = 0;
   let hideTimer = 0;
   let request = 0;
+  // A link the pointer entered while a preview was open, which takes the preview over only if the pointer rests on it.
+  let pending = null;
 
   function targetOf(element) {
     const anchor = element.dataset.docAnchor ?? null;
@@ -188,6 +190,7 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
 
   function hide() {
     clearTimeout(showTimer);
+    pending = null;
     request += 1;
     popover.hidden = true;
     anchorElement = null;
@@ -200,10 +203,32 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
 
   function enter(element) {
     clearTimeout(hideTimer);
-    if (element === anchorElement) return;
-    hide();
-    anchorElement = element;
-    showTimer = setTimeout(() => show(element), SHOW_DELAY_MS);
+    if (element === anchorElement) {
+      cancelSwitch();
+      return;
+    }
+    if (popover.hidden) {
+      hide();
+      anchorElement = element;
+      showTimer = setTimeout(() => show(element), SHOW_DELAY_MS);
+      return;
+    }
+    // An open preview stays while the pointer crosses a neighboring link on its way to the preview, such as the next item of a list;
+    // only resting on that link switches the preview to it, and reaching the preview first cancels the switch.
+    clearTimeout(showTimer);
+    pending = element;
+    showTimer = setTimeout(() => {
+      pending = null;
+      request += 1;
+      anchorElement = element;
+      show(element);
+    }, SHOW_DELAY_MS);
+  }
+
+  function cancelSwitch() {
+    if (!pending) return;
+    clearTimeout(showTimer);
+    pending = null;
   }
 
   const selector = "[data-artifact], a[data-doc-link], a[data-doc-anchor]";
@@ -213,17 +238,29 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
   });
   root.addEventListener("pointerout", (event) => {
     const element = event.target.closest(selector);
-    if (element && element === anchorElement && !element.contains(event.relatedTarget)) scheduleHide();
+    if (!element || element.contains(event.relatedTarget)) return;
+    if (element === pending) {
+      // Leaving a crossed link keeps the open preview only if the pointer goes on to it.
+      cancelSwitch();
+      if (!popover.contains(event.relatedTarget)) scheduleHide();
+    } else if (element === anchorElement) scheduleHide();
   });
   root.addEventListener("focusin", (event) => {
     const element = event.target.closest(selector);
     if (element) enter(element);
   });
   root.addEventListener("focusout", (event) => {
-    if (event.target.closest(selector) === anchorElement) scheduleHide();
+    const element = event.target.closest(selector);
+    if (!element) return;
+    if (element === pending) cancelSwitch();
+    else if (element !== anchorElement) return;
+    scheduleHide();
   });
   root.addEventListener("click", hide);
-  popover.addEventListener("pointerenter", () => clearTimeout(hideTimer));
+  popover.addEventListener("pointerenter", () => {
+    clearTimeout(hideTimer);
+    cancelSwitch();
+  });
   popover.addEventListener("pointerleave", scheduleHide);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !popover.hidden) hide();

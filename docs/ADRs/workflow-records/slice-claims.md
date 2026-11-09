@@ -23,6 +23,9 @@ A holder MUST be one host session, named by a digest of the session identifier t
 A holder MUST be labeled for people with the Git user name of the folder that holds the records, when set, and the host name without its domain.
 A server MUST renew a live claim of its own holder that it finds on an initiative read or update and does not renew yet.
 Each claim MUST be a record of its own beside the initiative record, one per claimed slice, and MUST record the slice, its holder, label, activity (`design` or `implementation`), when it was claimed, when it was last renewed, when it expires, and a random nonce of the attempt that took it.
+A claim MAY record the name of the harness its holder runs in, such as Claude Code or Codex, which Prism MUST only show to people and MUST NOT use to decide whether a claim blocks, renews, or ends.
+A claim reader MUST leave out a field it does not know instead of refusing the claim, so a field that a later release adds never hides a claim.
+A new optional claim field MUST be read in one release and written only from a later one, because releases up to 0.20 refuse a claim with an unknown field, ignore the whole claim, and can take the slice it covers.
 Claim records MUST NOT have a structural merge: two machines that write the same claim record conflict, the upstream version wins, and the first push holds the slice.
 Starting a slice MUST take an implementation claim, and design MUST take a design claim on its scope before it starts.
 A claim MUST cover the slice's descendants, so a claim MUST be refused while another holder's live claim is on the slice, an ancestor, or a descendant, and the refusal MUST name that claim's label, activity, and expiry.
@@ -94,3 +97,4 @@ Every initiative read and update compares the server's held claims for that init
 
 2026-11-04: Made the host session the holder when the host gives the server a session identifier, so a restarted server in the same session keeps its claims.
 2026-11-05: Read the session identifier from each tool call's metadata when the host names it there, as Codex does, before the server's environment, so Codex sessions keep their claims across server restarts too.
+2026-11-09: Added the optional harness name, read and shown in one release and written from the next, and made readers leave out unknown fields, because releases up to 0.20 refuse a claim with an unknown field and would then let another agent take a slice that is claimed.

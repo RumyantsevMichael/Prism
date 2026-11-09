@@ -275,7 +275,7 @@ function answeredDetail(item, ctx) {
     className: `is-answered gate-${escapeHtml(item.kind)}`,
     head: `${kindChip(item)}<span class="attention-where">${location(item, ctx)}</span>${when(item.answer.answeredAt, "attention-time gate-time")}`,
     title: escapeHtml(item.question),
-    body: `<p class="gate-given">${given(item)}</p><p class="attention-footnote muted">An agent waiting in Claude Code resumes on its own shortly after your last answer. Otherwise the agent receives these answers with your next message in the conversation, even a short one such as “go”.</p>`
+    body: `<p class="gate-given">${given(item)}</p><p class="attention-footnote muted">An agent that is waiting for these answers resumes on its own shortly after your last answer. Any other agent receives them with your next message in its conversation, even a short one such as “go”.</p>`
   });
 }
 
@@ -363,7 +363,7 @@ function bindAnswers(container, ctx, gates) {
         await ctx.answerGate({ initiative: form.dataset.initiative, id, choice: state.choice, note: draft.note });
         delete drafts[id];
         ctx.state.focus = null;
-        ctx.showToast("Answer recorded. An agent waiting in Claude Code resumes on its own; otherwise the agent sees it with your next message.");
+        ctx.showToast("Answer recorded. An agent that is waiting resumes on its own; any other agent sees it with your next message.");
         ctx.rerender();
       } catch (error) {
         // The server stays the backstop: its refusal shows beside the form, and the draft keeps the note through a re-render.

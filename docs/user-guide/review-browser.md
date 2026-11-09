@@ -67,13 +67,15 @@ The tab and its page return to normal on their own when the target comes back, f
 When Prism moves a record from its legacy location into `.prism/`, a tab on that record follows it to the new path.
 
 **Who's working** shows up to three avatars of the agents that hold a live claim on a slice, and how many are working.
-Its popover lists every live claim and then every claim that expired, with the holder, the activity, the slice, and the time left.
+Its popover lists every live claim and then every claim that expired, with the holder, the harness the agent runs in when its claim records one (otherwise Agent), the activity, the slice, and the time left.
 The sidebar shows a claimed slice's holder at the end of its row.
 Claims are read-only in the browser.
 
 A banner appears when the review server stops responding, and it clears when the connection returns.
 When the server stays silent for about 15 seconds, the banner says that the review app stopped and the page is no longer live, and actions that need the server say so instead of failing silently.
 A restarted app uses a new link, so ask the agent to open the review browser to get one, or run `./bin/prism review` from a Prism checkout.
+Opening an old link after a restart, or the app's port without a link, shows a page that says the link no longer works; it cannot list your projects, because the link is what keeps other users of the computer from reading them.
+The app's own address opens the project an agent used last, and a link to a project the app no longer lists opens that project too, with a notice to choose another from the project menu.
 The page keeps checking and recovers on its own when the same app or its upgraded successor answers.
 A check that gets no answer within 8 seconds counts as no answer, so a server that is too busy to answer shows the banner instead of a page that silently stops changing.
 
@@ -239,6 +241,7 @@ Each heading with text under it has a fold toggle beside it, and a link or conte
 Code in source files, Markdown code blocks, previews, and diagram source is highlighted by language.
 
 Hover over or focus any internal link to preview its target.
+An open preview stays while the pointer crosses other links on its way to the preview, and switches to another link only when the pointer rests on it.
 An initiative preview shows its state, band, intent, and progress, and a slice preview shows its status and outcome.
 A link to a document section previews that section.
 A link to a PlantUML file previews the diagram drawn small enough to fit.

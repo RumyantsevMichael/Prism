@@ -17,7 +17,7 @@ export function claimElement(claim, variant = "inline", attributes = {}) {
   element.setAttribute("variant", variant);
   element.setAttribute("label", claim.label);
   element.setAttribute("activity", claim.activity);
-  for (const [name, value] of Object.entries({ "claimed-at": claim.claimedAt, "renewed-at": claim.renewedAt, "expires-at": claim.expiresAt, ...attributes })) {
+  for (const [name, value] of Object.entries({ host: claim.host, "claimed-at": claim.claimedAt, "renewed-at": claim.renewedAt, "expires-at": claim.expiresAt, ...attributes })) {
     if (value) element.setAttribute(name, value);
   }
   return element;

@@ -344,6 +344,41 @@ async function serveFile(response, filePath, contentType) {
   }
 }
 
+/** Whether a request is a browser loading a page, as opposed to a script, a stylesheet, or a call from the page. */
+export function wantsPage(request) {
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
+  const destination = request.headers["sec-fetch-dest"];
+  if (destination) return destination === "document";
+  return /\btext\/html\b/.test(request.headers.accept ?? "");
+}
+
+const UNAVAILABLE_REASONS = new Set(["expired", "empty"]);
+
+/** The page for a link the review app cannot open: one without the current viewer credential ("expired") or an app with no project yet ("empty"). */
+export async function sendUnavailable(response, reason) {
+  const page = await readFile(path.join(PUBLIC_DIR, "unavailable.html"), "utf8");
+  send(response, 404, page.replace("{{reason}}", UNAVAILABLE_REASONS.has(reason) ? reason : "expired"), "text/html; charset=utf-8");
+}
+
+/**
+ * Answers a request that carries no current viewer credential. Only the kit's files and the marks, which hold no project data, are served,
+ * and a page load gets the page that says the link no longer works, so a stale tab or a bare address shows the app's own page rather than a line of text.
+ */
+export async function serveOutsideSession(request, response, pathname) {
+  if (pathname === "/favicon.svg" || pathname === "/prism-mark.svg") {
+    await serveFile(response, path.join(PUBLIC_DIR, pathname.slice(1)), "image/svg+xml");
+    return;
+  }
+  if (pathname === "/unavailable.js") {
+    await serveFile(response, path.join(PUBLIC_DIR, "unavailable.js"), "text/javascript; charset=utf-8");
+    return;
+  }
+  const asset = request.method === "GET" || request.method === "HEAD" ? publicAsset(pathname) : null;
+  if (asset) await serveFile(response, asset.file, asset.type);
+  else if (wantsPage(request)) await sendUnavailable(response, "expired");
+  else send(response, 404, "Not found");
+}
+
 // The file and type of a route under kit/ or styles/, or null for a path that leaves its folder, is not a known type, or is not a styles/<name>.css.
 export function publicAsset(route) {
   const folder = route.startsWith("/kit/") ? "kit" : route.startsWith("/styles/") ? "styles" : null;
@@ -856,6 +891,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       send(response, 200, JSON.stringify(loaded), "application/json; charset=utf-8");
+    } else if (wantsPage(request) && !/^\/(api|kit|styles|views|vendor)\//.test(route)) {
+      // A page address the app no longer has, such as one from an earlier release, opens the project's start page instead of a line of text.
+      response.writeHead(302, { Location: `${baseUrl}/`, "Cache-Control": "no-store" });
+      response.end();
     } else {
       send(response, 404, "Not found");
     }
@@ -912,7 +951,7 @@ export async function startReviewServer(options = {}) {
       }
       const url = new URL(request.url, "http://127.0.0.1");
       if (!url.pathname.startsWith(prefix)) {
-        send(response, 404, "Not found");
+        await serveOutsideSession(request, response, url.pathname);
         return;
       }
       await review.handle(request, response, url.pathname.slice(prefix.length) || "/", url);

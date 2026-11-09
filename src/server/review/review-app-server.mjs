@@ -26,7 +26,7 @@ import {
 } from "./review-app-discovery.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
-import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send } from "./review-server.mjs";
+import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send, sendUnavailable, serveOutsideSession, wantsPage } from "./review-server.mjs";
 import { loadAttention } from "./workspace-model.mjs";
 import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
 import { createWriteSessions } from "./write-sessions.mjs";
@@ -354,8 +354,10 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     return { current, projects: entries.map(({ lastSeen, ...entry }) => entry) };
   }
 
-  function mostRecentLiveProject() {
-    return [...projects.values()].filter((project) => live(project)).sort((left, right) => right.lastSeen - left.lastSeen)[0] ?? null;
+  // The live project used last, else the project used last, else null.
+  function mostRecentProject() {
+    const now = Date.now();
+    return [...projects.values()].sort((left, right) => Number(live(right, now)) - Number(live(left, now)) || right.lastSeen - left.lastSeen)[0] ?? null;
   }
 
   function freshNonce(nonce) {
@@ -466,10 +468,16 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         return;
       }
       const prefix = viewerPrefix();
+      // An address without the current viewer credential, such as a tab from before a restart or the bare port, gets only the kit's files and the page that says so.
+      if (url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) {
+        await serveOutsideSession(request, response, url.pathname);
+        return;
+      }
+      // The app's own address opens the project an agent used last, live or not, so the project menu is always one click away.
       if (url.pathname === prefix || url.pathname === `${prefix}/`) {
-        const project = mostRecentLiveProject();
+        const project = mostRecentProject();
         if (!project) {
-          send(response, 404, "No project is using Prism right now.");
+          await sendUnavailable(response, "empty");
           return;
         }
         response.writeHead(302, { Location: `${prefix}/p/${project.id}/`, "Cache-Control": "no-store" });
@@ -479,7 +487,16 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const match = url.pathname.startsWith(`${prefix}/p/`) ? /^\/p\/([0-9a-f]{16})(\/.*)?$/.exec(url.pathname.slice(prefix.length)) : null;
       const project = match ? projects.get(match[1]) : null;
       if (!project) {
-        send(response, 404, "Not found");
+        // A page of a project the app no longer lists opens the most recent project with a notice, so the person can choose another from its menu.
+        const recent = wantsPage(request) ? mostRecentProject() : null;
+        if (recent) {
+          response.writeHead(302, { Location: `${prefix}/p/${recent.id}/?missing=project`, "Cache-Control": "no-store" });
+          response.end();
+        } else if (wantsPage(request)) {
+          await sendUnavailable(response, "empty");
+        } else {
+          send(response, 404, "Not found");
+        }
         return;
       }
       if (match[2] === "/api/projects" && request.method === "GET") {
