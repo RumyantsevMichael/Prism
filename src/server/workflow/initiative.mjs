@@ -871,6 +871,17 @@ async function withClaimsLock(resolved, action) {
   return withArtifactLock(folder, () => withFileLock(folder, action, fail));
 }
 
+/**
+ * Run an action while holding the locks under which an initiative's open work is written: its claims lock, its initiative record lock, and its coordination state lock, in that order.
+ * Ship holds them while it reads open work and writes its decision, so a writer that adds a gate, a claim, or a proposal either lands before ship reads it or re-checks the decision after ship.
+ * No path takes these locks while it holds the roadmap lock, so ship takes them before the roadmap lock.
+ */
+export async function withInitiativeWriteLocks(projectRoot, initiative, action) {
+  if (!SLUG_PATTERN.test(initiative ?? "")) throw fail("invalid_path", "The initiative identifier must use letters, digits, hyphens, or underscores.");
+  const resolved = { root: projectRoot, initiative };
+  return withClaimsLock(resolved, () => withRecordLock(projectRoot, { kind: "initiative", initiative }, () => withRecordLock(projectRoot, { kind: "state", initiative }, action, fail), fail));
+}
+
 const claimKey = (resolved, slug) => ({ kind: "claim", initiative: resolved.initiative, slice: slug });
 
 async function readClaim(resolved, slug) {

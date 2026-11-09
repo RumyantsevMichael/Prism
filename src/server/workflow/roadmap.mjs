@@ -4,7 +4,7 @@ import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { fitScopes, normalizeRequirementReference, readInitiative, scopeDependents } from "./initiative.mjs";
+import { fitScopes, normalizeRequirementReference, readInitiative, scopeDependents, withInitiativeWriteLocks } from "./initiative.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
@@ -506,7 +506,11 @@ export async function updateRoadmap(input) {
   const managed = [resolved.projectionPath].filter((file) => path.posix.basename(file) === "roadmap.md");
   if (managed.length) await conservationStore.registerCoordinationOutputs(resolved.root, managed);
   await mkdir(path.dirname(resolved.target), { recursive: true });
-  return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
+  // A ship holds the write locks of each initiative it ships, in id order and before the roadmap lock, from its open-work read until its decision is written,
+  // so a gate, claim, or proposal added meanwhile is either seen as open work or refused by its writer's re-check under the same lock.
+  const shipping = [...new Set(input.operations.filter((operation) => operation.op === "ship" && SLUG_PATTERN.test(operation.id ?? "")).map((operation) => operation.id))].sort();
+  const holdShipLocks = (index, action) => index === shipping.length ? action() : withInitiativeWriteLocks(resolved.root, shipping[index], () => holdShipLocks(index + 1, action));
+  return holdShipLocks(0, () => withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
     const current = await loadRoadmap(resolved);
     if (current.revision !== input.expectedRevision) {
       throw fail(input.expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("roadmap record", input.expectedRevision, current.revision), { currentRevision: current.revision });
@@ -540,7 +544,7 @@ export async function updateRoadmap(input) {
     const history = await markShipped(resolved.root, marks);
     const { loaded, derived } = await readRoadmap(input.projectRoot);
     return { ...publicResult(resolved, loaded, derived), created: !current.exists, previousRevision: current.revision, projectionStale, ...history };
-  }, fail));
+  }, fail)));
 }
 
 // After a ship is written, each slice document it recorded takes the history mark; one it could not read or write is a problem, never a refusal.
