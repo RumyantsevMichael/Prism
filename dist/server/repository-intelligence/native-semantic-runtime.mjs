@@ -4,7 +4,7 @@ import { pluginPath, pluginURL } from "../plugin-root.mjs";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import readline from "node:readline";
+import { jsonLine, readJsonLines } from "../json-lines.mjs";
 import { constants } from "node:fs";
 import { mkdir, lstat, realpath, readdir, open, rename, rm, chmod, utimes } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -30,6 +30,8 @@ const inside = (root, file) => {
 const indexMetadata = ({ chunks: _chunks, ...metadata }) => metadata;
 const busy = (job) => job?.status === "waiting" || job?.status === "preparing";
 const LOCK_RETRY_MS = 2e3;
+const RELOAD_CONCURRENCY = 4;
+const reloadMiss = () => Object.assign(semanticError("preparation_failed", "The stored index no longer matches its content."), { reloadMiss: true });
 const UNRENEWED_LOCK_MS = 3e4;
 const heldError = (code, message) => Object.assign(semanticError(code, message), { held: code === "lock_timeout" });
 const stableFailure = (error) => ["invalid_path", "lock_timeout", "stale_snapshot", "unsupported_runtime", "corrupt_asset", "resource_limit", "validation_failed"].includes(error.code || "") ? error.code : error.code === "snapshot-changed" ? "stale_snapshot" : "preparation_failed";
@@ -213,7 +215,7 @@ class Helper {
     this.child = child;
     child.stderr.on("data", () => {
     });
-    const lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+    const lines = readJsonLines(child.stdout);
     lines.on("line", (line) => {
       let message;
       try {
@@ -249,8 +251,7 @@ class Helper {
       const timeout = setTimeout(() => this.stop(semanticError("resource_limit", "Native preparation exceeded its 30 minute operation limit.")), this.options.operationMs ?? 30 * 60 * 1e3);
       timeout.unref();
       this.requests.set(id, { resolve: (value) => resolve(value), reject, timeout, progress });
-      this.child.stdin.write(`${JSON.stringify({ id, method, args })}
-`, (error) => {
+      this.child.stdin.write(jsonLine({ id, method, args }), (error) => {
         if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed."));
       });
     });
@@ -293,6 +294,11 @@ class NativeSemanticRuntime {
   // Counts snapshot reads, so a newer read of a location's live content can replace a job for content read before it.
   reads = 0;
   verifiedRuntime;
+  // The model files as last checked, by size and modification time, so each component's preparation does not hash the model again.
+  verifiedModel;
+  // Jobs that load a stored index, and those of them that are loading now.
+  reloads = [];
+  reloading = /* @__PURE__ */ new Set();
   async manifest() {
     if (!this.pinned) {
       const data = await regularBytes(this.manifestPath, 1024 * 1024), manifest = JSON.parse(data.toString("utf8"));
@@ -428,7 +434,8 @@ class NativeSemanticRuntime {
       }
     }, semanticError, { renew: true, timeoutMs: 12e4 }));
     await privateDirectory(modelDirectory);
-    await withArtifactLock(modelDirectory, () => withFileLock(modelDirectory, async () => {
+    const stamp = async () => (await Promise.all(manifest.model.files.map((file) => lstat(path.join(modelDirectory, file.path)).then((info) => `${info.size}:${info.mtimeMs}`, () => "missing")))).join("\0");
+    if (this.verifiedModel?.directory !== modelDirectory || this.verifiedModel.stamp !== await stamp()) await withArtifactLock(modelDirectory, () => withFileLock(modelDirectory, async () => {
       for (const [index, file] of manifest.model.files.entries()) {
         if (file.path.includes("..") || path.isAbsolute(file.path)) throw semanticError("corrupt_asset", "The model asset path is invalid.");
         const target = path.join(modelDirectory, file.path);
@@ -440,6 +447,7 @@ class NativeSemanticRuntime {
         ];
         await downloadFirst(file, urls, target, allowFile, (current, total) => progress({ ...step, current, total }));
       }
+      this.verifiedModel = { directory: modelDirectory, stamp: await stamp() };
     }, semanticError, { renew: true, timeoutMs: 12e4 }));
     const used = /* @__PURE__ */ new Date();
     for (const directory of [runtime, modelDirectory]) await utimes(directory, used, used).catch(() => {
@@ -485,8 +493,11 @@ class NativeSemanticRuntime {
   // a native limit, which this process does not prepare again for the same content unless `retryLimited` asks for it.
   async enqueue(entries, expectedSnapshot, retryLimited = false) {
     const manifest = await this.manifest(), jobs = [];
+    const fingerprints = /* @__PURE__ */ new Map();
     for (const { source, component } of entries) {
-      const projectRoot = source.projectRoot, fingerprint = typeof projectRoot === "string" ? await gitFingerprint(projectRoot) : null;
+      const projectRoot = source.projectRoot;
+      if (typeof projectRoot === "string" && !fingerprints.has(projectRoot)) fingerprints.set(projectRoot, gitFingerprint(projectRoot));
+      const fingerprint = typeof projectRoot === "string" ? await fingerprints.get(projectRoot) : null;
       const read = ++this.reads, snapshot = await source.snapshot(), location = await this.location(snapshot.root, component);
       const live = snapshot.enumerator !== "retained";
       if (expectedSnapshot && expectedSnapshot !== snapshot.sourceFingerprint) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
@@ -494,7 +505,8 @@ class NativeSemanticRuntime {
       if (retryLimited && this.limited.get(generationKey)?.status === "degraded") this.limited.delete(generationKey);
       let job = this.limited.get(generationKey) ?? this.generations.get(generationKey);
       if (!job || job.status === "degraded" && !this.limited.has(generationKey)) {
-        job = this.job(source, snapshot, location, generationKey, component ? sha(`${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : void 0, component, live, read);
+        job = this.job(source, snapshot, location, generationKey, component ? this.componentPreparationId(location.directory, snapshot.sourceFingerprint, manifest.identity) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : void 0, component, live, read);
+        if (component) job.reload = (await readdir(location.directory).catch(() => [])).some((name) => name.startsWith(`generation-${snapshot.sourceFingerprint}-`));
       } else if (live && fingerprint && job.status === "ready" && !sameFingerprint(job.freshness ?? null, fingerprint)) {
         job.freshness = fingerprint;
         await writeFreshness(location.directory, job.snapshot, fingerprint);
@@ -504,23 +516,62 @@ class NativeSemanticRuntime {
       this.jobs.set(location.directory, job);
       jobs.push(job);
     }
-    const needed = [...new Set(jobs.filter((job) => job.status === "waiting"))];
+    for (const job of new Set(jobs)) if (job.reload && job.status === "waiting" && !job.retry) this.reload(job);
+    const last = (job) => job.component?.folder === "" ? 1 : 0;
+    const needed = [...new Set(jobs.filter((job) => job.status === "waiting" && !job.reload))].sort((left, right) => last(left) - last(right));
     this.queue = [...needed, ...this.queue.filter((job) => !needed.includes(job))];
     this.pump();
     return jobs;
+  }
+  // The preparation id of a component's content, which its progress records carry.
+  componentPreparationId(directory, snapshot, assetIdentity) {
+    return sha(`${directory}\0${snapshot}\0${assetIdentity}`);
+  }
+  reload(job) {
+    if (!this.reloads.includes(job)) this.reloads.push(job);
+    this.pumpReloads();
+  }
+  pumpReloads() {
+    while (this.reloading.size < RELOAD_CONCURRENCY && this.reloads.length) {
+      const job = this.reloads.shift();
+      if (!this.idle) this.sequence = new Promise((resolve) => {
+        this.idle = resolve;
+      });
+      this.reloading.add(job);
+      job.status = "preparing";
+      job.progress = { phase: "loading" };
+      void job.run().catch(() => {
+      }).finally(() => {
+        this.reloading.delete(job);
+        if (job.requeue) {
+          job.requeue = false;
+          this.queue.push(job);
+          this.pump();
+        } else if (!job.retry) job.finish();
+        this.pumpReloads();
+        this.settle();
+      });
+    }
+  }
+  // Resolves the sequence once no build or load runs or waits.
+  settle() {
+    if (this.running || this.queue.length || this.reloading.size || this.reloads.length) return;
+    this.idle?.();
+    this.idle = void 0;
   }
   // A live job that has not started is dropped when a newer read of the same location's live content needs another job, because its source
   // has changed and its build could only fail; it ends as failed with stale_snapshot, without running and without a progress record.
   // The running job is marked instead, and is dropped the same way if it ends waiting for another session's lock, so it is not tried again.
   supersede(previous, next) {
     if (!previous || previous === next || !previous.live || previous.read >= next.read || !busy(previous)) return;
-    if (previous === this.running) {
+    if (previous === this.running || this.reloading.has(previous)) {
       previous.superseded = true;
       return;
     }
     clearTimeout(previous.retry);
     previous.retry = void 0;
     this.queue = this.queue.filter((job) => job !== previous);
+    this.reloads = this.reloads.filter((job) => job !== previous);
     this.stale(previous);
     previous.finish();
   }
@@ -547,6 +598,15 @@ class NativeSemanticRuntime {
         await started;
         await recorder.succeed();
       } catch (error) {
+        if (error.reloadMiss) {
+          job.reload = false;
+          job.requeue = true;
+          job.status = "waiting";
+          job.progress = void 0;
+          await started;
+          await recorder.succeed();
+          return;
+        }
         let recovery = "Retry preparation after correcting the reported runtime, network, or source problem.";
         if (component && error.held) {
           if (job.superseded && this.jobs.get(location.directory) !== job) {
@@ -595,8 +655,7 @@ class NativeSemanticRuntime {
     if (this.running) return;
     const job = this.queue.shift();
     if (!job) {
-      this.idle?.();
-      this.idle = void 0;
+      this.settle();
       return;
     }
     if (!this.idle) this.sequence = new Promise((resolve) => {
@@ -651,6 +710,7 @@ class NativeSemanticRuntime {
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
         }
+        if (job.reload && this.running !== job) throw reloadMiss();
         const mirror = await privateDirectory(path.join(directory, `snapshot-${randomUUID()}`));
         try {
           this.report(job, { phase: "snapshot-copy", current: 0, total: snapshot.files.length, unit: "files" });

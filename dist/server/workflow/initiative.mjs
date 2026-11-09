@@ -17,7 +17,7 @@ import { syncRecordStoreNow } from "./record-store-sync.mjs";
 import { blockingClaim, claimedMessage, claimHolder, claimLabel, claimView, dropClaim, holdClaim, isLive, newClaim, parseClaim, pendClaim, renewal, serializeClaim, settleClaim, takeLostClaims, adoptClaims } from "./slice-claims.mjs";
 import { mergeHistory, mergeKeyed, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, latestDependentsRun, measureContract, restageFrozenTests, REVIEW_MARKS, stageFrozenTests, verifiedCode, withdrawFrozenTests } from "./slice-design.mjs";
-import { readCoordinationState } from "./state.mjs";
+import { effectiveSettings, readCoordinationState } from "./state.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { contractClauses, plannedChanges } from "./design-view.mjs";
 
@@ -720,6 +720,7 @@ async function applyOperation(resolved, record, operation, effects) {
       checkFrozenTestPaths(resolved, operation.slug, operation.frozenTests);
       await checkPlanFolders(resolved, slices, operation.slug);
       const component = await designComponent(resolved, operation, effects);
+      const review = await reviewPolicy(resolved, effects) === "all" ? "required" : operation.review;
       const frozenTests = await digestFrozenTests(resolved.root, operation.frozenTests);
       const staging = !STARTED.has(slice.status);
       const claimed = claimedTests(slices, operation.slug, frozenTests, staging);
@@ -758,17 +759,17 @@ async function applyOperation(resolved, record, operation, effects) {
       delete slice.contractDefects;
       slice.component = component.component.identity;
       if (effects.dryRun) {
-        slice.design = { acceptedAt, frozenTests, review: operation.review, ...(staging ? { staged: true } : {}) };
+        slice.design = { acceptedAt, frozenTests, review, ...(staging ? { staged: true } : {}) };
         break;
       }
       effects.staged = effects.staged.filter((item) => item.slice !== operation.slug);
       if (!staging) {
         const baselineId = await captureBaseline(resolved.root, resolved.initiative, operation.slug);
         // A new design of a started slice keeps the content the slice started from, so the changes made before the revision still count.
-        slice.design = { acceptedAt, frozenTests, review: operation.review, ...(baselineId ? { baselineId } : {}), ...startOf(slice.design) };
+        slice.design = { acceptedAt, frozenTests, review, ...(baselineId ? { baselineId } : {}), ...startOf(slice.design) };
       } else {
         effects.staged.push(await stageFrozenTests(resolved.root, operation.slug, frozenTests));
-        slice.design = { acceptedAt, frozenTests, review: operation.review, staged: true };
+        slice.design = { acceptedAt, frozenTests, review, staged: true };
       }
       break;
     }
@@ -838,7 +839,10 @@ async function applyOperation(resolved, record, operation, effects) {
       const proposal = record.proposals[operation.slug];
       if (!proposal) throw fail("validation_failed", `The scope ${operation.slug} has no pending design proposal.`);
       const required = new Set(operation.reviewRequired);
-      const replay = proposal.operations.map((inner) => inner.op === "accept_design" ? { ...inner, review: required.has(inner.slug) ? "required" : "none" } : inner);
+      // The review setting at acceptance decides which marks count: all marks every design, recommended adds design's own recommendation.
+      const policy = await reviewPolicy(resolved, effects);
+      const marked = (inner) => policy === "all" || required.has(inner.slug) || (policy === "recommended" && inner.review === "required");
+      const replay = proposal.operations.map((inner) => inner.op === "accept_design" ? { ...inner, review: marked(inner) ? "required" : "none" } : inner);
       const unmarked = [...required].filter((key) => !replay.some((inner) => inner.op === "accept_design" && inner.slug === key));
       if (unmarked.length) throw fail("validation_failed", `${unmarked.join(", ")} takes no design in this proposal, so it cannot be marked for review.`);
       for (const inner of replay) if (inner.op === "accept_design") effects.accepted.add(inner.slug);
@@ -901,7 +905,20 @@ async function precheckDiagrams(resolved, input) {
 
 export async function updateInitiative(input) {
   validateInput(UPDATE_INITIATIVE_SCHEMA, input);
-  return input.operations.some(takesClaims) ? claimingUpdate(input) : finishUpdate(await writeInitiative(input));
+  const result = input.operations.some(takesClaims) ? await claimingUpdate(input) : await finishUpdate(await writeInitiative(input));
+  // An agent that claims a scope or starts a slice learns the settings it works under, including the ones the person set.
+  if (result.removed || !input.operations.some((operation) => operation.op === "claim" || operation.op === "set_status")) return result;
+  const state = await readCoordinationState({ projectRoot: input.projectRoot, initiative: input.initiative }).catch(() => null);
+  return { ...result, settings: effectiveSettings(state?.valid ? state.state : null) };
+}
+
+// The initiative's review setting, read once per update when a design is accepted; an unset or unreadable setting keeps the marks as given.
+async function reviewPolicy(resolved, effects) {
+  if (effects.reviewPolicy === undefined) {
+    const state = await readCoordinationState({ projectRoot: resolved.root, initiative: resolved.initiative }).catch(() => null);
+    effects.reviewPolicy = effectiveSettings(state?.valid ? state.state : null).review;
+  }
+  return effects.reviewPolicy;
 }
 
 // An update that takes or releases a claim runs in two phases: its claim records first, confirmed with the store's remote, then the rest of the update.
@@ -1211,7 +1228,8 @@ export function initiativeAcknowledgement(result, operations) {
     ...(claims.taken.length ? { claimConfirmation: claims.confirmation } : {}),
     ...(claims.expired.length ? { replacedClaims: claims.expired } : {}),
     ...(claims.released.length ? { releasedClaims: claims.released } : {}),
-    ...(result.lostClaims ? { lostClaims: result.lostClaims } : {})
+    ...(result.lostClaims ? { lostClaims: result.lostClaims } : {}),
+    ...(result.settings ? { settings: result.settings } : {})
   };
 }
 

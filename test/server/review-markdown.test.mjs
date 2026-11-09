@@ -19,8 +19,8 @@ test("relative links resolve against the document and open known files in the re
   assert.match(html, /<a href="\.\/review\?artifact=docs%2Frequirements%2Fretries\.md" data-doc-link="docs\/requirements\/retries\.md" data-doc-anchor="2">rule<\/a>/);
   assert.match(html, /data-doc-link="docs\/plans\/retry\/review\.md">review<\/a>/);
   assert.match(html, /<a href="#context" data-doc-anchor="context">here<\/a>/);
-  assert.match(html, /<span class="doc-link-missing" title="docs\/plans\/retry\/missing\.md is not a reviewable file in this project">gone<\/span>/);
-  assert.match(html, /<span class="doc-link-missing"[^>]*>out<\/span>/);
+  assert.match(html, /<prism-chip class="doc-link-missing" tip="docs\/plans\/retry\/missing\.md is not a reviewable file in this project">gone<\/prism-chip>/);
+  assert.match(html, /<prism-chip class="doc-link-missing"[^>]*>out<\/prism-chip>/);
   assert.match(html, /<a href="https:\/\/example\.com" target="_blank" rel="noopener noreferrer">site<\/a>/);
   assert.doesNotMatch(html, /javascript:/);
   assert.match(html, /<code>\[code\]\(x\.md\)<\/code>/);

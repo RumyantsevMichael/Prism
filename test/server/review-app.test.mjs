@@ -252,13 +252,27 @@ test("the presenting session opens the browser once and the app never does", asy
   assert.equal(first.opened, true);
   assert.equal(second.opened, false, "the open lease holds back a second browser");
   assert.equal(opened.length, 1);
-  assert.equal(opened[0], first.url);
+  assert.equal(withoutGrant(opened[0]), first.url, "the opened URL is the presented one with a write grant in its fragment");
+  assert.match(grantOf(opened[0]), /^[A-Za-z0-9_-]{43}$/);
 });
 
+const grantOf = (url) => new URLSearchParams(new URL(url).hash.slice(1)).get("write");
+const withoutGrant = (url) => { const value = new URL(url); value.hash = ""; return value.href; };
+
+// A tab that Prism opened exchanges the grant in its URL for a write session, which makes its viewer stream a connected tab.
+async function writeToken(openedUrl) {
+  const response = await request(new URL("api/write-session", openedUrl), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant: grantOf(openedUrl) }) });
+  assert.equal(response.status, 200, response.body);
+  return JSON.parse(response.body).token;
+}
+
 // Collects the named events of one viewer stream, so a test can wait for an event without parsing chunk boundaries.
-async function viewerEvents(context, url) {
+// A stream with a write session token is a writable tab, the only kind that holds back a browser open.
+async function viewerEvents(context, url, token = null) {
   const events = [];
-  const stream = http.get(new URL("api/events", url));
+  const address = new URL("api/events", url);
+  if (token) address.searchParams.set("write", token);
+  const stream = http.get(address);
   context.after(() => stream.destroy());
   const response = await new Promise((resolve) => stream.once("response", resolve));
   let buffer = "";
@@ -293,13 +307,14 @@ test("presenting a project that no tab shows notifies the open tab instead of op
   const sessions = pool(context, { app: { directory, openBrowser: (url) => { opened.push(url); return true; } } });
   const shown = await sessions.get(first, "task-a");
   const hidden = await sessions.get(second, "task-b");
+  assert.equal((await shown.open([])).opened, true);
   const shownUrl = await shown.reviewUrl([]);
-  const events = await viewerEvents(context, shownUrl);
+  const events = await viewerEvents(context, shownUrl, await writeToken(opened[0]));
   await eventually(() => events.some((event) => event.name === "session"));
   const before = await shown.getSession();
   const presented = await hidden.open(["docs/hidden.md"]);
   assert.equal(presented.opened, false, "a tab is already open, so no second browser tab opens");
-  assert.deepEqual(opened, []);
+  assert.equal(opened.length, 1);
   const notice = await eventually(() => events.find((event) => event.name === "notice"));
   assert.equal(notice.data.projectRoot, second);
   assert.equal(notice.data.name, path.basename(second));
@@ -399,7 +414,7 @@ test("a presentation refused while the first tab is still loading reaches that t
   assert.equal(refused.opened, false, "one browser open at a time, app-wide");
   // The granted project presenting again before its tab connects does not displace the other project's notice.
   assert.equal((await loading.open(["docs/loading.md"])).opened, false);
-  assert.deepEqual(opened, [granted.url]);
+  assert.deepEqual(opened.map(withoutGrant), [granted.url]);
   const events = await viewerEvents(context, granted.url);
   const notice = await eventually(() => events.find((event) => event.name === "notice"));
   await new Promise((resolve) => setTimeout(resolve, 200));
@@ -423,10 +438,12 @@ test("a review shown in its own project's tab is not kept for a later tab of ano
   const directory = await appDirectory(context);
   const seen = await project(context, "seen");
   const other = await project(context, "other");
-  const sessions = pool(context, { app: { directory, openBrowser: () => true } });
+  const opened = [];
+  const sessions = pool(context, { app: { directory, openBrowser: (url) => { opened.push(url); return true; } } });
   const seenReview = await sessions.get(seen, "task-a");
   const otherUrl = await (await sessions.get(other, "task-b")).reviewUrl([]);
-  const seenEvents = await viewerEvents(context, await seenReview.reviewUrl([]));
+  assert.equal((await seenReview.open([])).opened, true);
+  const seenEvents = await viewerEvents(context, await seenReview.reviewUrl([]), await writeToken(opened[0]));
   await eventually(() => seenEvents.some((event) => event.name === "session"));
   assert.equal((await seenReview.open(["docs/seen.md"])).opened, false, "the project's own tab shows the review");
   assert.ok(await noNotice(context, otherUrl), "switching to another project brings back no notice for a review already seen");
@@ -493,11 +510,14 @@ test("a notice that reached a tab is not kept for a later tab", async (context) 
   const watching = await project(context, "watching");
   const presenting = await project(context, "presenting");
   const later = await project(context, "later");
-  const sessions = pool(context, { app: { directory, openBrowser: () => true } });
-  const watchingUrl = await (await sessions.get(watching, "task-a")).reviewUrl([]);
+  const opened = [];
+  const sessions = pool(context, { app: { directory, openBrowser: (url) => { opened.push(url); return true; } } });
+  const watcher = await sessions.get(watching, "task-a");
+  const watchingUrl = await watcher.reviewUrl([]);
   const presenter = await sessions.get(presenting, "task-b");
   const laterUrl = await (await sessions.get(later, "task-c")).reviewUrl([]);
-  const watchingEvents = await viewerEvents(context, watchingUrl);
+  assert.equal((await watcher.open([])).opened, true);
+  const watchingEvents = await viewerEvents(context, watchingUrl, await writeToken(opened[0]));
   await eventually(() => watchingEvents.some((event) => event.name === "session"));
   assert.equal((await presenter.open(["docs/presenting.md"])).opened, false, "a tab is open on another project");
   await eventually(() => watchingEvents.some((event) => event.name === "notice"));
@@ -539,7 +559,7 @@ test("the served review page carries the project switcher and the notice banner"
   const root = await project(context, "page");
   const url = await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]);
   const page = (await request(url)).body;
-  assert.match(page, /id="project-switcher"/);
+  assert.match(page, /id="project-button"/);
   assert.match(page, /id="project-menu"/);
   assert.match(page, /id="notice"/);
   const client = (await request(new URL("review.js", url))).body;
@@ -821,7 +841,7 @@ test("a session start opens one browser while no review tab is connected and sen
   const openBrowser = (url) => { opened.push(url); return true; };
   pool(context, { app: { directory, openBrowser } }).register(first, { open: true });
   await eventually(() => opened.length === 1);
-  const events = await viewerEvents(context, opened[0]);
+  const events = await viewerEvents(context, opened[0], await writeToken(opened[0]));
   await eventually(() => events.some((event) => event.name === "session"));
   const before = JSON.stringify(events.filter((event) => event.name === "session").at(-1).data.openTabs);
   pool(context, { app: { directory, openBrowser } }).register(second, { open: true });
@@ -834,6 +854,27 @@ test("a session start opens one browser while no review tab is connected and sen
   assert.equal(opened.length, 1, "a connected tab holds back a second window");
   assert.ok(!events.some((event) => event.name === "notice"), "a session start is not a presentation");
   assert.equal(JSON.stringify(events.filter((event) => event.name === "session").at(-1).data.openTabs), before);
+});
+
+// A session of an earlier release presents without acceptsGrant and opens the URL without a grant, so its tabs never take a write session.
+test("a client that does not declare grant support is held back by a read-only tab while a current client opens with a grant", async (context) => {
+  const directory = await appDirectory(context);
+  const app = await startReviewApp({ directory });
+  context.after(() => app.close());
+  const root = await project(context, "legacy-client");
+  const discovery = await readDiscovery(directory);
+  const present = async (body) => JSON.parse((await control(discovery, "present", { method: "POST", body: { projectRoot: root, open: true, ...body } })).body);
+  const { url } = JSON.parse((await control(discovery, "present", { method: "POST", body: { projectRoot: root, open: false } })).body);
+  const events = await viewerEvents(context, url);
+  await eventually(() => events.some((event) => event.name === "session"));
+  const legacy = await present({});
+  assert.equal(legacy.open, false, "an earlier client's tab would be read-only too, so the connected tab takes the presentation");
+  assert.equal(Object.hasOwn(legacy, "writeGrant"), false);
+  const legacyStart = await present({ start: true });
+  assert.equal(legacyStart.open, false, "an earlier client's session start opens no window while a tab is connected");
+  const current = await present({ acceptsGrant: true });
+  assert.equal(current.open, true, "a read-only tab does not hold back a client that adds the grant");
+  assert.match(current.writeGrant, /^[A-Za-z0-9_-]{43}$/);
 });
 
 test("a session serves its own review server when the shared app cannot start", async (context) => {
@@ -891,7 +932,7 @@ test("prism review presents through the shared app, opens the browser, and holds
   const result = await standalone(context, { projectRoot: root, artifactPath: "docs/command.md", env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: (url) => { opened.push(url); return true; } });
   assert.equal(result.held, null, "the command returns instead of serving the review");
   assert.equal(result.opened, true);
-  assert.deepEqual(opened, [result.url]);
+  assert.deepEqual(opened.map(withoutGrant), [result.url]);
   const url = new URL(result.url);
   assert.equal(Number(url.port), (await readDiscovery(directory)).port, "the review is served by the shared app");
   assert.equal(url.searchParams.get("artifact"), "docs/command.md");
@@ -907,7 +948,7 @@ test("prism review opens no browser while a review tab is connected", async (con
   const opened = [];
   const options = { env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: (url) => { opened.push(url); return true; } };
   const first = await standalone(context, { ...options, projectRoot: shown });
-  const events = await viewerEvents(context, first.url);
+  const events = await viewerEvents(context, first.url, await writeToken(opened[0]));
   await eventually(() => events.some((event) => event.name === "session"));
   const second = await standalone(context, { ...options, projectRoot: other });
   assert.equal(second.opened, false);
@@ -1044,9 +1085,14 @@ test("a gate answer from the app writes the state record without touching any ev
     await pool(context, { app: { directory, evidenceDirectory: storeDirectory } }).get(root, "task");
     stores.push(storeDirectory);
   }
-  const url = (await standalone(context, { projectRoot: root, env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: () => true })).url;
-  const body = JSON.stringify({ initiative: "work", id: "gate-00000000", choice: null, note: "Answered from the page." });
-  const answered = await request(new URL("api/gates/answer", url), { method: "POST", headers: { "Content-Type": "application/json" }, body });
+  const opened = [];
+  const url = (await standalone(context, { projectRoot: root, env: { PRISM_REVIEW_APP_DIR: directory }, openBrowser: (address) => { opened.push(address); return true; } })).url;
+  const write = { "X-Prism-Write": await writeToken(opened[0]) };
+  const target = "gate:work/gate-00000000";
+  const listed = await request(new URL(`api/actions?target=${encodeURIComponent(target)}`, url));
+  assert.equal(listed.status, 200, listed.body);
+  const body = JSON.stringify({ action: "gate.answer", target, input: { note: "Answered from the page." }, revision: JSON.parse(listed.body).actions[0].revision });
+  const answered = await request(new URL("api/actions/apply", url), { method: "POST", headers: { "Content-Type": "application/json", ...write }, body });
   assert.equal(answered.status, 200, answered.body);
   const contents = await Promise.all(stores.map((store) => readdir(store)));
   // State records sit outside conservation snapshots, so an answer has nothing to register in a store.

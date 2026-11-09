@@ -1,0 +1,9 @@
+@startuml
+title state-merge - code
+component "record-store-sync.mjs\nstructural merges" as Sync
+component "record-merge.mjs\nrecordMergeFor, mergeKeyed,\nmergeOrder, mergeUnit" as Merge
+component "state.mjs\nmergeCoordinationState, validation,\nfit to 1 MiB" as State
+Sync --> Merge : merge for a path
+Merge ..> State : loads the state merge
+State --> Merge : per-part rules
+@enduml

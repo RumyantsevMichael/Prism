@@ -5,5 +5,5 @@ The `Review browser` setting selects `internal`, `external`, or `auto`, and `aut
 
 - Record the user gate with its artifacts before opening the browser, so the Attention page lists it.
 - Open the browser without an artifact argument so it starts on Attention.
-- When only a URL is available, present the URL and the source artifact paths.
+- When the internal browser shows the review or only a URL is available, tell the user that this tab holds no [write session](../SKILL.md#common-terms) and can only read, so they answer in the conversation, in the system browser that `present_review` opens, or in the tab that `prism review` opens, and when only a URL is available, also present it with the source artifact paths.
 - When no review browser exists, present the source artifacts.

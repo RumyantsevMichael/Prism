@@ -145,19 +145,25 @@ export function adrFile(title, status = "Proposed") {
 }
 
 /** Start the review browser of a checkout in this process and stop it after the test. */
+// The review page that Prism opens holds a write session, which an answer needs, so the browser takes the one-time grant of the opened URL's fragment.
 export async function reviewBrowser(context, root) {
   const { startReviewServer } = await import("../../../dist/server/review/review-server.mjs");
-  const review = await startReviewServer({ projectRoot: root, openBrowser: async () => false });
+  const opened = [];
+  const review = await startReviewServer({ projectRoot: root, openBrowser: async (url) => { opened.push(url); return true; } });
   context.after(() => review.close());
+  await review.open([]);
+  const grant = new URLSearchParams(new URL(opened.at(-1)).hash.slice(1)).get("write");
+  const exchanged = await browserRequest(review, "/api/write-session", { method: "POST", body: { grant } });
+  review.writeHeaders = { "X-Prism-Write": exchanged.body.token };
   return review;
 }
 
-/** One request to a review browser: { status, body }, with JSON bodies parsed. */
+/** One request to a review browser, with its write session when it holds one: { status, body }, with JSON bodies parsed. */
 export function browserRequest(review, route, { method = "GET", body, headers = {} } = {}) {
   const url = new URL(`${review.baseUrl}${route}`);
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body);
-    const request = http.request(url, { method, headers: { ...(payload === undefined ? {} : { "Content-Type": "application/json" }), ...headers } }, (response) => {
+    const request = http.request(url, { method, headers: { ...(payload === undefined ? {} : { "Content-Type": "application/json" }), ...(review.writeHeaders ?? {}), ...headers } }, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => {

@@ -49,7 +49,7 @@ Prism never deletes, replaces, or rewrites the history of a clone it made.
 Prism shares the regular files at the paths it writes in a store: the records under `initiatives/`, `roadmap.json`, the registrations under `repositories/`, the migration files under `migrations/`, the ledgers of moved artifacts under `artifact-migrations/`, the artifacts under `artifacts/` whose every name follows the artifact name form, and the store's `.gitignore` and `.gitattributes`.
 It also shares a `README`, `README.md`, `README.txt`, `LICENSE`, `LICENSE.md`, `LICENSE.txt`, or `COPYING` at the store's root, spelled exactly so, which Prism never reads.
 Prism uses Git in the store only to keep these files' bytes: the clone and every sync write each file as the remote's branch holds it, and every commit holds each file as it is on disk.
-So no `.gitignore` or `.gitattributes` line, in the store or in your Git configuration, and no line-ending setting such as `core.autocrlf`, changes what Prism commits or writes.
+So no `.gitignore` or `.gitattributes` line, in the store or in your Git configuration, and no line-ending setting such as `core.autocrlf`, changes what Prism commits, merges, or writes.
 Prism runs each Git command in the store with `core.autocrlf=false`, `core.eol=lf`, `core.safecrlf=false`, `core.longpaths=true`, and an empty `core.attributesFile` and `core.excludesFile` for that command only, without changing your Git configuration.
 Your Git configuration, the variables Prism's process inherits, and the store's own refs also never change what Prism checks or pushes:
 
@@ -246,12 +246,25 @@ Naming a repository changes no record, migration entry, or run that the store al
 Changes to different initiatives in the roadmap, or to different slices or proposals of one initiative, merge, and both history entries are kept.
 A roadmap reordered on one machine keeps that order, and an initiative added on the other machine lands after the initiative it followed there.
 Two changes collide when they change the same initiative or slice differently, reorder the roadmap differently, or merge into a record that fails validation, such as a dependency cycle between two slices.
-Other records, such as coordination state, collide whenever Git cannot merge their lines.
+An initiative's coordination state merges as well, so a setting you change in the review app on one machine and an agent's state write on another both survive, and both machines' history entries are kept.
+In coordination state, different settings, gates, active slices, closed gates, and evidence paths merge, and a gate or active slice ended on one machine stays ended.
+A setting changed differently on both machines keeps your later change from the review app, and a gate answered differently on both machines keeps the earlier answer.
+Coordination state collides when two agents set one setting differently, when a gate's question or options differ between the machines, when one slice's active work or another field such as `next` changed differently on both, when the merged state fails validation, or when it exceeds 1 MiB without its history and closed gates.
+An initiative's coordination state stays within 1 MiB.
+When a write or a merge would exceed that, the oldest history entries give way first and then the oldest closed gates, so your settings and open gates are always kept, and a write always keeps the history entry of the change it records.
+A history entry or closed gate that gave way on either machine stays gone after a merge, and an agent is never told about it later.
+A write is refused with `artifact_too_large` only when the state exceeds 1 MiB with all of its history and closed gates gone.
+Other records, such as slice claims, collide whenever Git cannot merge their lines.
 In a collision the first push wins.
 The machine whose push lost keeps the upstream version and saves its own version under `.prism-sync/conflicts/<time>/` in the store, so no bytes are lost.
 The next Prism tool result on that machine names the record and the saved file, so the agent that made the change learns of it.
 Compare the saved file with the current record, and redo the change through Prism's tools if it still matters.
 Prism never replaces a record that changed while a merge was running: it leaves the branch where it was and resolves the change on the next sync.
+Two records whose paths differ only in letter case settle the same way on file systems that ignore letter case, as macOS and Windows use by default: a sync removes the spelling that lost before it writes the upstream's, and gives a folder that still holds other files the upstream's spelling.
+A sync saves the local versions that lost under `.prism-sync/saving/` before it replaces any file, so a sync that stops partway, for example because its server exits when the host closes, loses none of them.
+The next sync on that machine moves the versions of the files the stopped sync replaced to `.prism-sync/conflicts/` and drops the others, which the merge saves again when it runs, even when such a file changed in between, so each lost version is saved once.
+Each saved version stays pending in `.prism-sync/notices/` until a tool result has named it, so a sync that stops after it saved a version and before its status was written still has the version named by the next server's tool result.
+Only a result that the server writes to its host counts, so any call that the host cancels before its result is written, such as a `wait_for_user_gate` or a slow `update_coordination_state` you stop with Esc, gets no response and leaves the version pending for the next result, and so does a call that the session's end aborts.
 
 ## When two people change the same artifact
 

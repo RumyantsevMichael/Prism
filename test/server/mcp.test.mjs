@@ -94,8 +94,9 @@ async function browserStub(context) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "prism-browser-stub-"));
   const marker = path.join(directory, "opened");
   const count = path.join(directory, "open-count");
+  const url = path.join(directory, "opened-url");
   context.after(() => rm(directory, { recursive: true, force: true }));
-  const stub = "#!/bin/sh\nprintf opened > \"$PRISM_BROWSER_MARKER\"\nprintf x >> \"$PRISM_BROWSER_COUNT\"\n";
+  const stub = "#!/bin/sh\nprintf '%s' \"$1\" > \"$PRISM_BROWSER_URL\"\nprintf opened > \"$PRISM_BROWSER_MARKER\"\nprintf x >> \"$PRISM_BROWSER_COUNT\"\n";
   for (const command of ["open", "xdg-open"]) {
     await writeFile(path.join(directory, command), stub);
     await chmod(path.join(directory, command), 0o755);
@@ -103,10 +104,12 @@ async function browserStub(context) {
   return {
     marker,
     count,
+    url,
     environment: {
       PATH: `${directory}${path.delimiter}${process.env.PATH}`,
       PRISM_BROWSER_MARKER: marker,
-      PRISM_BROWSER_COUNT: count
+      PRISM_BROWSER_COUNT: count,
+      PRISM_BROWSER_URL: url
     }
   };
 }
@@ -891,9 +894,14 @@ test("does not reopen an existing viewer for repeated presentation calls", async
   await initialize(mcp);
   const first = await callTool(mcp, 2, "present_review", { projectRoot: root, artifact: "docs/artifact.md" }, "first-task");
   assert.equal(await waitForMarker(browser.marker), "opened");
+  // Only a tab that holds a write session counts as connected, so the stream uses the session the opened tab takes from its grant.
+  const openedUrl = new URL(await readFile(browser.url, "utf8"));
+  const grant = new URLSearchParams(openedUrl.hash.slice(1)).get("write");
+  const base = openedUrl.href.replace(/\/review(\?.*)?(#.*)?$/, "");
+  const exchanged = await fetch(`${base}/api/write-session`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant }) }).then((response) => response.json());
   const eventsUrl = new URL(first.result.structuredContent.url);
   eventsUrl.pathname = eventsUrl.pathname.replace(/\/review$/, "/api/events");
-  eventsUrl.search = "";
+  eventsUrl.search = `?write=${encodeURIComponent(exchanged.token)}`;
   const events = await openEventStream(eventsUrl);
   assert.equal(events.status, 200);
   await events.next();

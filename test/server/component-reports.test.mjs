@@ -59,8 +59,9 @@ test("clause 12: a report while a component prepares names the component it left
   const found = await findSameNameUnits({ projectRoot: root }, options(runtime, 300));
   assert.equal(found.status, "partial");
   assert.deepEqual(found.groups, []);
-  assert.deepEqual([found.diagnostics[0]?.code, found.diagnostics[0]?.components], ["components_missing", ["root/app"]]);
-  assert.equal(entry(found, "root/app").status, "preparing");
+  // The root component builds after the declared ones, so it waits behind app.
+  assert.deepEqual([found.diagnostics[0]?.code, found.diagnostics[0]?.components], ["components_missing", ["root/root", "root/app"]]);
+  assert.deepEqual([entry(found, "root/app").status, entry(found, "root/root").status], ["preparing", "waiting"]);
   control.release("packages/app/is.ts");
   await settled(runtime, root);
 });
@@ -83,16 +84,16 @@ test("clause 20: a context plan merges every component and is not estimate-eligi
   control.hold("packages/app/client.ts");
   const waiting = await prepareNativeProvider(root, options(runtime, 0));
   assert.equal(waiting.preparation.status, "preparing");
-  control.release("README.md");
   control.release("packages/net/retry.ts");
-  for (let attempt = 0; attempt < 100 && entry(await runtime.status(root), "root/net")?.status !== "ready"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  control.release("packages/app/client.ts");
+  for (let attempt = 0; attempt < 100 && entry(await runtime.status(root), "root/app")?.status !== "ready"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
   const partial = await prepareNativeProvider(root, options(runtime, 0));
   const plan = await planRepositoryContext({ task: "retry the request", hints: { symbols: ["retryRequest"] }, provider: new CompositeRepositoryIntelligence(partial.provider) });
   const missing = plan.diagnostics.provider.find((item) => item.code === "components_missing");
-  assert.deepEqual(missing?.components, ["root/app"]);
+  assert.deepEqual(missing?.components, ["root/root"]);
   assert.equal(plan.diagnostics.estimateEligible, false);
   assert.deepEqual([plan.tokenEstimate.lower, plan.tokenEstimate.expected, plan.tokenEstimate.upper], [null, null, null]);
-  control.release("packages/app/client.ts");
+  control.release("README.md");
   await settled(runtime, root);
   const complete = await prepareNativeProvider(root, options(runtime, 0));
   const evidence = await complete.provider.search("retry the request", {}, { topK: 10 });

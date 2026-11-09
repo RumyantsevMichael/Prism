@@ -1,0 +1,34 @@
+@startuml
+title record-views-on-kit
+component "change-map.js" as cmap
+component "review-ledger.js" as ledger
+component "coordination-state.js" as state
+component "evidence.js" as evidence
+component "graph.js" as graph
+component "json-tree.js / json-view.js" as json
+component "markdown.js / preview.js" as docs
+component "line-diff.js / highlight.js" as code
+component "review.js drawPlantUml" as draw
+component "kit/diagram-theme.js" as theme
+component "kit/plantuml-defaults.js" as defaults
+component "vendor/plantuml.js" as runtime
+component "styles/record-views.css" as css
+component "kit elements" as kit
+cmap --> evidence
+cmap --> graph
+ledger --> evidence
+evidence --> json
+docs --> code
+draw --> runtime : renderToString
+draw --> theme : on draw and theme change
+theme --> defaults
+cmap --> kit
+ledger --> kit
+state --> kit
+evidence --> kit
+graph --> kit
+json --> kit
+docs --> kit
+code --> kit
+css ..> kit : layout only
+@enduml

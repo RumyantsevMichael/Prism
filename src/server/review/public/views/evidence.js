@@ -1,5 +1,5 @@
 import { jsonTreeHtml } from "./json-tree.js";
-import { artifactChip, bindLinks, emptyNote, escapeHtml, evidenceChip, formatReference, keyValues, plural, shortId } from "./util.js";
+import { badge, bindLinks, chip, emptyState, escapeHtml, evidenceChip, keyValues, plural, recordChip, shortId, stat } from "./util.js";
 
 const KIND_LABELS = {
   comparison: "Comparison",
@@ -24,9 +24,12 @@ function number(value) {
   return typeof value === "number" ? value.toLocaleString() : escapeHtml(value ?? "—");
 }
 
+// A whole percent of `value` out of `scale`, for a kit meter.
+const percent = (value, scale) => Math.max(0, Math.min(100, Math.round((value / scale) * 100)));
+
 function measurementChart(measurements, growth) {
   if (!measurements?.length) {
-    return emptyNote("No measurements recorded.");
+    return emptyState("No measurements recorded");
   }
   const thresholds = new Map((growth ?? []).map((item) => [item.dimension, item]));
   const numeric = measurements.filter((item) => typeof item.before === "number" && typeof item.after === "number");
@@ -38,50 +41,55 @@ function measurementChart(measurements, growth) {
     const thresholdValue = limit && typeof limit.threshold === "number" ? item.before + limit.threshold : null;
     const scale = Math.max(item.before, item.after, thresholdValue ?? 0, 1);
     const increase = item.after - item.before;
-    const before = `<span class="bar bar-before" data-width="${(item.before / scale) * 100}"></span>`;
-    const after = `<span class="bar bar-after" data-width="${(item.after / scale) * 100}"></span>`;
-    const marker = thresholdValue === null ? "" : `<span class="threshold" data-left="${(thresholdValue / scale) * 100}" title="Threshold: +${limit.threshold}"></span>`;
-    return `<li class="measure ${limit ? "is-over" : ""}" title="${escapeHtml(item.dimension)}: ${item.before} → ${item.after}${item.reason ? ` (${escapeHtml(item.reason)})` : ""}">
+    const tip = `${item.dimension}: ${item.before} → ${item.after}${item.reason ? ` (${item.reason})` : ""}`;
+    return `<li class="measure${limit ? " is-over" : ""}">
       <div class="measure-label"><code>${escapeHtml(item.dimension)}</code><span class="muted">${escapeHtml(item.provenance ?? "")}</span></div>
-      <div class="measure-bars"><div class="bar-track">${before}</div><div class="bar-track">${after}${marker}</div></div>
-      <div class="measure-values"><span>${number(item.before)} → ${number(item.after)}</span><strong class="${increase > 0 ? "delta-up" : increase < 0 ? "delta-down" : ""}">${increase > 0 ? "+" : ""}${number(increase)}</strong></div>
+      <div class="measure-bars">
+        <prism-meter label="Before" value="${percent(item.before, scale)}" tip="${escapeHtml(tip)}"></prism-meter>
+        <prism-meter label="After" value="${percent(item.after, scale)}" tone="${limit ? "warning" : "info"}" tip="${escapeHtml(tip)}"></prism-meter>
+      </div>
+      <div class="measure-values"><span>${number(item.before)} → ${number(item.after)}</span><strong class="${increase > 0 ? "delta-up" : increase < 0 ? "delta-down" : ""}">${increase > 0 ? "+" : ""}${number(increase)}</strong>${thresholdValue === null ? "" : `<span class="muted">threshold +${number(limit.threshold)}</span>`}</div>
     </li>`;
   }).join("");
-  return `<div class="chart-legend"><span><i class="bar-swatch bar-before"></i>Before (baseline)</span><span><i class="bar-swatch bar-after"></i>After (result)</span><span><i class="threshold-swatch"></i>Growth threshold</span></div><ul class="measure-chart">${rows}</ul>
-    ${zero.length ? `<p class="muted unsupported-dimensions">Zero before and after: ${zero.map((item) => `<code>${escapeHtml(item.dimension)}</code>`).join(" ")}</p>` : ""}
-    ${unsupported.length ? `<p class="muted unsupported-dimensions">Not measured for this source: ${unsupported.map((item) => `<code>${escapeHtml(item.dimension)}</code>`).join(" ")}</p>` : ""}`;
+  return `<p class="muted measure-legend">Each pair of bars is before (the baseline) and after (the result), as a share of the largest of the two and the growth threshold.</p><ul class="measure-chart">${rows}</ul>
+    ${zero.length ? `<p class="muted">Zero before and after: ${zero.map((item) => `<code>${escapeHtml(item.dimension)}</code>`).join(" ")}</p>` : ""}
+    ${unsupported.length ? `<p class="muted">Not measured for this source: ${unsupported.map((item) => `<code>${escapeHtml(item.dimension)}</code>`).join(" ")}</p>` : ""}`;
 }
+
+const OBSERVATION_TONES = { failure: "danger", review_required: "warning" };
 
 function observationList(observations) {
   if (!observations?.length) {
-    return emptyNote("No observations.");
+    return emptyState("No observations");
   }
   const order = ["failure", "review_required"];
   const sorted = [...observations].sort((left, right) => order.indexOf(left.severity) - order.indexOf(right.severity));
-  return `<ul class="observation-list">${sorted.map((item) => `<li class="severity-${escapeHtml(item.severity)}">
-    <div class="observation-head"><span class="observation-severity">${escapeHtml(item.severity.replace("_", " "))}</span><code>${escapeHtml(item.code)}</code>${item.conceptId ? `<span class="meta-pill">${escapeHtml(item.conceptId)}</span>` : ""}</div>
+  return `<ul class="row-list observation-list">${sorted.map((item) => `<li>
+    <div class="chip-row">${badge(item.severity.replace("_", " "), OBSERVATION_TONES[item.severity] ?? "neutral")}<code>${escapeHtml(item.code)}</code>${item.conceptId ? chip(escapeHtml(item.conceptId)) : ""}</div>
     <p>${escapeHtml(item.message)}</p>
-    ${item.file ? `<p class="muted"><code>${escapeHtml(item.file)}</code>${item.side ? ` · ${escapeHtml(item.side)}` : ""}${item.unit ? ` · ${escapeHtml(typeof item.unit === "string" ? item.unit : item.unit.name ?? "")}` : ""}</p>` : ""}
+    ${item.file ? `<p class="muted"><code data-code-subject>${escapeHtml(item.file)}</code>${item.side ? ` · ${escapeHtml(item.side)}` : ""}${item.unit ? ` · ${escapeHtml(typeof item.unit === "string" ? item.unit : item.unit.name ?? "")}` : ""}</p>` : ""}
   </li>`).join("")}</ul>`;
 }
+
+const codes = (items) => items.map((item) => `<code data-code-subject>${escapeHtml(item)}</code>`).join(" ");
 
 function comparison(record, ctx) {
   const failures = (record.observations ?? []).filter((item) => item.severity === "failure").length;
   return `${keyValues([
-      ["Change map", record.deltaPath ? artifactChip(record.deltaPath, ctx) : null],
-      ["Delta revision", record.deltaRevision ? `<code title="${escapeHtml(record.deltaRevision)}">${escapeHtml(shortId(record.deltaRevision))}</code>` : null],
+      ["Change map", record.deltaPath ? recordChip(record.deltaPath, ctx) : null],
+      ["Delta revision", record.deltaRevision ? chip(`<code>${escapeHtml(shortId(record.deltaRevision))}</code>`, { tip: record.deltaRevision }) : null],
       ["Baseline", evidenceChip(record.baselineId, "Baseline snapshot")],
       ["Result", evidenceChip(record.resultSnapshotId, "Result snapshot")],
       ["Analyses", [evidenceChip(record.analysisIds?.before, "Before analysis"), evidenceChip(record.analysisIds?.after, "After analysis")].join(" ").trim() || null],
-      ["Scope", record.scope?.length ? record.scope.map((item) => `<code>${escapeHtml(item)}</code>`).join(" ") : null]
+      ["Scope", record.scope?.length ? codes(record.scope) : null]
     ])}
-    <div class="stat-row compact">
-      <div class="stat ${failures ? "is-bad" : "is-good"}"><span class="stat-value">${failures}</span><span class="stat-label">failures</span></div>
-      <div class="stat"><span class="stat-value">${(record.observations ?? []).length - failures}</span><span class="stat-label">need review</span></div>
-      <div class="stat ${(record.growth ?? []).length ? "is-warn" : ""}"><span class="stat-value">${(record.growth ?? []).length}</span><span class="stat-label">growth over threshold</span></div>
+    <div class="stat-grid">
+      ${stat("failures", String(failures), { tone: failures ? "danger" : "success" })}
+      ${stat("need review", String((record.observations ?? []).length - failures))}
+      ${stat("growth over threshold", String((record.growth ?? []).length), { tone: (record.growth ?? []).length ? "warning" : "" })}
     </div>
-    <h3>Measurements</h3>${measurementChart(record.measurements, record.growth)}
-    <h3>Observations</h3>${observationList(record.observations)}`;
+    <h3 class="label-caps">Measurements</h3>${measurementChart(record.measurements, record.growth)}
+    <h3 class="label-caps">Observations</h3>${observationList(record.observations)}`;
 }
 
 function snapshot(record) {
@@ -89,64 +97,60 @@ function snapshot(record) {
   const kinds = files.reduce((counts, file) => ({ ...counts, [file.kind]: (counts[file.kind] ?? 0) + 1 }), {});
   return `${keyValues([
       ["Commit", record.commit ? `<code>${escapeHtml(shortId(record.commit))}</code>` : '<span class="muted">none</span>'],
-      ["Fingerprint", `<code title="${escapeHtml(record.fingerprint)}">${escapeHtml(shortId(record.fingerprint))}</code>`],
-      ["Complete", record.complete ? '<span class="status-pill is-good">complete</span>' : '<span class="status-pill is-warn">incomplete</span>'],
+      ["Fingerprint", chip(`<code>${escapeHtml(shortId(record.fingerprint))}</code>`, { tip: record.fingerprint })],
+      ["Complete", record.complete ? badge("complete", "success") : badge("incomplete", "warning")],
       ["Capture policy", record.capturePolicy ? `<code>${escapeHtml(typeof record.capturePolicy === "string" ? record.capturePolicy : JSON.stringify(record.capturePolicy))}</code>` : null],
-      ["Files", Object.entries(kinds).map(([kind, count]) => `<span class="meta-pill">${escapeHtml(kind)}: ${count}</span>`).join(" ")]
+      ["Files", `<span class="chip-row">${Object.entries(kinds).map(([kind, count]) => chip(`${escapeHtml(kind)}: ${count}`)).join("")}</span>`]
     ])}
-    ${record.omissions?.length ? `<h3>Omissions</h3><ul class="plain-list">${record.omissions.map((item) => `<li><code>${escapeHtml(item.file)}</code> — ${escapeHtml(item.reason)}</li>`).join("")}</ul>` : ""}
-    <h3>Files</h3><div class="table-wrap"><table class="data-table"><thead><tr><th>File</th><th>Kind</th><th>Bytes</th></tr></thead><tbody>${files.map((file) => `<tr><td><code>${escapeHtml(file.file)}</code></td><td>${escapeHtml(file.kind)}</td><td>${number(file.bytes)}</td></tr>`).join("")}</tbody></table></div>`;
+    ${record.omissions?.length ? `<h3 class="label-caps">Omissions</h3><ul class="row-list">${record.omissions.map((item) => `<li><code data-code-subject>${escapeHtml(item.file)}</code> — ${escapeHtml(item.reason)}</li>`).join("")}</ul>` : ""}
+    <h3 class="label-caps">Files</h3><div class="table-wrap"><table class="data-table"><thead><tr><th>File</th><th>Kind</th><th>Bytes</th></tr></thead><tbody>${files.map((file) => `<tr><td><code data-code-subject>${escapeHtml(file.file)}</code></td><td>${escapeHtml(file.kind)}</td><td>${number(file.bytes)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function search(record) {
   const candidates = record.candidates ?? [];
-  const flags = Object.entries(record.capabilities ?? {}).map(([key, value]) => `<span class="meta-pill ${value ? "" : "is-off"}">${escapeHtml(key)}${value ? "" : " ✕"}</span>`).join(" ");
+  const flags = Object.entries(record.capabilities ?? {}).map(([key, value]) => chip(`${escapeHtml(key)}${value ? "" : " ✕"}`, { tone: value ? "" : "neutral", attributes: value ? "" : ' class="is-off"' })).join("");
   return `${keyValues([
       ["Query", `<q>${escapeHtml(record.query)}</q>`],
-      ["Status", `<span class="status-pill ${record.status === "ready" ? "is-good" : "is-warn"}">${escapeHtml(record.status)}</span>`],
-      ["Capabilities", flags || null],
+      ["Status", badge(record.status, record.status === "ready" ? "success" : "warning")],
+      ["Capabilities", flags ? `<span class="chip-row">${flags}</span>` : null],
       ["Snapshot", evidenceChip(record.snapshotId, "Snapshot")]
     ])}
-    <h3>${plural(candidates.length, "candidate")}</h3>
-    ${candidates.length ? `<ol class="candidate-ranking">${candidates.map((item) => `<li>
-      <div class="candidate-head"><strong>${escapeHtml(item.name ?? item.selector ?? item.id)}</strong><span class="meta-pill">${escapeHtml(item.kind ?? "")}</span></div>
-      <p class="muted"><code>${escapeHtml(item.file)}${item.range ? `:${item.range.startLine}-${item.range.endLine}` : ""}</code></p>
-      <p class="scores">${typeof item.cosineSimilarity === "number" ? `cosine ${item.cosineSimilarity.toFixed(3)}` : ""} ${typeof item.lexicalScore === "number" ? `· lexical ${item.lexicalScore.toFixed(3)}` : ""} ${item.fusedRank ? `· fused rank ${item.fusedRank}` : ""}</p>
-      ${item.excerpt ? `<pre><code>${escapeHtml(item.excerpt)}</code></pre>` : ""}
-    </li>`).join("")}</ol>` : emptyNote("The search returned no candidates.")}`;
+    <h3 class="label-caps">${plural(candidates.length, "candidate")}</h3>
+    ${candidates.length ? `<ol class="row-list candidate-ranking">${candidates.map((item) => `<li>
+      <div class="chip-row"><strong>${escapeHtml(item.name ?? item.selector ?? item.id)}</strong>${item.kind ? chip(escapeHtml(item.kind)) : ""}</div>
+      <p class="muted"><code data-code-subject>${escapeHtml(item.file)}${item.range ? `:${item.range.startLine}-${item.range.endLine}` : ""}</code></p>
+      <p class="muted">${typeof item.cosineSimilarity === "number" ? `cosine ${item.cosineSimilarity.toFixed(3)}` : ""} ${typeof item.lexicalScore === "number" ? `· lexical ${item.lexicalScore.toFixed(3)}` : ""} ${item.fusedRank ? `· fused rank ${item.fusedRank}` : ""}</p>
+      ${item.excerpt ? `<prism-code><pre><code>${escapeHtml(item.excerpt)}</code></pre></prism-code>` : ""}
+    </li>`).join("")}</ol>` : emptyState("The search returned no candidates")}`;
 }
 
 function body(evidence, ctx) {
   const record = evidence.record;
   const truncated = Object.entries(evidence.truncated ?? {});
   const specific = record.kind === "comparison" ? comparison(record, ctx) : record.kind === "snapshot" ? snapshot(record) : record.kind === "search" ? search(record) : "";
-  return `<p class="eyebrow">${escapeHtml(KIND_LABELS[record.kind] ?? record.kind)}</p>
-    <h2 class="evidence-title"><code>${escapeHtml(shortId(evidence.id))}</code></h2>
+  return `<p class="label-caps">${escapeHtml(KIND_LABELS[record.kind] ?? record.kind)}</p>
+    <h3 class="item-title evidence-title"><code>${escapeHtml(shortId(evidence.id))}</code></h3>
     ${truncated.length ? `<p class="notice">Long lists show their first ${evidence.arrayLimit} entries: ${truncated.map(([location, count]) => `<code>${escapeHtml(location)}</code> (${count})`).join(", ")}.</p>` : ""}
     ${specific}
-    <details class="raw-record"${specific ? "" : " open"}><summary>Raw record</summary>${jsonTreeHtml(record, { openDepth: specific ? 1 : 2, ctx })}</details>`;
+    <prism-disclosure class="raw-record" summary="Raw record"${specific ? "" : " open"}>${jsonTreeHtml(record, { openDepth: specific ? 1 : 2, ctx, label: "Raw record" })}</prism-disclosure>`;
 }
 
 async function renderTop() {
   const { root, trail, body: target } = drawer();
   const top = stack.at(-1);
-  root.hidden = false;
-  trail.innerHTML = stack.map((entry, index) => `<button type="button" class="trail-item" data-depth="${index}" ${index === stack.length - 1 ? 'aria-current="true"' : ""}>${escapeHtml(entry.label)}</button>`).join('<span aria-hidden="true">›</span>');
-  target.innerHTML = '<p class="rendering">Loading evidence</p>';
+  trail.innerHTML = stack.map((entry, index) => `<prism-button variant="ghost" size="sm" data-depth="${index}"${index === stack.length - 1 ? ' aria-current="true" pressed="true"' : ""}>${escapeHtml(entry.label)}</prism-button>`).join('<prism-icon name="chevron-right" size="xs"></prism-icon>');
+  target.innerHTML = '<prism-spinner label="Loading evidence"></prism-spinner>';
+  if (!root.isOpen) root.show();
   try {
     const evidence = top.evidence ?? (top.evidence = await activeContext.fetchEvidence(top.id));
+    if (stack.at(-1) !== top) return;
     target.innerHTML = body(evidence, activeContext);
-    for (const bar of target.querySelectorAll("[data-width]")) {
-      bar.style.width = `${Math.max(0.5, Number(bar.dataset.width))}%`;
-    }
-    for (const marker of target.querySelectorAll("[data-left]")) {
-      marker.style.left = `${Math.min(100, Number(marker.dataset.left))}%`;
-    }
   } catch (error) {
     target.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
   }
 }
 
+// The drawer is a kit dialog: it opens with the first evidence and keeps a trail of the evidence opened from there until it closes.
 export function openEvidence(id, label, ctx) {
   const { root, trail, body: target } = drawer();
   if (!root.dataset.bound) {
@@ -160,13 +164,17 @@ export function openEvidence(id, label, ctx) {
     });
     bindLinks(target, {
       openEvidence: (nextId, nextLabel) => openEvidence(nextId, nextLabel, activeContext),
-      openArtifact: (path) => {
-        activeContext.openArtifact(path);
+      openArtifact: (path, options) => {
+        root.close();
+        activeContext.openArtifact(path, options);
       }
+    });
+    root.addEventListener("prism-close", () => {
+      stack = [];
     });
   }
   activeContext = ctx;
-  if (root.hidden) {
+  if (!root.isOpen) {
     stack = [];
   }
   const existing = stack.findIndex((entry) => entry.id === id);
@@ -176,6 +184,6 @@ export function openEvidence(id, label, ctx) {
 
 export function closeEvidence() {
   const { root } = drawer();
-  root.hidden = true;
+  root.close?.();
   stack = [];
 }

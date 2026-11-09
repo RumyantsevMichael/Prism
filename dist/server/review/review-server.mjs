@@ -17,13 +17,19 @@ import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { answerGate, entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
+import { readPreferences, writePreferences } from "./review-preferences.mjs";
+import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const PUBLIC_DIR = path.join(SERVER_DIR, "public");
 const VENDOR_DIR = path.join(PLUGIN_ROOT, "vendor", "plantuml");
 const VIEWS_DIR = path.join(PUBLIC_DIR, "views");
+const KIT_DIR = path.join(PUBLIC_DIR, "kit");
+// The kit and the area stylesheets are served by extension, and any other file in their folders answers 404.
+const ASSET_TYPES = new Map([[".css", "text/css; charset=utf-8"], [".js", "text/javascript; charset=utf-8"], [".html", "text/html; charset=utf-8"], [".txt", "text/plain; charset=utf-8"], [".woff2", "font/woff2"]]);
 const TEXT_EXTENSIONS = new Set([".md", ".feature", ".puml", ".json"]);
 const EVIDENCE_ARRAY_LIMIT = 200;
 // Requests naming any other host are refused, so a DNS-rebinding page cannot reach the server.
@@ -397,12 +403,31 @@ async function serveFile(response, filePath, contentType) {
   try {
     send(response, 200, await readFile(filePath), contentType);
   } catch (error) {
-    if (error.code === "ENOENT") {
+    if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) {
       send(response, 404, "Not found");
       return;
     }
     throw error;
   }
+}
+
+// The file and type of a route under kit/ or styles/, or null for a path that leaves its folder, is not a known type, or is not a styles/<name>.css.
+export function publicAsset(route) {
+  const folder = route.startsWith("/kit/") ? "kit" : route.startsWith("/styles/") ? "styles" : null;
+  if (!folder) return null;
+  let relative;
+  try {
+    relative = decodeURIComponent(route.slice(folder.length + 2));
+  } catch {
+    return null;
+  }
+  const parts = relative.split("/");
+  if (!relative || /[\0\\]/.test(relative) || parts.some((part) => !part || part === "." || part === "..")) return null;
+  const extension = path.extname(relative);
+  if (!ASSET_TYPES.has(extension) || (folder === "styles" && (parts.length !== 1 || extension !== ".css"))) return null;
+  const root = path.join(PUBLIC_DIR, folder);
+  const file = path.join(root, ...parts);
+  return isInside(root, file) ? { file, type: ASSET_TYPES.get(extension) } : null;
 }
 
 export function openBrowser(url) {
@@ -466,6 +491,33 @@ export async function readBody(request) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+// A refusal of the action registry answers with its status and a JSON body of its code, message, and the fields that refusal carries.
+const ACTION_STATUS = { unknown_target: 404, unknown_action: 404, stale_revision: 409, action_unavailable: 409, confirmation_required: 409, invalid_input: 400 };
+const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
+export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
+
+function sendJson(response, statusCode, body) {
+  send(response, statusCode, JSON.stringify(body), "application/json; charset=utf-8");
+}
+
+function sendActionError(response, error) {
+  const status = ACTION_STATUS[error.code];
+  if (!status) throw error;
+  sendJson(response, status, { code: error.code, message: error.message, ...Object.fromEntries(ACTION_FIELDS.filter((key) => error[key] !== undefined).map((key) => [key, error[key]])) });
+}
+
+// A write comes from the review page itself: JSON, and an Origin, when the browser sends one, of the same host.
+function fromPage(request) {
+  const origin = request.headers.origin;
+  if (String(request.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase() !== "application/json") return false;
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === request.headers.host;
+  } catch {
+    return false;
+  }
+}
+
 async function readJson(request) {
   const text = await readBody(request);
   try {
@@ -477,8 +529,11 @@ async function readJson(request) {
 
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null,
-  rebuildIndex = (root) => backgroundPreparation().then((module) => module.startIndexRebuild(root)), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
+// writeSessions is the write session store of the server or app that serves this page; without one, no request can write.
+// onAction(event, { shared }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
+// shared is false for an index target, whose history belongs to this checkout alone. Without it, the event reaches this page's viewer streams.
+export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null,
+  rebuildIndex = (root, component, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
   let fingerprint = null;
   function currentFingerprint() {
     if (!fingerprint || Date.now() - fingerprint.at >= rebuildTiming.freshnessMs) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
@@ -498,13 +553,26 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const now = Date.now();
     if (auto && outOfDate && now - rebuild.changedAt >= rebuildTiming.quietMs && now - rebuild.startedAt >= rebuildTiming.gapMs) {
       rebuild.startedAt = now;
-      void rebuildIndex(projectRoot);
+      void rebuildIndex(projectRoot, null, { automatic: true });
     }
     return { ...status, autoRebuild: auto };
   }
+  // The registry's indexer serves each component's own index: with declared components, a target shows its component's entry in the status, or none
+  // while that component has neither an index nor a preparation, and without them the root target shows the checkout's one index.
+  // A person's request rebuilds only its own component, starts at once, and ignores the background opt-out, because it is not in the background.
+  const indexer = {
+    status: async (_root, component) => componentIndexingStatus(await indexingStatus(), component),
+    rebuild: (root, component) => {
+      rebuild.startedAt = Date.now();
+      Promise.resolve(rebuildIndex(root, component)).catch(() => {});
+    }
+  };
   let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
+  // Each viewer stream maps to its heartbeat and whether it carries a live write session; only writable streams count as connected tabs.
   const viewers = new Map();
   let viewerOpenLease = null;
+  const canWrite = (token) => Boolean(writeSessions?.valid(token));
+  const writableRequest = (request) => canWrite(request.headers["x-prism-write"]);
 
   function sessionSnapshot() {
     const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], revision: session.revision };
@@ -531,11 +599,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   function removeViewer(response) {
-    const heartbeat = viewers.get(response);
-    if (!heartbeat) {
+    const viewer = viewers.get(response);
+    if (!viewer) {
       return;
     }
-    clearInterval(heartbeat);
+    clearInterval(viewer.heartbeat);
     viewers.delete(response);
   }
 
@@ -550,7 +618,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     }
   }
 
-  function openViewerStream(response) {
+  function openViewerStream(response, writable) {
     response.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-store",
@@ -569,11 +637,17 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
     }, VIEWER_HEARTBEAT_MS);
     heartbeat.unref();
-    viewers.set(response, heartbeat);
+    viewers.set(response, { heartbeat, writable });
     response.once("close", () => removeViewer(response));
-    clearViewerOpenLease();
+    if (writable) clearViewerOpenLease();
     writeEvent(response, "session", sessionSnapshot());
     onViewer?.((event, data) => writeEvent(response, event, data));
+  }
+
+  function writableViewerCount() {
+    let count = 0;
+    for (const viewer of viewers.values()) if (viewer.writable) count += 1;
+    return count;
   }
 
   async function reviewableFiles() {
@@ -694,8 +768,6 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
     } else if (route === "/review.js") {
       await serveFile(response, path.join(PUBLIC_DIR, "review.js"), "text/javascript; charset=utf-8");
-    } else if (route === "/review.css") {
-      await serveFile(response, path.join(PUBLIC_DIR, "review.css"), "text/css; charset=utf-8");
     } else if (route === "/favicon.svg" || route === "/prism-mark.svg") {
       await serveFile(response, path.join(PUBLIC_DIR, route.slice(1)), "image/svg+xml");
     } else if (route === "/vendor/plantuml.js") {
@@ -704,10 +776,35 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
     } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
       await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
+    } else if (route === "/kit/catalog") {
+      await serveFile(response, path.join(KIT_DIR, "catalog.html"), "text/html; charset=utf-8");
+    } else if (route.startsWith("/kit/") || route.startsWith("/styles/")) {
+      const asset = publicAsset(route);
+      if (asset) await serveFile(response, asset.file, asset.type);
+      else send(response, 404, "Not found");
+    } else if (route === "/api/preferences" && request.method === "GET") {
+      send(response, 200, JSON.stringify(await readPreferences()), "application/json; charset=utf-8");
+    } else if (route === "/api/preferences" && request.method === "PUT") {
+      if (!fromPage(request)) {
+        send(response, 403, "Preferences must come from the review page as JSON.");
+        return;
+      }
+      try {
+        let change;
+        try {
+          change = JSON.parse(await readBody(request));
+        } catch {
+          throw Object.assign(new Error("The preferences must be a JSON object with theme, density, or both."), { code: "invalid_preference" });
+        }
+        send(response, 200, JSON.stringify(await writePreferences(change)), "application/json; charset=utf-8");
+      } catch (error) {
+        if (error.code !== "invalid_preference") throw error;
+        send(response, 400, JSON.stringify({ code: error.code, message: error.message }), "application/json; charset=utf-8");
+      }
     } else if (/^\/views\/[a-z][a-z-]*\.js$/.test(route)) {
       await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
     } else if (route === "/api/events" && request.method === "GET") {
-      openViewerStream(response);
+      openViewerStream(response, canWrite(url.searchParams.get("write")));
     } else if (route === "/api/index") {
       const artifacts = await listArtifacts(projectRoot), sources = await listReviewSources(projectRoot);
       const available = new Set([...artifacts, ...sources]);
@@ -726,21 +823,84 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/session" && request.method === "PUT") {
       const body = await readJson(request);
       send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
-    } else if (route === "/api/gates/answer" && request.method === "POST") {
-      const origin = request.headers.origin;
-      if (!String(request.headers["content-type"] ?? "").startsWith("application/json") || (origin && new URL(origin).host !== request.headers.host)) {
-        send(response, 403, "Answers must come from the review page as JSON.");
+    } else if (route === "/api/actions" && request.method === "GET") {
+      try {
+        const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer });
+        sendJson(response, 200, { target: listed.target, writable: writableRequest(request), actions: listed.actions });
+      } catch (error) {
+        sendActionError(response, error);
+      }
+    } else if (route === "/api/actions/targets" && request.method === "GET") {
+      try {
+        sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind") }));
+      } catch (error) {
+        sendActionError(response, error);
+      }
+    } else if (route === "/api/actions/apply" && request.method === "POST") {
+      if (!fromPage(request)) {
+        sendJson(response, 403, { code: "origin_refused", message: "A change must come from the review page as JSON." });
+        return;
+      }
+      if (!writableRequest(request)) {
+        sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
+        return;
+      }
+      const body = await readJson(request);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        sendJson(response, 400, { code: "invalid_request", message: "The request must be a JSON object of action, target, input, and revision." });
         return;
       }
       try {
-        const answered = await answerGate(projectRoot, await readJson(request));
+        const result = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer });
+        if (result.applied) forgetWorkspace();
+        sendJson(response, 200, result);
+        if (result.applied) {
+          const target = parseTarget(result.applied.target);
+          const event = { ...result.applied, initiative: target?.initiative ?? null };
+          if (onAction) await Promise.resolve(onAction(event, { shared: target?.kind !== "index" })).catch(() => {});
+          else notify("action", event);
+        }
+      } catch (error) {
+        sendActionError(response, error);
+      }
+    } else if (route === "/api/gates/answer" && request.method === "POST") {
+      // A requirement's or ADR's approval gate lives in the artifact's status record in the store, not in an initiative's coordination state, so it is answered here by its artifact and scope;
+      // every other question is answered through the apply route, and this route knows no other.
+      if (!fromPage(request)) {
+        sendJson(response, 403, { code: "origin_refused", message: "An answer must come from the review page as JSON." });
+        return;
+      }
+      const body = await readJson(request);
+      if (!body || typeof body !== "object" || Array.isArray(body) || body.artifact === undefined) {
+        send(response, 404, "Not found");
+        return;
+      }
+      if (!writableRequest(request)) {
+        sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
+        return;
+      }
+      try {
+        const answered = await answerGate(projectRoot, body);
         forgetWorkspace();
-        send(response, 200, JSON.stringify(answered), "application/json; charset=utf-8");
+        sendJson(response, 200, answered);
       } catch (error) {
         // An approval of an artifact that changed since it was asked, or by a checkout whose Git names no user, conflicts with the store as it is.
         const status = { gate_answered: 409, unknown_gate: 409, gate_invalid: 409, artifact_changed: 409, author_unknown: 409, invalid_answer: 400, artifact_not_found: 404, not_a_status_artifact: 400 }[error.code] ?? (recordsUnavailable(error) ? 503 : 400);
-        send(response, status, JSON.stringify({ code: error.code ?? "invalid_answer", message: error.message }), "application/json; charset=utf-8");
+        sendJson(response, status, { code: error.code ?? "invalid_answer", message: error.message });
       }
+    } else if (route === "/api/write-session" && request.method === "POST") {
+      // A tab that Prism opened exchanges the one-time grant of its URL fragment for the write session it keeps.
+      if (!fromPage(request)) {
+        sendJson(response, 403, { code: "origin_refused", message: "A write session must be requested by the review page as JSON." });
+        return;
+      }
+      const body = await readJson(request);
+      const token = await writeSessions?.exchange(body?.grant) ?? null;
+      if (!token) {
+        sendJson(response, 403, { code: "grant_refused", message: "The grant was already used, has expired, or was not issued here. Ask the agent to present the review, or run prism review." });
+        return;
+      }
+      sendJson(response, 200, { token });
     } else if (route === "/api/context") {
       send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
     } else if (route === "/api/entity") {
@@ -754,16 +914,6 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
     } else if (route === "/api/indexing" && request.method === "GET") {
       send(response, 200, JSON.stringify(await indexingStatus()), "application/json; charset=utf-8");
-    } else if (route === "/api/indexing/rebuild" && request.method === "POST") {
-      const origin = request.headers.origin;
-      if (!String(request.headers["content-type"] ?? "").startsWith("application/json") || (origin && new URL(origin).host !== request.headers.host)) {
-        send(response, 403, "A rebuild must come from the review page as JSON.");
-        return;
-      }
-      // A person's request starts at once and ignores the background opt-out, because it is not in the background.
-      rebuild.startedAt = Date.now();
-      void rebuildIndex(projectRoot);
-      send(response, 202, JSON.stringify({ started: true }), "application/json; charset=utf-8");
     } else if (route === "/api/search") {
       send(response, 200, JSON.stringify(await searchArtifacts(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {
@@ -816,6 +966,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     viewerCount() {
       return viewers.size;
     },
+    writableViewerCount,
     notify,
     setOpenTabs,
     presentTabs,
@@ -823,9 +974,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const [activeTab] = normalizeTabs(artifactPaths);
       return activeTab ? `${baseUrl}/review?artifact=${encodeURIComponent(activeTab)}` : `${baseUrl}/`;
     },
-    // A browser opens only while no tab watches this project, and once per lease so a slow first load does not open a second tab.
+    // A browser opens only while no writable tab watches this project, and once per lease so a slow first load does not open a second tab.
     claimBrowserOpen() {
-      if (viewers.size > 0 || viewerOpenLease) {
+      if (writableViewerCount() > 0 || viewerOpenLease) {
         return false;
       }
       armViewerOpenLease();
@@ -871,7 +1022,8 @@ export async function startReviewServer(options = {}) {
   });
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}${prefix}`;
-  review = createProjectReview({ projectRoot, baseUrl, ...(options.privateServer ? { privateServer: options.privateServer } : {}) });
+  const writeSessions = await createWriteSessions();
+  review = createProjectReview({ projectRoot, baseUrl, writeSessions, ...(options.privateServer ? { privateServer: options.privateServer } : {}), ...(options.rebuildIndex ? { rebuildIndex: options.rebuildIndex } : {}) });
   return {
     baseUrl,
     projectRoot,
@@ -887,7 +1039,8 @@ export async function startReviewServer(options = {}) {
       if (!review.claimBrowserOpen()) {
         return { url, opened: false, ...review.getSession() };
       }
-      const opened = Boolean(await browserOpener(url));
+      // Only the browser Prism opens receives a grant, in the fragment; the URL this answers carries none.
+      const opened = Boolean(await browserOpener(withWriteGrant(url, writeSessions.issueGrant())));
       if (!opened) {
         review.releaseBrowserOpen();
       }
@@ -895,6 +1048,8 @@ export async function startReviewServer(options = {}) {
     },
     close() {
       review.closeViewers();
+      // An open page reuses its keep-alive sockets to poll and to reopen its event stream, so a close that waited for them would last as long as the page.
+      server.closeAllConnections?.();
       return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   };

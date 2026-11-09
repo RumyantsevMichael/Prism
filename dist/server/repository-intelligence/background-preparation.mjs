@@ -10,24 +10,28 @@ const time = (value) => {
   const parsed = Date.parse(value ?? "");
   return Number.isFinite(parsed) ? parsed : 0;
 };
-async function prepareComponentIndexes(projectRoot, declaration, runtime, rebuild) {
-  const root = await realpath(projectRoot), chosen = [];
+async function prepareComponentIndexes(projectRoot, declaration, runtime, rebuild, only = null, retryLimited = rebuild) {
+  const root = await realpath(projectRoot), chosen = [], identity = rebuild && !retryLimited ? (await runtime.manifest()).identity : "";
   for (const entry of componentSources(root, declaration)) {
+    if (only !== null && entry.component !== only) continue;
     const snapshot = await entry.source.snapshot();
     if (!snapshot.files.length) continue;
     const component = { name: entry.name, identity: entry.component, folder: entry.folder };
     const { directory } = await runtime.location(root, component);
     const published = await runtime.published(directory), indexed = Boolean(published?.snapshot);
     const outOfDate = indexed && published.snapshot !== snapshot.sourceFingerprint;
-    const failed = rebuild && (runtime.jobs.get(directory)?.status === "degraded" || (await readProgressRecords(directory)).some((record) => record.state === "failed" && (!indexed || time(record.finishedAt ?? record.updatedAt) > time(published.builtAt))));
-    if (outOfDate || failed) chosen.push({ source: entry.source, component });
+    const records = rebuild ? await readProgressRecords(directory) : [];
+    const failed = rebuild && (runtime.jobs.get(directory)?.status === "degraded" || records.some((record) => record.state === "failed" && (!indexed || time(record.finishedAt ?? record.updatedAt) > time(published.builtAt))));
+    const id = identity && runtime.componentPreparationId(directory, snapshot.sourceFingerprint, identity);
+    const limited = Boolean(id) && (runtime.jobs.get(directory)?.failure?.code === "resource_limit" && runtime.jobs.get(directory)?.snapshot === snapshot.sourceFingerprint || records.some((record) => record.state === "failed" && record.preparationId === id && record.diagnostics.some((item) => item.code === "resource_limit")));
+    if ((outOfDate || failed || only !== null && !indexed) && !limited) chosen.push({ source: entry.source, component });
   }
-  if (chosen.length) await runtime.prepareComponents(chosen, 0, { retryLimited: rebuild });
+  if (chosen.length) await runtime.prepareComponents(chosen, 0, { retryLimited });
 }
-function preparation(runtime, rebuild) {
+function preparation(runtime, rebuild, component = null, retryLimited = rebuild) {
   return async (projectRoot) => {
     const declaration = await indexComponents(projectRoot);
-    if (declaration) return prepareComponentIndexes(projectRoot, declaration, runtime, rebuild);
+    if (declaration) return prepareComponentIndexes(projectRoot, declaration, runtime, rebuild, component?.identity ?? null, retryLimited);
     await prepareNativeProvider(projectRoot, { waitMs: 0, runtime });
   };
 }
@@ -70,28 +74,35 @@ function startBackgroundPreparation(projectRoot, options = {}) {
   return run;
 }
 const rebuilding = /* @__PURE__ */ new Map();
+const queued = /* @__PURE__ */ new Map();
 function startIndexRebuild(projectRoot, options = {}) {
-  const existing = rebuilding.get(projectRoot);
+  const component = options.component ?? null;
+  const key = component ? `${projectRoot}\0${component.identity}` : projectRoot;
+  const existing = rebuilding.get(key);
   if (existing) return existing;
   const { runtime = nativeSemanticRuntime } = options;
-  const { prepare = preparation(runtime, true), available = runtimeAvailable(runtime), record = recordFailure(runtime) } = options;
-  const run = (async () => {
+  const { prepare = preparation(runtime, true, component, !options.automatic), available = runtimeAvailable(runtime), record = recordFailure(runtime) } = options;
+  const previous = component ? queued.get(projectRoot) ?? Promise.resolve() : Promise.resolve();
+  const run = previous.then(async () => {
     if (!await available()) return;
     try {
       await prepare(projectRoot);
     } catch (error) {
       await record(projectRoot, error);
     }
-  })().catch(() => {
+  }).catch(() => {
   }).finally(() => {
-    rebuilding.delete(projectRoot);
+    rebuilding.delete(key);
+    if (queued.get(projectRoot) === run) queued.delete(projectRoot);
   });
-  rebuilding.set(projectRoot, run);
+  rebuilding.set(key, run);
+  if (component) queued.set(projectRoot, run);
   return run;
 }
 function resetBackgroundPreparation() {
   started.clear();
   rebuilding.clear();
+  queued.clear();
 }
 export {
   backgroundIndexingEnabled,

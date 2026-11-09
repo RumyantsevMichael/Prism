@@ -586,8 +586,8 @@ test("the review model shows live claims, a scope's design claim on its slices, 
   assert.equal(slices.reports.claim.label, "reports owner");
   assert.equal(slices.s1.claim, undefined);
   assert.equal(slices.s1.expiredClaim.label, "s1 owner");
-  assert.match(claimChip(claimOf(slices, "s1")), /is-expired[\s\S]*implementation · expired<\/span>/);
-  assert.match(claimChip(claimOf(slices, "s2")), /reports owner<\/span><span class="claim-meta">design via Reports · 20 min left/);
+  assert.match(claimChip(claimOf(slices, "s1")), /<prism-claim variant="inline" label="s1 owner" activity="implementation"[^>]* expires-at="[^"]+"><\/prism-claim>/);
+  assert.match(claimChip(claimOf(slices, "s2")), /<prism-claim variant="inline" label="reports owner" activity="design"[^>]*><\/prism-claim><span class="claim-scope">via Reports<\/span>/);
   assert.equal(claimOf(slices, "s2", now + 21 * 60000), null, "a lapsed scope claim covers nothing");
   const s2 = (await loadEntity(root, "slice:reports/s2")).data;
   assert.deepEqual([s2.coveringClaim.slug, s2.coveringClaim.claim.activity], ["reports", "design"]);

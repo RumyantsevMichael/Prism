@@ -1,5 +1,6 @@
 // Build a demo project whose JSON artifacts come from the real Prism MCP tools, for trying the review browser views.
 // Usage: node scripts/review-demo/seed.mjs [project-directory]
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ROOT, prepareProject, startTools } from "./project.mjs";
@@ -8,6 +9,8 @@ import { runRecord, segment } from "../../test/server/fixtures/run-records.mjs";
 
 const examples = JSON.parse(await readFile(path.join(ROOT, "test/server/fixtures/change-map.json"), "utf8"));
 const { realRoot, dataDir, write } = await prepareProject(process.argv[2], "prism-review-demo-");
+// The project is a Git repository, as a real one is, so the review browser lists its source files.
+execFileSync("git", ["init", "--quiet"], { cwd: realRoot, stdio: "ignore" });
 
 const slice = "docs/plans/retry-hardening/timeout-retries";
 const key = { initiative: "retry-hardening", slice: "timeout-retries" };
@@ -152,6 +155,13 @@ try {
     settings: { autonomy: "conservative", agentFlow: "multi" },
     gateOperations: [{ op: "ask", kind: "decision", slice: "authorize", question: "Should a report download require a fresh login, or is an active session enough?", context: "Reports hold invoice totals and customer addresses. The requirement says downloads need an authorized user but not how recent the sign-in must be.\n\nExample: a user signs in on Monday, leaves the tab open, and downloads a report on Friday.", artifacts: ["docs/requirements/reports.md"], options: [{ id: "fresh-login", label: "Require a fresh login", consequence: "The Friday download asks for the password again; the slice adds a re-authentication step." }, { id: "active-session", label: "Accept the active session", consequence: "The Friday download works at once; the slice reuses the existing session check." }], recommended: { option: "fresh-login", reason: "Reports carry customer data, and a re-authentication step costs one prompt per download." } }]
   } });
+  // A person's changes go through the action registry as the review page applies them, so Attention shows them under Recent changes.
+  const { applyAction, listActions } = await import("../../dist/server/workflow/actions.mjs");
+  for (const [initiative, id, value] of [["retry-hardening", "initiative.review", "recommended"], ["activity-reports", "initiative.continuation", "stepwise"]]) {
+    const target = `initiative:${initiative}`;
+    const action = (await listActions({ projectRoot: realRoot, target })).actions.find((item) => item.id === id);
+    await applyAction({ projectRoot: realRoot, target, action: id, input: { value }, revision: action.revision });
+  }
 
   process.stdout.write(`Demo project: ${realRoot}\nPrivate evidence: ${dataDir}\n\nStart the review browser with:\n  cd ${realRoot} && PLUGIN_DATA=${dataDir} ${path.join(ROOT, "bin/prism")} review\n`);
 } finally {

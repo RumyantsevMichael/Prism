@@ -27,16 +27,12 @@ function formatDuration(ms) {
   return `${rest} s`;
 }
 
-// An unavailable measure shows a dash, never 0; every other mark shows its value, including a real 0.
+// An unavailable measure shows a dash, never 0; every other mark shows its value, including a real 0, and a compact count shows in full in its tip.
 function tile([key, label, format], measure = UNAVAILABLE) {
   const unavailable = measure.coverage === "unavailable" || typeof measure.value !== "number";
   const value = unavailable ? "—" : format === "duration" ? formatDuration(measure.value) : compact.format(measure.value);
-  const title = !unavailable && format === "count" ? ` title="${measure.value}"` : "";
-  return `<div class="stat run-total${unavailable ? " is-unavailable" : ""}" data-measure="${key}" data-coverage="${escapeHtml(measure.coverage)}">
-        <span class="stat-value"${title}>${value}</span>
-        <span class="stat-label">${label}</span>
-        <span class="run-coverage">${escapeHtml(measure.coverage)}</span>
-      </div>`;
+  const tip = !unavailable && format === "count" && String(measure.value) !== value ? ` tip="${measure.value}"` : "";
+  return `<prism-stat class="run-total${unavailable ? " is-unavailable" : ""}" data-measure="${key}" data-coverage="${escapeHtml(measure.coverage)}" label="${label}" value="${value}" hint="${escapeHtml(measure.coverage)}"${tip}></prism-stat>`;
 }
 
 /** Renders one totals object for a scope (wave, slice, descendants, or initiative), or "" without totals. */
@@ -46,8 +42,8 @@ export function runTotalsHtml(totals, scope) {
     return `<p class="run-totals-empty" data-run-totals="${scope}">No run recorded yet.</p>`;
   }
   return `<div class="run-totals" data-run-totals="${scope}">
-    <p class="eyebrow">${SCOPE_LABELS[scope]}</p>
-    <div class="stat-row compact">
+    <p class="label-caps">${SCOPE_LABELS[scope]}</p>
+    <div class="stat-grid">
       ${MEASURES.map((entry) => tile(entry, totals[entry[0]])).join("")}
     </div>
     <p class="run-totals-note">Active time excludes idle gaps over ${formatDuration(totals.idleThresholdMs)}.</p>

@@ -50,9 +50,10 @@ function syncIgnoringCase(store) {
 
 const listing = (folder) => readdir(folder, { recursive: true }).then((names) => names.sort());
 
-for (const [label, local, upstream, kept] of [
+for (const [label, local, upstream, kept, folder = "artifacts/plans"] of [
   ["file", { "artifacts/plans/Notes.md": "# Notes by b\n" }, { "artifacts/plans/notes.md": "# Notes by a\n" }, ["notes.md", "slice.md"]],
-  ["folder", { "artifacts/plans/foo/slice.md": "# foo by b\n" }, { "artifacts/plans/Foo/slice.md": "# Foo by a\n" }, ["Foo", "Foo/slice.md", "slice.md"]]
+  ["folder", { "artifacts/plans/foo/slice.md": "# foo by b\n" }, { "artifacts/plans/Foo/slice.md": "# Foo by a\n" }, ["Foo", "Foo/slice.md", "slice.md"]],
+  ["record", { "initiatives/Reports/state.json": "{\"v\":\"b\"}\n" }, { "initiatives/reports/state.json": "{\"v\":\"a\"}\n" }, ["reports", "reports/state.json"], "initiatives"]
 ]) {
   test(`on a file system that ignores letter case, a ${label} that both machines wrote in two letter cases keeps the upstream's and saves the local one`, async (context) => {
     const { remote, storeA, storeB } = await stores(context);
@@ -73,16 +74,20 @@ for (const [label, local, upstream, kept] of [
     const [file, contents] = Object.entries(local)[0];
     assert.deepEqual(status.conflicts.map((conflict) => conflict.path), [file]);
     assert.equal(await readFile(path.join(storeB, status.conflicts[0].savedAs), "utf8"), contents, "the local file is saved");
-    assert.deepEqual(await listing(path.join(storeB, "artifacts", "plans")), kept, "the store holds the upstream's spelling only");
+    assert.deepEqual(await listing(path.join(storeB, ...folder.split("/"))), kept, "the store holds the upstream's spelling only");
     assert.equal(git(storeB, ["rev-list", "--left-right", "--count", "HEAD...origin/main"]), "0\t0");
     assert.equal(syncIgnoringCase(storeB).state, "ok");
     assert.equal(git(remote, ["ls-tree", "-r", "--name-only", "main"]), git(storeA, ["ls-tree", "-r", "--name-only", "HEAD"]), "nothing of the local spelling reaches the remote");
   });
 }
 
-for (const [label, from, to] of [["folder", "artifacts/plans/Foo", "artifacts/plans/foo"], ["file", "artifacts/plans/Notes.md", "artifacts/plans/notes.md"]]) {
+for (const [label, from, to, inside] of [
+  ["folder", "artifacts/plans/Foo", "artifacts/plans/foo", { "slice.md": "# Foo\n", "other.md": "# Other\n" }],
+  ["file", "artifacts/plans/Notes.md", "artifacts/plans/notes.md"],
+  ["record folder", "initiatives/Reports", "initiatives/reports", { "state.json": "{\"v\":1}\n", "initiative.json": "{}\n" }]
+]) {
   test(`on a file system that ignores letter case, a sync takes another machine's change of a ${label}'s letter case and keeps that spelling`, async (context) => {
-    const files = label === "folder" ? { [`${from}/slice.md`]: "# Foo\n", [`${from}/other.md`]: "# Other\n" } : { [from]: "# Notes\n" };
+    const files = inside ? Object.fromEntries(Object.entries(inside).map(([name, text]) => [`${from}/${name}`, text])) : { [from]: "# Notes\n" };
     const { storeA, storeB } = await stores(context, files);
     // On a file system that ignores letter case, git mv can refuse a move to another spelling of the same name, as macOS does for a folder, so the change goes through a temporary name.
     git(storeA, ["mv", from, `${to}.renaming`]);
@@ -90,13 +95,13 @@ for (const [label, from, to] of [["folder", "artifacts/plans/Foo", "artifacts/pl
     git(storeA, ["commit", "-q", "-m", "rename"]);
     git(storeA, ["push", "-q", "origin", "main"]);
     // A file the store does not share keeps the old folder alive, so the sync gives the folder its new spelling instead of writing into the old one.
-    if (label === "folder") await writeFile(path.join(storeB, from, ".keep"), "");
+    if (inside) await writeFile(path.join(storeB, from, ".keep"), "");
     await writeFile(path.join(storeB, "roadmap.json"), "{\"b\":true}\n");
     const status = syncIgnoringCase(storeB);
     assert.equal(status.state, "ok", JSON.stringify(status));
-    const names = await readdir(path.join(storeB, "artifacts", "plans"));
+    const names = await readdir(path.join(storeB, path.dirname(from)));
     assert.ok(names.includes(path.basename(to)) && !names.includes(path.basename(from)), names.join(", "));
-    if (label === "folder") assert.deepEqual(await listing(path.join(storeB, to)), [".keep", "other.md", "slice.md"], "the folder kept its other file");
+    if (inside) assert.deepEqual(await listing(path.join(storeB, to)), [".keep", ...Object.keys(inside)].sort(), "the folder kept its other file");
     assert.equal(git(storeB, ["rev-list", "--left-right", "--count", "HEAD...origin/main"]), "0\t0");
     assert.equal(git(storeB, ["show", "origin/main:roadmap.json"]), "{\"b\":true}", "the machine's own change is pushed");
     assert.equal(syncIgnoringCase(storeB).state, "ok");

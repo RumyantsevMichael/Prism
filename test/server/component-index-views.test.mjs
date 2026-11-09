@@ -60,6 +60,31 @@ test("clause 27: a rebuild prepares the components with an index or a failure th
   assert.equal(first.control.builds.length, 5);
 });
 
+test("the review browser's automatic rebuild leaves a component that reached a native limit for its current content", async (t) => {
+  resetBackgroundPreparation();
+  const { root, storage, write } = await project(t);
+  const first = await fakeRuntime(storage);
+  first.control.fail("packages/app/client.ts", "resource_limit");
+  await search(root, first.runtime);
+  assert.equal(first.control.builds.length, 3);
+  await write("packages/net/retry.ts", changed("packages/net/retry.ts"));
+  // A later process, such as the review app after a restart, knows the limit only from the recorded failure.
+  const later = await fakeRuntime(storage);
+  await startIndexRebuild(root, { runtime: later.runtime, available, automatic: true });
+  await settled(later.runtime, root);
+  assert.deepEqual(later.control.builds.map((build) => build.files), [NET_FILES]);
+  // The process that reached the limit does not retry it either; net is already up to date.
+  await startIndexRebuild(root, { runtime: first.runtime, available, automatic: true });
+  await settled(first.runtime, root);
+  assert.equal(first.control.builds.length, 3);
+  // Once its content changes, the automatic rebuild prepares it again.
+  await write("packages/app/client.ts", changed("packages/app/client.ts"));
+  later.control.recover("packages/app/client.ts");
+  await startIndexRebuild(root, { runtime: later.runtime, available, automatic: true });
+  await settled(later.runtime, root);
+  assert.deepEqual(later.control.builds.slice(1).map((build) => build.files), [APP_FILES]);
+});
+
 test("clause 28: the review browser's index status combines the components and names the one preparing", async (t) => {
   const { root, storage } = await project(t);
   const { runtime, control } = await fakeRuntime(storage);

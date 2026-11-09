@@ -96,6 +96,49 @@ Run the review-server tests after a server or UI change:
 npm test
 ```
 
+The review app's browser tests run the real review page in Chromium through an installed Playwright, local or global, and skip with an install hint when there is none.
+CI installs `playwright@1.63.0` and Chromium and sets `PRISM_REQUIRE_BROWSER=1`, under which a missing browser fails the run instead of skipping the browser tests.
+Set the same variable locally to make sure the browser tests ran:
+
+```bash
+npm install -g playwright@1.63.0
+npx playwright install chromium
+PRISM_REQUIRE_BROWSER=1 npm test
+```
+
+### Review app design values
+
+Every design value of the review app, such as a color, size, radius, shadow, blur, layer, font, or motion duration, lives in `src/server/review/public/kit/tokens.css`.
+Every other stylesheet, element, and script of the review app reads these `--prism-*` custom properties and declares no raw value of its own.
+A theme is one rule under `[data-theme="<name>"]` that gives a value to every semantic token, the `--prism-color-*` and `--prism-shadow-*` properties and `--prism-gradient-canvas`.
+The shipped `light` and `dark` themes declare the same set of names, and light is also the `:root` default.
+Compact sizes sit on `:root`, and `[data-density="comfortable"]` raises them.
+To change a shade, change it in both themes when both need it, and keep the contrast pairs that `test/server/review-kit-tokens.test.mjs` checks.
+The fonts, Geist and Geist Mono under the SIL Open Font License, ship in `kit/fonts/` and load from the review app, never from another host.
+The review app stores the user's theme and density in `review-preferences.json` in the review app folder, so the choice survives a restart on another port.
+
+The kit's elements live in `src/server/review/public/kit/elements/`, one `prism-<name>.js` per element, and `kit/kit.js` lists them in `KIT_ELEMENTS` and defines them.
+An element that renders in shadow DOM names its stylesheets in a static `styles` list, such as `prism-button.css` beside it, and the kit fetches each one once and adopts it in every shadow root.
+An element that renders in light DOM is styled in `kit/kit.css`.
+The review page loads `kit/tokens.css`, `kit/kit.css`, and then one stylesheet per area under `styles/`: `shell.css` for the shell and its panels, `actions.css` for action lists such as Initiative settings, `workflow-views.css` for the workflow screens, and `record-views.css` for records, documents, and diagrams.
+A screen's own rules go in its area stylesheet, read only tokens, and lay out kit elements rather than restyle them.
+Each element class also carries a static `tag` and a static `catalog` of its purpose, options, states, and keys.
+The component catalog at `<review URL>/kit/catalog` shows one entry per element from that `catalog`, with a live specimen per state from `SPECIMENS` in `kit/catalog.js`, plus long text and an unbroken name.
+To add an element, add its file, list it in `KIT_ELEMENTS`, and add its specimens to `SPECIMENS`.
+The review page's **Appearance** button, at the end of the status bar, links to the catalog.
+
+The kit guard names each raw design value and each control styled or written around the kit:
+
+```bash
+node scripts/review-kit/kit-guard.mjs
+```
+
+It checks every stylesheet, script, and page under `src/server/review/public/` and prints `<file>:<line>: <rule> <value>` for each finding.
+The `raw-value` rule names a color, size, layer, or time literal outside `kit/tokens.css` and `kit/plantuml-defaults.js`.
+The `control-style` rule names a stylesheet selector outside `kit/` that styles a native control, a control role, a `prism-` element, or a class named like a control.
+The `native-control` rule names a native control, a control role, or a `title` attribute written in a script or page outside `kit/`, also when a script sets the role or the title from code.
+Every screen is on the kit, so the guard finds nothing, and `test/server/review-kit-everywhere.test.mjs` fails on any new finding.
+
 Run a local human review from the repository root:
 
 ```bash
@@ -104,16 +147,18 @@ Run a local human review from the repository root:
 
 To try the entity-first review browser, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
 The seed builds a temporary project whose roadmap, initiative records, change map, review ledger, coordination state, recorded user gates, and evidence come from the real MCP tools.
+The project is a Git repository, so the browser also lists its source files.
 The browser opens on Attention, which lists the recorded user gates, and its sidebar expands only the path to the open initiative, slice, or library section.
 Answering a gate on Attention records the answer in the initiative's coordination state, and the `deliver-gate-answers` prompt hook passes answered gates to the agent with the next user message until the agent resolves them.
 The same hook runs when a session resumes and lists every open gate, so the resumed agent waits on its unanswered gates again.
 In Claude Code the `wait_for_user_gate` tool also returns the answer: Claude Code moves the call to the background after about two minutes (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`), its result wakes the idle session, and progress notifications every minute keep the stdio idle window (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`) from cancelling it.
 In Codex, which does not move tool calls to the background, a call that carries the Codex session id in its `_meta` records a wait request in the review app folder and returns `deferred`, and the `wait-for-gate-answers` Stop hook of that session takes the request and waits up to 55 minutes, then blocks the stop with the answers so the turn continues.
-The review page's secret session URL is the only credential for recording an answer, so anyone who can open that URL can answer for the user.
+The review page's write session is the credential for recording an answer: only a tab that Prism opened, with a one-time grant in its URL fragment, takes one, so a tab opened from a review URL that an agent printed can read but not answer.
+The demo's `prism review` command opens such a tab, and the session URL alone grants read access only.
 One shipped initiative record is written directly, because its completion gate needs accepted reviews that the offline demo cannot produce.
 
 `node scripts/review-demo/seed-stress.mjs` builds an edge-case project with unbroken long names, long text, many records, a deep slice tree, and unreadable records.
-Check the browser layout after a UI change:
+After a UI change, run the kit guard, open the component catalog for each element you touched, and check the browser layout:
 
 ```bash
 node scripts/review-demo/layout-check.mjs
@@ -121,6 +166,8 @@ node scripts/review-demo/layout-check.mjs
 
 The check opens every page of the demo, edge-case, and an empty project at phone, tablet, laptop, and wide window sizes, plus the menus, palette, and maximized views.
 It fails on content that escapes its container, a page that scrolls the whole window, a control cut off by its container, and browser errors.
+It also checks the component catalog of the empty project at each viewport and theme, and prints each catalog problem as `catalog <entry>: <problem> at <viewport> (<width>px), <theme>`.
+`--catalog <url>` checks only the catalog at that URL.
 `--viewports`, `--themes`, and `--screenshots <directory>` widen the run or keep screenshots for a visual pass.
 Playwright is not a repository dependency, so the check uses an installed copy and is not part of CI.
 

@@ -22,9 +22,6 @@ function storeWidth(value) {
   }
 }
 
-function fileName(path) {
-  return path.split("/").pop() || path;
-}
 
 // The panel shows a file the way its tab shows it: Markdown rendered with its diagrams drawn, code highlighted with line numbers, a diagram drawn, and a record as highlighted source.
 function fileBody(data, { renderMarkdown }) {
@@ -33,21 +30,23 @@ function fileBody(data, { renderMarkdown }) {
     return `<ol class="source-lines">${lines.map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol>`;
   }
   if (data.path.toLowerCase().endsWith(".md")) {
-    return `<div class="document-content">${renderMarkdown(data.path, data.content) || '<p class="muted">The document is empty.</p>'}</div>`;
+    return `<prism-doc class="document-content">${renderMarkdown(data.path, data.content) || '<p class="muted">The document is empty.</p>'}</prism-doc>`;
   }
   if (data.path.toLowerCase().endsWith(".puml")) return "";
-  const note = data.kind ? '<p class="side-panel-note">Open it as a tab to see it as a structured view.</p>' : "";
-  return `${note}<pre><code>${highlight(data.content, languageOf(data.path))}</code></pre>`;
+  const note = data.kind ? '<p class="side-panel-note">Open it as a page to see it as a structured view.</p>' : "";
+  return `${note}<prism-code language="${escapeHtml(languageOf(data.path) ?? "")}"><pre><code>${highlight(data.content, languageOf(data.path))}</code></pre></prism-code>`;
 }
 
+const NARROW = "(max-width: 720px)";
+
 /**
- * One panel beside the workspace that shows a single item at a time: a file opened from a link preview or link, or other context such as a review finding.
- * Opening another item replaces the current one; there are no tabs.
+ * One island beside the main island that shows a single item at a time: a file opened from a link preview or link, or other context such as a review finding.
+ * Opening another item replaces the current one. At 720px and below the island opens in `sheet`, a prism-dialog that rises from the bottom edge.
+ * `describe(path)` names a file: { label, kind, code }, where code marks a repository file whose path is the subject.
  */
-export function createSidePanel({ shell, fetchJson, renderMarkdown, mountDiagram = null, onOpenTab, onChange }) {
+export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mountDiagram = null, onOpenTab, onChange, describe = (path) => ({ label: path.split("/").pop() || path, kind: "File", code: true }) }) {
   const root = document.getElementById("side-panel");
-  const kind = document.getElementById("side-panel-kind");
-  const title = document.getElementById("side-panel-title");
+  const home = { parent: root.parentElement, next: root.nextSibling };
   const source = document.getElementById("side-panel-source");
   const body = document.getElementById("side-panel-body");
   const openButton = document.getElementById("side-panel-open");
@@ -66,19 +65,33 @@ export function createSidePanel({ shell, fetchJson, renderMarkdown, mountDiagram
   const saved = storedWidth();
   if (saved) applyWidth(saved);
 
+  const inSheet = () => Boolean(sheet) && root.parentElement !== home.parent;
+
+  function goHome() {
+    if (inSheet()) home.parent.insertBefore(root, home.next?.parentNode === home.parent ? home.next : null);
+  }
+
   function setOpen(open) {
+    const narrow = open && sheet && (globalThis.matchMedia?.(NARROW).matches ?? false);
     root.hidden = !open;
-    shell.classList.toggle("has-side-panel", open);
+    if (narrow) {
+      if (!inSheet()) sheet.append(root);
+      if (!sheet.isOpen) sheet.show();
+    } else {
+      if (inSheet() && sheet.isOpen) sheet.close();
+      goHome();
+    }
+    shell.classList.toggle("side-panel-open", open && !narrow);
     onChange?.(open);
   }
 
-  function header({ eyebrow, name, detail, ref }) {
-    kind.textContent = eyebrow;
-    title.textContent = name;
-    title.title = name;
+  function header({ eyebrow, name, detail, ref, code = false }) {
+    root.setAttribute("eyebrow", eyebrow);
+    root.setAttribute("heading", name);
+    sheet?.setAttribute("heading", name);
     source.textContent = detail ?? "";
-    source.title = detail ?? "";
     source.hidden = !detail;
+    source.toggleAttribute("data-code-subject", code);
     openButton.hidden = !ref;
   }
 
@@ -129,7 +142,9 @@ export function createSidePanel({ shell, fetchJson, renderMarkdown, mountDiagram
     const ticket = ++request;
     const same = current?.ref === path;
     current = { ref: path, anchor, content: same ? current.content : null, diagrams: same ? current.diagrams : null, folds: same ? current.folds : new Set() };
-    header({ eyebrow: "File", name: fileName(path), detail: anchor ? `${path} · ${anchor.match(LINE_RANGE) ? `lines ${anchor.slice(1).replace("-", "–")}` : `#${anchor}`}` : path, ref: path });
+    const named = describe(path);
+    const where = anchor ? (anchor.match(LINE_RANGE) ? `lines ${anchor.slice(1).replace("-", "–")}` : `#${anchor}`) : "";
+    header({ eyebrow: named.kind, name: named.label, detail: named.code ? [path, where].filter(Boolean).join(" · ") : where, ref: path, code: named.code });
     setOpen(true);
     if (same && current.content !== null) {
       scrollTo(anchor);
@@ -165,6 +180,11 @@ export function createSidePanel({ shell, fetchJson, renderMarkdown, mountDiagram
     body.replaceChildren();
     setOpen(false);
   }
+
+  // The bottom sheet closes with Escape, its Close button, or a click on the scrim, which closes the panel too.
+  sheet?.addEventListener("prism-close", () => {
+    if (inSheet() && !root.hidden) close();
+  });
 
   // A changed file or linked diagram re-renders in place and keeps the reader's scroll position; an unchanged one is left alone.
   async function refresh() {

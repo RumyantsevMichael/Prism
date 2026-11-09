@@ -8,16 +8,18 @@ import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workfl
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
-import { answerUserGate, readCoordinationState } from "../workflow/state.mjs";
+import { historyOrder, readCoordinationState } from "../workflow/state.mjs";
+import { readIndexHistory } from "../workflow/index-history.mjs";
 import { inArtifactStore, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
-import { loadDesignView } from "../workflow/design-view.mjs";
+import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { answerArtifactApproval, pendingApprovalGates, storeArtifactStatuses } from "../workflow/store-artifacts.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 
 const LIBRARY_LIMIT = 500;
+const RECENT_CHANGES_LIMIT = 20;
 const SLICE_FILE_LIMIT = 200;
 const UNRESOLVED = new Set(["OPEN", "IN PROGRESS", "REOPENED"]);
 // Each open page polls every 1.5 s, and one poll reads every record several times, so results are shared for a second.
@@ -212,7 +214,8 @@ async function computeRoadmapView(projectRoot) {
         requiredBy: record.initiatives.filter((other) => other.requires.includes(item.id)).map((other) => other.id),
         rationale: item.rationale ?? null,
         decision: item.decision,
-        findings: await initiativeFindings(projectRoot, config, item.id)
+        findings: await initiativeFindings(projectRoot, config, item.id),
+        claims: sliceClaims(await claimedSlices(projectRoot, item.id))
       });
     }
   }
@@ -256,6 +259,35 @@ async function withExpiredClaims(projectRoot, id, read) {
     copy[slice] = { ...slices[slice], expiredClaim: { label: claim.label, activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
   }
   return copy ? { ...read, loaded: { ...read.loaded, record: { ...read.loaded.record, slices: copy } } } : read;
+}
+
+// The claims of an initiative's slices: each slice's live claim, or the claim that lapsed without a release, with the slice's title and parent.
+function sliceClaims(slices) {
+  const claims = [];
+  for (const [slug, slice] of Object.entries(slices ?? {})) {
+    const claim = slice?.claim ?? slice?.expiredClaim;
+    if (!claim || typeof claim.label !== "string") continue;
+    claims.push({ slug, sliceTitle: slice.title ?? slug, label: claim.label, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
+  }
+  return claims;
+}
+
+// The slices of an initiative with their live and lapsed claims, or null when the record cannot be read.
+async function claimedSlices(projectRoot, id) {
+  try {
+    return (await withExpiredClaims(projectRoot, id, await readInitiativeWithClaims(projectRoot, id))).loaded.record?.slices ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// The live claim whose holder resumes when a gate on a slice is answered: the slice's own, or a design claim on a scope above it.
+function holdingClaim(slices, slug) {
+  for (let owner = slug; owner !== null && owner !== undefined && slices && Object.hasOwn(slices, owner); owner = slices[owner].parent ?? null) {
+    const claim = slices[owner].claim;
+    if (claim && typeof claim.label === "string" && (owner === slug || claim.activity === "design")) return { label: claim.label, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null };
+  }
+  return null;
 }
 
 async function computeInitiativeView(projectRoot, id) {
@@ -480,10 +512,17 @@ async function computeAttention(projectRoot) {
   const answered = [];
   const earlier = [];
   const watch = [];
+  const claims = [];
+  // The person's applied actions: every initiative history of these records, and this checkout's own index history, which no other checkout shares.
+  const changes = (await readIndexHistory(projectRoot).catch(() => ({ history: [] }))).history.map((entry) => ({ ...entry, initiative: null }));
   for (const id of ids) {
     const snapshot = await initiativeSnapshot(projectRoot, config, id, items.get(id));
     const initiative = { id, title: snapshot.title };
     const state = snapshot.state;
+    // The Watch group lists every live and expired claim, read-only, beside the agent-side signals.
+    const claimed = await claimedSlices(projectRoot, id);
+    for (const claim of sliceClaims(claimed)) claims.push({ ...claim, initiative });
+    if (state?.valid) for (const entry of state.state?.history ?? []) changes.push({ ...entry, initiative: id });
     if (state?.exists && !state.valid) {
       watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "state", initiative: id }), message: state.errors.join(" ") });
     }
@@ -494,9 +533,10 @@ async function computeAttention(projectRoot) {
           // A gate asked before the records moved to .prism names a record by its old path.
           const key = await keyOfPath(projectRoot, artifact).catch(() => null);
           const current = key ? await recordFile(projectRoot, key).catch(() => artifact) : artifact;
-          artifacts.push({ path: current, available: await isFile(projectRoot, current) });
+          const available = await isFile(projectRoot, current);
+          artifacts.push({ path: current, available, ...(available ? { record: await describeRecord(projectRoot, config, current, key, snapshot) } : {}) });
         }
-        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts };
+        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, claim: entry.slice ? holdingClaim(claimed, entry.slice) : null, artifacts };
         // A question whose every attached file is gone was likely overtaken by later work, so the page says it may no longer apply.
         if (!gate.answer && artifacts.length && artifacts.every((artifact) => !artifact.available)) gate.stale = true;
         (gate.answer ? answered : needsYou).push(gate);
@@ -544,7 +584,11 @@ async function computeAttention(projectRoot) {
   answered.sort((left, right) => newestFirst(left.answer.answeredAt, right.answer.answeredAt));
   // The newest closed questions come first, across initiatives, so the list stays short.
   earlier.sort((left, right) => newestFirst(left.closedAt, right.closedAt));
-  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, gateCount: needsYou.filter((item) => item.type === "gate").length };
+  const recentChanges = changes.sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
+  // Live claims lapse first first, then expired ones, the most recently lapsed first.
+  const ends = (claim) => Date.parse(claim.expiresAt ?? "") || 0;
+  claims.sort((left, right) => Number(left.expired) - Number(right.expired) || (left.expired ? ends(right) - ends(left) : ends(left) - ends(right)));
+  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, claims, recentChanges, gateCount: needsYou.filter((item) => item.type === "gate").length };
 }
 
 /**
@@ -584,16 +628,40 @@ async function answerApprovalGate(projectRoot, body) {
   return { gate: { ...entry.gate, kind: "approval" }, artifact: { path: entry.path, scope: entry.scope, version: entry.version } };
 }
 
-// The browser names the initiative and gate, or the artifact and gate; the state record is always the initiative's own, never a client path.
+// The browser answers an approval gate by its artifact and scope; every other question is answered through the review app's actions.
 export async function answerGate(projectRoot, body) {
   if (body && typeof body === "object" && body.artifact !== undefined) return answerApprovalGate(projectRoot, body);
-  if (!body || typeof body !== "object" || !SLUG_PATTERN.test(body.initiative ?? "") || typeof body.id !== "string") {
-    throw Object.assign(new Error("An initiative and a gate id are required."), { code: "invalid_answer" });
+  throw Object.assign(new Error("An artifact path and a gate id are required."), { code: "invalid_answer" });
+}
+
+// What a gate's attached record is, so the page names it by title and kind with the counts that matter for the answer.
+async function describeRecord(projectRoot, config, artifactPath, key, snapshot) {
+  const json = async () => {
+    try { return JSON.parse(await readText(projectRoot, artifactPath) ?? "null"); }
+    catch { return null; }
+  };
+  if (key?.kind === "change-map") {
+    const document = await json();
+    return { kind: "change-map", plannedChanges: Array.isArray(document?.concepts) ? document.concepts.length : 0 };
   }
-  const choice = typeof body.choice === "string" && body.choice ? body.choice : null;
-  const note = typeof body.note === "string" ? body.note : null;
-  const result = await answerUserGate({ projectRoot, initiative: body.initiative, id: body.id, choice, note });
-  return { gate: result.gate, revision: result.revision };
+  if (key?.kind === "review") return { kind: "review-ledger", openFindings: reviewSummary(await json()).unresolved };
+  if (key?.kind) return { kind: key.kind };
+  const slices = snapshot.record.record?.slices ?? {};
+  if (artifactPath.endsWith("/slice.md")) {
+    const slug = Object.keys(slices).find((name) => `${sliceFolder(snapshot.directory, slices, name)}/slice.md` === artifactPath);
+    if (slug) {
+      // A slice of a split scope counts the scope's clauses its Changes serve, as its page lists them.
+      const view = await loadDesignView(projectRoot, snapshot.id, slug).catch(() => null);
+      const clauses = view ? view.clauses.length : contractClauses(await readText(projectRoot, artifactPath) ?? "").length;
+      return { kind: "design", title: slices[slug].title, clauses, frozenTests: slices[slug].design?.frozenTests?.length ?? 0 };
+    }
+  }
+  for (const [kind, directory] of [["decision", config.paths.adrs], ["requirements", config.paths.requirements]]) {
+    if (!directory || !artifactPath.startsWith(`${directory}/`)) continue;
+    const entry = (await loadLibrary(projectRoot, kind === "decision" ? "decisions" : "requirements")).entries.find((item) => item.path === artifactPath);
+    if (entry) return { kind, title: entry.title, status: entry.status ?? null };
+  }
+  return null;
 }
 
 function glossaryTerms(content) {

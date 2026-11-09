@@ -12,6 +12,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Shared record store** (`shared-record-store`): Let every checkout and machine of a project share one set of Prism records through an ordinary Git repository, without losing bytes or colliding on unrelated changes.
 - **Single review app** (`single-review-app`): Run one review app per user that every agent session and project shares, with a project switcher that shows which project waits on the user.
 - **Repository intelligence** (`repository-intelligence`): Give workflow agents deterministic repository evidence: providers, context planning, session capacity, structural analysis, and duplication gates.
+- **Shipped work as history** (`shipped-work-history`): Treat a shipped initiative's state as immutable history that tools and skills recognise, and let fixes to done work ship inside the initiative that has not shipped yet.
 
 ### Next
 
@@ -20,8 +21,10 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 
 ### Shipped
 
+- **Initiative settings from the review app** (`initiative-settings-actions`): Let the person change an initiative's orchestration settings from the review app through a generic, revision-checked action mechanism that only the person's page can write and that later actions reuse unchanged. Shipped 2026-11-08.
 - **Components in one repository** (`components`): Let a repository declare components with their own test commands and dependencies, keep each leaf slice inside one component, run dependents' tests when a spanning scope finishes, and prepare the native index per component so a large monorepo fits its limits. Shipped 2026-11-07.
 - **Repository names in a shared store** (`repository-names`): Name each repository that shares a record store by a committed name the store registers with its remote, and let each machine know where its checkouts of each repository are. Shipped 2026-11-03.
+- **Review app UI kit** (`review-app-ui-kit`): Give the review app one set of design values, one shared component per kind of control, theme and density choices, and a served catalog with checks, so every screen stays consistent as it moves toward an IDE-like tool. Shipped 2026-11-09.
 
 ## Sequencing rationale
 

@@ -1,0 +1,18 @@
+@startuml
+title write-credential - code
+component "write-sessions.mjs\ncreateWriteSessions" as Sessions
+component "review-server.mjs\napi/write-session, apply check,\nwritable viewers" as Routes
+component "review-app-server.mjs\npresent writeGrant,\nhandoff digests" as App
+component "review-server-pool.mjs\nopen with grant fragment" as Pool
+component "review-app-protocol.schema.json" as Protocol
+component "public/review.js\ngrant exchange, session storage" as Page
+component "workflow/actions.mjs" as Registry
+Routes --> Sessions
+App --> Sessions
+App --> Routes : project pages
+Pool ..> App : present
+Pool ..> Protocol
+App ..> Protocol
+Routes --> Registry : apply after the check
+Page ..> Routes : X-Prism-Write
+@enduml

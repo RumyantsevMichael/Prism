@@ -1,0 +1,19 @@
+@startuml
+title kit-everywhere
+component "review.css" as legacy
+component "review-server.mjs" as server
+component "review.html" as html
+component "kit/" as kit
+component "styles/*.css" as styles
+component "kit-guard.mjs" as guard
+component "layout-check.mjs" as check
+component "review-stylesheet.test.mjs" as braces
+server ..> legacy : route removed
+html --> kit
+html --> styles
+guard --> kit
+guard --> styles
+braces --> kit
+braces --> styles
+check --> html
+@enduml

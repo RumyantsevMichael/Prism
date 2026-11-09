@@ -1,4 +1,7 @@
-import { artifactChip, bindLinks, card, emptyNote, escapeHtml, plural } from "./util.js";
+import { artifactChip, badge, bindLinks, card, chip, emptyState, escapeHtml, keyValues, plural, stat, summaryPanel } from "./util.js";
+import { recordKind, recordLabel } from "./entities.js";
+import { claimAttributes } from "./claims.js";
+import { isExpired } from "./claim-index.js";
 import { notifyControl } from "./attention-signal.js";
 
 const GATE_LABELS = {
@@ -63,9 +66,22 @@ export function answerState(item, draft = {}) {
   return { choice, ready: hasNote, noteRequired: true, noteLabel: "Your answer", notePlaceholder: "Answer in your own words", submitLabel: "Send answer", hint: hasNote ? "" : "Write your answer to send it." };
 }
 
+const KIND_TONES = { "visual-review": "accent", correctness: "accent", decision: "info", assistance: "warning", approval: "accent" };
+
+function when(time) {
+  return `<time class="attention-time" datetime="${escapeHtml(time)}">${escapeHtml(ago(time))}</time>`;
+}
+
 function gateHead(item, ctx, time) {
-  return `<div class="attention-head"><span class="gate-kind">${escapeHtml(GATE_LABELS[item.kind] ?? item.kind)}</span><span class="attention-where">${location(item, ctx)}</span><span class="muted" title="${escapeHtml(time)}">${escapeHtml(ago(time))}</span></div>
-    <p class="attention-question">${escapeHtml(item.question)}</p>`;
+  return `<div class="attention-head">${badge(GATE_LABELS[item.kind] ?? item.kind, KIND_TONES[item.kind] ?? "neutral")}<span class="attention-where">${location(item, ctx)}</span>${when(time)}</div>
+    <h3 class="attention-question">${escapeHtml(item.question)}</h3>`;
+}
+
+// Whose work resumes once the gate is answered: the agent whose live claim holds the slice.
+function gateHolder(item) {
+  const claim = item.claim;
+  if (!claim || typeof claim.label !== "string" || isExpired(claim)) return "";
+  return `<p class="gate-holder"><prism-claim variant="avatar"${claimAttributes(claim)}></prism-claim><span><strong>${escapeHtml(claim.label)}</strong> is waiting on your answer.</span></p>`;
 }
 
 // The situation the agent wrote for a person who has not followed the run, rendered as Markdown where the page can.
@@ -75,33 +91,62 @@ function gateContext(item, ctx) {
   return `<div class="gate-context">${body}</div>`;
 }
 
-// Each option's consequence and the agent's recommendation, so the choice reads without the conversation.
+// The agent's recommendation, so the choice reads without the conversation; each option's consequence shows with the option itself.
 function gateGuidance(item) {
   const recommended = item.recommended ?? null;
   const options = item.kind === "decision" ? (item.options ?? []) : [];
-  const consequences = options.filter((option) => option.consequence);
-  const list = consequences.length
-    ? `<ul class="gate-consequences">${consequences.map((option) => `<li${option.id === recommended?.option ? ' class="is-recommended"' : ""}><span class="gate-option-label">${escapeHtml(option.label)}</span><span class="gate-consequence">${escapeHtml(option.consequence)}</span></li>`).join("")}</ul>`
-    : "";
   const pick = recommended?.option ? options.find((option) => option.id === recommended.option) : null;
-  const reason = recommended?.reason
-    ? `<p class="gate-recommendation"><span class="gate-tag">Recommended</span> ${pick ? `<span class="gate-option-label">${escapeHtml(pick.label)}</span>: ` : ""}${escapeHtml(recommended.reason)}</p>`
-    : "";
-  return list || reason ? `<div class="gate-guidance">${list}${reason}</div>` : "";
+  if (!recommended?.reason) return "";
+  return `<p class="gate-recommendation">${badge("Recommended", "accent")}<span>${pick ? `<strong>${escapeHtml(pick.label)}</strong>: ` : ""}${escapeHtml(recommended.reason)}</span></p>`;
+}
+
+// A record attached to a gate reads by its title and kind with the counts that matter; a repository file keeps its path, since code is its subject.
+export function inspectLabel(artifact, ctx) {
+  const record = artifact.record ?? null;
+  const count = (value, word) => plural(Number.isInteger(value) ? value : 0, word);
+  if (record?.kind === "design") return { label: `Design · ${count(record.clauses, "clause")} · ${count(record.frozenTests, "frozen test")}` };
+  if (record?.kind === "change-map") return { label: `Change map · ${count(record.plannedChanges, "planned change")}` };
+  if (record?.kind === "review-ledger") return { label: `Review ledger · ${count(record.openFindings, "open finding")}` };
+  if (record?.kind === "decision") return { label: [record.title, "Decision", record.status].filter(Boolean).join(" · ") };
+  if (record?.kind === "requirements") return { label: `${record.title} · Requirements` };
+  const kind = recordKind(artifact.path);
+  if (!kind) return { label: artifact.path, code: true };
+  const named = ctx.describe?.(artifact.path) ?? recordLabel(artifact.path);
+  if (named.code) return { label: artifact.path, code: true };
+  return { label: named.label === named.kind ? named.kind : `${named.label} · ${named.kind}` };
+}
+
+function inspectList(item, ctx) {
+  const available = item.artifacts.filter((artifact) => artifact.available);
+  const missing = item.artifacts.filter((artifact) => !artifact.available);
+  const chips = available.map((artifact) => {
+    const { label, code } = inspectLabel(artifact, ctx);
+    return `<li>${code ? `<span data-code-subject>${artifactChip(artifact.path, ctx)}</span>` : artifactChip(artifact.path, ctx, label)}</li>`;
+  }).join("");
+  const gone = missing.map((artifact) => {
+    const { label, code } = inspectLabel(artifact, ctx);
+    return `<li${code ? " data-code-subject" : ""}>${chip(escapeHtml(label), { tone: "warning" })}</li>`;
+  }).join("");
+  return `${chips ? `<div class="gate-inspect"><p class="label-caps">Inspect</p><ul class="chip-row">${chips}</ul></div>` : ""}${gone ? `<div class="gate-inspect"><p class="label-caps">Not found</p><ul class="chip-row">${gone}</ul></div>` : ""}`;
 }
 
 function answerForm(item, draft) {
   const options = choices(item);
   const state = answerState(item, draft);
   const key = escapeHtml(item.id);
+  const consequences = new Map((item.kind === "decision" ? item.options ?? [] : []).map((option) => [option.id, option.consequence]));
+  const optional = !REVIEW_KINDS.has(item.kind) && options.length > 0;
+  const choice = options.length
+    ? `<div class="gate-choices"><prism-choice label="Your answer" data-choice${state.choice ? ` value="${escapeHtml(state.choice)}"` : ""}>${options.map(([id, label]) => `<prism-choice-option value="${escapeHtml(id)}"${id === "request-changes" ? ' tone="danger"' : ""}>${escapeHtml(label)}${id === item.recommended?.option ? ` ${badge("Recommended", "accent")}` : ""}${consequences.get(id) ? `<span slot="detail">${escapeHtml(consequences.get(id))}</span>` : ""}</prism-choice-option>`).join("")}</prism-choice>${optional ? `<prism-button size="sm" variant="ghost" data-clear-choice${state.choice ? "" : " disabled"}>Clear the choice</prism-button>` : ""}</div>`
+    : "";
   // An approval gate is answered by its artifact and scope, every other gate by its initiative; data-artifact would make the form a link to the file.
   const target = item.kind === "approval"
     ? ` data-gate-artifact="${escapeHtml(item.artifact.path)}" data-scope="${escapeHtml(item.artifact.scope?.kind ?? "workspace")}"${item.artifact.scope?.component ? ` data-component="${escapeHtml(item.artifact.scope.component)}"` : ""}`
     : ` data-initiative="${escapeHtml(item.initiative.id)}"`;
   return `<div class="gate-answer" data-gate="${key}"${target}>
-    ${options.length ? `<div class="gate-choices" role="group" aria-label="Your answer">${options.map(([id, label]) => `<button type="button" class="choice-button${id === "request-changes" ? " is-negative" : id === "approve" ? " is-positive" : ""}${id === item.recommended?.option ? " is-recommended" : ""}" data-choice="${escapeHtml(id)}" aria-pressed="${state.choice === id}"${id === item.recommended?.option ? ' title="Recommended"' : ""}>${escapeHtml(label)}</button>`).join("")}</div>` : ""}
-    <label class="gate-note"><span class="gate-note-label"><span data-note-label>${escapeHtml(state.noteLabel)}</span> <span class="gate-note-need${state.noteRequired ? " is-required" : ""}" data-note-need>${state.noteRequired ? "required" : "optional"}</span></span><textarea data-note rows="2" maxlength="4000" placeholder="${escapeHtml(state.notePlaceholder)}" aria-required="${state.noteRequired}">${escapeHtml(draft.note ?? "")}</textarea></label>
-    <div class="gate-actions"><button type="button" class="tool-button primary${state.choice === "request-changes" ? " is-negative" : ""}" data-submit aria-describedby="gate-hint-${key} gate-error-${key}"${state.ready ? "" : " disabled"}>${escapeHtml(state.submitLabel)}</button><p class="gate-hint" id="gate-hint-${key}" aria-live="polite">${escapeHtml(state.hint)}</p></div>
+    ${choice}
+    <prism-field class="gate-note" type="textarea" data-note label="${escapeHtml(state.noteLabel)}" hint="${state.noteRequired ? "Required" : "Optional"}" placeholder="${escapeHtml(state.notePlaceholder)}"${state.noteRequired ? " required" : ""} value="${escapeHtml(draft.note ?? "")}"></prism-field>
+    <div class="gate-actions"><prism-button variant="${state.choice === "request-changes" ? "danger" : "primary"}" data-submit${state.ready ? "" : " disabled"}>${escapeHtml(state.submitLabel)}</prism-button><p class="gate-hint" id="gate-hint-${key}" aria-live="polite">${escapeHtml(state.hint)}</p></div>
     <p class="gate-error" id="gate-error-${key}" role="alert"${draft.error ? "" : " hidden"}>${escapeHtml(draft.error ?? "")}</p>
   </div>`;
 }
@@ -109,52 +154,53 @@ function answerForm(item, draft) {
 // An approval gate names the requirement or ADR in full, with its scope and the status an approval records, since the answer applies to exactly that file.
 function approvalSubject(item) {
   const scope = item.artifact.scope?.label ?? "workspace";
-  // A pill is one line, so a long status ends in an ellipsis and shows whole as its tooltip.
-  const pill = (status, tone = "") => `<span class="status-pill${tone}" title="${escapeHtml(status)}">${escapeHtml(status)}</span>`;
-  const change = item.recorded && item.recorded !== item.status ? `<span class="approval-status">${pill(item.recorded)}<span aria-hidden="true">→</span><span class="sr-only">to</span>${pill(item.status, " is-good")}</span>` : `<span class="approval-status">${pill(item.status, " is-good")}</span>`;
-  return `<dl class="approval-subject">
-      <div><dt>File</dt><dd><code class="approval-path">${escapeHtml(item.artifact.path)}</code></dd></div>
-      <div><dt>Scope</dt><dd><span class="approval-scope">${escapeHtml(scope)}</span></dd></div>
-      <div><dt>Approving records</dt><dd>${change}</dd></div>
-    </dl>
+  const change = item.recorded && item.recorded !== item.status
+    ? `<span class="approval-status">${badge(item.recorded)}<span aria-hidden="true">→</span><span class="sr-only">to</span>${badge(item.status, "success")}</span>`
+    : `<span class="approval-status">${badge(item.status, "success")}</span>`;
+  return `${keyValues([
+      ["File", `<code class="approval-path" data-code-subject>${escapeHtml(item.artifact.path)}</code>`],
+      ["Scope", chip(escapeHtml(scope))],
+      ["Approving records", change]
+    ])}
     ${item.changed ? `<p class="notice">The file changed since this approval was asked, so approving it is refused. The agent asks again for the current version.</p>` : ""}`;
 }
 
 function gateCard(item, ctx, draft) {
   if (item.kind === "approval") {
-    return `<li class="attention-card gate-approval">
+    return `<li class="attention-item gate-approval"><article class="gate" aria-label="${escapeHtml(GATE_LABELS.approval)}">
     ${gateHead(item, ctx, item.askedAt)}
     ${approvalSubject(item)}
     ${gateContext(item, ctx)}
     ${answerForm(item, draft)}
-  </li>`;
+  </article></li>`;
   }
-  const available = item.artifacts.filter((artifact) => artifact.available);
-  const missing = item.artifacts.filter((artifact) => !artifact.available);
-  return `<li class="attention-card gate-${escapeHtml(item.kind)}">
+  return `<li class="attention-item gate-${escapeHtml(item.kind)}"><article class="gate" aria-label="${escapeHtml(GATE_LABELS[item.kind] ?? "Question")}">
     ${gateHead(item, ctx, item.askedAt)}
+    ${gateHolder(item)}
     ${gateContext(item, ctx)}
     ${gateGuidance(item)}
-    ${available.length ? `<div class="attention-artifacts"><span class="muted">Inspect</span> ${available.map((artifact) => artifactChip(artifact.path, ctx, artifact.path.split("/").pop())).join(" ")}</div>` : ""}
-    ${missing.length ? `<p class="muted">Not found: ${missing.map((artifact) => `<code>${escapeHtml(artifact.path)}</code>`).join(" ")}</p>` : ""}
+    ${inspectList(item, ctx)}
     ${item.stale ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : ""}
     ${answerForm(item, draft)}
-  </li>`;
+  </article></li>`;
+}
+
+function given(item) {
+  const negative = item.answer.choice === "request-changes";
+  return `${badge(choiceLabel(item, item.answer.choice), negative ? "danger" : "success")}${item.answer.note ? ` <span>${escapeHtml(item.answer.note)}</span>` : ""}`;
 }
 
 function answeredCard(item, ctx) {
-  return `<li class="attention-card is-answered gate-${escapeHtml(item.kind)}">
+  return `<li class="attention-item is-answered gate-${escapeHtml(item.kind)}">
     ${gateHead(item, ctx, item.answer.answeredAt)}
-    <p class="gate-given"><span class="choice-given${item.answer.choice === "request-changes" ? " is-negative" : ""}">${escapeHtml(choiceLabel(item, item.answer.choice))}</span>${item.answer.note ? ` ${escapeHtml(item.answer.note)}` : ""}</p>
+    <p class="gate-given">${given(item)}</p>
   </li>`;
 }
 
 // A closed question shows the browser answer, or the reason the agent gave when it resolved the question without one.
 function closedCard(item, ctx) {
-  const outcome = item.answer
-    ? `<span class="choice-given${item.answer.choice === "request-changes" ? " is-negative" : ""}">${escapeHtml(choiceLabel(item, item.answer.choice))}</span>${item.answer.note ? ` ${escapeHtml(item.answer.note)}` : ""}`
-    : `<span class="choice-given">Closed by the agent</span>`;
-  return `<li class="attention-card is-closed gate-${escapeHtml(item.kind)}">
+  const outcome = item.answer ? given(item) : badge("Closed by the agent");
+  return `<li class="attention-item is-closed gate-${escapeHtml(item.kind)}">
     ${gateHead(item, ctx, item.closedAt)}
     <p class="gate-given">${outcome}</p>
     ${item.reason ? `<p class="muted">${escapeHtml(item.reason)}</p>` : ""}
@@ -167,37 +213,46 @@ function bindAnswers(container, ctx, gates) {
     const id = form.dataset.gate;
     const item = gates.find((gate) => gate.id === id);
     const draft = (drafts[id] ??= { choice: null, note: "" });
-    const note = form.querySelector("[data-note]");
+    const field = form.querySelector("[data-note]");
+    const note = field.control ?? field.querySelector("textarea");
     const failure = form.querySelector(".gate-error");
     const submit = form.querySelector("[data-submit]");
     const hint = form.querySelector(".gate-hint");
-    const need = form.querySelector("[data-note-need]");
+    const choice = form.querySelector("prism-choice[data-choice]");
+    const clear = form.querySelector("[data-clear-choice]");
+    note.rows = 2;
+    note.maxLength = 4000;
+    note.setAttribute("aria-describedby", [note.getAttribute("aria-describedby"), hint.id, failure.id].filter(Boolean).join(" "));
     let sending = false;
     // A change updates the form in place, so focus and the typed note stay where they are.
     const refresh = () => {
       const state = answerState(item, draft);
-      for (const button of form.querySelectorAll("[data-choice]")) button.setAttribute("aria-pressed", String(button.dataset.choice === state.choice));
-      form.querySelector("[data-note-label]").textContent = state.noteLabel;
-      need.textContent = state.noteRequired ? "required" : "optional";
-      need.classList.toggle("is-required", state.noteRequired);
-      note.placeholder = state.notePlaceholder;
-      note.setAttribute("aria-required", String(state.noteRequired));
+      field.setAttribute("label", state.noteLabel);
+      field.setAttribute("hint", state.noteRequired ? "Required" : "Optional");
+      field.setAttribute("placeholder", state.notePlaceholder);
+      field.toggleAttribute("required", state.noteRequired);
       submit.textContent = state.submitLabel;
-      submit.classList.toggle("is-negative", state.choice === "request-changes");
-      submit.disabled = sending || !state.ready;
+      submit.setAttribute("variant", state.choice === "request-changes" ? "danger" : "primary");
+      submit.toggleAttribute("disabled", sending || !state.ready);
+      clear?.toggleAttribute("disabled", !draft.choice);
       if (hint.textContent !== state.hint) hint.textContent = state.hint;
     };
     const clearFailure = () => {
       draft.error = null;
       failure.hidden = true;
     };
-    for (const button of form.querySelectorAll("[data-choice]")) {
-      button.addEventListener("click", () => {
-        draft.choice = draft.choice === button.dataset.choice ? null : button.dataset.choice;
-        clearFailure();
-        refresh();
-      });
-    }
+    choice?.addEventListener("change", () => {
+      draft.choice = choice.value || null;
+      clearFailure();
+      refresh();
+    });
+    clear?.addEventListener("click", () => {
+      draft.choice = null;
+      choice.value = "";
+      clearFailure();
+      refresh();
+      note.focus();
+    });
     note.addEventListener("input", () => {
       draft.note = note.value;
       draft.selection = [note.selectionStart, note.selectionEnd];
@@ -249,34 +304,124 @@ function bindAnswers(container, ctx, gates) {
   }
 }
 
+// A change's action reads by its own name: the last part of its id in words, such as "Security review" for initiative.securityReview.
+function changeLabel(action) {
+  const words = String(action ?? "").split(".").pop().replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+  return words ? `${words[0].toUpperCase()}${words.slice(1)}` : "Change";
+}
+
+function changeValue(value) {
+  if (value === null || value === undefined) return "none";
+  if (typeof value === "object") return Object.entries(value).filter(([, item]) => item !== null && item !== "").map(([key, item]) => `${key}: ${typeof item === "object" ? JSON.stringify(item) : item}`).join(", ") || "none";
+  return String(value);
+}
+
+// The author is what the applying checkout's Git configuration claims, so the page names it as given and never as verified.
+function changeAuthor(by) {
+  return by?.name || by?.email || "An unknown person";
+}
+
+function changeWhere(entry, ctx) {
+  const [kind, rest = ""] = String(entry.target ?? "").split(/:(.*)/s);
+  const parts = [];
+  if (entry.initiative) parts.push(artifactChip(`initiative:${entry.initiative}`, ctx, entry.initiative));
+  if (kind === "index") parts.push(`<code class="recent-change-target" data-code-subject>${escapeHtml(rest)}</code>`);
+  if (kind === "gate") parts.push('<span class="muted">question</span>');
+  return parts.join('<span class="crumb-separator" aria-hidden="true">›</span>');
+}
+
+const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+function changeStep(before, after) {
+  return `<span class="recent-change-before">${escapeHtml(before)}</span> <span aria-hidden="true">→</span><span class="sr-only">to</span> <span class="recent-change-after">${escapeHtml(after)}</span>`;
+}
+
+// Two object values, such as model names, show only the parts that changed, so a long value does not hide what differs.
+function changeValues(entry) {
+  if (entry.action === "gate.answer") return escapeHtml(changeValue(entry.after));
+  if (isObject(entry.before) && isObject(entry.after)) {
+    const keys = [...new Set([...Object.keys(entry.before), ...Object.keys(entry.after)])].filter((key) => JSON.stringify(entry.before[key] ?? null) !== JSON.stringify(entry.after[key] ?? null));
+    if (keys.length) return keys.map((key) => `<span class="recent-change-part">${escapeHtml(key)}: ${changeStep(changeValue(entry.before[key]), changeValue(entry.after[key]))}</span>`).join("; ");
+  }
+  return changeStep(changeValue(entry.before), changeValue(entry.after));
+}
+
+// The author's address shows beside a name, since the page has no tooltip for plain text.
+function authorText(by) {
+  const name = changeAuthor(by);
+  return by?.email && by.email !== name ? `${escapeHtml(name)} <span class="muted">(${escapeHtml(by.email)})</span>` : escapeHtml(name);
+}
+
+export function changeHtml(entry, ctx) {
+  const values = changeValues(entry);
+  return `<li class="attention-item recent-change" data-change="${escapeHtml(entry.id)}">
+    <div class="attention-head">${badge(changeLabel(entry.action))}<span class="attention-where">${changeWhere(entry, ctx)}</span>${when(entry.at)}</div>
+    <p class="recent-change-values">${values}</p>
+    <p class="recent-change-by muted"><span>${authorText(entry.by)}</span> · <span>${escapeHtml(entry.by?.checkout ?? "an unknown checkout")}</span></p>
+  </li>`;
+}
+
+const RECENT_LIMIT = 20;
+
+// A change applied while the page is open joins the top of the list at once; the next load brings the list as the records hold it.
+let following = null;
+
+function followChanges(container, ctx) {
+  if (!following) document.addEventListener("prism:action", (event) => following?.(event));
+  following = (event) => {
+    if (!container.isConnected) return;
+    const entry = event.detail;
+    const slot = container.querySelector("[data-recent-changes]");
+    if (!slot || !entry?.id || slot.querySelector(`[data-change="${CSS.escape(entry.id)}"]`)) return;
+    let list = slot.querySelector("ul");
+    if (!list) {
+      slot.innerHTML = '<ul class="attention-list"></ul>';
+      list = slot.querySelector("ul");
+    }
+    list.insertAdjacentHTML("afterbegin", changeHtml(entry, ctx));
+    while (list.children.length > RECENT_LIMIT) list.lastElementChild.remove();
+  };
+}
+
 function noteCard(item, ctx) {
   const roadmapLink = artifactChip("roadmap", ctx, "Roadmap");
   const describe = {
     "pending-note": () => ["Pending item", escapeHtml(item.text), location(item, ctx)],
     unlisted: () => ["Needs prioritization", `${escapeHtml(item.initiative.id)} has an initiative record but no roadmap entry. Ask the agent to run <code>roadmap</code>.`, location(item, ctx)],
     "open-question": () => ["Roadmap question", escapeHtml(item.text), roadmapLink],
-    "roadmap-missing": () => ["No roadmap", `No roadmap record exists at <code>${escapeHtml(item.path)}</code>. Ask the agent to run <code>setup</code>.`, ""],
+    "roadmap-missing": () => ["No roadmap", "No roadmap record exists yet. Ask the agent to run <code>setup</code>.", ""],
     "roadmap-problem": () => ["Roadmap problem", escapeHtml(item.message), roadmapLink],
-    config: () => ["Workflow config", escapeHtml(item.message), "<code>.prism/workflow.md</code>"]
+    config: () => ["Workflow settings", escapeHtml(item.message), ""]
   }[item.type];
   const content = describe ? describe() : [item.type, "", ""];
-  return `<li class="attention-card note-${escapeHtml(item.type)}">
-    <div class="attention-head"><span class="gate-kind is-note">${escapeHtml(content[0])}</span><span class="attention-where">${content[2]}</span></div>
-    <p class="attention-question">${content[1]}</p>
+  return `<li class="attention-item note-${escapeHtml(item.type)}">
+    <div class="attention-head">${badge(content[0])}<span class="attention-where">${content[2]}</span></div>
+    <p class="attention-note">${content[1]}</p>
   </li>`;
+}
+
+function recordName(path, ctx) {
+  const named = ctx.describe?.(path) ?? recordLabel(path);
+  return named.code ? null : named.kind;
 }
 
 function watchRow(item, ctx) {
   const where = location(item, ctx);
   const describe = {
-    blocked: () => ['<span class="status-pill is-bad">blocked</span>', "The slice is blocked."],
-    findings: () => [item.blocking ? `<span class="status-pill is-bad">${plural(item.blocking, "blocking finding")}</span>` : `<span class="status-pill is-warn">${plural(item.unresolved, "open finding")}</span>`, artifactChip(item.path, ctx, "Open the findings board")],
-    active: () => ['<span class="status-pill is-info">active</span>', `${escapeHtml(item.activity)}${item.label ? ` · ${escapeHtml(item.label)}` : ""} · ${escapeHtml(item.workers.join(", "))}`],
-    "ready-to-ship": () => ['<span class="status-pill is-good">ready to ship</span>', "Every slice is done; the orchestrator records the ship decision at graduation."],
-    "record-problem": () => ['<span class="status-pill is-bad">record problem</span>', `${artifactChip(item.path, ctx, item.path.split("/").pop())} ${escapeHtml(item.message)}`]
+    blocked: () => [badge("blocked", "danger"), "The slice is blocked."],
+    findings: () => [item.blocking ? badge(plural(item.blocking, "blocking finding"), "danger") : badge(plural(item.unresolved, "open finding"), "warning"), artifactChip(item.path, ctx, "Open the findings board")],
+    active: () => [badge("active", "info"), `${escapeHtml(item.activity)}${item.label ? ` · ${escapeHtml(item.label)}` : ""} · ${escapeHtml(item.workers.join(", "))}`],
+    "ready-to-ship": () => [badge("ready to ship", "success"), "Every slice is done; the orchestrator records the ship decision at graduation."],
+    "record-problem": () => [badge("record problem", "danger"), `${artifactChip(item.path, ctx, recordName(item.path, ctx) ?? undefined)} ${escapeHtml(item.message)}`]
   }[item.type];
   const row = describe ? describe() : [escapeHtml(item.type), ""];
-  return `<tr><td>${row[0]}</td><td class="attention-where">${where}</td><td>${row[1]}</td></tr>`;
+  return `<li class="watch-row"><span class="watch-what">${row[0]}</span><span class="attention-where">${where}</span><span class="watch-detail">${row[1]}</span></li>`;
+}
+
+// A claim in the Watch group: who holds which slice for what, and how long it has left or since when it lapsed; it offers no action.
+function claimRow(claim, ctx) {
+  const where = location({ initiative: claim.initiative, slice: { slug: claim.slug, title: claim.sliceTitle } }, ctx);
+  return `<li class="watch-row watch-claim"><span class="watch-what"><prism-claim variant="inline"${claimAttributes(claim)}></prism-claim></span><span class="attention-where">${where}</span></li>`;
 }
 
 export function render(container, entity, ctx) {
@@ -284,28 +429,31 @@ export function render(container, entity, ctx) {
   const drafts = (ctx.state.drafts ??= {});
   const answered = data.answered ?? [];
   const earlier = data.earlier ?? [];
+  const recent = data.recentChanges ?? [];
+  const claims = data.claims ?? [];
   const gates = data.needsYou.filter((item) => item.type === "gate");
   const notes = data.needsYou.filter((item) => item.type !== "gate");
+  const watched = data.watch.length + claims.length;
   container.innerHTML = `
-    <section class="view-card summary-card">
-      <div class="stat-row">
-        <div class="stat ${gates.length ? "is-warn" : "is-good"}"><span class="stat-value">${gates.length}</span><span class="stat-label">${gates.length === 1 ? "question waits" : "questions wait"} on you</span></div>
-        <div class="stat"><span class="stat-value">${notes.length}</span><span class="stat-label">other ${notes.length === 1 ? "item needs" : "items need"} you</span></div>
-        <div class="stat"><span class="stat-value">${data.watch.length}</span><span class="stat-label">agent-side ${data.watch.length === 1 ? "signal" : "signals"}</span></div>
+    ${summaryPanel(`<div class="stat-grid">
+        ${stat(`${gates.length === 1 ? "question waits" : "questions wait"} on you`, String(gates.length), { tone: gates.length ? "warning" : "success" })}
+        ${stat(`other ${notes.length === 1 ? "item needs" : "items need"} you`, String(notes.length))}
+        ${stat(`${watched === 1 ? "thing" : "things"} to watch`, String(watched))}
       </div>
-      ${notifyControl(typeof Notification === "undefined" ? null : Notification.permission)}
-    </section>
+      ${notifyControl(typeof Notification === "undefined" ? null : Notification.permission)}`)}
     ${card("Needs you", data.needsYou.length
       ? `<ul class="attention-list">${gates.map((item) => gateCard(item, ctx, drafts[item.id] ?? { choice: null, note: "" })).join("")}${notes.map((item) => noteCard(item, ctx)).join("")}</ul>`
-      : emptyNote("Nothing is waiting on you."), { eyebrow: "Answer here or in the agent conversation" })}
+      : emptyState("Nothing is waiting on you", "Questions an agent asks during an orchestrated run appear here."), { eyebrow: "Answer here or in the agent conversation" })}
     <p class="attention-footnote muted">The orchestrator records a question here while it waits on you during an orchestrated run. Direct skill runs, such as ideate or roadmap, still ask only in the conversation.</p>
     ${answered.length ? card("Answered, waiting for the agent", `<ul class="attention-list">${answered.map((item) => answeredCard(item, ctx)).join("")}</ul><p class="attention-footnote muted">An agent waiting in Claude Code resumes on its own shortly after your last answer. Otherwise the agent receives these answers with your next message in the conversation, even a short one such as “go”.</p>`, { eyebrow: plural(answered.length, "answer") }) : ""}
-    ${card("Watch", data.watch.length
-      ? `<div class="table-wrap"><table class="data-table attention-watch"><tbody>${data.watch.map((item) => watchRow(item, ctx)).join("")}</tbody></table></div>`
-      : emptyNote("No blocked slices, open findings, or active work."), { eyebrow: "Agent-side state" })}
+    ${card("Watch", watched
+      ? `<ul class="row-list watch-list">${data.watch.map((item) => watchRow(item, ctx)).join("")}${claims.map((claim) => claimRow(claim, ctx)).join("")}</ul>`
+      : emptyState("Nothing to watch", "No blocked slices, open findings, claims, or active work."), { eyebrow: "Agent-side state" })}
+    ${card("Recent changes", `<div data-recent-changes>${recent.length ? `<ul class="attention-list">${recent.map((entry) => changeHtml(entry, ctx)).join("")}</ul>` : emptyState("No changes yet", "No one changed settings, answered a question, or rebuilt an index from the review app yet.")}</div>`, { eyebrow: "From the review app, newest first" })}
     ${earlier.length ? card("Earlier questions", `<ul class="attention-list">${earlier.map((item) => closedCard(item, ctx)).join("")}</ul>`, { eyebrow: "Most recent first" }) : ""}`;
   bindLinks(container, ctx);
   bindAnswers(container, ctx, gates);
+  followChanges(container, ctx);
   container.querySelector("[data-notify]")?.addEventListener("click", () => {
     void Notification.requestPermission().finally(() => ctx.rerender());
   });

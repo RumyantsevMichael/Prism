@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { componentOf, listsComponents, readComponents } from "../workflow/components.mjs";
-import { NativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
+import { NativeRepositoryIntelligence, RepositoryScan } from "./native-repository-intelligence.mjs";
 import { semanticError } from "./native-semantic-runtime.mjs";
 import type { ComponentRuntime, ComponentState, Diagnostic, IndexMetadata, NativeSource, Preparation, PreparedIndex, SearchResult, SourceSnapshot } from "./repository-unit-types.mjs";
 
@@ -11,7 +11,7 @@ import type { ComponentRuntime, ComponentState, Diagnostic, IndexMetadata, Nativ
 
 interface Component { name: string; identity: string; folder: string }
 export interface Declaration { repository: string; root: Component; declared: Component[]; components: Component[] }
-export interface ComponentSource { component: string; name: string; folder: string; source: NativeSource }
+export interface ComponentSource { component: string; name: string; folder: string; source: NativeSource; scan?: RepositoryScan }
 export interface ComponentResult { components: ComponentState[]; status: "ready" | "partial" | "preparing" | "degraded"; diagnostics: Diagnostic[]; snapshot: string; indexRevision: string | null }
 
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -26,9 +26,17 @@ export async function indexComponents(projectRoot: string): Promise<Declaration 
 }
 
 /** One source per component in component order: the root component first, then the declared components in declaration order. */
+// The sources share one Git listing of the repository, so a call over many components lists the repository once; verifyComponents lists it again.
 export function componentSources(root: string, declaration: Declaration, options: Record<string, unknown> = {}): ComponentSource[] {
-  return declaration.components.map(component => ({ component: component.identity, name: component.name, folder: component.folder,
-    source: new NativeRepositoryIntelligence(root, { ...options, filter: (file: string) => componentOf(declaration, file).identity === component.identity }) as unknown as NativeSource }));
+  const scan = new RepositoryScan();
+  return declaration.components.map(component => ({ component: component.identity, name: component.name, folder: component.folder, scan,
+    source: new NativeRepositoryIntelligence(root, { ...options, scan, filter: (file: string) => componentOf(declaration, file).identity === component.identity }) as unknown as NativeSource }));
+}
+
+/** Verifies that each component's files are unchanged since its snapshot, listing the repository once for all of them. */
+export async function verifyComponents(entries: ComponentSource[], verify: (source: NativeSource) => Promise<unknown> = source => source.verifySnapshot()) {
+  for (const scan of new Set(entries.map(entry => entry.scan))) scan?.refresh();
+  for (const entry of entries) await verify(entry.source);
 }
 
 /** Opens a source of the files that a filter accepts, such as a retained baseline's files of one component. */

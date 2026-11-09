@@ -1,4 +1,4 @@
-import { escapeHtml, formatTime } from "./util.js";
+import { escapeHtml } from "./util.js";
 
 const ACTIVITIES = { design: "design", implementation: "implementation" };
 
@@ -22,19 +22,20 @@ export function claimOf(slices, slug, now = Date.now()) {
   return null;
 }
 
+/** The attributes of a prism-claim for a claim, which the element turns into the holder, the activity, and the time left. */
+export function claimAttributes(claim) {
+  return Object.entries({ label: claim.label, activity: ACTIVITIES[claim.activity] ?? "implementation", "claimed-at": claim.claimedAt, "renewed-at": claim.renewedAt, "expires-at": claim.expiresAt })
+    .filter(([, value]) => typeof value === "string" && value)
+    .map(([name, value]) => ` ${name}="${escapeHtml(value)}"`).join("");
+}
+
 /**
- * A read-only chip for a slice's claim: holder label, activity, and time left.
- * A claim past its expiry shows as expired: the review model keeps a lapsed claim as expiredClaim, and a live one can lapse while the page is open.
+ * A read-only prism-claim for a slice's claim in a variant: avatar, inline, or strip, with the scope whose design claim covers the slice.
+ * A claim past its expiry shows as expired: the review model keeps a lapsed claim as expiredClaim, and the element follows the clock while the page is open.
  */
-export function claimChip(held, now = Date.now()) {
+export function claimChip(held, variant = "inline") {
   const claim = held?.claim;
   if (!claim || typeof claim.label !== "string") return "";
-  const activity = ACTIVITIES[claim.activity] ?? String(claim.activity ?? "work");
-  const left = untilText(claim.expiresAt, now);
-  const scope = held.scope ? ` on ${held.scope.title}` : "";
-  const title = left
-    ? `Claimed by ${claim.label} for ${activity}${scope} since ${formatTime(claim.claimedAt)}; expires ${formatTime(claim.expiresAt)} unless renewed.`
-    : `The claim by ${claim.label} for ${activity}${scope} expired ${formatTime(claim.expiresAt)}.`;
-  const meta = `${activity}${held.scope ? ` via ${held.scope.title}` : ""} · ${left ? `${left} left` : "expired"}`;
-  return `<span class="claim-chip activity-${escapeHtml(activity)}${left ? "" : " is-expired"}" title="${escapeHtml(title)}"><span class="claim-mark" aria-hidden="true"></span><span class="claim-text">${escapeHtml(claim.label)}</span><span class="claim-meta">${escapeHtml(meta)}</span></span>`;
+  const scope = held.scope ? `<span class="claim-scope">via ${escapeHtml(held.scope.title)}</span>` : "";
+  return `<span class="claim-held"><prism-claim variant="${escapeHtml(variant)}"${claimAttributes(claim)}></prism-claim>${scope}</span>`;
 }

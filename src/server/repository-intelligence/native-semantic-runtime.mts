@@ -3,7 +3,7 @@ import { pluginPath, pluginURL } from "../plugin-root.mjs";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import readline from "node:readline";
+import { jsonLine, readJsonLines } from "../json-lines.mjs";
 import { constants } from "node:fs";
 import { mkdir, lstat, realpath, readFile, readdir, open, rename, rm, chmod, utimes } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -22,7 +22,7 @@ interface Coverage extends Counts { structurallyCoveredFiles: number; complete: 
 // `superseded` is set when a newer read replaced the job while it ran, and `assets` keeps the checked assets for the job's next lock attempt.
 interface Job { id: string; directory: string; component?: IndexComponent; snapshot: string; status: "waiting" | "preparing" | "ready" | "degraded"; diagnostics: Diagnostic[]; failure: ComponentFailure | null;
   promise: Promise<void>; finish: () => void; run: () => Promise<void>; prepared?: PreparedIndex; revision?: string; builtAt?: string; progress?: Progress; coverage?: Coverage; recorder?: ProgressRecorder; freshness?: GitFingerprint | null;
-  live: boolean; read: number; retry?: NodeJS.Timeout; superseded?: boolean; assets?: Assets }
+  live: boolean; read: number; retry?: NodeJS.Timeout; superseded?: boolean; assets?: Assets; reload?: boolean; requeue?: boolean }
 interface Assets { runtime: string; modelDirectory: string; modelIdentity: string; assetIdentity: string }
 interface Location { root: string; directory: string }
 interface Entry { source: NativeSource; component?: IndexComponent }
@@ -40,6 +40,9 @@ const indexMetadata = ({ chunks: _chunks, ...metadata }: UnitIndex) => metadata;
 const busy = (job: Job | undefined) => job?.status === "waiting" || job?.status === "preparing";
 // A component whose lock another session holds is retried after this delay instead of holding the queue while that session builds it.
 const LOCK_RETRY_MS = 2000;
+// Loading an index that is already on disk reads files and builds nothing, so a few loads run beside the one build instead of queueing behind it.
+const RELOAD_CONCURRENCY = 4;
+const reloadMiss = () => Object.assign(semanticError("preparation_failed", "The stored index no longer matches its content."), { reloadMiss: true });
 // A writer renews its storage lock every five seconds, so a lock left unrenewed for longer than the lock stale period has no live writer,
 // even when the process it names is running, as a reused process id after a restart can be.
 const UNRENEWED_LOCK_MS = 30000;
@@ -197,7 +200,7 @@ class Helper {
     const child = spawn(path.join(this.runtime, process.platform === "win32" ? "node.exe" : "node"), args, { env: environment, cwd: this.runtime, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     this.child = child;
     child.stderr.on("data", () => {});
-    const lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
+    const lines = readJsonLines(child.stdout);
     lines.on("line", line => {
       let message: { id: number; progress?: Progress; error?: { code: string; message: string }; result?: unknown };
       try { message = JSON.parse(line); } catch { return this.stop(semanticError("preparation_failed", "The native helper returned invalid data.")); }
@@ -217,7 +220,7 @@ class Helper {
       const id = ++this.counter;
       const timeout = setTimeout(() => this.stop(semanticError("resource_limit", "Native preparation exceeded its 30 minute operation limit.")), this.options.operationMs ?? 30 * 60 * 1000);
       timeout.unref(); this.requests.set(id, { resolve: value => resolve(value as WorkerMethods[K]["output"]), reject, timeout, progress });
-      this.child!.stdin.write(`${JSON.stringify({ id, method, args })}\n`, error => { if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed.")); });
+      this.child!.stdin.write(jsonLine({ id, method, args }), error => { if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed.")); });
     });
   }
   stop(error = semanticError("preparation_failed", "The native helper stopped.")) {
@@ -248,6 +251,11 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   // Counts snapshot reads, so a newer read of a location's live content can replace a job for content read before it.
   reads = 0;
   verifiedRuntime?: string;
+  // The model files as last checked, by size and modification time, so each component's preparation does not hash the model again.
+  verifiedModel?: { directory: string; stamp: string };
+  // Jobs that load a stored index, and those of them that are loading now.
+  reloads: Job[] = [];
+  reloading = new Set<Job>();
   constructor(private options: Options = {}) {
     const hostData = process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA;
     this.directory = path.resolve(options.directory || (hostData ? path.join(hostData, "native-intelligence") : path.join(os.homedir(), ".cache", "prism", "native-intelligence")));
@@ -349,7 +357,8 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       } finally { await rm(staging, { recursive: true, force: true }); await rm(archive, { force: true }); }
     }, semanticError, { renew: true, timeoutMs: 120000 })) ;
     await privateDirectory(modelDirectory);
-    await withArtifactLock(modelDirectory, () => withFileLock(modelDirectory, async () => {
+    const stamp = async () => (await Promise.all(manifest.model.files.map(file => lstat(path.join(modelDirectory, file.path)).then(info => `${info.size}:${info.mtimeMs}`, () => "missing")))).join("\0");
+    if (this.verifiedModel?.directory !== modelDirectory || this.verifiedModel.stamp !== await stamp()) await withArtifactLock(modelDirectory, () => withFileLock(modelDirectory, async () => {
       for (const [index, file] of manifest.model.files.entries()) {
         if (file.path.includes("..") || path.isAbsolute(file.path)) throw semanticError("corrupt_asset", "The model asset path is invalid.");
         const target = path.join(modelDirectory, file.path); await privateDirectory(path.dirname(target));
@@ -358,6 +367,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
           `https://huggingface.co/${manifest.model.id}/resolve/${manifest.model.revision}/${file.path}`];
         await downloadFirst(file, urls, target, allowFile, (current, total) => progress({ ...step, current, total }));
       }
+      this.verifiedModel = { directory: modelDirectory, stamp: await stamp() };
     }, semanticError, { renew: true, timeoutMs: 120000 }));
     const used = new Date();
     for (const directory of [runtime, modelDirectory]) await utimes(directory, used, used).catch(() => {});
@@ -393,9 +403,13 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   // a native limit, which this process does not prepare again for the same content unless `retryLimited` asks for it.
   async enqueue(entries: Entry[], expectedSnapshot?: string, retryLimited = false): Promise<Job[]> {
     const manifest = await this.manifest(), jobs: Job[] = [];
+    // Every component of a call lives in one project, so the call reads its Git fingerprint once.
+    const fingerprints = new Map<string, Promise<GitFingerprint | null>>();
     for (const { source, component } of entries) {
       // The Git fingerprint is read before the snapshot, so a concurrent edit can only make the index look stale, never fresh.
-      const projectRoot = (source as { projectRoot?: unknown }).projectRoot, fingerprint = typeof projectRoot === "string" ? await gitFingerprint(projectRoot) : null;
+      const projectRoot = (source as { projectRoot?: unknown }).projectRoot;
+      if (typeof projectRoot === "string" && !fingerprints.has(projectRoot)) fingerprints.set(projectRoot, gitFingerprint(projectRoot));
+      const fingerprint = typeof projectRoot === "string" ? await fingerprints.get(projectRoot)! : null;
       const read = ++this.reads, snapshot = await source.snapshot(), location = await this.location(snapshot.root, component);
       // A retained baseline is not the working tree, so its index records no freshness.
       const live = (snapshot as { enumerator?: string }).enumerator !== "retained";
@@ -404,7 +418,9 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       if (retryLimited && this.limited.get(generationKey)?.status === "degraded") this.limited.delete(generationKey);
       let job = this.limited.get(generationKey) ?? this.generations.get(generationKey);
       if (!job || (job.status === "degraded" && !this.limited.has(generationKey))) {
-        job = this.job(source, snapshot, location, generationKey, component ? sha(`${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : undefined, component, live, read);
+        job = this.job(source, snapshot, location, generationKey, component ? this.componentPreparationId(location.directory, snapshot.sourceFingerprint, manifest.identity) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : undefined, component, live, read);
+        // A component whose index for this content is already stored only loads it, which needs no place in the build queue.
+        if (component) job.reload = (await readdir(location.directory).catch(() => [] as string[])).some(name => name.startsWith(`generation-${snapshot.sourceFingerprint}-`));
       } else if (live && fingerprint && job.status === "ready" && !sameFingerprint(job.freshness ?? null, fingerprint)) {
         // A commit or checkout that leaves indexed content unchanged reuses the index, so only its freshness record moves forward.
         job.freshness = fingerprint;
@@ -415,20 +431,49 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       this.jobs.set(location.directory, job);
       jobs.push(job);
     }
-    // The jobs this call needs move ahead of every waiting job that it does not need, in the order of the call; the running job is never interrupted.
-    const needed = [...new Set(jobs.filter(job => job.status === "waiting"))];
+    // A stored index loads at once. The builds this call needs move ahead of every waiting build that it does not need, in the order of the call,
+    // except that the root component builds after the declared ones: it holds everything outside them, often a large documentation tree, and
+    // building it first would hold back every package queued with it. The running build is never interrupted.
+    for (const job of new Set(jobs)) if (job.reload && job.status === "waiting" && !job.retry) this.reload(job);
+    const last = (job: Job) => job.component?.folder === "" ? 1 : 0;
+    const needed = [...new Set(jobs.filter(job => job.status === "waiting" && !job.reload))].sort((left, right) => last(left) - last(right));
     this.queue = [...needed, ...this.queue.filter(job => !needed.includes(job))];
     this.pump();
     return jobs;
+  }
+  // The preparation id of a component's content, which its progress records carry.
+  componentPreparationId(directory: string, snapshot: string, assetIdentity: string) { return sha(`${directory}\0${snapshot}\0${assetIdentity}`); }
+  reload(job: Job) {
+    if (!this.reloads.includes(job)) this.reloads.push(job);
+    this.pumpReloads();
+  }
+  pumpReloads() {
+    while (this.reloading.size < RELOAD_CONCURRENCY && this.reloads.length) {
+      const job = this.reloads.shift()!;
+      if (!this.idle) this.sequence = new Promise<void>(resolve => { this.idle = resolve; });
+      this.reloading.add(job); job.status = "preparing"; job.progress = { phase: "loading" };
+      // A load that finds no matching index goes back to the build queue as waiting, and finishes when that build does.
+      void job.run().catch(() => {}).finally(() => {
+        this.reloading.delete(job);
+        if (job.requeue) { job.requeue = false; this.queue.push(job); this.pump(); } else if (!job.retry) job.finish();
+        this.pumpReloads(); this.settle();
+      });
+    }
+  }
+  // Resolves the sequence once no build or load runs or waits.
+  settle() {
+    if (this.running || this.queue.length || this.reloading.size || this.reloads.length) return;
+    this.idle?.(); this.idle = undefined;
   }
   // A live job that has not started is dropped when a newer read of the same location's live content needs another job, because its source
   // has changed and its build could only fail; it ends as failed with stale_snapshot, without running and without a progress record.
   // The running job is marked instead, and is dropped the same way if it ends waiting for another session's lock, so it is not tried again.
   supersede(previous: Job | undefined, next: Job) {
     if (!previous || previous === next || !previous.live || previous.read >= next.read || !busy(previous)) return;
-    if (previous === this.running) { previous.superseded = true; return; }
+    if (previous === this.running || this.reloading.has(previous)) { previous.superseded = true; return; }
     clearTimeout(previous.retry); previous.retry = undefined;
     this.queue = this.queue.filter(job => job !== previous);
+    this.reloads = this.reloads.filter(job => job !== previous);
     this.stale(previous);
     previous.finish();
   }
@@ -449,6 +494,11 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         if (job.freshness !== undefined) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started; await recorder.succeed();
       } catch (error) {
+        if (error.reloadMiss) {
+          job.reload = false; job.requeue = true; job.status = "waiting"; job.progress = undefined;
+          await started; await recorder.succeed();
+          return;
+        }
         let recovery = "Retry preparation after correcting the reported runtime, network, or source problem.";
         if (component && error.held) {
           // A job that a newer read replaced while it ran is dropped, as a waiting one is, and leaves no progress record.
@@ -482,7 +532,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   pump() {
     if (this.running) return;
     const job = this.queue.shift();
-    if (!job) { this.idle?.(); this.idle = undefined; return; }
+    if (!job) { this.settle(); return; }
     if (!this.idle) this.sequence = new Promise<void>(resolve => { this.idle = resolve; });
     this.running = job; job.status = "preparing";
     void job.run().catch(() => {}).finally(() => { this.running = null; if (!job.retry) job.finish(); this.pump(); });
@@ -519,6 +569,8 @@ export class NativeSemanticRuntime implements ComponentRuntime {
             return { ...assets, index: indexMetadata(previous), indexPath, revision: pointer.revision };
           }
         } catch (error) { if (error.code !== "ENOENT") throw error; }
+        // A load never builds beside the running build; it hands the job back to the build queue.
+        if (job.reload && this.running !== job) throw reloadMiss();
         const mirror = await privateDirectory(path.join(directory, `snapshot-${randomUUID()}`));
         try {
           this.report(job, { phase: "snapshot-copy", current: 0, total: snapshot.files.length, unit: "files" });
