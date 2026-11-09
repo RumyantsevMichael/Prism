@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { browserRequest, checkout, cloneOf, commitFiles, eventually, git, exists, isolateGit, notes, ok, refused, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing tracked artifacts move into the store once, only in a tool call of the checkout whose result reports the move, leave the checkout only right before a result that reports them is written, and are reported as moved earlier by each later session while their deletion is uncommitted, against the store as pulled when it syncs, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, files that are untracked, ignored, too large, not text, or with malformed or colliding names stay in the checkout, an index entry that Git keeps out of the work tree with its skip-worktree bit is passed over and never reported, a configured folder that would take the source tree is refused, and the report stays bounded and one line per entry.
+// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing tracked artifacts move into the store once, only in a tool call of the checkout whose result reports the move, leave the checkout only right before a result that reports them is written, and are reported as moved earlier by each later session while their deletion is uncommitted, against the store as pulled when it syncs, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, files that are untracked, ignored, too large, not text, or with malformed or colliding names stay in the checkout, only an ordinary merged index entry moves, so an entry that Git keeps out of the work tree with its skip-worktree bit is passed over and never reported, an assume-unchanged entry or an unmerged path stays with its reason and remedy, and the move waits while a merge, rebase, am, cherry-pick, or revert is in progress, a configured folder that would take the source tree is refused, and the report stays bounded and one line per entry.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -707,6 +707,101 @@ test("clause 26: a skip-worktree entry, such as a file that a sparse checkout le
   const index = (await browserRequest(review, "/api/index")).body;
   assert.equal(index.recordStore.awaitingMove, undefined, "no browser notice counts the skip-worktree file as waiting");
   assert.equal(index.recordStore.keptInCheckout, undefined, "no browser notice counts the skip-worktree file as kept");
+});
+
+test("clause 26: the move takes only an ordinary merged index entry, so an assume-unchanged entry or an unmerged path stays with its reason and remedy and is never reported as moved or moved earlier, and the whole move waits while a merge is in progress", async (context) => {
+  const place = await workspace(context);
+  const ledgersOf = async (repository) => JSON.stringify((await ledgerFiles(place.store)).filter((ledger) => ledger.repository === repository));
+  const moved = (repository, file) => `${file} -> artifacts/repositories/${repository}/${file.replace(/^docs\//, "")}`;
+  const lineOf = (report, file) => report.split("\n").find((line) => line.includes(file) && !line.includes(" -> ")) ?? "";
+
+  // Git ignores work-tree changes at an assume-unchanged entry, so neither its edit nor a removal there could be staged the ordinary way.
+  const api = await checkout(place, "api", { files: { "docs/plans/a/slice.md": "# A\n", "docs/plans/b/slice.md": "# B\n", "docs/plans/c/slice.md": "# C\n", "src/x.js": "x\n" } });
+  git(api, "update-index", "--assume-unchanged", "docs/plans/a/slice.md", "docs/plans/b/slice.md");
+  await writeFile(path.join(api, "docs/plans/a/slice.md"), "# A, edited here\n");
+  const review = await reviewBrowser(context, api);
+  let index = (await browserRequest(review, "/api/index")).body.recordStore;
+  assert.equal(index.keptInCheckout?.files, 2, "the browser counts the assume-unchanged files as kept");
+  assert.equal(index.awaitingMove?.files, 1, "the browser counts only the ordinary file as waiting for a move");
+  const first = notes(await (await server(context, place, api)).call("get_artifact", {}));
+  assert.ok(first.includes(moved("api", "docs/plans/c/slice.md")), "an ordinary file beside the assume-unchanged entries moves");
+  for (const file of ["docs/plans/a/slice.md", "docs/plans/b/slice.md"]) {
+    assert.ok(!first.includes(`${file} -> `), `${file} is not reported as moved`);
+    assert.match(lineOf(first, file), /assume_unchanged/, `${file} is reported with the reason assume_unchanged`);
+  }
+  assert.match(first, /git update-index --no-assume-unchanged/, "the report gives the remedy that clears the bit");
+  assert.equal(await text(path.join(api, "docs/plans/a/slice.md")), "# A, edited here\n", "the edited assume-unchanged file stays in the checkout with its bytes");
+  assert.equal(await text(path.join(api, "docs/plans/b/slice.md")), "# B\n", "the other assume-unchanged file stays in the checkout");
+  assert.equal(await exists(scoped(place.store, "plans/a/slice.md")), false, "the store does not take an assume-unchanged file");
+  assert.doesNotMatch(await ledgersOf("api"), /plans\/[ab]\//, "no ledger names an assume-unchanged file");
+  git(api, "add", "-A");
+  assert.equal(git(api, "diff", "--cached", "--name-status"), "D\tdocs/plans/c/slice.md", "ordinary staging takes exactly the reported removal");
+  git(api, "reset", "-q");
+
+  // A removed file that a ledger lists as moved and whose bit is set afterwards is no longer reported as moved earlier, since Git would not stage its removal.
+  git(api, "update-index", "--assume-unchanged", "docs/plans/c/slice.md");
+  const second = notes(await (await server(context, place, api)).call("get_artifact", {}));
+  assert.ok(!second.includes(" -> "), "no session reports a path whose removal Git's ordinary staging cannot take as moved or moved earlier");
+  for (const file of ["docs/plans/a/slice.md", "docs/plans/b/slice.md", "docs/plans/c/slice.md"]) assert.match(lineOf(second, file), /assume_unchanged/, `${file} is reported again with its reason`);
+  index = (await browserRequest(review, "/api/index")).body.recordStore;
+  assert.equal(index.keptInCheckout?.files, 2, "the browser counts the assume-unchanged files that the work tree holds as kept");
+  assert.equal(index.awaitingMove, undefined, "no file waits for a move");
+
+  // Once the bits are cleared, a later session moves the files and reports the earlier removal, all of which ordinary staging takes.
+  git(api, "update-index", "--no-assume-unchanged", "docs/plans/a/slice.md", "docs/plans/b/slice.md", "docs/plans/c/slice.md");
+  const third = notes(await (await server(context, place, api)).call("get_artifact", {}));
+  for (const file of ["docs/plans/a/slice.md", "docs/plans/b/slice.md", "docs/plans/c/slice.md"]) assert.ok(third.includes(moved("api", file)), `${file} is reported as moved once Git sees its changes`);
+  assert.equal(await text(scoped(place.store, "plans/a/slice.md")), "# A, edited here\n", "the store takes the bytes the work tree held");
+  git(api, "add", "-A");
+  assert.deepEqual(git(api, "diff", "--cached", "--name-status").split("\n").sort(), ["D\tdocs/plans/a/slice.md", "D\tdocs/plans/b/slice.md", "D\tdocs/plans/c/slice.md"], "ordinary staging takes every reported removal");
+
+  // A stash pop that conflicts leaves an unmerged path with no operation in progress: it stays with its conflict markers until a person resolves it.
+  const web = await checkout(place, "web", { files: { "docs/plans/a/slice.md": "# A\n", "docs/plans/b/slice.md": "# B\n" } });
+  await writeFile(path.join(web, "docs/plans/a/slice.md"), "# A, stashed\n");
+  git(web, "stash", "-q");
+  await commitFiles(web, { "docs/plans/a/slice.md": "# A, committed\n" }, "change the plan");
+  assert.throws(() => git(web, "stash", "pop"), "the stash pop stops on its conflict");
+  const conflicted = await text(path.join(web, "docs/plans/a/slice.md"));
+  assert.match(conflicted, /^<<<<<<< /m, "the work tree holds the conflict markers");
+  const unmerged = notes(await (await server(context, place, web)).call("get_artifact", {}));
+  assert.ok(unmerged.includes(moved("web", "docs/plans/b/slice.md")), "an ordinary file beside the unmerged path moves");
+  assert.ok(!unmerged.includes("docs/plans/a/slice.md -> "), "the unmerged path is not reported as moved");
+  assert.match(lineOf(unmerged, "docs/plans/a/slice.md"), /unmerged/, "the unmerged path is reported with the reason unmerged");
+  assert.equal(unmerged.split("\n").filter((line) => line.includes("docs/plans/a/slice.md")).length, 1, "the unmerged path is named once, not once per stage");
+  assert.match(unmerged, /git add/, "the report gives the remedy that resolves the conflict");
+  assert.equal(await text(path.join(web, "docs/plans/a/slice.md")), conflicted, "the unmerged file stays in the checkout");
+  assert.equal(await exists(path.join(place.store, "artifacts/repositories/web/plans/a/slice.md")), false, "the store does not take the conflict markers");
+  assert.doesNotMatch(await ledgersOf("web"), /plans\/a\//, "no ledger names the unmerged path");
+  await writeFile(path.join(web, "docs/plans/a/slice.md"), "# A, resolved\n");
+  git(web, "add", "docs/plans/a/slice.md");
+  assert.ok(notes(await (await server(context, place, web)).call("get_artifact", {})).includes(moved("web", "docs/plans/a/slice.md")), "a later session moves the resolved file");
+  assert.equal(await text(path.join(place.store, "artifacts/repositories/web/plans/a/slice.md")), "# A, resolved\n");
+
+  // While a merge is in progress nothing moves, and each later tool call of the process looks again until the merge ends.
+  const ops = await checkout(place, "ops", { files: { "docs/plans/a/slice.md": "# A\n", "docs/plans/d/slice.md": "# D\n" } });
+  git(ops, "checkout", "-qb", "feature");
+  await commitFiles(ops, { "docs/plans/a/slice.md": "# A, feature\n", "docs/plans/d/slice.md": "# D, feature\n" }, "feature");
+  git(ops, "checkout", "-q", "main");
+  await commitFiles(ops, { "docs/plans/a/slice.md": "# A, main\n" }, "main");
+  assert.throws(() => git(ops, "merge", "feature"), "the merge stops on its conflict");
+  const status = git(ops, "status", "--porcelain");
+  const prism = await server(context, place, ops);
+  for (let call = 1; call <= 2; call++) {
+    const waiting = notes(await prism.call("get_artifact", {}));
+    assert.match(waiting, /\bmerge\b/, `call ${call} names the merge`);
+    assert.match(waiting, /in progress/, `call ${call} says the merge is in progress`);
+    assert.ok(!waiting.includes(" -> "), `call ${call} reports no move`);
+  }
+  assert.equal(git(ops, "status", "--porcelain"), status, "the checkout's work tree and index are unchanged");
+  assert.equal(await text(path.join(ops, "docs/plans/d/slice.md")), "# D, feature\n", "the cleanly merged file stays with the bytes no commit holds yet");
+  assert.equal(await exists(path.join(place.store, "artifacts/repositories/ops/plans/d/slice.md")), false, "nothing is written into the store");
+  assert.equal(await ledgersOf("ops"), "[]", "no ledger is written");
+  await writeFile(path.join(ops, "docs/plans/a/slice.md"), "# A, merged\n");
+  git(ops, "add", "-A");
+  git(ops, "commit", "-q", "--no-edit");
+  const after = notes(await prism.call("get_artifact", {}));
+  for (const file of ["docs/plans/a/slice.md", "docs/plans/d/slice.md"]) assert.ok(after.includes(moved("ops", file)), `${file} moves once the merge is committed`);
+  assert.equal(await text(path.join(place.store, "artifacts/repositories/ops/plans/a/slice.md")), "# A, merged\n");
 });
 
 test("clause 26: a moved file that a cancelled first tool call updated and removed is reported as moved by the session's next result, never as differing from a checkout copy that is gone", async (context) => {
