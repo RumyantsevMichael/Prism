@@ -1,6 +1,7 @@
-import { escapeHtml } from "./util.js";
+import { badge, escapeHtml } from "./util.js";
 
-// The page draws every action from its listing: the registry names the fields, and this view only places the existing controls.
+// The page draws every action from its listing: the registry names the fields, and this view places them as kit controls:
+// a prism-field per text field, a group of pressed prism-buttons per choice, and prism-buttons to apply and reset.
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 export const STALE_MESSAGE = "Someone changed this since you opened it; it now shows the current value.";
 
@@ -81,7 +82,7 @@ function guidanceHtml(action, choice) {
     ? `<ul class="gate-consequences">${consequences.map((option) => `<li><span class="gate-option-label">${escapeHtml(option.label)}</span><span class="gate-consequence">${escapeHtml(option.consequence)}</span></li>`).join("")}</ul>`
     : "";
   const pick = recommended?.value !== null && recommended?.value !== undefined ? options.find((option) => option.value === recommended.value) : null;
-  const reason = recommended?.reason ? `<p class="gate-recommendation"><span class="gate-tag">Recommended</span> ${pick ? `<span class="gate-option-label">${escapeHtml(pick.label)}</span>: ` : ""}${escapeHtml(recommended.reason)}</p>` : "";
+  const reason = recommended?.reason ? `<p class="gate-recommendation">${badge("Recommended", "accent")} ${pick ? `<span class="gate-option-label">${escapeHtml(pick.label)}</span>: ` : ""}${escapeHtml(recommended.reason)}</p>` : "";
   return list || reason ? `<div class="gate-guidance">${list}${reason}</div>` : "";
 }
 
@@ -102,19 +103,16 @@ function shownFields(action, input) {
 // A one-choice setting applies when an option is picked; an action with text or several fields applies with its own button.
 const appliesOnPick = (action) => !action.context && action.fields.length === 1 && action.fields[0].kind !== "text";
 
-function fieldHtml(action, field, input, { id, disabled, key }) {
+function fieldHtml(action, field, input, { disabled, key }) {
   if (field.kind === "text") {
     const required = isRequired(field, input);
-    const value = escapeHtml(input[field.name] ?? "");
-    const attributes = `id="${id}-${escapeHtml(field.name)}" data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}`)}"${field.maxLength ? ` maxlength="${field.maxLength}"` : ""} aria-required="${required}"${disabled ? " disabled" : ""}`;
-    return `<label class="gate-note action-field"><span class="gate-note-label">${escapeHtml(field.label)} <span class="gate-note-need${required ? " is-required" : ""}">${required ? "required" : "optional"}</span></span>${field.multiline
-      ? `<textarea ${attributes} rows="2">${value}</textarea>`
-      : `<input type="text" ${attributes} value="${value}"${value ? ` title="${value}"` : ""} autocomplete="off" spellcheck="false">`}</label>`;
+    // The field's hint says whether it is required; maxlength reaches the native control after the field is drawn.
+    return `<prism-field class="action-field" type="${field.multiline ? "textarea" : "text"}" label="${escapeHtml(field.label)}" hint="${required ? "Required" : "Optional"}" value="${escapeHtml(input[field.name] ?? "")}" data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}`)}"${field.maxLength ? ` data-max-length="${field.maxLength}"` : ""}${required ? " required" : ""}${disabled ? " disabled" : ""}></prism-field>`;
   }
   const picked = normalized(input[field.name]);
   const chosen = field.options.find((option) => option.value === picked);
-  const group = `<div class="segmented action-options" role="group" aria-label="${escapeHtml(field.label)}">${field.options.map((option) =>
-    `<button type="button" data-option data-field="${escapeHtml(field.name)}" data-value="${escapeHtml(option.value)}" data-focus-key="${escapeHtml(`${key}|${field.name}|${option.value}`)}" aria-pressed="${option.value === picked}"${option.consequence ? ` title="${escapeHtml(option.consequence)}"` : ""}${disabled ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}</button>`).join("")}</div>`;
+  const group = `<div class="action-options" role="group" aria-label="${escapeHtml(field.label)}">${field.options.map((option) =>
+    `<prism-button size="sm" pressed="${option.value === picked}" data-option data-field="${escapeHtml(field.name)}" data-value="${escapeHtml(option.value)}" data-focus-key="${escapeHtml(`${key}|${field.name}|${option.value}`)}"${option.consequence ? ` tip="${escapeHtml(option.consequence)}"` : ""}${disabled ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}</prism-button>`).join("")}</div>`;
   const consequence = !action.context && chosen?.consequence ? `<p class="gate-consequence action-consequence">${escapeHtml(chosen.consequence)}</p>` : "";
   return `<div class="action-choice">${group}${consequence}</div>`;
 }
@@ -130,19 +128,30 @@ function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLa
   if (!action.available) {
     control = `<p class="action-reason">${escapeHtml(action.reason ?? "")}</p>`;
   } else if (!action.fields.length) {
-    control = `<div class="gate-actions"><button type="button" class="tool-button" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}" aria-describedby="${id}-label ${id}-effect"${disabled ? " disabled" : ""}>${escapeHtml(submitLabel?.(action) ?? action.label)}</button></div>`;
+    control = `<div class="action-submit"><prism-button size="sm" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${disabled ? " disabled" : ""}>${escapeHtml(submitLabel?.(action) ?? action.label)}</prism-button></div>`;
   } else {
-    const fields = shownFields(action, state.input).map((field) => fieldHtml(action, field, state.input, { id, disabled, key })).join("");
-    const submit = appliesOnPick(action) ? "" : `<div class="gate-actions"><button type="button" class="tool-button primary" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}" aria-describedby="${id}-hint"${disabled || !state.ready ? " disabled" : ""}>${escapeHtml(submitLabel?.(action) ?? "Apply")}</button>${draft ? `<button type="button" class="tool-button" data-reset data-focus-key="${escapeHtml(`${key}|reset`)}"${sending ? " disabled" : ""}>Reset</button>` : ""}<p class="gate-hint" id="${id}-hint" aria-live="polite">${escapeHtml(state.hint)}</p></div>`;
+    const fields = shownFields(action, state.input).map((field) => fieldHtml(action, field, state.input, { disabled, key })).join("");
+    const submit = appliesOnPick(action) ? "" : `<div class="action-submit"><prism-button size="sm" variant="primary" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${disabled || !state.ready ? " disabled" : ""}>${escapeHtml(submitLabel?.(action) ?? "Apply")}</prism-button>${draft ? `<prism-button size="sm" data-reset data-focus-key="${escapeHtml(`${key}|reset`)}"${sending ? " disabled" : ""}>Reset</prism-button>` : ""}<p class="action-hint" id="${id}-hint" aria-live="polite">${escapeHtml(state.hint)}</p></div>`;
     control = `${contextHtml(action, renderMarkdown)}${guidanceHtml(action, choice)}<div class="action-fields">${fields}</div>${submit}`;
   }
   return `<div class="action-row${action.available ? "" : " is-unavailable"}" data-action-key="${escapeHtml(key)}" aria-busy="${Boolean(sending)}">
     <div class="action-meta"><span class="action-label" id="${id}-label">${head.label}</span>${head.detail ? `<span class="action-detail">${head.detail}</span>` : ""}<p class="action-effect" id="${id}-effect">${escapeHtml(action.effect)}</p></div>
-    <div class="action-control">${control}<p class="gate-error" role="alert"${error ? "" : " hidden"}>${escapeHtml(error ?? "")}</p></div>
+    <div class="action-control">${control}<p class="action-error" role="alert"${error ? "" : " hidden"}>${escapeHtml(error ?? "")}</p></div>
   </div>`;
 }
 
 const panels = new Set();
+
+// A kit control takes focus on its native control: the button inside a prism-button, or the input of a prism-field.
+const ENABLED = "prism-button:not([disabled]), prism-field:not([disabled])";
+const focusKeyOf = (element) => element?.closest?.("[data-focus-key]")?.dataset.focusKey ?? null;
+const nativeOf = (element) => element?.control ?? element;
+const isEnabled = (element) => Boolean(element) && !element.hasAttribute("disabled");
+
+// prism-field names no length limit, so each drawn text field passes its limit to its native control.
+function limitFields(root) {
+  for (const field of root.querySelectorAll("prism-field[data-max-length]")) if (field.control) field.control.maxLength = Number(field.dataset.maxLength);
+}
 
 /** The available actions of every action list shown in the open view, as jump palette entries labeled "<label>: <value>". */
 export function shownActionEntries() {
@@ -167,6 +176,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   const entries = new Map();
   let failure = null;
   let rendered = "";
+  let waitingFocus = null;
   let wanted = [...targets];
 
   function entryOf(target, action) {
@@ -181,7 +191,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   const writable = () => wanted.length > 0 && wanted.every((target) => listings.get(target)?.writable === true);
 
   function html() {
-    if (failure && !listings.size) return `<p class="gate-error" role="alert">${escapeHtml(failure)}</p>`;
+    if (failure && !listings.size) return `<p class="action-error" role="alert">${escapeHtml(failure)}</p>`;
     if (!wanted.every((target) => listings.has(target))) return '<p class="muted action-loading">Loading…</p>';
     const items = actionsOf();
     if (!items.length) return `<p class="empty-note">${escapeHtml(emptyText)}</p>`;
@@ -195,16 +205,22 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     const next = html();
     if (next === rendered && root.childElementCount) return;
     const focused = root.contains(document.activeElement) ? document.activeElement : null;
-    const focusKey = focused?.dataset?.focusKey ?? null;
+    // A control that was disabled while its change was sent keeps its claim on focus until it is enabled again, unless focus moved elsewhere.
+    const idle = !document.activeElement || document.activeElement === document.body;
+    const focusKey = focusKeyOf(focused) ?? (idle ? waitingFocus : null);
+    waitingFocus = null;
     const selection = focused && "selectionStart" in focused ? [focused.selectionStart, focused.selectionEnd] : null;
     rendered = next;
     root.innerHTML = next;
+    limitFields(root);
     if (focusKey) {
       const target = [...root.querySelectorAll("[data-focus-key]")].find((element) => element.dataset.focusKey === focusKey);
-      const fallback = target ?? root.querySelector(`[data-action-key="${CSS.escape(focusKey.split("|").slice(0, 2).join("|"))}"] button:not(:disabled), [data-action-key="${CSS.escape(focusKey.split("|").slice(0, 2).join("|"))}"] input:not(:disabled)`);
-      if (fallback && !fallback.disabled) {
-        fallback.focus({ preventScroll: true });
-        if (selection && target && "setSelectionRange" in target) try { target.setSelectionRange(...selection); } catch {}
+      const fallback = isEnabled(target) ? target : root.querySelector(`[data-action-key="${CSS.escape(focusKey.split("|").slice(0, 2).join("|"))}"] :is(${ENABLED})`);
+      if (!isEnabled(target) && target) waitingFocus = focusKey;
+      if (isEnabled(fallback)) {
+        const control = nativeOf(fallback);
+        control.focus({ preventScroll: true });
+        if (selection && fallback === target && "setSelectionRange" in control) try { control.setSelectionRange(...selection); } catch {}
       }
     }
     onRender?.();
@@ -242,12 +258,12 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
 
   // The modal dialog asks first; focus comes back to the control that asked, even when a refresh redrew it meanwhile.
   async function confirmed_(title, message, entry) {
-    const focusKey = document.activeElement?.dataset?.focusKey ?? null;
+    const focusKey = focusKeyOf(document.activeElement);
     const accepted = await api.confirm({ title, message });
     if (!root.contains(document.activeElement)) {
-      const back = [...root.querySelectorAll("[data-focus-key]")].find((element) => element.dataset.focusKey === focusKey)
-        ?? root.querySelector(`[data-action-key="${CSS.escape(entry.key)}"] button:not(:disabled)`);
-      back?.focus();
+      const back = [...root.querySelectorAll("[data-focus-key]")].find((element) => element.dataset.focusKey === focusKey && isEnabled(element))
+        ?? root.querySelector(`[data-action-key="${CSS.escape(entry.key)}"] :is(${ENABLED})`);
+      nativeOf(back)?.focus();
     }
     return accepted;
   }
@@ -303,7 +319,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   }
 
   root.addEventListener("click", (event) => {
-    const button = event.target.closest("button");
+    const button = event.target.closest("prism-button");
     if (!button || button.disabled || !root.contains(button)) return;
     const item = locate(button);
     if (!item) return;
@@ -321,7 +337,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       item.entry.error = null;
       setDraft(item.entry, null);
       render();
-      root.querySelector(`[data-action-key="${CSS.escape(item.entry.key)}"] button:not(:disabled)`)?.focus();
+      nativeOf(root.querySelector(`[data-action-key="${CSS.escape(item.entry.key)}"] :is(${ENABLED})`))?.focus();
     } else if (button.hasAttribute("data-apply")) {
       if (actionFormState(item.action, item.entry.draft ?? { values }).ready) void send(item, values);
     }
@@ -329,25 +345,21 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
 
   // Typing updates the draft and the controls it decides in place, so the field keeps its focus and an input method keeps its composition.
   root.addEventListener("input", (event) => {
-    const field = event.target.closest("[data-field]");
+    const field = event.target.closest("prism-field[data-field]");
     const item = field && locate(field);
-    if (!item || field.tagName === "BUTTON") return;
+    if (!item) return;
     setDraft(item.entry, { ...(item.entry.draft?.values ?? {}), [field.dataset.field]: field.value });
     item.entry.error = null;
     const state = actionFormState(item.action, item.entry.draft);
     const apply = item.row.querySelector("[data-apply]");
-    if (apply) apply.disabled = !state.ready || item.entry.sending;
-    const hint = item.row.querySelector(".gate-hint");
+    if (apply) apply.toggleAttribute("disabled", !state.ready || item.entry.sending);
+    const hint = item.row.querySelector(".action-hint");
     if (hint && hint.textContent !== state.hint) hint.textContent = state.hint;
-    item.row.querySelector(".gate-error").hidden = true;
-    for (const other of item.row.querySelectorAll("[data-field]:not(button)")) {
+    item.row.querySelector(".action-error").hidden = true;
+    for (const other of item.row.querySelectorAll("prism-field[data-field]")) {
       const required = isRequired(item.action.fields.find((candidate) => candidate.name === other.dataset.field), state.input);
-      other.setAttribute("aria-required", String(required));
-      const need = other.closest("label")?.querySelector(".gate-note-need");
-      if (need) {
-        need.textContent = required ? "required" : "optional";
-        need.classList.toggle("is-required", required);
-      }
+      other.toggleAttribute("required", required);
+      other.setAttribute("hint", required ? "Required" : "Optional");
     }
     if (!item.row.querySelector("[data-reset]")) {
       rendered = "";
@@ -357,7 +369,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
 
   // Enter in a one-line field applies a ready change, as a form would.
   root.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" || event.target.tagName !== "INPUT" || event.isComposing) return;
+    if (event.key !== "Enter" || event.target.tagName !== "INPUT" || !event.target.closest("prism-field") || event.isComposing) return;
     const item = locate(event.target);
     if (!item?.entry.draft) return;
     event.preventDefault();
@@ -379,9 +391,9 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       const row = root.querySelector(`[data-action-key="${CSS.escape(`${target}|${id}`)}"]`);
       if (!row) return false;
       row.scrollIntoView({ block: "nearest" });
-      const control = row.querySelector('[aria-pressed="true"]:not(:disabled)') ?? row.querySelector("button:not(:disabled), input:not(:disabled), textarea:not(:disabled)") ?? row;
+      const control = row.querySelector('prism-button[data-option][pressed="true"]:not([disabled])') ?? row.querySelector(ENABLED) ?? row;
       if (control === row) row.tabIndex = -1;
-      control.focus();
+      nativeOf(control).focus();
       return true;
     },
     setTargets(next) {
@@ -412,6 +424,6 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
 /** The Initiative settings card of an initiative or slice page, drawn into slot from the target's listing. */
 export function mountInitiativeSettings(slot, { target, eyebrow, ctx }) {
   if (!slot || !ctx.actionApi) return null;
-  slot.innerHTML = `<section class="view-card action-card"><header class="view-card-header"><p class="eyebrow">${escapeHtml(eyebrow)}</p><div class="view-card-title"><h2>Initiative settings</h2></div></header><div class="view-card-body" data-action-list></div></section>`;
+  slot.innerHTML = `<prism-panel class="view-section settings-panel" heading="Initiative settings" eyebrow="${escapeHtml(eyebrow)}"><div data-action-list></div></prism-panel>`;
   return createActionList({ root: slot.querySelector("[data-action-list]"), targets: [target], api: ctx.actionApi, drafts: (ctx.state.actionDrafts ??= {}), renderMarkdown: ctx.renderMarkdown ?? null, palette: true, emptyText: "This initiative has no settings to change." });
 }

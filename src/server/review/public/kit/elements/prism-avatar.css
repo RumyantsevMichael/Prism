@@ -1,0 +1,65 @@
+/* prism-avatar: a square agent or a round person, with a live dot at its corner. */
+
+:host {
+  --size: var(--prism-avatar-size);
+  --fill: var(--prism-color-agent);
+  --ink: var(--prism-color-on-agent);
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  width: var(--size);
+  height: var(--size);
+  vertical-align: middle;
+}
+
+:host([size="sm"]) { --size: var(--prism-avatar-size-sm); }
+:host([size="lg"]) { --size: var(--prism-avatar-size-lg); }
+:host([kind="person"]) { --fill: var(--prism-color-person-1); --ink: var(--prism-color-on-person-1); }
+:host([kind="person"][hue="2"]) { --fill: var(--prism-color-person-2); --ink: var(--prism-color-on-person-2); }
+:host([kind="person"][hue="3"]) { --fill: var(--prism-color-person-3); --ink: var(--prism-color-on-person-3); }
+:host([kind="person"][hue="4"]) { --fill: var(--prism-color-person-4); --ink: var(--prism-color-on-person-4); }
+
+.face {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border: var(--prism-stroke) solid var(--prism-color-avatar-edge);
+  border-radius: var(--prism-radius-sm);
+  background: var(--fill);
+  color: var(--ink);
+  font-size: var(--prism-font-size-3xs);
+  font-weight: var(--prism-font-weight-semibold);
+  line-height: 1;
+}
+
+:host([kind="person"]) .face {
+  border-radius: var(--prism-radius-round);
+}
+
+:host([expired]) .face {
+  border: var(--prism-stroke) dashed var(--prism-color-line-control);
+  background: transparent;
+  color: var(--prism-color-ink-muted);
+}
+
+.dot {
+  position: absolute;
+  right: calc(-1 * var(--prism-stroke));
+  bottom: calc(-1 * var(--prism-stroke));
+  width: var(--prism-dot-size);
+  height: var(--prism-dot-size);
+  border: var(--prism-stroke) solid var(--prism-color-surface);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-live);
+}
+
+:host([breathing]) .dot {
+  animation: breathe var(--prism-duration-pulse) var(--prism-easing-standard) infinite;
+}
+
+@keyframes breathe {
+  50% {
+    opacity: 0.45;
+  }
+}

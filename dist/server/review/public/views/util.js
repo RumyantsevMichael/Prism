@@ -35,41 +35,107 @@ export function formatTime(value) {
   return Number.isFinite(time) ? new Date(time).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : String(value ?? "");
 }
 
-// The source names the file a card reads, in a quiet label beside the title rather than in the eyebrow.
+// The source names the file a card reads, in a quiet label beside the title; the workflow views name records by kind instead.
 export function cardSource(source) {
   return source ? `<span class="card-source">${escapeHtml(source)}</span>` : "";
 }
 
-export function card(title, body, { eyebrow = "", source = "", className = "" } = {}) {
-  return `<section class="view-card ${className}">
-    <header class="view-card-header">${eyebrow ? `<p class="eyebrow">${escapeHtml(eyebrow)}</p>` : ""}<div class="view-card-title"><h2>${escapeHtml(title)}</h2>${cardSource(source)}</div></header>
-    <div class="view-card-body">${body}</div>
-  </section>`;
+// A card is a kit panel; it names what it shows by its heading and an eyebrow, never by the file it reads.
+export function card(title, body, { eyebrow = "", className = "", level = 2 } = {}) {
+  return `<prism-panel class="view-section ${escapeHtml(className)}" heading="${escapeHtml(title)}"${eyebrow ? ` eyebrow="${escapeHtml(eyebrow)}"` : ""}${level === 2 ? "" : ` level="${level}"`}>${body}</prism-panel>`;
+}
+
+// A summary block is a kit panel without a heading, for a page's figures and controls above its cards.
+export function summaryPanel(body, className = "") {
+  return `<prism-panel class="view-section summary-block ${escapeHtml(className)}">${body}</prism-panel>`;
+}
+
+/** A kit figure; `tip` gives a value shortened for display, such as a compact count, in full. */
+export function stat(label, value, { tone = "", hint = "", tip = "", attributes = "" } = {}) {
+  return `<prism-stat label="${escapeHtml(label)}" value="${escapeHtml(value)}"${hint ? ` hint="${escapeHtml(hint)}"` : ""}${tone ? ` tone="${escapeHtml(tone)}"` : ""}${tip ? ` tip="${escapeHtml(tip)}"` : ""}${attributes}></prism-stat>`;
+}
+
+/** A kit status badge in a tone: neutral, accent, danger, warning, success, or info. */
+export function badge(text, tone = "neutral") {
+  return `<prism-badge variant="status" tone="${escapeHtml(tone)}">${escapeHtml(text)}</prism-badge>`;
+}
+
+/** A static kit chip, with optional quieter meta text. */
+export function chip(html, { tone = "", meta = "", tip = "", attributes = "" } = {}) {
+  return `<prism-chip${tone ? ` tone="${escapeHtml(tone)}"` : ""}${tip ? ` tip="${escapeHtml(tip)}"` : ""}${attributes}>${html}${meta ? `<span slot="meta">${meta}</span>` : ""}</prism-chip>`;
+}
+
+/** A kit empty state with its heading and an optional line below it. */
+export function emptyState(heading, text = "") {
+  return `<prism-empty-state heading="${escapeHtml(heading)}">${text ? `<p>${escapeHtml(text)}</p>` : ""}</prism-empty-state>`;
 }
 
 export function evidenceChip(id, label) {
   if (!id) {
     return "";
   }
-  return `<button type="button" class="link-chip evidence-chip" data-evidence="${escapeHtml(id)}" data-label="${escapeHtml(label)}" title="${escapeHtml(id)}"><span>${escapeHtml(label)}</span><code>${escapeHtml(shortId(id))}</code></button>`;
+  return `<prism-chip interactive tone="accent" data-evidence="${escapeHtml(id)}" data-label="${escapeHtml(label)}" tip="${escapeHtml(id)}">${escapeHtml(label)}<code slot="meta">${escapeHtml(shortId(id))}</code></prism-chip>`;
 }
 
+// A link to a page or file opens it; without a label it names a repository file by its path, which is then the subject.
 export function artifactChip(path, ctx, label = path) {
   if (!path) {
     return "";
   }
+  const code = label === path && !/^(?:initiative|slice):/.test(path) ? " data-code-subject" : "";
   if (!ctx.hasArtifact(path)) {
-    return `<span class="link-chip disabled" title="Not a reviewable artifact"><code>${escapeHtml(label)}</code></span>`;
+    return `<prism-chip tip="Not a reviewable artifact"${code}>${escapeHtml(label)}</prism-chip>`;
   }
-  return `<button type="button" class="link-chip artifact-chip" data-artifact="${escapeHtml(path)}" title="Open ${escapeHtml(path)}"><code>${escapeHtml(label)}</code></button>`;
+  return `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(path)}"${code}>${escapeHtml(label)}</prism-chip>`;
 }
 
-// A requirement reference keeps its anchor, so the link opens and previews the requirement's own section.
+/**
+ * Names a path for the record views: one of Prism's records by its title and kind, and a repository file by its path, marked as where code is the subject.
+ * Returns { label, code }.
+ */
+export function pathName(path, ctx) {
+  const named = ctx?.describe?.(path);
+  if (!named || named.code) return { label: String(path ?? ""), code: true };
+  const title = ctx.recordTitle?.(path) ?? named.label;
+  return { label: title === named.kind ? named.kind : `${named.kind} · ${title}`, code: false };
+}
+
+/** A path as inline text: a record's title and kind, or the repository path in code marked data-code-subject. */
+export function pathText(path, ctx, selector = "") {
+  const { label, code } = pathName(path, ctx);
+  const detail = selector ? ` › ${escapeHtml(selector)}` : "";
+  return code ? `<code data-code-subject>${escapeHtml(path)}${detail}</code>` : `<span>${escapeHtml(label)}${detail}</span>`;
+}
+
+/** A link chip to a path, named as pathName names it; a path the review cannot open is static text. */
+export function recordChip(path, ctx, { selector = "", anchor = "" } = {}) {
+  if (!path) return "";
+  const { label, code } = pathName(path, ctx);
+  const text = `${escapeHtml(label)}${selector ? `<span slot="meta">${escapeHtml(selector)}</span>` : ""}`;
+  const subject = code ? " data-code-subject" : "";
+  if (!ctx?.hasArtifact?.(path)) return `<prism-chip${subject}>${text}</prism-chip>`;
+  return `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(path)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}${subject}>${text}</prism-chip>`;
+}
+
+function words(name) {
+  const text = name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim();
+  return text ? text[0].toUpperCase() + text.slice(1) : name;
+}
+
+/** The title of one of Prism's documents, such as a requirements file, from the page's index, or its file name in words. */
+export function documentTitle(path, ctx) {
+  return ctx.recordTitle?.(path) ?? words(String(path).split("/").pop() ?? "");
+}
+
+// A requirement reference keeps its anchor, so the link opens and previews the requirement's own section; it reads as the requirement and its file's title.
 export function requirementLinks(references, ctx) {
   return references.map((reference) => {
     const [file, anchor] = reference.split("#");
-    const label = `${file.split("/").pop()}${anchor ? `#${anchor}` : ""}`;
-    return ctx.hasArtifact(file) ? `<button type="button" class="link-chip artifact-chip" data-artifact="${escapeHtml(file)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}><code>${escapeHtml(label)}</code></button>` : `<code>${escapeHtml(reference)}</code>`;
+    const title = documentTitle(file, ctx);
+    const label = anchor ? `Requirement ${anchor} · ${title}` : `${title} · Requirements`;
+    return ctx.hasArtifact(file)
+      ? `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(file)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${escapeHtml(label)}</prism-chip>`
+      : `<prism-chip>${escapeHtml(label)}</prism-chip>`;
   }).join(" ");
 }
 

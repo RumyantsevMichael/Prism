@@ -1,0 +1,169 @@
+/* Action lists, such as Initiative settings and the index popover's rebuild controls: each action is a row of its name and effect beside its kit controls.
+   Every value comes from kit/tokens.css; the kit draws every control. */
+
+.action-list {
+  display: grid;
+  min-width: 0;
+}
+
+.action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--prism-space-3) var(--prism-space-7);
+  min-width: 0;
+  padding: var(--prism-space-5) 0;
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.action-row:first-child {
+  padding-top: var(--prism-space-1);
+  border-top: 0;
+}
+
+.action-row:last-child {
+  padding-bottom: var(--prism-space-1);
+}
+
+.action-meta {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.action-label {
+  max-width: 100%;
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.action-row.is-unavailable .action-label {
+  color: var(--prism-color-ink-muted);
+}
+
+.action-effect,
+.action-consequence,
+.action-reason,
+.action-hint {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.action-reason {
+  font-style: italic;
+}
+
+.action-control {
+  display: grid;
+  align-content: start;
+  gap: var(--prism-space-4);
+  min-width: 0;
+}
+
+.action-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--prism-list-width)), 1fr));
+  gap: var(--prism-space-4) var(--prism-space-5);
+  min-width: 0;
+}
+
+.action-choice {
+  display: grid;
+  grid-column: 1 / -1;
+  justify-items: start;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+/* A group whose options do not fit one line wraps onto the next. */
+.action-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.action-submit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-4);
+  min-width: 0;
+}
+
+.action-error {
+  margin: 0;
+  color: var(--prism-color-danger);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.action-error[hidden] {
+  display: none;
+}
+
+.action-notice,
+.action-loading {
+  margin: 0 0 var(--prism-space-4);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+/* In the index popover each component is one line: its identity and state, then its rebuild control. */
+.index-actions {
+  margin-top: var(--prism-space-4);
+  min-width: 0;
+}
+
+.action-list.is-compact .action-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  padding: var(--prism-space-3) 0;
+}
+
+.action-list.is-compact .action-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-4);
+}
+
+.action-list.is-compact .action-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.action-list.is-compact .action-detail {
+  flex: none;
+}
+
+.action-list.is-compact .action-effect {
+  display: none;
+}
+
+.action-list.is-compact .action-control {
+  justify-items: end;
+}
+
+.action-list.is-compact .action-error,
+.action-list.is-compact .action-reason {
+  text-align: end;
+}
+
+@media (max-width: 720px) {
+  .action-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The confirmation dialog says what the change lets agents do. */
+.action-dialog-message {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

@@ -1,14 +1,21 @@
-import { escapeHtml } from "./util.js";
+// The command palette: a glass dialog whose search field drives a listbox of results grouped by kind, Prism's records named by title and kind,
+// a slice's result carrying its claim, repository files in a Files group, and full-text matches in Prism's documents after them.
+// Above 720px a preview of the active result sits beside the results.
+import { claimElement } from "./claim-index.js";
 
-const KIND_ORDER = ["action", "place", "initiative", "slice", "requirement", "decision", "term", "file"];
+const KIND_ORDER = ["action", "place", "initiative", "slice", "requirement", "decision", "term", "record", "file"];
+const GROUPS = { action: "Settings on this page", place: "Places", initiative: "Initiatives", slice: "Slices", requirement: "Requirements", decision: "Decisions", term: "Glossary terms", record: "Records", file: "Files", text: "Text in documents" };
+const KINDS = { action: "Setting", place: "Place", initiative: "Initiative", slice: "Slice", requirement: "Requirement", decision: "Decision", term: "Term", file: "File" };
 const RESULT_LIMIT = 40;
+const TEXT_SEARCH_DELAY_MS = 200;
+const TEXT_SEARCH_MINIMUM = 3;
 
 function rank(entry, query, tokens) {
   const label = entry.label.toLowerCase();
-  const haystack = `${label} ${String(entry.detail ?? "").toLowerCase()} ${entry.ref.toLowerCase()}`;
+  const haystack = `${label} ${String(entry.detail ?? "").toLowerCase()} ${String(entry.kindLabel ?? "").toLowerCase()} ${entry.ref.toLowerCase()}`;
   if (!tokens.every((token) => haystack.includes(token))) return null;
   const position = label.startsWith(query) ? 0 : label.includes(query) ? 1 : 2;
-  return [position, KIND_ORDER.indexOf(entry.kind), label.length];
+  return [KIND_ORDER.indexOf(entry.kind), position, label.length];
 }
 
 function compare(left, right) {
@@ -18,116 +25,178 @@ function compare(left, right) {
   return 0;
 }
 
-const TEXT_SEARCH_DELAY_MS = 200;
-const TEXT_SEARCH_MINIMUM = 3;
+function node(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = text;
+  return element;
+}
 
-// A jump list over Prism entities and reviewable files by name, followed by full-text matches in Prism artifacts.
-export function createPalette({ dialog, input, results, entries, onOpen, search = null }) {
+/** The kind a result shows: a record's own kind, such as Design or Change map, or the kind of entity. */
+export function kindOf(entry) {
+  return entry.kindLabel ?? KINDS[entry.kind] ?? entry.kind;
+}
+
+/**
+ * `dialog` is a prism-dialog, `field` a prism-field of type search, `results` a prism-listbox for that field, and `preview` the pane beside them.
+ * `entries()` lists what the palette can jump to; `search(query)` finds text in documents; `describe(path)` names a document by title and kind;
+ * `claimFor(ref)` gives a slice's claim; `onOpen(ref, { find })` opens a result.
+ */
+export function createPalette({ dialog, field, results, preview, entries, onOpen, search = null, describe = (path) => ({ label: path, kind: "Document" }), claimFor = () => null }) {
   let matches = [];
   let textMatches = [];
   let textState = "idle";
-  let active = 0;
-  let returnFocus = null;
   let searchTimer = 0;
   let searchRequest = 0;
+  let rendered = "";
+
+  const query = () => (field.value ?? "").trim();
 
   function update() {
-    const query = input.value.trim().toLowerCase();
-    const tokens = query.split(/\s+/).filter(Boolean);
+    const text = query().toLowerCase();
+    const tokens = text.split(/\s+/).filter(Boolean);
     const all = entries();
-    matches = query
-      ? all.map((entry) => ({ entry, rank: rank(entry, query, tokens) })).filter((item) => item.rank).sort(compare).slice(0, RESULT_LIMIT).map((item) => item.entry)
+    matches = text
+      ? all.map((entry) => ({ entry, rank: rank(entry, text, tokens) })).filter((item) => item.rank).sort(compare).slice(0, RESULT_LIMIT).map((item) => item.entry)
       : all.filter((entry) => entry.kind === "action" || entry.kind === "place" || entry.kind === "initiative").slice(0, RESULT_LIMIT);
-    active = 0;
     textMatches = [];
     clearTimeout(searchTimer);
     const current = ++searchRequest;
-    textState = search && query.length >= TEXT_SEARCH_MINIMUM ? "searching" : "idle";
+    textState = search && text.length >= TEXT_SEARCH_MINIMUM ? "searching" : "idle";
     if (textState === "searching") {
       searchTimer = setTimeout(async () => {
         let found = [];
         try {
-          found = await search(input.value.trim());
+          found = await search(query());
         } catch {
           found = [];
         }
         if (current !== searchRequest) return;
-        textMatches = found.flatMap((result) => result.matches.slice(0, 1).map((match) => ({ ref: result.path, kind: "text", label: result.path.split("/").pop(), detail: `${result.path}:${match.line}  ${match.text}`, find: input.value.trim() })));
+        textMatches = found.flatMap((result) => result.matches.slice(0, 1).map((match) => {
+          const named = describe(result.path);
+          // As in the Records group, a record that belongs to a slice or initiative reads as its kind, and the preview names its owner.
+          const owned = !named.code && named.owner && named.label !== named.kind;
+          const label = owned ? named.kind : named.label;
+          return { ref: result.path, kind: "text", label, kindLabel: owned ? "Record" : named.kind, code: Boolean(named.code), detail: match.text, line: match.line, find: query(), preview: owned ? { kind: named.kind, title: named.owner } : null };
+        }));
         textState = "done";
-        render();
+        render({ keep: true });
       }, TEXT_SEARCH_DELAY_MS);
     }
-    render();
+    render({ keep: false });
   }
 
-  function all() {
-    return [...matches, ...textMatches];
-  }
+  const all = () => [...matches, ...textMatches];
 
   function option(entry, index) {
-    return `<li role="option" id="palette-option-${index}" class="palette-option${entry.kind === "text" ? " is-text" : ""}" data-index="${index}" aria-selected="${index === active}">
-          <span class="palette-kind kind-${escapeHtml(entry.kind)}">${escapeHtml(entry.kind)}</span>
-          <span class="palette-label">${escapeHtml(entry.label)}</span>
-          ${entry.detail ? `<span class="palette-detail">${escapeHtml(entry.detail)}</span>` : ""}
-        </li>`;
+    const code = entry.kind === "file" || entry.code;
+    const item = node("prism-list-item", code ? "palette-result is-code" : "palette-result");
+    item.setAttribute("value", String(index));
+    // A repository file found by its text keeps its path, as the Files group does.
+    if (entry.code && entry.kind !== "file") item.dataset.codeSubject = "";
+    item.append(entry.label);
+    const meta = node("span", "palette-meta");
+    meta.slot = "meta";
+    const claim = entry.kind === "slice" ? claimFor(entry.ref) : null;
+    if (claim) meta.append(claimElement(claim, "inline"), " ");
+    meta.append(node("span", "palette-kind", kindOf(entry)));
+    item.append(meta);
+    return item;
   }
 
-  function render() {
-    const textHeader = textState === "searching"
-      ? '<li class="palette-section" role="presentation">Searching text…</li>'
-      : textState === "done" ? `<li class="palette-section" role="presentation">${textMatches.length ? "Text matches" : "No text matches"}</li>` : "";
-    results.innerHTML = matches.length || textState !== "idle"
-      ? `${matches.map(option).join("")}${textHeader}${textMatches.map((entry, index) => option(entry, matches.length + index)).join("")}`
-      : '<li class="palette-empty">Nothing matches.</li>';
-    input.setAttribute("aria-activedescendant", all().length ? `palette-option-${active}` : "");
-    results.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  function group(kind, items, label = GROUPS[kind] ?? kind) {
+    const holder = node("div", "palette-group");
+    holder.setAttribute("role", "group");
+    holder.setAttribute("aria-label", label);
+    // Repository files are where code is the subject, so they keep their paths.
+    if (kind === "file") holder.dataset.codeSubject = "";
+    holder.append(node("div", "palette-group-label", label), ...items);
+    return holder;
   }
 
-  function choose(index, keep) {
+  function render({ keep }) {
+    const active = keep ? results.active?.getAttribute("value") ?? null : null;
+    const list = all();
+    const key = JSON.stringify([list.map((entry) => [entry.ref, entry.kind, entry.label, entry.line ?? null]), textState]);
+    if (key === rendered) return;
+    rendered = key;
+    const groups = [];
+    let index = 0;
+    for (const kind of KIND_ORDER) {
+      const items = matches.filter((entry) => entry.kind === kind);
+      if (!items.length) continue;
+      groups.push(group(kind, items.map((entry) => option(entry, matches.indexOf(entry)))));
+      index += items.length;
+    }
+    if (textState === "searching") groups.push(node("p", "palette-status", "Searching text…"));
+    else if (textState === "done" && textMatches.length) groups.push(group("text", textMatches.map((entry, offset) => option(entry, index + offset))));
+    else if (textState === "done" && !list.length) groups.push(node("p", "palette-status", "No text matches."));
+    if (!list.length && textState !== "searching" && textState !== "done") groups.push(node("p", "palette-status", "Nothing matches."));
+    results.replaceChildren(...groups);
+    results.activate(active);
+    showPreview();
+  }
+
+  // Until an arrow key picks a result, the first one stands in for it: the preview shows it and Enter opens it.
+  // The listbox keeps no active option then, so the first ArrowDown still lands on the first result.
+  const current = () => results.active ?? results.options[0] ?? null;
+
+  function showPreview() {
+    const entry = all()[Number(current()?.getAttribute("value"))];
+    if (!entry) {
+      preview.replaceChildren(node("p", "palette-preview-hint", "ArrowDown and ArrowUp move through the results, and Enter opens one."));
+      return;
+    }
+    const code = entry.kind === "file" || entry.code;
+    const title = node("h3", "palette-preview-title", entry.preview?.title ?? entry.label);
+    if (code) title.dataset.codeSubject = "";
+    const parts = [node("p", "palette-preview-kind", entry.preview?.kind ?? kindOf(entry)), title];
+    if (entry.detail && entry.detail !== entry.preview?.title) {
+      const detail = node("p", "palette-preview-detail", entry.kind === "text" ? `Line ${entry.line}: ${entry.detail}` : entry.detail);
+      // A file's path, and a line of a document's text, are quoted as they are.
+      if (code || entry.kind === "text") detail.dataset.codeSubject = "";
+      parts.push(detail);
+    }
+    const claim = entry.kind === "slice" ? claimFor(entry.ref) : null;
+    if (claim) parts.push(claimElement(claim, "inline"));
+    preview.replaceChildren(...parts);
+  }
+
+  function choose(index) {
     const entry = all()[index];
     if (!entry) return;
     hide();
     // An action entry of the shown page moves focus to that action's control instead of opening anything.
     if (entry.run) entry.run();
-    else onOpen(entry.ref, { keep, find: entry.find ?? null });
+    else onOpen(entry.ref, { find: entry.find ?? null });
   }
 
   function show() {
-    returnFocus = document.activeElement;
-    dialog.hidden = false;
-    input.value = "";
+    rendered = "";
+    field.value = "";
     update();
-    input.focus();
+    dialog.show();
+    field.control?.focus();
   }
 
   function hide() {
     clearTimeout(searchTimer);
     searchRequest += 1;
-    dialog.hidden = true;
-    returnFocus?.focus?.();
+    dialog.close();
   }
 
-  input.addEventListener("input", update);
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      const count = all().length;
-      if (count) active = (active + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
-      render();
-    } else if (event.key === "Enter") {
-      event.preventDefault();
-      choose(active, event.ctrlKey || event.metaKey);
-    } else if (event.key === "Escape") {
+  field.addEventListener("input", update);
+  // A search field clears its text on Escape before a dialog sees the key, so the palette closes on the first Escape itself.
+  field.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
       event.preventDefault();
       hide();
+    } else if (event.key === "Enter" && !event.isComposing && !event.altKey && !event.ctrlKey && !event.metaKey && !results.active && current()) {
+      event.preventDefault();
+      results.choose(current());
     }
   });
-  results.addEventListener("click", (event) => {
-    const option = event.target.closest("[data-index]");
-    if (option) choose(Number(option.dataset.index), event.ctrlKey || event.metaKey);
-  });
-  dialog.addEventListener("click", (event) => {
-    if (event.target === dialog) hide();
-  });
-  return { show, hide, isOpen: () => !dialog.hidden };
+  results.addEventListener("prism-select", (event) => choose(Number(event.detail?.value)));
+  new MutationObserver(showPreview).observe(results, { subtree: true, attributes: true, attributeFilter: ["active"] });
+  return { show, hide, isOpen: () => dialog.isOpen };
 }

@@ -3,147 +3,139 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#17152b">
+  <meta name="theme-color" content="">
   <title>Prism review</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./review.css">
+  <script src="./kit/boot.js"></script>
+  <link rel="stylesheet" href="./kit/tokens.css">
+  <link rel="stylesheet" href="./kit/kit.css">
+  <link rel="stylesheet" href="./styles/shell.css">
+  <link rel="stylesheet" href="./styles/actions.css">
+  <link rel="stylesheet" href="./styles/workflow-views.css">
+  <link rel="stylesheet" href="./styles/record-views.css">
   <script src="./vendor/viz-global.js"></script>
 </head>
 <body>
-  <header class="topbar">
-    <span class="brand" title="Prism review">
-      <img class="brand-mark" src="./prism-mark.svg" alt="" aria-hidden="true">
-      <span class="sr-only">Prism review</span>
-    </span>
-    <div class="project-switcher" id="project-switcher">
-      <button class="project-chip" id="project-button" type="button" aria-expanded="false" aria-controls="project-menu" title="Project root" disabled>
+  <div id="shell" class="shell">
+    <header id="topbar" class="topbar">
+      <prism-button id="nav-button" class="topbar-navigation" variant="ghost" label="Navigation" tip="Navigation"><prism-icon name="menu"></prism-icon></prism-button>
+      <a class="brand" href="./review?artifact=attention" aria-label="Prism review, Attention">
+        <img class="brand-mark" src="./prism-mark.svg" alt="" aria-hidden="true">
+        <span class="wordmark">Prism</span>
+      </a>
+      <prism-button id="project-button" class="topbar-project" variant="ghost" disabled>
         <span id="project" class="project-label">Loading project</span>
-        <span id="project-gates" class="project-gates" hidden></span>
-      </button>
-      <div id="project-menu" class="project-menu" hidden>
-        <p class="project-menu-title">Projects</p>
-        <ul id="project-list" class="project-list"></ul>
+        <prism-badge id="project-gates" variant="count" tone="danger" hidden></prism-badge>
+        <prism-icon name="chevron-down" size="xs"></prism-icon>
+      </prism-button>
+      <prism-menu id="project-menu" for="project-button"></prism-menu>
+      <prism-button id="jump" class="topbar-search" label="Search or jump to (Ctrl K)" aria-keyshortcuts="Control+K Meta+K">
+        <prism-icon name="search" size="sm"></prism-icon>
+        <span class="topbar-search-label">Search or jump to…</span>
+        <kbd>Ctrl K</kbd>
+      </prism-button>
+      <div class="topbar-end">
+        <prism-button id="presence-button" class="topbar-presence" variant="ghost">0 working</prism-button>
+        <prism-popover id="presence" for="presence-button" heading="Who's working"></prism-popover>
       </div>
-    </div>
-    <div id="tabs" class="artifact-tabs" role="tablist" aria-label="Open artifacts"></div>
-  </header>
-  <div id="app-gone" class="app-gone-banner" role="alert" hidden>
-    <span class="app-gone-mark" aria-hidden="true"></span>
-    <div class="app-gone-text">
-      <p class="app-gone-title">The review app stopped, so this page is no longer live.</p>
-      <p>To get a new link, ask the agent to open the review browser. This page reconnects on its own if the same app comes back.</p>
-    </div>
-  </div>
-  <div id="private-server" class="app-gone-banner is-private" role="status" hidden>
-    <span class="app-gone-mark" aria-hidden="true"></span>
-    <div class="app-gone-text">
-      <p class="app-gone-title">This page belongs to one agent session, not the shared review app.</p>
-      <p>The shared review app could not be reached, so another session may show this project at a different link, and this page stops when its session ends.</p>
-      <p class="private-server-reason" id="private-server-reason"></p>
-    </div>
-    <button type="button" class="banner-dismiss" id="private-server-dismiss" aria-label="Dismiss">×</button>
-  </div>
-  <div id="notice" class="notice-banner" role="status" aria-live="polite" hidden></div>
-  <div id="connection" class="connection-banner" role="alert" hidden>The review server is not responding. Retrying…</div>
-  <main class="app-shell" id="app-shell">
-    <aside class="sidebar" id="sidebar" aria-label="Workspace navigation">
-      <div class="sidebar-top">
-        <div class="sidebar-tools">
-          <button id="jump" class="jump-button" type="button" aria-haspopup="dialog" title="Jump to (Ctrl K)">
-            <span class="search-icon" aria-hidden="true"></span>
-            <span class="jump-label">Jump to…</span>
-            <kbd>Ctrl K</kbd>
-          </button>
-          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-controls="sidebar" aria-expanded="true" title="Collapse the sidebar ([)">
-            <span class="sr-only">Collapse the sidebar</span>
-          </button>
-        </div>
-        <ul id="nav-places" class="nav-tree" aria-label="Places"></ul>
-      </div>
-      <nav class="sidebar-scroll" aria-label="Prism workspace">
-        <ul id="artifacts" class="nav-tree"></ul>
-      </nav>
-      <div class="sidebar-library">
-        <ul id="nav-library" class="nav-tree" aria-label="Library"></ul>
-      </div>
-    </aside>
-    <section class="workspace" id="workspace">
-      <div id="artifact" class="artifact-view" aria-live="polite">
-        <div class="welcome-card">
-          <img class="welcome-mark" src="./prism-mark.svg" alt="" aria-hidden="true">
-          <p class="eyebrow">Human review</p>
-          <h1>Loading the workspace</h1>
-          <p>Attention, the roadmap, and the library open here.</p>
-        </div>
-      </div>
-    </section>
-    <aside id="side-panel" class="side-panel" aria-labelledby="side-panel-title" hidden>
-      <div id="side-panel-resizer" class="side-panel-resizer" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0"></div>
-      <header class="side-panel-header">
-        <div class="side-panel-heading">
-          <p class="eyebrow" id="side-panel-kind"></p>
-          <h2 id="side-panel-title"></h2>
-          <p class="side-panel-source" id="side-panel-source"></p>
-        </div>
-        <div class="side-panel-tools">
-          <button class="tool-button" id="side-panel-open" type="button" title="Open as a tab">Open as tab</button>
-          <button class="tool-button side-panel-close" id="side-panel-close" type="button" aria-label="Close the side panel" title="Close (Esc)">×</button>
-        </div>
-      </header>
-      <div class="side-panel-body" id="side-panel-body"></div>
-    </aside>
-  </main>
-  <footer class="statusbar" id="statusbar" aria-label="Status">
-    <button class="status-item" id="store-status" type="button" aria-haspopup="dialog" hidden>
-      <span class="store-icon" aria-hidden="true"></span>
-      <span id="store-status-label" class="status-label"></span>
-    </button>
-    <button class="status-item" id="store-sync" type="button" aria-haspopup="dialog" hidden>
-      <span class="indexing-dot" aria-hidden="true"></span>
-      <span id="store-sync-label" class="status-label"></span>
-    </button>
-    <span class="statusbar-spacer"></span>
-    <div class="indexing" id="indexing" hidden>
-      <button class="indexing-chip" id="indexing-button" type="button" aria-expanded="false" aria-controls="indexing-panel">
-        <span class="indexing-dot" aria-hidden="true"></span>
-        <span id="indexing-label" class="indexing-label"></span>
-        <span id="indexing-component" class="indexing-component" hidden></span>
-        <span id="indexing-meter" class="indexing-meter" aria-hidden="true" hidden><span></span></span>
-        <span id="indexing-detail" class="indexing-detail" hidden></span>
-      </button>
-      <div id="indexing-panel" class="indexing-panel" role="dialog" aria-label="Repository index" hidden></div>
-    </div>
-  </footer>
-  <dialog id="store-dialog" class="store-dialog" aria-labelledby="store-dialog-title"></dialog>
-  <dialog id="action-dialog" class="store-dialog action-dialog" aria-labelledby="action-dialog-title" aria-describedby="action-dialog-message">
-    <form method="dialog">
-      <header class="store-dialog-header"><h2 id="action-dialog-title">Confirm the change</h2></header>
-      <div class="store-dialog-body"><p id="action-dialog-message"></p></div>
-      <footer class="action-dialog-buttons">
-        <button type="submit" class="tool-button" value="cancel">Cancel</button>
-        <button type="submit" class="tool-button primary" value="confirm">Confirm</button>
-      </footer>
-    </form>
-  </dialog>
-  <aside id="evidence-drawer" class="evidence-drawer" aria-label="Evidence" hidden>
-    <header class="evidence-drawer-header">
-      <div class="evidence-trail" id="evidence-trail"></div>
-      <button class="tool-button" id="evidence-close" type="button" aria-label="Close evidence">Close</button>
     </header>
-    <div class="evidence-drawer-body" id="evidence-body"></div>
-  </aside>
-  <div id="palette" class="palette" role="dialog" aria-modal="true" aria-label="Jump to" hidden>
-    <div class="palette-panel">
-      <label class="search-box palette-search">
-        <span class="search-icon" aria-hidden="true"></span>
-        <span class="sr-only">Jump to</span>
-        <input id="palette-input" type="search" placeholder="Name of an initiative, slice, document, or file, or text in an artifact" autocomplete="off" role="combobox" aria-controls="palette-results" aria-expanded="true">
-      </label>
-      <ul id="palette-results" class="palette-results" role="listbox" aria-label="Matches"></ul>
-      <p class="palette-hint">Enter opens in the preview tab · Ctrl+Enter keeps it open · Esc closes</p>
+    <div id="banners" class="banners">
+      <prism-banner id="app-gone" tone="danger" heading="The review app stopped, so this page is no longer live." hidden>
+        <p>To get a new link, ask the agent to open the review browser. This page reconnects on its own if the same app comes back.</p>
+      </prism-banner>
+      <prism-banner id="private-server" tone="warning" heading="This page belongs to one agent session, not the shared review app." dismissible hidden>
+        <p>The shared review app could not be reached, so another session may show this project at a different link, and this page stops when its session ends.</p>
+        <p class="private-server-reason" id="private-server-reason"></p>
+      </prism-banner>
+      <div id="notice" class="notices" aria-live="polite" hidden></div>
+      <prism-banner id="connection" tone="warning" heading="The review server is not responding. Retrying…" hidden></prism-banner>
     </div>
+    <div id="shell-body" class="shell-body">
+      <nav id="sidebar" class="sidebar" aria-label="Workspace navigation">
+        <div id="nav" class="nav">
+          <prism-tree id="nav-places" label="Places"></prism-tree>
+          <div id="nav-scope" class="nav-scope"></div>
+          <div id="nav-library" class="nav-library"></div>
+        </div>
+      </nav>
+      <prism-panel id="main" class="main" variant="island" flush>
+        <div id="page-bar" class="page-bar"></div>
+        <div id="workspace" class="workspace">
+          <div id="artifact" class="artifact-view" aria-live="polite" aria-busy="true">
+            <prism-empty-state class="welcome" heading="Loading the workspace">
+              <p>Attention, the roadmap, and the library open here.</p>
+            </prism-empty-state>
+          </div>
+        </div>
+      </prism-panel>
+      <prism-panel id="side-panel" class="side" variant="island" flush hidden>
+        <prism-button slot="tools" id="side-panel-open" variant="ghost" size="sm">Open as page</prism-button>
+        <prism-button slot="tools" id="side-panel-close" variant="ghost" size="sm" label="Close the side panel" tip="Close (Esc)"><prism-icon name="close"></prism-icon></prism-button>
+        <div id="side-panel-resizer" class="side-resizer" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0"></div>
+        <p class="side-source" id="side-panel-source"></p>
+        <div class="side-body" id="side-panel-body"></div>
+      </prism-panel>
+    </div>
+    <footer class="statusbar" id="statusbar" aria-label="Status">
+      <prism-button class="status-item" id="store-status" variant="ghost" size="sm" hidden>
+        <prism-icon name="store" size="xs"></prism-icon>
+        <span id="store-status-label" class="status-label"></span>
+      </prism-button>
+      <prism-button class="status-item" id="store-sync" variant="ghost" size="sm" hidden>
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="store-sync-label" class="status-label"></span>
+      </prism-button>
+      <span class="statusbar-spacer"></span>
+      <span class="indexing" id="indexing" hidden>
+        <prism-button class="status-item" id="indexing-button" variant="ghost" size="sm">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="indexing-label" class="status-label"></span>
+          <span id="indexing-component" class="indexing-component" hidden></span>
+          <prism-meter id="indexing-meter" class="indexing-meter" label="Index build" hidden></prism-meter>
+          <span id="indexing-detail" class="indexing-detail" hidden></span>
+        </prism-button>
+        <prism-popover id="indexing-panel" for="indexing-button" heading="Repository index"></prism-popover>
+      </span>
+      <span class="statusbar-appearance">
+        <prism-button id="appearance-button" variant="ghost"><prism-icon name="contrast" size="sm"></prism-icon>Appearance</prism-button>
+        <prism-menu id="appearance-menu" for="appearance-button">
+          <prism-menu-group label="Theme">
+            <prism-menu-item type="radio" value="system">System</prism-menu-item>
+            <prism-menu-item type="radio" value="light">Light</prism-menu-item>
+            <prism-menu-item type="radio" value="dark">Dark</prism-menu-item>
+          </prism-menu-group>
+          <prism-menu-group label="Density">
+            <prism-menu-item type="radio" value="compact">Compact</prism-menu-item>
+            <prism-menu-item type="radio" value="comfortable">Comfortable</prism-menu-item>
+          </prism-menu-group>
+          <prism-menu-item value="catalog"><prism-icon name="external" size="sm"></prism-icon> Component catalog</prism-menu-item>
+        </prism-menu>
+      </span>
+    </footer>
   </div>
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <prism-dialog id="nav-drawer" heading="Navigation" placement="start"></prism-dialog>
+  <prism-dialog id="side-panel-sheet" heading="Side panel" placement="bottom"></prism-dialog>
+  <prism-dialog id="store-dialog" heading="Record store" size="lg"></prism-dialog>
+  <prism-dialog id="action-dialog" heading="Confirm the change">
+    <p id="action-dialog-message" class="action-dialog-message"></p>
+    <prism-button slot="footer" id="action-dialog-cancel">Cancel</prism-button>
+    <prism-button slot="footer" id="action-dialog-confirm" variant="primary">Confirm</prism-button>
+  </prism-dialog>
+  <prism-dialog id="palette" class="palette" heading="Command palette" size="lg">
+    <prism-field id="palette-input" type="search" label="Search or jump to" placeholder="An initiative, slice, document, or file, or text in a document"></prism-field>
+    <div class="palette-body">
+      <prism-listbox id="palette-results" class="palette-results" for="palette-input" label="Results"></prism-listbox>
+      <div id="palette-preview" class="palette-preview" aria-live="polite"></div>
+    </div>
+    <p class="palette-hint">Enter opens the result · Esc closes</p>
+  </prism-dialog>
+  <prism-dialog id="evidence-drawer" class="evidence-dialog" heading="Evidence" size="lg">
+    <nav id="evidence-trail" class="evidence-trail" aria-label="Evidence trail"></nav>
+    <div id="evidence-body" class="evidence-body"></div>
+  </prism-dialog>
+  <prism-toast id="toast"></prism-toast>
+  <script type="module" src="./kit/kit.js"></script>
   <script type="module" src="./review.js"></script>
+  <script type="module" src="./kit/appearance.js"></script>
 </body>
 </html>

@@ -1,0 +1,33 @@
+@startuml
+title shell-on-kit
+component "review.html" as html
+component "review.js\npages + history" as app
+component "styles/shell.css" as css
+component "page-bar.js" as bar
+component "claim-index.js" as claims
+component "presence.js\nWho's working" as presence
+component "palette.js" as palette
+component "side-panel.js" as side
+component "entities.js / registry.js" as nav
+component "connection.js / record-store.js / indexing.js / missing-tab.js / attention-signal.js" as misc
+component "kit elements" as kit
+interface "/api/entity?ref=initiative:<id>" as entity
+html --> css
+html --> app
+app --> bar
+app --> palette
+app --> side
+app --> nav
+app --> presence
+app --> misc
+claims --> entity : claim, expiredClaim
+presence --> claims
+palette --> claims
+nav --> claims
+bar --> kit
+presence --> kit
+palette --> kit
+side --> kit
+nav --> kit
+misc --> kit
+@enduml

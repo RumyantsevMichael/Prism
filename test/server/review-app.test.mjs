@@ -559,7 +559,7 @@ test("the served review page carries the project switcher and the notice banner"
   const root = await project(context, "page");
   const url = await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]);
   const page = (await request(url)).body;
-  assert.match(page, /id="project-switcher"/);
+  assert.match(page, /id="project-button"/);
   assert.match(page, /id="project-menu"/);
   assert.match(page, /id="notice"/);
   const client = (await request(new URL("review.js", url))).body;
