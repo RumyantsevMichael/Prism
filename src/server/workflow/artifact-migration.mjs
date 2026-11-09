@@ -58,6 +58,15 @@ async function checkoutListing(root, kinds) {
   }
 }
 
+/** The files that Git tracks under a checkout's artifact paths and that its work tree holds as regular files, or null when Git cannot list them; it reads and runs nothing else. */
+export async function waitingArtifactFiles(root, kinds) {
+  const listing = await checkoutListing(root, kinds);
+  if (listing === null) return null;
+  const held = [];
+  for (const file of listing.candidates) if ((await lstat(path.join(root, ...file.split("/"))).catch(() => null))?.isFile()) held.push(file);
+  return held;
+}
+
 // Whether any configured artifact path exists in the checkout, so a checkout that Git cannot list is reported only when it holds something the move would have taken.
 async function holdsArtifactPaths(root, kinds) {
   for (const entry of kinds.kinds) if (await lstat(path.join(root, ...entry.path.split("/"))).then(() => true, () => false)) return true;
@@ -111,13 +120,18 @@ const unchangedFile = (left, right) => sameFile(left, right) && left.size === ri
 
 /**
  * Access to a checkout's files that reads and removes a file only while it lies inside the checkout through real folders:
- * { read(file, max), remove(file, { version, size }), removeFolder(folder), close() }.
+ * { real, read(file, max), remove(file, { version, size }), removeFolder(folder), close() }, where real is the checkout's real root that every path resolves below.
+ * Given the real root of an earlier access, such as the decision of the move whose files it removes, it resolves every path below that real root, and while the checkout's root resolves elsewhere,
+ * such as after the root or a folder above it was swapped for a link, it finds every file outside the checkout, so it never reads or removes a file of another tree.
  * read returns { size, bytes } with bytes null above max, or null when the file is gone, is no regular file, or does not lie inside the checkout through real folders;
  * remove returns "removed", "gone" when it already left its folder, or "changed" when it holds other bytes, is no regular file, or does not lie inside the checkout through real folders.
  */
-async function checkoutFiles(root) {
-  const real = await realpath(root);
+async function checkoutFiles(root, decided = null) {
+  const real = decided ?? await realpath(root);
   const linked = await holdsFolders();
+  // Whether the checkout's root still resolves to the real root; a file is "gone" only while it does, since a missing folder below a root that moved away says nothing of the checkout.
+  const rootHere = async () => await realpath(root).catch(() => null) === real;
+  const absent = async () => await rootHere() ? "gone" : null;
   const handles = new Map();
   const placeOf = (folder) => folder === "" ? real : path.join(real, ...folder.split("/"));
   const parts = (file) => { const names = file.split("/"); return { folder: names.slice(0, -1).join("/"), name: names.at(-1) }; };
@@ -137,7 +151,7 @@ async function checkoutFiles(root) {
         if (handle) { handles.delete(folder); handles.set(folder, handle); }
         else {
           if (fresh) await release(folder);
-          try { handle = await hold(folder); } catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return "gone"; if (error.code === "ELOOP") return null; throw error; }
+          try { handle = await hold(folder); } catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return absent(); if (error.code === "ELOOP") return null; throw error; }
         }
         const prefix = `/proc/self/fd/${handle.fd}`;
         if (await readlink(prefix).catch(() => null) === place) return prefix;
@@ -149,10 +163,10 @@ async function checkoutFiles(root) {
     for (const name of folder === "" ? [] : folder.split("/")) {
       current = path.join(current, name);
       const info = await lstat(current).catch(() => null);
-      if (info === null || !(info.isDirectory() || info.isSymbolicLink())) return "gone";
+      if (info === null || !(info.isDirectory() || info.isSymbolicLink())) return absent();
       if (!info.isDirectory()) return null;
     }
-    return await realpath(place).catch(() => null) === place ? place : null;
+    return await realpath(place).catch(() => null) === place && await rootHere() ? place : null;
   };
   // The file opened without following a link, confirmed afterwards to be the file at its path in its folder at its place: { state: "open", ... }, or { state: "gone" | "outside" }.
   const opened = async (file) => {
@@ -161,15 +175,27 @@ async function checkoutFiles(root) {
     if (prefix === "gone") return { state: "gone" };
     if (prefix === null) return { state: "outside" };
     const entry = `${prefix}/${name}`;
+    // An entry that is no regular file, such as a FIFO, a socket, or a device, is passed over without being opened, since opening some of them blocks or fails.
+    const before = await lstat(entry).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; });
+    if (before === null) return { state: await absent() ?? "outside" };
+    if (before.isSymbolicLink()) return { state: "outside" };
+    if (!before.isFile()) return { state: "gone" };
     let handle;
     try { handle = await open(entry, READ_FLAGS); }
-    catch (error) { if (error.code === "ENOENT") return { state: "gone" }; if (GONE.includes(error.code)) return { state: "outside" }; throw error; }
+    catch (error) {
+      if (error.code === "ENOENT") return { state: await absent() ?? "outside" };
+      if (GONE.includes(error.code)) return { state: "outside" };
+      // An entry replaced since by one that open refuses, such as a socket, is no regular file either.
+      if (!(await lstat(entry).catch(() => null))?.isFile()) return { state: "gone" };
+      throw error;
+    }
     const info = await handle.stat({ bigint: true });
     if (info.isFile() && await placed(folder) === prefix && sameFile(info, await lstat(entry, { bigint: true }).catch(() => null))) return { state: "open", handle, info, folder, prefix, entry };
     await handle.close();
     return { state: info.isFile() ? "outside" : "gone" };
   };
   return {
+    real,
     async read(file, max = Infinity) {
       const found = await opened(file);
       if (found.state !== "open") return null;
@@ -204,9 +230,9 @@ async function checkoutFiles(root) {
   };
 }
 
-// Run action with a checkout's file access, and close the folders it held open afterwards.
-async function withCheckoutFiles(root, action) {
-  const access = await checkoutFiles(root);
+// Run action with a checkout's file access, resolved below the real root of an earlier access when one is given, and close the folders it held open afterwards.
+async function withCheckoutFiles(root, action, real = null) {
+  const access = await checkoutFiles(root, real);
   try { return await action(access); } finally { await access.close(); }
 }
 
@@ -311,8 +337,9 @@ async function anyDependsOnStore(root, kinds, repository, files) {
 }
 
 // Decide every file, write the store copies and status records, then the ledger, all while holding the store's artifact lock; the checkout's files are removed afterwards.
+// The decided move names the real root it read the checkout's files through, so its removals happen below that root only.
 function moveIntoStore(seen, files) {
-  return withCheckoutFiles(seen.root, (access) => decideAndWrite(seen, access, files));
+  return withCheckoutFiles(seen.root, async (access) => ({ ...await decideAndWrite(seen, access, files), real: access.real }));
 }
 
 async function decideAndWrite(seen, access, files) {
@@ -465,6 +492,10 @@ async function finishMove(seen, listing, decided, report) {
     if (stored === move.version) confirmed.push(move);
     else stay(move, stored === null ? "removed_in_store" : "differs");
   }
+  // A checkout whose root resolves elsewhere than where the decision read its files keeps every file, which a later move decides again against the store.
+  if (await realpath(seen.root).catch(() => null) !== decided.real) {
+    return report(listing, { kept: [...decided.kept, ...stayed].sort(byPath), ledger: decided.ledger, retry: true });
+  }
   return withCheckoutFiles(seen.root, async (access) => {
     const done = [];
     for (const move of confirmed) {
@@ -477,7 +508,7 @@ async function finishMove(seen, listing, decided, report) {
     const gone = new Set(removed);
     const { references, moreReferences } = await referencesOf(access, seen.kinds, listing.tracked.filter((file) => !gone.has(file)), removed);
     return report(listing, { moved: done.map(({ from, to }) => ({ from, to })), kept: [...decided.kept, ...stayed].sort(byPath), references, moreReferences, ledger: decided.ledger, ...(retry ? { retry } : {}) });
-  });
+  }, decided.real);
 }
 
 // The moves that a ledger file of the repository names, as from and to joined by a null character, or null when it cannot be read.

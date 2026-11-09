@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import net from "node:net";
 import path from "node:path";
 import test from "node:test";
 import { checkout, cloneOf, commitFiles, eventually, exists, git, isolateGit, notes, ok, remoteFile, server, syncedWorkspace, text, workspace } from "./fixtures/workspace-artifacts.mjs";
@@ -324,4 +325,62 @@ test("a folder swapped for a symbolic link while a long move runs makes the move
   assert.equal(await text(path.join(outside, "secret.md")), "# Outside bytes\n");
   assert.equal(await text(path.join(outside, "same.md")), "# Same\n", "no file outside the checkout is removed");
   assert.doesNotMatch(report, /zz\/(secret|same)\.md -> /);
+});
+
+test("a socket at a tracked path under the artifact paths is passed over as a FIFO is, and the move takes the other files", { skip: process.platform === "win32" }, async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api", { files: { "docs/plans/p/slice.md": "# Slice\n", "docs/plans/p/probe.sock": "x\n" } });
+  // The tracked file is replaced in the work tree by a listening Unix socket, which open refuses.
+  await rm(path.join(api, "docs/plans/p/probe.sock"));
+  const listener = net.createServer();
+  await new Promise((resolve, reject) => listener.once("error", reject).listen(path.join(api, "docs/plans/p/probe.sock"), resolve));
+  context.after(() => new Promise((resolve) => listener.close(resolve)));
+  const prism = await server(context, place, api);
+  const first = await prism.call("get_artifact", {});
+  assert.deepEqual(ok(first).artifacts.map((entry) => entry.path), ["docs/plans/p/slice.md"]);
+  assert.match(notes(first), /docs\/plans\/p\/slice\.md -> artifacts\/repositories\/api\/plans\/p\/slice\.md/);
+  assert.doesNotMatch(notes(first), /probe\.sock/);
+  assert.equal(await exists(path.join(api, "docs/plans/p/slice.md")), false, "the text file left the checkout");
+  assert.equal(await text(scoped(place.store, "plans/p/slice.md")), "# Slice\n");
+  ok(await prism.call("get_roadmap", {}));
+  ok(await prism.call("get_artifact", {}));
+});
+
+test("a checkout root swapped for a link to a copy while a long move runs makes the move remove no file of the copy and report no removal", async (context) => {
+  const place = await workspace(context);
+  const files = {};
+  for (let index = 0; index < 1000; index += 1) files[`docs/plans/aa/f${String(index).padStart(4, "0")}.md`] = `# ${index}\n`;
+  const api = await checkout(place, "api", { files });
+  // Outside the checkout, a copy of it whose tracked files hold the same bytes.
+  const copy = path.join(place.parent, "copy");
+  await cp(api, copy, { recursive: true });
+  const prism = await server(context, place, api);
+  // As soon as the move wrote its first store file, the checkout's root becomes a link to the copy.
+  const original = path.join(place.parent, "api-original");
+  const swap = (async () => {
+    while (!(await exists(scoped(place.store, "plans/aa/f0000.md")))) await new Promise((resolve) => setTimeout(resolve, 2));
+    await rename(api, original);
+    await symlink(copy, api);
+  })();
+  context.after(async () => { await rm(api, { force: true }); await rename(original, api).catch(() => {}); });
+  const report = notes(await prism.call("get_artifact", {}));
+  await swap;
+  const left = async (root) => (await readdir(path.join(root, "docs/plans/aa"))).length;
+  assert.equal(await left(copy), 1000, "no file of the copy is removed");
+  assert.equal(await left(original), 1000, "the checkout's own files stay for a later move");
+  assert.doesNotMatch(report, / -> /, "the report names no file as removed");
+});
+
+test("a report whose kept files fill its bound still says how many files moved and were removed, and leaves out only list entries", async (context) => {
+  const place = await workspace(context);
+  // Each file whose name breaks the name form is kept with a long explanation, so the kept list alone takes more than the report's bound.
+  const files = { "docs/plans/reports/slice.md": "# Reports\n" };
+  for (let index = 0; index < 300; index += 1) files[`docs/plans/kept/note ${String(index).padStart(3, "0")}.md`] = `# ${index}\n`;
+  const api = await checkout(place, "api", { files });
+  const report = notes(await (await server(context, place, api)).call("get_artifact", {}));
+  assert.ok(Buffer.byteLength(report, "utf8") <= 32 * 1024, `the report holds ${Buffer.byteLength(report, "utf8")} bytes`);
+  assert.match(report, /^Prism kept 300 tracked files under the artifact paths/m);
+  assert.match(report, /^Prism moved 1 descriptive file of this checkout into the record store at .*, scope api, and removed it from the checkout;/m, "the moves' header stays");
+  assert.match(report, /^Prism left \d+ more entries out of this report to keep it short and the ledger artifact-migrations\/\S+\.json in the record store/m);
+  assert.equal(await exists(path.join(api, "docs/plans/reports/slice.md")), false);
 });

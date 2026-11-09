@@ -303,6 +303,7 @@ Anyone may release any claim, and the initiative's history records who released 
 ## Sync status
 
 The review browser's status bar names the record store and when it last synced, and `.prism-sync/status.json` in the store holds the details.
+While files that Git tracks under a checkout's requirements, ADRs, plans, glossary, or roadmap paths still wait in the checkout, the status bar counts them beside the store, and the checkout's next agent tool call moves them into the store and reports each move, while the review browser itself never moves them and lists only the store's copies.
 When the last sync did not succeed, clicking the sync state opens its message, its time, and every saved conflict.
 Each saved conflict shows the saved local copy against the current record as a diff, so you can ask an agent to redo the change that lost.
 The list shows saved records, while a saved artifact is named in the next tool result as described above.

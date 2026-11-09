@@ -8,7 +8,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, artifactPathTest, describeRecordStore, inArtifactStore, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, artifactPathTest, awaitingArtifactMove, describeRecordStore, inArtifactStore, outsideToolCall, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
 import { readStoreArtifact } from "../workflow/store-artifacts.mjs";
 import { withoutCredentials } from "../workflow/remote-url.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
@@ -149,6 +149,13 @@ async function storeArtifactEntries(projectRoot) {
 /** Why the record store cannot serve the checkout's artifacts, as describeRecordStore reports it with the store named as configured, or null when it can or the project names no store. */
 async function artifactStoreRefusal(projectRoot) {
   return (await describeRecordStore(projectRoot).catch(() => null))?.unavailable ?? null;
+}
+
+// The checkout's tracked files that wait for its next agent tool call to move them into an available store, which the browser shows beside the store's status; the browser itself never moves them.
+async function awaitingMoveOf(projectRoot, store) {
+  if (store.kind === "project" || store.unavailable) return {};
+  const awaitingMove = await awaitingArtifactMove(projectRoot);
+  return awaitingMove ? { awaitingMove } : {};
 }
 
 /** The source files the review shows, without a checkout file at an artifact path of a project with a store, which is never the artifact. */
@@ -706,7 +713,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
-      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, artifactScopes: await listArtifactScopes(projectRoot), sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, artifactScopes: await listArtifactScopes(projectRoot), sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await awaitingMoveOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.
       send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
@@ -837,7 +844,8 @@ export async function startReviewServer(options = {}) {
   const token = randomBytes(24).toString("base64url");
   const prefix = `/session/${token}`;
   let review;
-  const server = createServer(async (request, response) => {
+  // A request answers a browser, never a tool call, so no store access in it moves a checkout's artifacts, even on a server that a tool call started.
+  const server = createServer((request, response) => outsideToolCall(async () => {
     try {
       if (!isTrustedHost(request.headers.host)) {
         send(response, 403, "Unknown host");
@@ -856,7 +864,7 @@ export async function startReviewServer(options = {}) {
         send(response, 400, error.message);
       }
     }
-  });
+  }));
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.port ?? 0, "127.0.0.1", resolve);

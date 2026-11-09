@@ -11,7 +11,11 @@ export function storeItem(store) {
   if (store.kind === "project") return { label: "Records in project", title: `Records live in this checkout's ${store.label} folder.`, tone: "muted" };
   const noun = store.kind === "remote" ? "Remote store" : "Store";
   if (store.unavailable) return { label: `${noun} unavailable`, title: store.unavailable, tone: "danger" };
-  return { label: `${noun} ${store.label}`, title: [`Records live in the ${store.kind === "remote" ? "store named by its remote" : "store folder"} ${store.label}.`, store.location ? `Folder: ${store.location}` : ""].filter(Boolean).join("\n"), tone: "muted" };
+  const title = [`Records live in the ${store.kind === "remote" ? "store named by its remote" : "store folder"} ${store.label}.`, store.location ? `Folder: ${store.location}` : ""].filter(Boolean).join("\n");
+  // Tracked files that still wait in the checkout for its next agent tool call to move them are named beside the store, since the browser lists only the store's artifacts.
+  const waiting = store.awaitingMove?.files;
+  if (waiting) return { label: `${noun} ${store.label} · ${plural(waiting, "file")} to move`, title: `${title}\n${store.awaitingMove.message}`, tone: "warn" };
+  return { label: `${noun} ${store.label}`, title, tone: "muted" };
 }
 
 /** The store's sync state, as the status bar names it, or null when nothing syncs: { label, tone, problem }. */
@@ -81,6 +85,7 @@ export function createRecordStoreStatus({ storeButton, storeLabel, syncButton, s
     dialog.innerHTML = `<header class="store-dialog-header"><h2 id="store-dialog-title">Record store</h2><button type="button" class="tool-button" data-close>Close</button></header>
       <div class="store-dialog-body">
         ${store.unavailable ? `<p class="store-message is-danger">${escapeHtml(store.unavailable)}</p>` : ""}
+        ${store.awaitingMove?.message ? `<p class="store-message is-warn">${escapeHtml(store.awaitingMove.message)}</p>` : ""}
         ${problem && status.message ? `<p class="store-message ${status.state === "conflicts" ? "is-warn" : "is-danger"}">${escapeHtml(status.message)}</p>` : ""}
         ${storeFacts(store, status)}
         ${store.kind === "project" ? "" : `<section class="store-conflicts"><h3>Saved conflicts</h3>

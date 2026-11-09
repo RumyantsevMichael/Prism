@@ -7,7 +7,7 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { finishBackgroundMoves, recordStoreOf, restoreMigrationReports, takeMigrationReports } from "./workflow/record-store.mjs";
+import { finishBackgroundMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { withCallSession } from "./workflow/slice-claims.mjs";
@@ -131,10 +131,12 @@ async function requestedProjectRoot(argumentsValue) {
       throw new Error(`The projectRoot argument does not match the host project root ${resolvedRoot}. Pass that path, which is the directory where the session started.`);
     }
   }
+  // The tool call's project root is the checkout whose first store access in this call may move its existing artifacts into the store, since this call's result reports the move.
+  nameToolCallRoot(resolvedRoot);
   // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call.
-  reviewServers.register(resolvedRoot);
-  // The native index starts building once the project is known, so a later search finds it ready; this never waits for the build.
-  void startBackgroundPreparation(resolvedRoot);
+  outsideToolCall(() => reviewServers.register(resolvedRoot));
+  // The native index starts building once the project is known, so a later search finds it ready; this never waits for the build, and the build moves no artifact.
+  void outsideToolCall(() => startBackgroundPreparation(resolvedRoot));
   return resolvedRoot;
 }
 
@@ -1155,13 +1157,13 @@ async function savedArtifactLine(item, argumentsValue) {
 }
 
 // The move of a checkout's existing artifacts into its repository's scope says which files left the checkout, which stayed and why, and which tracked files still name them.
-// Its text holds at most ARTIFACT_MOVE_NOTE_MAX bytes: entries past that are left out from the end, and its last line counts them and names the ledger, which lists every move and kept file.
+// Its text holds at most ARTIFACT_MOVE_NOTE_MAX bytes: every section's header, which gives its count, always stays, list entries past that are left out from the end, and its last line counts them and names the ledger, which lists every move and kept file.
 // Every path it prints goes through shownPath, so no file name begins or ends a line of Prism's text.
 const ARTIFACT_MOVE_NOTE_MAX = 32 * 1024;
 function artifactMoveNote(move) {
   const store = shownPath(move.store);
   if (move.unlisted) return `Git could not list this checkout's files, so Prism moved none of the files under its artifact paths into the record store at ${store}; they stay in the checkout until a later first access in a checkout that Git lists.`;
-  if (move.deferred) return `This checkout's descriptive files wait for a pull from the record store's remote before they move into the record store at ${store}: the store's sync could not complete the pull (sync state ${move.deferred.state}), so Prism moved, removed, and recorded nothing, the files stay in the checkout, and a later access tries again.`;
+  if (move.deferred) return `This checkout's descriptive files wait for a pull from the record store's remote before they move into the record store at ${store}: the store's sync could not complete the pull (sync state ${move.deferred.state}), so Prism moved, removed, and recorded nothing, the files stay in the checkout, and a later tool call of this checkout tries again.`;
   const them = (count) => count === 1 ? "it" : "them";
   const sections = [];
   // Kept and untracked files come first, since each waits for a person, and a long move's list of moves is what the closing line leaves to the ledger.
@@ -1179,16 +1181,16 @@ function artifactMoveNote(move) {
   const ledger = move.ledger ? ` and the ledger ${shownPath(`${ARTIFACT_MIGRATIONS}/${move.ledger}`)} in the record store at ${store} lists every move and kept file` : "";
   const closing = (count) => `Prism left ${count} more ${count === 1 ? "entry" : "entries"} out of this report to keep it short${ledger}.`;
   const bytes = (line) => Buffer.byteLength(line, "utf8") + 1;
-  // Room for the closing line, which names the ledger and counts what was left out.
-  let budget = ARTIFACT_MOVE_NOTE_MAX - bytes(closing(Number.MAX_SAFE_INTEGER));
-  const lines = [];
-  const take = (line) => { if (bytes(line) > budget) return false; lines.push(line); budget -= bytes(line); return true; };
-  for (const line of fixed) take(line);
+  // Room for the closing line, which names the ledger and counts what was left out, and for every header and fixed line, which say what moved and what stayed and how many.
+  let budget = ARTIFACT_MOVE_NOTE_MAX - bytes(closing(Number.MAX_SAFE_INTEGER)) - [...fixed, ...sections.map((section) => section.header)].reduce((sum, line) => sum + bytes(line), 0);
+  const lines = [...fixed];
   let omitted = 0;
   for (const section of sections) {
-    if (omitted || !take(section.header)) { omitted += section.entries.length; continue; }
+    lines.push(section.header);
     for (const [index, entry] of section.entries.entries()) {
-      if (!take(entry)) { omitted += section.entries.length - index; break; }
+      if (omitted || bytes(entry) > budget) { omitted += section.entries.length - index; break; }
+      lines.push(entry);
+      budget -= bytes(entry);
     }
   }
   if (omitted) lines.push(closing(omitted));
@@ -1198,12 +1200,12 @@ function artifactMoveNote(move) {
 // A sync that found the same record, or the same lines of an artifact, changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
 // A saved version stays pending until a tool result carries it, so a server that stopped before naming it leaves it to the next one.
 // Returns the result with the notes, and what to do once it was written or was not: a written result confirms the saved versions it names, and one never written leaves them for the next result.
-async function withRecordNotes(value, argumentsValue) {
+async function withRecordNotes(value, argumentsValue, roots) {
   const none = { value, written: async () => {}, unwritten: () => {} };
   if (!Array.isArray(value?.content)) return none;
-  // A move that a retry ran in the background removes the checkout's files only here, so the result that follows names every file it removed.
-  await finishBackgroundMoves().catch(() => {});
-  const reports = takeMigrationReports();
+  // A move that a retry ran in the background removes the checkout's files only here, in a tool call of the checkout, so the result that follows names every file it removed.
+  await finishBackgroundMoves(roots).catch(() => {});
+  const reports = takeMigrationReports(roots);
   const taken = await takeSavedConflicts().catch(() => []);
   const saved = taken.filter((item) => item.record);
   const artifacts = taken.filter((item) => item.location);
@@ -1343,11 +1345,12 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/call") {
       callsInProgress.add(request.id);
       const meta = request.params?._meta;
-      const value = await withCallSession(meta, () => callTool(request.params?.name, request.params?.arguments, meta, request.id));
+      const call = toolCallContext();
+      const value = await withToolCall(call, () => withCallSession(meta, () => callTool(request.params?.name, request.params?.arguments, meta, request.id)));
       // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
       if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;
       if (closing) { await result(request.id, value); return; }
-      const noted = await withRecordNotes(value, request.params?.arguments);
+      const noted = await withRecordNotes(value, request.params?.arguments, call.roots);
       // A cancel that arrived while the notes were taken still stops the result, and nothing runs between this check and the write.
       if (cancelledCalls.has(request.id)) { noted.unwritten(); return; }
       if (await result(request.id, noted.value) && !closing) await noted.written();

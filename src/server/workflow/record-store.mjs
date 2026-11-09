@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, rmdir, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
@@ -474,6 +475,7 @@ async function migrateIntoStore(root, store, config, report) {
   return report;
 }
 
+// The record move's report, with the store and configuration it read, which the artifact move of a tool call takes next.
 async function migrate(root) {
   const report = { moved: [], conflicts: [] };
   const store = await recordStoreOf(root);
@@ -481,10 +483,12 @@ async function migrate(root) {
   if (store.external) {
     await migrateIntoStore(root, store, config, report);
     if (report.moved.length || report.conflicts.length) unreportedMoves.push({ root, store: store.base, ...report });
-    const artifacts = await migrateArtifactsOnce(root, store, config);
-    if (artifacts) unreportedMoves.push({ root, store: store.base, moved: [], conflicts: [], artifacts });
-    return report;
+    return { report, store, config };
   }
+  return { report: await migrateIntoProject(root, store, config, report), store, config };
+}
+
+async function migrateIntoProject(root, store, config, report) {
   const moves = await legacyRecords(root, store, config);
   const pending = [];
   for (const move of moves) if (await regularFile(path.join(root, move.from))) pending.push(move);
@@ -499,8 +503,40 @@ async function migrate(root) {
   return report;
 }
 
-// A checkout's existing artifacts move into its repository's scope on its first access to the store in a server process, after its records moved,
-// so a later access in the same process reports nothing again; a move that failed, or that waits for a pull, is tried again by the next access.
+/*
+ * Only a Prism tool call whose project root is a checkout moves the checkout's existing artifacts, because only its result carries the move's report.
+ * Each tool call runs in a context of its own that names the project roots it resolved, and the context closes when the call returns,
+ * so a review browser request, the shared review app's project list, a hook, a tool call of another checkout, and work that a tool call left running in the background read the store without moving.
+ */
+const toolCalls = new AsyncLocalStorage();
+
+/** Run one tool call in its own context, whose roots set lists the project roots the call names; once run settles, nothing it started moves a checkout's artifacts. */
+export async function withToolCall(call, run) {
+  call.open = true;
+  try { return await toolCalls.run(call, run); } finally { call.open = false; }
+}
+
+/** A new tool call context: { roots, open }. */
+export const toolCallContext = () => ({ roots: new Set(), open: false });
+
+/** Name a project root of the current tool call, whose first store access in the call may move the checkout's artifacts. */
+export function nameToolCallRoot(root) {
+  const call = toolCalls.getStore();
+  if (call?.open) call.roots.add(root);
+}
+
+/** Run outside any tool call, such as a review browser request or background work that a tool call starts, so no store access in it moves a checkout's artifacts. */
+export function outsideToolCall(run) {
+  return toolCalls.exit(run);
+}
+
+const inToolCallOf = (root) => {
+  const call = toolCalls.getStore();
+  return call?.open === true && call.roots.has(root);
+};
+
+// A checkout's existing artifacts move into its repository's scope on the first access to the store of a tool call of the checkout in a server process, after its records moved,
+// so a later access in the same process reports nothing again; a move that failed, or that waits for a pull, is tried again by the next tool call.
 const artifactMigrations = new Map();
 // Moves that wait for a pull, by checkout and store: { state, retry }, where state is the outcome of the last pull that did not complete,
 // and retry is the pull, and the move right after it, that a later access started and that runs on in the background.
@@ -604,18 +640,48 @@ async function pullThenMove(root, store, key, move) {
 }
 
 /**
- * Finish, in the foreground of a tool call whose result reports them, the moves that a retry ran in the background:
+ * Finish, in the foreground of a tool call of the checkout whose result reports them, the moves of the given checkouts that a retry ran in the background:
  * each removes a checkout file only once it confirms the file against the move's ledger and the store's bytes, and a file it cannot confirm stays in the checkout.
  * A move that fails is tried again by a later access.
  */
-export async function finishBackgroundMoves() {
-  const { finishedMove } = backgroundMoves.length ? await import("./artifact-migration.mjs") : {};
-  for (const handoff of backgroundMoves.splice(0)) {
+export async function finishBackgroundMoves(roots) {
+  const handoffs = backgroundMoves.filter((handoff) => roots.has(handoff.root));
+  if (!handoffs.length) return;
+  const { finishedMove } = await import("./artifact-migration.mjs");
+  for (const handoff of handoffs) {
+    const index = backgroundMoves.indexOf(handoff);
+    if (index === -1) continue;
+    backgroundMoves.splice(index, 1);
     let outcome;
     try { outcome = await finishedMove(handoff.outcome); }
     catch { artifactMigrations.delete(handoff.key); continue; }
     if (outcome?.retry) artifactMigrations.delete(handoff.key);
     if (outcome) unreportedMoves.push({ root: handoff.root, store: handoff.store, moved: [], conflicts: [], artifacts: outcome });
+  }
+}
+
+/**
+ * The files that Git tracks under a checkout's artifact paths and that its work tree still holds, other than a frozen test of an accepted design and the record files that the record move takes:
+ * { files, message } for people, saying that the checkout's next agent tool call moves them, or null when none waits, the project has no record store, or the store or Git cannot be used.
+ * It only reads, so a review browser shows what waits without moving, writing, or removing a file.
+ */
+export async function awaitingArtifactMove(projectRootPath) {
+  try {
+    const root = await projectRoot(projectRootPath);
+    const store = await recordStoreOf(root);
+    if (!store.external) return null;
+    const config = await readWorkflowConfig(root);
+    const { waitingArtifactFiles } = await import("./artifact-migration.mjs");
+    const waiting = await waitingArtifactFiles(root, artifactKinds(config));
+    if (!waiting?.length) return null;
+    const records = new Set((await legacyRecords(root, store, config)).map((move) => move.from));
+    const frozenTests = await storedFrozenTests(store);
+    const files = waiting.filter((file) => !records.has(file) && !frozenTests.has(file)).length;
+    if (!files) return null;
+    const one = files === 1;
+    return { files, message: `${files} ${one ? "file" : "files"} that Git tracks under this checkout's artifact paths ${one ? "is" : "are"} still in the checkout and not in the record store; the checkout's next agent tool call moves ${one ? "it" : "them"} into the store or reports why ${one ? "it stays" : "each stays"}.` };
+  } catch {
+    return null;
   }
 }
 
@@ -658,9 +724,11 @@ function legacyLocations(root, store) {
   return value;
 }
 
-/** The record moves that writes made since the last call, for the tool result that reports them. */
-export function takeMigrationReports() {
-  return unreportedMoves.splice(0);
+/** The record moves that writes made since the last call, and the artifact moves of the given checkouts, for the tool result that reports them. */
+export function takeMigrationReports(roots) {
+  const taken = unreportedMoves.filter((report) => !report.artifacts || roots.has(report.root));
+  for (const report of taken) unreportedMoves.splice(unreportedMoves.indexOf(report), 1);
+  return taken;
 }
 
 /** Give back record moves that takeMigrationReports returned for a tool result that was never written, so the next result reports them. */
@@ -675,8 +743,20 @@ export async function moveLegacyRecords(projectRootPath) {
   await ensureRecords(root);
 }
 
-/** Move every legacy record of a project into .prism, or into its record store, once per process, so all initiatives read from one place; only writes move records into .prism. */
-export function ensureRecords(root) {
+/**
+ * Move every legacy record of a project into .prism, or into its record store, once per process, so all initiatives read from one place; only writes move records into .prism.
+ * In a tool call whose project root is the checkout, the checkout's existing artifacts then move into its record store, and no other access moves them.
+ */
+export async function ensureRecords(root) {
+  const { report, store, config } = await recordsMoved(root);
+  if (store.external && inToolCallOf(root)) {
+    const artifacts = await migrateArtifactsOnce(root, store, config);
+    if (artifacts) unreportedMoves.push({ root, store: store.base, moved: [], conflicts: [], artifacts });
+  }
+  return report;
+}
+
+function recordsMoved(root) {
   const existing = migrations.get(root);
   if (existing && Date.now() - existing.at < MIGRATION_TTL_MS) return existing.pending;
   const pending = migrate(root).catch((error) => {

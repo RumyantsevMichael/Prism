@@ -5,7 +5,7 @@ import path from "node:path";
 import { ConservationStore, conservationStore } from "../conservation/conservation-store.mjs";
 import { withFileLock } from "../workflow/artifact-store.mjs";
 import { useManagedStores } from "../workflow/record-store-remote.mjs";
-import { describeRecordStore } from "../workflow/record-store.mjs";
+import { describeRecordStore, outsideToolCall } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import {
   REVIEW_APP_PROTOCOL,
@@ -394,7 +394,8 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     response.end(body);
   }
 
-  const server = createServer(async (request, response) => {
+  // A request answers a browser, never a tool call, so no store access in it moves a checkout's artifacts, even on a server that a tool call started.
+  const server = createServer((request, response) => outsideToolCall(async () => {
     try {
       if (!isTrustedHost(request.headers.host)) {
         send(response, 403, "Unknown host");
@@ -434,7 +435,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         send(response, error.status ?? 400, error.message);
       }
     }
-  });
+  }));
 
   // A successor keeps the port and viewer credential only from a recent handed-off file and only on that same port, so a tab reconnects
   // after a replacement but a credential that a tab may have sent to another listener after a crash or long ago is never served again.
