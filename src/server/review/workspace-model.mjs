@@ -12,7 +12,7 @@ import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-co
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
-import { pendingApprovalGates, storeArtifactStatuses } from "../workflow/store-artifacts.mjs";
+import { appliedArtifactActions, pendingApprovalGates, storeArtifactStatuses } from "../workflow/store-artifacts.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 
 const LIBRARY_LIMIT = 500;
@@ -500,6 +500,16 @@ export function loadAttention(projectRoot) {
   return remember(`attention:${projectRoot}`, () => computeAttention(projectRoot));
 }
 
+/**
+ * Attention as its page shows it, with recentChanges: the shared Attention above, and the applied actions on store artifacts read again at each request,
+ * because a store sync changes or removes their files at any time, so a file that a reader now leaves out never lingers in the list for the cache window.
+ */
+export async function loadAttentionView(projectRoot) {
+  const { changes, ...attention } = await loadAttention(projectRoot);
+  const recentChanges = [...changes, ...await artifactChanges(projectRoot)].sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
+  return { ...attention, recentChanges };
+}
+
 async function computeAttention(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
@@ -510,7 +520,8 @@ async function computeAttention(projectRoot) {
   const earlier = [];
   const watch = [];
   const claims = [];
-  // The person's applied actions: every initiative history of these records, and this checkout's own index history, which no other checkout shares.
+  // The person's applied actions: every initiative history of these records, this checkout's own index history, which no other checkout shares,
+  // and the status records and comment files of the store artifacts the checkout sees, read below.
   const changes = (await readIndexHistory(projectRoot).catch(() => ({ history: [] }))).history.map((entry) => ({ ...entry, initiative: null }));
   for (const id of ids) {
     const snapshot = await initiativeSnapshot(projectRoot, config, id, items.get(id));
@@ -581,11 +592,12 @@ async function computeAttention(projectRoot) {
   answered.sort((left, right) => newestFirst(left.answer.answeredAt, right.answer.answeredAt));
   // The newest closed questions come first, across initiatives, so the list stays short.
   earlier.sort((left, right) => newestFirst(left.closedAt, right.closedAt));
-  const recentChanges = changes.sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
+  // The shared part keeps the newest changes of initiatives and the index; loadAttentionView adds the store artifacts' applied actions to them.
+  const recent = changes.sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
   // Live claims lapse first first, then expired ones, the most recently lapsed first.
   const ends = (claim) => Date.parse(claim.expiresAt ?? "") || 0;
   claims.sort((left, right) => Number(left.expired) - Number(right.expired) || (left.expired ? ends(right) - ends(left) : ends(left) - ends(right)));
-  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, claims, recentChanges, gateCount: needsYou.filter((item) => item.type === "gate").length };
+  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, claims, changes: recent, gateCount: needsYou.filter((item) => item.type === "gate").length };
 }
 
 /**
@@ -596,10 +608,21 @@ async function approvalGates(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   if ((config.workspace?.store ?? null) === null) return [];
   const gates = await pendingApprovalGates(projectRoot).catch(() => []);
+  // An id that another pending gate holds too names no single gate, so the card says why its answer is refused.
+  const holders = new Map();
+  for (const gate of gates) holders.set(gate.id, (holders.get(gate.id) ?? 0) + 1);
   return gates.map((gate) => ({
     type: "gate", id: gate.id, kind: "approval", status: gate.status, recorded: gate.recorded, question: gate.question, context: gate.context ?? null, options: null, recommended: null,
-    askedAt: gate.askedAt, answer: null, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope }, changed: gate.changed
+    askedAt: gate.askedAt, answer: null, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope }, changed: gate.changed,
+    ...(holders.get(gate.id) > 1 ? { ambiguous: true } : {})
   }));
+}
+
+// The applied actions on the store artifacts the checkout sees, approvals from their status records and comments from their own files, which belong to no initiative's history.
+async function artifactChanges(projectRoot) {
+  const config = await readWorkflowConfig(projectRoot);
+  if ((config.workspace?.store ?? null) === null) return [];
+  return appliedArtifactActions(projectRoot).catch(() => []);
 }
 
 // What a gate's attached record is, so the page names it by title and kind with the counts that matter for the answer.
@@ -800,7 +823,7 @@ async function initiativeCode(projectRoot, view) {
 export async function loadEntity(projectRoot, ref, options = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
-  if (parsed.kind === "attention") return { ref, kind: "attention", data: await loadAttention(projectRoot) };
+  if (parsed.kind === "attention") return { ref, kind: "attention", data: await loadAttentionView(projectRoot) };
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };

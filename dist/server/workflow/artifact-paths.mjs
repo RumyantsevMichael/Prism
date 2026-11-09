@@ -7,6 +7,26 @@ export const ARTIFACTS = "artifacts";
 export const ARTIFACT_STATUS = "artifact-status";
 export const ARTIFACT_ACCEPTED = "artifact-accepted";
 export const STATUS_RECORD_NAME = "status.json";
+// Each comment on an artifact is one file of its own at artifact-comments/<the artifact's location>/<time>-<random suffix>.json, so comments from two machines never change the same file.
+export const ARTIFACT_COMMENTS = "artifact-comments";
+// A move of an artifact to another scope leaves a forward at artifact-comments/<the old location>/moved-to, one line of JSON {"location": <the new location>},
+// so a store sync places a change that another machine made at the old location on the artifact where the forwards lead.
+export const ARTIFACT_FORWARD = "moved-to";
+
+/** The bytes of a forward to a location. */
+export const forwardContent = (location) => `${JSON.stringify({ location })}\n`;
+
+/** The location a forward's bytes name, or null for bytes of any other form: one line of JSON, an object whose only key location names an artifact location. */
+export function forwardLocation(bytes) {
+  let value;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (text.replace(/\n$/, "").includes("\n")) return null;
+    value = JSON.parse(text);
+  } catch { return null; }
+  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 1 || typeof value.location !== "string") return null;
+  return value.location.split("/").every(wellFormedName) && locationArtifact(value.location) ? value.location : null;
+}
 // Each move of a checkout's existing artifacts into the store writes one ledger file of its own below artifact-migrations/, so two machines never change the same file.
 export const ARTIFACT_MIGRATIONS = "artifact-migrations";
 const KIND_LOCATIONS = Object.freeze({ requirements: "requirements", adrs: "adrs", plans: "plans", glossary: "glossary.md", roadmap: "roadmap.md" });

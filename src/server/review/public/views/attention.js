@@ -150,16 +150,19 @@ function answerForm(item, draft) {
 }
 
 // An approval gate names the requirement or ADR in full, with its scope and the status an approval records, since the answer applies to exactly that file.
+// Both statuses are plain text that wraps, so the whole status that approving writes reads at every width; a status of up to 200 characters fits no one-line label.
 function approvalSubject(item) {
   const scope = item.artifact.scope?.label ?? "workspace";
+  const status = (text, modifier) => `<span class="approval-status-value ${modifier}">${escapeHtml(text)}</span>`;
   const change = item.recorded && item.recorded !== item.status
-    ? `<span class="approval-status">${badge(item.recorded)}<span aria-hidden="true">→</span><span class="sr-only">to</span>${badge(item.status, "success")}</span>`
-    : `<span class="approval-status">${badge(item.status, "success")}</span>`;
+    ? `<span class="approval-status">${status(item.recorded, "is-recorded")}<span class="approval-status-arrow" aria-hidden="true">→</span><span class="sr-only">to</span>${status(item.status, "is-approved")}</span>`
+    : `<span class="approval-status">${status(item.status, "is-approved")}</span>`;
   return `${keyValues([
       ["File", `<code class="approval-path" data-code-subject>${escapeHtml(item.artifact.path)}</code>`],
       ["Scope", chip(escapeHtml(scope))],
       ["Approving records", change]
     ])}
+    ${item.ambiguous ? `<p class="notice">Another pending approval holds this question's id, so an answer cannot tell which file it approves and is refused. The agent asks again for the file it means.</p>` : ""}
     ${item.changed ? `<p class="notice">The file changed since this approval was asked, so approving it is refused. The agent asks again for the current version.</p>` : ""}`;
 }
 
@@ -282,13 +285,14 @@ function bindAnswers(container, ctx, gates) {
           gate_answered: "This question already has an answer.",
           unknown_gate: "The agent already resolved or withdrew this question.",
           artifact_changed: "The file changed since this approval was asked, so nothing was recorded. The agent asks again for the current version.",
+          approval_ambiguous: "Another pending approval holds this question's id, so nothing was recorded. The agent asks again for the file it means.",
           author_unknown: "Git names no user for this checkout, so the approval cannot record who gave it. Set one with git config user.name, then answer again."
         }[error.code] ?? error.message;
         failure.textContent = draft.error;
         failure.hidden = false;
         sending = false;
         refresh();
-        if (["gate_answered", "unknown_gate", "artifact_changed"].includes(error.code)) ctx.rerender();
+        if (["gate_answered", "unknown_gate", "artifact_changed", "approval_ambiguous"].includes(error.code)) ctx.rerender();
       }
     });
     // The page re-renders when live data changes, so an unsent note and its cursor are restored.
@@ -323,10 +327,17 @@ function changeWhere(entry, ctx) {
   if (entry.initiative) parts.push(artifactChip(`initiative:${entry.initiative}`, ctx, entry.initiative));
   if (kind === "index") parts.push(`<code class="recent-change-target" data-code-subject>${escapeHtml(rest)}</code>`);
   if (kind === "gate") parts.push('<span class="muted">question</span>');
+  // A change of a store artifact, such as an approval, names the file in full and its scope, since it belongs to no initiative.
+  if (entry.artifact && typeof entry.artifact.path === "string") {
+    parts.push(`<code class="recent-change-target" data-code-subject>${escapeHtml(entry.artifact.path)}</code>`, chip(escapeHtml(entry.artifact.scope?.label ?? "workspace")));
+  }
+  if (kind === "approval") parts.push('<span class="muted">approval</span>');
   return parts.join('<span class="crumb-separator" aria-hidden="true">›</span>');
 }
 
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+// The characters of a comment that Recent changes shows.
+const COMMENT_SHOWN = 280;
 
 function changeStep(before, after) {
   return `<span class="recent-change-before">${escapeHtml(before)}</span> <span aria-hidden="true">→</span><span class="sr-only">to</span> <span class="recent-change-after">${escapeHtml(after)}</span>`;
@@ -335,6 +346,11 @@ function changeStep(before, after) {
 // Two object values, such as model names, show only the parts that changed, so a long value does not hide what differs.
 function changeValues(entry) {
   if (entry.action === "gate.answer") return escapeHtml(changeValue(entry.after));
+  // A comment changes no value, so it shows the line it names and the start of its text, which the file's page shows whole.
+  if (entry.action === "artifact.comment" && isObject(entry.after)) {
+    const text = String(entry.after.text ?? "");
+    return `<span class="recent-change-part">Line ${escapeHtml(String(entry.after.line ?? ""))}: ${escapeHtml(text.length > COMMENT_SHOWN ? `${text.slice(0, COMMENT_SHOWN)}…` : text)}</span>`;
+  }
   if (isObject(entry.before) && isObject(entry.after)) {
     const keys = [...new Set([...Object.keys(entry.before), ...Object.keys(entry.after)])].filter((key) => JSON.stringify(entry.before[key] ?? null) !== JSON.stringify(entry.after[key] ?? null));
     if (keys.length) return keys.map((key) => `<span class="recent-change-part">${escapeHtml(key)}: ${changeStep(changeValue(entry.before[key]), changeValue(entry.after[key]))}</span>`).join("; ");

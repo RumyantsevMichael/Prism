@@ -5,7 +5,8 @@ import test from "node:test";
 import { checkout, eventually, isolateGit, notes, ok, remoteFile, server, syncedWorkspace, text, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Store sync of an artifact that one machine moved, to another scope or by a removal and a write of similar text, while the other machine changed it.
-// A move merges as a removal and an addition, so each path keeps the upstream file and saves the local one, and no machine's bytes are lost.
+// A move to another scope leaves a forward at the old location, so the other machine's change merges into the moved artifact as if it had been made there;
+// a removal and a write of similar text merge as a removal and an addition, so the old path keeps the upstream file and saves the local one, and no machine's bytes are lost.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 const { syncRecordStoreNow: syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
@@ -13,6 +14,7 @@ const { syncRecordStoreNow: syncRecordStore, takeSavedConflicts } = await import
 const BASE = "# Foo\n\nLine one.\nLine two.\nLine three.\nLine four.\nLine five.\n";
 const FILE = "docs/plans/foo/slice.md";
 const WORKSPACE = "artifacts/plans/foo/slice.md";
+const FORWARD = "artifact-comments/plans/foo/slice.md/moved-to";
 
 // Machine a's checkout is repository api, and machine b's is web; each server leaves sync off unless asked, and the test syncs each store on demand.
 async function machines(context, sync) {
@@ -49,7 +51,7 @@ async function shared(context, sync) {
   return { ...found, version: first.version };
 }
 
-test("an upstream move to another scope with an edit of a line this machine also edited keeps the moved artifact and saves this machine's version", async (context) => {
+test("an upstream move to another scope with an edit of a line this machine also edited keeps the moved artifact and saves this machine's version as the moved artifact's", async (context) => {
   const { place, onA, onB, version } = await shared(context);
   await edit(onA, (await moveScope(onA, version)).version, "Line two.", "Line two from a.");
   await edit(onB, version, "Line two.", "Line two from b.");
@@ -60,17 +62,33 @@ test("an upstream move to another scope with an edit of a line this machine also
   const local = BASE.replace("Line two.", "Line two from b.");
   assert.deepEqual(await files(path.join(place.storeB, "artifacts")), { "repositories/api/plans/foo/slice.md": upstream });
   const stamps = Object.entries(await saved(place.storeB));
-  assert.deepEqual(stamps.map(([file, bytes]) => [file.split("/").slice(1).join("/"), bytes]), [[WORKSPACE, local]]);
-  assert.deepEqual(merged.conflicts.map(({ path: file, savedAs }) => [file, savedAs?.endsWith(WORKSPACE)]), [[WORKSPACE, true]]);
+  const MOVED = "artifacts/repositories/api/plans/foo/slice.md";
+  assert.deepEqual(stamps.map(([file, bytes]) => [file.split("/").slice(1).join("/"), bytes]), [[MOVED, local]], "this machine's edit merged into the moved artifact and lost its line there");
+  assert.deepEqual(merged.conflicts.map(({ path: file, savedAs }) => [file, savedAs?.endsWith(MOVED)]), [[MOVED, true]]);
   const taken = (await takeSavedConflicts()).filter((item) => item.store === place.storeB);
-  assert.deepEqual(taken.map(({ location }) => location), ["plans/foo/slice.md"]);
+  assert.deepEqual(taken.map(({ location }) => location), ["repositories/api/plans/foo/slice.md"]);
   assert.equal(await text(taken[0].savedAs), local);
   assert.equal((await syncRecordStore(place.storeB)).state, "ok");
   assert.equal(remoteFile(place.remote, "artifacts/repositories/api/plans/foo/slice.md"), upstream.trimEnd());
   assert.equal(remoteFile(place.remote, WORKSPACE), null);
+  assert.deepEqual(JSON.parse(remoteFile(place.remote, FORWARD)), { location: "repositories/api/plans/foo/slice.md" }, "the forward stays at the old location");
 });
 
-test("a local move to another scope with an edit of a line the upstream also edited keeps the upstream artifact where it was and the moved one beside it", async (context) => {
+test("an upstream move to another scope merges an edit of another line that this machine made at the old location into the moved artifact", async (context) => {
+  const { place, onA, onB, version } = await shared(context);
+  await edit(onA, (await moveScope(onA, version)).version, "Line two.", "Line two from a.");
+  await edit(onB, version, "Line four.", "Line four from b.");
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  const merged = await syncRecordStore(place.storeB);
+  assert.equal(merged.state, "ok", merged.message);
+  const both = BASE.replace("Line two.", "Line two from a.").replace("Line four.", "Line four from b.");
+  assert.deepEqual(await files(path.join(place.storeB, "artifacts")), { "repositories/api/plans/foo/slice.md": both });
+  assert.deepEqual(await saved(place.storeB), {});
+  assert.equal(remoteFile(place.remote, "artifacts/repositories/api/plans/foo/slice.md"), both.trimEnd());
+  assert.equal(remoteFile(place.remote, WORKSPACE), null);
+});
+
+test("a local move to another scope with an edit of a line the upstream also edited merges the upstream's edit into the moved artifact, keeping the upstream's line and saving this machine's version", async (context) => {
   const { place, onA, onB, version } = await shared(context);
   await edit(onA, version, "Line two.", "Line two from a.");
   await edit(onB, (await moveScope(onB, version)).version, "Line two.", "Line two from b.");
@@ -79,13 +97,15 @@ test("a local move to another scope with an edit of a line the upstream also edi
   assert.equal(merged.state, "conflicts", merged.message);
   const upstream = BASE.replace("Line two.", "Line two from a.");
   const local = BASE.replace("Line two.", "Line two from b.");
-  // The local side removed the workspace copy, so nothing of it is saved; its moved copy stays and reaches the remote.
-  assert.deepEqual(merged.conflicts, [{ path: WORKSPACE, savedAs: null }]);
-  assert.deepEqual(await files(path.join(place.storeB, "artifacts")), { "plans/foo/slice.md": upstream, "repositories/web/plans/foo/slice.md": local });
-  assert.equal(remoteFile(place.remote, WORKSPACE), upstream.trimEnd());
-  assert.equal(remoteFile(place.remote, "artifacts/repositories/web/plans/foo/slice.md"), local.trimEnd());
+  // The upstream's edit lands on the moved artifact, where both machines changed one line, so the upstream's line stays there and this machine's version is saved under the moved location.
+  const MOVED = "artifacts/repositories/web/plans/foo/slice.md";
+  assert.deepEqual(merged.conflicts.map(({ path: file, savedAs }) => [file, savedAs?.endsWith(MOVED)]), [[MOVED, true]]);
+  assert.deepEqual(await files(path.join(place.storeB, "artifacts")), { "repositories/web/plans/foo/slice.md": upstream });
+  assert.deepEqual(Object.values(await saved(place.storeB)), [local]);
+  assert.equal(remoteFile(place.remote, WORKSPACE), null);
+  assert.equal(remoteFile(place.remote, MOVED), upstream.trimEnd());
   const listed = ok(await onB.call("get_artifact", { path: "docs/plans" })).artifacts.map((entry) => `${entry.path}@${entry.scope.label}`).sort();
-  assert.deepEqual(listed, ["docs/plans/foo/slice.md@web", "docs/plans/foo/slice.md@workspace"]);
+  assert.deepEqual(listed, ["docs/plans/foo/slice.md@web"]);
 });
 
 test("an upstream move of a plan folder to another scope keeps a file this machine added to the folder", async (context) => {
@@ -142,7 +162,7 @@ test("edits to different lines of an artifact still merge, and a file both machi
   assert.deepEqual(await saved(place.storeB), {});
 });
 
-test("with sync on, the next tool result names an artifact whose local edit lost to an upstream move to another scope", async (context) => {
+test("with sync on, the next tool result names an artifact whose local edit lost, in the scope it moved to, to an upstream edit of the same line", async (context) => {
   const { place, onA, onB } = await machines(context, "on");
   const first = await writeArtifact(onA, FILE, BASE);
   await eventually(() => remoteFile(place.remote, WORKSPACE) === BASE.trimEnd(), 30000, "the base version reaching the remote");
@@ -160,7 +180,7 @@ test("with sync on, the next tool result names an artifact whose local edit lost
   const savedAs = path.join(place.storeB, ".prism-sync", "conflicts", copies[0][0]);
   const reported = notes(await onB.call("get_artifact", { path: "docs/plans" }));
   assert.ok(reported.includes(FILE), "the next result names the artifact's path");
-  assert.match(reported, /workspace/, "the next result names the artifact's scope");
+  assert.match(reported, /scope api/, "the next result names the scope the artifact moved to");
   assert.ok(reported.includes(savedAs), "the next result names the saved copy");
 });
 

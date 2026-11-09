@@ -1184,10 +1184,25 @@ const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 // A saved artifact named as the checkout names it, by its path and scope label, or by its store location when the checkout gives it no path.
 async function savedArtifactLine(item, argumentsValue) {
+  return `- ${await savedArtifactWhere(item.store, item.location, argumentsValue)} (this machine's version: ${item.savedAs})`;
+}
+
+async function savedArtifactWhere(store, location, argumentsValue) {
   const projectRoot = await requestedProjectRoot(argumentsValue ?? {}).catch(() => null);
-  const named = projectRoot ? await artifactAtLocation(projectRoot, item.store, item.location).catch(() => null) : null;
-  const where = named?.path ? `${named.path} in scope ${named.scope.label}` : `artifacts/${item.location} in the record store at ${item.store}${named ? `, scope ${named.scope.label}` : ""}`;
-  return `- ${where} (this machine's version: ${item.savedAs})`;
+  const named = projectRoot ? await artifactAtLocation(projectRoot, store, location).catch(() => null) : null;
+  return named?.path ? `${named.path} in scope ${named.scope.label}` : `artifacts/${location} in the record store at ${store}${named ? `, scope ${named.scope.label}` : ""}`;
+}
+
+// Whether the store at storeBase holds an artifact at a location below artifacts/.
+const holdsArtifact = (storeBase, location) => readFile(path.join(storeBase, "artifacts", ...location.split("/"))).then(() => true, () => false);
+
+// A saved status record or comment named by the artifact it belongs to, and a comment also by its line and text, which the saved copy holds.
+async function savedDerivedLine(item, argumentsValue) {
+  const line = await savedArtifactWhere(item.store, item.statusOf ?? item.commentOn, argumentsValue);
+  if (item.statusOf) return `${line}, its status record (saved copy: ${item.savedAs})`;
+  const comment = await readFile(item.savedAs, "utf8").then(JSON.parse).catch(() => null);
+  const said = comment && Number.isSafeInteger(comment.line) && typeof comment.text === "string" ? `, a comment on line ${comment.line}: ${JSON.stringify(comment.text)}` : ", a comment";
+  return `${line}${said} (saved copy: ${item.savedAs})`;
 }
 
 // The move of a checkout's existing artifacts into its repository's scope says which files left the checkout, which stayed and why, and which tracked files still name them.
@@ -1252,6 +1267,9 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   const saved = taken.filter((item) => item.record);
   const artifacts = taken.filter((item) => item.location);
   const files = taken.filter((item) => item.file);
+  // A status record that changed on both sides keeps the upstream one while its artifact stays; one, or a comment, whose artifact the store no longer holds left the store.
+  const derived = [];
+  for (const item of taken.filter((item) => item.statusOf || item.commentOn)) derived.push({ item, kept: Boolean(item.statusOf) && await holdsArtifact(item.store, item.statusOf) });
   const conflictLines = [];
   if (saved.length) {
     conflictLines.push(`Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, ...saved.map((item) => `- ${item.record} (this machine's version: ${item.savedAs})`));
@@ -1259,6 +1277,17 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   if (artifacts.length) {
     conflictLines.push(`Store sync found ${plural(artifacts.length, "artifact")} whose same lines someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`);
     for (const item of artifacts) conflictLines.push(await savedArtifactLine(item, argumentsValue));
+  }
+  const records = derived.filter((entry) => entry.kept);
+  if (records.length) {
+    conflictLines.push(`Store sync found ${plural(records.length, "status record")} of an artifact that someone else changed before this machine's change was pushed; the store kept their record and saved this machine's. Read each artifact again with get_artifact, and ask its approval again with ask_approval if this machine's answer still matters.`);
+    for (const { item } of records) conflictLines.push(`- ${await savedDerivedLine(item, argumentsValue)}`);
+  }
+  const stranded = derived.filter((entry) => !entry.kept);
+  if (stranded.length) {
+    const counted = [[stranded.filter((entry) => entry.item.statusOf).length, "status record"], [stranded.filter((entry) => entry.item.commentOn).length, "comment"]].filter(([count]) => count).map(([count, noun]) => plural(count, noun)).join(" and ");
+    conflictLines.push(`Store sync took ${counted} out of the store because the store no longer holds the artifact at ${stranded.length === 1 ? "its" : "their"} location, as when one machine changed an artifact while another removed it, and saved ${stranded.length === 1 ? "it" : "them"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`);
+    for (const { item } of stranded) conflictLines.push(`- ${await savedDerivedLine(item, argumentsValue)}`);
   }
   if (files.length) {
     conflictLines.push(`Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, ...files.map((item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})`));

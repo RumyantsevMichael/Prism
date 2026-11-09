@@ -7,6 +7,7 @@ import { withFileLock } from "../workflow/artifact-store.mjs";
 import { useManagedStores } from "../workflow/record-store-remote.mjs";
 import { describeRecordStore, outsideToolCall } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
+import { appliedArtifactActions } from "../workflow/store-artifacts.mjs";
 import {
   REVIEW_APP_PROTOCOL,
   lockBase,
@@ -291,6 +292,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
 
   // An applied action reaches every checkout's page whose records resolve to the same record store, since those pages show the same records;
   // an index rebuild, and any action of a page whose store cannot be resolved, reaches only the applying page.
+  // An action on a store artifact, an approval or a comment, reaches only the checkouts that see that artifact, each naming it by its own path, as its own recent changes list it.
   async function announceAction(project, event, shared) {
     project.review.notify("action", event);
     if (!shared) return;
@@ -298,7 +300,13 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     const location = await storeOf(project.root);
     if (!location) return;
     await Promise.all([...projects.values()].filter((other) => other !== project && other.review.viewerCount() > 0).map(async (other) => {
-      if (await storeOf(other.root) === location) other.review.notify("action", event);
+      if (await storeOf(other.root) !== location) return;
+      if (!event.artifact) {
+        other.review.notify("action", event);
+        return;
+      }
+      const seen = (await appliedArtifactActions(other.root).catch(() => [])).find((entry) => entry.id === event.id);
+      if (seen) other.review.notify("action", seen);
     }));
   }
 

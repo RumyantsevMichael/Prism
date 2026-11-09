@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { addComment, aheadOfClock, appliedComments, commentFolderOf, listComments, movedComment, movedForward, storedAuthor, storedTime } from "./artifact-comments.mjs";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
-import { ARTIFACT_ACCEPTED, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, kindInScope, letterCaseKey, locationArtifact, malformedArtifactName, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_FORWARD, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, kindInScope, letterCaseKey, locationArtifact, malformedArtifactName, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { acceptedLocation, answerApproval, askApproval, hasStatus, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { checkArtifactFolders, noteToolCallWrite, recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
@@ -67,13 +68,13 @@ const SCOPE_TEXT = "scope is \"workspace\", \"repository\" for this checkout's r
 export const ARTIFACT_TOOLS = Object.freeze([
   {
     name: "get_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", not end in "." or ".lock", and be no Windows device name such as con, aux, nul, com1, or lpt1 before its first "."; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. A requirement or ADR also returns status, its recorded status, which only a person's answer at a gate changes, and statusMismatch with written, recorded, and a message when its Status: line says otherwise; every file returns acceptedVersion and changedSinceAccepted against the bytes a person last accepted, approval once one is recorded, latestAnswer with the gate, status, choice (approve or request-changes), note, answeredAt, by, and entry (the id of the review app's history entry that applied it) of the person's latest answer at an approval gate, so requested changes reach an agent that no longer waits, and accepted true reads those accepted bytes. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
+    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", not end in "." or ".lock", and be no Windows device name such as con, aux, nul, com1, or lpt1 before its first "."; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. A requirement or ADR also returns status, its recorded status, which only a person's answer at a gate changes, and statusMismatch with written, recorded, and a message when its Status: line says otherwise; every file returns acceptedVersion and changedSinceAccepted against the bytes a person last accepted, approval once one is recorded, latestAnswer with the gate, status, choice (approve or request-changes), note, answeredAt, by, and entry (the id of the review app's history entry that applied it) of the person's latest answer at an approval gate, so requested changes reach an agent that no longer waits, and accepted true reads those accepted bytes. Every file read also returns comments, the people's comments on the file from the review browser, oldest first and including those a store sync brought from other machines, each with id, version (the version it was made on), line, text, author (name and host), at, and entry (the id of the review app's history entry that applied it); the comments move with the file to another scope and are removed with it. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
     inputSchema: GET_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), move_scope (path, expectedVersion, and the scope to move it to), and ask_approval (path, optional status, default Approved, optional question, and context, the situation for a person who has not followed the work), which records a pending approval gate on a requirement or ADR at its current version and returns its id as gate, for the person to answer on Attention in the review browser and for wait_for_user_gate with artifact; it is refused with not_a_status_artifact for any other file, status_by_ship for Accepted on an ADR, which only a ship accepts, and nothing_to_approve when the status is already recorded and the bytes are the accepted ones. Leave Status: and Approved: lines to gates: a write whose Status: line differs from the recorded status is kept and its entry carries statusMismatch. expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. A write that creates an artifact, and a move_scope, whose path differs only in letter case from an artifact path a seen scope holds, or from another write of the update, is refused with artifact_name_conflict and data.path holding that path, so change only the letter case by a remove and then a write in a later update. Such a write or move_scope whose location in the store, the path below artifacts/ in the scope it would take, holds more than 120 characters is refused with artifact_path_too_long and data.location, so choose a shorter path or a scope with a shorter folder. Such a write or move_scope in a component scope whose component name is a Windows device name, such as aux, nul, or com1, is refused with component_name_invalid and data.component, so rename the component under ## Components in .prism/workflow.md or choose another scope. move_scope of a path that several scopes hold moves the one copy whose version is expectedVersion. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. A name that breaks the artifact name form that get_artifact describes is refused with artifact_name_invalid and data.invalidName, so choose another name. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
+    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), move_scope (path, expectedVersion, and the scope to move it to), and ask_approval (path, optional status, default Approved, optional question, and context, the situation for a person who has not followed the work), which records a pending approval gate on a requirement or ADR at its current version and returns its id as gate, for the person to answer on Attention in the review browser and for wait_for_user_gate with artifact; it is refused with not_a_status_artifact for any other file, status_by_ship for Accepted on an ADR, which only a ship accepts, and nothing_to_approve when the status is already recorded and the bytes are the accepted ones. Leave Status: and Approved: lines to gates: a write whose Status: line differs from the recorded status is kept and its entry carries statusMismatch. expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. A write that creates an artifact, and a move_scope, whose path differs only in letter case from an artifact path a seen scope holds, or from another write of the update, is refused with artifact_name_conflict and data.path holding that path, so change only the letter case by a remove and then a write in a later update. Such a write or move_scope whose location in the store, the path below artifacts/ in the scope it would take, holds more than 120 characters is refused with artifact_path_too_long and data.location, so choose a shorter path or a scope with a shorter folder. Such a write or move_scope in a component scope whose component name is a Windows device name, such as aux, nul, or com1, is refused with component_name_invalid and data.component, so rename the component under ## Components in .prism/workflow.md or choose another scope. move_scope of a path that several scopes hold moves the one copy whose version is expectedVersion. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. An artifact's comments from the review browser belong to it: move_scope moves them with it, remove removes them, and a write that creates an artifact removes the comments that a removed or moved artifact left at its path, and such an entry carries removedComments, the number of comments removed, when there were any, so read a file's comments with get_artifact before you remove it. A name that breaks the artifact name form that get_artifact describes is refused with artifact_name_invalid and data.invalidName, so choose another name. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
     inputSchema: UPDATE_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
   }
@@ -296,9 +297,9 @@ async function listing(seen, folder, given) {
   return { artifacts, truncated: found.length > LIST_MAX };
 }
 
-/** The folder whose entries a store file's names are matched against: artifacts/, or the status or accepted folder beside it that holds the file. */
+/** The folder whose entries a store file's names are matched against: artifacts/, or the status, accepted, or comments folder beside it that holds the file. */
 function baseFor(seen, target) {
-  for (const folder of [ARTIFACT_STATUS, ARTIFACT_ACCEPTED]) {
+  for (const folder of [ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS]) {
     const base = path.join(seen.store.base, folder);
     if (target.startsWith(`${base}${path.sep}`)) return base;
   }
@@ -373,7 +374,8 @@ export async function getArtifact(input) {
     const mismatch = input.accepted ? null : statusMismatch(address.kind, file, content, status);
     return {
       path: file, scope, kind: address.kind, version: artifactVersion(bytes), bytes: bytes.length, totalLines: read.totalLines, offset, content: read.content, nextOffset: read.nextOffset,
-      ...statusFields(address.kind, status, record.version), ...(mismatch ? { statusMismatch: mismatch } : {}), ...(input.accepted ? { accepted: true } : {})
+      ...statusFields(address.kind, status, record.version), ...(mismatch ? { statusMismatch: mismatch } : {}), ...(input.accepted ? { accepted: true } : {}),
+      comments: await listComments(seen, scope, address)
     };
   });
 }
@@ -586,6 +588,44 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
     const target = await resolveStatusFile(seen, acceptedLocation(artifactVersion(bytes)));
     if ((await read(target)) === null) { state.set(target, stored(bytes)); names.set(target, file); }
   };
+  // Each artifact's comments move and go with it in the same update, so a sync commits the artifact and its comments together.
+  // A comment folder's entries as the earlier operations of this update leave them, by folder: each holds { name, target, comment }, with comment null for an entry that is no comment.
+  const folders = new Map();
+  const commentsAt = async (scope, address) => {
+    const folder = await commentFolderOf(seen, scope, address);
+    const key = folder.target ?? `\0${folder.location}`;
+    if (!folders.has(key)) {
+      folders.set(key, folder.entries);
+      for (const entry of folder.entries) if (!original.has(entry.target)) { original.set(entry.target, { version: "held" }); state.set(entry.target, original.get(entry.target)); }
+    }
+    return { key, entries: folders.get(key) };
+  };
+  // Remove everything a location's comment folder holds and return the comments among it, for a move to carry or a result to count.
+  const takeComments = async (scope, address, file) => {
+    const { key, entries } = await commentsAt(scope, address);
+    folders.set(key, []);
+    for (const entry of entries) { state.set(entry.target, null); names.set(entry.target, file); }
+    return entries.filter((entry) => entry.comment);
+  };
+  const putComments = async (scope, address, file, comments) => {
+    const { entries } = await commentsAt(scope, address);
+    for (const comment of comments) {
+      const moved = await movedComment(seen, scope, address, comment);
+      if (!original.has(moved.target)) original.set(moved.target, null);
+      state.set(moved.target, stored(moved.bytes));
+      names.set(moved.target, file);
+      entries.push({ name: comment.name, target: moved.target, comment: JSON.parse(moved.bytes.toString("utf8")) });
+    }
+  };
+  const leaveForward = async (scope, address, file, location) => {
+    const { entries } = await commentsAt(scope, address);
+    const forward = await movedForward(seen, scope, address, location);
+    if (!original.has(forward.target)) original.set(forward.target, null);
+    state.set(forward.target, stored(forward.bytes));
+    names.set(forward.target, file);
+    entries.push({ name: ARTIFACT_FORWARD, target: forward.target, comment: null });
+  };
+  const counted = (entry, removed) => removed.length ? Object.assign(entry, { removedComments: removed.length }) : entry;
   // A requirement's or ADR's entry reports a written status that differs from the recorded one once every operation has run.
   const mismatches = [];
   const artifacts = [];
@@ -619,11 +659,13 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
         if (hasStatus(address.kind)) setStatus(status.target, file, newRecord(address.kind, operation.writtenStatus ?? null));
         else if (status.exists) setStatus(status.target, file, null);
       }
+      // A created artifact never shows a comment made on an earlier artifact at its path, such as one a sync brought after another machine removed that artifact.
+      const removed = current === null ? await takeComments(scope, address, file) : [];
       // A moved checkout file keeps its exact bytes, which need not be text.
       const next = operation.bytes ?? Buffer.from(operation.content, "utf8");
       state.set(target, stored(next));
       names.set(target, file);
-      artifacts.push({ path: file, scope, version: artifactVersion(next) });
+      artifacts.push(counted({ path: file, scope, version: artifactVersion(next) }, removed));
       if (hasStatus(address.kind)) mismatches.push({ entry: artifacts.at(-1), file, scope, address, text: operation.content });
       continue;
     }
@@ -645,7 +687,8 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
       state.set(source.target, null);
       const status = await statusOf(source.scope, address);
       if (status.exists) setStatus(status.target, file, null);
-      artifacts.push({ path: file, scope: source.scope, removed: true });
+      // A removed artifact has no page that could show its comments, so they go with it, and the result counts them for the agent.
+      artifacts.push(counted({ path: file, scope: source.scope, removed: true }, await takeComments(source.scope, address, file)));
     } else if (operation.op === "ask_approval") {
       const status = await statusOf(source.scope, address);
       const asked = askApproval(address.kind, file, status.record, { status: operation.status, question: operation.question, context: operation.context, version: source.record.version });
@@ -676,6 +719,7 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
       artifacts.push({ path: file, scope: source.scope, version: source.record.version, acceptedVersion: source.record.version });
     } else {
       const scope = scopeOf(seen, given);
+      let removed = [];
       checkComponentName(file, scope);
       checkLetterCase(item, await heldBefore(), checked);
       checkLocationLength(scope, address);
@@ -690,8 +734,13 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
         const to = await statusOf(scope, address);
         if (from.exists) { setStatus(to.target, file, from.record); setStatus(from.target, file, null); }
         else if (to.exists) setStatus(to.target, file, null);
+        // The comments move with it too, each with its own file name and its location rewritten, and whatever the new location's folder held before goes, as a create removes it.
+        removed = await takeComments(scope, address, file);
+        await putComments(scope, address, file, await takeComments(source.scope, address, file));
+        // The old location keeps a forward to the new one, so a sync places a change that another machine made there on the moved artifact.
+        await leaveForward(source.scope, address, file, artifactLocation(scope, address));
       }
-      artifacts.push({ path: file, scope, version: source.record.version });
+      artifacts.push(counted({ path: file, scope, version: source.record.version }, removed));
     }
   }
   for (const { entry, scope, address, file, text } of mismatches) {
@@ -806,6 +855,74 @@ export async function readStoreArtifact(projectRoot, file) {
 }
 
 /**
+ * What the review browser shows of a stored artifact at a project-relative path, or null when no seen scope holds it:
+ * { path, scope, bytes, version, modifiedAt, accepted, changed, comments }, where accepted is { version, content } of the bytes a person last accepted,
+ * with content null when the store lacks those bytes, or null when none was accepted, changed whether the bytes differ from them, and comments the artifact's comments, oldest first.
+ * Two seen scopes that hold the path are refused with artifact_ambiguous, as a read without scope is.
+ */
+export async function reviewStoreArtifact(projectRoot, file) {
+  return refusing(async () => {
+    const { file: normalized, address } = await ownArtifact(projectRoot, file);
+    const seen = await seenScopes(projectRoot);
+    const held = await holders(seen, address, scopesFor(seen, address.kind, null));
+    if (held.length > 1) throw ambiguous(normalized, held);
+    if (!held.length) return null;
+    const [{ scope, target, record }] = held;
+    const modifiedAt = (await lstat(target).catch(() => null))?.mtimeMs ?? null;
+    const { acceptedVersion } = await statusRecordOf(seen, scope, address);
+    const acceptedText = acceptedVersion === null ? null : await acceptedBytes(seen, normalized, acceptedVersion).then((bytes) => artifactText(bytes), () => null);
+    return {
+      path: normalized, scope, bytes: contentOf(normalized, record), version: record.version, modifiedAt,
+      accepted: acceptedVersion === null ? null : { version: acceptedVersion, content: acceptedText },
+      changed: acceptedVersion !== record.version,
+      comments: await listComments(seen, scope, address)
+    };
+  });
+}
+
+// The scope that a scope label names among the scopes a checkout sees, or null.
+const labeledScope = (seen, label) => seen.scopes.find((scope) => scope.label === label) ?? null;
+
+/**
+ * The store artifact that a scope label and a project-relative path name, as the review app's comment target names it: { path, scope, kind, version },
+ * or null when the project names no store, the path is no artifact path, or the labeled scope is not seen or holds no file there.
+ * An unavailable store or a refused repository name is refused with the store's own refusal, as a read is.
+ */
+export async function storeArtifactTarget(projectRoot, label, file) {
+  return refusing(async () => {
+    let checked;
+    try { checked = await ownArtifact(projectRoot, file); }
+    catch (error) { if (["store_not_configured", "not_an_artifact", "artifact_name_invalid"].includes(error?.code)) return null; throw error; }
+    if (checked.file !== file) return null;
+    const seen = await seenScopes(projectRoot);
+    const scope = labeledScope(seen, label);
+    if (!scope || !kindInScope(checked.address.kind, scope)) return null;
+    const [held] = await holders(seen, checked.address, [scope]);
+    return held ? { path: checked.file, scope, kind: checked.address.kind, version: held.record.version } : null;
+  });
+}
+
+/**
+ * Store a person's comment on the artifact that a scope label and a project-relative path name, under the store's artifact lock: { path, label, version, line, text, author, entry },
+ * where version is the version the comment was made on and entry the review app's history entry that applies it.
+ * It is refused with artifact_not_found when no seen scope with that label holds the artifact, and with version_conflict and data.version when its bytes are another version now.
+ * Returns the comment as a reader gets it.
+ */
+export async function commentOnArtifact(projectRoot, { path: file, label, version: expected, line, text, author, entry }) {
+  return refusing(async () => {
+    const { file: normalized, address } = await ownArtifact(projectRoot, file);
+    const seen = await seenScopes(projectRoot);
+    return withArtifactStoreLock(seen, async () => {
+      const scope = labeledScope(seen, label);
+      const [held] = scope ? await holders(seen, address, [scope]) : [];
+      if (!held) throw notFound(normalized);
+      if (held.record.version !== expected) throw fail("version_conflict", `${normalized} changed since the page read it.`, { version: held.record.version });
+      return addComment(seen, scope, address, { version: expected, line, text, author, entry });
+    });
+  });
+}
+
+/**
  * Change one store artifact for Prism itself under the store's artifact lock: decide gets the artifact's current text, or null when no seen scope holds it,
  * and returns the text to write, null to remove the artifact, or undefined to leave it.
  * The change is made of update_artifact operations with the version just read, so it takes every check an agent's update takes.
@@ -833,8 +950,9 @@ export async function writeStoreArtifact(projectRoot, file, decide, { follow = f
       if (next === null) checked = [check({ op: "remove", path: normalized, expectedVersion: version })];
       else if (current === null) checked = [inScope({ op: "write", path: normalized, content: next, expectedVersion: null }, preferred) ?? check({ op: "write", path: normalized, content: next, expectedVersion: null })];
       else {
-        const moved = preferred.label !== current.scope.label && inScope({ op: "write", path: normalized, content: next, expectedVersion: null }, preferred);
-        if (moved) checked = [check({ op: "remove", path: normalized, expectedVersion: version, ...scopeFieldsOf(current.scope) }), moved];
+        // A view that follows its plans folder to another scope moves there as move_scope moves a file, so its status record and comments go with it, and then takes its new text.
+        const moved = preferred.label !== current.scope.label && inScope({ op: "move_scope", path: normalized, expectedVersion: version }, preferred);
+        if (moved) checked = [moved, check({ op: "write", path: normalized, content: next, expectedVersion: version, ...scopeFieldsOf(preferred) })];
         else if (Buffer.from(next, "utf8").equals(current.record.bytes)) return unchanged;
         else checked = [check({ op: "write", path: normalized, content: next, expectedVersion: version })];
       }
@@ -976,8 +1094,22 @@ export async function answerArtifactApproval(projectRoot, { path: file, scope, c
     const { config, kinds } = await configuration(projectRoot);
     const seen = await seenScopes(projectRoot);
     const item = checkOperation(config, kinds, { op: "answer_approval", path: file, ...namedScope(seen, scope, component), answer: { id, choice, note, by, entry } });
-    return withArtifactStoreLock(seen, async () => (await applyOperations(seen, [item])).artifacts[0]);
+    return withArtifactStoreLock(seen, async () => {
+      // The id is checked again under the lock, so a status record that came to share it after the caller read the gates is never answered in its place.
+      const holding = (await seenPendingGates(seen)).filter((gate) => gate.id === id);
+      if (holding.length > 1) throw fail("approval_ambiguous", ambiguousApprovalMessage(id, holding), { holders: holding.map((gate) => gate.artifact) });
+      return (await applyOperations(seen, [item])).artifacts[0];
+    });
   });
+}
+
+/**
+ * The refusal message of an approval id that more than one pending gate holds, naming each artifact's path and scope label,
+ * since an answer to it cannot tell which file the person approves.
+ */
+export function ambiguousApprovalMessage(id, gates) {
+  const named = gates.map((gate) => `${gate.artifact.path} (${gate.artifact.scope?.label ?? "workspace"})`);
+  return `More than one pending approval holds the id ${id}, so an answer to it cannot tell which file it approves: ${named.join(", ")}. Nothing was recorded; the agent asks again for the file it means.`;
 }
 
 // The requirements and ADRs that the seen scopes hold, as holdings lists them.
@@ -994,15 +1126,60 @@ async function statusHoldings(seen) {
 export async function pendingApprovalGates(projectRoot) {
   return refusing(async () => {
     await configuration(projectRoot);
+    return seenPendingGates(await seenScopes(projectRoot));
+  });
+}
+
+async function seenPendingGates(seen) {
+  const gates = [];
+  for (const entry of await statusHoldings(seen)) {
+    const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path));
+    if (!record.pending.length) continue;
+    const current = await readStored(entry.target).catch(() => null);
+    for (const gate of record.pending) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope }, recorded: record.status, current: current?.version ?? null, changed: current?.version !== gate.version });
+  }
+  return gates;
+}
+
+// A status record's history item keeps the review app's history entry of the answer that applied it; a store sync brings records that no Prism checked,
+// so an entry is taken only in the exact form answerApproval writes it, with its time, gate, choice, and author agreeing with the item that keeps it.
+const ANSWER_EVENTS = { approved: "approve", changes_requested: "request-changes" };
+const ENTRY_KEYS = ["id", "action", "target", "before", "after", "at", "by", "via"];
+const isPlainRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const exactKeys = (value, keys) => isPlainRecord(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+const appliedEntry = (item) => {
+  if (!isPlainRecord(item) || !Object.hasOwn(ANSWER_EVENTS, item.event) || typeof item.gate !== "string" || item.gate === "" || !storedTime(item.at)) return null;
+  if (!isPlainRecord(item.by) || typeof item.by.name !== "string" || typeof item.by.host !== "string") return null;
+  const entry = item.entry;
+  if (!exactKeys(entry, ENTRY_KEYS) || typeof entry.id !== "string" || !/^[0-9a-f]{32}$/.test(entry.id)) return null;
+  if (entry.action !== "gate.answer" || entry.target !== `approval:${item.gate}` || entry.before !== null || entry.via !== "review-app") return null;
+  if (!exactKeys(entry.after, ["choice", "note"]) || entry.after.choice !== ANSWER_EVENTS[item.event]) return null;
+  if (entry.after.note !== null && !(typeof entry.after.note === "string" && entry.after.note.length <= 4000)) return null;
+  if (!storedTime(entry.at) || entry.at !== item.at || !storedAuthor(entry.by) || entry.by.name !== item.by.name) return null;
+  return entry;
+};
+
+/**
+ * The review app's applied actions on the store artifacts the checkout sees: those that the status records of its requirements and ADRs keep, such as an approval's gate.answer,
+ * and the comments, each read from its own file, each as its history entry with initiative null and artifact { path, scope }, since such an action belongs to no initiative;
+ * an entry is listed only in the form Prism writes and once its time is no more than a few minutes ahead of the clock, and an entry that two records keep is listed once.
+ */
+export async function appliedArtifactActions(projectRoot) {
+  return refusing(async () => {
+    await configuration(projectRoot);
     const seen = await seenScopes(projectRoot);
-    const gates = [];
+    const listed = new Map();
+    // An entry dated more than a few minutes after this machine's clock waits, so no file stays at the top of the list by a time to come.
+    const now = Date.now();
     for (const entry of await statusHoldings(seen)) {
       const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path));
-      if (!record.pending.length) continue;
-      const current = await readStored(entry.target).catch(() => null);
-      for (const gate of record.pending) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope }, recorded: record.status, current: current?.version ?? null, changed: current?.version !== gate.version });
+      for (const item of record.history) {
+        const applied = appliedEntry(item);
+        if (applied && !aheadOfClock(applied.at, now) && !listed.has(applied.id)) listed.set(applied.id, { ...applied, initiative: null, artifact: { path: entry.path, scope: entry.scope } });
+      }
     }
-    return gates;
+    for (const comment of await appliedComments(seen, now)) if (!listed.has(comment.id)) listed.set(comment.id, comment);
+    return [...listed.values()];
   });
 }
 

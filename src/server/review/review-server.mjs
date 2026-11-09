@@ -9,7 +9,7 @@ import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, outsideToolCall, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
-import { readStoreArtifact } from "../workflow/store-artifacts.mjs";
+import { readStoreArtifact, reviewStoreArtifact } from "../workflow/store-artifacts.mjs";
 import { withoutCredentials } from "../workflow/remote-url.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
@@ -343,11 +343,19 @@ async function readReviewed(projectRoot, file) {
   return { content: await readFile(absolutePath, "utf8"), modifiedAt: (await stat(absolutePath)).mtimeMs, absolutePath };
 }
 
+// What the review view shows of a store artifact beside its content: its scope, version, the version a person last accepted with its text, whether it changed since, and its comments.
+async function reviewedStoreArtifact(projectRoot, file) {
+  const stored = await reviewStoreArtifact(projectRoot, file);
+  if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
+  const { scope, version, accepted, changed, comments } = stored;
+  return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, artifact: { scope, version, accepted, changed, comments } };
+}
+
 export async function loadArtifact(projectRoot, artifactPath) {
   if (await inArtifactStore(projectRoot, artifactPath)) {
-    const { content, modifiedAt } = await readReviewed(projectRoot, artifactPath);
-    if (path.extname(artifactPath).toLowerCase() === ".json") return { path: artifactPath, content, diagrams: [], modifiedAt, ...(await loadJsonArtifact(projectRoot, artifactPath, content)) };
-    return { path: artifactPath, content, diagrams: await linkedDiagrams(projectRoot, artifactPath, content), modifiedAt };
+    const { content, modifiedAt, artifact } = await reviewedStoreArtifact(projectRoot, artifactPath);
+    if (path.extname(artifactPath).toLowerCase() === ".json") return { path: artifactPath, content, diagrams: [], modifiedAt, artifact, ...(await loadJsonArtifact(projectRoot, artifactPath, content)) };
+    return { path: artifactPath, content, diagrams: await linkedDiagrams(projectRoot, artifactPath, content), modifiedAt, artifact };
   }
   const absolutePath = await resolveProjectFile(projectRoot, artifactPath);
   if (!TEXT_EXTENSIONS.has(path.extname(artifactPath).toLowerCase())) {
@@ -492,8 +500,9 @@ export async function readBody(request) {
 }
 
 // A refusal of the action registry answers with its status and a JSON body of its code, message, and the fields that refusal carries.
-// An approval of an artifact that changed since it was asked, or by a checkout whose Git names no user, conflicts with the store as it is.
-const ACTION_STATUS = { unknown_target: 404, unknown_action: 404, stale_revision: 409, action_unavailable: 409, confirmation_required: 409, artifact_changed: 409, author_unknown: 409, invalid_input: 400 };
+// An approval of an artifact that changed since it was asked, of an id that more than one pending gate holds, or an approval or comment by a checkout whose Git names no user, conflicts with the store as it is,
+// and a store that cannot be used answers an approval or comment target with its own refusal as unavailable, as an artifact read does.
+const ACTION_STATUS = { unknown_target: 404, unknown_action: 404, stale_revision: 409, action_unavailable: 409, confirmation_required: 409, artifact_changed: 409, approval_ambiguous: 409, author_unknown: 409, invalid_input: 400 };
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 
@@ -502,6 +511,10 @@ function sendJson(response, statusCode, body) {
 }
 
 function sendActionError(response, error) {
+  if (error?.name === "ActionError" && error.unavailable === true) {
+    sendJson(response, 503, { code: error.code, message: withoutCredentials(error.message) });
+    return;
+  }
   const status = ACTION_STATUS[error.code];
   if (!status) throw error;
   sendJson(response, status, { code: error.code, message: error.message, ...Object.fromEntries(ACTION_FIELDS.filter((key) => error[key] !== undefined).map((key) => [key, error[key]])) });
@@ -854,10 +867,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       try {
         const result = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer });
         if (result.applied) forgetWorkspace();
-        sendJson(response, 200, result);
+        sendJson(response, 200, { applied: result.applied, actions: result.actions });
         if (result.applied) {
           const target = parseTarget(result.applied.target);
-          const event = { ...result.applied, initiative: target?.initiative ?? null };
+          // An approval or a comment belongs to no initiative, so its event names its artifact, as Attention's recent changes list it.
+          const event = { ...result.applied, initiative: target?.initiative ?? null, ...(result.artifact ? { artifact: result.artifact } : {}) };
           if (onAction) await Promise.resolve(onAction(event, { shared: target?.kind !== "index" })).catch(() => {});
           else notify("action", event);
         }

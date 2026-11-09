@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ARTIFACT_ACCEPTED, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, letterCaseKey, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_FORWARD, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, forwardLocation, letterCaseKey, STATUS_RECORD_NAME, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
-import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
+import { canonicalJson, hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { localRepository, localTransport, UnresolvableLocalRemote } from "./git-local-repository.mjs";
 import { withoutCredentials } from "./remote-url.mjs";
@@ -49,13 +49,15 @@ const GENERATED_VIEW = Buffer.from("This file is a generated view of ");
 const isRegistrationFile = (relative) => /^repositories\/[^/]+\.json$/.test(relative);
 const isRecordFile = (relative) => relative === "roadmap.json" || relative.startsWith("initiatives/") || isRegistrationFile(relative);
 const isClaimFile = (relative) => /^initiatives\/[^/]+\/claims\/[^/]+\.json$/.test(relative);
+// A move's forward that both sides changed differently, as when two machines moved one artifact, takes the upstream one, which names where the upstream's artifact went.
+const isForwardFile = (relative) => relative.startsWith(`${ARTIFACT_COMMENTS}/`) && relative.endsWith(`/${ARTIFACT_FORWARD}`);
 // A claim or a registration that lost a race is its holder's news, reported through the refusal or acceptance it causes, so no conflict list shows it.
-const isQuietConflict = (relative) => isClaimFile(relative) || isRegistrationFile(relative);
+const isQuietConflict = (relative) => isClaimFile(relative) || isRegistrationFile(relative) || isForwardFile(relative);
 // A person's artifact keeps the upstream version on a line conflict, as a record does, and its local version is saved and reported by its location.
 const isArtifactFile = (relative) => relative.startsWith(`${ARTIFACTS}/`);
 // An artifact's status record and its accepted bytes change with the artifact under the artifact lock, so a sync stages them with the artifacts, and a status record that changed on both sides keeps the upstream one as a record does.
-// The ledger of a move of a checkout's artifacts is written under the same lock, so no commit holds the ledger without the artifacts it lists.
-const STATUS_FOLDERS = [ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_MIGRATIONS];
+// The ledger of a move of a checkout's artifacts, and each comment on an artifact, are written under the same lock, so no commit holds the ledger without the artifacts it lists.
+const STATUS_FOLDERS = [ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_MIGRATIONS];
 const isStatusFile = (relative) => STATUS_FOLDERS.some((folder) => relative.startsWith(`${folder}/`));
 const isGuardedFile = (relative) => isArtifactFile(relative) || isStatusFile(relative);
 const guardedFolder = (relative) => [ARTIFACTS, ...STATUS_FOLDERS].find((folder) => relative.startsWith(`${folder}/`)) ?? null;
@@ -226,9 +228,10 @@ export async function readSavedConflict(base, savedAs) {
 }
 
 /**
- * Local versions that a sync saved because the upstream changed the same record or the same lines of an artifact, or a file whose local version the sync withheld,
+ * Local versions that a sync saved because the upstream changed the same record or the same lines of an artifact, a status record or comment that a merge left without its artifact, or a file whose local version the sync withheld,
  * in stores this process uses, that this process has not reported before and that a sync saved since this process started or that no tool result has carried yet:
  * { record, savedAs, at } for a record, { store, location, savedAs, at } for an artifact, whose location is its path below artifacts/ in the store at store,
+ * { store, statusOf, savedAs, at } for a status record and { store, commentOn, savedAs, at } for a comment, each naming the location of the artifact it belongs to,
  * and { store, file, savedAs, at } for any other file the store shares, such as its .gitattributes.
  * A tool result that carries them confirms them with confirmSavedConflicts, which clears their pending notices.
  */
@@ -249,7 +252,12 @@ export async function takeSavedConflicts() {
       const items = (await savedFiles(path.join(directory, stamp), (file) => isSavedFile(file) || shareable(file))).map((file) => {
         const savedAs = path.join(directory, stamp, ...file.split("/"));
         const when = new Date(at).toISOString();
-        return isArtifactFile(file) ? { store: base, location: file.slice(ARTIFACTS.length + 1), savedAs, at: when } : isRecordFile(file) ? { record: `.prism/${file}`, savedAs, at: when } : { store: base, file, savedAs, at: when };
+        if (isArtifactFile(file)) return { store: base, location: file.slice(ARTIFACTS.length + 1), savedAs, at: when };
+        if (isRecordFile(file)) return { record: `.prism/${file}`, savedAs, at: when };
+        // A status record or comment is named by the artifact location it belongs to, so the result names the artifact's path and scope.
+        const location = derivedLocation(file);
+        if (location !== null) return file.startsWith(`${ARTIFACT_STATUS}/`) ? { store: base, statusOf: location, savedAs, at: when } : { store: base, commentOn: location, savedAs, at: when };
+        return { store: base, file, savedAs, at: when };
       });
       // A stamp that holds only claims and registrations, which other results report, has nothing to carry.
       if (notice && !items.length) await rm(notice, { force: true });
@@ -1120,29 +1128,35 @@ async function merge(base, author, options, run) {
   if (!mergeBase.ok || !mergeBase.text) return { failed: "The store's branch and its upstream share no commit, so the store was left as it was.", conflicts: [] };
   // Only the entries a store shares merge; every other entry comes from the upstream alone, so no machine's commit changes one and a local one never reaches the remote.
   const [original, local, upstreamFiles] = await Promise.all([mergeBase.text, head.text, theirs].map(async (commit) => (await partition(await treeFiles(base, commit)))));
-  const { result, conflicts: fileConflicts } = await mergeFiles(base, original.shared, local.shared, upstreamFiles.shared);
-  const merges = await structuralMerges(base, original.shared, local.shared, upstreamFiles.shared);
+  // A change that one side made where the other side moved the artifact away merges as if it had been made where the forwards lead.
+  const placed = await placeMovedChanges(base, original.shared, local.shared, upstreamFiles.shared);
+  const { result, conflicts: fileConflicts } = await mergeFiles(base, placed.original, placed.local, placed.upstream);
+  const merges = await structuralMerges(base, placed.original, placed.local, placed.upstream);
   const views = new Set(merges.views);
   // The upstream version wins, as the first push does for a stale revision, and the local version is kept beside the store once the merge applies.
   // A generated view that changed on both sides takes the upstream view whole, which the next write of its record regenerates, so it is neither saved nor reported.
-  const takeUpstream = (file) => { if (upstreamFiles.shared.has(file)) result.set(file, upstreamFiles.shared.get(file)); else result.delete(file); };
+  const takeUpstream = (file) => { if (placed.upstream.has(file)) result.set(file, placed.upstream.get(file)); else result.delete(file); };
   const fallback = [...new Set([...fileConflicts, ...merges.fallback])].filter((file) => !merges.merged.has(file) && !views.has(file));
   for (const file of [...fallback, ...views]) takeUpstream(file);
   // A record merged by structure takes its merged blob instead of the line merge.
   for (const [file, contents] of merges.merged) result.set(file, { mode: "100644", object: (await required(base, ["hash-object", "-w", "--no-filters", "--stdin"], { input: contents })).text });
-  const clashes = [...settleFolders(result, upstreamFiles.shared), ...settleLetterCase(result, local.shared, upstreamFiles.shared)];
+  const clashes = [...settleFolders(result, placed.upstream), ...settleLetterCase(result, placed.local, placed.upstream)];
   // A conflict inside a place where the upstream took the whole folder or file is saved with that place.
   const inClash = (file) => clashes.some((place) => file === place || file.startsWith(`${place}/`));
   const conflicted = [...clashes, ...fallback.filter((file) => !inClash(file))];
   const other = conflicted.filter((file) => !isSavedFile(file));
   if (other.length) return { failed: `The upstream conflicts with local changes to ${other.slice(0, 5).join(", ")}, so the store was left as it was.`, conflicts: [] };
+  // A status record or comment whose artifact the merged store does not hold, as one changed on one machine while another removed the artifact, leaves the store and is saved and reported.
+  const stranded = strandedFiles(result);
+  for (const [file] of stranded) result.delete(file);
   const merged = besides(result, upstreamFiles.other);
   // A file the upstream carries can still meet a local file in another letter case, which no other machine could then take.
   const clash = letterCaseClash(merged.keys());
   if (clash) return { failed: `The merge would hold ${describeUnsafeEntry({ path: clash[1], clash: clash[0] })}, so the store was left as it was. Remove or rename one of them.`, conflicts: [] };
   const tree = await writeTree(base, merged);
   const commit = (await required(base, [...author, "commit-tree", tree, "-p", head.text, "-p", theirs, "-m", `prism: merge records from ${(await git(base, ["rev-parse", "--abbrev-ref", "@{upstream}"])).text || "upstream"}`])).text;
-  const copies = conflictCopies(local.shared, upstreamFiles.shared, conflicted);
+  const copies = conflictCopies(placed.local, placed.upstream, conflicted);
+  for (const [file, entry] of stranded) if (!copies.some(([candidate]) => candidate === file)) copies.push([file, entry]);
   // A file whose local version the sync withheld keeps the branch's version in the local tree, so the merge replaces it whenever the upstream changed it, and its withheld bytes are saved as a conflict's are.
   for (const [file, entry] of heldCopies(run, local.shared, merged)) {
     const at = copies.findIndex(([candidate]) => candidate === file);
@@ -1169,6 +1183,98 @@ async function replaceFiles(base, run, { from, to, copies }, options) {
 // The withheld local versions of the files that a change from one tree to another replaces, as [path, entry].
 function heldCopies(run, before, after) {
   return [...(run.heldBack ?? [])].filter(([file]) => !sameEntry(before.get(file), after.get(file)));
+}
+
+// The paths of a location's forward and status record below the store's status folders.
+const forwardPath = (location) => `${ARTIFACT_COMMENTS}/${location}/${ARTIFACT_FORWARD}`;
+const statusPath = (location) => `${ARTIFACT_STATUS}/${location}/${STATUS_RECORD_NAME}`;
+
+/** The artifact location that a status record or a comment file belongs to, or null for any other path, a forward included. */
+function derivedLocation(file) {
+  if (file.startsWith(`${ARTIFACT_STATUS}/`) && file.endsWith(`/${STATUS_RECORD_NAME}`)) return file.slice(ARTIFACT_STATUS.length + 1, -(STATUS_RECORD_NAME.length + 1)) || null;
+  if (!file.startsWith(`${ARTIFACT_COMMENTS}/`) || isForwardFile(file)) return null;
+  const location = file.slice(ARTIFACT_COMMENTS.length + 1, file.lastIndexOf("/"));
+  return file.lastIndexOf("/") > ARTIFACT_COMMENTS.length ? location : null;
+}
+
+// The files of a tree that a location derives, other than its forward: its artifact, its status record, and its comments.
+const locationFiles = (files, location) => [...files.keys()].filter((file) => file === `${ARTIFACTS}/${location}` || derivedLocation(file) === location);
+
+// The path that a file of one location takes at another.
+function placedPath(file, from, to) {
+  if (file === `${ARTIFACTS}/${from}`) return `${ARTIFACTS}/${to}`;
+  if (file === statusPath(from)) return statusPath(to);
+  return `${ARTIFACT_COMMENTS}/${to}/${file.slice(ARTIFACT_COMMENTS.length + from.length + 2)}`;
+}
+
+// The entry a file of one location takes at another: a comment names its new location, as a move rewrites it, and every other file keeps its bytes.
+async function placedEntry(base, file, entry, from, to) {
+  if (!file.startsWith(`${ARTIFACT_COMMENTS}/`)) return entry;
+  let value;
+  try { value = JSON.parse((await entryBytes(base, entry))?.toString("utf8")); } catch { return entry; }
+  if (value === null || typeof value !== "object" || Array.isArray(value) || value.location !== from) return entry;
+  const object = (await required(base, ["hash-object", "-w", "--no-filters", "--stdin"], { input: Buffer.from(`${JSON.stringify({ ...value, location: to })}\n`, "utf8") })).text;
+  return { ...entry, object };
+}
+
+// The location that the forwards of a tree lead to from a location, each forward to the location it names, stopping at a location that holds an artifact and passing no location twice.
+async function forwardsEnd(base, files, from) {
+  const passed = new Set([from]);
+  for (let at = from; ;) {
+    if (at !== from && files.has(`${ARTIFACTS}/${at}`)) return at;
+    const entry = files.get(forwardPath(at));
+    const next = entry ? forwardLocation(await entryBytes(base, entry) ?? Buffer.alloc(0)) : null;
+    if (next === null || passed.has(next)) return at;
+    passed.add(next);
+    at = next;
+  }
+}
+
+/**
+ * The shared entries of the merge base and both sides, with each change that one side made to an artifact's bytes, its status record, or its comments at a location
+ * from which the other side moved the artifact, as a forward the other side added there shows, placed at the location where that side's forwards lead, with the base's files of the old location,
+ * so the merge takes each change as if it had been made there: a file only one side changed takes that side's version, and one both changed merges by lines or keeps the upstream's.
+ * The old location then holds what the moving side left there. A change whose forwards lead to no artifact, or to a location either tree already uses, stays where it was made.
+ * Returns { original, local, upstream } as Map(path, entry).
+ */
+async function placeMovedChanges(base, original, local, upstream) {
+  const sides = { local, upstream };
+  const placed = { original: new Map(original), local: new Map(local), upstream: new Map(upstream) };
+  const done = new Set();
+  for (const [mover, changer] of [["upstream", "local"], ["local", "upstream"]]) {
+    for (const [file, entry] of sides[mover]) {
+      if (!isForwardFile(file) || sameEntry(original.get(file), entry)) continue;
+      const from = file.slice(ARTIFACT_COMMENTS.length + 1, -(ARTIFACT_FORWARD.length + 1));
+      const changing = placed[changer];
+      // A location that both sides moved away from holds nothing of either side to place.
+      if (done.has(from) || sides[mover].has(`${ARTIFACTS}/${from}`) || (changing.has(file) && !sameEntry(original.get(file), changing.get(file)))) continue;
+      const files = locationFiles(changing, from);
+      if (!files.length) continue;
+      const to = await forwardsEnd(base, sides[mover], from);
+      if (to === from || !sides[mover].has(`${ARTIFACTS}/${to}`)) continue;
+      if ([placed.original, changing].some((tree) => tree.has(`${ARTIFACTS}/${to}`) || tree.has(statusPath(to)))) continue;
+      for (const tree of [placed.original, changing]) {
+        for (const moved of locationFiles(tree, from)) {
+          const target = placedPath(moved, from, to);
+          if (tree.has(target)) continue;
+          tree.set(target, await placedEntry(base, moved, tree.get(moved), from, to));
+          tree.delete(moved);
+        }
+      }
+      done.add(from);
+    }
+  }
+  return placed;
+}
+
+/** The status records and comments of a merged result whose location holds no artifact there, as [path, entry]. */
+function strandedFiles(result) {
+  const stranded = [];
+  for (const [file, entry] of result) {
+    const location = derivedLocation(file);
+    if (location !== null && !result.has(`${ARTIFACTS}/${location}`)) stranded.push([file, entry]);
+  }
+  return stranded;
 }
 
 /**
@@ -1420,7 +1526,11 @@ async function structuralMerges(base, original, local, upstream) {
   for (const file of both) {
     const [was, mine, theirs] = await Promise.all([original, local, upstream].map((side) => bytesOf(side, file)));
     if (mine === null || theirs === null || mine.equals(theirs)) continue;
-    if (isRegistrationFile(file)) { fallback.push(file); continue; }
+    if (isRegistrationFile(file)) {
+      // Two machines that registered one repository alike, apart from when each did, as two first accesses of a new store do, lose nothing by keeping the upstream one.
+      if (sameRegistration(mine, theirs)) merged.set(file, theirs); else fallback.push(file);
+      continue;
+    }
     const mergeRecord = await recordMergeFor(file);
     let outcome;
     try {
@@ -1432,6 +1542,18 @@ async function structuralMerges(base, original, local, upstream) {
     else fallback.push(file);
   }
   return { merged, fallback, views };
+}
+
+// Whether two registrations' bytes hold the same registration apart from the time each machine registered it.
+function sameRegistration(left, right) {
+  const parsed = [left, right].map((bytes) => {
+    let value;
+    try { value = JSON.parse(bytes.toString("utf8")); } catch { return null; }
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+    const { registeredAt, ...rest } = value;
+    return canonicalJson(rest);
+  });
+  return parsed[0] !== null && parsed[0] === parsed[1];
 }
 
 // The bytes of a tree entry's blob exactly as Git holds them, or null for no entry or one that is no regular file.

@@ -69,6 +69,7 @@ Each decision and action request explains itself so you can answer without havin
 Prism refuses to record a decision or action request without that explanation, or a decision without a consequence for each option and a recommendation, so a question always reaches you with them.
 Questions recorded by an earlier Prism version show only their question.
 A design or correctness review needs Approve or Request changes, and Request changes also needs a note that says what should change.
+The approval of a requirement or ADR takes the same answers, and its card names the file, its scope, its recorded status, and the whole status that approving records, wrapped onto further lines when it is long.
 A decision takes one of its options, a note in your own words, or both.
 An action request needs only Mark as done, with an optional note.
 The button that sends your answer stays disabled until the answer is complete, and the text beside it says what is missing.
@@ -84,9 +85,10 @@ An answer to the approval of a requirement or ADR reaches, once and in the same 
 Agents in other checkouts or on other machines are not told, but any agent that reads that file also reads your latest answer and its note, so requested changes are not lost when nothing waits.
 Attention also lists blocked slices, open findings, and active work.
 Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
-Under Recent changes it shows the 20 newest actions applied from the review app, newest first: setting changes and answers of every initiative in the project's records, and index rebuilds of this checkout.
+Under Recent changes it shows the 20 newest actions applied from the review app, newest first: setting changes and answers of every initiative in the project's records, answers to the approvals of the requirements and ADRs this checkout sees, each with the file and its scope, comments on the files this checkout sees, each with the file, its scope, the line, and the start of the comment, and index rebuilds of this checkout.
 Each change shows the value before and after it, the author's Git name, or email when no name is set, and the checkout label and host the change came from.
-A change applied in any tab joins the top of the list at once, also a setting change or answer from another checkout whose records live in the same record store, while another checkout's index rebuild never appears.
+A change applied in any tab joins the top of the list at once, also a setting change or answer from another checkout whose records live in the same record store, and an approval answered or a comment made in another checkout of that store when this checkout sees the file, while another checkout's index rebuild never appears.
+An answered approval stays under Recent changes after it leaves Needs you.
 A change that a record store sync brings from another machine appears the next time Attention loads.
 
 Only a tab that Prism opened can answer; see [Which tabs can make changes](#which-tabs-can-make-changes).
@@ -94,10 +96,13 @@ See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-
 
 ## Changes you make in the page
 
-Every change that the review page makes to Prism's records is an action: answering a question, changing an initiative setting, or rebuilding an index.
+Every change that the review page makes to Prism's records is an action: answering a question, changing an initiative setting, commenting on a file in the record store, or rebuilding an index.
 The page sends each action with the version of the record it showed you, so when an agent or another tab changed that record in the meantime, Prism refuses your action and changes nothing.
 An action changes only Prism's records, and apart from a rebuild starting Prism's own indexer, it never runs a command, changes a project file, or writes to Git.
 Answering the approval of a requirement or ADR also needs a tab that can make changes, and Prism records nothing when the file changed since the approval was asked.
+When more than one pending approval holds the same id, as a copied status record or a scope move that stopped halfway can leave, Prism lists each one, names every file and scope that holds the id, and refuses an answer to any of them, so the agent asks again for the file it means.
+A comment needs a tab that can make changes and a Git `user.name` in the checkout, and Prism stores nothing when the file changed since the page showed it; the page then shows the current file and keeps your comment unsent.
+While the record store cannot be used, such as when it is unavailable or the checkout's repository name is refused, Prism refuses an approval answer or a comment with the same reason that reading the file gives, and records nothing.
 
 ### Which tabs can make changes
 
@@ -225,6 +230,26 @@ The panel draws a PlantUML file, and the diagrams a document links, as its page 
 The side panel holds one file at a time, so opening another replaces it, and a link inside the panel opens its target in the panel.
 Open as page opens the file as the page, Esc or the close button closes the panel, and dragging its left edge sets its width.
 Graph, diagram, and document cards can be maximized, and Esc restores them.
+
+### Review a file in the record store
+
+In a project whose `.prism/workflow.md` names a record store, a requirement, ADR, plan file, glossary, or roadmap view opens with a Review card above its content.
+The card names the file's scope, `workspace`, the repository, or `<repository>/<component>`, and says whether a person accepted the file and whether it changed since.
+A file is accepted when a person approves it, when the design of the slices whose folder holds it is accepted, or when its initiative ships.
+Below that, the card shows the lines that changed since the accepted version, with the line numbers of both versions, or the whole file as added when no version was accepted yet.
+It then lists the comments on the file, oldest first, each with its author's Git name, the host it came from, the line it names, and its time, and marks a comment made on an earlier version of the file.
+Comments that a record store sync brings from other machines appear the next time the page checks the file, and comments from this machine's tabs appear at once.
+
+To find a line's number, open **Lines of the current version** on the Review card, which lists every line of the file as it is now with its number, also when the file matches its accepted version and for lines that the changes leave out.
+The list is closed when the page opens, and it stays open or closed as you left it while comments arrive and the file changes, with the line you scrolled to still in view.
+To comment, enter that line number, with or without spaces around it, and your comment of at most 4000 characters, then select Comment.
+The comment goes to the record store as a file of its own, so it reaches every checkout that sees the file and every machine that syncs the store, and the file itself does not change.
+Agents read the comments with the file through `get_artifact`.
+A file's comments belong to it: when an agent moves the file to another scope its comments move with it, and when an agent removes the file its comments are removed with it, so a new file at the same path starts without them.
+A comment you are still typing stays in the form when the file moves to another scope, and Comment then sends it to the file in its new scope.
+A comment made on one machine while another machine moves the file follows the file once the two machines' stores have synced.
+A comment made on one machine while another machine removes the file leaves the store when they sync, is saved beside this machine's store, and is named with its line and text to the agent in its next Prism result, so nothing you wrote is lost.
+The card and Recent changes on Attention take only comments and approvals in the form Prism writes them, so a damaged file that a sync brings shows nowhere, and Recent changes lists an entry dated more than five minutes ahead of this machine's clock only once that time comes.
 
 ## Find artifacts
 

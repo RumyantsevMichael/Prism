@@ -170,8 +170,9 @@ export function shownActionEntries() {
  * Draws the actions of one or more targets into root, keeps them current, and applies them.
  * api is { list(target), apply(request), confirm({ title, message }), toast(message) }: list resolves to a listing, apply to { status, json },
  * and confirm to true only after the person confirms. drafts keeps unsent input per action across re-renders.
+ * keepStaleDrafts keeps the person's input when the record changed under it, for input such as a comment that stays meaningful against the current record.
  */
-export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, onRender = null }) {
+export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, onRender = null, keepStaleDrafts = false }) {
   const listings = new Map();
   const entries = new Map();
   let failure = null;
@@ -301,8 +302,8 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       return false;
     }
     if (result.code === "stale_revision" || result.code === "action_unavailable") {
-      // The page shows the action as it is now and drops the draft made against the old value.
-      setDraft(entry, null);
+      // The page shows the action as it is now and drops the draft made against the old value, unless the draft stays meaningful against the new one.
+      if (!keepStaleDrafts) setDraft(entry, null);
       replaceAction(target, result.current);
       api.toast(STALE_MESSAGE);
       render();
@@ -398,6 +399,27 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     },
     setTargets(next) {
       wanted = [...next];
+      return refresh();
+    },
+    // Moves the list from one target to another that names the same record, as a file that moved to another scope, keeping each action's unsent input,
+    // its drawn controls, and the focused control with its cursor in place while the new target's listing loads.
+    retarget(from, to) {
+      if (from === to || !wanted.includes(from)) return refresh();
+      const prefix = `${from}|`;
+      const moved = (key) => key?.startsWith(prefix) ? `${to}|${key.slice(prefix.length)}` : key;
+      for (const key of Object.keys(drafts)) if (key.startsWith(prefix)) { drafts[moved(key)] = drafts[key]; delete drafts[key]; }
+      for (const [key, entry] of [...entries]) if (key.startsWith(prefix)) { entries.delete(key); entries.set(moved(key), Object.assign(entry, { key: moved(key), target: to })); }
+      const listing = listings.get(from);
+      listings.delete(from);
+      if (listing) listings.set(to, { ...listing, actions: (listing.actions ?? []).map((action) => action.target === from ? { ...action, target: to } : action) });
+      wanted = wanted.map((target) => target === from ? to : target);
+      for (const element of root.querySelectorAll("[data-action-key], [data-focus-key]")) {
+        if (element.dataset.actionKey) element.dataset.actionKey = moved(element.dataset.actionKey);
+        if (element.dataset.focusKey) element.dataset.focusKey = moved(element.dataset.focusKey);
+      }
+      waitingFocus = moved(waitingFocus);
+      // The drawn controls now carry the new keys, so the next render replaces them only when the new listing differs.
+      rendered = html();
       return refresh();
     },
     refresh,

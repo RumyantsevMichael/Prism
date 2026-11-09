@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import http from "node:http";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 import { deliverGateAnswers } from "../../dist/hooks/deliver-gate-answers.mjs";
 import { answerApproval, parseRecord, rewriteStatusLines, writtenStatus } from "../../dist/server/workflow/artifact-status.mjs";
+import { startStandaloneReview } from "../../dist/server/review/review-server-pool.mjs";
+import { answerArtifactApproval } from "../../dist/server/workflow/store-artifacts.mjs";
+import { actionOf, apply as applyOn, listing, writeHeaders } from "./fixtures/review-actions.mjs";
 import { adrFile, answerGate, browserRequest, checkout, eventually, git, isolateGit, ok, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Status records of store artifacts: how status lines are read and rewritten, and that a record syncs with its artifact.
@@ -111,6 +115,90 @@ const pendingApprovals = async (review) => (await browserRequest(review, "/api/e
 // An approval gate is answered through the review app's gate.answer action of the target approval:<id>.
 const answer = (review, body) => answerGate(review, body);
 const askApproval = async (prism, file = FILE) => ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: file, context: "Billing." }] })).artifacts[0].gate;
+
+test("a synced gate whose id another pending gate holds is not answered, even by a store update that names its artifact", async (context) => {
+  const { place, api, prism } = await project(context);
+  const other = "docs/requirements/alpha.md";
+  await writeArtifact(prism, other, requirementFile("Alpha"));
+  await writeArtifact(prism, FILE, requirementFile("Billing"));
+  const gate = await askApproval(prism);
+  // A synced record of alpha.md holds billing.md's pending gate, id and all, as a copied file leaves it.
+  const source = path.join(place.store, "artifact-status/requirements/billing.md/status.json");
+  const copy = path.join(place.store, "artifact-status/requirements/alpha.md/status.json");
+  await mkdir(path.dirname(copy), { recursive: true });
+  await writeFile(copy, await readFile(source, "utf8"));
+  const before = [await readFile(source, "utf8"), await readFile(copy, "utf8"), await readFile(path.join(place.store, "artifacts/requirements/billing.md"), "utf8")];
+  // The store update itself checks the id under its lock, so a copy that lands after the review app read the gates is refused too.
+  const refusal = await answerArtifactApproval(api, { path: FILE, scope: "workspace", id: gate, choice: "approve", by: { name: "Ada Reviewer", host: "test" } }).then(() => null, (error) => error);
+  assert.equal(refusal?.code, "approval_ambiguous");
+  assert.match(refusal.message, /alpha\.md[\s\S]*billing\.md/, "the refusal names each artifact that holds the id");
+  assert.deepEqual([await readFile(source, "utf8"), await readFile(copy, "utf8"), await readFile(path.join(place.store, "artifacts/requirements/billing.md"), "utf8")], before, "nothing was answered");
+  assert.equal(ok(await prism.call("get_artifact", { path: FILE })).status, "Draft");
+});
+
+// Reads named events from a viewer stream, as a connected tab receives them, until it has seen count of them.
+function viewerEvents(context, url, name, count) {
+  return new Promise((resolve, reject) => {
+    const seen = [];
+    const request = http.get(url, (response) => {
+      context.after(() => response.destroy());
+      let buffer = "";
+      response.on("data", (chunk) => {
+        buffer += chunk.toString("utf8");
+        let end;
+        while ((end = buffer.indexOf("\n\n")) !== -1) {
+          const block = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          const event = /^event: (.+)$/m.exec(block)?.[1];
+          const data = /^data: (.+)$/m.exec(block)?.[1];
+          if (event === name) {
+            seen.push(JSON.parse(data));
+            if (seen.length === count) resolve(seen);
+          }
+        }
+      });
+    });
+    request.once("error", reject);
+    setTimeout(() => reject(new Error(`Saw ${seen.length} ${name} events.`)), 8000).unref();
+  });
+}
+
+test("an applied approval reaches the tabs of each checkout of the shared app that sees the artifact, and of no other", async (context) => {
+  const { place, api, prism } = await project(context);
+  const web = await checkout(place, "web");
+  const own = "docs/requirements/api-only.md";
+  await writeArtifact(prism, FILE, requirementFile("Billing"));
+  await writeArtifact(prism, own, requirementFile("Api only"), { scope: "repository" });
+  const shared = await askApproval(prism);
+  const local = await askApproval(prism, own);
+  const directory = path.join(place.parent, "review-app");
+  context.after(async () => {
+    const discovery = await readFile(path.join(directory, "review-app.json"), "utf8").then(JSON.parse, () => null);
+    if (discovery?.pid && discovery.pid !== process.pid) try { process.kill(discovery.pid); } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
+  const opened = [];
+  const env = { ...process.env, PRISM_REVIEW_APP_DIR: directory };
+  const openBrowser = (url) => { opened.push(url); return true; };
+  const baseOf = (url) => /^(.*\/p\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
+  const apiBase = baseOf((await startStandaloneReview({ projectRoot: api, env, openBrowser })).url);
+  const headers = await writeHeaders(apiBase, opened.at(-1));
+  const webBase = baseOf((await startStandaloneReview({ projectRoot: web, env, openBrowser })).url);
+  const onWeb = viewerEvents(context, `${webBase}/api/events`, "action", 1);
+  const onApi = viewerEvents(context, `${apiBase}/api/events`, "action", 2);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const answered = [];
+  // The repository's own file is answered first, so the other checkout's first event shows that it never received it.
+  for (const id of [local, shared]) {
+    const action = actionOf(await listing(apiBase, `approval:${id}`, headers), "gate.answer");
+    const applied = await applyOn(apiBase, { action: "gate.answer", target: `approval:${id}`, input: { choice: "approve" }, revision: action.revision }, headers);
+    assert.equal(applied.status, 200, applied.text);
+    answered.push(applied.json.applied);
+  }
+  const [webEvents, apiEvents] = await Promise.all([onWeb, onApi]);
+  assert.deepEqual(apiEvents.map((event) => [event.id, event.artifact.path, event.artifact.scope.label, event.initiative]), [[answered[0].id, own, "api", null], [answered[1].id, FILE, "workspace", null]]);
+  assert.deepEqual(webEvents.map((event) => [event.id, event.artifact.path, event.artifact.scope.label]), [[answered[1].id, FILE, "workspace"]], "the other checkout's tab receives only the approval of the file it sees");
+});
 
 test("a wait on an artifact's approval gate ends as resolved when the artifact is removed", async (context) => {
   const { prism } = await project(context, BACKGROUND_HOST);

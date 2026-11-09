@@ -17,6 +17,7 @@ import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
 import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
+import { artifactReviewHtml, mountArtifactReview } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 
 const project = document.getElementById("project");
@@ -628,10 +629,13 @@ function connectSessionEvents() {
     } catch {
     }
   });
-  // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload.
+  // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload,
+  // and a comment on the open file shows at once rather than at the next check.
   sessionStream.addEventListener("action", (event) => {
     try {
-      document.dispatchEvent(new CustomEvent("prism:action", { detail: JSON.parse(event.data) }));
+      const detail = JSON.parse(event.data);
+      document.dispatchEvent(new CustomEvent("prism:action", { detail }));
+      if (detail?.artifact?.path && detail.artifact.path === selectedPath) void showArtifact(selectedPath);
     } catch {
     }
   });
@@ -1356,7 +1360,10 @@ async function showArtifact(path) {
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
     </header>
+    ${artifactReviewHtml(data, state)}
     ${documentCard}`;
+  // A store artifact shows its review view above its content, and its comment form keeps an unsent comment across the page's live updates.
+  mountArtifactReview(artifact, data, { actionApi, state });
   pageBar.setActions(structured ? modeButtons(state, path) : []);
   if (structured) {
     const container = document.createElement("div");
