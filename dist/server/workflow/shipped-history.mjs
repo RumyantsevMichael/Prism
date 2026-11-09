@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
+import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { readRecord, listClaimRecords, withRecordLock, writeRecord } from "./record-store.mjs";
 import { isLive, parseClaim } from "./slice-claims.mjs";
 import { readCoordinationState } from "./state.mjs";
@@ -128,8 +129,20 @@ export function markDocument(content, initiative, date) {
   return `${mark}\n${content}`;
 }
 
-/** The project-relative paths of an initiative's slice documents by its initiative record, in path order; none without a record or a plans path. */
+// Whether a project-relative path stays inside the initiative's plans folder, so a slug or path from a record never reaches a file outside it.
+function insideInitiativePlans(plans, initiative, relative) {
+  if (typeof relative !== "string" || path.posix.isAbsolute(relative) || path.isAbsolute(relative)) return false;
+  const folder = path.posix.join(plans, initiative);
+  const normalized = path.posix.normalize(relative);
+  return normalized === relative && normalized.startsWith(`${folder}/`) && !normalized.split("/").includes("..");
+}
+
+/**
+ * The project-relative paths of an initiative's slice documents by its initiative record, in path order; none without a record or a plans path.
+ * A slice key outside the slug pattern names no document, so a record never leads a read or a mark outside the plans folder.
+ */
 async function sliceDocumentPaths(projectRoot, initiative) {
+  if (!SLUG_PATTERN.test(initiative ?? "")) return [];
   let slices;
   try {
     const { bytes } = await readRecord(projectRoot, { kind: "initiative", initiative });
@@ -141,8 +154,9 @@ async function sliceDocumentPaths(projectRoot, initiative) {
   if (!slices || typeof slices !== "object" || Array.isArray(slices)) return [];
   const plans = (await readWorkflowConfig(projectRoot)).paths.plans;
   if (!plans) return [];
-  const folders = Object.keys(slices).map((slug) => slices[slug]?.parent === null ? `${plans}/${initiative}` : `${plans}/${initiative}/${slug}`);
-  return [...new Set(folders.map((folder) => path.posix.join(folder, "slice.md")))].sort();
+  const folders = Object.keys(slices).filter((slug) => SLUG_PATTERN.test(slug)).map((slug) => slices[slug]?.parent === null ? `${plans}/${initiative}` : `${plans}/${initiative}/${slug}`);
+  const files = [...new Set(folders.map((folder) => path.posix.join(folder, "slice.md")))];
+  return files.filter((file) => insideInitiativePlans(plans, initiative, file)).sort();
 }
 
 // A document's state: { content } when it reads, { absent: true } when it does not exist, or { problem } with why it cannot be read.
@@ -277,7 +291,11 @@ export async function shippedHistory(projectRoot, initiative) {
     if (recorded) ({ decision, marked } = recorded);
     else decision = (await shippedDecision(projectRoot, initiative)) ?? decision;
   }
-  const recorded = Array.isArray(decision.documents) ? decision.documents.filter((item) => typeof item?.path === "string").sort(byPath) : [];
+  // A recorded path comes from the shared roadmap record, so only one inside the initiative's plans folder is read or reported.
+  const plans = Array.isArray(decision.documents) ? await readWorkflowConfig(projectRoot).then((config) => config.paths.plans).catch(() => null) : null;
+  const recorded = Array.isArray(decision.documents) && plans && SLUG_PATTERN.test(initiative ?? "")
+    ? decision.documents.filter((item) => insideInitiativePlans(plans, initiative, item?.path)).sort(byPath)
+    : [];
   const changedAfterShip = Array.isArray(decision.documents) ? await documentChanges(projectRoot, initiative, recorded).catch(() => []) : [];
   return {
     initiative,
