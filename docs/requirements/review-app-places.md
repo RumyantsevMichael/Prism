@@ -1,8 +1,8 @@
 # Review app places
 
-Status: Draft
+Status: Approved
 Created: 2026-11-09
-Approved: n/a
+Approved: 2026-11-09
 
 ## Problem
 
@@ -36,13 +36,10 @@ The review app UI kit kept navigation unchanged as one of its non-goals, so this
 
 ## Design questions
 
-- What the Roadmap place's sidebar holds, since the mockup does not draw it.
-- How the rail and the current place's sidebar fit into the navigation drawer at phone and tablet widths, and where the Attention count shows there.
 - Which history tells when a record last changed: the repository's Git history, the shared store's history, or both, and whether a change not yet committed counts.
 - In which order Work lists the up to four other unfinished slices of the open initiative.
 - Whether the Knowledge search reuses the Jump palette's search restricted to records, or has its own results list.
-- Whether `/` keeps opening the Jump palette, as today, or focuses the current place's filter, as the mockup's field hint suggests.
-- The design adds the approved mockup to the repository under `docs/plans/review-app-places/mockup/`, with the parts that are later work removed, and the mockup comparison runs against that copy.
+- Michael decided on 9 November 2026 that the design adds the approved mockup to the repository under `docs/plans/review-app-places/mockup/`, with the parts that are later work and the `/` hints of its filter fields removed, that he approves that copy at the design gate, and that the mockup comparison runs against it.
 - The Accepted decision `docs/ADRs/review-ui-kit/own-ui-kit.md` says navigation has one sidebar that becomes a drawer and no strip of open tabs; the open-document tabs already returned, and the places add a rail, so design revises that clause through a superseding decision.
 
 <a id="1"></a>
@@ -303,7 +300,7 @@ Requirement: When the person chooses Roadmap on the rail, the review app shall o
 
 Rationale: Michael chose to keep the Roadmap board as it is, and the product owner's priority work happens there.
 
-Related: [review-app-places.md§1](#1)
+Related: [review-app-places.md§1](#1), [review-app-places.md§37](#37)
 
 <a id="21"></a>
 ## 21. List shipped work in History
@@ -312,9 +309,9 @@ Pattern: Ubiquitous
 
 Disposition: Active
 
-Requirement: The review app shall list in the History sidebar every shipped initiative by title with its ship date, the most recently shipped first, each leading to its initiative page.
+Requirement: The review app shall list in the History sidebar every shipped or superseded initiative by title with the date it shipped or was superseded, the most recent first, mark each superseded one as superseded, and lead from each to its initiative page.
 
-Rationale: Shipped work leaves Work, so History keeps it one click away for whoever needs to trace what was built.
+Rationale: Shipped and superseded work leaves Work, so History keeps it one click away for whoever needs to trace what was built or replaced, as Michael decided on 9 November 2026.
 
 Related: [review-app-places.md§15](#15)
 
@@ -351,9 +348,9 @@ Pattern: Ubiquitous
 
 Disposition: Active
 
-Requirement: The review app shall keep working as it does today the open-document tabs with the preview tab, Keep, close, middle-click close, agent-presented tabs, and tabs restored after a reload, the page bar's Back and Forward, the Jump palette opened with Ctrl K or Cmd K, Appearance opened with Ctrl+,, Who's working, and the status bar.
+Requirement: The review app shall keep working as it does today the open-document tabs with the preview tab, Keep, close, middle-click close, agent-presented tabs, and tabs restored after a reload, the page bar's Back and Forward, the Jump palette opened with Ctrl K, Cmd K, or `/`, Appearance opened with Ctrl+,, Who's working, and the status bar.
 
-Rationale: The places change only the sidebar, so every other part of the shell must behave exactly as before.
+Rationale: The places change only the sidebar, so every other part of the shell must behave exactly as before, and Michael decided on 9 November 2026 that `/` keeps opening the Jump palette rather than focusing a place's filter.
 
 Related: [review-app-places.md§23](#23)
 
@@ -507,8 +504,21 @@ Pattern: State-driven
 
 Disposition: Active
 
-Requirement: While the window is 1100 pixels wide or narrower, the review app shall show the places' rail and the current place's sidebar together in the navigation drawer that the Navigation button opens, close the drawer when the person chooses a page, and keep the Attention count visible in the top bar.
+Requirement: While the window is 1100 pixels wide or narrower, the review app shall show the places' rail and the current place's sidebar together in the navigation drawer that the Navigation button opens, close the drawer when the person chooses a page, and keep the Attention bell with its count in the top bar.
 
-Rationale: Phones and tablets use the drawer today, and the count must stay visible while the drawer and its rail are closed.
+Rationale: Phones and tablets use the drawer today, and Michael decided on 9 November 2026 that the bell keeps its count there because the rail is hidden while the drawer is closed.
 
 Related: [review-app-places.md§1](#1), [review-app-places.md§5](#5)
+
+<a id="37"></a>
+## 37. Show the Roadmap's views in its sidebar
+
+Pattern: Ubiquitous
+
+Disposition: Active
+
+Requirement: The review app shall show in the Roadmap sidebar the choices Board, List, and Graph, which switch the Roadmap page's view, and one link to each of the Now, Next, Later, and Parked lanes, and no entry for a single initiative.
+
+Rationale: Michael decided on 9 November 2026 that the Roadmap place's sidebar offers the page's views and lanes, while the board itself shows the initiatives.
+
+Related: [review-app-places.md§20](#20)
