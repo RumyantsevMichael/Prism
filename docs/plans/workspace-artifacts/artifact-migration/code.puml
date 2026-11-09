@@ -7,6 +7,7 @@ component "artifact-paths" as paths
 component "artifact-status\nrecorded status of moved files" as status
 component "mcp\nmigration note" as mcp
 component "roadmap\nview from the stored record" as roadmap
+component "review-server\nawaitingMove notice" as review
 component "record-store-sync\npull before the move" as sync
 component "components\ndeclared component folders" as components
 
@@ -17,4 +18,5 @@ migration --> roadmap
 store --> sync
 store --> components
 mcp --> store
+review --> paths
 @enduml

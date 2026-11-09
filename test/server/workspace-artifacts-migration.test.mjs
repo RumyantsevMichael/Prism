@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { checkout, cloneOf, commitFiles, eventually, git, exists, isolateGit, notes, ok, refused, remoteFile, requirementFile, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { browserRequest, checkout, cloneOf, commitFiles, eventually, git, exists, isolateGit, notes, ok, refused, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing tracked artifacts move into the store once, against the store as pulled when it syncs, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, files that are untracked, ignored, too large, not text, or with malformed or colliding names stay in the checkout, a configured folder that would take the source tree is refused, and the report stays bounded and one line per entry.
+// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing tracked artifacts move into the store once, only in a tool call of the checkout whose result reports the move, against the store as pulled when it syncs, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, files that are untracked, ignored, too large, not text, or with malformed or colliding names stay in the checkout, a configured folder that would take the source tree is refused, and the report stays bounded and one line per entry.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -448,4 +450,79 @@ test("clause 26 with store sync: when the store's remote cannot be reached the m
     return ok(later).artifacts.some((entry) => entry.path === file) && !(await exists(path.join(api, file)));
   }, 60000, "the move after a completed pull");
   assert.equal(await text(path.join(place.storeA, "artifacts", "repositories", "api", "plans", "reports", "slice.md")), "# Reports\n");
+});
+
+const WAITING = { "docs/plans/reports/slice.md": "# Reports\n", "docs/plans/reports/notes.md": "# Notes\n" };
+
+// The checkout's files are where they were committed and nothing of them reached the store or a ledger.
+async function untouched(place, root) {
+  for (const [file, contents] of Object.entries(WAITING)) {
+    assert.equal(await text(path.join(root, file)), contents, `${file} stays in the checkout`);
+    assert.equal(await exists(scoped(place.store, file.replace(/^docs\//, ""))), false, `${file} is not written into the store`);
+  }
+  assert.equal(git(root, "status", "--porcelain"), "", "the checkout's work tree is unchanged");
+  assert.deepEqual(await ledgerFiles(place.store), [], "no ledger is written");
+}
+
+// The checkout's next tool call moves the waiting files and its result reports each move.
+async function movedByNextToolCall(context, place, root) {
+  const prism = await server(context, place, root);
+  const first = await prism.call("get_artifact", {});
+  assert.deepEqual(ok(first).artifacts.map((entry) => entry.path).sort(), Object.keys(WAITING).sort());
+  const report = notes(first);
+  for (const [file, contents] of Object.entries(WAITING)) {
+    assert.equal(await exists(path.join(root, file)), false, `${file} left the checkout`);
+    assert.equal(await text(scoped(place.store, file.replace(/^docs\//, ""))), contents);
+    assert.ok(report.includes(`${file} -> artifacts/repositories/api/${file.replace(/^docs\//, "")}`), `the tool result reports the move of ${file}`);
+  }
+}
+
+test("clause 26: a review browser request moves nothing, shows only the store's artifacts with a notice of the files still in the checkout, and the next tool call moves and reports them", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api", { files: WAITING });
+  const review = await reviewBrowser(context, api);
+  const index = await browserRequest(review, "/api/index");
+  assert.equal(index.status, 200);
+  for (const file of Object.keys(WAITING)) assert.equal(index.body.artifacts.includes(file), false, `${file} is not listed from the checkout`);
+  assert.equal(index.body.recordStore.awaitingMove.files, 2, "the notice counts the tracked files still in the checkout");
+  assert.match(index.body.recordStore.awaitingMove.message, /tool call/, "the notice says the next tool call moves them");
+  assert.equal((await browserRequest(review, `/api/artifact?path=${encodeURIComponent("docs/plans/reports/slice.md")}`)).status, 404, "a file only the checkout holds is not served");
+  await untouched(place, api);
+
+  await movedByNextToolCall(context, place, api);
+  const after = await browserRequest(review, "/api/index");
+  assert.ok(Object.keys(WAITING).every((file) => after.body.artifacts.includes(file)), "the browser lists the moved files from the store");
+  assert.equal(after.body.recordStore.awaitingMove, undefined, "no notice once no tracked file waits in the checkout");
+});
+
+test("clause 26: the shared review app's project list reads another registered checkout without moving its files, and that checkout's next tool call moves and reports them", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api", { files: WAITING });
+  const web = await checkout(place, "web");
+  const { startReviewApp } = await import("../../dist/server/review/review-app-server.mjs");
+  const { createReviewServerPool } = await import("../../dist/server/review/review-server-pool.mjs");
+  const parent = await mkdtemp(path.join(os.tmpdir(), "prism-review-app-"));
+  context.after(() => rm(parent, { recursive: true, force: true }));
+  const directory = path.join(parent, "prism");
+  const app = await startReviewApp({ directory });
+  const onWeb = createReviewServerPool({ app: { directory } });
+  const onApi = createReviewServerPool({ app: { directory } });
+  try {
+    const url = await (await onWeb.get(web, "task")).reviewUrl([]);
+    // A session in api registers api with the app, and nobody opens api's page; web's open tab refreshes its project switcher.
+    await onApi.get(api, "task");
+    const listed = await new Promise((resolve, reject) => http.get(new URL("api/projects", url), (response) => {
+      let body = "";
+      response.on("data", (chunk) => body += chunk);
+      response.on("end", () => resolve({ status: response.statusCode, body: JSON.parse(body) }));
+    }).on("error", reject));
+    assert.equal(listed.status, 200);
+    assert.ok(listed.body.projects.some((project) => project.name === "api"), "the project list reads the api checkout");
+    await untouched(place, api);
+  } finally {
+    await onWeb.close();
+    await onApi.close();
+    await app.close();
+  }
+  await movedByNextToolCall(context, place, api);
 });
