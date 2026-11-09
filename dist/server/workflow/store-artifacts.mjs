@@ -5,7 +5,7 @@ import path from "node:path";
 import { addComment, aheadOfClock, appliedComments, commentFolderOf, listComments, movedComment, storedAuthor, storedTime } from "./artifact-comments.mjs";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
-import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, letterCaseKey, locationArtifact, locationIdentity, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, letterCaseKey, locationArtifact, locationIdentity, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { acceptedLocation, answerApproval, askApproval, hasStatus, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { checkArtifactFolders, noteToolCallWrite, recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
@@ -619,15 +619,17 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
   };
   // Each artifact's identity changes with it in the same update: a create writes a new one, a move carries it, a removal removes it, and every other write keeps it.
   // An identity file is a short line, so a larger file someone placed there is replaced or removed unread.
+  // An entry at the identity path that is no file, such as a folder a sync brought, or one that stands in place of a folder above it, is no artifact's identity:
+  // the update removes it before it writes, so it neither fails nor half applies over it.
+  const strays = new Map();
   const identityAt = async (scope, address) => {
     const location = artifactLocation(scope, address);
-    const target = await resolveStatusFile(seen, `${ARTIFACT_IDENTITY}/${location}`);
+    const target = path.join(seen.store.base, ARTIFACT_IDENTITY, ...location.split("/"));
     if (!state.has(target)) {
-      const info = await lstat(target).catch(() => null);
-      const bytes = info?.isFile() && info.size <= IDENTITY_FILE_MAX ? await readFile(target).catch(() => null) : null;
-      const record = info === null ? null : bytes === null ? { bytes: null, version: "held" } : stored(bytes);
+      const { record, stray } = await identityEntry(seen, location);
       original.set(target, record);
       state.set(target, record);
+      if (stray) strays.set(target, stray);
     }
     return { target, location, record: state.get(target) };
   };
@@ -636,11 +638,10 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
     state.set(target, id === null ? null : stored(Buffer.from(identityContent(id), "utf8")));
     names.set(target, file);
   };
-  // The identity an artifact has: the one its identity file holds, unless that file is of another form or another artifact's file holds the same id, and else the one its location gives.
+  // The identity an artifact has, by the rule that keeps every identity of the store's tree its own: the one its identity file holds, else the one its location gives.
   const identityHeld = async (scope, address) => {
-    const { location, record } = await identityAt(scope, address);
-    const id = identityOf(record?.bytes ?? null);
-    return id !== null && !(await identityElsewhere(seen, id, location)) ? id : locationIdentity(location);
+    const location = artifactLocation(scope, address);
+    return (await storeIdentities(seen)).get(location) ?? locationIdentity(location);
   };
   const counted = (entry, removed) => removed.length ? Object.assign(entry, { removedComments: removed.length }) : entry;
   // A requirement's or ADR's entry reports a written status that differs from the recorded one once every operation has run.
@@ -772,7 +773,14 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
   }
   // New bytes are written before removals, so a move interrupted midway leaves the artifact in both scopes rather than in neither.
   const changed = [...state].filter(([target, record]) => (record?.version ?? null) !== (original.get(target)?.version ?? null));
-  await checkLayout(seen, changed.filter(([, record]) => record !== null), state, names);
+  const clearing = [...strays].filter(([target]) => names.has(target));
+  await checkLayout(seen, changed.filter(([target, record]) => record !== null && !strays.has(target)), state, names);
+  // A stray entry where an identity file of this update belongs goes first, as no file of any artifact.
+  for (const [, stray] of clearing) {
+    if ((await lstat(stray).catch(() => null))?.isSymbolicLink()) throw fail("invalid_path", "An artifact location in the record store passes through a symbolic link, which Prism does not follow.");
+    await rm(stray, { recursive: true, force: true });
+    await pruneArtifactFolders(baseFor(seen, stray), stray);
+  }
   for (const [target, record] of changed.filter(([, record]) => record !== null)) {
     await mkdir(path.dirname(target), { recursive: true });
     await resolveAgain(seen, target);
@@ -784,32 +792,62 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
     await pruneArtifactFolders(baseFor(seen, target), target);
   }
   // A change syncs as a record write does, so it is committed and pushed without a further call; the sync stages artifacts only once this update releases the artifact lock.
-  if (changed.length && seen.store.sync) scheduleRecordSync(seen.store.base);
+  if ((changed.length || clearing.length) && seen.store.sync) scheduleRecordSync(seen.store.base);
   return { artifacts };
 }
 
 /**
- * Whether an identity file below artifact-identity/ other than the one at location holds id while its location holds an artifact, as a file copied by hand would,
- * so that neither artifact keeps the shared id. Links are never followed, and a file too large to be an identity is never read.
+ * What a store holds at the identity path of a location: { record, stray }, with record the identity file as a stored record, { bytes: null, version: "held" } for a file too large to be one, or null,
+ * and stray the path of an entry that stands in the way of an identity file there, a folder or other entry at the path, or a file or other entry in place of a folder above it, or null.
+ * No link is followed: a link at or above the path is refused, as at every other store path.
  */
-async function identityElsewhere(seen, id, location) {
-  const root = path.join(seen.store.base, ARTIFACT_IDENTITY);
+async function identityEntry(seen, location) {
+  const names = location.split("/");
+  let current = seen.store.base;
+  for (const [index, name] of [ARTIFACT_IDENTITY, ...names].entries()) {
+    current = path.join(current, name);
+    const info = await lstat(current).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; });
+    if (info === null) break;
+    if (info.isSymbolicLink()) throw fail("invalid_path", "An artifact location in the record store passes through a symbolic link, which Prism does not follow.");
+    if (index < names.length) {
+      if (info.isDirectory()) continue;
+      return { record: null, stray: current };
+    }
+    if (!info.isFile()) return { record: null, stray: current };
+  }
+  const target = await resolveStatusFile(seen, `${ARTIFACT_IDENTITY}/${location}`);
+  const info = await lstat(target).catch(() => null);
+  if (!info?.isFile()) return { record: null, stray: null };
+  const bytes = info.size <= IDENTITY_FILE_MAX ? await readFile(target).catch(() => null) : null;
+  return { record: bytes === null ? { bytes: null, version: "held" } : stored(bytes), stray: null };
+}
+
+/**
+ * The identity of every artifact the store holds, as Map(location, id), read from the store's whole tree as a sync reads it:
+ * each location below artifacts/ that holds a regular file takes the id its identity file holds, else the one its location gives, and no two locations keep one id.
+ * Links are never followed, and a file too large to be an identity is never read.
+ */
+async function storeIdentities(seen) {
+  const locations = [];
   const visit = async (relative) => {
     let entries;
-    try { entries = await readdir(relative === "" ? root : path.join(root, ...relative.split("/")), { withFileTypes: true }); }
-    catch { return false; }
+    try { entries = await readdir(relative === "" ? seen.base : path.join(seen.base, ...relative.split("/")), { withFileTypes: true }); }
+    catch { return; }
     for (const entry of entries) {
       const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
-      if (entry.isDirectory()) { if (await visit(child)) return true; continue; }
-      if (!entry.isFile() || child === location) continue;
-      const target = path.join(root, ...child.split("/"));
-      const info = await lstat(target).catch(() => null);
-      if (!info?.isFile() || info.size > IDENTITY_FILE_MAX || identityOf(await readFile(target).catch(() => null)) !== id) continue;
-      if ((await lstat(path.join(seen.base, ...child.split("/"))).catch(() => null))?.isFile()) return true;
+      if (entry.isDirectory()) await visit(child);
+      else if (entry.isFile() && child.split("/").every(wellFormedName)) locations.push(child);
     }
-    return false;
   };
-  return visit("");
+  await visit("");
+  const written = new Map();
+  for (const location of locations) {
+    const target = path.join(seen.store.base, ARTIFACT_IDENTITY, ...location.split("/"));
+    const info = await lstat(target).catch(() => null);
+    const id = info?.isFile() && info.size <= IDENTITY_FILE_MAX ? identityOf(await readFile(target).catch(() => null)) : null;
+    if (id !== null) written.set(location, id);
+  }
+  return uniqueIdentities(locations, written);
 }
 
 // A new artifact without a scope takes the scope that holds its nearest folder below the kind folder, when exactly one seen scope holds that folder, else the workspace scope.

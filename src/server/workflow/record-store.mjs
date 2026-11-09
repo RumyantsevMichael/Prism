@@ -9,7 +9,7 @@ import { gitTooOld, listSavedConflicts, prepareStoreFiles, pullRecordStoreIfStal
 import { managedRecordStore } from "./record-store-remote.mjs";
 import { isRemoteStore, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 import { checkRepositoryName, portableRepositoryName, REPOSITORIES, REPOSITORY_REFUSALS, repositoryId } from "./repository-names.mjs";
-import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, STATUS_RECORD_NAME, artifactAddress, componentScope, normalizeArtifactPath, repositoryScope, scopeFolder, wellFormedName, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, STATUS_RECORD_NAME, artifactAddress, componentScope, locationArtifact, normalizeArtifactPath, repositoryScope, scopeFolder, wellFormedName, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
 import { COMPONENT_NAME, readComponents } from "./components.mjs";
 import { artifactKinds, initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
@@ -113,8 +113,8 @@ export function isStoreFile(relative) {
   if (names[0] === ARTIFACT_ACCEPTED) return names.length === 2 && /^[0-9a-f]{64}$/.test(names[1]);
   // A comment is one file of its own, named by its time and a random suffix, below its artifact's location in artifact-comments/.
   if (names[0] === ARTIFACT_COMMENTS) return names.length > 2 && ARTIFACT_COMMENT_FILE.test(names.at(-1)) && names.slice(1).every(wellFormedName);
-  // An artifact's identity sits at its location below artifact-identity/.
-  if (names[0] === ARTIFACT_IDENTITY) return names.length > 1 && names.slice(1).every(wellFormedName);
+  // An artifact's identity sits at its location below artifact-identity/, and only at a location of an artifact's form, so a file where Prism keeps folders of identity files, such as artifact-identity/plans, is shared nowhere.
+  if (names[0] === ARTIFACT_IDENTITY) return names.length > 1 && names.slice(1).every(wellFormedName) && locationArtifact(names.slice(1).join("/")) !== null;
   if (names[0] === "migrations") return names.length === 2 && MIGRATION_FILE.test(names[1]);
   if (names[0] === ARTIFACT_MIGRATIONS) return names.length === 2 && ARTIFACT_LEDGER_FILE.test(names[1]);
   if (names[0] === REPOSITORIES) return names.length === 2 && names[1].endsWith(".json") && portableRepositoryName(names[1].slice(0, -".json".length));

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, uniqueIdentities, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { canonicalJson, hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
@@ -388,6 +388,8 @@ const storeLayout = () => layout ??= import("./record-store.mjs").then(({ isStor
   const kind = (file, { mode, notUtf8 }) => {
     if (!FILE_MODES.has(mode) || notUtf8 || file.split("/").some((name) => unsafeName(name) || !portableName(name) || (file !== ".gitattributes" && gitFileName(bytesOfPath(name))))) return "unsafe";
     if (shareable(file)) return storePathFits(file) ? "shared" : "unsafe";
+    // Below artifact-identity/ a store holds only the identity files of artifact locations, so any other entry there, which would stand in the way of one, is refused.
+    if (file.startsWith(`${ARTIFACT_IDENTITY}/`)) return "unsafe";
     if (isStoreFolder(file) || folders(file).some((folder) => !isArtifactFile(folder) && shareable(folder))) return "unsafe";
     return "carried";
   };
@@ -1245,25 +1247,24 @@ async function treeIdentities(base, files, groups) {
     const id = contents.has(object) ? identityOf(contents.get(object)) : null;
     if (id !== null) written.set(location, id);
   }
-  const ids = new Map();
-  for (const [location, group] of groups) if (group.has("artifact")) ids.set(location, written.get(location) ?? locationIdentity(location));
-  // An id that two locations hold is no artifact's own, so each location whose file gave it takes the id the location gives instead, which no other location gives.
-  const count = new Map();
-  for (const id of ids.values()) count.set(id, (count.get(id) ?? 0) + 1);
-  for (const [location, id] of ids) if (count.get(id) > 1 && id !== locationIdentity(location)) ids.set(location, locationIdentity(location));
+  // An id that two locations hold is no artifact's own, so each location whose file gave it takes the id the location gives instead, until no two locations share one.
+  const ids = uniqueIdentities([...groups].filter(([, group]) => group.has("artifact")).map(([location]) => location), written);
   return { ids, where: new Map([...ids].map(([location, id]) => [id, location])), written };
 }
 
 // A comment file is small, so a larger blob that a tree holds there is moved with its bytes as they are and never read.
 const COMMENT_BYTES_MAX = 64 * 1024;
 
-// The entry a file of one location takes at another: a comment names its new location, as a move rewrites it, and every other file keeps its bytes.
+// The comment module, which schedules a sync after it writes a comment, imports this one, so it loads when a merge first places a comment.
+let comments;
+const commentForm = () => comments ??= import("./artifact-comments.mjs").then(({ storedComment }) => storedComment);
+
+// The entry a file of one location takes at another: a comment of the exact form Prism writes names its new location, as a move rewrites it, and every other file keeps its bytes as they are.
 async function placedEntry(base, role, entry, from, to) {
   if (!role.startsWith("comment/") || !FILE_MODES.has(entry.mode)) return entry;
   if (!((await objectInfo(base, [entry.object])).get(entry.object)?.size <= COMMENT_BYTES_MAX)) return entry;
-  let value;
-  try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await entryBytes(base, entry))); } catch { return entry; }
-  if (value === null || typeof value !== "object" || Array.isArray(value) || value.location !== from) return entry;
+  const value = (await commentForm())(role.slice("comment/".length), await entryBytes(base, entry), from);
+  if (value === null) return entry;
   const object = (await required(base, ["hash-object", "-w", "--no-filters", "--stdin"], { input: Buffer.from(`${JSON.stringify({ ...value, location: to })}\n`, "utf8") })).text;
   return { ...entry, object };
 }
@@ -1272,9 +1273,10 @@ async function placedEntry(base, role, entry, from, to) {
  * The shared entries of the merge base and both sides with every artifact's files, its bytes, its status record, and its comments, placed in each tree at the one location that the merge gives the artifact's identity,
  * so a path merge takes each change as if both sides had made it there: a file only one side changed takes that side's version, and one both changed merges by lines or keeps the upstream's.
  * The merge gives an identity the location at which both sides hold it, else the one to which one side moved it while the other kept it where the base held it,
- * else the upstream's where both moved it, else the one at which the only side that holds it holds it, unless that side holds it as the base did, so the other side's removal stands,
- * and every other location is left as the side that moved the artifact away left it.
- * Where two identities would take one location, it keeps the one the upstream holds there; the other goes to where the upstream holds it, or, when the upstream holds it nowhere else, leaves the merge,
+ * else the upstream's where both moved it, else the one at which the only side that holds it holds it, unless that side holds it as the base did, so the other side's removal stands
+ * and its files leave every tree, and every other location is left as the side that moved the artifact away or removed it left it.
+ * Where two identities would take one location, it keeps the one the upstream holds there, over a local removal of it, which gives way so every upstream change to it merges in;
+ * the other goes to where the upstream holds it, or, when the upstream holds it nowhere else, leaves the merge,
  * and each of its local files that the base does not hold alike and that differs from what the location keeps is saved.
  * A file whose placed path would exceed the bounds of a store path is not placed: a side's version that the base does not hold alike is saved instead.
  * Identity files take no part in the path merge; placedIdentities gives back the one of each artifact the merge keeps.
@@ -1302,6 +1304,7 @@ async function placeByIdentity(base, original, local, upstream) {
   }
   // Two identities meet at one location only where one side holds each there; the upstream's keeps it.
   const dropped = new Set();
+  const contested = new Map();
   for (let again = true; again;) {
     again = false;
     const taking = new Map();
@@ -1309,6 +1312,7 @@ async function placeByIdentity(base, original, local, upstream) {
     for (const [location, held] of taking) {
       if (held.length < 2) continue;
       const kept = held.find((id) => identities.upstream.ids.get(location) === id) ?? held[0];
+      contested.set(location, kept);
       for (const id of held.filter((candidate) => candidate !== kept)) {
         const theirs = at("upstream", id);
         if (theirs !== null && theirs !== location) { final.set(id, theirs); again = true; }
@@ -1334,7 +1338,9 @@ async function placeByIdentity(base, original, local, upstream) {
       const id = identities[name].ids.get(location);
       // A status record or comment whose location holds no artifact in this tree stays where it is, for the merge to save if no artifact is left there.
       if (id === undefined) { for (const [file, entry] of group.values()) if (!placed[name].has(file)) placed[name].set(file, entry); continue; }
-      const to = dropped.has(id) ? null : final.get(id) ?? location;
+      // An artifact that the merge gives no location, which a side holds only as the base did while the other removed it, leaves every tree, so the removal stands and its location is left as the remover left it.
+      if (!final.has(id) && !dropped.has(id)) continue;
+      const to = dropped.has(id) ? null : final.get(id);
       for (const [role, [file, entry]] of group) {
         const target = to === null ? null : to === location ? file : rolePath(role, to);
         if (target !== null && storePathFits(target)) { later.push([name, target, to === location ? entry : await placedEntry(base, role, entry, location, to)]); continue; }
@@ -1350,6 +1356,16 @@ async function placeByIdentity(base, original, local, upstream) {
     }
   }
   for (const [name, target, entry] of later) placed[name].set(target, entry);
+  // Where the location that two artifacts would take keeps the upstream's, a local removal of it gives way: this side then holds it there as the base did, so every change the upstream made to it merges in.
+  for (const [location, id] of contested) {
+    if (dropped.has(id) || final.get(id) !== location || at("local", id) !== null) continue;
+    const from = at("original", id);
+    for (const [role] of from === null ? [] : groups.original.get(from)) {
+      const target = rolePath(role, location);
+      const entry = await baseFile(id, role, location);
+      if (entry && storePathFits(target) && !placed.local.has(target)) placed.local.set(target, entry);
+    }
+  }
   const kept = new Map();
   for (const [id, location] of final) if (!dropped.has(id)) kept.set(location, id);
   return { ...placed, saved, identities: { trees: { local, upstream }, of: identities, kept } };

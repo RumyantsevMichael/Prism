@@ -67,3 +67,14 @@ test("a create replaces an identity file that a removed artifact left, and a mov
   }
   assert.ok(other.version);
 });
+
+test("no two locations of a tree keep one identity, also where identity files chain one location's given identity onto the next", async () => {
+  const { uniqueIdentities } = await import("../../dist/server/workflow/artifact-paths.mjs");
+  const [a, b, c, d] = ["requirements/a.md", "requirements/b.md", "requirements/c.md", "requirements/d.md"];
+  const written = new Map([[b, given(a)], [c, given(b)], [d, given(c)]]);
+  const ids = uniqueIdentities([a, b, c, d], written);
+  assert.deepEqual([...ids.values()], [given(a), given(b), given(c), given(d)], "each location ends with the identity its own location gives");
+  const copied = "0123456789abcdef0123456789abcdef";
+  const two = uniqueIdentities([a, b, c], new Map([[a, copied], [b, copied], [c, "fedcba9876543210fedcba9876543210"]]));
+  assert.deepEqual([two.get(a), two.get(b), two.get(c)], [given(a), given(b), "fedcba9876543210fedcba9876543210"], "an id two files hold is neither's, and an id one file holds stays");
+});

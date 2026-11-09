@@ -27,6 +27,36 @@ export const identityContent = (id) => `${JSON.stringify({ id })}\n`;
 /** The identity that a location gives an artifact whose identity file is missing, of another form, or shared: the first 32 hexadecimal digits of the SHA-256 of the location's UTF-8 bytes. */
 export const locationIdentity = (location) => createHash("sha256").update(location, "utf8").digest("hex").slice(0, 32);
 
+/**
+ * The identity of each location of one tree that holds an artifact, as Map(location, id): the id its identity file holds, as written gives it, else the one its location gives.
+ * No two locations of a tree have one identity: where two would, each location whose file gave that id takes the one its location gives instead,
+ * which can meet an id that a third location's file holds, so this repeats until no two locations share one; a location that has the id its own location gives never changes again, so it ends.
+ */
+export function uniqueIdentities(locations, written) {
+  const ids = new Map();
+  const holders = new Map();
+  const hold = (location, id) => {
+    ids.set(location, id);
+    if (!holders.has(id)) holders.set(id, new Set());
+    holders.get(id).add(location);
+    return holders.get(id).size > 1;
+  };
+  const shared = [];
+  for (const location of locations) if (hold(location, written.get(location) ?? locationIdentity(location))) shared.push(ids.get(location));
+  while (shared.length) {
+    const id = shared.pop();
+    const held = holders.get(id);
+    if (held.size < 2) continue;
+    for (const location of [...held]) {
+      const own = locationIdentity(location);
+      if (own === id) continue;
+      held.delete(location);
+      if (hold(location, own)) shared.push(own);
+    }
+  }
+  return ids;
+}
+
 /** The id that an identity file's bytes hold, or null for bytes of any other form: one line of JSON, an object whose only key id holds 32 lowercase hexadecimal digits. */
 export function identityOf(bytes) {
   if (!bytes || bytes.length > IDENTITY_FILE_MAX) return null;

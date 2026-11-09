@@ -52,8 +52,10 @@ const commentName = (at) => `${at.replace(/[:.]/g, "-")}-${randomBytes(4).toStri
 /**
  * The stored comment that a file's name and bytes hold, or null for a file that is not in the exact form addComment writes:
  * one line of JSON with exactly its keys, location naming the folder that holds it, and every value of the form and size that Prism writes.
+ * A store sync uses the same check, so a merge rewrites location only in a comment that every reader takes.
  */
-function storedComment(name, bytes, location) {
+export function storedComment(name, bytes, location) {
+  if (!bytes || bytes.length > COMMENT_FILE_MAX) return null;
   if (!ARTIFACT_COMMENT_FILE.test(name)) return null;
   let value;
   try {
