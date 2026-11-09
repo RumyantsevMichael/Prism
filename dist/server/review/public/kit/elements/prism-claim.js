@@ -9,11 +9,12 @@ const ACTIVITIES = ["design", "implementation"];
 
 export class PrismClaim extends Base {
   static tag = "prism-claim";
-  static observedAttributes = ["label", "activity", "claimed-at", "renewed-at", "expires-at", "variant"];
+  static observedAttributes = ["label", "host", "activity", "claimed-at", "renewed-at", "expires-at", "variant"];
   static catalog = {
     purpose: "Shows which agent holds a slice, for what activity, and how long its claim has left; an expired claim says how long ago it lapsed. It is read-only and holds no control.",
     options: [
       { name: "label", values: ["text"], default: "", description: "The holder's label, as the claim records it; every holder is an agent." },
+      { name: "host", values: ["text"], default: "", description: "The harness the agent runs in, such as Claude Code or Codex, shown in place of the word Agent; without it the claim says Agent." },
       { name: "activity", values: ACTIVITIES, default: "implementation", description: "What the holder is doing, in words with a facet in the design or build phase color." },
       { name: "claimed-at", values: ["time"], default: "", description: "When the claim started; a strip shows it as since <time>." },
       { name: "renewed-at", values: ["time"], default: "", description: "When the claim was last renewed; the strip's lease meter runs from it to expires-at." },
@@ -51,9 +52,14 @@ export class PrismClaim extends Base {
     return (this.getAttribute("label") ?? "").trim();
   }
 
-  /** The claim's text in one line: the holder, Agent, the activity, and the time left. */
+  /** What kind of holder this is: the harness the agent runs in when the claim names one, else Agent. */
+  get kind() {
+    return (this.getAttribute("host") ?? "").trim() || "Agent";
+  }
+
+  /** The claim's text in one line: the holder, its harness or Agent, the activity, and the time left. */
   get tooltipText() {
-    return [this.label, "Agent", this.activity, timeLeft(this.getAttribute("expires-at")).text].filter(Boolean).join(" · ");
+    return [this.label, this.kind, this.activity, timeLeft(this.getAttribute("expires-at")).text].filter(Boolean).join(" · ");
   }
 
   render() {
@@ -66,7 +72,7 @@ export class PrismClaim extends Base {
       const name = make(this, "span", "prism-claim-name");
       name.textContent = this.label;
       const kind = make(this, "span", "prism-claim-kind");
-      kind.textContent = "Agent";
+      kind.textContent = this.kind;
       line.append(name, " ", kind);
       return line;
     };

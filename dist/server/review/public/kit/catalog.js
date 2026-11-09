@@ -56,9 +56,9 @@ function toastButton(caption, message, tone) {
 }
 
 // A claim whose times are set from now: `left` minutes left, or lapsed that many minutes ago when negative, on a lease of 30 minutes.
-function claimOf({ variant, label = "Claude on build-2", activity = "implementation", left = 41 }) {
+function claimOf({ variant, label = "Claude on build-2", host = "", activity = "implementation", left = 41 }) {
   const at = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
-  return `<prism-claim variant="${variant}" label="${html(label)}" activity="${activity}" claimed-at="${at(left - 90)}" renewed-at="${at(left - 30)}" expires-at="${at(left)}"></prism-claim>`;
+  return `<prism-claim variant="${variant}" label="${html(label)}"${host ? ` host="${html(host)}"` : ""} activity="${activity}" claimed-at="${at(left - 90)}" renewed-at="${at(left - 30)}" expires-at="${at(left)}"></prism-claim>`;
 }
 
 // The six phases with the first `reached` done and the next one current.
@@ -352,8 +352,8 @@ const SPECIMENS = {
   },
   "prism-claim": {
     avatar: claimOf({ variant: "avatar" }),
-    inline: claimOf({ variant: "inline" }) + claimOf({ variant: "inline", label: "Codex on ci", activity: "design", left: 180 }),
-    strip: claimOf({ variant: "strip" }),
+    inline: claimOf({ variant: "inline" }) + claimOf({ variant: "inline", label: "Michael on ci", host: "Codex", activity: "design", left: 180 }),
+    strip: claimOf({ variant: "strip" }) + claimOf({ variant: "strip", label: "Michael on build-2", host: "Claude Code" }),
     expired: claimOf({ variant: "inline", label: "Claude on vm", activity: "design", left: -4 }) + claimOf({ variant: "avatar", label: "Claude on vm", left: -4 }),
     "expired-strip": claimOf({ variant: "strip", label: "Claude on vm", left: -95 }),
     "long-text": claimOf({ variant: "inline", label: LONG }) + claimOf({ variant: "strip", label: LONG, left: 3000 }),

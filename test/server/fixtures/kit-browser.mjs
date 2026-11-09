@@ -117,11 +117,11 @@ export function reviewUrl(base, ref) {
  * Writes a claim record for a slice of a project, as a Prism server writes one: live for `minutesLeft`, or lapsed `minutesLeft` minutes ago when it is negative.
  * Write it before the project's review server starts, since the server caches what it read.
  */
-export async function writeClaim(projectRoot, initiative, slug, { label = "Claude on build-2", activity = "implementation", minutesLeft = 41, minutesClaimed = 20 } = {}) {
+export async function writeClaim(projectRoot, initiative, slug, { label = "Claude on build-2", host = null, activity = "implementation", minutesLeft = 41, minutesClaimed = 20 } = {}) {
   const { mkdir, writeFile } = await import("node:fs/promises");
   const now = Date.now();
   const at = (minutes) => new Date(now + minutes * 60000).toISOString();
-  const claim = { schemaVersion: 1, slug, holder: `session-${slug.replace(/[^a-z0-9]/g, "").padEnd(16, "0").slice(0, 16)}`, label, activity, claimedAt: at(-minutesClaimed), renewedAt: at(minutesLeft - 30), expiresAt: at(minutesLeft), nonce: "0123456789abcdef01234567" };
+  const claim = { schemaVersion: 1, slug, holder: `session-${slug.replace(/[^a-z0-9]/g, "").padEnd(16, "0").slice(0, 16)}`, label, ...(host ? { host } : {}), activity, claimedAt: at(-minutesClaimed), renewedAt: at(minutesLeft - 30), expiresAt: at(minutesLeft), nonce: "0123456789abcdef01234567" };
   const folder = path.join(projectRoot, ".prism", "initiatives", initiative, "claims");
   await mkdir(folder, { recursive: true });
   await writeFile(path.join(folder, `${slug}.json`), `${JSON.stringify(claim, null, 2)}\n`);

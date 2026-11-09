@@ -315,8 +315,8 @@ async function claimsView(resolved, loaded, { report = true } = {}) {
     record = { ...record, slices: { ...record.slices } };
     for (const [slug, claim] of claims) {
       if (!isLive(claim, now) || !Object.hasOwn(record.slices, slug)) continue;
-      record.slices[slug] = { ...record.slices[slug], claim: { holder: claim.holder, label: claim.label, activity: claim.activity, claimedAt: claim.claimedAt, renewedAt: claim.renewedAt, expiresAt: claim.expiresAt } };
-      listed[slug] = { label: claim.label, activity: claim.activity, expiresAt: claim.expiresAt, heldHere: claim.holder === holder };
+      record.slices[slug] = { ...record.slices[slug], claim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), activity: claim.activity, claimedAt: claim.claimedAt, renewedAt: claim.renewedAt, expiresAt: claim.expiresAt } };
+      listed[slug] = { label: claim.label, ...(claim.host ? { host: claim.host } : {}), activity: claim.activity, expiresAt: claim.expiresAt, heldHere: claim.holder === holder };
     }
   }
   if (report) adoptClaims(resolved.root, resolved.initiative, claims, now);

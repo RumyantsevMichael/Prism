@@ -1,0 +1,48 @@
+/* The page the review app serves for a link it cannot open: an address without the current viewer credential, or an app with no project yet.
+   It stands alone, so it loads only the tokens and base styles, and every value comes from kit/tokens.css. */
+
+body.unavailable {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--prism-color-chrome) var(--prism-gradient-canvas) no-repeat;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-md);
+}
+
+.unavailable-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  height: var(--prism-bar-height);
+  padding: 0 var(--prism-space-6);
+}
+
+.unavailable-mark {
+  display: block;
+  width: var(--prism-mark-size);
+  height: var(--prism-mark-size);
+}
+
+.unavailable-wordmark {
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.unavailable-main {
+  max-width: var(--prism-measure);
+  margin: var(--prism-space-7) auto;
+  padding: 0 var(--prism-space-5);
+}
+
+.unavailable-main p {
+  margin: 0 0 var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+}
+
+.unavailable-reason {
+  display: none;
+}
+
+body[data-reason="expired"] .unavailable-reason[data-for="expired"],
+body[data-reason="empty"] .unavailable-reason[data-for="empty"] {
+  display: flex;
+}

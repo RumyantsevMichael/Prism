@@ -568,6 +568,57 @@ test("the served review page carries the project switcher and the notice banner"
   assert.match(client, /name === "notice"/);
 });
 
+test("addresses the app cannot open show the app's own page or a project, never a line of text", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "routes");
+  const url = await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]);
+  const projectBase = new URL(url);
+  const viewer = projectBase.pathname.replace(/\/p\/[0-9a-f]{16}\/$/, "");
+  const page = { Accept: "text/html" };
+  const origin = `http://127.0.0.1:${projectBase.port}`;
+
+  // Without the current viewer credential the page says the link no longer works and names no project.
+  for (const address of [`${origin}/`, `${origin}/session/stale-credential/p/0123456789abcdef/`]) {
+    const answer = await request(address, { headers: page });
+    assert.equal(answer.status, 404);
+    assert.match(answer.headers["content-type"], /^text\/html/);
+    assert.match(answer.body, /data-reason="expired"/);
+    assert.ok(!answer.body.includes(root) && !answer.body.includes(path.basename(root)), "the page names no project");
+  }
+  // The page's own files carry no project data, so they load without the credential; nothing else does.
+  assert.equal((await request(`${origin}/kit/tokens.css`)).status, 200);
+  assert.equal((await request(`${origin}/styles/unavailable.css`)).status, 200);
+  assert.equal((await request(`${origin}/review.js`)).status, 404);
+  assert.equal((await request(`${origin}/kit/%2e%2e/review.html`)).status, 404);
+  assert.equal((await request(`${origin}/session/stale-credential/p/0123456789abcdef/api/index`)).status, 404, "a call from a stale page gets a plain refusal");
+
+  // The app's address opens the project used last, and an unknown project's page opens it with a notice.
+  const home = await request(`${origin}${viewer}/`, { headers: page });
+  assert.equal(home.status, 302);
+  assert.equal(home.headers.location, projectBase.pathname);
+  const missing = await request(`${origin}${viewer}/p/0123456789abcdef/review?artifact=docs%2Fgone.md`, { headers: page });
+  assert.equal(missing.status, 302);
+  assert.equal(missing.headers.location, `${projectBase.pathname}?missing=project`);
+  assert.equal((await request(`${origin}${viewer}/p/0123456789abcdef/api/index`)).status, 404, "a call for an unknown project is refused, not redirected");
+
+  // A page address that a project no longer has opens the project's start page.
+  const old = await request(new URL("initiatives/old-page", url), { headers: page });
+  assert.equal(old.status, 302);
+  assert.equal(old.headers.location, url.replace(/\/$/, "") + "/");
+  assert.equal((await request(new URL("api/no-such-route", url), { headers: page })).status, 404);
+});
+
+test("an app with no project yet shows the app's own page at its address", async (context) => {
+  const directory = await appDirectory(context);
+  const app = await startReviewApp({ directory, idleMs: 60000 });
+  context.after(() => app.close());
+  const answer = await request(app.viewerUrl, { headers: { Accept: "text/html" } });
+  assert.equal(answer.status, 404);
+  assert.match(answer.body, /data-reason="empty"/);
+  const unknown = await request(new URL("p/0123456789abcdef/", app.viewerUrl), { headers: { Accept: "text/html" } });
+  assert.match(unknown.body, /data-reason="empty"/);
+});
+
 test("reading the review URL without tabs leaves the session unchanged", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "readonly");
