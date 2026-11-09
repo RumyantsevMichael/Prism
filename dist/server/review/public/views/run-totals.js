@@ -42,7 +42,7 @@ export function runTotalsHtml(totals, scope) {
     return `<p class="run-totals-empty" data-run-totals="${scope}">No run recorded yet.</p>`;
   }
   return `<div class="run-totals" data-run-totals="${scope}">
-    <p class="eyebrow">${SCOPE_LABELS[scope]}</p>
+    <p class="label-caps">${SCOPE_LABELS[scope]}</p>
     <div class="stat-grid">
       ${MEASURES.map((entry) => tile(entry, totals[entry[0]])).join("")}
     </div>

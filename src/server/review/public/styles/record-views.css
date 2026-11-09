@@ -1284,3 +1284,17 @@ body.has-maximized::after {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* A code location links to its file on the host in the ink color, and a mark after the commit says the work tree had uncommitted changes. */
+a.code-link {
+  color: inherit;
+}
+
+a.code-link:hover {
+  color: var(--prism-color-accent-text);
+}
+
+.code-dirty {
+  color: var(--prism-color-warning);
+  font-weight: var(--prism-font-weight-bold);
+}

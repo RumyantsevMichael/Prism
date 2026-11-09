@@ -169,7 +169,7 @@ test("serves the browser runtime without an image endpoint", async (context) => 
     assert.match(pageSource, /id="jump"/);
     assert.match(pageSource, /aria-live="polite"/);
     assert.match(pageSource, /id="page-bar"/);
-    const stylesheet = await (await fetchReview(`${review.baseUrl}/review.css`)).text();
+    const stylesheet = await (await fetchReview(`${review.baseUrl}/kit/tokens.css`)).text();
     assert.match(stylesheet, /prefers-reduced-motion/);
     const client = await (await fetchReview(`${review.baseUrl}/review.js`)).text();
     assert.match(client, /data-action="zoom-in"/);

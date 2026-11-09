@@ -6,6 +6,7 @@ html {
   color: var(--prism-color-ink);
   font-family: var(--prism-font-ui);
   font-weight: var(--prism-font-weight-regular);
+  line-height: var(--prism-line-height);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -14,6 +15,23 @@ html {
 body {
   font-family: var(--prism-font-ui);
   letter-spacing: var(--prism-tracking-body);
+}
+
+*,
+::before,
+::after {
+  box-sizing: border-box;
+}
+
+button,
+input {
+  color: inherit;
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
 }
 
 code,
@@ -35,11 +53,22 @@ samp {
 
 a {
   color: var(--prism-color-accent-text);
+  text-decoration-color: color-mix(in srgb, var(--prism-color-accent) 35%, transparent);
+  text-underline-offset: 0.2em;
 }
 
 mark {
   background: var(--prism-color-warning-soft);
   color: var(--prism-color-ink);
+}
+
+kbd {
+  padding: 0 var(--prism-space-2);
+  border: var(--prism-stroke) solid var(--prism-color-line-strong);
+  border-radius: var(--prism-radius-xs);
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-2xs);
 }
 
 hr {

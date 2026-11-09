@@ -701,8 +701,6 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
     } else if (route === "/review.js") {
       await serveFile(response, path.join(PUBLIC_DIR, "review.js"), "text/javascript; charset=utf-8");
-    } else if (route === "/review.css") {
-      await serveFile(response, path.join(PUBLIC_DIR, "review.css"), "text/css; charset=utf-8");
     } else if (route === "/favicon.svg" || route === "/prism-mark.svg") {
       await serveFile(response, path.join(PUBLIC_DIR, route.slice(1)), "image/svg+xml");
     } else if (route === "/vendor/plantuml.js") {

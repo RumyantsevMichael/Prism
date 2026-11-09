@@ -1,4 +1,4 @@
-import { escapeHtml } from "./util.js";
+import { badge, escapeHtml } from "./util.js";
 
 // The page draws every action from its listing: the registry names the fields, and this view places them as kit controls:
 // a prism-field per text field, a group of pressed prism-buttons per choice, and prism-buttons to apply and reset.
@@ -82,7 +82,7 @@ function guidanceHtml(action, choice) {
     ? `<ul class="gate-consequences">${consequences.map((option) => `<li><span class="gate-option-label">${escapeHtml(option.label)}</span><span class="gate-consequence">${escapeHtml(option.consequence)}</span></li>`).join("")}</ul>`
     : "";
   const pick = recommended?.value !== null && recommended?.value !== undefined ? options.find((option) => option.value === recommended.value) : null;
-  const reason = recommended?.reason ? `<p class="gate-recommendation"><span class="gate-tag">Recommended</span> ${pick ? `<span class="gate-option-label">${escapeHtml(pick.label)}</span>: ` : ""}${escapeHtml(recommended.reason)}</p>` : "";
+  const reason = recommended?.reason ? `<p class="gate-recommendation">${badge("Recommended", "accent")} ${pick ? `<span class="gate-option-label">${escapeHtml(pick.label)}</span>: ` : ""}${escapeHtml(recommended.reason)}</p>` : "";
   return list || reason ? `<div class="gate-guidance">${list}${reason}</div>` : "";
 }
 

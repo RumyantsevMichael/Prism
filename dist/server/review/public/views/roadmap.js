@@ -1,4 +1,4 @@
-import { applyWidths, progressBar } from "./entities.js";
+import { applyWidths, progressBar, stateBadge } from "./entities.js";
 import { isExpired } from "./claim-index.js";
 import { claimAttributes } from "./claims.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
@@ -6,11 +6,7 @@ import { badge, bindLinks, card, emptyNote, escapeHtml, plural, stat, summaryPan
 
 const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 
-const STATE_TONES = { envisioned: "neutral", planned: "info", "in-progress": "accent", shipped: "success", superseded: "neutral", unlisted: "warning" };
-
-export function stateBadge(state) {
-  return badge(state, STATE_TONES[state] ?? "neutral");
-}
+export { stateBadge };
 
 // An initiative's title is a link to its page, which a click opens in place and a modified click keeps open.
 export function initiativeLink(id, title) {

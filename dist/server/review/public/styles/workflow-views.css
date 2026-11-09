@@ -53,6 +53,14 @@
   min-width: 0;
 }
 
+/* Run totals on wave cards, slice pages, and initiative pages: a caption over the stat tiles. */
+.run-totals {
+  display: grid;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  margin-top: var(--prism-space-4);
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--prism-control-height) * 5)), 1fr));
@@ -207,6 +215,11 @@
   overflow-x: auto;
 }
 
+/* Wide tables scroll inside their card; cells break only words longer than the table can hold. */
+.table-wrap table {
+  overflow-wrap: break-word;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -220,8 +233,10 @@
   font-size: var(--prism-font-size-xs);
   font-weight: var(--prism-font-weight-semibold);
   letter-spacing: var(--prism-tracking-caps);
+  background: var(--prism-color-sunken);
   text-align: left;
   text-transform: uppercase;
+  vertical-align: top;
   white-space: nowrap;
 }
 
@@ -422,6 +437,46 @@
 
 .gate-context pre {
   overflow-x: auto;
+}
+
+/* What each option of a gate leads to, and the agent's recommendation, kept to a readable measure. */
+.gate-guidance {
+  display: grid;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  max-width: var(--prism-measure);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.gate-consequences {
+  display: grid;
+  gap: var(--prism-space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gate-consequences li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-1) var(--prism-space-3);
+  min-width: 0;
+}
+
+.gate-consequence {
+  flex-basis: 100%;
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+}
+
+.gate-option-label {
+  min-width: 0;
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.gate-context-plain {
+  white-space: pre-wrap;
 }
 
 .gate-recommendation {

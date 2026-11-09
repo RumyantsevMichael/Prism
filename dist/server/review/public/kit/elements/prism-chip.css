@@ -80,6 +80,17 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The secondary text shortens inside its part, so a long one ends in an ellipsis within the chip rather than running past it. */
+.meta:not([hidden]) {
+  display: inline-flex;
+}
+
+::slotted([slot="meta"]) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 a.chip,
 button.chip {
   cursor: pointer;

@@ -129,7 +129,7 @@ export async function render(container, entity, ctx) {
         ["Records", `<span class="chip-row">${[artifactChip(data.recordPath, ctx, "Initiative record"), ctx.hasArtifact(data.statePath) ? artifactChip(data.statePath, ctx, "Coordination state") : ""].join("")}</span>`]
       ])}
       ${data.runTotals ? runTotalsHtml(data.runTotals.initiative, "initiative") : ""}`);
-  // The settings belong to the initiative whatever state its record is in, so every branch shows them.
+  // The settings belong to the initiative whatever state its record is in, so every branch that has an action target shows them.
   const settings = '<div data-initiative-settings></div>';
   const mountSettings = () => mountInitiativeSettings(container.querySelector("[data-initiative-settings]"), { target: `initiative:${data.id}`, eyebrow: "Orchestration of every slice", ctx });
   if (!data.exists) {
@@ -139,8 +139,9 @@ export async function render(container, entity, ctx) {
     return;
   }
   if (!data.valid) {
-    container.innerHTML = `${head}${card("Invalid initiative record", `<ul class="diagnostic-list">${data.errors.map((error) => `<li class="is-blocking">${escapeHtml(error)}</li>`).join("")}</ul>`, { eyebrow: "Initiative record" })}${settings}`;
-    mountSettings();
+    // An unreadable record that the roadmap does not list is no action target, so its page has no settings to show.
+    container.innerHTML = `${head}${card("Invalid initiative record", `<ul class="diagnostic-list">${data.errors.map((error) => `<li class="is-blocking">${escapeHtml(error)}</li>`).join("")}</ul>`, { eyebrow: "Initiative record" })}${item ? settings : ""}`;
+    if (item) mountSettings();
     bindLinks(container, ctx);
     return;
   }

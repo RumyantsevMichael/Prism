@@ -1519,8 +1519,19 @@ function closeDrawer() {
 // Above 1100px the sidebar shows the trees, so a drawer left open as the window widens closes and gives them back.
 function watchDrawerWidth() {
   const wide = matchMedia("(min-width: 1101px)");
+  // Focus in the sidebar would fall to the page when the sidebar becomes a closed drawer, so it moves to the Navigation button that opens the drawer.
+  const sidebar = document.getElementById("sidebar");
+  let sidebarFocused = false;
+  document.addEventListener("focusin", (event) => { sidebarFocused = sidebar.contains(event.target); });
   wide.addEventListener("change", () => {
-    if (!wide.matches) return;
+    if (!wide.matches) {
+      if (navDrawer.isOpen || !sidebarFocused) return;
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (!active || active === document.body || sidebar.contains(active)) document.getElementById("nav-button").focus();
+      });
+      return;
+    }
     if (!navDrawer.isOpen) return closeDrawer();
     navDrawer.close();
     closeDrawer();
