@@ -311,11 +311,22 @@ The review setting decides review marks when a design is accepted: `all` marks e
 Defect repair stays outside this workflow.
 Reproduce and diagnose a defect against the existing specification, and change the specification only when the required behavior must change too.
 
+A defect in a done slice of an initiative that has not shipped is fixed inside that initiative as new work.
+Report it with `update_initiative` `report_defect` `{ slug, requirements, summary }` on the done slice, which records it as `d1`, `d2`, and so on, and refuses a slice that is not done with `validation_failed`.
+The done slice stays done, and its status, accepted design, frozen tests, verification runs, and review are unchanged.
+`set_status` refuses to set a done slice to another status with `slice_done`.
+Design claims the done slice with `claim` and proposes one fix slice with `propose_design`: one `add_fix` `{ slug, defects, fix: { slug, title, outcome, requirements } }` naming the done slice, optional `set_dependencies` and `update_slice` on the fix slug, and one `accept_design` of the fix slug.
+Prism refuses any other operation on a done scope, a defect the slice does not hold or that another fix slice already fixes, and a slug already in use, all with `validation_failed`.
+Accepting the proposal adds the fix as a new `not-started` slice below the done slice, with `fixes: { slice, defects }`, and its `slice.md` sits in its own folder under the initiative's plans folder.
+A fix slice is a leaf of the initiative: it counts toward progress, it cannot split, it starts only when the done slice's dependencies and those of its ancestors are done, and slices that depend on the done slice wait for it.
+`get_initiative` lists each fix slice under the done slice in `derived.children` and in `derived.fixes`, and lists each defect whose fix is missing or not done under `derived.unfinishedFixes` as `{ slice, defect, fix, status }`.
+While any is listed, `readyToShip` is `false`, `get_roadmap` reports a `fixes_unfinished` diagnostic, and ship refuses with `fixes_unfinished`, naming each one.
+
 A fix to the work of a shipped initiative is a new initiative, because a shipped initiative's state is history.
 Add it with `update_roadmap` `add_initiative`, or later with `update_initiative`, and give it `corrects: { initiative, slices }` with the shipped initiative and each of its slices whose work the fix corrects.
 The roadmap Markdown shows it on the new entry as ``Corrects `reports`: `download`, `audit`.``
 Prism refuses `corrects` with `validation_failed` for an initiative that has not shipped, an unknown initiative, the entry's own id, an empty `slices` list, and a slice that the shipped initiative's record does not hold, which is every slice when that record is missing.
-Fix done work of an initiative that has not shipped inside that initiative instead, by reporting the defect on the done slice with `report_defect`, which is Planned.
+Fix done work of an initiative that has not shipped inside that initiative instead, by reporting the defect on the done slice with `report_defect`, as described above.
 Every read of the shipped initiative that carries `shippedHistory` lists the initiatives that correct it under `laterFixes`, each as `{ initiative, title, state, slices }` with its current lifecycle state, in roadmap order.
 
 ## Project files

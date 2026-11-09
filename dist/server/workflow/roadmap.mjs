@@ -4,7 +4,7 @@ import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { fitScopes, normalizeRequirementReference, readInitiative, scopeDependents, withInitiativeWriteLocks } from "./initiative.mjs";
+import { fitScopes, normalizeRequirementReference, readInitiative, scopeDependents, unfinishedFixes, unfinishedFixesMessage, withInitiativeWriteLocks } from "./initiative.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
@@ -251,7 +251,7 @@ async function withOpenWork(projectRoot, item, result, options = {}) {
   return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, diagnostic] }, blocker: derived.readyToShip ? { open: work } : result.blocker };
 }
 
-// The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { open } for open work, { problem } for an invalid declaration, or { scopes } for blocked dependents.
+// The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { open } for open work, { fixes } for unfinished fixes, { problem } for an invalid declaration, or { scopes } for blocked dependents.
 async function deriveItem(projectRoot, config, item) {
   const base = { id: item.id, band: item.band, state: "envisioned", readyToShip: false, progress: null, active: [], diagnostics: [] };
   const leaves = { leaves: true };
@@ -289,6 +289,9 @@ async function deriveItem(projectRoot, config, item) {
     const open = await withOpenWork(projectRoot, item, { derived, blocker: leaves }, { record: loaded.record, state });
     if (open) return open;
   }
+  // Unfinished fixes to done work refuse ship after open work and before the leaf check, since an unfinished fix slice is also a leaf that is not done.
+  const fixes = unfinishedFixes(loaded.record);
+  if (fixes.length) return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, { code: "fixes_unfinished", message: unfinishedFixesMessage(item.id, fixes), fixes }] }, blocker: { fixes } };
   if (!derived.readyToShip) return { derived, blocker: leaves };
   // A finished initiative is ready to ship only once ship would succeed: its declaration is valid and every finished scope's dependents passed.
   const found = await dependentsBlockers(projectRoot, config, item.id, loaded.record);
@@ -505,6 +508,7 @@ async function applyOperation(resolved, record, operation, actor, at, marks) {
       if (hasOpenWork(work)) throw fail("open_work", openWorkMessage(item.id, work), work);
       const { derived, blocker } = await deriveItem(resolved.root, resolved.config, item);
       if (blocker?.open) throw fail("open_work", openWorkMessage(item.id, blocker.open), blocker.open);
+      if (blocker?.fixes) throw fail("fixes_unfinished", unfinishedFixesMessage(item.id, blocker.fixes), { fixes: blocker.fixes });
       if (blocker?.leaves) throw fail("gate_blocked", "Every leaf slice in the initiative record must be done before the initiative ships.", { state: derived.state, progress: derived.progress, diagnostics: derived.diagnostics });
       // Shipping reads the components after the leaf check: an invalid declaration refuses with its own code and fields, and a red or unproven dependent blocks it.
       if (blocker?.problem) throw blocker.problem;
@@ -605,7 +609,7 @@ export const ROADMAP_TOOLS = [
   },
   {
     name: "update_roadmap",
-    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. add_initiative and update_initiative take corrects ({ initiative, slices }) for a fix to shipped work: the entry names the shipped initiative and each of its recorded slices whose work it corrects, the roadmap Markdown shows it, and the shipped initiative's shippedHistory lists the entry under laterFixes; corrects refuses with validation_failed an initiative that has not shipped (fix its done work inside it with update_initiative report_defect), an unknown initiative, the entry's own id, an empty slices list, and a slice the shipped initiative's record does not hold. A shipped initiative's entry keeps its title, intent, requirements, and required initiatives: update_initiative and set_requires naming it refuse with initiative_shipped, with its initiative and shippedAt. Ship refuses an existing decision with validation_failed, then refuses with open_work, listing gates ({ id, slice, question, answered }), claims ({ slice, label, activity, expiresAt }), and proposals (scope slugs), while the initiative has a pending user gate, answered or not, a live slice claim, or a pending design proposal. Ship then requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Ship records each slice document of the initiative in its decision as documents ({ path, sha256 } of its content without the history mark), with documentsRecordedAt and documentsFrom ship, writes the history mark into each, and lists the marked paths under historyMarks and each document it could not read or write under historyMarkProblems ({ path, reason }) without failing. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
+    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. add_initiative and update_initiative take corrects ({ initiative, slices }) for a fix to shipped work: the entry names the shipped initiative and each of its recorded slices whose work it corrects, the roadmap Markdown shows it, and the shipped initiative's shippedHistory lists the entry under laterFixes; corrects refuses with validation_failed an initiative that has not shipped (fix its done work inside it with update_initiative report_defect), an unknown initiative, the entry's own id, an empty slices list, and a slice the shipped initiative's record does not hold. A shipped initiative's entry keeps its title, intent, requirements, and required initiatives: update_initiative and set_requires naming it refuse with initiative_shipped, with its initiative and shippedAt. Ship refuses an existing decision with validation_failed, then refuses with open_work, listing gates ({ id, slice, question, answered }), claims ({ slice, label, activity, expiresAt }), and proposals (scope slugs), while the initiative has a pending user gate, answered or not, a live slice claim, or a pending design proposal. Ship then refuses with fixes_unfinished, listing fixes ({ slice, defect, fix, status }), while a defect reported on a done slice has no fix slice or its fix slice is not done. Ship then requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Ship records each slice document of the initiative in its decision as documents ({ path, sha256 } of its content without the history mark), with documentsRecordedAt and documentsFrom ship, writes the history mark into each, and lists the marked paths under historyMarks and each document it could not read or write under historyMarkProblems ({ path, reason }) without failing. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
     inputSchema: UPDATE_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

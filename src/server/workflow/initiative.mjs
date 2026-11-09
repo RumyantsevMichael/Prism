@@ -51,6 +51,8 @@ const splitOperation = object({ op: { const: "split" }, parent: slug, children: 
 const dependenciesOperation = object({ op: { const: "set_dependencies" }, slug, dependencies: { type: "array", maxItems: 200, items: slug } });
 const updateSliceOperation = object({ op: { const: "update_slice" }, slug, title: text, outcome: text }, ["op", "slug"]);
 const acceptDesignOperation = object({ op: { const: "accept_design" }, slug, frozenTests: { type: "array", minItems: 1, maxItems: 200, items: text }, review: { enum: REVIEW_MARKS }, component: { type: "string", minLength: 1, maxLength: 200 } }, ["op", "slug", "frozenTests", "review"]);
+const requirementsList = { type: "array", minItems: 1, maxItems: 200, items: text };
+const addFixOperation = object({ op: { const: "add_fix" }, slug, defects: { type: "array", minItems: 1, maxItems: 50, items: slug }, fix: object({ slug, title: text, outcome: text, requirements: requirementsList }) });
 const STANDALONE = new Set(["remove_records", "propose_design", "accept_proposal"]);
 // Sync outcomes that mean nothing else shares the record, so a claim is confirmed locally.
 const LOCAL_SYNC = new Set(["no_upstream", "not_a_repository"]);
@@ -68,7 +70,9 @@ export const UPDATE_INITIATIVE_SCHEMA = object({
     dependenciesOperation,
     updateSliceOperation,
     acceptDesignOperation,
-    object({ op: { const: "propose_design" }, slug, operations: { type: "array", minItems: 1, maxItems: 50, items: { oneOf: [splitOperation, dependenciesOperation, updateSliceOperation, acceptDesignOperation] } } }),
+    object({ op: { const: "propose_design" }, slug, operations: { type: "array", minItems: 1, maxItems: 50, items: { oneOf: [splitOperation, dependenciesOperation, updateSliceOperation, acceptDesignOperation, addFixOperation] } } }),
+    addFixOperation,
+    object({ op: { const: "report_defect" }, slug, requirements: requirementsList, summary: text }),
     object({ op: { const: "accept_proposal" }, slug, reviewRequired: { type: "array", maxItems: 200, items: slug }, gate: text }, ["op", "slug", "reviewRequired"]),
     object({ op: { const: "restore_tests" }, slug }),
     object({ op: { const: "report_contract_defects" }, slug, defects: { type: "array", minItems: 1, maxItems: 50, items: object({ clause: text, reason: text }) } }),
@@ -115,12 +119,14 @@ function canonicalRecord(record) {
       ...(slice.outcome ? { outcome: slice.outcome } : {}),
       status: slice.status,
       parent: slice.parent,
+      ...(slice.fixes ? { fixes: { slice: slice.fixes.slice, defects: [...slice.fixes.defects] } } : {}),
       requirements: [...slice.requirements].sort(),
       dependencies: [...slice.dependencies].sort(),
       ...(slice.component ? { component: slice.component } : {}),
       ...(slice.design ? { design: { acceptedAt: slice.design.acceptedAt, frozenTests: [...slice.design.frozenTests].sort((left, right) => left.path.localeCompare(right.path)), review: slice.design.review, ...(slice.design.baselineId ? { baselineId: slice.design.baselineId } : {}), ...(slice.design.staged ? { staged: true } : {}), ...startOf(slice.design) } } : {}),
       ...(slice.splitEvidence ? { splitEvidence: slice.splitEvidence } : {}),
-      ...(slice.contractDefects ? { contractDefects: slice.contractDefects } : {})
+      ...(slice.contractDefects ? { contractDefects: slice.contractDefects } : {}),
+      ...(slice.defects?.length ? { defects: slice.defects.map((item) => ({ id: item.id, requirements: [...item.requirements], summary: item.summary, reportedAt: item.reportedAt })) } : {})
     };
   }
   const proposals = Object.fromEntries(Object.keys(record.proposals ?? {}).sort().map((key) => [key, record.proposals[key]]));
@@ -146,6 +152,7 @@ function validateRecord(raw, initiative) {
     if (slice?.contractDefects !== undefined && (!Array.isArray(slice.contractDefects) || slice.contractDefects.some((item) => typeof item?.clause !== "string" || typeof item?.reason !== "string"))) errors.push(`${key}: contractDefects must list { clause, reason } entries.`);
     if (slice?.component !== undefined && (typeof slice.component !== "string" || !COMPONENT_IDENTITY.test(slice.component) || slice.status === "split")) errors.push(`${key}: component must be a <repository>/<component> identity on a slice that is not split.`);
     if (slice?.splitEvidence !== undefined && (slice.status !== "split" || !SPLIT_EVIDENCE_KINDS.includes(slice.splitEvidence?.kind))) errors.push(`${key}: splitEvidence belongs to a split slice and names its kind.`);
+    errors.push(...defectProblems(raw.slices, key));
   }
   if (raw.proposals !== undefined) {
     if (raw.proposals === null || typeof raw.proposals !== "object" || Array.isArray(raw.proposals)) errors.push("proposals must be an object keyed by scope.");
@@ -158,6 +165,53 @@ function validateRecord(raw, initiative) {
     errors.push(error.message);
   }
   return { errors, analysis };
+}
+
+const DEFECT_ID = /^d[1-9][0-9]*$/;
+
+// A done slice keeps the defects reported on it, and each of its fix slices names defects it holds that no other fix slice names.
+function defectProblems(slices, key) {
+  const slice = slices?.[key];
+  const problems = [];
+  if (slice?.defects !== undefined) {
+    const valid = Array.isArray(slice.defects) && slice.defects.every((item) => DEFECT_ID.test(item?.id ?? "") && Array.isArray(item.requirements) && item.requirements.length > 0 && item.requirements.every((reference) => typeof reference === "string") && typeof item.summary === "string" && item.summary.length > 0 && typeof item.reportedAt === "string");
+    if (!valid || new Set(slice.defects.map((item) => item.id)).size !== slice.defects.length) problems.push(`${key}: defects must list { id, requirements, summary, reportedAt } entries with distinct d<n> ids.`);
+    if (slice.status !== "done") problems.push(`${key}: defects belong to a done slice.`);
+  }
+  if (slice?.fixes !== undefined) {
+    const fixed = slices?.[slice.fixes?.slice];
+    const held = new Set(Array.isArray(fixed?.defects) ? fixed.defects.map((item) => item?.id) : []);
+    const defects = Array.isArray(slice.fixes?.defects) ? slice.fixes.defects : [];
+    if (!defects.length || defects.some((id) => !held.has(id))) problems.push(`${key}: fixes must name defects that ${slice.fixes?.slice} holds.`);
+    const shared = defects.filter((id) => Object.entries(slices).some(([other, value]) => other !== key && value?.fixes?.slice === slice.fixes.slice && Array.isArray(value.fixes.defects) && value.fixes.defects.includes(id)));
+    if (shared.length) problems.push(`${key}: another fix slice of ${slice.fixes.slice} already fixes ${shared.join(", ")}.`);
+  }
+  return problems;
+}
+
+/**
+ * Each defect reported on a done slice whose fix is unfinished, in slice then defect order: { slice, defect, fix, status },
+ * where fix is the fix slice that names the defect and status its status, or null and not-designed while no fix slice names it.
+ */
+export function unfinishedFixes(record) {
+  const slices = record?.slices && typeof record.slices === "object" ? record.slices : {};
+  const number = (id) => Number(String(id).slice(1));
+  const found = [];
+  for (const key of Object.keys(slices).sort()) {
+    const defects = Array.isArray(slices[key]?.defects) ? [...slices[key].defects].sort((left, right) => number(left.id) - number(right.id)) : [];
+    for (const defect of defects) {
+      const fix = Object.keys(slices).sort().find((other) => slices[other]?.fixes?.slice === key && Array.isArray(slices[other].fixes.defects) && slices[other].fixes.defects.includes(defect.id));
+      if (!fix) found.push({ slice: key, defect: defect.id, fix: null, status: "not-designed" });
+      else if (slices[fix].status !== "done") found.push({ slice: key, defect: defect.id, fix, status: slices[fix].status });
+    }
+  }
+  return found;
+}
+
+/** The refusal message of a ship that waits for fixes, naming each unfinished one. */
+export function unfinishedFixesMessage(initiative, fixes) {
+  const named = fixes.map((item) => item.fix === null ? `${item.slice} ${item.defect} (no fix slice designed)` : `${item.slice} ${item.defect} (fix ${item.fix} is ${item.status})`);
+  return `The initiative ${initiative} cannot ship while fixes to its done work are unfinished: ${named.join("; ")}. Design a fix slice for each defect and finish it before shipping.`;
 }
 
 /**
@@ -211,10 +265,11 @@ async function loadRecord(resolved) {
   return { exists: true, revision, text, record: raw, valid: errors.length === 0, errors, analysis };
 }
 
-function derived(analysis) {
+function derived(analysis, record) {
   if (!analysis) return null;
   const { slices, ...rest } = analysis;
-  return { ...rest, readyToShip: analysis.complete[analysis.root] === true };
+  const fixes = unfinishedFixes(record);
+  return { ...rest, unfinishedFixes: fixes, readyToShip: analysis.complete[analysis.root] === true && fixes.length === 0 };
 }
 
 function publicResult(resolved, loaded) {
@@ -227,7 +282,7 @@ function publicResult(resolved, loaded) {
     valid: loaded.valid,
     errors: loaded.errors,
     record: loaded.record,
-    derived: derived(loaded.analysis)
+    derived: derived(loaded.analysis, loaded.record)
   };
 }
 
@@ -273,12 +328,13 @@ export function fitScopes(record) {
 /** The leaves of a scope in slug order: the leaves below its planned slices, which are the planned slices themselves unless one was split, or the leaf itself. */
 export function scopeLeaves(record, scope) {
   const slices = record?.slices && typeof record.slices === "object" ? record.slices : {};
-  const children = (slug) => Object.keys(slices).filter((key) => slices[key]?.parent === slug);
+  // A fix slice is a leaf beside the done slice it fixes, so the done slice stays a leaf of its scope too.
+  const children = (slug, fixes) => Object.keys(slices).filter((key) => slices[key]?.parent === slug && Boolean(slices[key]?.fixes) === fixes);
   const leaves = (slug, seen = new Set()) => {
     if (seen.has(slug)) return [];
     seen.add(slug);
-    const own = children(slug);
-    return own.length ? own.flatMap((child) => leaves(child, seen)) : [slug];
+    const own = children(slug, false);
+    return [...(own.length ? own.flatMap((child) => leaves(child, seen)) : [slug]), ...children(slug, true).flatMap((child) => leaves(child, seen))];
   };
   return Object.hasOwn(slices, scope) ? [...new Set(leaves(scope))].sort() : [];
 }
@@ -343,6 +399,8 @@ function markdown(record) {
     if (slice.outcome) lines.push(`${indent}  - Outcome: ${slice.outcome}`);
     lines.push(`${indent}  - Requirements: ${slice.requirements.join(", ")}`);
     if (slice.dependencies.length) lines.push(`${indent}  - Depends on: ${slice.dependencies.map((item) => `\`${item}\``).join(", ")}`);
+    if (slice.fixes) lines.push(`${indent}  - Fixes \`${slice.fixes.slice}\`: ${slice.fixes.defects.join(", ")}`);
+    for (const defect of record.slices[slugValue].defects ?? []) lines.push(`${indent}  - Defect ${defect.id} reported ${defect.reportedAt.slice(0, 10)} (${defect.requirements.join(", ")}): ${defect.summary}`);
     const design = record.slices[slugValue].design;
     if (design) lines.push(`${indent}  - Design accepted ${design.acceptedAt.slice(0, 10)}: ${design.frozenTests.length} frozen test files${design.staged ? " staged until the slice starts" : ""}, review ${design.review === "required" ? "required" : "not required"}`);
     for (const child of analysis.children[slugValue]) visit(child, depth + 1);
@@ -492,7 +550,7 @@ async function checkContractBudget(resolved, slices, operations) {
 
 // The slugs a proposal changes outside its scope: it may split only the scope and change only the scope, the slices inside it, and the parts it creates.
 function proposalOutside(slices, scope, operations) {
-  const created = new Set(operations.filter((item) => item.op === "split").flatMap((item) => item.children.map((child) => child.slug)));
+  const created = new Set(operations.flatMap((item) => item.op === "split" ? item.children.map((child) => child.slug) : item.op === "add_fix" ? [item.fix.slug] : []));
   const inside = (key) => {
     if (created.has(key)) return true;
     for (let current = key, depth = 0; current !== null && current !== undefined && depth < 1000; current = slices[current]?.parent, depth += 1) if (current === scope) return true;
@@ -581,6 +639,7 @@ async function applyOperation(resolved, record, operation, effects) {
       const parent = requireSlice(operation.parent);
       if (parent.status === "split") throw fail("validation_failed", "The parent is already split.");
       if (parent.status === "done") throw fail("validation_failed", "A done slice cannot split.");
+      if (parent.fixes) throw fail("validation_failed", `The fix slice ${operation.parent} cannot split; design another fix slice for the defects it leaves.`);
       for (const child of operation.children) {
         if (Object.hasOwn(slices, child.slug)) throw fail("validation_failed", `The slice slug ${child.slug} is already used in this initiative.`);
         slices[child.slug] = { title: child.title, ...(child.outcome ? { outcome: child.outcome } : {}), status: "not-started", parent: operation.parent, requirements: normalizeRequirements(resolved, child.requirements), dependencies: [] };
@@ -596,6 +655,8 @@ async function applyOperation(resolved, record, operation, effects) {
     case "set_status": {
       const slice = requireSlice(operation.slug);
       if (slice.status === "split") throw fail("validation_failed", "A split parent keeps the split status permanently.");
+      // A done slice keeps the evidence of its passing verification, so a defect in it is fixed as new work.
+      if (slice.status === "done" && operation.status !== "done") throw fail("slice_done", `The slice ${operation.slug} is done and stays done; report a defect with report_defect and design a fix as new work.`, { slice: operation.slug });
       // A slice starts only after every slice it depends on, directly or through an ancestor, is done.
       if (operation.status === "in-progress" && slice.status === "not-started") {
         const analysis = analyzeInitiative(slices);
@@ -729,8 +790,7 @@ async function applyOperation(resolved, record, operation, effects) {
     }
     case "claim": {
       // Design claims its scope before it starts, and the claim ends when its proposal is accepted.
-      const slice = requireSlice(operation.slug);
-      if (slice.status === "done") throw fail("validation_failed", `The slice ${operation.slug} is done, so it takes no design claim.`);
+      requireSlice(operation.slug);
       takeClaim(record, operation.slug, "design", effects, operation);
       break;
     }
@@ -751,12 +811,12 @@ async function applyOperation(resolved, record, operation, effects) {
       // Design proposes its result itself, so Prism's refusals reach the designer while it can still fix them;
       // the proposal is checked on a copy of the record and waits for the orchestrator to accept it after the design gate.
       const scope = requireSlice(operation.slug);
-      if (scope.status === "done") throw fail("validation_failed", "A done slice cannot take a new design.");
+      if (scope.status === "done") checkFixProposal(operation);
       const outside = proposalOutside(slices, operation.slug, operation.operations);
       if (outside.length) throw fail("validation_failed", `A design proposal changes only its scope ${operation.slug} and the slices inside it, not ${outside.join(", ")}.`);
       const trial = { slices: Object.assign(Object.create(null), structuredClone(slices)) };
       const accepted = new Set(operation.operations.filter((item) => item.op === "accept_design").map((item) => item.slug));
-      const trialEffects = { staged: [], installed: [], refs: [], diagrams: [], checkedFolders: new Set(), diagramCache: effects.diagramCache, accepted, applied: [], dryRun: true, components: effects.components };
+      const trialEffects = { staged: [], installed: [], refs: [], diagrams: [], checkedFolders: new Set(), diagramCache: effects.diagramCache, accepted, applied: [], dryRun: true, components: effects.components, proposal: operation.slug };
       for (const inner of operation.operations) await applyOperation(resolved, trial, inner, trialEffects);
       try {
         analyzeInitiative(trial.slices);
@@ -780,12 +840,39 @@ async function applyOperation(resolved, record, operation, effects) {
       if (unmarked.length) throw fail("validation_failed", `${unmarked.join(", ")} takes no design in this proposal, so it cannot be marked for review.`);
       for (const inner of replay) if (inner.op === "accept_design") effects.accepted.add(inner.slug);
       effects.gate = operation.gate;
+      effects.proposal = operation.slug;
       for (const inner of replay) {
         await applyOperation(resolved, record, inner, effects);
         effects.applied.push(inner);
       }
+      delete effects.proposal;
       delete record.proposals[operation.slug];
       if (effects.claims?.files.get(operation.slug)?.activity === "design") endClaim(operation.slug, effects);
+      break;
+    }
+    case "report_defect": {
+      // A defect found in done work is recorded on the done slice, which keeps its status, design, frozen tests, runs, and review.
+      const slice = requireSlice(operation.slug);
+      if (slice.status !== "done") throw fail("validation_failed", `A defect is reported on a done slice, and ${operation.slug} is ${slice.status}, so its work is fixed in place.`);
+      const defects = slice.defects ?? [];
+      const highest = defects.reduce((max, item) => Math.max(max, Number(DEFECT_ID.test(item?.id ?? "") ? item.id.slice(1) : 0)), 0);
+      slice.defects = [...defects, { id: `d${highest + 1}`, requirements: normalizeRequirements(resolved, operation.requirements), summary: operation.summary, reportedAt: new Date().toISOString() }];
+      break;
+    }
+    case "add_fix": {
+      // A fix to done work is a new slice below the done slice, added only through that scope's design proposal.
+      if (effects.proposal !== operation.slug) throw fail("validation_failed", "add_fix stands only inside the propose_design of the done scope that it names.");
+      const fixed = requireSlice(operation.slug);
+      if (fixed.status !== "done") throw fail("validation_failed", `add_fix fixes a done slice, and ${operation.slug} is ${fixed.status}.`);
+      const fix = operation.fix;
+      if (Object.hasOwn(slices, fix.slug)) throw fail("validation_failed", `The slice slug ${fix.slug} is already used in this initiative.`);
+      if (new Set(operation.defects).size !== operation.defects.length) throw fail("validation_failed", "add_fix names each defect once.");
+      const held = new Set((fixed.defects ?? []).map((item) => item.id));
+      const unknown = operation.defects.filter((id) => !held.has(id));
+      if (unknown.length) throw fail("validation_failed", `The slice ${operation.slug} holds no defect ${unknown.join(", ")}; report it with report_defect first.`);
+      const named = operation.defects.filter((id) => Object.values(slices).some((other) => other.fixes?.slice === operation.slug && other.fixes.defects.includes(id)));
+      if (named.length) throw fail("validation_failed", `Another fix slice of ${operation.slug} already fixes ${named.join(", ")}.`);
+      slices[fix.slug] = { title: fix.title, outcome: fix.outcome, status: "not-started", parent: operation.slug, fixes: { slice: operation.slug, defects: [...operation.defects] }, requirements: normalizeRequirements(resolved, fix.requirements), dependencies: [] };
       break;
     }
     case "regenerate_markdown":
@@ -795,6 +882,17 @@ async function applyOperation(resolved, record, operation, effects) {
     default:
       throw fail("validation_failed", `Unsupported operation ${operation.op}.`);
   }
+}
+
+// A done scope takes one fix as its design: one add_fix naming the scope, the fix slice's dependencies and title or outcome, and the fix slice's accepted design.
+function checkFixProposal(operation) {
+  const refuse = (reason) => fail("validation_failed", `The design proposal of the done slice ${operation.slug} was not recorded: ${reason}`);
+  const fixes = operation.operations.filter((item) => item.op === "add_fix");
+  if (fixes.length !== 1 || fixes[0].slug !== operation.slug) throw refuse("a done slice is designed as exactly one add_fix that names it.");
+  const fixSlug = fixes[0].fix.slug;
+  const other = operation.operations.filter((item) => item.op !== "add_fix" && !(["set_dependencies", "update_slice", "accept_design"].includes(item.op) && item.slug === fixSlug));
+  if (other.length) throw refuse(`it takes only set_dependencies, update_slice, and accept_design of the fix slice ${fixSlug}, not ${other.map((item) => `${item.op} of ${item.slug ?? item.parent}`).join(", ")}.`);
+  if (operation.operations.filter((item) => item.op === "accept_design").length !== 1) throw refuse(`it takes exactly one accept_design of the fix slice ${fixSlug}.`);
 }
 
 // Coordination cleanup removes an initiative's records only after the roadmap keeps its superseded decision; a shipped initiative keeps them as history.
@@ -825,6 +923,7 @@ async function precheckDiagrams(resolved, input) {
   for (const operation of operations) {
     if (operation.op === "create") parents.set(operation.slug, null);
     if (operation.op === "split") for (const child of operation.children) parents.set(child.slug, operation.parent);
+    if (operation.op === "add_fix") parents.set(operation.fix.slug, operation.slug);
   }
   const folders = new Set();
   for (const slug of accepted) {
@@ -1146,6 +1245,8 @@ export function initiativeAcknowledgement(result, operations) {
     ...(slices[key].splitEvidence ? { splitEvidence: slices[key].splitEvidence.kind } : {}),
     ...(result.record?.proposals?.[key] ? { proposal: "pending" } : {}),
     ...(slices[key].contractDefects ? { contractDefects: slices[key].contractDefects.length } : {}),
+    ...(slices[key].defects?.length ? { defects: slices[key].defects.map((item) => item.id) } : {}),
+    ...(slices[key].fixes ? { fixes: slices[key].fixes } : {}),
     // A new design answers the defects but does not restart the slice, because restarting takes an implementation claim.
     ...(slices[key].status === "blocked" && slices[key].design && !slices[key].contractDefects ? { next: "The design answers the contract defects, and the slice stays blocked until set_status in-progress restarts it." } : {}),
     ...(slices[key].claim ? { claim: { label: slices[key].claim.label, activity: slices[key].claim.activity, expiresAt: slices[key].claim.expiresAt } } : {})
@@ -1176,13 +1277,13 @@ export function initiativeAcknowledgement(result, operations) {
 export const INITIATIVE_TOOLS = [
   {
     name: "get_initiative",
-    description: "Read an initiative's MCP-managed slice record with derived leaves, effective dependencies, completion, design candidates, and readiness to ship, plus run totals computed from run records for each slice, each split parent with its descendants, and the initiative, and each live claim: on its slice in the record view and under claims with its label, activity, and expiry, where heldHere marks this server's claims; lostClaims lists, once, claims this server held that expired or were released or taken over. Reads never create files. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip }, where documents lists the slice documents its ship decision recorded and changedAfterShip each one changed, removed, or added since, ignoring the history mark; the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked, to commit apart from the task's changes.",
+    description: "Read an initiative's MCP-managed slice record with derived leaves, effective dependencies, completion, design candidates, fixes (each slice with fix slices mapped to their slugs), unfinishedFixes ({ slice, defect, fix, status } for each defect whose fix slice is missing, with fix null and status not-designed, or not done), and readiness to ship, which unfinished fixes hold false, plus run totals computed from run records for each slice, each split parent with its descendants, and the initiative, and each live claim: on its slice in the record view and under claims with its label, activity, and expiry, where heldHere marks this server's claims; lostClaims lists, once, claims this server held that expired or were released or taken over. Reads never create files. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked, to commit apart from the task's changes.",
     inputSchema: GET_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts, while a started slice set back to not-started stages them again; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design, which clears them but leaves the slice blocked until set_status in-progress restarts it. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements, and refuses a slice.md Changes line that is not add, change, or remove followed by comma-separated paths in backticks and a colon with the note. accept_design takes the slice's component, bare or as <repository>/<component>, records it as <repository>/<component>, and may leave it out only in a repository that declares no components under ## Components in .prism/workflow.md, which records the root component; acceptance refuses an invalid declaration with component_invalid, component_overlap, component_dependency_unknown, or component_cycle, a component that is not this repository's with component_unknown, listing its components, and a slice whose Changes paths or frozen tests belong to another component and lie under no shared path with component_boundary, listing the paths. set_status in-progress refuses to start a not-started slice with dependencies_incomplete, naming them, until every slice it depends on directly or through an ancestor is done. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. A slice has at most one holder, the host session that claimed it, or the Prism server process when the host names no session, across every checkout and machine that shares the records: set_status in-progress takes an implementation claim, claim takes a design claim on a scope before design starts, and a claim covers the slice's descendants. Taking a claim is refused with slice_claimed, naming the holder's label, activity, and expiry, while another holder's live claim covers the slice, an ancestor, or a descendant; an expired claim is replaced and the result names it under replacedClaims. An update that takes or releases claims is checked whole, writes its claims first, and where store sync is on waits for a sync before anything else is written: another machine's claim or renewal that won refuses it with slice_claimed, and an unreachable remote refuses it with claim_unconfirmed; a refused update applies none of its operations. The holding server renews its live claims every 10 minutes, a server the host restarts in the same session renews them after its first read or update of the initiative, a claim expires 30 minutes after its last renewal, and an expired claim is never renewed. A claim ends when its slice leaves in-progress, when the scope's proposal is accepted, or through release_claim, which anyone may send and which the history records. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. A shipped initiative's state is history: every operation on it, remove_records included, is refused with initiative_shipped, naming the initiative and its ship time, before every check except argument validation, and changes no record, while a roadmap record that cannot be read or parsed refuses it with invalid_roadmap; start new work on it as a new initiative. After the roadmap records the initiative as superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts, while a started slice set back to not-started stages them again; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design, which clears them but leaves the slice blocked until set_status in-progress restarts it. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements, and refuses a slice.md Changes line that is not add, change, or remove followed by comma-separated paths in backticks and a colon with the note. accept_design takes the slice's component, bare or as <repository>/<component>, records it as <repository>/<component>, and may leave it out only in a repository that declares no components under ## Components in .prism/workflow.md, which records the root component; acceptance refuses an invalid declaration with component_invalid, component_overlap, component_dependency_unknown, or component_cycle, a component that is not this repository's with component_unknown, listing its components, and a slice whose Changes paths or frozen tests belong to another component and lie under no shared path with component_boundary, listing the paths. set_status in-progress refuses to start a not-started slice with dependencies_incomplete, naming them, until every slice it depends on directly or through an ancestor is done. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. A slice has at most one holder, the host session that claimed it, or the Prism server process when the host names no session, across every checkout and machine that shares the records: set_status in-progress takes an implementation claim, claim takes a design claim on a scope before design starts, and a claim covers the slice's descendants. Taking a claim is refused with slice_claimed, naming the holder's label, activity, and expiry, while another holder's live claim covers the slice, an ancestor, or a descendant; an expired claim is replaced and the result names it under replacedClaims. An update that takes or releases claims is checked whole, writes its claims first, and where store sync is on waits for a sync before anything else is written: another machine's claim or renewal that won refuses it with slice_claimed, and an unreachable remote refuses it with claim_unconfirmed; a refused update applies none of its operations. The holding server renews its live claims every 10 minutes, a server the host restarts in the same session renews them after its first read or update of the initiative, a claim expires 30 minutes after its last renewal, and an expired claim is never renewed. A claim ends when its slice leaves in-progress, when the scope's proposal is accepted, or through release_claim, which anyone may send and which the history records. A defect in done work is fixed as new work: report_defect ({ slug, requirements, summary }) records a defect d<n> on a done slice and refuses any other slice with validation_failed; claim takes a design claim on a done slice; propose_design on a done scope takes exactly one add_fix ({ slug, defects, fix: { slug, title, outcome, requirements } }) naming that scope, set_dependencies and update_slice on the fix slug, and one accept_design of the fix slug, refusing with validation_failed any other operation, a defect the scope does not hold or another fix slice names, and a used slug, while add_fix outside propose_design refuses too; accept_proposal adds the fix as a not-started slice below the done slice, with fixes { slice, defects }, whose slice.md sits in its own folder, and leaves the done slice's records unchanged. A fix slice is a leaf of the done slice's ancestors, cannot split, starts after the dependencies of the done slice and its ancestors, and holds the dependents of the done slice until it is done. set_status changing a done slice to another status refuses with slice_done. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. A shipped initiative's state is history: every operation on it, remove_records included, is refused with initiative_shipped, naming the initiative and its ship time, before every check except argument validation, and changes no record, while a roadmap record that cannot be read or parsed refuses it with invalid_roadmap; start new work on it as a new initiative. After the roadmap records the initiative as superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }
