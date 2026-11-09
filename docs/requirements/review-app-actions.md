@@ -117,7 +117,7 @@ Related: [§1](#1)
 
 Pattern: Event-driven
 
-Disposition: Active
+Disposition: Superseded by [§15](#15)
 
 Requirement: When Prism applies an action, Prism shall record in the history of the target's initiative, or of the checkout whose index it rebuilds when the target is an index, the action, its target, the time, that it came from the review app, and the value before and after.
 
@@ -136,7 +136,7 @@ Requirement: When Prism applies an action, Prism shall show it in the review app
 
 Rationale: A change made in one tab, or by another person, is visible where the person already looks.
 
-Related: [§7](#7)
+Related: [§7](#7), [§15](#15)
 
 <a id="9"></a>
 ## 9. Make every review app change an action
@@ -149,7 +149,7 @@ Requirement: Prism shall accept a change to Prism records from the review app on
 
 Rationale: One write path gives every change the same authority, stale-value check, and history.
 
-Related: [§6](#6), [§7](#7), [§10](#10)
+Related: [§6](#6), [§7](#7), [§10](#10), [§15](#15)
 
 <a id="10"></a>
 ## 10. Change only Prism records
@@ -202,7 +202,7 @@ Requirement: When an agent session receives a Prism tool result about an initiat
 
 Rationale: Running agents learn of the person's changes from Prism itself rather than from skill prose they may skip.
 
-Related: [§7](#7), [§14](#14)
+Related: [§7](#7), [§14](#14), [§15](#15)
 
 <a id="14"></a>
 ## 14. End a gate wait on the person's change
@@ -216,3 +216,18 @@ Requirement: While `wait_for_user_gate` waits on an initiative, when the person 
 Rationale: An orchestrator waiting on a gate must not keep working under a setting the person just changed.
 
 Related: [§13](#13)
+
+<a id="15"></a>
+## 15. Record each applied action where its target belongs
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Supersedes: [§7](#7)
+
+Requirement: When Prism applies an action, Prism shall record the action, its target, the time, that it came from the review app, and the value before and after in the history of the target's initiative, in the history of the checkout whose index it rebuilds when the target is an index, or in the status record of the approved requirement or ADR when the target is its approval gate.
+
+Rationale: Agents and people can then see who changed what, and when, after the page closes, and an approval, which is asked before any initiative exists, keeps its history with the requirement or ADR it concerns.
+
+Related: [§8](#8), [§9](#9), [workspace-artifacts.md§11](workspace-artifacts.md#11)

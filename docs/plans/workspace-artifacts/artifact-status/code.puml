@@ -4,13 +4,14 @@ title artifact-status
 component "artifact-status\nwrittenStatus, askApproval, answerApproval, accepted bytes" as status
 component "store-artifacts\nstatus fields, ask_approval, accepted reads" as tools
 component "initiative\naccept_proposal accepted versions" as initiative
-component "workspace-model\nAttention, libraries" as model
-component "actions\napproval target, gate.answer" as actions
-component "review-server\napply route, 409 refusals" as server
+component "workspace-model\nAttention, recent changes, libraries" as model
+component "actions\napproval target, gate.answer, ambiguous ids" as actions
+component "review-server\nactions routes, 409 and 503 refusals, action events" as server
 component "review page\nanswers through actions" as page
-component "attention view" as view
+component "attention view\nwhole status, recent changes" as view
 component "gate-wait and wait-for-gate-answers hook" as wait
-component "mcp\nwait_for_user_gate artifact" as mcp
+component "mcp\nwait_for_user_gate artifact,\nsaved status records" as mcp
+component "record-store-sync\nmerges bytes and status records\nby artifact identity" as sync
 
 tools --> status
 initiative --> status
@@ -22,4 +23,6 @@ view --> page
 page --> server
 mcp --> wait
 wait --> status
+mcp --> sync
+tools --> sync
 @enduml
