@@ -18,11 +18,12 @@ Where a repository's workflow configuration names a record store, Prism MUST rec
 A status written into the file that differs from the recorded one MUST be treated as the recorded status and reported with the gate that changes it, and MUST NOT refuse the write.
 A requirement's status MUST change at an approval gate that a person answers in the review browser, and the answer MUST record who approved it and when.
 An approval answer MUST be the review app's gate answer action, applied through the action registry with the same write session and origin checks as every other gate answer, against the artifact's current version as its revision, and no other route of the review app MAY answer it.
-An applied approval MUST be recorded in the approved artifact's status record, since an approval belongs to no initiative; this partly supersedes the rule of the [review app actions ADR](review-app-actions.md) that every applied action is recorded in its initiative's or checkout's history, pending the person's acceptance of the [proposed amendment of review-app-actions.md§7](../../plans/workspace-artifacts/review-app-actions-amendment.md).
+An applied approval MUST be recorded in the approved artifact's status record, since an approval belongs to no initiative, as a comment is in its own file; this partly supersedes the rule of the [review app actions ADR](review-app-actions.md) that every applied action is recorded in its initiative's or checkout's history, pending the person's acceptance of the [proposed amendment of review-app-actions.md§7](../../plans/workspace-artifacts/review-app-actions-amendment.md).
 An approval MUST apply only to the version that was asked about.
 An ADR MUST become Accepted only when a person confirms that an initiative whose contracts cite it ships, and Prism MUST record the repository and commit of every slice's latest passing verification run with it.
 Prism MUST keep each artifact's accepted version, the bytes at its latest approval, design acceptance, or ship acceptance, so a reviewer sees what changed since.
 Review comments MUST live in the store, one file per comment, with the artifact's location and version, the commenter's Git user name and host name, and the time.
+A review comment MUST be the review app's comment action, applied through the action registry with the same write session and origin checks as every other action, against the artifact's current version as its revision, and its history entry MUST be recorded in the comment's own file.
 
 ## Rationale
 

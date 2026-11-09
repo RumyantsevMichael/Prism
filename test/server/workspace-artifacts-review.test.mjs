@@ -3,7 +3,7 @@ import os from "node:os";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { answerGate, browserRequest, checkout, git, isolateGit, ok, requirementFile, reviewBrowser, server, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { answerGate, browserRequest, checkout, git, isolateGit, ok, READ_ONLY, requirementFile, reviewBrowser, server, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 39-42 of the workspace-artifacts design: people review artifact changes against the accepted version and comment through the store.
 const environment = await isolateGit();
@@ -22,7 +22,11 @@ async function project(context, { named = true } = {}) {
 }
 
 const artifactView = async (review, file = FILE) => (await browserRequest(review, `/api/artifact?path=${encodeURIComponent(file)}`)).body;
-const comment = (review, body, headers) => browserRequest(review, "/api/artifact/comments", { method: "POST", body, headers });
+// A comment is the review app's artifact.comment action on the target artifact:<scope label>:<path>, applied against the version the page shows as its revision.
+const commentTarget = (file = FILE, scope = "workspace") => `artifact:${scope}:${file}`;
+const comment = (review, { path: file, scope, version: revision, line, text }, headers = {}) =>
+  browserRequest(review, "/api/actions/apply", { method: "POST", body: { action: "artifact.comment", target: commentTarget(file, scope), input: { line: String(line), text }, revision }, headers });
+const commentFiles = async (store) => (await readdir(COMMENTS(store)).catch(() => [])).filter((name) => name.endsWith(".json"));
 
 test("clause 39: an artifact is shown against its accepted version, or as added when it has none", async (context) => {
   const { prism, review } = await project(context);
@@ -50,38 +54,58 @@ test("clause 39: an artifact is shown against its accepted version, or as added 
   assert.notEqual(changed.artifact.version, approved.version);
 });
 
-test("clause 40: a comment from the review page is stored in the store, one file per comment, with its author, host, version, and time", async (context) => {
+test("clause 40: a comment is the review app's artifact.comment action, stored in the store, one file per comment, with its author, host, version, time, and history entry, and the old comment route is gone", async (context) => {
   const { place, prism, review } = await project(context);
   const written = await writeArtifact(prism, FILE, requirementFile("Billing"));
+  const listed = await browserRequest(review, `/api/actions?target=${encodeURIComponent(commentTarget())}`);
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  const [action] = listed.body.actions;
+  assert.deepEqual([listed.body.actions.length, action.id, action.target, action.available, action.revision], [1, "artifact.comment", commentTarget(), true, written.version], "the revision is the artifact's current version");
+  const [line, text] = action.fields;
+  assert.deepEqual([line.name, line.kind, line.required], ["line", "text", true]);
+  assert.deepEqual([text.name, text.kind, text.required, text.maxLength], ["text", "text", true, 4000]);
+
   const posted = await comment(review, { path: FILE, scope: "workspace", version: written.version, line: 12, text: "Which currency?" });
-  assert.equal(posted.status, 201, JSON.stringify(posted.body));
-  assert.equal(posted.body.path, FILE);
-  assert.equal(posted.body.version, written.version);
-  assert.equal(posted.body.line, 12);
-  assert.equal(posted.body.text, "Which currency?");
-  assert.deepEqual(posted.body.author, { name: "Ada Reviewer", host: os.hostname() });
-  assert.ok(Date.parse(posted.body.at) > Date.now() - 600000);
-  const files = (await readdir(COMMENTS(place.store))).filter((name) => name.endsWith(".json"));
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  const entry = posted.body.applied;
+  assert.deepEqual([entry.action, entry.target, entry.before, entry.after, entry.via], ["artifact.comment", commentTarget(), null, { version: written.version, line: 12, text: "Which currency?" }, "review-app"]);
+  assert.equal(entry.by.name, "Ada Reviewer");
+  assert.ok(Date.parse(entry.at) > Date.now() - 600000);
+  const files = await commentFiles(place.store);
   assert.equal(files.length, 1);
   const stored = JSON.parse(await readFile(path.join(COMMENTS(place.store), files[0]), "utf8"));
   assert.equal(stored.text, "Which currency?");
   assert.equal(stored.version, written.version);
+  assert.equal(stored.line, 12);
   assert.equal(stored.location, "requirements/billing.md");
-  assert.equal((await comment(review, { path: FILE, scope: "workspace", version: written.version, line: 1, text: "Second." })).status, 201);
-  assert.equal((await readdir(COMMENTS(place.store))).filter((name) => name.endsWith(".json")).length, 2, "each comment is a file of its own");
+  assert.deepEqual(stored.author, { name: "Ada Reviewer", host: os.hostname() });
+  assert.equal(stored.at, entry.at);
+  assert.equal(stored.entry, entry.id, "the comment's own file holds its history entry");
+  assert.equal((await comment(review, { path: FILE, scope: "workspace", version: written.version, line: 1, text: "Second." })).status, 200);
+  assert.equal((await commentFiles(place.store)).length, 2, "each comment is a file of its own");
+  for (const old of [{ path: FILE, scope: "workspace", version: written.version, line: 1, text: "Old route." }, {}, "not json"]) {
+    assert.equal((await browserRequest(review, "/api/artifact/comments", { method: "POST", body: old })).status, 404, `the old comment route is gone for ${JSON.stringify(old)}`);
+  }
+  assert.equal((await commentFiles(place.store)).length, 2, "the old route stores nothing");
 });
 
-test("clause 41: a comment is refused unless it is JSON from the page, names a seen artifact, has text of 1 to 4000 characters, and Git names its author", async (context) => {
-  const { prism, review } = await project(context);
+test("clause 41: a comment action is refused unless it is JSON from the page with its write session, names a seen artifact at its current version, has a line and text of 1 to 4000 characters, and Git names its author", async (context) => {
+  const { place, prism, review } = await project(context);
   const written = await writeArtifact(prism, FILE, requirementFile("Billing"));
   const body = { path: FILE, scope: "workspace", version: written.version, line: 1, text: "Fine." };
-  assert.equal((await comment(review, JSON.stringify(body), { "Content-Type": "text/plain" })).status, 403);
-  assert.equal((await comment(review, body, { Origin: "http://evil.example" })).status, 403);
-  assert.equal((await comment(review, { ...body, path: "docs/requirements/missing.md" })).status, 404);
-  assert.equal((await comment(review, { ...body, path: "README.md" })).status, 404);
-  assert.equal((await comment(review, { ...body, text: "   " })).status, 400);
-  assert.equal((await comment(review, { ...body, text: "x".repeat(4001) })).status, 400);
-  assert.equal((await comment(review, { ...body, text: "x".repeat(4000) })).status, 201);
+  const refusal = async (response, status, code) => assert.deepEqual([response.status, response.body.code], [status, code], JSON.stringify(response.body));
+  await refusal(await comment(review, body, { "Content-Type": "text/plain" }), 403, "origin_refused");
+  await refusal(await comment(review, body, { Origin: "http://evil.example" }), 403, "origin_refused");
+  await refusal(await comment(review, body, READ_ONLY), 403, "write_forbidden");
+  await refusal(await comment(review, { ...body, path: "docs/requirements/missing.md" }), 404, "unknown_target");
+  await refusal(await comment(review, { ...body, path: "README.md" }), 404, "unknown_target");
+  await refusal(await comment(review, { ...body, scope: "api" }), 404, "unknown_target");
+  await refusal(await comment(review, { ...body, version: version("older bytes") }), 409, "stale_revision");
+  await refusal(await comment(review, { ...body, text: "   " }), 400, "invalid_input");
+  await refusal(await comment(review, { ...body, text: "x".repeat(4001) }), 400, "invalid_input");
+  for (const line of ["0", "-1", "1.5", "x", ""]) await refusal(await comment(review, { ...body, line }), 400, "invalid_input");
+  assert.deepEqual(await commentFiles(place.store), [], "a refused comment stores nothing");
+  assert.equal((await comment(review, { ...body, text: "x".repeat(4000) })).status, 200);
 
   const anonymous = await project(context, { named: false });
   const other = await writeArtifact(anonymous.prism, FILE, requirementFile("Billing"));
@@ -93,7 +117,7 @@ test("clause 41: a comment is refused unless it is JSON from the page, names a s
 test("clause 42: every reader gets an artifact's comments oldest first, including those a sync brought from another machine", async (context) => {
   const { place, prism, review } = await project(context);
   const written = await writeArtifact(prism, FILE, requirementFile("Billing"));
-  assert.equal((await comment(review, { path: FILE, scope: "workspace", version: written.version, line: 3, text: "First here." })).status, 201);
+  assert.equal((await comment(review, { path: FILE, scope: "workspace", version: written.version, line: 3, text: "First here." })).status, 200);
   // A comment written on another machine arrives as a file of its own when the store syncs.
   await mkdir(COMMENTS(place.store), { recursive: true });
   await writeFile(path.join(COMMENTS(place.store), "2026-11-07T00-00-00-000Z-0a1b2c3d.json"), `${JSON.stringify({ location: "requirements/billing.md", version: version("older"), line: 1, text: "Earlier, elsewhere.", author: { name: "Grace", host: "laptop" }, at: "2026-11-07T00:00:00.000Z" })}\n`);

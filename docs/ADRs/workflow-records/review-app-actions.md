@@ -95,5 +95,5 @@ A Claude Code hook that runs before each tool use of Prism records which sub-age
 
 ## Decision Log
 
-- 2026-11-09: Proposed, not yet in force: the Proposed [artifact status ADR](artifact-status-at-gates.md) would partly supersede the rule that each applied action is recorded in its initiative's or checkout's history, by recording an approval of a requirement or ADR, which belongs to no initiative, in that artifact's status record.
+- 2026-11-09: Proposed, not yet in force: the Proposed [artifact status ADR](artifact-status-at-gates.md) would partly supersede the rule that each applied action is recorded in its initiative's or checkout's history, by recording an approval of a requirement or ADR in that artifact's status record and a comment on a store artifact in the comment's own file, since neither belongs to an initiative.
   It waits on the person's acceptance of the [proposed amendment of review-app-actions.md§7](../../plans/workspace-artifacts/review-app-actions-amendment.md), and until then this ADR stands unchanged.
