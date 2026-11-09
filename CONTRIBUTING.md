@@ -120,6 +120,8 @@ The review app stores the user's theme and density in `review-preferences.json` 
 The kit's elements live in `src/server/review/public/kit/elements/`, one `prism-<name>.js` per element, and `kit/kit.js` lists them in `KIT_ELEMENTS` and defines them.
 An element that renders in shadow DOM names its stylesheets in a static `styles` list, such as `prism-button.css` beside it, and the kit fetches each one once and adopts it in every shadow root.
 An element that renders in light DOM is styled in `kit/kit.css`.
+The review page loads `kit/tokens.css`, `kit/kit.css`, and then one stylesheet per area under `styles/`: `shell.css` for the shell and its panels, `actions.css` for action lists such as Initiative settings, `workflow-views.css` for the workflow screens, and `record-views.css` for records, documents, and diagrams.
+A screen's own rules go in its area stylesheet, read only tokens, and lay out kit elements rather than restyle them.
 Each element class also carries a static `tag` and a static `catalog` of its purpose, options, states, and keys.
 The component catalog at `<review URL>/kit/catalog` shows one entry per element from that `catalog`, with a live specimen per state from `SPECIMENS` in `kit/catalog.js`, plus long text and an unbroken name.
 To add an element, add its file, list it in `KIT_ELEMENTS`, and add its specimens to `SPECIMENS`.
@@ -135,7 +137,7 @@ It checks every stylesheet, script, and page under `src/server/review/public/` a
 The `raw-value` rule names a color, size, layer, or time literal outside `kit/tokens.css` and `kit/plantuml-defaults.js`.
 The `control-style` rule names a stylesheet selector outside `kit/` that styles a native control, a control role, a `prism-` element, or a class named like a control.
 The `native-control` rule names a native control, a control role, or a `title` attribute written in a script or page outside `kit/`, also when a script sets the role or the title from code.
-The older stylesheet `review.css` and the screens' scripts still hold findings until those screens move onto the kit.
+Every screen is on the kit, so the guard finds nothing, and `test/server/review-kit-everywhere.test.mjs` fails on any new finding.
 
 Run a local human review from the repository root:
 
@@ -156,7 +158,7 @@ The demo's `prism review` command opens such a tab, and the session URL alone gr
 One shipped initiative record is written directly, because its completion gate needs accepted reviews that the offline demo cannot produce.
 
 `node scripts/review-demo/seed-stress.mjs` builds an edge-case project with unbroken long names, long text, many records, a deep slice tree, and unreadable records.
-Check the browser layout after a UI change:
+After a UI change, run the kit guard, open the component catalog for each element you touched, and check the browser layout:
 
 ```bash
 node scripts/review-demo/layout-check.mjs

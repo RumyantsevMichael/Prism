@@ -41,6 +41,7 @@ The sidebar is the only navigation.
 It lists Attention and Roadmap, every initiative with its state, the open initiative's slices or the open library section's documents, and the Library, with Requirements, Decisions, and the Glossary.
 A slice that has subslices expands when you expand it or when one of its subslices is open.
 At a window width of 1100 pixels or less the sidebar is hidden, and the Navigation button at the left of the top bar opens it as a drawer that closes when you choose a page.
+If you narrow the window past that width while the sidebar has the focus, the focus moves to the Navigation button.
 
 The page bar at the top of the page holds Back and Forward and the trail of the page's place, initiative, and slice by title.
 Back and Forward, Alt+Left and Alt+Right, and the browser's own buttons move through the pages you visited in that browser tab.
@@ -131,6 +132,7 @@ Every setting can change at any time, including after work on the initiative sta
 ### Initiative settings card
 
 The initiative page, and every slice page of the initiative, ends with an **Initiative settings** card.
+An initiative whose record cannot be read and that the roadmap does not list has no settings, so its page shows no card.
 On a slice page the card names the initiative above its title, because the settings belong to the whole initiative and a change there applies to every slice.
 Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
 Picking an option applies it at once, except for Models, whose model names you type and then send with **Apply** or Enter; **Reset** drops what you typed.

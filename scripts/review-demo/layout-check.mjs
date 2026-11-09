@@ -127,10 +127,10 @@ try {
         }],
         "maximized document": ["docs/wide.md", () => page.locator("[data-maximize]").first().click()],
         "maximized diagram": ["docs/plans/huge-initiative/slice-with-long-name/diagram.puml", () => page.locator("[data-maximize]").first().click()],
-        "link preview": ["slice:huge-initiative/slice-with-long-name", () => page.locator("#artifact .link-chip").first().hover()],
+        "link preview": ["slice:huge-initiative/slice-with-long-name", () => page.locator("#artifact prism-chip[data-artifact]").first().hover()],
         "side panel": ["slice:huge-initiative/slice-with-long-name", async () => {
-          await page.locator('#artifact .link-chip[data-artifact$=".md"]').first().hover();
-          await page.locator(".link-preview .link-preview-panel").click({ timeout: 3000 });
+          await page.locator('#artifact prism-chip[data-artifact$=".md"]').first().hover();
+          await page.locator(".link-preview").getByRole("button", { name: "Show in side panel" }).click({ timeout: 3000 });
         }]
       };
       for (const [name, [ref, open]] of Object.entries(states)) {
