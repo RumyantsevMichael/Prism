@@ -466,7 +466,7 @@ async function readJson(request) {
 // onAction(event, { shared }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
 // shared is false for an index target, whose history belongs to this checkout alone. Without it, the event reaches this page's viewer streams.
 export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null,
-  rebuildIndex = (root, component) => backgroundPreparation().then((module) => module.startIndexRebuild(root, component ? { component: { identity: component.identity, folder: component.folder } } : {})), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
+  rebuildIndex = (root, component, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
   let fingerprint = null;
   function currentFingerprint() {
     if (!fingerprint || Date.now() - fingerprint.at >= rebuildTiming.freshnessMs) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
@@ -486,7 +486,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const now = Date.now();
     if (auto && outOfDate && now - rebuild.changedAt >= rebuildTiming.quietMs && now - rebuild.startedAt >= rebuildTiming.gapMs) {
       rebuild.startedAt = now;
-      void rebuildIndex(projectRoot);
+      void rebuildIndex(projectRoot, null, { automatic: true });
     }
     return { ...status, autoRebuild: auto };
   }

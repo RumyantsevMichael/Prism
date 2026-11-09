@@ -9,6 +9,7 @@
     "build:native": "node scripts/native-build/compile.mjs",
     "check:native": "node scripts/native-build/compile.mjs --check",
     "test": "node --test test/server/*.test.mjs",
+    "test:store-sync": "node scripts/test-store-sync.mjs",
     "validate:sdm": "node scripts/validate-sdm.mjs",
     "render": "bun scripts/render-diagrams.ts",
     "stage:native": "node scripts/native-build/stage.mjs"

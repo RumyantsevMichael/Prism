@@ -49,16 +49,17 @@ test("clause 16: several included components merge by cosine similarity, keep th
 
 test("clauses 12 and 16: an unscoped search while a component prepares merges the others and names it", async (t) => {
   const { root, runtime, control } = await scored(t);
-  control.hold("packages/app/client.ts");
+  // The root component builds after the declared ones, so the packages answer while it prepares.
+  control.hold("README.md");
   const found = await search(root, runtime, {}, 300);
   assert.equal(found.status, "partial");
-  assert.deepEqual(names(found), ["timeoutAfter", "retryRequest"]);
+  assert.deepEqual(names(found), ["timeoutAfter", "fetchUser", "retryRequest"]);
   const [missing] = found.diagnostics;
-  assert.deepEqual([missing.code, missing.components], ["components_missing", ["root/app"]]);
-  assert.match(missing.message, /root\/app/);
+  assert.deepEqual([missing.code, missing.components], ["components_missing", ["root/root"]]);
+  assert.match(missing.message, /root\/root/);
   assert.match(missing.message, /preparing/);
-  assert.equal(entry(found, "root/app").status, "preparing");
-  control.release("packages/app/client.ts");
+  assert.equal(entry(found, "root/root").status, "preparing");
+  control.release("README.md");
   await settled(runtime, root);
   const complete = await search(root, runtime);
   assert.equal(complete.status, "ready");

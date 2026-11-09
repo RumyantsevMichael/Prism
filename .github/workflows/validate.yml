@@ -11,6 +11,27 @@ on:
   pull_request:
 
 jobs:
+  # The plugin runs on whatever Node the user has, and a Node 24 minor release changed how readline ends lines.
+  # Testing the server on the newest Node 24 catches such changes before users meet them.
+  server-latest-node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          check-latest: true
+
+      - name: Test the server on the newest Node 24
+        run: |
+          node --version
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm test
+
   validate:
     runs-on: ubuntu-latest
     steps:

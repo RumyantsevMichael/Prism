@@ -22,10 +22,11 @@ const time = (value: string | undefined) => { const parsed = Date.parse(value ??
 
 // In a repository that declares components, the start refreshes only the components that already have an index in this storage and are out of
 // date, so a component that no tool has needed yet is never built in the background. The rebuild also prepares each component whose latest
-// preparation failed, with or without an index, including one that reached a native limit in this process.
+// preparation failed, with or without an index. A rebuild that the person asks for also prepares one that reached a native limit; an automatic
+// rebuild leaves a component whose latest preparation reached a native limit for its current content, in any process, because it would only fail again.
 // A rebuild of one component prepares only that component, also when it has no index yet, and reuses its index while it is up to date.
-async function prepareComponentIndexes(projectRoot: string, declaration: Declaration, runtime: NativeSemanticRuntime, rebuild: boolean, only: string | null = null) {
-  const root = await realpath(projectRoot), chosen = [];
+async function prepareComponentIndexes(projectRoot: string, declaration: Declaration, runtime: NativeSemanticRuntime, rebuild: boolean, only: string | null = null, retryLimited = rebuild) {
+  const root = await realpath(projectRoot), chosen = [], identity = rebuild && !retryLimited ? (await runtime.manifest()).identity : "";
   for (const entry of componentSources(root, declaration)) {
     if (only !== null && entry.component !== only) continue;
     const snapshot = await entry.source.snapshot();
@@ -35,18 +36,22 @@ async function prepareComponentIndexes(projectRoot: string, declaration: Declara
     const published = await runtime.published(directory), indexed = Boolean(published?.snapshot);
     const outOfDate = indexed && published!.snapshot !== snapshot.sourceFingerprint;
     // A failure counts only when it ended after the component's latest index; a job of this process that failed counts as recorded too.
+    const records = rebuild ? await readProgressRecords(directory) : [];
     const failed = rebuild && (runtime.jobs.get(directory)?.status === "degraded"
-      || (await readProgressRecords(directory)).some(record => record.state === "failed" && (!indexed || time(record.finishedAt ?? record.updatedAt) > time(published!.builtAt))));
-    if (outOfDate || failed || (only !== null && !indexed)) chosen.push({ source: entry.source, component });
+      || records.some(record => record.state === "failed" && (!indexed || time(record.finishedAt ?? record.updatedAt) > time(published!.builtAt))));
+    const id = identity && runtime.componentPreparationId(directory, snapshot.sourceFingerprint, identity);
+    const limited = Boolean(id) && (runtime.jobs.get(directory)?.failure?.code === "resource_limit" && runtime.jobs.get(directory)?.snapshot === snapshot.sourceFingerprint
+      || records.some(record => record.state === "failed" && record.preparationId === id && record.diagnostics.some(item => item.code === "resource_limit")));
+    if ((outOfDate || failed || (only !== null && !indexed)) && !limited) chosen.push({ source: entry.source, component });
   }
-  if (chosen.length) await runtime.prepareComponents(chosen, 0, { retryLimited: rebuild });
+  if (chosen.length) await runtime.prepareComponents(chosen, 0, { retryLimited });
 }
 
 // A repository without components prepares its one index; an invalid declaration refuses here, as it refuses the native tools, and so prepares nothing.
-function preparation(runtime: NativeSemanticRuntime, rebuild: boolean, component: RebuildComponent | null = null) {
+function preparation(runtime: NativeSemanticRuntime, rebuild: boolean, component: RebuildComponent | null = null, retryLimited = rebuild) {
   return async (projectRoot: string) => {
     const declaration = await indexComponents(projectRoot);
-    if (declaration) return prepareComponentIndexes(projectRoot, declaration, runtime, rebuild, component?.identity ?? null);
+    if (declaration) return prepareComponentIndexes(projectRoot, declaration, runtime, rebuild, component?.identity ?? null, retryLimited);
     await prepareNativeProvider(projectRoot, { waitMs: 0, runtime });
   };
 }
@@ -99,13 +104,14 @@ const queued = new Map<string, Promise<void>>();
 // The review browser uses it when the index went out of date or the person asks, so the line ranges it shows catch up without an agent search.
 // With `component`, it rebuilds only that component's index and joins only a running rebuild of the same component; the runtime queues it
 // behind a preparation of another component without interrupting that one. Without it, every out-of-date or failed component is rebuilt.
-export function startIndexRebuild(projectRoot: string, options: Omit<Options, "enabled"> & { component?: RebuildComponent } = {}): Promise<void> {
+// `automatic` marks the review browser's own rebuild, which leaves a component that reached a native limit for its current content.
+export function startIndexRebuild(projectRoot: string, options: Omit<Options, "enabled"> & { component?: RebuildComponent; automatic?: boolean } = {}): Promise<void> {
   const component = options.component ?? null;
   const key = component ? `${projectRoot}\0${component.identity}` : projectRoot;
   const existing = rebuilding.get(key);
   if (existing) return existing;
   const { runtime = nativeSemanticRuntime } = options;
-  const { prepare = preparation(runtime, true, component), available = runtimeAvailable(runtime), record = recordFailure(runtime) } = options;
+  const { prepare = preparation(runtime, true, component, !options.automatic), available = runtimeAvailable(runtime), record = recordFailure(runtime) } = options;
   const previous = component ? queued.get(projectRoot) ?? Promise.resolve() : Promise.resolve();
   const run = previous.then(async () => {
     if (!await available()) return;

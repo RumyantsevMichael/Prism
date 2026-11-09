@@ -105,7 +105,7 @@ test("CC-3: a component that another session holds is reported preparing and doe
   assert.ok(Date.now() - started < 10000);
   assert.equal(found.status, "partial");
   assert.deepEqual(found.components.map((item) => [item.component, item.status, item.failure]), [["root/root", "included", null], ["root/net", "preparing", null], ["root/app", "included", null]]);
-  assert.deepEqual(control.builds.map((build) => build.files[0]), [".prism/workflow.md", "packages/app/client.ts"]);
+  assert.deepEqual(control.builds.map((build) => build.files[0]), ["packages/app/client.ts", ".prism/workflow.md"]);
   assert.equal(entry(await runtime.status(root), "root/net").status, "preparing");
   // Once the other session releases the lock, the component is prepared here.
   await rm(`${directory}.lock`);
@@ -114,16 +114,17 @@ test("CC-3: a component that another session holds is reported preparing and doe
 });
 
 test("a waiting job for content that changed is dropped and writes no failure after the newer index", async (t) => {
-  const { root, storage, write } = await project(t);
+  // app is declared first, so its held build keeps net waiting behind it.
+  const { root, storage, write } = await project(t, { components: ["## Components", "- app: packages/app", "- net: packages/net", ""].join("\n") });
   const { runtime, control } = await fakeRuntime(storage);
-  control.hold("README.md");
+  control.hold("packages/app/client.ts");
   await search(root, runtime, {}, 0);
   await write("packages/net/retry.ts", `${FILES["packages/net/retry.ts"]}// changed\n`);
   const newer = await search(root, runtime, { filters: { paths: ["packages/net"] } }, 0);
-  control.release("README.md");
+  control.release("packages/app/client.ts");
   await settled(runtime, root);
   assert.equal(entry(newer, "root/net").status, "waiting");
-  assert.deepEqual(control.builds.map((build) => build.files[0]), [".prism/workflow.md", "packages/net/retry.ts", "packages/app/client.ts"]);
+  assert.deepEqual(control.builds.map((build) => build.files[0]), ["packages/app/client.ts", "packages/net/retry.ts", ".prism/workflow.md"]);
   const { directory } = await runtime.location(root, NET);
   assert.deepEqual((await readdir(directory)).filter((name) => name.startsWith("progress-")), []);
   assert.equal(entry(await runtime.status(root), "root/net").status, "ready");
@@ -162,7 +163,7 @@ test("CC-4: a component whose lock names a live process but is no longer renewed
   const found = await search(root, runtime, {}, 3000);
   assert.equal(found.status, "partial");
   assert.deepEqual(found.components.map((item) => [item.component, item.status, item.failure?.code ?? null]), [["root/root", "included", null], ["root/net", "failed", "lock_timeout"], ["root/app", "included", null]]);
-  assert.deepEqual(control.builds.map((build) => build.files[0]), [".prism/workflow.md", "packages/app/client.ts"]);
+  assert.deepEqual(control.builds.map((build) => build.files[0]), ["packages/app/client.ts", ".prism/workflow.md"]);
   const status = await runtime.status(root);
   assert.equal(status.status, "degraded");
   assert.equal(entry(status, "root/net").status, "degraded");
