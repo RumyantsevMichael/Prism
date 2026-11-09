@@ -33,6 +33,19 @@
   line-height: 1;
 }
 
+:host([kind="workspace"]) {
+  --size: calc(var(--prism-control-height) - var(--prism-space-3));
+  --fill: var(--prism-color-accent);
+  --ink: var(--prism-color-on-accent);
+}
+
+:host([kind="workspace"]) .face {
+  border-color: transparent;
+  border-radius: var(--prism-radius-xs);
+  font-size: var(--prism-font-size-2xs);
+  font-weight: var(--prism-font-weight-bold);
+}
+
 :host([kind="person"]) .face {
   border-radius: var(--prism-radius-round);
 }

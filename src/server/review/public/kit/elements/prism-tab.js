@@ -11,7 +11,9 @@ export class PrismTab extends Base {
     options: [
       { name: "value", values: ["text"], default: "", description: "The value prism-tabs sends in prism-select when this tab is chosen." },
       { name: "selected", values: ["boolean"], default: "false", description: "Marks the one selected tab, exposed as aria-selected." },
-      { name: "disabled", values: ["boolean"], default: "false", description: "The tab cannot be chosen." }
+      { name: "disabled", values: ["boolean"], default: "false", description: "The tab cannot be chosen." },
+      { name: "slot=\"start\"", values: ["children"], default: "", description: "An icon before the label." },
+      { name: "slot=\"end\"", values: ["children"], default: "", description: "A count after the label, such as a prism-badge." }
     ],
     states: ["selected", "unselected", "disabled"],
     keyboard: ["Inside prism-tabs, arrow keys move between tabs and Enter or Space chooses one."]
@@ -19,7 +21,7 @@ export class PrismTab extends Base {
 
   constructor() {
     super();
-    this.root = shadow(this, PrismTab.styles, `<span class="tab" part="tab"><span class="text"><slot></slot></span><slot name="end"></slot></span>`);
+    this.root = shadow(this, PrismTab.styles, `<span class="tab" part="tab"><slot name="start"></slot><span class="text"><slot></slot></span><slot name="end"></slot></span>`);
   }
 
   connectedCallback() {

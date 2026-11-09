@@ -24,7 +24,7 @@ export function nextMissingTabs(current, reported) {
   return { next, changed };
 }
 
-/** Render the page of a missing page into container; onClose leaves it for the page before it. */
+/** Render the page of a missing tab into container; onClose closes the tab. */
 export function renderMissing(container, ref, { entity = false, label = ref, onClose } = {}) {
   const notice = missingNotice(ref, { entity, label });
   const state = document.createElement("prism-empty-state");
@@ -39,7 +39,7 @@ export function renderMissing(container, ref, { entity = false, label = ref, onC
   detail.textContent = notice.detail;
   const close = document.createElement("prism-button");
   close.setAttribute("variant", "primary");
-  close.textContent = "Close this page";
+  close.textContent = "Close tab";
   close.addEventListener("click", () => onClose?.());
   state.append(where, detail, close);
   container.replaceChildren(state);

@@ -150,7 +150,8 @@ test("clauses 77, 79: the slice page shows its lifecycle, claim, and sub-tabs, a
   assert.equal(await stepper.locator('[aria-current="step"]').count(), 1, "one phase is current");
   assert.match(steps[0], /done/i, "requirements are done");
   const tabs = view.getByRole("tablist", { name: "Slice" });
-  assert.deepEqual((await tabs.getByRole("tab").allInnerTexts()).map((text) => text.trim()), ["Design", "Diagram", "Verification", "Review ledger", "Change map", "Files"]);
+  // A tab may end with its count, such as the review ledger's open findings or the slice folder's files.
+  assert.deepEqual((await tabs.getByRole("tab").allInnerTexts()).map((text) => text.trim().replace(/\s+\d+$/, "")), ["Design", "Diagram", "Verification", "Review ledger", "Change map", "Files"]);
   const bar = page.locator("#page-bar");
   assert.equal(await bar.getByRole("button", { name: "Copy link", exact: true }).count(), 1);
   const side = bar.getByRole("button", { name: "Side panel", exact: true });

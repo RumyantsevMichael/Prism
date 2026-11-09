@@ -126,7 +126,8 @@ test("clauses 9, 21, 24: comfortable density makes every kit control of the page
       const root = getComputedStyle(document.documentElement);
       const sizes = ["--prism-control-height", "--prism-control-height-sm", "--prism-row-height", "--prism-subtab-height"].map((name) => Math.round(parseFloat(root.getPropertyValue(name))));
       return [...document.querySelectorAll("prism-button, prism-tab, prism-tree-item, prism-menu-item, prism-list-item")].filter((element) => element.getClientRects().length).map((element) => {
-        const own = element.shadowRoot?.firstElementChild ?? element;
+        // An expanded tree item holds its child items, so its own row is the control that is measured.
+        const own = element.shadowRoot?.firstElementChild ?? element.querySelector(":scope > .prism-tree-row") ?? element;
         const height = Math.round(Math.min(element.getBoundingClientRect().height, own.getBoundingClientRect().height || Infinity));
         return { tag: element.tagName.toLowerCase(), height, sized: sizes.includes(height) || sizes.includes(Math.round(element.getBoundingClientRect().height)) };
       });

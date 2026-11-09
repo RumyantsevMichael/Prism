@@ -4,13 +4,14 @@ import { Base, deepActiveElement, setAttribute, shadow } from "./base.js";
 
 const TOOLTIP_ID = "prism-kit-tooltip";
 
-// The kit element an event concerns: the nearest element on its path that has shortened text, or a prism-* element with a tip.
+// The kit element an event concerns: the nearest element on its path that has shortened text, or a prism-* element with a tip,
+// or a plain element that only shows text, such as a time or a progress image, with a tip.
 // An item of a tree or listbox is a boundary: its own text decides, so a child item never shows its parent's tooltip.
 function subjectOf(event) {
   for (const node of event.composedPath()) {
     if (node.nodeType !== 1) continue;
     if (node.tagName === "PRISM-TOOLTIP") return null;
-    if (node.hasAttribute("shortened") || (node.tagName.startsWith("PRISM-") && node.hasAttribute("tip"))) return node;
+    if (node.hasAttribute("shortened") || ((node.tagName.startsWith("PRISM-") || node.tagName === "TIME" || node.getAttribute("role") === "img") && node.hasAttribute("tip"))) return node;
     if (node.constructor?.tooltipBoundary) return null;
   }
   return null;
@@ -37,7 +38,7 @@ export class PrismTooltip extends Base {
   static catalog = {
     purpose: "The page's one tooltip: it shows the full text of a shortened kit element, or an element's tip, on frosted glass.",
     options: [
-      { name: "tip", values: ["text"], default: "", description: "Set on any kit element: the text the tooltip shows for it." },
+      { name: "tip", values: ["text"], default: "", description: "Set on any kit element, a time element, or an element with the img role: the text the tooltip shows for it." },
       { name: "shortened", values: ["boolean"], default: "false", description: "Set by the kit on an element whose one line of text ends with an ellipsis; the tooltip then shows the full text." }
     ],
     states: ["tip", "shortened"],

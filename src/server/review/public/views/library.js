@@ -32,7 +32,7 @@ export function render(container, entity, ctx) {
   const data = entity.data;
   if (entity.kind === "glossary") {
     container.innerHTML = data.exists
-      ? `<prism-panel class="view-section"><prism-doc class="document-content">${ctx.renderMarkdown(data.content, data.path)}</prism-doc></prism-panel>`
+      ? `<section class="view-section document-sheet"><prism-doc class="document-content">${ctx.renderMarkdown(data.content, data.path)}</prism-doc></section>`
       : card("No glossary yet", data.path ? `<p>The configured glossary does not exist yet.</p><p class="muted">Run <code>setup</code> or <code>ideate</code> to create it.</p>` : "<p>The workflow settings turn the glossary off.</p>", { eyebrow: "Glossary" });
     return;
   }

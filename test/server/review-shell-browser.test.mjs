@@ -53,7 +53,7 @@ test("clause 74: the artifact area reports busy while a view loads and not busy 
   assert.ok(seen.includes("true"), "the view reported busy while it loaded");
 });
 
-test("clause 75: the shell is a top bar, one sidebar of trees, the main island with its page bar, and a status bar on a canvas, with no tab strip", { skip }, async (context) => {
+test("clause 75: the shell is a top bar, one sidebar of trees, the main island with its strip of open documents above its page bar, and a status bar on a canvas", { skip }, async (context) => {
   const { page } = await open(context);
   const header = page.locator("header");
   assert.equal(await header.locator("[aria-haspopup=menu]").count() >= 1, true, "the top bar holds the project switcher menu");
@@ -64,13 +64,21 @@ test("clause 75: the shell is a top bar, one sidebar of trees, the main island w
   assert.ok(await sidebar.getByRole("tree").count() >= 2, "the sidebar holds kit trees for places, initiatives, and the library");
   assert.equal(await sidebar.getByRole("treeitem", { name: /^Attention/ }).count(), 1);
   assert.equal(await sidebar.getByRole("treeitem", { name: /^Roadmap/ }).count(), 1);
+  // The owner restored the strip of open documents: it is the one tablist outside a page's own content, at the top of the main island above the page bar.
   const strips = await page.evaluate(() => {
     const deep = (root) => [...root.querySelectorAll("*")].flatMap((node) => node.shadowRoot ? [node, ...deep(node.shadowRoot)] : [node]);
     const inside = (node) => { for (let at = node; at; at = at.parentElement ?? at.getRootNode().host) if (at.id === "artifact") return true; return false; };
-    return deep(document).filter((node) => node.getAttribute("role") === "tablist" && node.getClientRects().length && !inside(node)).length;
+    return deep(document).filter((node) => node.getAttribute("role") === "tablist" && node.getClientRects().length && !inside(node)).map((node) => node.getAttribute("aria-label"));
   });
-  assert.equal(strips, 0, "the page has no tab strip outside a page's own content");
-  assert.equal(await page.getByRole("tablist", { name: "Open artifacts" }).count(), 0);
+  assert.deepEqual(strips, ["Open artifacts"], "the strip of open documents is the only tab strip outside a page's own content");
+  const strip = page.getByRole("tablist", { name: "Open artifacts" });
+  assert.equal(await strip.getByRole("tab", { name: /^Attention/ }).count(), 1, "the open page has its tab");
+  const order = await page.evaluate(() => {
+    const strip = document.querySelector("#open-tabs");
+    const bar = document.querySelector("#page-bar");
+    return { inMain: Boolean(strip.closest("#main")), above: strip.getBoundingClientRect().bottom <= bar.getBoundingClientRect().top + 1 };
+  });
+  assert.deepEqual(order, { inMain: true, above: true }, "the strip sits in the main island above the page bar");
   const layout = await page.evaluate(() => {
     const main = document.querySelector("#main");
     const canvasOf = (element) => {

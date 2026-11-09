@@ -1,11 +1,12 @@
-// prism-tree-item: one item of a prism-tree in light DOM: a row with a twisty, its label, and children with slot="end", then its child items in a group.
+// prism-tree-item: one item of a prism-tree in light DOM: a row with a twisty, children with slot="start", its label, and children with slot="end", then its child items in a group.
+// With an href the row is a link, so a middle-click, a Ctrl or Cmd click, or the context menu opens or copies the item's address.
 import { Base, emit, make, setAttribute, toggleAttribute, uniqueId } from "./base.js";
 import { remeasure, unwatchShortening, watchShortening } from "../shorten.js";
 
 export class PrismTreeItem extends Base {
   static tag = "prism-tree-item";
   static tooltipBoundary = true;
-  static observedAttributes = ["label", "expanded", "selected"];
+  static observedAttributes = ["label", "expanded", "selected", "href"];
   static catalog = {
     purpose: "One item of a prism-tree: a row with its label and trailing content, and its child items, which expand and collapse.",
     options: [
@@ -13,10 +14,13 @@ export class PrismTreeItem extends Base {
       { name: "value", values: ["text"], default: "", description: "The value the tree sends in prism-select when the item is chosen." },
       { name: "expanded", values: ["boolean"], default: "false", description: "Whether its child items show; exposed as aria-expanded when it has child items." },
       { name: "selected", values: ["boolean"], default: "false", description: "Whether it is the current item; exposed as aria-selected." },
+      { name: "href", values: ["URL"], default: "", description: "The item's address: the row becomes a link that a middle-click or a Ctrl or Cmd click opens in a new browser tab and the context menu can copy." },
+      { name: "tip", values: ["text"], default: "", description: "The tooltip's text on hover and keyboard focus, such as the full label with the item's status." },
+      { name: "slot=\"start\"", values: ["children"], default: "", description: "A glyph before the label, such as an icon, a state, or a phase; a leaf with one gives up the twisty's room." },
       { name: "slot=\"end\"", values: ["children"], default: "", description: "Content after the label, such as a count or a claim." }
     ],
-    states: ["leaf", "collapsed", "expanded", "selected"],
-    keyboard: ["The tree moves focus between items; Enter or a click selects an item.", "A click on the twisty expands or collapses the item."]
+    states: ["leaf", "collapsed", "expanded", "selected", "glyphs", "link"],
+    keyboard: ["The tree moves focus between items; Enter or a click selects an item.", "A click on the twisty expands or collapses the item.", "A Ctrl, Cmd, or Shift click or a middle-click on an item with an href opens its address in the browser instead of selecting it."]
   };
 
   constructor() {
@@ -24,6 +28,9 @@ export class PrismTreeItem extends Base {
     this.addEventListener("click", (event) => {
       if (this.itemOf(event) !== this) return;
       const tree = this.tree;
+      // A Shift click on a link is the browser's: it opens the address in a new window; a middle-click never reaches here.
+      if (this.hasAttribute("href") && event.shiftKey) return;
+      event.preventDefault();
       if (event.composedPath().includes(this.twisty)) {
         if (this.hasChildItems) this.expanded = !this.expanded;
         tree?.rove(this);
@@ -55,12 +62,14 @@ export class PrismTreeItem extends Base {
 
   build() {
     const id = uniqueId("prism-tree-item");
-    this.row = make(this, "div", "prism-tree-row");
+    // The row is an anchor so an item with an href is a real link; the item, not the anchor, is the focus stop.
+    this.row = make(this, "a", "prism-tree-row", { role: "none", tabindex: "-1", draggable: "false" });
     this.twisty = make(this, "span", "prism-tree-twisty", { "aria-hidden": "true" });
     this.twisty.append(make(this, "prism-icon", "", { name: "chevron-right", size: "xs" }));
+    this.start = make(this, "span", "prism-tree-start", { id: `${id}-start` });
     this.labelElement = make(this, "span", "prism-tree-label", { id: `${id}-label` });
     this.end = make(this, "span", "prism-tree-end", { id: `${id}-end` });
-    this.row.append(this.twisty, this.labelElement, this.end);
+    this.row.append(this.twisty, this.start, this.labelElement, this.end);
     this.group = make(this, "div", "prism-tree-group", { role: "group" });
     this.prepend(this.row);
     this.append(this.group);
@@ -69,6 +78,7 @@ export class PrismTreeItem extends Base {
       for (const node of [...this.childNodes]) {
         if (node === this.row || node === this.group) continue;
         if (node.nodeType === 1 && node.tagName === "PRISM-TREE-ITEM") this.group.append(node);
+        else if (node.nodeType === 1 && node.getAttribute("slot") === "start") this.start.append(node);
         else if (node.nodeType === 1 && node.getAttribute("slot") === "end") this.end.append(node);
         else if (node.nodeType === 3 && !node.textContent.trim()) node.remove();
         else this.end.append(node);
@@ -122,9 +132,9 @@ export class PrismTreeItem extends Base {
     return this.parentElement?.closest("prism-tree-item") ?? null;
   }
 
-  /** The full label, which the tooltip shows when the label is shortened. */
+  /** The full label, which the tooltip shows when the label is shortened, or the tip that names more. */
   get tooltipText() {
-    return this.getAttribute("label") ?? "";
+    return this.getAttribute("tip") || (this.getAttribute("label") ?? "");
   }
 
   itemOf(event) {
@@ -148,8 +158,14 @@ export class PrismTreeItem extends Base {
     setAttribute(this.twisty.firstElementChild, "name", this.expanded ? "chevron-down" : "chevron-right");
     this.group.hidden = !parent || !this.expanded;
     setAttribute(this, "aria-selected", String(this.selected));
+    const href = this.getAttribute("href");
+    setAttribute(this.row, "href", href || null);
+    const hasStart = this.start.childNodes.length > 0;
+    this.start.hidden = !hasStart;
+    this.twisty.classList.toggle("is-gone", !parent && hasStart);
     const hasEnd = this.end.childNodes.length > 0;
     this.end.hidden = !hasEnd;
-    setAttribute(this, "aria-labelledby", hasEnd ? `${this.labelElement.id} ${this.end.id}` : this.labelElement.id);
+    // The label comes first in the name, so the item is found by its title; a glyph's name, such as a state, follows the end content.
+    setAttribute(this, "aria-labelledby", [this.labelElement.id, hasEnd ? this.end.id : null, hasStart ? this.start.id : null].filter(Boolean).join(" "));
   }
 }

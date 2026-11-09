@@ -78,3 +78,18 @@
 :host([variant="status"]) .badge {
   justify-content: flex-start;
 }
+
+:host([solid]) {
+  --tone: var(--prism-color-on-accent);
+  --tone-fill: var(--prism-color-accent);
+}
+
+:host([size="sm"]) {
+  height: var(--prism-badge-size-sm);
+}
+
+:host([size="sm"]) .badge {
+  min-width: var(--prism-badge-size-sm);
+  padding: 0 var(--prism-space-1);
+  font-size: var(--prism-font-size-3xs);
+}

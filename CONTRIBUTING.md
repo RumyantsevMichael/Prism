@@ -148,7 +148,7 @@ Run a local human review from the repository root:
 To try the entity-first review browser, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
 The seed builds a temporary project whose roadmap, initiative records, change map, review ledger, coordination state, recorded user gates, and evidence come from the real MCP tools.
 The project is a Git repository, so the browser also lists its source files.
-The browser opens on Attention, which lists the recorded user gates, and its sidebar expands only the path to the open initiative, slice, or library section.
+The browser opens on Attention, which lists the recorded user gates, and its sidebar nests the slices of each initiative being worked on and expands the path to the open page and every branch with a slice in progress, blocked, or claimed.
 Answering a gate on Attention records the answer in the initiative's coordination state, and the `deliver-gate-answers` prompt hook passes answered gates to the agent with the next user message until the agent resolves them.
 The same hook runs when a session resumes and lists every open gate, so the resumed agent waits on its unanswered gates again.
 In Claude Code the `wait_for_user_gate` tool also returns the answer: Claude Code moves the call to the background after about two minutes (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`), its result wakes the idle session, and progress notifications every minute keep the stdio idle window (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`) from cancelling it.
@@ -170,6 +170,17 @@ It also checks the component catalog of the empty project at each viewport and t
 `--catalog <url>` checks only the catalog at that URL.
 `--viewports`, `--themes`, and `--screenshots <directory>` widen the run or keep screenshots for a visual pass.
 Playwright is not a repository dependency, so the check uses an installed copy and is not part of CI.
+
+A change to a screen that the UI kit mockup shows is done only when the rendered screen matches the mockup, so compare them side by side:
+
+```bash
+node scripts/review-demo/mockup-compare.mjs --out /tmp/mockup-compare
+```
+
+It puts the demo app into the state of each mockup scene (Attention with a gate and the Appearance menu, the roadmap with Who's working, a slice with its diagram beside it, the command palette, and the navigation drawer) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
+`--scenes`, `--widths`, `--themes`, and `--densities` narrow the run.
+Read every pair: the layout check finds broken layouts, but only this comparison shows a screen that works and still looks nothing like the design.
+Differences that come from the demo's data, or from mockup content that is deliberately out of scope, are expected; name them in the pull request.
 
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.

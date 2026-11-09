@@ -1,0 +1,29 @@
+/* prism-kbd: a keycap in the code font, its lower edge drawn heavier. */
+
+:host {
+  display: inline-flex;
+  flex: none;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+kbd {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 100%;
+  height: var(--prism-control-height-sm);
+  padding: 0 var(--prism-space-3);
+  overflow: hidden;
+  border: var(--prism-stroke) solid var(--prism-color-line-strong);
+  border-bottom-width: var(--prism-stroke-strong);
+  border-radius: var(--prism-radius-xs);
+  background: var(--prism-color-sunken);
+  color: var(--prism-color-ink-muted);
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-2xs);
+  font-weight: var(--prism-font-weight-regular);
+  line-height: calc(var(--prism-control-height-sm) - var(--prism-stroke) - var(--prism-stroke-strong));
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
