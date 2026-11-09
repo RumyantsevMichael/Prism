@@ -8,7 +8,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { deliverGateAnswers } from "../../dist/hooks/deliver-gate-answers.mjs";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
-import { adrFile, answerGate, artifactConfig, browserRequest, checkout, cloneOf, commitFiles, eventually, git, isolateGit, notes, ok, READ_ONLY, refused, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, text, today, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { adrFile, answerGate, artifactConfig, browserRequest, checkout, cloneOf, closeServers, commitFiles, eventually, git, isolateGit, notes, ok, READ_ONLY, refused, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, text, today, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 import { launch, openPage, skip as noBrowser } from "./fixtures/kit-browser.mjs";
 
 // Contract clauses 30-38 of the workspace-artifacts design: requirement and ADR status changes only at gates answered in the browser.
@@ -755,6 +755,15 @@ const identityFile = (id) => `${JSON.stringify({ id })}\n`;
 const record = (value) => `${JSON.stringify(value)}\n`;
 const atHead = (store, file) => { try { return git(store, "show", `HEAD:${file}`); } catch { return null; } };
 const headTree = (store) => git(store, "ls-tree", "-r", "--name-only", "HEAD").split("\n").filter(Boolean);
+// The notes of the first two tool results of a Prism server started after a sync, on a checkout of repository api that uses the store, as the next agent session on that machine sees them.
+async function laterNotes(context, store, options = {}) {
+  const parent = path.dirname(store);
+  const machine = { parent, storeSetting: `../${path.basename(store)}`, app: path.join(parent, `app-${path.basename(store)}`), sync: "on" };
+  const prism = await server(context, machine, await checkout(machine, "api", options));
+  const said = [notes(await prism.call("get_artifact", {})), notes(await prism.call("get_artifact", {}))];
+  await closeServers();
+  return said;
+}
 // The text of each file a sync saved in a store, by its path below the saved stamp.
 async function savedBelow(store) {
   const found = {};
@@ -786,6 +795,11 @@ test("clause 25: where one machine removed a file and wrote another at its path 
   assert.deepEqual(JSON.parse(saved["artifact-status/requirements/billing.md/status.json"]), { status: "Draft", by: "b" }, "and its status record");
   assert.ok(JSON.stringify(synced.conflicts).includes("artifacts/requirements/billing.md"), "the sync names the saved file");
   assert.equal(git(remote, "show", "main:artifacts/requirements/billing.md"), approvedText.trimEnd(), "the remote keeps the approved file");
+  // The saved later file's entry also tells that this machine's removal gave way, so the removal is not named a second time.
+  const copy = (await savedCopies(b)).find((file) => file.endsWith(path.join("artifacts", "requirements", "billing.md")));
+  const [first] = await laterNotes(context, b);
+  assert.ok(first.includes(copy), "the next result names the saved later file");
+  assert.doesNotMatch(first, /Store sync undid this machine's removal of/, "and names the removal that gave way only through it");
 });
 
 test("clause 25: an artifact stored without an identity file has the identity its location gives, so a move of it is followed and a later file at its path is not", async (context) => {
@@ -963,28 +977,153 @@ test("clause 25: where the upstream removed one artifact and moved another onto 
   assert.deepEqual(JSON.parse(git(remote, "show", `main:${status(onto)}`)), { status: "Approved", of: "moved" }, "the remote holds the change");
 });
 
-test("clause 25: where this machine removed a file and wrote another at its path while the upstream only asked the first one's approval, the location keeps the upstream's file with its pending gate and saves the later one", async (context) => {
+test("clause 25: where this machine removed a file and wrote another at its path while the upstream only asked the first one's approval, the removal stands, the later file keeps the path, and the asked gate's record is saved and named", async (context) => {
   const original = requirementFile("Billing");
   const { remote, a, b } = await rawStores(context, {
     "artifacts/requirements/billing.md": original,
     "artifact-identity/requirements/billing.md": identityFile(OLD_ID),
     "artifact-status/requirements/billing.md/status.json": record({ status: "Draft", by: "base" })
   });
-  // The upstream asks the file's approval, which changes only its status record; this machine removed it and wrote other text at its path, with an identity and record of its own.
+  // The upstream asks the file's approval, which changes only its status record; this machine removed it on purpose and wrote other text at its path, with an identity and record of its own.
   const asked = { status: "Draft", by: "base", gates: [{ id: "a1b2c3d4e5f6", state: "pending" }] };
   await put(a, { "artifact-status/requirements/billing.md/status.json": record(asked) });
   push(a, "ask approval");
   await put(b, { "artifacts/requirements/billing.md": LATER, "artifact-identity/requirements/billing.md": identityFile(LATER_ID), "artifact-status/requirements/billing.md/status.json": record({ status: "Draft", by: "b" }) });
   const synced = await syncRecordStoreNow(b);
-  assert.equal(synced.state, "conflicts", synced.message);
-  assert.equal(atHead(b, "artifacts/requirements/billing.md"), original.trimEnd(), "the upstream's file keeps the location");
-  assert.deepEqual(JSON.parse(atHead(b, "artifact-status/requirements/billing.md/status.json") ?? "null"), asked, "with its pending gate");
-  assert.deepEqual(JSON.parse(atHead(b, "artifact-identity/requirements/billing.md") ?? "null"), { id: OLD_ID }, "and its identity");
+  assert.notEqual(synced.state, "merge_failed", synced.message);
+  assert.equal(atHead(b, "artifacts/requirements/billing.md"), LATER.trimEnd(), "this machine's later file keeps the path");
+  assert.deepEqual(JSON.parse(atHead(b, "artifact-status/requirements/billing.md/status.json") ?? "null"), { status: "Draft", by: "b" }, "with its own status record");
+  assert.deepEqual(JSON.parse(atHead(b, "artifact-identity/requirements/billing.md") ?? "null"), { id: LATER_ID }, "and its own identity");
   const saved = await savedBelow(b);
-  assert.equal(saved["artifacts/requirements/billing.md"], LATER, "the later file's text is saved");
-  assert.deepEqual(JSON.parse(saved["artifact-status/requirements/billing.md/status.json"] ?? "null"), { status: "Draft", by: "b" }, "and its status record");
-  assert.equal(synced.conflicts.filter((item) => JSON.stringify(item).includes("artifacts/requirements/billing.md")).length, 1, "the later file is named once");
-  assert.equal(git(remote, "show", "main:artifacts/requirements/billing.md"), original.trimEnd(), "the remote keeps the upstream's file");
+  assert.deepEqual(JSON.parse(saved["artifact-status/requirements/billing.md/status.json"] ?? "null"), asked, "the asked gate's record is saved");
+  assert.equal(saved["artifacts/requirements/billing.md"], undefined, "and nothing of the later file");
+  assert.equal(git(remote, "show", "main:artifacts/requirements/billing.md"), LATER.trimEnd(), "the remote holds the later file");
+  const copy = (await savedCopies(b)).find((file) => file.endsWith(path.join("artifact-status", "requirements", "billing.md", "status.json")));
+  const [first, second] = await laterNotes(context, b);
+  assert.ok(first.includes(copy), "the next result names the saved record");
+  assert.ok(first.includes(FILE), "and the path of the file it was asked on");
+  assert.match(first, /workspace/, "and its scope");
+  assert.doesNotMatch(first, /Store sync undid this machine's/, "and names nothing of this machine's as undone");
+  assert.equal(second.includes(copy), false, "a later result does not name it again");
+});
+
+// The requirement in the repository's scope that this machine moves onto the path of the workspace requirement it removed.
+const MOVED = requirementFile("Billing").replace("The system shall do the thing.", "The system shall do the api thing.");
+const MOVED_ID = "22222222222222222222222222222222";
+const [WORKSPACE_AT, API_AT] = ["requirements/billing.md", "repositories/api/requirements/billing.md"];
+// The files of the artifact at a location, as update_artifact removes them.
+const removedAt = (location) => ({ [`artifacts/${location}`]: null, [`artifact-identity/${location}`]: null, [`artifact-status/${location}/status.json`]: null });
+// This machine removes the workspace requirement on purpose and moves the repository's one to the workspace scope, onto its path, as move_scope does.
+const removeAndMove = () => ({
+  ...removedAt(WORKSPACE_AT), ...removedAt(API_AT),
+  [`artifacts/${WORKSPACE_AT}`]: MOVED, [`artifact-identity/${WORKSPACE_AT}`]: identityFile(MOVED_ID), [`artifact-status/${WORKSPACE_AT}/status.json`]: record({ status: "Draft", of: "moved" })
+});
+const bothRequirements = (removed = requirementFile("Billing")) => ({
+  [`artifacts/${WORKSPACE_AT}`]: removed, [`artifact-identity/${WORKSPACE_AT}`]: identityFile(OLD_ID), [`artifact-status/${WORKSPACE_AT}/status.json`]: record({ status: "Draft", of: "removed" }),
+  [`artifacts/${API_AT}`]: MOVED, [`artifact-identity/${API_AT}`]: identityFile(MOVED_ID), [`artifact-status/${API_AT}/status.json`]: record({ status: "Draft", of: "moved" })
+});
+// A comment in the form Prism writes, made on the workspace requirement on another machine.
+const upstreamComment = `${JSON.stringify({ location: WORKSPACE_AT, version: version(requirementFile("Billing")), line: 1, text: "On the removed requirement.", author: { name: "Grace", host: "laptop" }, at: "2026-11-07T00:00:00.000Z", entry: "9".repeat(32), by: { name: "Grace", email: null, checkout: "acme/web" }, via: "review-app" })}\n`;
+const asked = { status: "Draft", of: "removed", gates: [{ id: "a1b2c3d4e5f6", state: "pending" }] };
+// The entry that names the workspace requirement that a sync put back over this machine's removal of it.
+const backEntry = new RegExp(`^- ${FILE.replace(/[.]/g, "\\.")} in scope workspace$`, "m");
+
+for (const [how, change, savedPath] of [
+  ["commented on", { [`artifact-comments/${WORKSPACE_AT}/2026-11-07T00-00-00-000Z-00000001.json`]: upstreamComment }, `artifact-comments/${WORKSPACE_AT}/2026-11-07T00-00-00-000Z-00000001.json`],
+  ["asked the approval of", { [`artifact-status/${WORKSPACE_AT}/status.json`]: record(asked) }, `artifact-status/${WORKSPACE_AT}/status.json`]
+]) {
+  test(`clause 25: where this machine removed a file and moved another onto its path while the upstream only ${how} the first, the removal and the move stand, and the upstream's change is saved and named`, async (context) => {
+    const { remote, a, b } = await rawStores(context, bothRequirements());
+    await put(a, change);
+    push(a, `upstream ${how} the workspace requirement`);
+    await put(b, removeAndMove());
+    const synced = await syncRecordStoreNow(b);
+    assert.notEqual(synced.state, "merge_failed", synced.message);
+    for (const store of [b, remote]) {
+      const show = (file) => store === remote ? (() => { try { return git(remote, "show", `main:${file}`); } catch { return null; } })() : atHead(b, file);
+      assert.equal(show(`artifacts/${WORKSPACE_AT}`), MOVED.trimEnd(), "the moved requirement holds the workspace path");
+      assert.deepEqual(JSON.parse(show(`artifact-identity/${WORKSPACE_AT}`) ?? "null"), { id: MOVED_ID }, "with its identity");
+      assert.deepEqual(JSON.parse(show(`artifact-status/${WORKSPACE_AT}/status.json`) ?? "null"), { status: "Draft", of: "moved" }, "and its own status record");
+      for (const file of [`artifacts/${API_AT}`, `artifact-identity/${API_AT}`, `artifact-status/${API_AT}/status.json`]) assert.equal(show(file), null, `the move stands, leaving no ${file}`);
+      if (savedPath.startsWith("artifact-comments/")) assert.equal(show(savedPath), null, "the upstream's comment lands on no file");
+    }
+    const saved = await savedBelow(b);
+    assert.deepEqual(Object.keys(saved), [savedPath], "only the upstream's change is saved");
+    assert.equal(saved[savedPath], savedPath.startsWith("artifact-comments/") ? upstreamComment : record(asked));
+    const copy = (await savedCopies(b)).find((file) => file.endsWith(path.join(...savedPath.split("/"))));
+    const [first, second] = await laterNotes(context, b);
+    assert.ok(first.includes(copy), "the next result names the saved copy");
+    assert.ok(first.includes(FILE), "and the path of the file it was made on");
+    if (savedPath.startsWith("artifact-comments/")) assert.ok(first.includes("On the removed requirement."), "and quotes the comment");
+    assert.doesNotMatch(first, /Store sync undid this machine's/, "and names nothing of this machine's as undone");
+    assert.equal(second.includes(copy), false, "a later result does not name it again");
+  });
+}
+
+test("clauses 25 and 31: an approval answered upstream while this machine removed the file puts the approved file back, and the next result names the removal it undid, once", async (context) => {
+  const approvedText = requirementFile("Billing", "Approved", "2026-11-09");
+  const { remote, a, b } = await rawStores(context, {
+    "artifacts/requirements/billing.md": requirementFile("Billing"),
+    "artifact-identity/requirements/billing.md": identityFile(OLD_ID),
+    "artifact-status/requirements/billing.md/status.json": record({ status: "Draft", by: "base" })
+  });
+  // Approving rewrites the file's status lines, which is an edit of its bytes; this machine removed the file on purpose meanwhile.
+  await put(a, { "artifacts/requirements/billing.md": approvedText, "artifact-status/requirements/billing.md/status.json": record({ status: "Approved", by: "a" }) });
+  push(a, "approve");
+  await put(b, removedAt("requirements/billing.md"));
+  const synced = await syncRecordStoreNow(b);
+  assert.notEqual(synced.state, "merge_failed", synced.message);
+  assert.equal(atHead(b, "artifacts/requirements/billing.md"), approvedText.trimEnd(), "the approved file is back");
+  assert.deepEqual(JSON.parse(atHead(b, "artifact-status/requirements/billing.md/status.json") ?? "null"), { status: "Approved", by: "a" }, "with its approval");
+  assert.deepEqual(JSON.parse(atHead(b, "artifact-identity/requirements/billing.md") ?? "null"), { id: OLD_ID }, "and its identity");
+  assert.equal(git(remote, "show", "main:artifacts/requirements/billing.md"), approvedText.trimEnd(), "the remote holds the approved file");
+  const [first, second] = await laterNotes(context, b);
+  assert.match(first, /Store sync undid this machine's removal of/, "the next result says that the sync undid this machine's removal");
+  assert.match(first, backEntry, "and names the file that is back");
+  assert.doesNotMatch(second, /Store sync undid this machine's removal of/, "a later result does not name it again");
+});
+
+test("clause 25: an approval answered upstream while this machine removed the file and moved another onto its path puts the approved file back, sends the moved one back to its scope, and names both", async (context) => {
+  const approvedText = requirementFile("Billing", "Approved", "2026-11-09");
+  const { remote, a, b } = await rawStores(context, bothRequirements());
+  await put(a, { [`artifacts/${WORKSPACE_AT}`]: approvedText, [`artifact-status/${WORKSPACE_AT}/status.json`]: record({ status: "Approved", of: "removed" }) });
+  push(a, "approve the workspace requirement");
+  await put(b, removeAndMove());
+  const synced = await syncRecordStoreNow(b);
+  assert.notEqual(synced.state, "merge_failed", synced.message);
+  for (const [location, bytes, id, of] of [[WORKSPACE_AT, approvedText, OLD_ID, { status: "Approved", of: "removed" }], [API_AT, MOVED, MOVED_ID, { status: "Draft", of: "moved" }]]) {
+    assert.equal(atHead(b, `artifacts/${location}`), bytes.trimEnd(), `${location} holds its own file`);
+    assert.deepEqual(JSON.parse(atHead(b, `artifact-identity/${location}`) ?? "null"), { id }, "with its identity");
+    assert.deepEqual(JSON.parse(atHead(b, `artifact-status/${location}/status.json`) ?? "null"), of, "and its status record");
+    assert.equal(git(remote, "show", `main:artifacts/${location}`), bytes.trimEnd(), "as the remote does");
+  }
+  assert.deepEqual(Object.keys(await savedBelow(b)).filter((file) => file.startsWith("artifacts/")), [], "the moved file went back whole, so no copy of it is saved");
+  const [first, second] = await laterNotes(context, b);
+  assert.match(first, /Store sync undid this machine's removal of/, "the next result says that the sync undid this machine's removal");
+  assert.match(first, backEntry, "and names the file that is back");
+  assert.match(first, /Store sync undid this machine's move of/, "and that it undid this machine's move");
+  assert.ok(first.includes(`- ${FILE} in scope api, which this machine moved to scope workspace`), "naming the scope the moved file stays in and the one this machine moved it to");
+  assert.doesNotMatch(second, /Store sync undid this machine's/, "a later result names neither again");
+});
+
+test("clause 25: where both machines moved an artifact to different scopes, it takes the upstream's scope, and the next result names this machine's move that the sync undid", async (context) => {
+  const component = "repositories/api/components/billing/requirements/billing.md";
+  const { remote, a, b } = await rawStores(context, {
+    [`artifacts/${WORKSPACE_AT}`]: MOVED, [`artifact-identity/${WORKSPACE_AT}`]: identityFile(MOVED_ID), [`artifact-status/${WORKSPACE_AT}/status.json`]: record({ status: "Draft", of: "moved" })
+  });
+  const moveTo = (location) => ({ ...removedAt(WORKSPACE_AT), [`artifacts/${location}`]: MOVED, [`artifact-identity/${location}`]: identityFile(MOVED_ID), [`artifact-status/${location}/status.json`]: record({ status: "Draft", of: "moved" }) });
+  await put(a, moveTo(component));
+  push(a, "move to the component");
+  await put(b, moveTo(API_AT));
+  const synced = await syncRecordStoreNow(b);
+  assert.notEqual(synced.state, "merge_failed", synced.message);
+  assert.equal(atHead(b, `artifacts/${component}`), MOVED.trimEnd(), "the artifact is where the upstream moved it");
+  assert.equal(atHead(b, `artifacts/${API_AT}`), null, "and not where this machine moved it");
+  assert.equal(git(remote, "show", `main:artifacts/${component}`), MOVED.trimEnd());
+  const [first, second] = await laterNotes(context, b, { components: ["- billing: packages/billing"] });
+  assert.match(first, /Store sync undid this machine's move of/, "the next result says that the sync undid this machine's move");
+  assert.ok(first.includes(`- ${FILE} in scope api/billing, which this machine moved to scope api`), "naming the scope it stays in and the one this machine moved it to");
+  assert.doesNotMatch(second, /Store sync undid this machine's move of/, "a later result does not name it again");
 });
 
 test("clause 38: the accepted version is kept at approval and at design acceptance, and can be read", async (context) => {

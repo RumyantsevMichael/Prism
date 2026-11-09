@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, truncate, wri
 import http from "node:http";
 import path from "node:path";
 import test from "node:test";
-import { answerGate, artifactConfig, browserRequest, checkout, cloneOf, commitFiles, eventually, git, isolateGit, notes, ok, READ_ONLY, refused, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { answerGate, artifactConfig, browserRequest, checkout, cloneOf, closeServers, commitFiles, eventually, git, isolateGit, notes, ok, READ_ONLY, refused, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 import { launch, openPage, skip as noBrowser } from "./fixtures/kit-browser.mjs";
 
 // Contract clauses 39-42 of the workspace-artifacts design: people review artifact changes against the accepted version and comment through the store.
@@ -515,6 +515,15 @@ function push(root, message, first = false) {
 }
 const identityFile = (id) => `${JSON.stringify({ id })}\n`;
 const headTree = (store) => git(store, "ls-tree", "-r", "--name-only", "HEAD").split("\n").filter(Boolean);
+// The notes of the first two tool results of a Prism server started after a sync, on a checkout of repository api that uses the store, as the next agent session on that machine sees them.
+async function laterNotes(context, store, options = {}) {
+  const parent = path.dirname(store);
+  const machine = { parent, storeSetting: `../${path.basename(store)}`, app: path.join(parent, `app-${path.basename(store)}`), sync: "on" };
+  const prism = await server(context, machine, await checkout(machine, "api", options));
+  const said = [notes(await prism.call("get_artifact", {})), notes(await prism.call("get_artifact", {}))];
+  await closeServers();
+  return said;
+}
 
 test("clause 42: a comment whose placement at a moved artifact's location would exceed the store's path bounds is saved and named, and every other one is placed", async (context) => {
   const { syncRecordStoreNow, unsafeStoreEntry } = await import("../../dist/server/workflow/record-store-sync.mjs");
@@ -820,28 +829,36 @@ test("clause 25: the notes that name saved files hold at most 32 KiB, count what
   assert.equal((await savedCopies(place.storeB)).filter((file) => file.includes(path.join("artifact-comments", ...location.split("/")))).length, MANY, "every comment is saved");
 });
 
-test("clause 25: where this machine removed a file and wrote another at its path while the upstream only commented on the first, the location keeps the upstream's file with its comment and saves the later one", async (context) => {
+test("clause 25: where this machine removed a file and wrote another at its path while the upstream only commented on the first, the removal stands, the later file keeps the path, and the comment is saved and named with its text", async (context) => {
   const { syncRecordStoreNow } = await import("../../dist/server/workflow/record-store-sync.mjs");
   const [OLD_ID, LATER_ID] = ["0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"];
   const original = requirementFile("Billing");
   const { remote, a, b } = await rawStores(context, { "artifacts/requirements/billing.md": original, "artifact-identity/requirements/billing.md": identityFile(OLD_ID) });
-  // The upstream comments on the file; this machine removed it and wrote other text at its path, with an identity of its own.
+  // The upstream comments on the file, which leaves its bytes as they were; this machine removed it on purpose and wrote other text at its path, with an identity of its own.
   const commented = `artifact-comments/requirements/billing.md/${commentName(1)}`;
   await put(a, { [commented]: `${JSON.stringify(syncedComment({ text: "On the first file." }))}\n` });
   push(a, "comment");
   await put(b, { "artifacts/requirements/billing.md": LATER, "artifact-identity/requirements/billing.md": identityFile(LATER_ID) });
   const synced = await syncRecordStoreNow(b);
-  assert.equal(synced.state, "conflicts", synced.message);
+  assert.notEqual(synced.state, "merge_failed", synced.message);
   const atHead = (file) => { try { return git(b, "show", `HEAD:${file}`); } catch { return null; } };
-  assert.equal(atHead("artifacts/requirements/billing.md"), original.trimEnd(), "the upstream's file keeps the location");
-  assert.equal(JSON.parse(atHead(commented) ?? "null")?.text, "On the first file.", "with its comment");
-  assert.deepEqual(JSON.parse(atHead("artifact-identity/requirements/billing.md") ?? "null"), { id: OLD_ID }, "and its identity");
-  const saved = (await savedCopies(b)).filter((file) => file.endsWith(path.join("artifacts", "requirements", "billing.md")));
-  assert.equal(saved.length, 1, "the later file is saved");
-  assert.equal(await readFile(saved[0], "utf8"), LATER);
-  assert.equal(synced.conflicts.filter((item) => JSON.stringify(item).includes("artifacts/requirements/billing.md")).length, 1, "and named once");
-  assert.equal(git(remote, "show", "main:artifacts/requirements/billing.md"), original.trimEnd(), "the remote keeps the upstream's file");
-  assert.ok(remoteTree(remote).includes(commented), "and its comment");
+  assert.equal(atHead("artifacts/requirements/billing.md"), LATER.trimEnd(), "this machine's later file keeps the path");
+  assert.deepEqual(JSON.parse(atHead("artifact-identity/requirements/billing.md") ?? "null"), { id: LATER_ID }, "with its own identity");
+  assert.equal(atHead(commented), null, "and without the comment made on the removed file");
+  const saved = await savedCopies(b);
+  const comment = saved.find((file) => file.endsWith(path.join("artifact-comments", "requirements", "billing.md", commentName(1))));
+  assert.ok(comment, "the comment is saved");
+  assert.equal(JSON.parse(await readFile(comment, "utf8")).text, "On the first file.");
+  assert.equal(saved.some((file) => file.endsWith(path.join("artifacts", "requirements", "billing.md"))), false, "and nothing of the later file is saved");
+  assert.equal(git(remote, "show", "main:artifacts/requirements/billing.md"), LATER.trimEnd(), "the remote holds the later file");
+  assert.equal(remoteTree(remote).some((file) => file.startsWith("artifact-comments/")), false, "and no comment");
+  const [first, second] = await laterNotes(context, b);
+  assert.ok(first.includes(comment), "the next result names the saved comment");
+  assert.ok(first.includes(FILE), "and the path it was made on");
+  assert.match(first, /workspace/, "and its scope");
+  assert.ok(first.includes("On the first file."), "and quotes its text");
+  assert.doesNotMatch(first, /Store sync undid this machine's/, "and names nothing of this machine's as undone");
+  assert.equal(second.includes(comment), false, "a later result does not name it again");
 });
 
 test("clause 42: a merge rewrites location only in a comment of the form Prism writes, so no bytes of a file in a comment folder stop it", async (context) => {
