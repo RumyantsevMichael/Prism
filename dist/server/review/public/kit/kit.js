@@ -9,6 +9,8 @@ import { PrismChip } from "./elements/prism-chip.js";
 import { PrismBadge } from "./elements/prism-badge.js";
 import { PrismTab } from "./elements/prism-tab.js";
 import { PrismTabs } from "./elements/prism-tabs.js";
+import { PrismDocTab } from "./elements/prism-doc-tab.js";
+import { PrismDocTabs } from "./elements/prism-doc-tabs.js";
 import { PrismMenu } from "./elements/prism-menu.js";
 import { PrismMenuGroup } from "./elements/prism-menu-group.js";
 import { PrismMenuItem } from "./elements/prism-menu-item.js";
@@ -38,6 +40,12 @@ import { PrismStep } from "./elements/prism-step.js";
 import { PrismBreadcrumbs } from "./elements/prism-breadcrumbs.js";
 import { PrismDoc } from "./elements/prism-doc.js";
 import { PrismCode } from "./elements/prism-code.js";
+import { PrismInbox } from "./elements/prism-inbox.js";
+import { PrismInboxItem } from "./elements/prism-inbox-item.js";
+import { PrismPhase } from "./elements/prism-phase.js";
+import { PrismPhaseBar } from "./elements/prism-phase-bar.js";
+import { PrismState } from "./elements/prism-state.js";
+import { PrismKbd } from "./elements/prism-kbd.js";
 
 /**
  * Every kit element class; each carries a static `tag` and a static `catalog` of
@@ -49,6 +57,7 @@ export const KIT_ELEMENTS = [
   PrismIcon,
   PrismChip,
   PrismBadge,
+  PrismKbd,
   PrismTab,
   PrismMenuItem,
   PrismTooltip,
@@ -57,6 +66,8 @@ export const KIT_ELEMENTS = [
   PrismSpinner,
   PrismAvatar,
   PrismTabs,
+  PrismDocTab,
+  PrismDocTabs,
   PrismMenu,
   PrismMenuGroup,
   PrismField,
@@ -79,7 +90,12 @@ export const KIT_ELEMENTS = [
   PrismStep,
   PrismBreadcrumbs,
   PrismDoc,
-  PrismCode
+  PrismCode,
+  PrismInbox,
+  PrismInboxItem,
+  PrismPhase,
+  PrismPhaseBar,
+  PrismState
 ];
 
 /** Defines each kit element once; a second call, or an element that is already defined, changes nothing. */

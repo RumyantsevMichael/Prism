@@ -1,15 +1,19 @@
 // The page bar at the top of the main island: Back and Forward through the pages visited in this browser tab, the trail of the page's place,
 // initiative, and slice by title, and the page's own actions at its end.
+// Every control of the bar is an icon button at the control height; an action the bar knows by name, such as Copy link, takes its icon and keeps its name as its label.
+
+// The glyph of each page action the bar draws as an icon; any other action keeps its text.
+const ACTION_ICONS = { "Copy link": "copy", "Side panel": "panel", "Details and settings": "more" };
 
 function iconButton(id, label, icon) {
   const button = document.createElement("prism-button");
-  button.id = id;
+  if (id) button.id = id;
   button.setAttribute("variant", "ghost");
-  button.setAttribute("size", "sm");
   button.setAttribute("label", label);
   button.setAttribute("tip", label);
   const glyph = document.createElement("prism-icon");
   glyph.setAttribute("name", icon);
+  glyph.setAttribute("size", "sm");
   button.append(glyph);
   return button;
 }
@@ -21,8 +25,8 @@ function iconButton(id, label, icon) {
 export function createPageBar({ root, onBack, onForward, onOpen }) {
   const history = document.createElement("div");
   history.className = "page-bar-history";
-  const back = iconButton("page-back", "Back", "back");
-  const forward = iconButton("page-forward", "Forward", "forward");
+  const back = iconButton("page-back", "Back", "chevron-left");
+  const forward = iconButton("page-forward", "Forward", "chevron-right");
   back.setAttribute("aria-keyshortcuts", "Alt+ArrowLeft");
   forward.setAttribute("aria-keyshortcuts", "Alt+ArrowRight");
   back.addEventListener("click", () => onBack());
@@ -50,6 +54,7 @@ export function createPageBar({ root, onBack, onForward, onOpen }) {
       if (crumb.ref) {
         link.href = `./review?artifact=${encodeURIComponent(crumb.ref)}`;
         link.addEventListener("click", (event) => {
+          // A Shift click or a middle-click is the browser's: it opens the crumb in a new window or browser tab; a Ctrl or Cmd click keeps a review tab.
           if (event.shiftKey || event.button !== 0) return;
           event.preventDefault();
           onOpen(crumb.ref, event);
@@ -60,8 +65,23 @@ export function createPageBar({ root, onBack, onForward, onOpen }) {
     }));
   }
 
+  // A text action the bar knows becomes an icon button of the same name; its clicks, pressed state, and disabled state stay its own.
+  function asIcon(action) {
+    const name = action.tagName === "PRISM-BUTTON" && !action.hasAttribute("label") ? action.textContent.trim() : "";
+    const glyph = ACTION_ICONS[name];
+    if (!glyph) return action;
+    action.setAttribute("label", name);
+    action.setAttribute("tip", name);
+    action.removeAttribute("size");
+    const symbol = document.createElement("prism-icon");
+    symbol.setAttribute("name", glyph);
+    symbol.setAttribute("size", "sm");
+    action.replaceChildren(symbol);
+    return action;
+  }
+
   function setActions(nodes) {
-    actions.replaceChildren(...nodes);
+    actions.replaceChildren(...nodes.map(asIcon));
     actions.hidden = nodes.length === 0;
   }
 

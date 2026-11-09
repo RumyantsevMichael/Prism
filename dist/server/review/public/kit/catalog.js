@@ -16,19 +16,27 @@ const id = (prefix) => `${prefix}-${(ids += 1)}`;
 const repeat = (count, make) => Array.from({ length: count }, (_, index) => make(index)).join("");
 
 // A kit button and the menu it opens.
-function menuFor(items, { caption = "Open the menu" } = {}) {
+function menuFor(items, { caption = "Open the menu", heading = "", keys = "", wide = false } = {}) {
   const trigger = id("catalog-menu-button");
-  return `<prism-button id="${trigger}">${caption}<prism-icon name="chevron-down" size="sm"></prism-icon></prism-button><prism-menu for="${trigger}">${items}</prism-menu>`;
+  const title = heading ? ` heading="${html(heading)}"${keys ? ` keys="${html(keys)}"` : ""}` : "";
+  return `<prism-button id="${trigger}">${caption}<prism-icon name="chevron-down" size="sm"></prism-icon></prism-button><prism-menu for="${trigger}"${title}${wide ? " size=\"wide\" sheet" : ""}>${items}</prism-menu>`;
 }
 
 const themeItems = `<prism-menu-group label="Theme"><prism-menu-item type="radio" value="system" checked>System</prism-menu-item><prism-menu-item type="radio" value="light">Light</prism-menu-item><prism-menu-item type="radio" value="dark">Dark</prism-menu-item></prism-menu-group>`;
 const densityItems = `<prism-menu-group label="Density"><prism-menu-item type="radio" value="compact" checked>Compact</prism-menu-item><prism-menu-item type="radio" value="comfortable">Comfortable</prism-menu-item></prism-menu-group>`;
+const themeTiles = `<prism-menu-group label="Theme" layout="tiles"><prism-menu-item type="radio" variant="tile" preview="system" value="system" checked><prism-icon name="monitor" size="xs"></prism-icon>System</prism-menu-item><prism-menu-item type="radio" variant="tile" preview="light" value="light"><prism-icon name="sun" size="xs"></prism-icon>Light</prism-menu-item><prism-menu-item type="radio" variant="tile" preview="dark" value="dark"><prism-icon name="moon" size="xs"></prism-icon>Dark</prism-menu-item></prism-menu-group>`;
+const densitySegments = `<prism-menu-group label="Density" layout="segmented"><prism-menu-item type="radio" variant="segment" value="compact" checked>Compact</prism-menu-item><prism-menu-item type="radio" variant="segment" value="comfortable">Comfortable</prism-menu-item></prism-menu-group>`;
 const tabsOf = (labels, selected = 0, extra = "") => `<prism-tabs label="Specimen tabs">${labels.map((label, index) => `<prism-tab value="t${index}"${index === selected ? " selected" : ""}${extra && index === labels.length - 1 ? ` ${extra}` : ""}>${html(label)}</prism-tab>`).join("")}</prism-tabs>`;
 const choiceOf = (options, { label = "Your answer", value = "" } = {}) => `<prism-choice label="${html(label)}" name="${id("catalog-choice")}"${value ? ` value="${value}"` : ""}>${options}</prism-choice>`;
 const answers = `<prism-choice-option value="accept">Accept<span slot="detail">The slices start in order.</span></prism-choice-option><prism-choice-option value="changes" tone="danger">Request changes<span slot="detail">Design revises the contract.</span></prism-choice-option>`;
 
 const PHASES = ["requirements", "design", "frozen", "build", "review", "shipped"];
 const PHASE_NAMES = ["Requirements", "Design", "Frozen", "Build", "Review", "Shipped"];
+
+// An inbox of the questions that wait on a person, and two of its items.
+const inboxOf = (items, label = "Needs you") => `<prism-inbox label="${html(label)}">${items}</prism-inbox>`;
+const inboxGate = `<prism-inbox-item value="gate" icon="gate" tone="accent">Retry timed-out requests until a total deadline<span slot="description">Design gate · Claude on build-2 waits</span><span slot="end">now</span></prism-inbox-item>`;
+const inboxQuestion = `<prism-inbox-item value="question" icon="question" tone="info">Should a report download require a fresh login?<span slot="description">Decision · Export activity reports</span><span slot="end">2 min</span></prism-inbox-item>`;
 
 // A kit button that opens the dialog after it, through the catalog's data-opens wiring.
 function opener(caption, dialog) {
@@ -60,6 +68,11 @@ function stepper(reached) {
 
 const crumbs = (labels) => `<prism-breadcrumbs>${labels.map((label, index) => `<a href="#entry-prism-breadcrumbs">${label}</a>`).join("")}</prism-breadcrumbs>`;
 
+// A strip of open documents: each tab is [title, states], where states lists the tab's attributes, such as "selected preview".
+function docTabsOf(tabs, label = "Open documents") {
+  return `<prism-doc-tabs label="${html(label)}">${tabs.map(([title, states = ""], index) => `<prism-doc-tab value="doc-${index}" label="${html(title)}" tip="${html(title)}" ${states}>${html(title)}</prism-doc-tab>`).join("")}</prism-doc-tabs>`;
+}
+
 // Each element's specimens by state; every entry also shows long text and an unbroken name, and an element that holds items shows many.
 const SPECIMENS = {
   "prism-button": {
@@ -71,6 +84,11 @@ const SPECIMENS = {
     disabled: `<prism-button disabled>Unavailable</prism-button><prism-button variant="primary" disabled>Unavailable</prism-button>`,
     pressed: `<prism-button variant="ghost" pressed>Side panel</prism-button><prism-button pressed="false">Wrap lines</prism-button>`,
     "icon-only": `<prism-button variant="ghost" label="Close"><prism-icon name="close"></prism-icon></prism-button><prism-button label="Search" tip="Search the workspace"><prism-icon name="search"></prism-icon></prism-button>`,
+    chrome: `<prism-button variant="chrome" shape="round">2 working</prism-button><prism-button variant="chrome" aria-expanded="true">Open menu</prism-button>`,
+    status: `<prism-button variant="status"><prism-icon name="store" size="xs"></prism-icon>Shared store</prism-button><prism-button variant="status" aria-expanded="true"><prism-icon name="contrast" size="sm"></prism-icon>Theme and density</prism-button>`,
+    search: `<prism-button variant="search" label="Search or jump to (Ctrl K)"><prism-icon name="search" size="sm"></prism-icon><span>Search or jump to…</span><prism-kbd>Ctrl K</prism-kbd></prism-button>`,
+    round: `<prism-button size="sm" shape="round" pressed>All</prism-button><prism-button size="sm" shape="round" pressed="false">Slices</prism-button>`,
+    badge: `<prism-button variant="ghost" label="Attention, 5 items"><prism-icon name="bell"></prism-icon><prism-badge slot="badge" solid size="sm">5</prism-badge></prism-button>`,
     "long-text": `<prism-button>${LONG}</prism-button>`,
     "unbroken-name": `<prism-button variant="primary">${UNBROKEN}</prism-button>`
   },
@@ -94,8 +112,15 @@ const SPECIMENS = {
     count: `<prism-badge>3</prism-badge><prism-badge>128</prism-badge>`,
     status: `<prism-badge variant="status" tone="success">Passing</prism-badge><prism-badge variant="status" tone="danger">Failing</prism-badge>`,
     tones: TONES.map((tone) => `<prism-badge tone="${tone}">${tone}</prism-badge>`).join(""),
+    solid: `<prism-badge solid>5</prism-badge><prism-badge solid size="sm">12</prism-badge>`,
     "long-text": `<prism-badge variant="status" tone="info">${LONG}</prism-badge>`,
     "unbroken-name": `<prism-badge tone="neutral">${UNBROKEN}</prism-badge>`
+  },
+  "prism-kbd": {
+    key: `<prism-kbd>Esc</prism-kbd><prism-kbd>↵</prism-kbd>`,
+    combination: `<prism-kbd>Ctrl K</prism-kbd><prism-kbd keys="Ctrl ,"></prism-kbd>`,
+    "long-text": `<prism-kbd>Ctrl Shift Alt Meta K then G</prism-kbd>`,
+    "unbroken-name": `<prism-kbd>${UNBROKEN}</prism-kbd>`
   },
   "prism-tab": {
     selected: tabsOf(["Design", "Diagram"], 0),
@@ -112,16 +137,35 @@ const SPECIMENS = {
     "long-text": tabsOf([LONG, "Diagram"]),
     "unbroken-name": tabsOf([UNBROKEN, "Diagram"])
   },
+  "prism-doc-tab": {
+    kept: docTabsOf([["Design", "selected"], ["Change map"]], "Kept tabs"),
+    preview: docTabsOf([["Design"], ["Review ledger", "selected preview"]], "Preview tab"),
+    agent: docTabsOf([["Retry requirements", "selected agent"], ["Total deadline", "agent"]], "Agent tabs"),
+    missing: docTabsOf([["Roadmap"], ["docs/notes/removed.md", "selected missing"]], "Missing tab"),
+    "long-text": docTabsOf([[LONG, "selected preview"], ["Files"]], "Long title"),
+    "unbroken-name": docTabsOf([[UNBROKEN, "selected agent"], ["Files"]], "Unbroken title")
+  },
+  "prism-doc-tabs": {
+    default: docTabsOf([["Attention"], ["Design", "selected"], ["Change map", "agent"], ["Review ledger", "preview"]]),
+    "many-tabs": docTabsOf(Array.from({ length: 18 }, (_, index) => [index % 5 ? `Document ${index + 1}` : `${UNBROKEN} ${index + 1}`, index === 12 ? "selected" : index === 17 ? "preview" : index % 4 === 1 ? "agent" : ""]), "Many tabs"),
+    "many-items": docTabsOf(Array.from({ length: 30 }, (_, index) => [`Tab ${index + 1}`, index === 0 ? "selected" : ""]), "Many items"),
+    "long-text": docTabsOf([[LONG, "selected"], [LONG, "preview"]], "Long titles"),
+    "unbroken-name": docTabsOf([[UNBROKEN, "selected"], [UNBROKEN, "missing"]], "Unbroken titles")
+  },
   "prism-menu": {
     closed: menuFor(`${themeItems}${densityItems}<prism-menu-item value="catalog">Component catalog</prism-menu-item>`, { caption: "Display" }),
     actions: menuFor(`<prism-menu-item value="copy">Copy link</prism-menu-item><prism-menu-item value="open">Open in a new tab</prism-menu-item><prism-menu-item value="unavailable" disabled>Unavailable</prism-menu-item>`, { caption: "Actions" }),
     groups: menuFor(`${themeItems}${densityItems}`, { caption: "Groups" }),
+    titled: menuFor(`<prism-menu-item value="catalog"><prism-icon name="grid" size="sm"></prism-icon>Component catalog<prism-icon slot="hint" name="external" size="xs"></prism-icon></prism-menu-item>`, { caption: "Titled", heading: "Appearance", keys: "Ctrl ," }),
+    sheet: menuFor(`${themeTiles}${densitySegments}`, { caption: "Sheet on a phone", heading: "Appearance", keys: "Ctrl ,", wide: true }),
     "many-items": menuFor(repeat(40, (index) => `<prism-menu-item value="i${index}">Initiative number ${index + 1}</prism-menu-item>`), { caption: "Projects" }),
     "long-text": menuFor(`<prism-menu-item value="long">${LONG}</prism-menu-item><prism-menu-item value="short">Short</prism-menu-item>`, { caption: LONG }),
     "unbroken-name": menuFor(`<prism-menu-item value="unbroken">${UNBROKEN}</prism-menu-item>`, { caption: UNBROKEN })
   },
   "prism-menu-group": {
     default: menuFor(`${themeItems}`),
+    tiles: menuFor(themeTiles, { wide: true }),
+    segmented: menuFor(densitySegments, { wide: true }),
     "long-text": menuFor(`<prism-menu-group label="${LONG}"><prism-menu-item value="a">First</prism-menu-item></prism-menu-group>`),
     "unbroken-name": menuFor(`<prism-menu-group label="${UNBROKEN}"><prism-menu-item value="a">First</prism-menu-item></prism-menu-group>`)
   },
@@ -132,6 +176,9 @@ const SPECIMENS = {
     checkbox: menuFor(`<prism-menu-item type="checkbox" value="wrap" checked>Wrap lines</prism-menu-item>`),
     disabled: menuFor(`<prism-menu-item value="off" disabled>Unavailable</prism-menu-item>`),
     hint: menuFor(`<prism-menu-item value="palette">Command palette<span slot="hint">Ctrl K</span></prism-menu-item>`),
+    detail: menuFor(`<prism-menu-item type="radio" value="main" checked>payments / main<span slot="detail">/home/dev/src/payments-platform-monorepo-with-an-unreasonably-long-name</span><span slot="hint">in use</span></prism-menu-item>`),
+    tile: menuFor(themeTiles, { wide: true }),
+    segment: menuFor(densitySegments, { wide: true }),
     "long-text": menuFor(`<prism-menu-item value="long">${LONG}<span slot="hint">Ctrl Shift Alt K</span></prism-menu-item>`),
     "unbroken-name": menuFor(`<prism-menu-item value="unbroken">${UNBROKEN}</prism-menu-item>`)
   },
@@ -144,6 +191,7 @@ const SPECIMENS = {
   "prism-field": {
     text: `<prism-field type="text" label="Name" name="name" placeholder="Name the slice"></prism-field>`,
     search: `<prism-field type="search" label="Jump to" name="q" placeholder="Search"></prism-field>`,
+    bare: `<prism-field type="search" variant="bare" label="Search or jump to" name="bare" placeholder="Search"><prism-icon slot="start" name="search"></prism-icon><prism-kbd slot="end">Esc</prism-kbd></prism-field>`,
     textarea: `<prism-field type="textarea" label="Note" name="note" placeholder="Write a note"></prism-field>`,
     select: `<prism-field type="select" label="Lane" name="lane"><prism-option value="a">Alpha</prism-option><prism-option value="b" selected>Beta</prism-option></prism-field>`,
     hint: `<prism-field type="text" label="Reviewer" name="reviewer" hint="Optional unless you request changes"></prism-field>`,
@@ -178,6 +226,8 @@ const SPECIMENS = {
   "prism-stat": {
     default: `<prism-stat label="Open findings" value="3" hint="2 high"></prism-stat>`,
     tone: `<prism-stat label="Failing tests" value="12" tone="danger"></prism-stat><prism-stat label="Passing" value="48" tone="success"></prism-stat>`,
+    inline: `<prism-stat layout="inline" label="questions wait on you" value="3" tone="accent"></prism-stat><prism-stat layout="inline" label="things to watch" value="2"></prism-stat>`,
+    figure: `<prism-stat layout="figure" icon="lock" label="frozen tests, failing until built" value="7" tone="success"></prism-stat><prism-stat layout="figure" icon="document" label="contract clauses" value="4"></prism-stat>`,
     "long-text": `<prism-stat label="${LONG}" value="1284" hint="${LONG}"></prism-stat>`,
     "unbroken-name": `<prism-stat label="${UNBROKEN}" value="${UNBROKEN}"></prism-stat>`
   },
@@ -195,6 +245,7 @@ const SPECIMENS = {
     "unbroken-name": `<prism-spinner label="${UNBROKEN}"></prism-spinner>`
   },
   "prism-avatar": {
+    workspace: `<prism-avatar kind="workspace" name="payments"></prism-avatar><prism-avatar kind="workspace" name="demo"></prism-avatar>`,
     agent: `<prism-avatar kind="agent" name="Claude on build-2"></prism-avatar><prism-avatar kind="agent" name="Codex on ci" size="sm"></prism-avatar><prism-avatar kind="agent" name="Claude on vm" size="lg"></prism-avatar>`,
     person: repeat(4, (index) => `<prism-avatar kind="person" name="Ada Lovelace" hue="${index + 1}"></prism-avatar>`) + `<prism-avatar kind="person" name="Grace Hopper" hue="3" size="lg"></prism-avatar>`,
     live: `<prism-avatar kind="agent" name="Claude on build-2" live></prism-avatar><prism-avatar kind="agent" name="Codex on ci" live breathing></prism-avatar>`,
@@ -217,6 +268,7 @@ const SPECIMENS = {
     default: `<prism-tree label="Places"><prism-tree-item label="Attention" value="attention" selected><prism-badge slot="end">2</prism-badge></prism-tree-item><prism-tree-item label="Roadmap" value="roadmap"></prism-tree-item></prism-tree>`,
     nested: `<prism-tree label="Initiatives"><prism-tree-item label="Review app UI kit" value="kit" expanded><prism-tree-item label="Kit foundation" value="foundation"></prism-tree-item><prism-tree-item label="Kit containers" value="containers"><prism-tree-item label="Claims" value="claims"></prism-tree-item></prism-tree-item></prism-tree-item><prism-tree-item label="Harden request retries" value="retries"><prism-tree-item label="Timeout retries" value="timeout"></prism-tree-item></prism-tree-item></prism-tree>`,
     selected: `<prism-tree label="Library"><prism-tree-item label="Decisions" value="decisions"></prism-tree-item><prism-tree-item label="Requirements" value="requirements" selected><prism-badge slot="end">14</prism-badge></prism-tree-item></prism-tree>`,
+    rail: `<prism-tree label="Rail" rail><prism-tree-item label="Attention" value="attention" selected><prism-icon slot="start" name="bell"></prism-icon><prism-badge slot="end" variant="count" solid size="sm">5</prism-badge></prism-tree-item><prism-tree-item label="Roadmap" value="roadmap"><prism-icon slot="start" name="roadmap"></prism-icon></prism-tree-item><prism-tree-item label="Requirements" value="requirements"><prism-icon slot="start" name="list"></prism-icon><span slot="end">4</span></prism-tree-item></prism-tree>`,
     "many-items": `<prism-tree label="Many initiatives">${repeat(30, (index) => `<prism-tree-item label="${index % 5 ? `Initiative ${index + 1}` : `${UNBROKEN}-${index + 1}`}" value="i${index}"${index === 2 ? " expanded" : ""}><prism-badge slot="end">${index * 3}</prism-badge>${index === 2 ? repeat(6, (child) => `<prism-tree-item label="Slice ${child + 1} of a long initiative" value="i${index}-${child}"></prism-tree-item>`) : ""}</prism-tree-item>`)}</prism-tree>`,
     "long-text": `<prism-tree label="Long"><prism-tree-item label="${LONG}" value="long" expanded><prism-badge slot="end">128</prism-badge><prism-tree-item label="${LONG}" value="long-child"></prism-tree-item></prism-tree-item></prism-tree>`,
     "unbroken-name": `<prism-tree label="Unbroken"><prism-tree-item label="${UNBROKEN}" value="unbroken" expanded><prism-tree-item label="${UNBROKEN}" value="unbroken-child"><prism-badge slot="end">${UNBROKEN}</prism-badge></prism-tree-item></prism-tree-item></prism-tree>`
@@ -227,12 +279,15 @@ const SPECIMENS = {
     expanded: `<prism-tree label="Expanded"><prism-tree-item label="Harden request retries" value="retries" expanded><prism-tree-item label="Timeout retries" value="timeout"></prism-tree-item></prism-tree-item></prism-tree>`,
     selected: `<prism-tree label="Selected"><prism-tree-item label="Attention" value="attention" selected><prism-badge slot="end">3</prism-badge></prism-tree-item></prism-tree>`,
     "long-text": `<prism-tree label="Long item"><prism-tree-item label="${LONG}" value="long"><prism-badge slot="end">7</prism-badge></prism-tree-item></prism-tree>`,
-    "unbroken-name": `<prism-tree label="Unbroken item"><prism-tree-item label="${UNBROKEN}" value="unbroken"></prism-tree-item></prism-tree>`
+    "unbroken-name": `<prism-tree label="Unbroken item"><prism-tree-item label="${UNBROKEN}" value="unbroken"></prism-tree-item></prism-tree>`,
+    glyphs: `<prism-tree label="Glyphs"><prism-tree-item label="Attention" value="attention"><prism-icon slot="start" name="bell"></prism-icon><prism-badge slot="end" variant="count" solid>5</prism-badge></prism-tree-item><prism-tree-item label="Harden request retries" value="retries" expanded tip="Harden request retries · In progress · 0 of 5 shipped"><prism-state slot="start" state="in-progress" label="In progress"></prism-state><span slot="end">0/5</span><prism-tree-item label="Retry timed-out requests until a total deadline" value="timeout" tip="Retry timed-out requests until a total deadline · Design"><prism-phase slot="start" phase="design" label="Design"></prism-phase></prism-tree-item><prism-tree-item label="Retry dropped connections" value="dropped" tip="Retry dropped connections · Blocked"><prism-phase slot="start" phase="build" label="Build"></prism-phase><prism-badge slot="end" variant="count" tone="danger">Blocked</prism-badge></prism-tree-item></prism-tree-item></prism-tree>`,
+    link: `<prism-tree label="Links"><prism-tree-item label="Roadmap" value="roadmap" href="#roadmap"><prism-icon slot="start" name="roadmap"></prism-icon></prism-tree-item><prism-tree-item label="Requirements" value="requirements" href="#requirements"><prism-icon slot="start" name="list"></prism-icon><span slot="end">4</span></prism-tree-item></prism-tree>`
   },
   "prism-listbox": {
     default: `<prism-listbox label="Results"><prism-list-item value="kit">Review app UI kit<span slot="meta">Initiative</span></prism-list-item><prism-list-item value="containers">Kit containers<span slot="meta">Slice</span></prism-list-item></prism-listbox>`,
     active: `<prism-listbox label="Active result"><prism-list-item value="a" active>Roadmap<span slot="meta">Place</span></prism-list-item><prism-list-item value="b">Attention<span slot="meta">Place</span></prism-list-item></prism-listbox>`,
     selected: `<prism-listbox label="Selected result"><prism-list-item value="a">Design</prism-list-item><prism-list-item value="b" selected>Diagram</prism-list-item></prism-listbox>`,
+    "first-current": `<prism-listbox label="Results with a current first" first-current><prism-list-item value="a">Roadmap<span slot="meta">Place</span></prism-list-item><prism-list-item value="b">Attention<span slot="meta">Place</span></prism-list-item></prism-listbox>`,
     "with-field": `<prism-field id="catalog-listbox-field" type="search" label="Jump to" name="jump" placeholder="Type, then ArrowDown"></prism-field><prism-listbox label="Matches" for="catalog-listbox-field"><prism-list-item value="r">Roadmap<span slot="meta">Place</span></prism-list-item><prism-list-item value="t">Timeout retries<span slot="meta">Slice</span></prism-list-item></prism-listbox>`,
     "many-items": `<prism-listbox label="Many results">${repeat(40, (index) => `<prism-list-item value="r${index}">${index % 4 ? `Result ${index + 1}` : `${UNBROKEN}-${index + 1}`}<span slot="meta">${index % 3 ? "Slice" : "Decision · Proposed"}</span></prism-list-item>`)}</prism-listbox>`,
     "long-text": `<prism-listbox label="Long results"><prism-list-item value="l">${LONG}<span slot="meta">${LONG}</span></prism-list-item></prism-listbox>`,
@@ -243,14 +298,20 @@ const SPECIMENS = {
     active: `<prism-listbox label="Active option"><prism-list-item value="a" active>Kit controls</prism-list-item></prism-listbox>`,
     selected: `<prism-listbox label="Selected option"><prism-list-item value="a" selected>Kit controls</prism-list-item></prism-listbox>`,
     meta: `<prism-listbox label="Option with kind"><prism-list-item value="a">Retry with a deadline<span slot="meta">Decision · Accepted</span></prism-list-item></prism-listbox>`,
+    "two-line": `<prism-listbox label="Two-line options" first-current><prism-list-item value="a"><prism-icon slot="icon" name="layers" size="sm"></prism-icon>Retry timed-out requests until a total deadline<span slot="detail">Harden request retries · Claude on build-2, design</span><span slot="meta">${claimOf({ variant: "avatar" })} Slice</span></prism-list-item><prism-list-item value="b"><prism-icon slot="icon" name="code" size="sm"></prism-icon>strategy.ts<span slot="detail">src/retry/strategy.ts</span><span slot="meta">File</span></prism-list-item></prism-listbox>`,
+    highlight: `<prism-listbox label="Highlighted match"><prism-list-item value="a"><prism-icon slot="icon" name="list" size="sm"></prism-icon><mark>Retry</mark> requirements<span slot="detail">Requirements</span><span slot="meta">Requirements</span></prism-list-item></prism-listbox>`,
     "long-text": `<prism-listbox label="Long option"><prism-list-item value="a">${LONG}<span slot="meta">Slice</span></prism-list-item></prism-listbox>`,
     "unbroken-name": `<prism-listbox label="Unbroken option"><prism-list-item value="a">${UNBROKEN}</prism-list-item></prism-listbox>`
   },
   "prism-dialog": {
     closed: opener("Open the record store", `<prism-dialog heading="Record store"><p>Records live in a shared store.</p><prism-field type="text" label="Filter" name="filter"></prism-field><prism-button slot="footer" variant="primary">Copy location</prism-button></prism-dialog>`),
     center: opener("Open a small dialog", `<prism-dialog heading="Switch project" size="sm"><p>Pick the project this page shows.</p></prism-dialog>`),
-    start: opener("Open the navigation drawer", `<prism-dialog heading="Navigation" placement="start"><prism-tree label="Drawer places"><prism-tree-item label="Attention" value="attention" selected></prism-tree-item><prism-tree-item label="Roadmap" value="roadmap"></prism-tree-item></prism-tree></prism-dialog>`),
+    start: opener("Open the navigation drawer", `<prism-dialog heading="Navigation" placement="start" bare><prism-tree label="Drawer places"><prism-tree-item label="Attention" value="attention" selected></prism-tree-item><prism-tree-item label="Roadmap" value="roadmap"></prism-tree-item></prism-tree></prism-dialog>`),
+    top: opener("Open a dialog at the top", `<prism-dialog heading="Command palette" placement="top" size="lg" bare><prism-field type="search" variant="bare" label="Search or jump to" name="top"><prism-icon slot="start" name="search"></prism-icon><prism-kbd slot="end">Esc</prism-kbd></prism-field><p>Results hang below the top bar.</p></prism-dialog>`),
+    bare: opener("Open a bare dialog", `<prism-dialog heading="Diagram" bare><p>The content draws its own header; Escape closes it.</p></prism-dialog>`),
     bottom: opener("Open the bottom sheet", `<prism-dialog heading="Diagram" placement="bottom"><p>The slice's diagram on a phone.</p></prism-dialog>`),
+    end: opener("Open the evidence drawer", `<prism-dialog heading="Evidence" placement="end" modeless><p>The evidence of a finding, beside the page.</p></prism-dialog>`),
+    modeless: opener("Open a modeless dialog", `<prism-dialog heading="Evidence" placement="end" modeless><p>The page behind stays usable; Escape closes this.</p></prism-dialog>`),
     "long-content": opener("Open a long dialog", `<prism-dialog heading="Command palette" size="lg">${repeat(30, (index) => `<p>Paragraph ${index + 1} of a body that scrolls inside the dialog.</p>`)}</prism-dialog>`),
     "long-text": opener(LONG, `<prism-dialog heading="${LONG}"><p>${LONG} ${LONG}</p></prism-dialog>`),
     "unbroken-name": opener(UNBROKEN, `<prism-dialog heading="${UNBROKEN}"><p>${UNBROKEN}</p></prism-dialog>`)
@@ -337,6 +398,44 @@ const third = 3;</code></pre></prism-code>`,
 }</code></pre></prism-code>`,
     "long-text": `<prism-code numbers><pre><code>${LONG} ${LONG} ${LONG}</code></pre></prism-code>`,
     "unbroken-name": `<prism-code><pre><code>${UNBROKEN}${UNBROKEN}</code></pre></prism-code>`
+  },
+  "prism-inbox": {
+    default: inboxOf(`${inboxGate}${inboxQuestion}`),
+    selected: inboxOf(`${inboxGate.replace("<prism-inbox-item ", "<prism-inbox-item selected ")}${inboxQuestion}`, "Picked question"),
+    unread: inboxOf(`${inboxGate.replace("<prism-inbox-item ", "<prism-inbox-item unread ")}${inboxQuestion.replace("<prism-inbox-item ", "<prism-inbox-item unread ")}`, "Unread questions"),
+    "long-text": inboxOf(`<prism-inbox-item value="l" icon="question" tone="info">${LONG}<span slot="description">${LONG}</span><span slot="end">${LONG}</span></prism-inbox-item>`, "Long questions"),
+    "unbroken-name": inboxOf(`<prism-inbox-item value="u" icon="question" tone="info">${UNBROKEN}<span slot="description">${UNBROKEN}</span></prism-inbox-item>`, "Unbroken questions")
+  },
+  "prism-inbox-item": {
+    default: inboxOf(inboxQuestion, "One question"),
+    selected: inboxOf(inboxGate.replace("<prism-inbox-item ", "<prism-inbox-item selected "), "Picked item"),
+    unread: inboxOf(inboxGate.replace("<prism-inbox-item ", "<prism-inbox-item unread "), "Unread item"),
+    avatar: inboxOf(`<prism-inbox-item value="claim"><prism-claim slot="start" variant="avatar" label="Claude on vm" activity="implementation"></prism-claim>Claude on vm is implementing<span slot="description">Emit retry metrics</span><span slot="end">live</span></prism-inbox-item>`, "Item with an avatar"),
+    "long-text": inboxOf(`<prism-inbox-item value="l" icon="gate" tone="accent">${LONG}<span slot="description">${LONG}</span><span slot="end">2 min</span></prism-inbox-item>`, "Long item"),
+    "unbroken-name": inboxOf(`<prism-inbox-item value="u" icon="gate" tone="accent">${UNBROKEN}<span slot="description">${UNBROKEN}</span></prism-inbox-item>`, "Unbroken item")
+  },
+  "prism-phase": {
+    plain: `<prism-phase phase="design">Design</prism-phase>`,
+    tag: `<prism-phase phase="frozen" variant="tag">Design gate · tests frozen</prism-phase>`,
+    phases: PHASES.map((phase, index) => `<prism-phase phase="${phase}" variant="tag">${PHASE_NAMES[index]}</prism-phase>`).join(" "),
+    "long-text": `<prism-phase phase="build" variant="tag">${LONG}</prism-phase>`,
+    "unbroken-name": `<prism-phase phase="review">${UNBROKEN}</prism-phase>`
+  },
+  "prism-phase-bar": {
+    default: `<prism-phase-bar phases="review,design,build,,frozen" label="0 of 5 shipped"></prism-phase-bar>`,
+    "not-started": `<prism-phase-bar phases=",," label="0 of 3 started"></prism-phase-bar>`,
+    shipped: `<prism-phase-bar phases="shipped,shipped" label="2 of 2 shipped"></prism-phase-bar>`,
+    "long-text": `<prism-phase-bar phases="${PHASES.join(",")}" label="${LONG}"></prism-phase-bar>`,
+    "unbroken-name": `<prism-phase-bar phases="design,build" label="${UNBROKEN}"></prism-phase-bar>`
+  },
+  "prism-state": {
+    envisioned: `<prism-state state="envisioned">Envisioned</prism-state>`,
+    planned: `<prism-state state="planned">Planned</prism-state>`,
+    "in-progress": `<prism-state state="in-progress">In progress</prism-state>`,
+    shipped: `<prism-state state="shipped">Shipped</prism-state>`,
+    superseded: `<prism-state state="superseded">Superseded</prism-state>`,
+    "long-text": `<prism-state state="planned">${LONG}</prism-state>`,
+    "unbroken-name": `<prism-state state="in-progress">${UNBROKEN}</prism-state>`
   }
 };
 

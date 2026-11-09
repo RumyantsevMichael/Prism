@@ -164,10 +164,8 @@ export function openEvidence(id, label, ctx) {
     });
     bindLinks(target, {
       openEvidence: (nextId, nextLabel) => openEvidence(nextId, nextLabel, activeContext),
-      openArtifact: (path, options) => {
-        root.close();
-        activeContext.openArtifact(path, options);
-      }
+      // The drawer stands beside the page, so a record opened from it opens behind it and the trail stays.
+      openArtifact: (path, options) => activeContext.openArtifact(path, options)
     });
     root.addEventListener("prism-close", () => {
       stack = [];

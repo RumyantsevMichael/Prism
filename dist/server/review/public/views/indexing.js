@@ -1,5 +1,6 @@
 import { escapeHtml } from "./util.js";
 import { createActionList } from "./actions.js";
+import { createPoller } from "./poller.js";
 
 // The index build reports unrelated totals per step, so the chip shows the current step and its own percentage, never an overall one.
 const STEPS = [
@@ -166,7 +167,6 @@ export function currentIndexStatus() {
 /** The status bar's index item: `button` is a kit button, `panel` the prism-popover it opens, and `meter` a prism-meter in the button. */
 export function createIndexingStatus({ root, button, label, detail, meter, panel, fetchJson, actionApi = null, component = root.querySelector(".indexing-component") }) {
   let status = null;
-  let timer = null;
   let rendered = "";
   // The popover keeps its own heading and body, so the details and the rebuild controls render into holders in its body.
   const summary = document.createElement("div");
@@ -222,8 +222,7 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
     controls?.render();
   }
 
-  async function refresh() {
-    clearTimeout(timer);
+  async function load() {
     try {
       status = await fetchJson("./api/indexing");
     } catch {
@@ -232,14 +231,17 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
     render();
     void refreshControls();
     document.dispatchEvent(new CustomEvent("prism:indexing", { detail: status }));
-    timer = setTimeout(refresh, status?.state === "preparing" ? ACTIVE_POLL_MS : IDLE_POLL_MS);
   }
+
+  // A running build is checked often and an idle index seldom, one check at a time and only while the tab is shown.
+  const poller = createPoller({ run: load, interval: () => (status?.state === "preparing" ? ACTIVE_POLL_MS : IDLE_POLL_MS) });
+  const refresh = () => poller.now();
 
   // Opening the popover lists the rebuild controls, and an applied rebuild shows as a running build at once.
   panel.addEventListener("prism-open", () => void refreshControls());
   document.addEventListener("prism:action", (event) => {
     if (event.detail?.action === "index.rebuild") void refresh();
   });
-  void refresh();
+  void poller.start();
   return { refresh };
 }

@@ -1,4 +1,5 @@
 import { badge, escapeHtml } from "./util.js";
+import { coalesce } from "./poller.js";
 
 // The page draws every action from its listing: the registry names the fields, and this view places them as kit controls:
 // a prism-field per text field, a group of pressed prism-buttons per choice, and prism-buttons to apply and reset.
@@ -226,7 +227,8 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     onRender?.();
   }
 
-  async function refresh() {
+  // A listing asked for again while one is on its way is read once more after it, never twice at once.
+  const refresh = coalesce(async () => {
     const results = await Promise.all(wanted.map((target) => Promise.resolve(api.list(target)).then((listing) => ({ target, listing }), (error) => ({ target, error }))));
     failure = null;
     for (const { target, listing, error } of results) {
@@ -234,7 +236,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       else listings.set(target, listing);
     }
     if (root.isConnected) render();
-  }
+  });
 
   function locate(element) {
     const row = element.closest("[data-action-key]");

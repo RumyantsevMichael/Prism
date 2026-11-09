@@ -433,13 +433,13 @@ const tools = [
   },
   {
     name: "get_review_url",
-    description: "Start or update the local Prism review server and return a human review URL only. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open, and an empty array focuses Attention. This tool does not open a browser or return rendered image data.",
+    description: "Start or update the local Prism review server and return a human review URL only. Use artifacts to open every listed artifact as a tab marked as presented by the agent, in the tab strip that every window of the review session shares, and to focus the first one; the human's open tabs stay open, and an empty array focuses Attention. This tool does not open a browser or return rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to add as agent tabs. An empty array focuses Attention." }
+        artifact: { type: "string", description: "One project-relative artifact path, opened as one agent tab. Use artifacts to present several artifacts at once." },
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths, each opened as its own agent tab that stays open until the human closes it. An empty array focuses Attention." }
       },
       required: ["projectRoot"],
       additionalProperties: false
@@ -448,13 +448,13 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open or update one local Prism review page in the system browser for the human. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
+    description: "Open or update one local Prism review page in the system browser for the human. Use artifacts to open every listed artifact as a tab marked as presented by the agent, in the tab strip that every window of the review session shares, and to focus the first one; the human's open tabs stay open. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to add as agent tabs. An empty array opens Attention." }
+        artifact: { type: "string", description: "One project-relative artifact path, opened as one agent tab. Use artifacts to present several artifacts at once." },
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths, each opened as its own agent tab that stays open until the human closes it. An empty array opens Attention." }
       },
       required: ["projectRoot"],
       additionalProperties: false

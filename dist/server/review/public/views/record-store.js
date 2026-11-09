@@ -5,14 +5,20 @@ import { escapeHtml, formatTime, keyValues, plural } from "./util.js";
 const PROBLEMS = { no_upstream: "Records not shared", not_a_repository: "Records not synced", push_rejected: "Records not pushed", merge_failed: "Records not merged", fetch_failed: "Records not fetched", git_failed: "Records not synced", conflicts: "Record conflicts saved" };
 const STATES = { ok: "Synced", ...PROBLEMS };
 
+// A store's short name: the last part of its folder or remote, without a .git ending.
+function storeName(label) {
+  const parts = String(label ?? "").replace(/[\\/]+$/, "").split(/[\\/:]/).filter(Boolean);
+  return (parts.at(-1) ?? String(label ?? "")).replace(/\.git$/, "");
+}
+
 /** Where the records live: { label, short, title, tone }, where the status bar shows short and its tip title. */
 export function storeItem(store) {
   if (!store) return null;
   if (store.kind === "project") return { label: "Records in project", short: "Records in project", title: `Records live in this checkout's ${store.label} folder.`, tone: "muted" };
   const noun = store.kind === "remote" ? "Remote store" : "Store";
   if (store.unavailable) return { label: `${noun} unavailable`, short: "Shared store unavailable", title: store.unavailable, tone: "danger" };
-  // The status bar says only that a shared store holds the records; its tip and the details name where.
-  return { label: `${noun} ${store.label}`, short: "Shared store", title: [`Records live in the ${store.kind === "remote" ? "store named by its remote" : "store folder"} ${store.label}.`, store.location ? `Folder: ${store.location}` : ""].filter(Boolean).join("\n"), tone: "muted" };
+  // The status bar names the shared store at a glance, by the workspace name when it has one; its tip and the details say where it lives.
+  return { label: `${noun} ${store.label}`, short: `Shared store ${store.workspaceName ?? storeName(store.label)}`, title: [`Records live in the ${store.kind === "remote" ? "store named by its remote" : "store folder"} ${store.label}.`, store.location ? `Folder: ${store.location}` : ""].filter(Boolean).join("\n"), tone: "muted" };
 }
 
 /** The store's sync state, as the status bar names it, or null when nothing syncs: { label, tone, problem }. */

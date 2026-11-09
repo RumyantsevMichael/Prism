@@ -1,0 +1,100 @@
+/* prism-doc-tab: an open document in the strip; the selected tab takes the page's surface, so it reads as joined to the page below it. */
+
+:host {
+  display: flex;
+  flex: none;
+  min-width: 0;
+  max-width: var(--prism-doc-tab-width);
+  height: 100%;
+  color: var(--prism-color-ink-muted);
+}
+
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-1);
+  width: 100%;
+  min-width: 0;
+  padding: 0 var(--prism-space-2) 0 var(--prism-space-4);
+  border-inline-end: var(--prism-stroke) solid var(--prism-color-line);
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--prism-duration-fast) var(--prism-easing-standard), color var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+:host(:hover) .tab {
+  background: var(--prism-color-hover);
+  color: var(--prism-color-ink);
+}
+
+/* The selected tab is the page's own surface with an accent edge on top, and it covers the strip's bottom line. */
+:host([selected]) .tab {
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  box-shadow: inset 0 var(--prism-stroke-strong) 0 var(--prism-color-accent);
+}
+
+.select {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--prism-control-height);
+  border-radius: var(--prism-radius-xs);
+}
+
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:host([preview]) .text {
+  font-style: italic;
+}
+
+.mark {
+  color: var(--prism-color-accent-text);
+}
+
+/* A tab whose file or record is gone is dimmed and struck through, as its page says. */
+:host([missing]) .text {
+  color: var(--prism-color-ink-faint);
+  text-decoration: line-through;
+}
+
+.note {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.keep,
+.close {
+  flex: none;
+}
+
+/* The close button shows on the selected tab, on the tab under the pointer, and while it has the focus; it keeps its room so titles do not move. */
+.close {
+  opacity: 0;
+}
+
+:host([selected]) .close,
+:host(:hover) .close,
+:host([current]) .close,
+.close:focus-within {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .close {
+    opacity: 1;
+  }
+}

@@ -2,25 +2,27 @@
 // its heading and a Close button sit in its header, children with slot="footer" after its body, and every other child in its body.
 import { Base, deepActiveElement, distribute, emit, focusables, make, setAttribute, uniqueId } from "./base.js";
 
-const PLACEMENTS = ["center", "start", "bottom"];
+const PLACEMENTS = ["center", "top", "start", "bottom", "end"];
 const SIZES = ["sm", "md", "lg"];
 
 export class PrismDialog extends Base {
   static tag = "prism-dialog";
-  static observedAttributes = ["heading", "open", "size", "placement"];
+  static observedAttributes = ["heading", "open", "size", "placement", "bare", "modeless"];
   static catalog = {
-    purpose: "A modal dialog on frosted glass over a blurred scrim, which keeps focus inside it and returns focus where it was when it closes; it can also open as a drawer from the left edge or a sheet from the bottom.",
+    purpose: "A modal dialog on frosted glass over a blurred scrim, which keeps focus inside it and returns focus where it was when it closes; it can also open near the top as a command palette does, as a drawer from the left edge, or as a sheet from the bottom.",
     options: [
       { name: "heading", values: ["text"], default: "", description: "The heading, which names the dialog." },
       { name: "open", values: ["boolean"], default: "false", description: "Whether the dialog shows; show() and close() set it." },
       { name: "size", values: SIZES, default: "md", description: "The width of a centered dialog." },
-      { name: "placement", values: PLACEMENTS, default: "center", description: "center floats in the window, start slides in from the left edge at --prism-drawer-width, and bottom rises from the bottom edge at full width." },
+      { name: "placement", values: PLACEMENTS, default: "center", description: "center floats in the window; top hangs below the top bar with the spectrum on its top edge, as a command palette; start opens a drawer at --prism-drawer-width from the left edge, an island between the top bar and the status bar; bottom rises from the bottom edge at full width; and end stands at --prism-panel-width against the right edge between the top bar and the status bar." },
+      { name: "modeless", values: ["boolean"], default: "false", description: "Opens without a scrim and leaves the page usable behind it, as a drawer of details beside the page does; Escape and Close still close it, and focus moves into it when it opens." },
+      { name: "bare", values: ["boolean"], default: "false", description: "Shows no header: the heading still names the dialog for assistive technology, and Escape or a click on the scrim closes it, for a dialog whose content draws its own header or none." },
       { name: "slot=\"footer\"", values: ["children"], default: "", description: "Actions after the body." }
     ],
-    states: ["closed", "center", "start", "bottom", "long-content"],
+    states: ["closed", "center", "top", "start", "bottom", "end", "modeless", "bare", "long-content"],
     keyboard: [
       "Focus moves into the dialog when it opens, and Tab and Shift+Tab stay inside it.",
-      "Escape, the Close button, or a click on the scrim closes it and sends prism-close; focus returns to the element that had it."
+      "Escape, the Close button, or a click on the scrim closes it and sends prism-close; focus returns to the element that had it; a bare dialog has no Close button."
     ]
   };
 
@@ -55,15 +57,29 @@ export class PrismDialog extends Base {
     head.append(this.headingElement, this.closeButton);
     this.body = make(this, "div", "prism-dialog-body");
     this.footer = make(this, "footer", "prism-dialog-foot");
-    this.surface.append(head, this.body, this.footer);
+    // The frame holds the dialog's parts; a drawer draws it as an island inset from the surface's edges, and other placements leave it out of the layout.
+    this.frame = make(this, "div", "prism-dialog-frame");
+    this.frame.append(head, this.body, this.footer);
+    this.surface.append(this.frame);
     this.append(this.surface);
     this.children$ = distribute(this, { footer: this.footer, default: this.body }, [this.surface]);
     this.surface.addEventListener("close", () => this.closed());
-    this.surface.addEventListener("keydown", (event) => this.trap(event));
+    this.surface.addEventListener("keydown", (event) => {
+      // A modeless dialog is not the browser's modal, so Escape closes it here; Tab moves on to the page as it would from any region.
+      if (this.hasAttribute("modeless")) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          this.close();
+        }
+        return;
+      }
+      this.trap(event);
+    });
     // A click whose point is outside the surface lands on its backdrop, the scrim.
     this.surface.addEventListener("click", (event) => {
       if (event.target !== this.surface) return;
-      const box = this.surface.getBoundingClientRect();
+      const drawn = this.surface.dataset.placement === "start" ? this.frame : this.surface;
+      const box = drawn.getBoundingClientRect();
       const inside = event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
       if (!inside) this.close();
     });
@@ -74,7 +90,13 @@ export class PrismDialog extends Base {
     if (!PLACEMENTS.includes(this.getAttribute("placement"))) setAttribute(this.surface, "data-placement", "center");
     else setAttribute(this.surface, "data-placement", this.getAttribute("placement"));
     setAttribute(this.surface, "data-size", SIZES.includes(this.getAttribute("size")) ? this.getAttribute("size") : "md");
+    const bare = this.hasAttribute("bare");
+    setAttribute(this.surface, "data-bare", bare ? "" : null);
+    this.closeButton.hidden = bare;
     this.footer.hidden = this.footer.childNodes.length === 0;
+    const modeless = this.hasAttribute("modeless");
+    setAttribute(this.surface, "aria-modal", modeless ? "false" : "true");
+    setAttribute(this.surface, "data-modeless", modeless ? "" : null);
   }
 
   get isOpen() {
@@ -98,7 +120,8 @@ export class PrismDialog extends Base {
     this.pending = true;
     this.setOpenAttribute(true);
     try {
-      this.surface.showModal();
+      if (this.hasAttribute("modeless")) this.surface.show();
+      else this.surface.showModal();
     } catch {
       this.pending = false;
       this.setOpenAttribute(false);

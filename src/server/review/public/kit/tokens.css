@@ -69,8 +69,11 @@
   --prism-panel-width: 400px;
   --prism-popover-width: 400px;
   --prism-menu-width: 320px;
+  --prism-doc-tab-width: 220px;
   --prism-palette-width: 800px;
   --prism-preview-width: 260px;
+  /* At this window width and below, a menu marked sheet spans the window, as the phone layout's menus do; the shell's own phone breakpoint is the same width. */
+  --prism-sheet-width: 720px;
   --prism-measure: 76ch;
   --prism-stroke: 1px;
   --prism-stroke-strong: 2px;

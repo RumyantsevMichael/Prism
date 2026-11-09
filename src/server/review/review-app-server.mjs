@@ -30,6 +30,8 @@ import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send } fro
 import { loadAttention } from "./workspace-model.mjs";
 import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
 import { createWriteSessions } from "./write-sessions.mjs";
+import { createViewerHub } from "./viewer-hub.mjs";
+import { createCachedValue } from "./cached-value.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
 const IDLE_MS = 30 * 60 * 1000;
@@ -43,6 +45,10 @@ const STORAGE_DIRECTORY_LIMIT = 4;
 const STORAGE_FIELDS = [["evidenceDirectory", "evidenceDirectories"], ["intelligenceDirectory", "intelligenceDirectories"], ["recordStoreDirectory", "recordStoreDirectories"]];
 const NOTICE_MS = 60 * 1000;
 const RECENT_LIMIT = 20;
+// Every open tab lists the projects every few seconds, and reading one project's gates, store, and index state takes long on a large project, so the list keeps each.
+// Agents record gates and build indexes in their own processes, which tell this app nothing, so those two are kept briefly.
+// A checkout's store and name change only with its configuration, so they are kept longer, and a session that registers or presents the project renews them at once.
+const PROJECT_SUMMARY_MS = { gates: 10 * 1000, indexing: 10 * 1000, store: 60 * 1000 };
 
 function statusError(status, message) {
   return Object.assign(new Error(message), { status });
@@ -116,6 +122,8 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   let closing = null;
   // One write session store serves every checkout's page, so a tab that switches checkouts keeps its write session.
   let writeSessions = null;
+  // Every project's page is served from this one origin, so a browser holds one shared event stream for all its tabs, whatever project each shows.
+  const hub = createViewerHub();
 
   const viewerPrefix = () => `/session/${viewerToken}`;
 
@@ -258,7 +266,8 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       // A new project starts as the most recent, so the recent limit never drops the project being registered.
       project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [], intelligenceDirectories: [], recordStoreDirectories: [] };
       project.review = createProjectReview({ projectRoot: root, baseUrl, instance, appVersion: pluginVersion, onViewer, onAction, evidenceStore: () => evidenceStoreOf(project),
-        intelligenceDirectories: () => intelligenceDirectoriesOf(project), writeSessions });
+        intelligenceDirectories: () => intelligenceDirectoriesOf(project), writeSessions, hub });
+      project.summary = projectSummary(project);
       projects.set(id, project);
       if (persist) await rememberProjects();
     }
@@ -293,6 +302,9 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   // an index rebuild, and any action of a page whose store cannot be resolved, reaches only the applying page.
   async function announceAction(project, event, shared) {
     project.review.notify("action", event);
+    // An answered gate or a rebuild changes what the project list shows, and a shared store's gates count in every checkout of that store.
+    if (!shared) project.summary.indexing.invalidate();
+    else for (const other of projects.values()) other.summary.gates.invalidate();
     if (!shared) return;
     const storeOf = (root) => describeRecordStore(root).then((store) => store.location ?? null, () => null);
     const location = await storeOf(project.root);
@@ -308,18 +320,33 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     return loadAttention(root).then((attention) => attention.gateCount, () => null);
   }
 
+  // The slow parts of one project's entry in the project list, each kept as PROJECT_SUMMARY_MS says.
+  function projectSummary(project) {
+    return {
+      workspace: createCachedValue(() => readWorkspaceIdentity(project.root), { ttlMs: PROJECT_SUMMARY_MS.store }),
+      // Checkouts whose records resolve to one store share their records, so the switcher lists them as one project.
+      store: createCachedValue(() => describeRecordStore(project.root).then(async ({ kind, label, location }) => ({ kind, label, location, workspaceName: kind === "project" ? null : await readWorkspaceName(project.root) })).catch(() => null), { ttlMs: PROJECT_SUMMARY_MS.store }),
+      gates: createCachedValue(() => gateCount(project.root), { ttlMs: PROJECT_SUMMARY_MS.gates }),
+      indexing: createCachedValue(async () => (await readIndexingStatus(project.root, intelligenceDirectoriesOf(project)).catch(() => null))?.state ?? null, { ttlMs: PROJECT_SUMMARY_MS.indexing })
+    };
+  }
+
+  // A session that registers or presents a project may have changed its configuration, records, or reported storage.
+  function forgetSummary(project) {
+    for (const value of Object.values(project.summary)) value.invalidate();
+  }
+
   async function projectList(current) {
     const now = Date.now();
     const entries = await Promise.all([...projects.values()].map(async (project) => ({
       id: project.id,
       name: path.basename(project.root),
-      workspace: await readWorkspaceIdentity(project.root),
+      workspace: await project.summary.workspace.get(),
       projectRoot: project.root,
       live: live(project, now),
-      gates: await gateCount(project.root),
-      // Checkouts whose records resolve to one store share their records, so the switcher lists them as one project.
-      store: await describeRecordStore(project.root).then(async ({ kind, label, location }) => ({ kind, label, location, workspaceName: kind === "project" ? null : await readWorkspaceName(project.root) })).catch(() => null),
-      indexing: (await readIndexingStatus(project.root, intelligenceDirectoriesOf(project)).catch(() => null))?.state ?? null,
+      gates: await project.summary.gates.get().catch(() => null),
+      store: await project.summary.store.get().catch(() => null),
+      indexing: await project.summary.indexing.get().catch(() => null),
       url: project.review.reviewUrl([]),
       lastSeen: project.lastSeen
     })));
@@ -359,6 +386,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       checkDirectories(body);
       const project = await projectFor(body.projectRoot);
       await reportDirectories(project, body);
+      forgetSummary(project);
       project.leases.set(lease, Date.now() + LEASE_MS);
       await touch(project);
       return { projectId: project.id, url: project.review.reviewUrl([]) };
@@ -373,6 +401,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       checkDirectories(body);
       const project = await projectFor(body.projectRoot);
       await reportDirectories(project, body);
+      forgetSummary(project);
       const review = project.review;
       const acceptsGrant = body.acceptsGrant === true;
       // A session start asks only whether to open a window, and leaves tabs and other projects' notices alone.

@@ -6,8 +6,11 @@ export class PrismTree extends Base {
   static observedAttributes = ["label"];
   static catalog = {
     purpose: "A tree of items that expand and collapse and one of which is selected, such as the sidebar's places, initiatives, and library.",
-    options: [{ name: "label", values: ["text"], default: "", description: "The tree's accessible name." }],
-    states: ["default", "nested", "selected"],
+    options: [
+      { name: "label", values: ["text"], default: "", description: "The tree's accessible name." },
+      { name: "rail", values: ["boolean"], default: "false", description: "Shows each top item's start glyph alone, with a count badge on it and the label as its tooltip, as a collapsed sidebar does." }
+    ],
+    states: ["default", "nested", "selected", "rail"],
     keyboard: [
       "Only one item is in the Tab order.",
       "ArrowDown and ArrowUp move to the next and previous visible item; Home and End move to the first and last.",

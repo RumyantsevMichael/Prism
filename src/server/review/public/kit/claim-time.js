@@ -41,6 +41,24 @@ export function sinceText(claimedAt, now = Date.now()) {
   return today ? `since ${time}` : `since ${date.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${time}`;
 }
 
+/** How long ago `at` was in words: `just now` below a minute, then `<n> min ago`, `<n> h ago` below 48 hours, and `<n> days ago`; empty without a time. */
+export function agoText(at, now = Date.now()) {
+  const time = Date.parse(at);
+  if (!Number.isFinite(time)) return "";
+  const ago = Math.max(0, now - time);
+  if (ago < MINUTE) return "just now";
+  if (ago < HOUR) return `${Math.floor(ago / MINUTE)} min ago`;
+  if (ago < 48 * HOUR) return `${Math.floor(ago / HOUR)} h ago`;
+  return `${Math.floor(ago / DAY)} days ago`;
+}
+
+/** A time as the date and the time of day to the minute, for a tooltip; empty without a time. */
+export function exactTime(at) {
+  const time = Date.parse(at);
+  if (!Number.isFinite(time)) return "";
+  return new Date(time).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 /**
  * Calls `update` every minute until the returned function is called.
  * Each shown claim keeps its own timer from the moment it appears, so its words change a minute after they were last written.

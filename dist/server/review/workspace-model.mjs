@@ -185,7 +185,7 @@ async function computeRoadmapView(projectRoot) {
         rationale: item.rationale ?? null,
         decision: item.decision,
         findings: await initiativeFindings(projectRoot, config, item.id),
-        claims: sliceClaims(await claimedSlices(projectRoot, item.id))
+        ...sliceFacts(await claimedSlices(projectRoot, item.id))
       });
     }
   }
@@ -204,6 +204,20 @@ async function computeRoadmapView(projectRoot) {
     items,
     unlisted: (await initiativeFolders(projectRoot)).filter((id) => !listed.has(id))
   };
+}
+
+// Every live and lapsed claim of the roadmap's initiatives and of the unlisted ones, in one read, for the page's claim index.
+export function loadClaims(projectRoot) {
+  return remember(`claims:${projectRoot}`, () => computeClaims(projectRoot));
+}
+
+async function computeClaims(projectRoot) {
+  const roadmap = await loadRoadmapView(projectRoot);
+  const initiatives = [
+    ...roadmap.items.map((item) => ({ id: item.id, title: item.title ?? item.id, claims: item.claims })),
+    ...await Promise.all(roadmap.unlisted.map(async (id) => ({ id, title: id, claims: sliceClaims(await claimedSlices(projectRoot, id)) })))
+  ];
+  return { claims: initiatives.flatMap(({ id, title, claims }) => claims.map((claim) => ({ ref: `slice:${id}/${claim.slug}`, initiative: id, initiativeTitle: title, ...claim }))) };
 }
 
 export function loadInitiativeView(projectRoot, id) {
@@ -240,6 +254,18 @@ function sliceClaims(slices) {
     claims.push({ slug, sliceTitle: slice.title ?? slug, label: claim.label, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
   }
   return claims;
+}
+
+// Where a slice stands for the lifecycle the review app draws: its status, whether it has an accepted design, and whether that design requires a review.
+function slicePhase(slice) {
+  return { status: slice?.status ?? "not-started", designed: Boolean(slice?.design), review: slice?.design?.review ?? null };
+}
+
+// A roadmap card's claims and the phase facts of each leaf slice, in record order, for its per-slice progress bar.
+function sliceFacts(slices) {
+  const entries = Object.entries(slices ?? {});
+  const parents = new Set(entries.map(([, slice]) => slice?.parent).filter((parent) => typeof parent === "string"));
+  return { claims: sliceClaims(slices), slices: entries.filter(([slug]) => !parents.has(slug)).map(([slug, slice]) => ({ slug, ...slicePhase(slice) })) };
 }
 
 // The slices of an initiative with their live and lapsed claims, or null when the record cannot be read.
@@ -493,7 +519,7 @@ async function computeAttention(projectRoot) {
           const available = await isFile(projectRoot, current);
           artifacts.push({ path: current, available, ...(available ? { record: await describeRecord(projectRoot, config, current, key, snapshot) } : {}) });
         }
-        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, claim: entry.slice ? holdingClaim(claimed, entry.slice) : null, artifacts };
+        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, phase: entry.slice && claimed && Object.hasOwn(claimed, entry.slice) ? slicePhase(claimed[entry.slice]) : null, claim: entry.slice ? holdingClaim(claimed, entry.slice) : null, artifacts };
         // A question whose every attached file is gone was likely overtaken by later work, so the page says it may no longer apply.
         if (!gate.answer && artifacts.length && artifacts.every((artifact) => !artifact.available)) gate.stale = true;
         (gate.answer ? answered : needsYou).push(gate);
@@ -616,13 +642,25 @@ async function computeNavigation(projectRoot) {
   return {
     roadmap: { exists: roadmap.exists ?? false, error: roadmap.error ?? null, valid: roadmap.valid ?? false },
     attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
-    initiatives: [
+    initiatives: await Promise.all([
       ...roadmap.items.map((item) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
       ...roadmap.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))
-    ],
+    ].map(withSliceTree(projectRoot))),
     glossary: { path: glossary.path, exists: glossary.exists },
+    library: Object.fromEntries(await Promise.all(["requirements", "decisions"].map(async (kind) => [kind, (await loadLibrary(projectRoot, kind).catch(() => ({ entries: [] }))).entries.length]))),
     diagnostics: config.diagnostics,
     index: await searchIndex(projectRoot, config, roadmap, glossary)
+  };
+}
+
+// The sidebar nests the slices of each initiative that is being worked on, so a planned, in-progress, or unlisted initiative carries its slice tree.
+const NAVIGATION_TREE_STATES = new Set(["planned", "in-progress", "unlisted"]);
+
+function withSliceTree(projectRoot) {
+  return async (item) => {
+    if (!NAVIGATION_TREE_STATES.has(item.state)) return item;
+    const { scope } = await initiativeTree(projectRoot, item.id).catch(() => ({ scope: null }));
+    return scope ? { ...item, title: item.state === "unlisted" ? scope.title : item.title, tree: scope.tree } : item;
   };
 }
 
@@ -639,7 +677,7 @@ async function initiativeTree(projectRoot, id) {
     const slice = view.record.slices[slug];
     const children = view.derived.children[slug] ?? [];
     const review = view.slices[slug]?.review;
-    scope.tree.push({ slug, title: slice.title, status: slice.status, depth, parent: slice.parent, hasChildren: children.length > 0, complete: Boolean(view.derived.complete[slug]), blocking: review && !review.invalid ? review.blocking : 0 });
+    scope.tree.push({ slug, title: slice.title, status: slice.status, depth, parent: slice.parent, hasChildren: children.length > 0, complete: Boolean(view.derived.complete[slug]), blocking: review && !review.invalid ? review.blocking : 0, ...slicePhase(slice) });
     for (const child of children) visit(child, depth + 1);
   };
   visit(view.derived.root, 0);

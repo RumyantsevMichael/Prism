@@ -1,6 +1,6 @@
 import { renderToString } from "./vendor/plantuml.js";
 import { renderView } from "./views/registry.js";
-import { openEvidence } from "./views/evidence.js";
+import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, parseEntityRef, recordKind, recordLabel, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
 import { highlight, highlightLines, languageOf } from "./views/highlight.js";
@@ -18,10 +18,14 @@ import { createPresence } from "./views/presence.js";
 import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
+import { currentPhase } from "./views/slice.js";
+import { createPoller, deadline, POLL_DEADLINE_MS } from "./views/poller.js";
+import { createEventRelay } from "./views/event-relay.js";
 
 const project = document.getElementById("project");
 const navRoot = document.getElementById("nav");
 const sidebar = document.getElementById("sidebar");
+const shell = document.getElementById("shell");
 const navPlaces = document.getElementById("nav-places");
 const navScope = document.getElementById("nav-scope");
 const navLibrary = document.getElementById("nav-library");
@@ -36,12 +40,15 @@ const toast = document.getElementById("toast");
 const projectButton = document.getElementById("project-button");
 const projectMenu = document.getElementById("project-menu");
 const projectGates = document.getElementById("project-gates");
+const projectTile = document.getElementById("project-tile");
+const attentionButton = document.getElementById("attention-button");
+const attentionCount = document.getElementById("attention-count");
 const noticeBanner = document.getElementById("notice");
 // The latest notice per presenting project; a notice only links, and the page changes project only when the user follows it.
 const notices = new Map();
 let projectListing = "";
 let selectedPath = new URLSearchParams(location.search).get("artifact");
-// The server keeps the pages a session has open for the agent: the one shown, one preview page that ordinary navigation replaces, and the pages an agent presented.
+// The server keeps the session's open tabs for every window and for the agent: the selected tab, one preview tab that ordinary navigation replaces, and the tabs an agent presented.
 let openTabs = [];
 let previewTab = null;
 let agentTabs = [];
@@ -51,7 +58,8 @@ let sessionInstance = null;
 // A page that reconnects to an app of another plugin version reloads, so it never runs old page code against a newer app.
 let appVersion = null;
 let sessionConnected = false;
-let sessionStream;
+// The origin's shared event stream, which one tab holds for every tab of the review app.
+let relay = null;
 let saveQueue = Promise.resolve();
 let lastSnapshot = "";
 // The path whose view the workspace shows, and each visited page's scroll position, so a refresh or a return keeps the reader's place.
@@ -82,6 +90,12 @@ let claimIndex;
 let presence;
 const viewStates = new Map();
 const treeToggles = new Map();
+
+// Every request has a deadline, so a request the browser holds back for want of a free connection fails and shows the connection banner instead of freezing the page.
+function appFetch(url, options = {}) {
+  const { deadlineMs, ...rest } = options;
+  return fetch(url, { signal: deadline(deadlineMs), ...rest });
+}
 
 function samePaths(left, right) {
   return left.length === right.length && left.every((path, index) => path === right[index]);
@@ -194,14 +208,14 @@ function writeHeaders() {
 const actionApi = {
   async list(target) {
     if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-    const response = await fetch(`./api/actions?target=${encodeURIComponent(target)}`, { cache: "no-store", headers: writeHeaders() });
+    const response = await appFetch(`./api/actions?target=${encodeURIComponent(target)}`, { cache: "no-store", headers: writeHeaders() });
     const listing = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Error(listing.message ?? "The actions could not be read."), { code: listing.code });
     return listing;
   },
   async apply(request) {
     if (connection === "stopped") return { status: 0, json: { message: STOPPED_MESSAGE } };
-    const response = await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request) })
+    const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request) })
       .catch(() => null);
     if (!response) return { status: 0, json: { message: "The review app did not answer, so the change was not applied. Try again in a moment." } };
     return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };
@@ -242,7 +256,7 @@ async function takeWriteGrant() {
   if (!grant) return;
   history.replaceState(history.state, "", `${location.pathname}${location.search}`);
   try {
-    const response = await fetch("./api/write-session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant }) });
+    const response = await appFetch("./api/write-session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant }) });
     const answer = await response.json().catch(() => ({}));
     if (response.ok && typeof answer.token === "string") sessionStorage.setItem(WRITE_SESSION_KEY, answer.token);
   } catch {
@@ -275,7 +289,7 @@ function setBusy(busy) {
 function saveSession() {
   const payload = { openTabs: [...openTabs], activeTab: selectedPath, previewTab, agentTabs: agentTabs.filter((tab) => openTabs.includes(tab)) };
   const request = async () => {
-    const response = await fetch("./api/session", {
+    const response = await appFetch("./api/session", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -290,8 +304,42 @@ function saveSession() {
   return queued;
 }
 
-// Opening a page pushes it onto the browser history, so Back, Forward, and the browser's own buttons move through the same pages.
-// The session keeps the page and a preview of recent ones for the agent; `keep` keeps a page among them when the next one opens.
+// The strip of open documents at the top of the main island: one tab per open page, the italic preview tab, kept tabs, and the tabs an agent presented.
+const tabStrip = document.getElementById("open-tabs");
+const PREVIEW_TIP = "Preview tab: the next link replaces it. Double-click to keep it open.";
+
+// A tab names its page by its title: a record by its title, or by its kind and owner when its kind is its name, and a repository file by its name.
+// The tooltip gives the full name, a repository file's path, and what the tab's state means.
+function tabNames(path) {
+  if (parseEntityRef(path)) return { title: pageLabel(path), full: pageLabel(path) };
+  const named = describe(path);
+  if (named.code) return { title: fileName(path), full: path, code: true };
+  const title = named.label === named.kind && named.owner ? `${named.kind} · ${named.owner}` : named.label;
+  return { title, full: title === named.kind ? title : `${named.kind} · ${title}` };
+}
+
+function renderTabs() {
+  if (typeof tabStrip.setTabs !== "function") {
+    void customElements.whenDefined("prism-doc-tabs").then(renderTabs);
+    return;
+  }
+  tabStrip.setTabs(openTabs.map((path) => {
+    const entity = Boolean(parseEntityRef(path));
+    const { title, full, code = false } = tabNames(path);
+    const missing = missingTabs.has(path);
+    const preview = path === previewTab;
+    const agent = agentTabs.includes(path);
+    const tip = [missing ? missingNotice(path, { entity, label: title }).tooltip : full, preview ? PREVIEW_TIP : "", agent ? "Presented by the agent." : ""].filter(Boolean).join(" ");
+    return { value: path, label: title, tip, selected: path === selectedPath, preview, agent, missing, code };
+  }));
+}
+
+tabStrip.addEventListener("prism-select", (event) => openRef(event.detail?.value));
+tabStrip.addEventListener("prism-tab-keep", (event) => keepTab(event.detail?.value));
+tabStrip.addEventListener("prism-tab-close", (event) => closeTab(event.detail?.value));
+
+// Opening a page shows it in a tab and pushes it onto the browser history, so Back, Forward, and the browser's own buttons move through the same pages.
+// An ordinary open replaces the preview tab; `keep` opens a kept tab instead, or keeps the preview, and a new tab goes right after the selected one.
 function openRef(path, { keep = false, fromHistory = false } = {}) {
   if (!path || !requireApp()) {
     return;
@@ -316,23 +364,58 @@ function openRef(path, { keep = false, fromHistory = false } = {}) {
   updateLocation(path, moved && !fromHistory);
   if (navDrawer.isOpen) navDrawer.close();
   setBusy(true);
+  renderTabs();
   renderNavigation();
   void showArtifact(path);
   void saveSession().catch((error) => showToast(error.message));
 }
 
-// A page that no longer exists leaves for the page before it, or for Attention when it was the first.
-function closePage(path) {
-  if (!requireApp()) return;
+// Keeping the preview tab turns it into an ordinary tab, so the next link opens a new preview beside it.
+function keepTab(path) {
+  if (previewTab !== path || !requireApp()) {
+    return;
+  }
+  previewTab = null;
+  renderTabs();
+  void saveSession().catch((error) => showToast(error.message));
+}
+
+// With no tab open, the page says nothing is open and the page bar and sidebar name no page.
+function showNothing() {
+  welcome();
+  pageBar.setTrail([]);
+  pageBar.setActions([]);
+  currentContext = null;
+  contextSnapshot = "";
+  renderNavigation();
+}
+
+// Closing the selected tab shows the last open tab in its place, and closing the last tab leaves nothing open.
+function closeTab(path) {
+  if (!path || !requireApp()) return;
   scrollPositions.delete(path);
   openTabs = openTabs.filter((tab) => tab !== path);
   agentTabs = agentTabs.filter((tab) => tab !== path);
-  if (previewTab === path) previewTab = null;
-  if (selectedPath !== path) return;
-  if (pages.index > 0) history.back();
-  else openRef("attention");
+  if (previewTab === path) {
+    previewTab = null;
+  }
+  if (selectedPath === path) {
+    selectedPath = openTabs[openTabs.length - 1] ?? null;
+    lastSnapshot = "";
+    updateLocation(selectedPath);
+  }
+  renderTabs();
+  if (selectedPath) {
+    setBusy(true);
+    renderNavigation();
+    void showArtifact(selectedPath);
+  } else {
+    showNothing();
+  }
+  void saveSession().catch((error) => showToast(error.message));
 }
 
+// Every window of the session shows the same tabs; a page an agent presents, or one another window opened, becomes the next page of this tab's history.
 function synchronizeSession(snapshot) {
   const nextRevision = Number.isInteger(snapshot.revision) ? snapshot.revision : sessionRevision;
   const nextInstance = typeof snapshot.instance === "string" ? snapshot.instance : sessionInstance;
@@ -355,10 +438,18 @@ function synchronizeSession(snapshot) {
   previewTab = nextPreview;
   agentTabs = nextAgentTabs;
   const next = nextSelectedPath && nextTabs.includes(nextSelectedPath) ? nextSelectedPath : null;
-  // A page an agent presents, or one another window of this session opened, becomes the next page of this tab's history.
-  if (!next || next === selectedPath) return;
+  if (next === selectedPath) {
+    renderTabs();
+    return;
+  }
   selectedPath = next;
   lastSnapshot = "";
+  renderTabs();
+  if (!next) {
+    updateLocation(null);
+    showNothing();
+    return;
+  }
   updateLocation(selectedPath, true);
   setBusy(true);
   renderNavigation();
@@ -465,6 +556,10 @@ function projectItem({ entry, identity }, current, { gates: showGates = true, re
     hint.slot = "hint";
     item.append(hint);
   }
+  // The folder shows under the checkout's name, as two checkouts of one repository differ by their folders.
+  const folder = element("span", "project-folder", entry.projectRoot);
+  folder.slot = "detail";
+  item.append(folder);
   return item;
 }
 
@@ -482,11 +577,14 @@ function showOneProject() {
   projectButton.removeAttribute("disabled");
 }
 
-// The review app lists its projects.
+// The review app lists its projects; a session server has no list, so its page stops asking.
+let projectPoller = null;
+
 async function refreshProjects() {
   let listing;
   try {
-    const response = await fetch("./api/projects", { cache: "no-store" });
+    const response = await appFetch("./api/projects", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS });
+    if (response.status === 404) projectPoller?.stop();
     if (!response.ok) {
       showOneProject();
       return;
@@ -534,8 +632,19 @@ async function refreshProjects() {
     const gates = Math.max(...members.map(({ entry }) => entry.gates ?? 0));
     const group = document.createElement("prism-menu-group");
     group.setAttribute("label", `Workspace ${storeName(shared.store)}${gates ? ` · ${gates} ${gates === 1 ? "gate" : "gates"}` : ""}`);
+    // Choosing the workspace opens its records through the checkout already open, else one an agent is using, else the one used last.
     // Every checkout of a workspace shows the same records, so only code views, such as source files and the index, differ between them.
-    group.append(...members.map((member) => projectItem(member, listing.current, { gates: false, repository: true })));
+    const opened = members.find(({ entry }) => entry.id === listing.current) ?? members.find(({ entry }) => entry.live) ?? listing.projects.map((entry) => members.find((member) => member.entry === entry)).find(Boolean);
+    const through = [opened.identity.repository, workspaceName(opened.identity) ?? folderName(opened.entry.projectRoot)].filter(Boolean).join(" / ");
+    const repositoryCount = new Set(members.map(({ identity }) => identity.repository)).size;
+    const head = document.createElement("prism-menu-item");
+    head.setAttribute("value", opened.entry.url);
+    head.setAttribute("tip", `Workspace ${storeName(shared.store)}: ${members.length} ${members.length === 1 ? "checkout" : "checkouts"}${repositoryCount > 1 ? ` of ${repositoryCount} repositories` : ""} keep their records in ${shared.store.location ?? shared.store.label}, so their roadmap, initiatives, and gates are the same. Opens through ${through}.`);
+    head.append(`Workspace ${storeName(shared.store)}`);
+    const via = element("span", "project-folder", `Opens through ${through}`);
+    via.slot = "detail";
+    head.append(via);
+    group.append(head, ...members.map((member) => projectItem(member, listing.current, { gates: false, repository: true })));
     groups.push(group);
   }
   for (const [repository, members] of [...repositories].sort(([left], [right]) => collator.compare(left, right))) {
@@ -550,6 +659,7 @@ async function refreshProjects() {
 function setProjectLabel(identity, projectRoot, store = null) {
   const workspace = workspaceOf(store);
   project.replaceChildren(projectLabel(identity, workspace));
+  projectTile.setAttribute("name", workspace ?? identity.repository ?? folderName(projectRoot));
   projectButton.setAttribute("tip", [workspace ? `Workspace: ${workspace}` : "", projectTitle(identity, projectRoot)].filter(Boolean).join("\n"));
   signals.project = [workspace, [identity.repository ?? folderName(projectRoot), workspaceName(identity)].filter(Boolean).join("/")].filter(Boolean).join(" · ");
   document.title = signalTitle(baseTitle(), signals.count ?? 0);
@@ -564,10 +674,14 @@ signals.plainIcon = signals.icon?.getAttribute("href") ?? null;
 async function updateAttentionSignals(count) {
   const previous = signals.count;
   signals.count = count;
+  // The top bar's bell counts the same recorded questions and opens Attention.
+  attentionCount.hidden = !(count > 0);
+  attentionCount.textContent = count > 0 ? String(count) : "";
+  attentionButton.setAttribute("label", count > 0 ? `Attention, ${count} ${count === 1 ? "item" : "items"}` : "Attention");
   document.title = signalTitle(baseTitle(), count);
   if (signals.icon && signals.plainIcon) {
     if (count > 0) {
-      signals.badged ??= await fetch(signals.plainIcon).then((response) => response.ok ? response.text() : null).then((svg) => svg && `data:image/svg+xml,${encodeURIComponent(badgedIcon(svg))}`).catch(() => null);
+      signals.badged ??= await appFetch(signals.plainIcon).then((response) => response.ok ? response.text() : null).then((svg) => svg && `data:image/svg+xml,${encodeURIComponent(badgedIcon(svg))}`).catch(() => null);
       if (signals.badged && signals.count > 0) signals.icon.setAttribute("href", signals.badged);
     } else {
       signals.icon.setAttribute("href", signals.plainIcon);
@@ -609,39 +723,48 @@ function renderNotices() {
   }));
 }
 
-function connectSessionEvents() {
-  const token = writeSession();
-  sessionStream = new EventSource(token ? `./api/events?write=${encodeURIComponent(token)}` : "./api/events");
-  sessionStream.onopen = () => {
-    sessionConnected = true;
-    reportRefresh(true);
-  };
-  sessionStream.onerror = () => {
-    sessionConnected = false;
-  };
-  sessionStream.addEventListener("notice", (event) => {
-    try {
-      const notice = JSON.parse(event.data);
-      notices.delete(notice.projectId);
-      notices.set(notice.projectId, notice);
-      renderNotices();
-    } catch {
-    }
-  });
-  // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload.
-  sessionStream.addEventListener("action", (event) => {
-    try {
-      document.dispatchEvent(new CustomEvent("prism:action", { detail: JSON.parse(event.data) }));
-    } catch {
-    }
-  });
-  sessionStream.addEventListener("session", (event) => {
+// A tab joins and leaves the shared stream itself, with its own write session, so the server counts it as a writable tab exactly when it holds one.
+async function joinStream(stream, tab) {
+  const response = await appFetch("./api/events/join", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ stream, tab }), deadlineMs: POLL_DEADLINE_MS });
+  return response.ok;
+}
+
+function leaveStream(stream, tab, { keepalive = false } = {}) {
+  return appFetch("./api/events/leave", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stream, tab }), keepalive, deadlineMs: POLL_DEADLINE_MS });
+}
+
+function onStreamEvent(name, data) {
+  if (name === "notice") {
+    notices.delete(data.projectId);
+    notices.set(data.projectId, data);
+    renderNotices();
+  } else if (name === "action") {
+    // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload.
+    document.dispatchEvent(new CustomEvent("prism:action", { detail: data }));
+  } else if (name === "session") {
     sessionConnected = true;
     try {
-      synchronizeSession(JSON.parse(event.data));
+      synchronizeSession(data);
     } catch (error) {
       showToast(error.message);
     }
+  }
+}
+
+function connectSessionEvents() {
+  relay = createEventRelay({
+    join: joinStream,
+    leave: leaveStream,
+    onEvent: onStreamEvent,
+    onStatus: ({ open, joined }) => {
+      sessionConnected = joined;
+      if (open) reportRefresh(true);
+    }
+  });
+  window.addEventListener("pagehide", () => relay.close());
+  // A page restored from the back-forward cache left the stream as it went, so it loads again to rejoin it.
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) location.reload();
   });
 }
 
@@ -656,7 +779,7 @@ function markdownOptions(basePath) {
 // A short outage shows the retrying banner; one that outlasts the grace period shows the stopped banner, and any answer clears both.
 function reportRefresh(ok) {
   probes = recordProbe(probes, ok, Date.now());
-  const next = connectionState({ ...probes, now: Date.now(), streamOpen: sessionStream?.readyState === EventSource.OPEN });
+  const next = connectionState({ ...probes, now: Date.now(), streamOpen: Boolean(relay?.open) });
   if (next === connection) return;
   const recovered = connection === "stopped" && next === "live";
   connection = next;
@@ -664,9 +787,9 @@ function reportRefresh(ok) {
   appGoneBanner.hidden = next !== "stopped";
   if (!recovered) return;
   // A stream that met another listener on the port gave up, so a returning app needs a new one; the next poll redraws the open view.
-  if (sessionStream?.readyState === EventSource.CLOSED) connectSessionEvents();
+  relay?.reconnect();
   lastSnapshot = "";
-  void refreshProjects();
+  void projectPoller?.now();
 }
 
 // A session that could not reach the shared app serves this page itself, so the page says why another link may show the same project.
@@ -920,14 +1043,33 @@ function trailOf(path) {
   });
 }
 
-const STATE_WORDS = { envisioned: "Envisioned", planned: "Planned", "in-progress": "In progress", shipped: "Shipped", unlisted: "Not on the roadmap" };
+const STATE_WORDS = { envisioned: "Envisioned", planned: "Planned", "in-progress": "In progress", shipped: "Shipped", superseded: "Superseded", unlisted: "Not on the roadmap" };
+const STATUS_WORDS = { "not-started": "Not started", "in-progress": "In progress", blocked: "Blocked", split: "Split", done: "Done" };
+const PHASE_STEPS = [["requirements", "Requirements"], ["design", "Design"], ["frozen", "Tests frozen"], ["build", "Build"], ["review", "Review"], ["shipped", "Shipped"]];
 
-function treeItem(value, label, { selected = false, expanded = false, end = [], children = [] } = {}) {
+function pageHref(ref) {
+  return `./review?artifact=${encodeURIComponent(ref)}`;
+}
+
+function kitElement(tag, attributes = {}, text = "") {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(attributes)) if (value !== null && value !== undefined && value !== false) node.setAttribute(name, value === true ? "" : String(value));
+  if (text) node.textContent = text;
+  return node;
+}
+
+function treeItem(value, label, { selected = false, expanded = false, start = [], end = [], children = [], tip = null, href = pageHref(value) } = {}) {
   const item = document.createElement("prism-tree-item");
   item.setAttribute("value", value);
   item.setAttribute("label", label);
+  if (href) item.setAttribute("href", href);
+  if (tip) item.setAttribute("tip", tip);
   item.toggleAttribute("selected", selected);
   item.toggleAttribute("expanded", expanded);
+  for (const node of start) {
+    node.slot = "start";
+    item.append(node);
+  }
   for (const node of end) {
     node.slot = "end";
     item.append(node);
@@ -958,29 +1100,112 @@ function badge(text, tone = "neutral", tip = null) {
   return node;
 }
 
-// A branch expands when the user expanded it or when it leads to the open slice, so every other row stays one line.
-function isExpanded(scope, slug, ancestorsOfCurrent) {
-  const toggled = treeToggles.get(`slice:${scope.id}/${slug}`);
-  return toggled ?? ancestorsOfCurrent.has(slug);
+function navIcon(name) {
+  return kitElement("prism-icon", { name });
 }
 
-function sliceItems(scope, entity) {
-  const nodes = new Map(scope.tree.map((node) => [node.slug, node]));
+function meta(text) {
+  return element("span", "nav-meta", text);
+}
+
+// The phase a slice is in, as the roadmap draws it: a slice that has not started and has no design is in no phase yet.
+function slicePhaseStep(node) {
+  if (node.status === "not-started" && !node.designed) return null;
+  const index = currentPhase({ status: node.status, design: node.designed ? { review: node.review } : null });
+  return PHASE_STEPS[Math.min(index, PHASE_STEPS.length - 1)];
+}
+
+function isActiveSlice(node, ref) {
+  if (node.status === "in-progress" || node.status === "blocked") return true;
+  const claim = claimIndex?.claimFor(ref);
+  return Boolean(claim && !claim.expired);
+}
+
+// A claim's line for a tooltip: who holds the slice, for what, and until when.
+function claimLine(claim) {
+  if (!claim) return null;
+  const end = Date.parse(claim.expiresAt);
+  const until = Number.isFinite(end) ? `${claim.expired || end <= Date.now() ? "expired" : "until"} ${new Date(end).toLocaleString()}` : null;
+  return [`${claim.label} holds it for ${claim.activity}`, until].filter(Boolean).join(", ");
+}
+
+function leafCounts(nodes) {
+  const leaves = nodes.filter((node) => node.depth > 0 && !node.hasChildren);
+  return { done: leaves.filter((node) => node.status === "done").length, total: leaves.length };
+}
+
+// A split slice's glyph sums up its descendants: shipped once all are done, in progress once one has started, planned before.
+function branchState(id, nodes, slug) {
+  const below = [];
+  const visit = (parent) => {
+    for (const child of nodes.filter((node) => node.parent === parent)) {
+      below.push(child);
+      visit(child.slug);
+    }
+  };
+  visit(slug);
+  const leaves = below.filter((node) => !node.hasChildren);
+  if (leaves.length && leaves.every((node) => node.status === "done")) return "shipped";
+  if (below.some((node) => node.status !== "not-started" || isActiveSlice(node, `slice:${id}/${node.slug}`))) return "in-progress";
+  return "planned";
+}
+
+// A branch expands when the user expanded it, when it leads to the open page, or when one of its slices is being worked on.
+function sliceItems(id, nodes, current, entity) {
+  const bySlug = new Map(nodes.map((node) => [node.slug, node]));
   const ancestorsOfCurrent = new Set();
-  for (let slug = nodes.get(scope.current)?.parent; slug; slug = nodes.get(slug)?.parent) ancestorsOfCurrent.add(slug);
+  for (let slug = bySlug.get(current)?.parent; slug; slug = bySlug.get(slug)?.parent) ancestorsOfCurrent.add(slug);
   const build = (node) => {
-    const ref = `slice:${scope.id}/${node.slug}`;
+    const ref = `slice:${id}/${node.slug}`;
+    const children = nodes.filter((child) => child.parent === node.slug).map(build);
+    const start = [];
     const end = [];
+    const status = STATUS_WORDS[node.status] ?? node.status;
+    const phase = slicePhaseStep(node);
+    let stateWord;
+    if (children.length) {
+      const state = branchState(id, nodes, node.slug);
+      stateWord = `Split · ${STATE_WORDS[state]}`;
+      start.push(kitElement("prism-state", { state, label: stateWord }));
+    } else {
+      stateWord = [phase ? phase[1] : null, status].filter(Boolean).join(" · ");
+      start.push(kitElement("prism-phase", { phase: phase?.[0] ?? null, label: stateWord }));
+    }
+    if (node.status === "blocked") end.push(kitElement("prism-icon", { name: "warning", size: "xs", label: "Blocked", tip: "Blocked", class: "nav-blocked" }));
     if (node.blocking) end.push(badge(String(node.blocking), "danger", `${node.blocking} blocking ${node.blocking === 1 ? "finding" : "findings"}`));
     const claim = claimIndex?.claimFor(ref);
     if (claim) end.push(claimElement(claim, "avatar"));
-    const children = scope.tree.filter((child) => child.parent === node.slug).map(build);
-    return treeItem(ref, node.title, { selected: selectedPath === ref || (scope.current === node.slug && !entity), expanded: children.length > 0 && isExpanded(scope, node.slug, ancestorsOfCurrent), end, children });
+    const counts = children.length ? leafCounts(nodes.filter((other) => isBelow(bySlug, other, node.slug))) : null;
+    const tip = [node.title, stateWord, counts && counts.total ? `${counts.done} of ${counts.total} shipped` : null, node.blocking ? `${node.blocking} blocking ${node.blocking === 1 ? "finding" : "findings"}` : null, claimLine(claim)].filter(Boolean).join(" · ");
+    const toggled = treeToggles.get(ref);
+    const hasActive = children.length > 0 && nodes.some((other) => isBelow(bySlug, other, node.slug) && isActiveSlice(other, `slice:${id}/${other.slug}`));
+    const expanded = children.length > 0 && (toggled ?? (ancestorsOfCurrent.has(node.slug) || hasActive));
+    return treeItem(ref, node.title, { selected: selectedPath === ref || (current === node.slug && !entity), expanded, start, end, children, tip });
   };
-  return scope.tree.filter((node) => node.depth === 1).map(build);
+  return nodes.filter((node) => node.depth === 1).map(build);
 }
 
-// The sidebar is the only navigation: places, every initiative, the open initiative's slices or the open library section's documents, and the library.
+function isBelow(bySlug, node, ancestor) {
+  for (let slug = node.parent; slug; slug = bySlug.get(slug)?.parent) if (slug === ancestor) return true;
+  return false;
+}
+
+// One initiative as a branch: its state glyph, its shipped leaf slices out of all, and its slices nested below.
+function initiativeItem(item, nodes, scope, entity) {
+  const ref = `initiative:${item.id}`;
+  const inScope = scope.kind === "initiative" && scope.id === item.id;
+  const children = sliceItems(item.id, nodes, inScope ? scope.current : null, entity);
+  const counts = leafCounts(nodes);
+  const state = item.state === "unlisted" ? "planned" : item.state;
+  const stateWord = STATE_WORDS[item.state] ?? item.state;
+  const end = counts.total ? [meta(`${counts.done}/${counts.total}`)] : [];
+  const tip = [item.title, stateWord, counts.total ? `${counts.done} of ${counts.total} shipped` : null].filter(Boolean).join(" · ");
+  const hasActive = nodes.some((node) => node.depth > 0 && isActiveSlice(node, `slice:${item.id}/${node.slug}`));
+  const expanded = children.length > 0 && (treeToggles.get(ref) ?? (inScope || hasActive));
+  return treeItem(ref, item.title, { selected: selectedPath === ref || (inScope && !scope.current && !entity), expanded, start: [kitElement("prism-state", { state, label: stateWord })], end, children, tip });
+}
+
+// The sidebar is the only navigation: places, the initiatives being worked on with their slices, the open library section's documents, and the library.
 let navigationKey = "";
 
 function renderNavigation() {
@@ -989,34 +1214,31 @@ function renderNavigation() {
   void updateAttentionSignals(attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([selectedPath, scope, attention, navigation.initiatives, navigation.glossary, navigation.diagnostics, claims, [...treeToggles]]);
+  const key = JSON.stringify([selectedPath, scope, attention, navigation.initiatives, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles]]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
   const refocus = focused && navRoot.contains(focused) ? focused.getAttribute("value") : null;
   const others = attention.needsYou - attention.gates;
-  const attentionEnd = attention.needsYou ? [badge(String(attention.needsYou), attention.gates ? "danger" : "accent", `${attention.gates} recorded ${attention.gates === 1 ? "question" : "questions"} and ${others} other ${others === 1 ? "item" : "items"} need you`)] : [];
+  const attentionTip = `${attention.gates} recorded ${attention.gates === 1 ? "question" : "questions"} and ${others} other ${others === 1 ? "item" : "items"} need you`;
+  const attentionEnd = attention.needsYou ? [kitElement("prism-badge", { variant: "count", solid: true, tip: attentionTip }, String(attention.needsYou))] : [];
   navPlaces.replaceChildren(
-    treeItem("attention", "Attention", { selected: selectedPath === "attention", end: attentionEnd }),
-    treeItem("roadmap", "Roadmap", { selected: selectedPath === "roadmap" })
+    treeItem("attention", "Attention", { selected: selectedPath === "attention", start: [navIcon("bell")], end: attentionEnd }),
+    treeItem("roadmap", "Roadmap", { selected: selectedPath === "roadmap", start: [navIcon("roadmap")] })
   );
   const parts = [];
-  const initiatives = navigation.initiatives ?? [];
-  parts.push(section("Initiatives", initiatives.length));
-  if (initiatives.length) {
-    parts.push(tree("Initiatives", initiatives.map((item) => {
-      const ref = `initiative:${item.id}`;
-      const current = scope.kind === "initiative" && scope.id === item.id && !scope.current && !entity;
-      const state = element("span", "nav-state", STATE_WORDS[item.state] ?? item.state);
-      return treeItem(ref, item.title, { selected: selectedPath === ref || current, end: [state] });
-    })));
-  } else parts.push(element("p", "nav-note", "No initiatives yet."));
-  if (scope.kind === "initiative") {
-    parts.push(section(scope.title));
-    const items = sliceItems(scope, entity);
-    if (items.length) parts.push(tree(`Slices of ${scope.title}`, items));
-    else parts.push(element("p", "nav-note", scope.valid === false ? "The initiative record is invalid." : "No slices yet."));
-  } else if (scope.kind === "library") {
+  // The initiatives being worked on, and the open one whatever its state, in roadmap order.
+  const listed = (navigation.initiatives ?? []).flatMap((item) => {
+    const open = scope.kind === "initiative" && scope.id === item.id;
+    if (open) return [{ item: { ...item, title: scope.title ?? item.title }, nodes: scope.tree ?? item.tree ?? [] }];
+    return item.tree ? [{ item, nodes: item.tree }] : [];
+  });
+  if (scope.kind === "initiative" && !listed.some(({ item }) => item.id === scope.id)) listed.push({ item: { id: scope.id, title: scope.title, state: scope.state }, nodes: scope.tree ?? [] });
+  parts.push(section("Initiatives", listed.length));
+  if (listed.length) parts.push(tree("Initiatives", listed.map(({ item, nodes }) => initiativeItem(item, nodes, scope, entity))));
+  else parts.push(element("p", "nav-note", (navigation.initiatives ?? []).length ? "No initiative is planned or in progress; the roadmap lists them all." : "No initiatives yet."));
+  if (scope.kind === "initiative" && scope.valid === false) parts.push(element("p", "nav-note", "The initiative record is invalid."));
+  if (scope.kind === "library") {
     const name = ENTITY_LABELS[scope.section] ?? scope.section;
     const topics = new Map();
     for (const entry of scope.entries) {
@@ -1027,7 +1249,7 @@ function renderNavigation() {
     if (scope.section !== "decisions") parts.push(section(name, scope.entries.length));
     for (const [topic, entries] of topics) {
       if (scope.section === "decisions") parts.push(section(topic, entries.length));
-      parts.push(tree(topic, entries.map((entry) => treeItem(entry.path, entry.title, { selected: selectedPath === entry.path, end: entry.status ? [element("span", "nav-state", entry.status)] : [] }))));
+      parts.push(tree(topic, entries.map((entry) => treeItem(entry.path, entry.title, { selected: selectedPath === entry.path, end: entry.status ? [element("span", "nav-state", entry.status)] : [], tip: entry.status ? `${entry.title} · ${entry.status}` : null }))));
     }
     if (!scope.entries.length) parts.push(element("p", "nav-note", "No documents."));
   }
@@ -1042,10 +1264,14 @@ function renderNavigation() {
   }
   navScope.replaceChildren(...parts);
   const glossary = navigation.glossary ?? {};
+  const library = navigation.library ?? {};
+  const count = (value) => Number.isInteger(value) ? [meta(String(value))] : [];
   navLibrary.replaceChildren(section("Library"), tree("Library", [
-    ...["requirements", "decisions"].map((ref) => treeItem(ref, ENTITY_LABELS[ref], { selected: selectedPath === ref })),
-    treeItem("glossary", "Glossary", { selected: selectedPath === "glossary" || (glossary.path && selectedPath === glossary.path), end: glossary.exists ? [] : [element("span", "nav-state", "missing")] })
+    treeItem("requirements", ENTITY_LABELS.requirements, { selected: selectedPath === "requirements", start: [navIcon("list")], end: count(library.requirements) }),
+    treeItem("decisions", ENTITY_LABELS.decisions, { selected: selectedPath === "decisions", start: [navIcon("scale")], end: count(library.decisions) }),
+    treeItem("glossary", "Glossary", { selected: selectedPath === "glossary" || (glossary.path && selectedPath === glossary.path), start: [navIcon("book")], end: glossary.exists ? count(library.terms) : [element("span", "nav-state", "missing")] })
   ]));
+  applyRail();
   if (refocus) [...navRoot.querySelectorAll("prism-tree-item")].find((item) => item.getAttribute("value") === refocus)?.focus();
   navRoot.querySelector("prism-tree-item[selected]")?.scrollIntoView?.({ block: "nearest" });
 }
@@ -1068,6 +1294,8 @@ async function refreshContext(path) {
   currentContext = { ref: path, value };
   renderNavigation();
   pageBar.setTrail(trailOf(path));
+  // A slice's or initiative's tab takes the title its context names.
+  renderTabs();
 }
 
 function controlsOf(root) {
@@ -1217,20 +1445,25 @@ function endRebuild(memory) {
 
 // A page whose file or entity is gone shows a short page with a button that closes it; the next refresh restores a target that comes back.
 function showMissing(path) {
-  missingTabs.add(path);
+  if (!missingTabs.has(path)) {
+    missingTabs.add(path);
+    renderTabs();
+  }
   if (path !== selectedPath) return;
   if (lastSnapshot !== `missing:${path}`) {
     lastSnapshot = `missing:${path}`;
     renderedPath = null;
     document.body.classList.remove("has-maximized");
     pageBar.setActions([]);
-    renderMissing(artifact, path, { entity: Boolean(parseEntityRef(path)), label: pageLabel(path), onClose: () => closePage(path) });
+    renderMissing(artifact, path, { entity: Boolean(parseEntityRef(path)), label: pageLabel(path), onClose: () => closeTab(path) });
   }
   setBusy(false);
 }
 
 function updateMissingTabs(reported) {
-  missingTabs = nextMissingTabs(missingTabs, reported).next;
+  const { next, changed } = nextMissingTabs(missingTabs, reported);
+  missingTabs = next;
+  if (changed) renderTabs();
 }
 
 // A page that could not load says why in the artifact area, and the area is no longer busy.
@@ -1258,7 +1491,7 @@ function modeButtons(state, path) {
 }
 
 async function showEntity(path) {
-  const response = await fetch(`./api/entity?ref=${encodeURIComponent(path)}`, { cache: "no-store" });
+  const response = await appFetch(`./api/entity?ref=${encodeURIComponent(path)}`, { cache: "no-store" });
   if (response.status === 404) {
     showMissing(path);
     return;
@@ -1313,7 +1546,7 @@ async function showArtifact(path) {
     await showEntity(path);
     return;
   }
-  const response = await fetch(`./api/artifact?path=${encodeURIComponent(path)}`, { cache: "no-store" });
+  const response = await appFetch(`./api/artifact?path=${encodeURIComponent(path)}`, { cache: "no-store" });
   if (response.status === 404) {
     showMissing(path);
     return;
@@ -1390,7 +1623,7 @@ function viewState(path) {
 
 async function fetchJson(url) {
   if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await appFetch(url, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -1437,6 +1670,8 @@ function viewContext(path, state) {
         target.appendChild(section);
         await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section);
       }
+      // A diagram mounted after the page drew, such as on a slice's Diagram tab, gets its Maximize control too.
+      if (path === selectedPath) decorateMaximize(path);
     },
     // A gate answer is the gate's answer action, applied against the revision its listing shows.
     async answerGate({ initiative, id, choice, note }) {
@@ -1445,13 +1680,13 @@ function viewContext(path, state) {
       const unanswered = () => {
         throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
       };
-      const listed = await fetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
+      const listed = await appFetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
       const listing = await listed.json().catch(() => ({}));
       if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
       const action = (listing.actions ?? []).find((item) => item.id === "gate.answer");
       const names = new Set((action?.fields ?? []).map((field) => field.name));
       const input = Object.fromEntries([["choice", choice], ["note", note]].filter(([name, value]) => names.has(name) && value !== null && value !== undefined && value !== ""));
-      const response = await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
+      const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
       const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
       if (!response.ok) {
         // The answer form names an answered or withdrawn question as it always has.
@@ -1505,15 +1740,59 @@ function focusTrees() {
 }
 
 // The drawer places its children in its body a microtask after they arrive, so the trees take focus once they sit inside the open drawer.
+// Above 1100px the sidebar can collapse to a rail of the places' and the library's icons, which keeps the Attention count; the choice is remembered in this browser.
+const SIDEBAR_KEY = "prism.review.sidebar";
+const wideWindow = matchMedia("(min-width: 1101px)");
+
+function readSidebarCollapsed() {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === "collapsed";
+  } catch {
+    return false;
+  }
+}
+
+function applyRail() {
+  const rail = shell.classList.contains("sidebar-collapsed") && wideWindow.matches && navRoot.parentElement === sidebar;
+  for (const holder of navRoot.querySelectorAll("prism-tree")) holder.toggleAttribute("rail", rail);
+}
+
+function setSidebarCollapsed(collapsed, { remember = true } = {}) {
+  shell.classList.toggle("sidebar-collapsed", collapsed);
+  const toggle = document.getElementById("sidebar-toggle");
+  const action = collapsed ? "Expand the sidebar" : "Collapse the sidebar";
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.setAttribute("label", action);
+  toggle.setAttribute("tip", `${action} ([)`);
+  applyRail();
+  if (!remember) return;
+  try {
+    localStorage.setItem(SIDEBAR_KEY, collapsed ? "collapsed" : "expanded");
+  } catch {
+    // A browser without storage keeps the choice for this page only.
+  }
+}
+
 async function openDrawer() {
   navDrawer.append(navRoot);
+  applyRail();
   navDrawer.show();
   await Promise.resolve();
   if (navDrawer.isOpen && navDrawer.contains(navRoot)) focusTrees();
 }
 
+// At 720px and below the search button is a bare icon, as the other top bar tools are; its label still names it.
+function watchSearchWidth() {
+  const jump = document.getElementById("jump");
+  const narrow = matchMedia("(max-width: 720px)");
+  const apply = () => jump.setAttribute("variant", narrow.matches ? "chrome" : "search");
+  apply();
+  narrow.addEventListener("change", apply);
+}
+
 function closeDrawer() {
   if (navRoot.parentElement !== sidebar) sidebar.append(navRoot);
+  applyRail();
 }
 
 // Above 1100px the sidebar shows the trees, so a drawer left open as the window widens closes and gives them back.
@@ -1550,7 +1829,7 @@ async function initialize() {
     root: document.getElementById("page-bar"),
     onBack: goBack,
     onForward: goForward,
-    onOpen: (ref) => openRef(ref)
+    onOpen: (ref, event) => openRef(ref, { keep: Boolean(event?.ctrlKey || event?.metaKey) })
   });
   showHistory();
   recordStoreStatus = createRecordStoreStatus({
@@ -1583,13 +1862,13 @@ async function initialize() {
     sectionFrame = requestAnimationFrame(() => markCurrentSection(artifact, workspace.getBoundingClientRect().top));
   }, { passive: true });
   // Choosing another project opens its review page; opening the menu refreshes the list first.
-  projectButton.addEventListener("click", () => void refreshProjects());
+  projectPoller = createPoller({ run: refreshProjects, interval: 5000 });
+  projectButton.addEventListener("click", () => void projectPoller.now());
   projectMenu.addEventListener("prism-select", (event) => {
     const url = event.detail?.value;
     if (url && url !== location.href) location.href = url;
   });
-  void refreshProjects();
-  setInterval(refreshProjects, 5000);
+  void projectPoller.start();
   createIndexingStatus({
     root: document.getElementById("indexing"),
     button: document.getElementById("indexing-button"),
@@ -1607,7 +1886,6 @@ async function initialize() {
   navigation = data.navigation;
   claimIndex = createClaimIndex({
     fetchJson,
-    initiatives: () => navigation.initiatives ?? [],
     onChange: () => {
       navigationKey = "";
       renderNavigation();
@@ -1626,6 +1904,8 @@ async function initialize() {
     field: document.getElementById("palette-input"),
     results: document.getElementById("palette-results"),
     preview: document.getElementById("palette-preview"),
+    scopes: document.getElementById("palette-scopes"),
+    count: document.getElementById("palette-count"),
     entries: paletteEntries,
     describe,
     claimFor: (ref) => claimIndex.claimFor(ref),
@@ -1693,9 +1973,19 @@ async function initialize() {
       sidePanel.showFile(target, anchor);
     }
   });
+  // Ctrl-click or Cmd-click on a sidebar item opens it as a kept tab, and a double click keeps the tab it opened.
+  let navKeep = false;
+  navRoot.addEventListener("click", (event) => {
+    navKeep = event.ctrlKey || event.metaKey;
+  }, { capture: true });
   navRoot.addEventListener("prism-select", (event) => {
     const ref = event.detail?.value;
-    if (ref) openRef(ref);
+    if (ref) openRef(ref, { keep: navKeep });
+    navKeep = false;
+  });
+  navRoot.addEventListener("dblclick", (event) => {
+    const ref = event.target.closest?.("prism-tree-item")?.getAttribute("value");
+    if (ref && ref === selectedPath) keepTab(ref);
   });
   navRoot.addEventListener("prism-toggle", (event) => {
     const value = event.detail?.value;
@@ -1704,9 +1994,14 @@ async function initialize() {
     renderNavigation();
   });
   document.getElementById("nav-button").addEventListener("click", openDrawer);
+  setSidebarCollapsed(readSidebarCollapsed(), { remember: false });
+  document.getElementById("sidebar-toggle").addEventListener("click", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
+  wideWindow.addEventListener("change", applyRail);
   navDrawer.addEventListener("prism-close", closeDrawer);
   watchDrawerWidth();
   document.getElementById("jump").addEventListener("click", () => palette.show());
+  attentionButton.addEventListener("click", () => openRef("attention"));
+  watchSearchWidth();
   artifact.addEventListener("click", (event) => {
     // Markdown links to repository files open as review pages, and anchors scroll within the document they name.
     const docLink = event.target.closest("a[data-doc-link], a[data-doc-anchor]");
@@ -1737,13 +2032,22 @@ async function initialize() {
     const docLink = event.target.closest("a[data-doc-link]");
     if (docLink) openRef(docLink.dataset.docLink, { keep: true });
   });
-  const overlayOpen = () => [...document.querySelectorAll("prism-dialog, prism-popover, prism-menu")].some((overlay) => overlay.isOpen ?? overlay.hasAttribute("open"));
+  const overlayOpen = () => [...document.querySelectorAll("prism-dialog:not([modeless]), prism-popover, prism-menu")].some((overlay) => overlay.isOpen ?? overlay.hasAttribute("open"));
   document.addEventListener("keydown", (event) => {
     const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName) || Boolean(document.activeElement?.closest?.("prism-field"));
     if ((event.key === "k" || event.key === "K") && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       if (palette.isOpen()) palette.hide();
       else palette.show();
+    } else if (event.key === "," && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+      // Ctrl+, or Meta+, opens the Appearance menu on its first choice, as its title row shows.
+      event.preventDefault();
+      const menu = document.getElementById("appearance-menu");
+      if (menu.isOpen) menu.close({ focus: true });
+      else menu.show({ focus: "first" });
+    } else if (event.key === "[" && !typing && !overlayOpen() && wideWindow.matches && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed"));
     } else if (event.key === "/" && !typing && !palette.isOpen()) {
       event.preventDefault();
       palette.show();
@@ -1754,6 +2058,9 @@ async function initialize() {
       else goForward();
     } else if (event.key === "Escape" && overlayOpen()) {
       // An open dialog, popover, or menu closes on its own Escape.
+    } else if (event.key === "Escape" && document.getElementById("evidence-drawer").isOpen) {
+      // The evidence drawer leaves the page usable, so Escape from the page closes it as well as Escape inside it.
+      closeEvidence();
     } else if (event.key === "Escape" && selectedPath && viewState(selectedPath).maximized) {
       setMaximized(selectedPath, null);
     } else if (event.key === "Escape" && sidePanel.isOpen() && !document.querySelector(".link-preview:not([hidden])")) {
@@ -1776,25 +2083,31 @@ async function initialize() {
   } else {
     updateLocation(selectedPath);
     setBusy(true);
+    renderTabs();
     await showArtifact(selectedPath);
   }
   let polls = 0;
-  setInterval(async () => {
+  // The page checks its project every 1.5 s, one check at a time, and only while the tab is shown; a check without an answer within its deadline counts as failed.
+  const indexPoller = createPoller({ interval: 1500, run: async () => {
     // Shown action lists check their listing every few seconds, so a change an agent made shows without a reload.
     if (++polls % 3 === 0 && connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
     try {
-      const refreshed = await fetch("./api/index", { cache: "no-store" }).catch(() => null);
-      reportRefresh(Boolean(refreshed?.ok));
-      if (refreshed?.ok) {
-        const snapshot = await refreshed.json();
+      const refreshed = await appFetch("./api/index", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
+      const snapshot = refreshed?.ok ? await refreshed.json().catch(() => null) : null;
+      reportRefresh(Boolean(snapshot));
+      if (snapshot) {
         renderStoreSync(snapshot);
         prismRecords = new Set(snapshot.artifacts);
         availableArtifacts = new Set([...snapshot.artifacts, ...(snapshot.sources ?? [])]);
         updateMissingTabs(snapshot.missingTabs);
         if (JSON.stringify(snapshot.navigation) !== JSON.stringify(navigation)) {
+          // Claims are read on their own schedule, so only a new or removed initiative reads them again at once.
+          const initiatives = (list) => JSON.stringify((list ?? []).map((item) => item.id));
+          const added = initiatives(snapshot.navigation?.initiatives) !== initiatives(navigation.initiatives);
           navigation = snapshot.navigation;
           renderNavigation();
-          void claimIndex.refresh().catch(() => {});
+          renderTabs();
+          if (added) void claimIndex.refresh().catch(() => {});
         }
         if (!sessionConnected) {
           synchronizeSession(snapshot);
@@ -1807,7 +2120,9 @@ async function initialize() {
       }
     } catch {
     }
-  }, 1500);
+  } });
+  // The first check waits one interval, since the page has just drawn from a fresh index.
+  setTimeout(() => void indexPoller.start(), 1500);
 }
 
 initialize().catch((error) => {

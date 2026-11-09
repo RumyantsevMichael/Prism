@@ -1,7 +1,7 @@
 // prism-claim: a read-only claim in light DOM: which agent holds a slice, for what activity, and how long the claim has left, as an avatar,
 // an inline line, or a strip with when it started and a lease meter. Its time words update every minute; it holds no control.
 import { Base, make, setAttribute } from "./base.js";
-import { everyMinute, leaseLeft, sinceText, timeLeft } from "../claim-time.js";
+import { agoText, everyMinute, exactTime, leaseLeft, sinceText, timeLeft } from "../claim-time.js";
 import { unwatchShortening, watchShortening } from "../shorten.js";
 
 const VARIANTS = ["avatar", "inline", "strip"];
@@ -18,7 +18,7 @@ export class PrismClaim extends Base {
       { name: "claimed-at", values: ["time"], default: "", description: "When the claim started; a strip shows it as since <time>." },
       { name: "renewed-at", values: ["time"], default: "", description: "When the claim was last renewed; the strip's lease meter runs from it to expires-at." },
       { name: "expires-at", values: ["time"], default: "", description: "When the claim lapses; the time left shows in words and updates every minute." },
-      { name: "variant", values: VARIANTS, default: "inline", description: "avatar shows only the avatar with the text as its tooltip, inline adds the holder, activity, and time left, and strip adds since and the lease meter." }
+      { name: "variant", values: VARIANTS, default: "inline", description: "avatar shows only the avatar with the text as its tooltip, inline adds the holder, activity, and time left, and strip is a full-width band that adds since, the last renewal, how long ago it was claimed, and the lease meter, with the exact times as its tooltip." }
     ],
     states: ["avatar", "inline", "strip", "expired", "expired-strip"],
     keyboard: ["A claim takes no keys; an avatar claim's text is its accessible description, and a shortened inline claim joins the Tab order to show its full text."]
@@ -88,16 +88,24 @@ export class PrismClaim extends Base {
     } else {
       const lines = make(this, "span", "prism-claim-lines");
       const first = make(this, "span", "prism-claim-line");
-      first.append(holder());
-      const second = make(this, "span", "prism-claim-line");
+      const holds = make(this, "span", "prism-claim-holds");
+      holds.textContent = "holds this slice for";
+      first.append(holder(), " ", holds, " ", activity());
+      // The report line: when the claim started and when its holder last renewed it, which is when the agent last checked in.
+      parts.report = make(this, "span", "prism-claim-report");
       parts.since = make(this, "span", "prism-claim-since");
-      second.append(activity(), " ", parts.since);
-      lines.append(first, second);
+      parts.renewed = make(this, "span", "prism-claim-renewed");
+      parts.report.append(parts.since, parts.renewed);
+      lines.append(first, parts.report);
       const lease = make(this, "span", "prism-claim-lease");
+      const words = make(this, "span", "prism-claim-lease-words");
+      parts.claimed = make(this, "span", "prism-claim-ago");
+      words.append(parts.time, parts.claimed);
       parts.meter = make(this, "prism-meter", "prism-claim-meter", { label: "Lease left" });
-      lease.append(parts.time, parts.meter);
+      lease.append(words, parts.meter);
       this.replaceChildren(parts.avatar, lines, lease);
     }
+    if (variant !== "strip" && this.getAttribute("tabindex") === "0" && !this.hasAttribute("shortened")) this.removeAttribute("tabindex");
     if (variant !== "inline") unwatchShortening(this);
     this.update();
   }
@@ -119,8 +127,23 @@ export class PrismClaim extends Base {
       const text = this.tooltipText;
       setAttribute(this, "tip", text);
       setAttribute(avatar, "aria-description", text);
+    } else if (this.variant === "strip") {
+      const times = [["Claimed", "claimed-at"], ["renewed", "renewed-at"], [left.expired ? "expired" : "expires", "expires-at"]].map(([word, name]) => exactTime(this.getAttribute(name)) && `${word} ${exactTime(this.getAttribute(name))}`).filter(Boolean);
+      setAttribute(this, "tip", times.length ? times.join(", ") : null);
+      // The exact times are the strip's tooltip, so keyboard focus reaches them too.
+      setAttribute(this, "tabindex", times.length ? "0" : null);
     } else setAttribute(this, "tip", null);
     if (parts.since) parts.since.textContent = sinceText(this.getAttribute("claimed-at"), now);
+    if (parts.renewed) {
+      const renewed = agoText(this.getAttribute("renewed-at"), now);
+      parts.renewed.textContent = renewed ? `last renewed ${renewed}` : "";
+      parts.renewed.hidden = !renewed;
+    }
+    if (parts.claimed) {
+      const claimed = agoText(this.getAttribute("claimed-at"), now);
+      parts.claimed.textContent = claimed ? `claimed ${claimed}` : "";
+      parts.claimed.hidden = !claimed;
+    }
     if (parts.meter) {
       const lease = left.expired ? 0 : leaseLeft(this.getAttribute("renewed-at"), this.getAttribute("expires-at"), now);
       setAttribute(parts.meter, "value", lease === null ? null : String(lease));

@@ -84,7 +84,7 @@ export function recordLabel(path, titles = new Map()) {
 
 export function entityLabel(entity) {
   const data = entity.data;
-  if (entity.kind === "attention") return { title: "What needs you", subtitle: null };
+  if (entity.kind === "attention") return { title: "Attention", lead: "Answer here or in the agent's conversation; the agent picks the answer up on its own.", subtitle: null };
   if (entity.kind === "roadmap") return { eyebrow: "Roadmap", title: "Roadmap", lead: data.serves || null, subtitle: data.recordPath ?? null };
   if (entity.kind === "initiative") return { eyebrow: "Initiative", title: data.roadmapItem?.title ?? data.id, subtitle: data.recordPath };
   if (entity.kind === "slice") return { eyebrow: `Slice · ${data.initiativeTitle}`, title: data.slice.title, subtitle: data.artifacts?.folder ?? null };
@@ -114,7 +114,11 @@ export function progressBar(progress) {
     const share = (progress[status] / progress.leaves) * 100;
     return share ? `<span class="progress-segment segment-${status}" data-width="${share}"></span>` : "";
   }).join("");
-  return `<div class="progress" role="img" aria-label="${progress.done} of ${progress.leaves} slices done"><div class="progress-track">${segments}</div><span class="progress-label">${progress.done} of ${progress.leaves} done</span></div>`;
+  // Each segment's count is the bar's tooltip, as the label names only the done ones.
+  const counts = ["done", "in-progress", "blocked", "deferred"].filter((status) => progress[status]).map((status) => `${progress[status]} ${status.replace("-", " ")}`);
+  const rest = progress.leaves - ["done", "in-progress", "blocked", "deferred"].reduce((sum, status) => sum + (progress[status] ?? 0), 0);
+  if (rest > 0) counts.push(`${rest} not started`);
+  return `<div class="progress" role="img" aria-label="${progress.done} of ${progress.leaves} slices done" tip="${escapeHtml(counts.join(" · "))}"><div class="progress-track">${segments}</div><span class="progress-label">${progress.done} of ${progress.leaves} done</span></div>`;
 }
 
 export function applyWidths(root) {

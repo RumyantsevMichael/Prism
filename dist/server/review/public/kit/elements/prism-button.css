@@ -13,6 +13,23 @@
   height: var(--prism-control-height-sm);
 }
 
+/* A badge sits on the button's top end corner, as a count on an icon button. */
+:host {
+  position: relative;
+}
+
+.badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  pointer-events: none;
+}
+
+.badge[hidden] {
+  display: none;
+}
+
 button {
   display: inline-flex;
   align-items: center;
@@ -139,4 +156,149 @@ button:disabled[aria-pressed="true"],
 :host([disabled]) button:disabled[aria-pressed="true"] {
   background: var(--prism-color-selected);
   color: var(--prism-color-accent-text);
+}
+
+/* status: an item of the status bar: small quiet text whose fill, on hover or while its menu is open, stays inside the bar while the button keeps the control height. */
+:host([variant="status"]) button {
+  position: relative;
+  padding: 0 var(--prism-space-3);
+  border-color: transparent;
+  background: transparent;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-regular);
+}
+
+:host([variant="status"]) button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  height: calc(var(--prism-status-height) - var(--prism-space-2));
+  margin: auto 0;
+  border-radius: var(--prism-radius-xs);
+  pointer-events: none;
+}
+
+:host([variant="status"]) .content {
+  position: relative;
+}
+
+:host([variant="status"]) button:hover {
+  background: transparent;
+  color: var(--prism-color-ink);
+}
+
+:host([variant="status"]) button:hover::before {
+  background: var(--prism-color-chrome-hover);
+}
+
+:host([variant="status"]) button[aria-expanded="true"] {
+  background: transparent;
+  color: var(--prism-color-ink);
+}
+
+:host([variant="status"]) button[aria-expanded="true"]::before {
+  background: var(--prism-color-surface);
+  box-shadow: var(--prism-shadow-island);
+}
+
+:host([variant="status"]) ::slotted(prism-icon) {
+  margin-inline-end: var(--prism-space-3);
+}
+
+/* chrome: a quiet button on the canvas, such as the top bar's and the status bar's; an open one lifts onto the surface. */
+:host([variant="chrome"]) button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-regular);
+}
+
+:host([variant="chrome"][size="sm"]) button {
+  font-size: var(--prism-font-size-xs);
+}
+
+:host([variant="chrome"]) button:hover {
+  background: var(--prism-color-chrome-hover);
+  color: var(--prism-color-ink);
+}
+
+:host([variant="chrome"]) button[aria-expanded="true"] {
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  box-shadow: var(--prism-shadow-lift);
+}
+
+:host([variant="chrome"][disabled]) button:disabled,
+:host([variant="status"][disabled]) button:disabled {
+  border-color: transparent;
+  background: transparent;
+}
+
+/* search: a button that reads as a search field: its text starts at the left, a trailing key hint ends it, and it stands on the surface. */
+:host([variant="search"][label]) {
+  width: auto;
+}
+
+:host([variant="search"]) button,
+:host([variant="search"][label]) button {
+  justify-content: flex-start;
+  padding: 0 var(--prism-space-2) 0 var(--prism-space-4);
+  text-align: start;
+  border-radius: var(--prism-radius-md);
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-regular);
+  box-shadow: var(--prism-shadow-island);
+}
+
+:host([variant="search"]) button:hover {
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+}
+
+:host([variant="search"]) .content {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-4);
+  width: 100%;
+}
+
+:host([variant="search"]) ::slotted(prism-icon) {
+  flex: none;
+  margin-inline-end: 0;
+}
+
+:host([variant="search"]) ::slotted(:not(prism-icon):not(prism-kbd)) {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:host([variant="search"]) ::slotted(prism-kbd) {
+  flex: none;
+}
+
+/* shape round: a pill, as Who's working and a filter of a list are; an unpressed filter stays quiet. */
+:host([shape="round"]) button {
+  border-radius: var(--prism-radius-round);
+}
+
+:host([shape="round"]:not([variant])) button[aria-pressed="false"] {
+  background: transparent;
+  color: var(--prism-color-ink-muted);
+}
+
+:host([shape="round"]:not([variant])) button[aria-pressed="false"]:hover {
+  background: var(--prism-color-hover);
+  color: var(--prism-color-ink);
+}
+
+:host([shape="round"]) button[aria-pressed="true"] {
+  border-color: var(--prism-color-accent);
+  background: var(--prism-color-accent-soft);
+  color: var(--prism-color-accent-text);
+  font-weight: var(--prism-font-weight-semibold);
 }
