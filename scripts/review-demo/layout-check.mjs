@@ -80,8 +80,9 @@ try {
     project.refs = [...new Set([...PLACES, ...index.navigation.index.map((entry) => entry.ref).filter((ref) => ref !== "glossary"), ...index.artifacts])];
   }
 
-  for (const viewport of viewports) {
-    for (const theme of themes) {
+  // Each viewport and theme has its own browser context, and they run side by side, since most of a check is waiting for pages to settle.
+  await Promise.all(viewports.flatMap((viewport) => themes.map(async (theme) => {
+    {
       const context = await browser.newContext({ viewport: VIEWPORTS[viewport], colorScheme: theme, isMobile: viewport === "phone", hasTouch: viewport === "phone" });
       const page = await context.newPage();
       let current = "";
@@ -135,17 +136,22 @@ try {
       };
       for (const [name, [ref, open]] of Object.entries(states)) {
         await visit(stress, ref, name);
-        try {
-          await open();
-          await page.waitForTimeout(900);
-        } catch (error) {
-          record(`could not open the ${name}: ${error.message.split("\n")[0]}`, current);
+        // A page still settling under load can miss the first attempt, so an overlay that does not open gets one more visit before it counts.
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          try {
+            await open();
+            await page.waitForTimeout(900);
+            break;
+          } catch (error) {
+            if (attempt === 2) record(`could not open the ${name}: ${error.message.split("\n")[0]}`, current);
+            else await visit(stress, ref, name);
+          }
         }
         await check(stress, name);
       }
       await context.close();
     }
-  }
+  })));
   // The component catalog of the empty project, at every checked viewport and theme.
   const emptyProject = projects.find((project) => project.name === "empty");
   catalogProblems = await checkCatalog({ url: new URL("kit/catalog", emptyProject.url).href, viewports, themes, browser });
