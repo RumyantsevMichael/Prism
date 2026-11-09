@@ -18,7 +18,9 @@ import { roadmapPaths } from "./workflow-config.mjs";
 // The move writes the store and its ledger first and removes a checkout file only then, right before a tool result that reports the removal is written, and only while it holds the bytes the store took,
 // so an interruption leaves a file in both places rather than in neither, and every removed file is named in the result that follows the removal,
 // or, when a cancel or a host close stops that result, by a later result of the same process or as moved earlier by each later process while `git ls-files --deleted` lists it.
-// An index entry that Git keeps out of the work tree with its skip-worktree bit, such as a file a sparse checkout leaves out, never moves and is never reported.
+// Only an ordinary merged index entry, which `git ls-files -v` tags H, moves: an entry that Git keeps out of the work tree with its skip-worktree bit, such as a file a sparse checkout leaves out, never moves and is never reported,
+// and an entry with the assume-unchanged bit or an unmerged path stays in the checkout, named in no ledger, and is reported with its reason, since Git would neither show nor stage its removal the ordinary way.
+// While Git has a merge, rebase, am, cherry-pick, or revert in progress in the checkout, the whole move waits, and so does every removal of a decided move.
 const REFERENCE_FILES_MAX = 200;
 const REFERENCE_LINES_MAX = 20;
 const REFERENCE_BYTES_MAX = 4 * 1024 * 1024;
@@ -40,51 +42,103 @@ async function gitFiles(root, args, pathspecs = []) {
   return [...new Set(stdout.split("\0").filter(Boolean))].sort();
 }
 
+// The state of an index entry by its `git ls-files -v` tag: H an ordinary merged entry, the only one that the move takes, h one with the assume-unchanged bit,
+// S or s a skip-worktree entry, s when its assume-unchanged bit is also set, and M each stage of an unmerged path; any other tag is passed over as the move passes over a skip-worktree entry.
+const ENTRY_STATES = Object.freeze({ H: "ordinary", h: "assume_unchanged", S: "skipped", s: "skipped", M: "unmerged", m: "unmerged" });
+
+/** The index entries of a checkout by path, with their states as ENTRY_STATES names them, listed with `git ls-files -v` below the pathspecs, or the whole index without them. */
+async function indexStates(root, pathspecs = []) {
+  const states = new Map();
+  // Each entry of `git ls-files -v -z` is its tag, a space, and its path, so a path that holds a space or a line break is read whole; each stage of an unmerged path gives one entry.
+  for (const entry of await gitFiles(root, ["-v"], pathspecs)) {
+    const space = entry.indexOf(" ");
+    const file = entry.slice(space + 1);
+    const state = ENTRY_STATES[entry.slice(0, space)] ?? "skipped";
+    if (states.get(file) !== "unmerged") states.set(file, state);
+  }
+  return states;
+}
+
+const artifactPathspecs = (kinds) => kinds.kinds.map((entry) => `:(literal)${entry.path}`);
+
 /**
- * The checkout's files under its artifact paths as Git lists them: { tracked, candidates, deleted, untracked, ignored }, where tracked lists every tracked file of the checkout,
- * candidates the tracked ones under the artifact paths other than a skip-worktree entry, which `git ls-files -t` tags S and which Git keeps out of the work tree on purpose,
- * deleted holds the ones there that `git ls-files --deleted` lists, the index entries whose file the work tree lacks other than a skip-worktree entry,
- * untracked the untracked ones there that Git does not ignore, and ignored the number of ignored ones there; null when Git cannot list them.
+ * The checkout's files under its artifact paths as Git lists them: { tracked, candidates, deleted, assumed, unmerged, untracked, ignored }, where tracked lists every tracked file of the checkout,
+ * candidates the ordinary merged entries under the artifact paths, the only ones that the move takes, deleted holds the ones there that `git ls-files --deleted` lists, the candidates whose file the work tree lacks,
+ * assumed the entries there with the assume-unchanged bit, unmerged the unmerged paths there, each once, untracked the untracked files there that Git does not ignore, and ignored the number of ignored ones there;
+ * a skip-worktree entry, which Git keeps out of the work tree on purpose, is in none of these but tracked. Null when Git cannot list them.
  */
 async function checkoutListing(root, kinds) {
   const inArtifactPaths = (file) => {
     const address = artifactAddress(kinds, file);
     return address !== null && address.rest !== "";
   };
-  const pathspecs = kinds.kinds.map((entry) => `:(literal)${entry.path}`);
+  const pathspecs = artifactPathspecs(kinds);
   try {
-    // Each entry of `git ls-files -t` is its tag, a space, and its path.
-    const tagged = (await gitFiles(root, ["-t"])).map((entry) => ({ tag: entry.slice(0, entry.indexOf(" ")), file: entry.slice(entry.indexOf(" ") + 1) }));
-    const tracked = [...new Set(tagged.map((entry) => entry.file))].sort();
-    const skipped = new Set(tagged.filter((entry) => entry.tag === "S").map((entry) => entry.file));
-    const deleted = new Set((await gitFiles(root, ["--deleted"], pathspecs)).filter((file) => inArtifactPaths(file) && !skipped.has(file)));
+    const states = await indexStates(root);
+    const tracked = [...states.keys()].sort();
+    const inState = (state) => tracked.filter((file) => states.get(file) === state && inArtifactPaths(file));
+    const candidates = inState("ordinary");
+    const ordinary = new Set(candidates);
+    const deleted = new Set((await gitFiles(root, ["--deleted"], pathspecs)).filter((file) => ordinary.has(file)));
     const untracked = (await gitFiles(root, ["--others", "--exclude-standard"], pathspecs)).filter(inArtifactPaths);
     const ignored = (await gitFiles(root, ["--others", "--ignored", "--exclude-standard"], pathspecs)).filter(inArtifactPaths).length;
-    return { tracked, candidates: tracked.filter((file) => inArtifactPaths(file) && !skipped.has(file)), deleted, untracked, ignored };
+    return { tracked, candidates, deleted, assumed: inState("assume_unchanged"), unmerged: inState("unmerged"), untracked, ignored };
   } catch {
     return null;
   }
 }
 
-/** The files that Git tracks under a checkout's artifact paths and that its work tree holds as regular files, or null when Git cannot list them; it reads and runs nothing else. */
-export async function waitingArtifactFiles(root, kinds) {
-  const listing = await checkoutListing(root, kinds);
-  if (listing === null) return null;
+// The files that mark an operation in progress, in the order `git status` reads them, below the folder that `git rev-parse --git-path` locates for the checkout, a linked worktree's own included.
+const OPERATION_MARKERS = Object.freeze(["MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer/todo"]);
+const MARKER_READ_MAX = 64 * 1024;
+
+/**
+ * The operation that Git has in progress in the checkout, as `merge`, `rebase`, `am`, `cherry-pick`, or `revert`, or null when there is none:
+ * a `rebase-apply` folder holding `applying` is `git am`, and a sequencer's todo list without a cherry-pick or revert head names the operation by its first command.
+ * Throws when Git cannot locate the markers, so a caller that cannot tell moves and removes nothing.
+ */
+async function operationInProgress(root) {
+  const { stdout } = await run("git", ["-c", "core.fsmonitor=false", "-C", root, "rev-parse", ...OPERATION_MARKERS.flatMap((marker) => ["--git-path", marker])], { maxBuffer: LIST_BUFFER });
+  const located = stdout.split("\n").filter(Boolean);
+  if (located.length !== OPERATION_MARKERS.length) throw new Error("git rev-parse did not locate every marker");
+  const at = new Map(OPERATION_MARKERS.map((marker, index) => [marker, path.resolve(root, located[index])]));
+  const present = async (marker) => (await lstat(at.get(marker)).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; })) !== null;
+  if (await present("MERGE_HEAD")) return "merge";
+  if (await present("rebase-merge")) return "rebase";
+  if (await present("rebase-apply")) return await lstat(path.join(at.get("rebase-apply"), "applying")).then(() => "am", () => "rebase");
+  if (await present("CHERRY_PICK_HEAD")) return "cherry-pick";
+  if (await present("REVERT_HEAD")) return "revert";
+  if (await present("sequencer/todo")) {
+    const todo = (await fileBytes(path.dirname(at.get("sequencer/todo")), path.basename(at.get("sequencer/todo")), MARKER_READ_MAX).catch(() => null))?.toString("utf8") ?? "";
+    const first = todo.split("\n").map((line) => line.trim()).find((line) => line && !line.startsWith("#")) ?? "";
+    return /^revert\s/.test(first) ? "revert" : "cherry-pick";
+  }
+  return null;
+}
+
+// The files among the given ones that the checkout's work tree holds as regular files.
+async function heldFiles(root, files) {
   const held = [];
-  for (const file of listing.candidates) if ((await lstat(path.join(root, ...file.split("/"))).catch(() => null))?.isFile()) held.push(file);
+  for (const file of files) if ((await lstat(path.join(root, ...file.split("/"))).catch(() => null))?.isFile()) held.push(file);
   return held;
 }
 
+/** The ordinary tracked files under a checkout's artifact paths, the ones that a move takes, that its work tree holds as regular files, or null when Git cannot list them; it reads and runs nothing else. */
+export async function waitingArtifactFiles(root, kinds) {
+  const listing = await checkoutListing(root, kinds);
+  return listing === null ? null : heldFiles(root, listing.candidates);
+}
+
 /**
- * The files that Git tracks under a checkout's artifact paths and that its work tree holds, other than those that left says stay, sorted by what a move does with them: { waiting, kept } as counts,
- * or null when Git cannot list them. A file is kept when a ledger of the repository lists it as kept and none lists it as moved, unless every such ledger kept it as too_large or not_text
- * and it now holds at most 1 MiB of UTF-8 text; every other file waits for a move to decide on it. It reads the checkout and the store's ledgers, and writes nothing.
+ * The files that Git tracks under a checkout's artifact paths and that its work tree holds, other than a skip-worktree entry and those that left says stay, sorted by what a move does with them: { waiting, kept } as counts,
+ * or null when Git cannot list them. An assume-unchanged entry and an unmerged path are kept, whatever a ledger lists; an ordinary file is kept when a ledger of the repository lists it as kept and none lists it as moved,
+ * unless every such ledger kept it as too_large or not_text and it now holds at most 1 MiB of UTF-8 text; every other file waits for a move to decide on it. It reads the checkout and the store's ledgers, and writes nothing.
  */
 export async function checkoutArtifactsByMove(root, kinds, { store, repository, left = () => false }) {
-  const held = await waitingArtifactFiles(root, kinds);
-  if (held === null) return null;
-  const files = held.filter((file) => !left(file));
-  const counts = { waiting: 0, kept: 0 };
+  const listing = await checkoutListing(root, kinds);
+  if (listing === null) return null;
+  const files = (await heldFiles(root, listing.candidates)).filter((file) => !left(file));
+  const counts = { waiting: 0, kept: (await heldFiles(root, [...listing.assumed, ...listing.unmerged])).filter((file) => !left(file)).length };
   if (!files.length) return counts;
   const ledger = await ledgersOf(store, repository);
   const resolvable = new Set(["too_large", "not_text"]);
@@ -317,39 +371,64 @@ async function ledgersOf(storeBase, repository) {
  * it returns { pulled, state, outcome }, where outcome is what move returned, or null when another tool result carries it, and rejects with move's error.
  * What move returns, and what this returns, is a report, or a decided move whose store copies, status records, and ledger are written and whose finish({ proceed, writes }) removes the checkout's moved files and returns the report,
  * which the caller runs only right before it writes a tool result that carries the report, as finishedMove says.
- * The report is null when there is nothing to report, else { repository, store, moved, earlier, kept, untracked, ignored, references, moreReferences, ledger },
- * or { repository, store, deferred } when the pull did not complete, or { repository, store, unlisted: true } when Git cannot list the checkout's files:
- * moved lists { from, to } from checkout path to location below artifacts/, earlier lists the files moved earlier in the same form, kept lists { path, reason, location?, other?, size? }, untracked lists checkout paths,
+ * The report is null when there is nothing to report, else { repository, store, moved, earlier, kept, passed, untracked, ignored, references, moreReferences, ledger },
+ * or { repository, store, deferred } when the pull did not complete, { repository, store, operation } while Git has the named operation in progress in the checkout, so the whole move waits,
+ * or { repository, store, unlisted: true } when Git cannot list the checkout's files:
+ * moved lists { from, to } from checkout path to location below artifacts/, earlier lists the files moved earlier in the same form, kept lists { path, reason, location?, other?, size? },
+ * passed lists the assume-unchanged entries and unmerged paths that the report names, as { path, reason } with reason assume_unchanged or unmerged, which no ledger names, untracked lists checkout paths,
  * references lists { file, lines, more }, and ledger names the ledger file the move wrote, or null; retry: true says that the ledger could not confirm some moves, whose files stay for a later move.
  */
 export async function migrateArtifacts({ root, kinds, store, repository, pull = null, named = null, prepare }) {
   const listing = await checkoutListing(root, kinds);
   if (listing === null) return await holdsArtifactPaths(root, kinds) ? { repository, store, unlisted: true } : null;
-  const report = (listing, outcome) => ({ repository, store, untracked: listing.untracked, ignored: listing.ignored, references: [], moreReferences: 0, moved: [], earlier: [], kept: [], ledger: null, ...outcome });
-  const quiet = (listing) => listing.untracked.length || listing.ignored ? report(listing, {}) : null;
+  const report = (listing, outcome) => ({ repository, store, untracked: listing.untracked, ignored: listing.ignored, references: [], moreReferences: 0, moved: [], earlier: [], kept: [], passed: [], ledger: null, ...outcome });
+  const quiet = (listing, passed = []) => passed.length || listing.untracked.length || listing.ignored ? report(listing, { passed }) : null;
   const decide = async (listing, { seen, recordSources, frozenTests }) => {
-    const files = listing.candidates.filter((file) => !recordSources.has(file) && !frozenTests.has(file));
-    if (!files.length) return quiet(listing);
+    const left = (file) => recordSources.has(file) || frozenTests.has(file);
+    const files = listing.candidates.filter((file) => !left(file));
+    const passed = await passedOver(seen, listing, left);
+    if (!files.length) return quiet(listing, passed);
     const { earlier, lacking } = await movedEarlier(seen, files, listing.deleted, named);
     const present = files.filter((file) => !lacking.has(file));
-    if (!present.length && !earlier.length) return quiet(listing);
+    if (!present.length && !earlier.length) return quiet(listing, passed);
     // Files moved earlier are only reported, so a move that has nothing else to take writes nothing and takes no lock.
     const decided = present.length ? await withArtifactStoreLock(seen, () => moveIntoStore(seen, present), MOVE_LOCK) : { moved: [], kept: [], ledger: null, real: await realpath(root) };
-    return { finish: (options) => finishMove(seen, listing, { ...decided, earlier }, report, { ...options, named }) };
+    return { finish: (options) => finishMove(seen, listing, { ...decided, earlier, passed }, report, { ...options, named }) };
   };
-  if (!listing.candidates.length) return quiet(listing);
+  const decides = (listing) => listing.candidates.length || listing.assumed.length || listing.unmerged.length;
+  if (!decides(listing)) return quiet(listing);
+  // While Git has an operation in progress, the work tree holds bytes that no commit holds yet and the operation's next commit takes every staged change, so the whole move waits, before any pull.
+  const waiting = await waitsFor(root);
+  if (waiting === undefined) return { repository, store, unlisted: true };
+  if (waiting) return { repository, store, operation: waiting };
   // A pull runs only when some file's decision reads the store, so files that every move keeps or passes over never make an access wait for the remote.
   if (pull && await anyDependsOnStore(root, kinds, repository, listing.candidates)) {
     // The move runs right after the pull that pull completes, and lists the checkout again, since a retry's pull can end long after this access.
     const pulled = await pull(async () => {
       const fresh = await checkoutListing(root, kinds);
       if (fresh === null) return { repository, store, unlisted: true };
-      return fresh.candidates.length ? decide(fresh, await prepare({ pulled: true })) : quiet(fresh);
+      return decides(fresh) ? decide(fresh, await prepare({ pulled: true })) : quiet(fresh);
     });
     if (!pulled.pulled) return { repository, store, deferred: { state: pulled.state } };
     return pulled.outcome;
   }
   return decide(listing, await prepare({ pulled: false }));
+}
+
+// The operation that the checkout has in progress, null for none, or undefined when Git cannot tell.
+const waitsFor = (root) => operationInProgress(root).catch(() => undefined);
+
+/**
+ * The assume-unchanged entries and unmerged paths under the checkout's artifact paths, other than those that left says stay, that the report names, as { path, reason }:
+ * each whose work tree holds a file at its path, or that a ledger of the repository lists as moved, an unmerged path once whatever its stages; nothing is written for any of them.
+ */
+async function passedOver(seen, listing, left) {
+  const entries = [...listing.assumed.map((file) => ({ path: file, reason: "assume_unchanged" })), ...listing.unmerged.map((file) => ({ path: file, reason: "unmerged" }))].filter((entry) => !left(entry.path));
+  if (!entries.length) return [];
+  const lacking = new Set();
+  await withCheckoutFiles(seen.root, async (access) => { for (const entry of entries) if (await access.lacks(entry.path)) lacking.add(entry.path); });
+  const ledger = lacking.size ? await readLedgers(seen) : null;
+  return entries.filter((entry) => !lacking.has(entry.path) || ledger.movedFrom.has(entry.path)).sort(byPath);
 }
 
 /**
@@ -385,6 +464,7 @@ export const unfinishedMove = (outcome) => typeof outcome?.finish === "function"
  * The report of what a move returned: a decided move is finished first, which removes its checkout files; run it only right before writing the tool result that carries the report.
  * proceed() says whether that result is still to be written, and the finish stops removing files once it says no, returning { interrupted: true }, so the move can be finished again later,
  * which reports a file already removed as moved; writes maps each store file that an update_artifact of the same tool call wrote to the versions it wrote there.
+ * While Git has an operation in progress in the checkout, the finish removes nothing and returns { pending }, the report that the move waits for it, and the move is finished again before a later result.
  */
 export async function finishedMove(outcome, { proceed = () => true, writes = null } = {}) {
   return unfinishedMove(outcome) ? outcome.finish({ proceed, writes }) : outcome;
@@ -573,8 +653,16 @@ async function writeLedger(seen, ledger, moved, kept) {
  * A moved file that the work tree no longer holds, such as one that an interrupted finish removed, is reported as moved whenever its store location holds a file, whatever bytes it holds.
  * The references are found before the first removal, so the result follows the removals as closely as it can; each removed file and each file moved earlier is added to named.
  * A move whose tool call was refused or cancelled, or that a retry ran in the background, is finished by a later tool call whose result reports it, so a process that ends first leaves every file in the checkout for a later move.
+ * A moved file goes, or is reported as moved or moved earlier, only while its index entry is still an ordinary merged one: an assume-unchanged entry or an unmerged path stays and is reported with its reason,
+ * a skip-worktree entry stays unreported, and a file that Git no longer tracks stays as untracked; while Git has an operation in progress, nothing is removed and the finish returns { pending }.
  */
 async function finishMove(seen, listing, decided, report, { proceed = () => true, writes = null, named = null } = {}) {
+  const passed = [...(decided.passed ?? [])], untracked = [...listing.untracked];
+  const waiting = await waitsFor(seen.root);
+  if (waiting) {
+    const { repository, store } = report(listing, {});
+    return { pending: { repository, store, operation: waiting, finishing: true } };
+  }
   const ledgered = decided.moved.length ? await ledgerMoves(seen, decided.ledger) : null;
   const checked = [], stayed = [];
   let retry = false;
@@ -587,38 +675,57 @@ async function finishMove(seen, listing, decided, report, { proceed = () => true
     checked.push({ move, stored, confirmed: stored === move.version || Boolean(stored?.updated) });
   }
   const stayFor = ({ move, stored }) => stay(move, stored === null ? "removed_in_store" : "differs");
+  const unique = (entries) => [...new Map(entries.map((entry) => [entry.path, entry])).values()].sort(byPath);
+  const done = (outcome) => report(listing, { untracked: [...new Set(untracked)].sort(), ...outcome, passed: unique(passed) });
+  // Git's index as it is now decides which moved files may still go; a checkout whose index Git cannot read, or whose operation Git cannot tell, keeps every file for a later move.
+  const states = waiting === null ? await indexStates(seen.root, artifactPathspecs(seen.kinds)).catch(() => null) : null;
   // A checkout whose root resolves elsewhere than where the decision read its files keeps every file, which a later move decides again against the store.
-  if (await realpath(seen.root).catch(() => null) !== decided.real) {
+  if (states === null || await realpath(seen.root).catch(() => null) !== decided.real) {
     for (const entry of checked) if (!entry.confirmed) stayFor(entry);
-    return report(listing, { kept: [...decided.kept, ...stayed].sort(byPath), ledger: decided.ledger, retry: true });
+    return done({ kept: [...decided.kept, ...stayed].sort(byPath), ledger: decided.ledger, retry: true });
   }
   return withCheckoutFiles(seen.root, async (access) => {
+    // A moved file whose entry stopped being one that the move takes stays as its entry's state says, and so is never removed, reported as moved, or reported as differing.
+    const taken = async (file) => {
+      const state = states.get(file);
+      if (state === "ordinary") return true;
+      if (state === "assume_unchanged" || state === "unmerged") passed.push({ path: file, reason: state });
+      else if (state === undefined && !await access.lacks(file)) untracked.push(file);
+      return state === undefined && await access.lacks(file);
+    };
     const removing = [];
     for (const entry of checked) {
+      if (!await taken(entry.move.from)) continue;
       if (entry.confirmed || (entry.stored !== null && await access.lacks(entry.move.from) && await storeHolds(seen, entry.move.to))) removing.push(entry.move);
       else stayFor(entry);
     }
-    const earlier = decided.earlier ?? [];
+    // A file moved earlier is reported only while its entry is still an ordinary one whose removal Git's ordinary staging takes.
+    const earlier = [];
+    for (const item of decided.earlier ?? []) {
+      const state = states.get(item.from);
+      if (state === "ordinary") earlier.push(item);
+      else if (state === "assume_unchanged" || state === "unmerged") passed.push({ path: item.from, reason: state });
+    }
     const formerPaths = (moves) => [...moves.map((move) => move.from), ...earlier.map((item) => item.from)];
     const leaving = new Set(removing.map((move) => move.from));
     let found = await referencesOf(access, seen.kinds, listing.tracked.filter((file) => !leaving.has(file)), formerPaths(removing));
-    const done = [];
+    const left = [];
     for (const move of removing) {
       // A result that will not be written, such as one that the host cancelled meanwhile, removes nothing more, and the move is finished again before a later result.
       if (!proceed()) return { interrupted: true };
       // A file already gone left the checkout, and the store holds it.
       if (await access.remove(move.from, move) === "changed") stay(move, "differs");
-      else { done.push(move); named?.add(move.from); }
+      else { left.push(move); named?.add(move.from); }
     }
-    const removed = done.map((move) => move.from);
+    const removed = left.map((move) => move.from);
     // A file that changed during the finish stays in the checkout, so the references are found again for the files that left.
-    if (done.length !== removing.length) {
+    if (left.length !== removing.length) {
       const gone = new Set(removed);
-      found = await referencesOf(access, seen.kinds, listing.tracked.filter((file) => !gone.has(file)), formerPaths(done));
+      found = await referencesOf(access, seen.kinds, listing.tracked.filter((file) => !gone.has(file)), formerPaths(left));
     }
     await pruneCheckoutFolders(access, seen.kinds, removed);
     for (const item of earlier) named?.add(item.from);
-    return report(listing, { moved: done.map(({ from, to }) => ({ from, to })), earlier: earlier.map(({ from, to }) => ({ from, to })), kept: [...decided.kept, ...stayed].sort(byPath), references: found.references, moreReferences: found.moreReferences, ledger: decided.ledger, ...(retry ? { retry } : {}) });
+    return done({ moved: left.map(({ from, to }) => ({ from, to })), earlier: earlier.map(({ from, to }) => ({ from, to })), kept: [...decided.kept, ...stayed].sort(byPath), references: found.references, moreReferences: found.moreReferences, ledger: decided.ledger, ...(retry ? { retry } : {}) });
   }, decided.real);
 }
 
@@ -722,6 +829,8 @@ export function keptExplanation(entry) {
     case "too_large": return `it holds ${entry.size} bytes, above the ${ARTIFACT_CONTENT_MAX} bytes (1 MiB) that an artifact may hold, so the store does not take it; keep it in the checkout, or make it smaller and commit it for a later first access to move`;
     case "not_text": return "it is not UTF-8 text, which the artifact tools read and write, so the store does not take it; keep it in the checkout";
     case "view_differs": return `it differs from the roadmap view at ${where} that the store generates from the roadmap record; put content that the roadmap record lacks into the record through update_roadmap before a person removes the file`;
+    case "assume_unchanged": return "its index entry has Git's assume-unchanged bit, so Git neither shows nor stages a change or a removal at its path and the store does not take it; git update-index --no-assume-unchanged on its path clears the bit, after which a later session's move decides it, or reports it as moved earlier when the checkout lacks it";
+    case "unmerged": return "Git's index holds it unmerged, in the stages of a conflict that a merge, rebase, git am, cherry-pick, revert, or git stash pop stopped on, so its file may hold conflict markers and the store does not take it; a person resolves the conflict and stages the result with git add, or ends the operation, after which a later session's move decides it";
     case "no_roadmap_record": return "the store holds no valid roadmap record to generate the view from; put content that a roadmap record needs into the record through update_roadmap before a person removes the file";
     default: return entry.reason;
   }

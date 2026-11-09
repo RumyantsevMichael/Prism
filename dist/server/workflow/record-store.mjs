@@ -584,7 +584,8 @@ function migrateArtifactsOnce(root, store, config) {
   artifactMigrations.set(key, pending);
   const forget = () => { if (artifactMigrations.get(key) === pending) artifactMigrations.delete(key); };
   pending.then((outcome) => {
-    if (outcome?.deferred) forget();
+    // A move that waits for a pull, or for an operation that Git has in progress in the checkout, is tried again by the next tool call of the checkout.
+    if (outcome?.deferred || outcome?.operation) forget();
     else deferredMoves.delete(key);
     // Moves that the ledger could not confirm wait for a later access to move again.
     if (outcome?.retry) artifactMigrations.delete(key);
@@ -626,8 +627,8 @@ async function pullThenMove(root, store, key, move) {
     deferred.retry = pullAndMove(store, move).then((result) => {
       deferred.retry = null;
       if (!result.pulled) { deferred.state = result.state; return result; }
-      // A move that failed is tried again by the next access, with a pull of its own.
-      if (result.error) return result;
+      // A move that failed, or that found an operation in progress in the checkout, is tried again by the next access, with a pull of its own.
+      if (result.error || result.outcome?.operation) return result;
       if (deferredMoves.get(key) === deferred) {
         deferredMoves.delete(key);
         artifactMigrations.set(key, MOVED);
@@ -664,6 +665,12 @@ export async function finishUnfinishedMoves(roots, { proceed = () => true, write
     try { outcome = await finishedMove(handoff.outcome, { proceed, writes }); }
     catch { artifactMigrations.delete(handoff.key); continue; }
     if (outcome?.interrupted) { unfinishedMoves.unshift(handoff); return; }
+    // While Git has an operation in progress in the checkout, the move removes nothing: its result says that the move waits, and a later result finishes it.
+    if (outcome?.pending) {
+      unfinishedMoves.splice(Math.min(index, unfinishedMoves.length), 0, handoff);
+      unreportedMoves.push({ root: handoff.root, store: handoff.store, moved: [], conflicts: [], artifacts: outcome.pending });
+      continue;
+    }
     if (outcome?.retry) artifactMigrations.delete(handoff.key);
     if (outcome) unreportedMoves.push({ root: handoff.root, store: handoff.store, moved: [], conflicts: [], artifacts: outcome });
   }
