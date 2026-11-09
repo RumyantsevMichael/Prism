@@ -558,6 +558,8 @@ const MOVED = Promise.resolve(null);
 // The checkout's files stay until a tool call of the checkout finishes the move right before it writes its result, removing them and reporting the move in that result,
 // so a refused or cancelled call, or one answered after the host closed input, leaves its move to the next result that is written.
 const unfinishedMoves = [];
+// The checkout paths that this process's results name as moved, by checkout and store, so a file moved earlier is reported once in each process and never beside its own move.
+const namedMoves = new Map();
 function migrateArtifactsOnce(root, store, config) {
   const key = `${root}\0${store.base}`;
   if (artifactMigrations.has(key)) return artifactMigrations.get(key).then(() => null);
@@ -565,6 +567,7 @@ function migrateArtifactsOnce(root, store, config) {
     const { migrateArtifacts } = await import("./artifact-migration.mjs");
     return migrateArtifacts({
       root, kinds: artifactKinds(config), store: store.base, repository: store.repository,
+      named: namedMoves.get(key) ?? namedMoves.set(key, new Set()).get(key),
       // With store sync on, the move decides against the store as its own pull left it, so it reads what other machines pushed.
       pull: store.sync ? (move) => pullThenMove(root, store, key, move) : null,
       prepare: async ({ pulled }) => {
@@ -788,6 +791,7 @@ export function forgetMigrations() {
   artifactMigrations.clear();
   deferredMoves.clear();
   unfinishedMoves.length = 0;
+  namedMoves.clear();
   pendingMoves.clear();
   nameChecks.clear();
 }

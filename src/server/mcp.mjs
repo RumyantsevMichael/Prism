@@ -1170,12 +1170,14 @@ function artifactMoveNote(move) {
   if (move.kept.length) sections.push({ header: `Prism kept ${plural(move.kept.length, "tracked file")} under the artifact paths in the checkout, where ${move.kept.length === 1 ? "it stays" : "they stay"} until a person settles ${move.kept.length === 1 ? "it" : "each"}:`, entries: move.kept.map((item) => `- ${shownPath(item.path)} (${item.reason}): ${keptExplanation(item)}.`) });
   if (move.untracked.length) sections.push({ header: `${plural(move.untracked.length, "file")} under the artifact paths ${move.untracked.length === 1 ? "is" : "are"} not tracked by Git, so ${move.untracked.length === 1 ? "it stays" : "they stay"} in the checkout and no ledger names ${them(move.untracked.length)}; a person commits such a file for a later first access to move it, or writes it into the store with update_artifact:`, entries: move.untracked.map((file) => `- ${shownPath(file)} (untracked)`) });
   if (move.moved.length) sections.push({ header: `Prism moved ${plural(move.moved.length, "descriptive file")} of this checkout into the record store at ${store}, scope ${shownPath(move.repository)}, and removed ${them(move.moved.length)} from the checkout; read and change ${them(move.moved.length)} with get_artifact and update_artifact by the same paths, and commit the removal on its own, apart from the task's changes.`, entries: move.moved.map((item) => `- ${shownPath(item.from)} -> ${shownPath(`artifacts/${item.to}`)}`) });
+  const earlier = move.earlier ?? [];
+  if (earlier.length) sections.push({ header: `Prism moved ${plural(earlier.length, "descriptive file")} of this checkout into the record store at ${store}, scope ${shownPath(move.repository)}, earlier and removed ${them(earlier.length)} from the checkout, and Git's index still lists ${them(earlier.length)}; read and change ${them(earlier.length)} with get_artifact and update_artifact by the same paths, and commit the removal on its own, apart from the task's changes, since each later session reports ${them(earlier.length)} again until a person stages or commits the removal.`, entries: earlier.map((item) => `- ${shownPath(item.from)} -> ${shownPath(`artifacts/${item.to}`)}`) });
   const fixed = move.ignored ? [`${plural(move.ignored, "ignored file")} under the artifact paths ${move.ignored === 1 ? "stays" : "stay"} in the checkout: Git ignores ${them(move.ignored)}, so Prism neither moves nor names ${them(move.ignored)}.`] : [];
   if (move.references.length) {
     const total = move.references.length + move.moreReferences;
     const entries = move.references.map((item) => `- ${shownPath(item.file)}:${item.lines.join(",")}${item.more ? ` and ${item.more} more ${item.more === 1 ? "line" : "lines"}` : ""}`);
     if (move.moreReferences) entries.push(`- and ${plural(move.moreReferences, "more file")}`);
-    sections.push({ header: `${plural(total, "tracked file")} in the checkout still ${total === 1 ? "names" : "name"} a moved file's former path or a configured folder that lost files, by line; the configured paths stay the artifacts' addresses, so update only text that tells readers to open these files in the checkout:`, entries });
+    sections.push({ header: `${plural(total, "tracked file")} in the checkout still ${total === 1 ? "names" : "name"} the former path of a file moved now or earlier, or a configured folder that lost files, by line; the configured paths stay the artifacts' addresses, so update only text that tells readers to open these files in the checkout:`, entries });
   }
   if (!sections.length && !fixed.length) return null;
   const ledger = move.ledger ? ` and the ledger ${shownPath(`${ARTIFACT_MIGRATIONS}/${move.ledger}`)} in the record store at ${store} lists every move and kept file` : "";
@@ -1204,14 +1206,26 @@ function artifactMoveNote(move) {
 async function withRecordNotes(value, argumentsValue, call, proceed = () => true) {
   const none = { value, written: async () => {}, unwritten: () => {} };
   if (!Array.isArray(value?.content)) return none;
-  // A decided move, the call's own or one that a refused, cancelled, or background call left, removes the checkout's files only here, right before a result of a tool call of the checkout is written,
-  // so the result that follows names every file it removed; a refused or cancelled call never gets here and removes nothing.
-  await finishUnfinishedMoves(call.roots, { proceed, writes: call.writes }).catch(() => {});
-  const reports = takeMigrationReports(call.roots);
+  // The other notes are taken first, so the move's removals come as close as they can before the result is written.
   const taken = await takeSavedConflicts().catch(() => []);
   const saved = taken.filter((item) => item.record);
   const artifacts = taken.filter((item) => item.location);
   const files = taken.filter((item) => item.file);
+  const conflictLines = [];
+  if (saved.length) {
+    conflictLines.push(`Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, ...saved.map((item) => `- ${item.record} (this machine's version: ${item.savedAs})`));
+  }
+  if (artifacts.length) {
+    conflictLines.push(`Store sync found ${plural(artifacts.length, "artifact")} whose same lines someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`);
+    for (const item of artifacts) conflictLines.push(await savedArtifactLine(item, argumentsValue));
+  }
+  if (files.length) {
+    conflictLines.push(`Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, ...files.map((item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})`));
+  }
+  // A decided move, the call's own or one that a refused, cancelled, or background call left, removes the checkout's files only here, right before a result of a tool call of the checkout is written,
+  // so the result that follows names every file it removed; a refused or cancelled call never gets here and removes nothing.
+  await finishUnfinishedMoves(call.roots, { proceed, writes: call.writes }).catch(() => {});
+  const reports = takeMigrationReports(call.roots);
   if (!reports.length && !taken.length) return none;
   const lines = [];
   // Each move of a checkout's artifacts is a text item of its own, after the other notes, so its bound and its closing line are its own.
@@ -1226,16 +1240,7 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
     }
     if (report.conflicts.length) lines.push(`${report.conflicts.length} old files were kept because ${kept} already holds a different record: ${report.conflicts.map((move) => move.from).join(", ")}.`);
   }
-  if (saved.length) {
-    lines.push(`Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, ...saved.map((item) => `- ${item.record} (this machine's version: ${item.savedAs})`));
-  }
-  if (artifacts.length) {
-    lines.push(`Store sync found ${plural(artifacts.length, "artifact")} whose same lines someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`);
-    for (const item of artifacts) lines.push(await savedArtifactLine(item, argumentsValue));
-  }
-  if (files.length) {
-    lines.push(`Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, ...files.map((item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})`));
-  }
+  lines.push(...conflictLines);
   return {
     value: { ...value, content: [...value.content, ...(lines.length ? [{ type: "text", text: lines.join("\n") }] : []), ...moveNotes.map((text) => ({ type: "text", text }))] },
     written: () => confirmSavedConflicts(taken).catch(() => {}),

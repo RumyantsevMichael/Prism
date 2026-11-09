@@ -16,7 +16,8 @@ import { roadmapPaths } from "./workflow-config.mjs";
 
 // On a checkout's first access to its store, the files Git tracks under its artifact paths move into its repository's scope once, and every file the move cannot take stays where it is.
 // The move writes the store and its ledger first and removes a checkout file only then, right before a tool result that reports the removal is written, and only while it holds the bytes the store took,
-// so an interruption leaves a file in both places rather than in neither, and every removed file is named in the result that follows the removal.
+// so an interruption leaves a file in both places rather than in neither, and every removed file is named in the result that follows the removal,
+// or, when a cancel or a host close stops that result, by a later result of the same process or as moved earlier by each later process while the checkout's index lists it.
 const REFERENCE_FILES_MAX = 200;
 const REFERENCE_LINES_MAX = 20;
 const REFERENCE_BYTES_MAX = 4 * 1024 * 1024;
@@ -152,7 +153,8 @@ const unchangedFile = (left, right) => sameFile(left, right) && left.size === ri
  * Given the real root of an earlier access, such as the decision of the move whose files it removes, it resolves every path below that real root, and while the checkout's root resolves elsewhere,
  * such as after the root or a folder above it was swapped for a link, it finds every file outside the checkout, so it never reads or removes a file of another tree.
  * read returns { size, bytes } with bytes null above max, or null when the file is gone, is no regular file, or does not lie inside the checkout through real folders;
- * remove returns "removed", "gone" when it already left its folder, or "changed" when it holds other bytes, is no regular file, or does not lie inside the checkout through real folders.
+ * remove returns "removed", "gone" when it already left its folder, or "changed" when it holds other bytes, is no regular file, or does not lie inside the checkout through real folders;
+ * lacks(file) says whether the work tree holds nothing at the file's path while the checkout's root still resolves to the real root.
  */
 async function checkoutFiles(root, decided = null) {
   const real = decided ?? await realpath(root);
@@ -248,6 +250,14 @@ async function checkoutFiles(root, decided = null) {
         return "removed";
       } finally { await found.handle.close(); }
     },
+    async lacks(file) {
+      const { folder, name } = parts(file);
+      const prefix = await placed(folder);
+      if (prefix === null) return false;
+      if (prefix === "gone") return true;
+      const entry = await lstat(`${prefix}/${name}`).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; });
+      return entry === null && await absent() === "gone";
+    },
     async removeFolder(folder) {
       const { folder: parent, name } = parts(folder);
       const prefix = await placed(parent);
@@ -264,12 +274,12 @@ async function withCheckoutFiles(root, action, real = null) {
   try { return await action(access); } finally { await access.close(); }
 }
 
-// The ledgers of earlier moves of the repository: the locations each moved into the store and the checkout paths each moved from, and the files each kept with their reasons.
+// The ledgers of earlier moves of the repository: the locations each moved into the store, the checkout paths each moved from with the location that the latest such ledger gives, and the files each kept with their reasons.
 const readLedgers = (seen) => ledgersOf(seen.store.base, seen.repository);
 
 async function ledgersOf(storeBase, repository) {
   const folder = path.join(storeBase, ARTIFACT_MIGRATIONS);
-  const ledger = { moved: new Set(), movedFrom: new Set(), kept: new Set(), keptFor: new Map() };
+  const ledger = { moved: new Set(), movedFrom: new Set(), movedTo: new Map(), kept: new Set(), keptFor: new Map() };
   let names = [];
   try { names = (await readdir(folder)).filter((name) => name.endsWith(".json")).sort(); }
   catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
@@ -281,6 +291,7 @@ async function ledgersOf(storeBase, repository) {
     for (const move of Array.isArray(entry.moved) ? entry.moved : []) {
       if (typeof move?.to === "string") ledger.moved.add(move.to);
       if (typeof move?.from === "string") ledger.movedFrom.add(move.from);
+      if (typeof move?.from === "string" && typeof move?.to === "string") ledger.movedTo.set(move.from, move.to);
     }
     for (const kept of Array.isArray(entry.kept) ? entry.kept : []) {
       if (typeof kept?.path !== "string") continue;
@@ -293,28 +304,32 @@ async function ledgersOf(storeBase, repository) {
 
 /**
  * Move a checkout's tracked files under its artifact paths into its repository's scope.
- * The caller gives the checkout's root and artifact kinds, the store's folder and the repository's accepted name, pull, or null without sync,
+ * The caller gives the checkout's root and artifact kinds, the store's folder and the repository's accepted name, pull, or null without sync, named, the set of the checkout's paths that the server process's results name as moved,
  * and prepare({ pulled }), which returns { seen, recordSources, frozenTests }: the scopes the checkout sees, the record files that the record move takes,
  * and the frozen tests of accepted designs, which all stay in the checkout; pulled says that prepare runs right after a pull, while the store's sync lock is held.
  * pull(move) completes a pull of a synced store and, while it still holds the store's sync lock, runs move, so the move decides against no older pull;
  * it returns { pulled, state, outcome }, where outcome is what move returned, or null when another tool result carries it, and rejects with move's error.
  * What move returns, and what this returns, is a report, or a decided move whose store copies, status records, and ledger are written and whose finish({ proceed, writes }) removes the checkout's moved files and returns the report,
  * which the caller runs only right before it writes a tool result that carries the report, as finishedMove says.
- * The report is null when there is nothing to report, else { repository, store, moved, kept, untracked, ignored, references, moreReferences, ledger },
+ * The report is null when there is nothing to report, else { repository, store, moved, earlier, kept, untracked, ignored, references, moreReferences, ledger },
  * or { repository, store, deferred } when the pull did not complete, or { repository, store, unlisted: true } when Git cannot list the checkout's files:
- * moved lists { from, to } from checkout path to location below artifacts/, kept lists { path, reason, location?, other?, size? }, untracked lists checkout paths,
+ * moved lists { from, to } from checkout path to location below artifacts/, earlier lists the files moved earlier in the same form, kept lists { path, reason, location?, other?, size? }, untracked lists checkout paths,
  * references lists { file, lines, more }, and ledger names the ledger file the move wrote, or null; retry: true says that the ledger could not confirm some moves, whose files stay for a later move.
  */
-export async function migrateArtifacts({ root, kinds, store, repository, pull = null, prepare }) {
+export async function migrateArtifacts({ root, kinds, store, repository, pull = null, named = null, prepare }) {
   const listing = await checkoutListing(root, kinds);
   if (listing === null) return await holdsArtifactPaths(root, kinds) ? { repository, store, unlisted: true } : null;
-  const report = (listing, outcome) => ({ repository, store, untracked: listing.untracked, ignored: listing.ignored, references: [], moreReferences: 0, moved: [], kept: [], ledger: null, ...outcome });
+  const report = (listing, outcome) => ({ repository, store, untracked: listing.untracked, ignored: listing.ignored, references: [], moreReferences: 0, moved: [], earlier: [], kept: [], ledger: null, ...outcome });
   const quiet = (listing) => listing.untracked.length || listing.ignored ? report(listing, {}) : null;
   const decide = async (listing, { seen, recordSources, frozenTests }) => {
     const files = listing.candidates.filter((file) => !recordSources.has(file) && !frozenTests.has(file));
     if (!files.length) return quiet(listing);
-    const decided = await withArtifactStoreLock(seen, () => moveIntoStore(seen, files), MOVE_LOCK);
-    return { finish: (options) => finishMove(seen, listing, decided, report, options) };
+    const { earlier, lacking } = await movedEarlier(seen, files, named);
+    const present = files.filter((file) => !lacking.has(file));
+    if (!present.length && !earlier.length) return quiet(listing);
+    // Files moved earlier are only reported, so a move that has nothing else to take writes nothing and takes no lock.
+    const decided = present.length ? await withArtifactStoreLock(seen, () => moveIntoStore(seen, present), MOVE_LOCK) : { moved: [], kept: [], ledger: null, real: await realpath(root) };
+    return { finish: (options) => finishMove(seen, listing, { ...decided, earlier }, report, { ...options, named }) };
   };
   if (!listing.candidates.length) return quiet(listing);
   // A pull runs only when some file's decision reads the store, so files that every move keeps or passes over never make an access wait for the remote.
@@ -329,6 +344,30 @@ export async function migrateArtifacts({ root, kinds, store, repository, pull = 
     return pulled.outcome;
   }
   return decide(listing, await prepare({ pulled: false }));
+}
+
+/**
+ * The files moved earlier among a checkout's tracked files: those that the work tree lacks, that a ledger of the repository lists as moved, and whose store location holds a file,
+ * other than those that named says a result of this server process names as moved, as { earlier, lacking }, where earlier lists { from, to } and lacking holds every file that the work tree lacks.
+ * A removal that a cancel or a host close kept out of every result is named this way by a later process, for as long as the checkout's index lists the file; nothing is written or removed for it.
+ */
+async function movedEarlier(seen, files, named) {
+  const lacking = new Set();
+  await withCheckoutFiles(seen.root, async (access) => { for (const file of files) if (await access.lacks(file)) lacking.add(file); });
+  const earlier = [];
+  if (!lacking.size) return { earlier, lacking };
+  const ledger = await readLedgers(seen);
+  for (const file of lacking) {
+    const to = ledger.movedTo.get(file);
+    if (to !== undefined && !named?.has(file) && await storeHolds(seen, to)) earlier.push({ from: file, to });
+  }
+  return { earlier, lacking };
+}
+
+// Whether the store's location below artifacts/ holds a regular file, whatever bytes it holds.
+async function storeHolds(seen, location) {
+  try { return (await lstat(await resolveArtifactFile(seen, location)).catch(() => null))?.isFile() ?? false; }
+  catch { return false; }
 }
 
 /** Whether what a move returned is a decided move that still removes its checkout files. */
@@ -523,11 +562,13 @@ async function writeLedger(seen, ledger, moved, kept) {
  * Finish a move whose store copies, status records, and ledger are written, right before a tool result that reports it is written: a moved checkout file goes only when the move's ledger names its move
  * and its store location still holds the bytes the store took, or bytes that an update_artifact of the finishing tool call wrote there, and only while the checkout file still holds the bytes the store took
  * and lies inside the checkout through real folders; a file that changed meanwhile keeps its new bytes in the checkout, beside the store's copy of the earlier ones.
+ * A moved file that the work tree no longer holds, such as one that an interrupted finish removed, is reported as moved whenever its store location holds a file, whatever bytes it holds.
+ * The references are found before the first removal, so the result follows the removals as closely as it can; each removed file and each file moved earlier is added to named.
  * A move whose tool call was refused or cancelled, or that a retry ran in the background, is finished by a later tool call whose result reports it, so a process that ends first leaves every file in the checkout for a later move.
  */
-async function finishMove(seen, listing, decided, report, { proceed = () => true, writes = null } = {}) {
-  const ledgered = await ledgerMoves(seen, decided.ledger);
-  const confirmed = [], stayed = [];
+async function finishMove(seen, listing, decided, report, { proceed = () => true, writes = null, named = null } = {}) {
+  const ledgered = decided.moved.length ? await ledgerMoves(seen, decided.ledger) : null;
+  const checked = [], stayed = [];
   let retry = false;
   const roadmapLocation = artifactLocation(WORKSPACE_SCOPE, { kind: "roadmap", rest: null });
   const stay = (move, reason) => stayed.push({ path: move.from, reason: move.to === roadmapLocation ? "view_differs" : reason, location: move.to });
@@ -535,27 +576,41 @@ async function finishMove(seen, listing, decided, report, { proceed = () => true
     // A move that no ledger confirms is decided again by a later move, so its file stays in the checkout without a report.
     if (!ledgered?.has(`${move.from}\0${move.to}`)) { retry = true; continue; }
     const stored = await storedVersion(seen, move.to, move.size, writes).catch(() => "other");
-    if (stored === move.version || stored?.updated) confirmed.push(move);
-    else stay(move, stored === null ? "removed_in_store" : "differs");
+    checked.push({ move, stored, confirmed: stored === move.version || Boolean(stored?.updated) });
   }
+  const stayFor = ({ move, stored }) => stay(move, stored === null ? "removed_in_store" : "differs");
   // A checkout whose root resolves elsewhere than where the decision read its files keeps every file, which a later move decides again against the store.
   if (await realpath(seen.root).catch(() => null) !== decided.real) {
+    for (const entry of checked) if (!entry.confirmed) stayFor(entry);
     return report(listing, { kept: [...decided.kept, ...stayed].sort(byPath), ledger: decided.ledger, retry: true });
   }
   return withCheckoutFiles(seen.root, async (access) => {
+    const removing = [];
+    for (const entry of checked) {
+      if (entry.confirmed || (entry.stored !== null && await access.lacks(entry.move.from) && await storeHolds(seen, entry.move.to))) removing.push(entry.move);
+      else stayFor(entry);
+    }
+    const earlier = decided.earlier ?? [];
+    const formerPaths = (moves) => [...moves.map((move) => move.from), ...earlier.map((item) => item.from)];
+    const leaving = new Set(removing.map((move) => move.from));
+    let found = await referencesOf(access, seen.kinds, listing.tracked.filter((file) => !leaving.has(file)), formerPaths(removing));
     const done = [];
-    for (const move of confirmed) {
+    for (const move of removing) {
       // A result that will not be written, such as one that the host cancelled meanwhile, removes nothing more, and the move is finished again before a later result.
       if (!proceed()) return { interrupted: true };
       // A file already gone left the checkout, and the store holds it.
       if (await access.remove(move.from, move) === "changed") stay(move, "differs");
-      else done.push(move);
+      else { done.push(move); named?.add(move.from); }
     }
     const removed = done.map((move) => move.from);
+    // A file that changed during the finish stays in the checkout, so the references are found again for the files that left.
+    if (done.length !== removing.length) {
+      const gone = new Set(removed);
+      found = await referencesOf(access, seen.kinds, listing.tracked.filter((file) => !gone.has(file)), formerPaths(done));
+    }
     await pruneCheckoutFolders(access, seen.kinds, removed);
-    const gone = new Set(removed);
-    const { references, moreReferences } = await referencesOf(access, seen.kinds, listing.tracked.filter((file) => !gone.has(file)), removed);
-    return report(listing, { moved: done.map(({ from, to }) => ({ from, to })), kept: [...decided.kept, ...stayed].sort(byPath), references, moreReferences, ledger: decided.ledger, ...(retry ? { retry } : {}) });
+    for (const item of earlier) named?.add(item.from);
+    return report(listing, { moved: done.map(({ from, to }) => ({ from, to })), earlier: earlier.map(({ from, to }) => ({ from, to })), kept: [...decided.kept, ...stayed].sort(byPath), references: found.references, moreReferences: found.moreReferences, ledger: decided.ledger, ...(retry ? { retry } : {}) });
   }, decided.real);
 }
 
@@ -590,18 +645,24 @@ async function storedVersion(seen, location, size, writes = null) {
   return bytes === null ? "other" : artifactVersion(bytes);
 }
 
-// A folder that the move emptied goes, up to the configured folder, which stays.
+// A folder that the move emptied goes, up to the configured folder, which stays; each folder is tried once, after every folder below it.
 async function pruneCheckoutFolders(access, kinds, removed) {
   const tops = new Set(kinds.kinds.filter((entry) => entry.folder).map((entry) => entry.path));
-  for (const file of removed) {
-    for (let folder = path.posix.dirname(file); folder !== "." && folder !== "" && !tops.has(folder); folder = path.posix.dirname(folder)) {
-      if (!(await access.removeFolder(folder))) break;
+  const prunable = (folder) => folder !== "." && folder !== "" && !tops.has(folder);
+  const depth = (folder) => folder.split("/").length;
+  const pending = new Set(removed.map((file) => path.posix.dirname(file)).filter(prunable));
+  while (pending.size) {
+    const deepest = [...pending].reduce((most, folder) => Math.max(most, depth(folder)), 0);
+    for (const folder of [...pending].filter((entry) => depth(entry) === deepest)) {
+      pending.delete(folder);
+      const parent = path.posix.dirname(folder);
+      if (await access.removeFolder(folder) && prunable(parent)) pending.add(parent);
     }
   }
 }
 
 /**
- * Each tracked file left in the checkout whose text names a moved file's former path or the configured folder of a kind that lost files, as { file, lines, more },
+ * Each tracked file left in the checkout whose text names the former path of a moved file or a file moved earlier, or the configured folder of a kind that lost either, as { file, lines, more },
  * with at most REFERENCE_LINES_MAX line numbers and the number of its other matching lines, at most REFERENCE_FILES_MAX files, with the count of the rest.
  */
 async function referencesOf(access, kinds, tracked, movedFiles) {
