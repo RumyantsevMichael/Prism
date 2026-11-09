@@ -1,6 +1,11 @@
-import { readRecord, listClaimRecords } from "./record-store.mjs";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { writeAtomically } from "./artifact-store.mjs";
+import { readRecord, listClaimRecords, withRecordLock, writeRecord } from "./record-store.mjs";
 import { isLive, parseClaim } from "./slice-claims.mjs";
 import { readCoordinationState } from "./state.mjs";
+import { readWorkflowConfig } from "./workflow-config.mjs";
 
 // A shipped initiative's state is history: these helpers read its shipped decision and the work that keeps an initiative from shipping,
 // and name the refusal of a change to a shipped initiative.
@@ -81,3 +86,197 @@ export function openWorkMessage(initiative, work) {
   if (work.proposals.length) parts.push(`pending design proposals for ${work.proposals.join(", ")}`);
   return `Initiative ${initiative} cannot ship while work is open: ${parts.join("; ")}. Resolve each gate, finish or release each claim, and accept or replace each proposal first, because no agent can finish this work once the initiative is history.`;
 }
+
+// A shipped initiative's slice documents carry the history mark, and its decision records their content without the mark,
+// so a read can tell which documents changed after ship.
+
+const MARK_FIRST = /^> Shipped history: initiative `[^`]+` shipped on \d{4}-\d{2}-\d{2}, so this document records finished work\.$/;
+const MARK_SECOND = "> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.";
+const byPath = (left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+
+/** The two lines of the history mark of a shipped initiative, each ending in a newline. */
+export const historyMark = (initiative, date) => `> Shipped history: initiative \`${initiative}\` shipped on ${date}, so this document records finished work.\n${MARK_SECOND}\n`;
+
+/** The message that a read of a shipped initiative carries. */
+export const shippedHistoryMessage = (initiative, decision) => `Initiative ${initiative} shipped on ${shipDate(decision)} and its state is history: take current intent only from Approved requirements, Accepted ADRs, the glossary, and feature files, and cite this initiative only as history.`;
+
+// Where a document holds the mark: { start, end } as line indexes of the lines to remove, or null when it holds none.
+function markLines(lines) {
+  if (/^# /.test(lines[0] ?? "") && lines[1] === "" && MARK_FIRST.test(lines[2] ?? "") && lines[3] === MARK_SECOND) return { start: 1, end: 4 };
+  if (MARK_FIRST.test(lines[0] ?? "") && lines[1] === MARK_SECOND && lines[2] === "") return { start: 0, end: 3 };
+  return null;
+}
+
+/** A document's content without the history mark: the two mark lines and the blank line inserted with them removed. */
+export function unmarkedContent(content) {
+  const lines = content.split("\n");
+  const found = markLines(lines);
+  if (!found) return content;
+  lines.splice(found.start, found.end - found.start);
+  return lines.join("\n");
+}
+
+/** A document with the history mark: under a level-one heading on the first line, otherwise at the top; a document that holds a mark is returned unchanged. */
+export function markDocument(content, initiative, date) {
+  if (markLines(content.split("\n"))) return content;
+  const mark = historyMark(initiative, date);
+  const end = content.indexOf("\n");
+  if (/^# /.test(content) && end !== -1) return `${content.slice(0, end + 1)}\n${mark}${content.slice(end + 1)}`;
+  return `${mark}\n${content}`;
+}
+
+/** The project-relative paths of an initiative's slice documents by its initiative record, in path order; none without a record or a plans path. */
+async function sliceDocumentPaths(projectRoot, initiative) {
+  let slices;
+  try {
+    const { bytes } = await readRecord(projectRoot, { kind: "initiative", initiative });
+    if (!bytes) return [];
+    slices = JSON.parse(bytes.toString("utf8"))?.slices;
+  } catch {
+    return [];
+  }
+  if (!slices || typeof slices !== "object" || Array.isArray(slices)) return [];
+  const plans = (await readWorkflowConfig(projectRoot)).paths.plans;
+  if (!plans) return [];
+  const folders = Object.keys(slices).map((slug) => slices[slug]?.parent === null ? `${plans}/${initiative}` : `${plans}/${initiative}/${slug}`);
+  return [...new Set(folders.map((folder) => path.posix.join(folder, "slice.md")))].sort();
+}
+
+// A document's state: { content } when it reads, { absent: true } when it does not exist, or { problem } with why it cannot be read.
+async function readDocument(projectRoot, relative) {
+  try {
+    return { content: await readFile(path.join(projectRoot, relative), "utf8") };
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return { absent: true };
+    return { problem: error.message };
+  }
+}
+
+/**
+ * The slice documents of an initiative that exist in this checkout: documents lists { path, content, unmarked } for each readable one,
+ * and problems { path, reason } for each that exists but cannot be read, both in path order.
+ */
+export async function readSliceDocuments(projectRoot, initiative) {
+  const documents = [];
+  const problems = [];
+  for (const relative of await sliceDocumentPaths(projectRoot, initiative)) {
+    const read = await readDocument(projectRoot, relative);
+    if (read.problem) problems.push({ path: relative, reason: read.problem });
+    else if (!read.absent) documents.push({ path: relative, content: read.content, unmarked: unmarkedContent(read.content) });
+  }
+  return { documents, problems };
+}
+
+/** The recorded form of documents read by readSliceDocuments: { path, sha256 } of each one's content without the mark. */
+export const documentDigests = (documents) => documents.map((document) => ({ path: document.path, sha256: sha256(document.unmarked) }));
+
+/**
+ * Write the history mark into documents read by readSliceDocuments; returns marked, the paths written in path order,
+ * and problems { path, reason } for each that could not be written. A document that already holds a mark is left as it is.
+ */
+export async function writeHistoryMarks(projectRoot, initiative, decision, documents) {
+  const marked = [];
+  const problems = [];
+  for (const document of documents) {
+    const next = markDocument(document.content, initiative, shipDate(decision));
+    if (next === document.content) continue;
+    try {
+      await writeAtomically(path.join(projectRoot, document.path), next);
+      marked.push(document.path);
+    } catch (error) {
+      problems.push({ path: document.path, reason: error.message });
+    }
+  }
+  return { marked, problems };
+}
+
+async function readRoadmapBytes(projectRoot) {
+  const { bytes } = await readRecord(projectRoot, { kind: "roadmap" });
+  return bytes;
+}
+
+/**
+ * Record and mark the slice documents of an initiative that shipped before its decision recorded them, at the first read that reaches it:
+ * returns { decision, marked } once recorded, or null when the initiative has not shipped, its decision already records documents,
+ * no slice document exists in this checkout, or the roadmap changed meanwhile, so that a later read records them. It never throws.
+ */
+export async function recordShipDocuments(projectRoot, initiative) {
+  try {
+    const before = await readRoadmapBytes(projectRoot);
+    if (!before) return null;
+    const revision = sha256(before);
+    const decision = entryShippedDecision(JSON.parse(before.toString("utf8"))?.initiatives?.find?.((entry) => entry?.id === initiative));
+    if (!decision || Array.isArray(decision.documents)) return null;
+    const { documents } = await readSliceDocuments(projectRoot, initiative);
+    if (!documents.length) return null;
+    const recorded = { ...decision, documents: documentDigests(documents), documentsRecordedAt: new Date().toISOString(), documentsFrom: "first-read" };
+    const written = await withRecordLock(projectRoot, { kind: "roadmap" }, async () => {
+      const current = await readRoadmapBytes(projectRoot);
+      if (!current || sha256(current) !== revision) return false;
+      const record = JSON.parse(current.toString("utf8"));
+      const entry = record.initiatives.find((item) => item?.id === initiative);
+      entry.decision = recorded;
+      await writeRecord(projectRoot, { kind: "roadmap" }, `${JSON.stringify(record, null, 2)}\n`);
+      return true;
+    });
+    if (!written) return null;
+    const { marked } = await writeHistoryMarks(projectRoot, initiative, recorded, documents);
+    return { decision: recorded, marked };
+  } catch {
+    return null;
+  }
+}
+
+/** Record the slice documents of every shipped roadmap entry whose decision has none; returns { initiative, marked } for each entry this call recorded. */
+export async function recordEarlierShips(projectRoot, entries) {
+  const results = [];
+  for (const entry of entries) {
+    const decision = entryShippedDecision(entry);
+    if (!decision || Array.isArray(decision.documents)) continue;
+    const recorded = await recordShipDocuments(projectRoot, entry.id);
+    if (recorded) results.push({ initiative: entry.id, marked: recorded.marked });
+  }
+  return results;
+}
+
+/** Each recorded document whose content differs, ignoring the mark, or that no longer exists, and each slice document in a folder that had none recorded, in path order. */
+async function documentChanges(projectRoot, initiative, recorded) {
+  const changes = [];
+  const known = new Set(recorded.map((item) => item.path));
+  for (const item of recorded) {
+    const read = await readDocument(projectRoot, item.path);
+    if (read.absent) changes.push({ path: item.path, change: "removed" });
+    else if (read.problem || sha256(unmarkedContent(read.content)) !== item.sha256) changes.push({ path: item.path, change: "changed" });
+  }
+  const { documents } = await readSliceDocuments(projectRoot, initiative);
+  for (const document of documents) if (!known.has(document.path)) changes.push({ path: document.path, change: "added" });
+  return changes.sort(byPath);
+}
+
+/**
+ * What a read of a shipped initiative reports: { initiative, shippedAt, message, documents, changedAfterShip }, with marked listing the documents
+ * this read marked when it recorded an earlier ship's documents, or null when the initiative has not shipped.
+ */
+export async function shippedHistory(projectRoot, initiative) {
+  let decision = await shippedDecision(projectRoot, initiative);
+  if (!decision) return null;
+  let marked = [];
+  if (!Array.isArray(decision.documents)) {
+    const recorded = await recordShipDocuments(projectRoot, initiative);
+    if (recorded) ({ decision, marked } = recorded);
+  }
+  const recorded = Array.isArray(decision.documents) ? decision.documents.filter((item) => typeof item?.path === "string").sort(byPath) : [];
+  const changedAfterShip = Array.isArray(decision.documents) ? await documentChanges(projectRoot, initiative, recorded).catch(() => []) : [];
+  return {
+    initiative,
+    shippedAt: decision.at,
+    message: shippedHistoryMessage(initiative, decision),
+    documents: recorded.map((item) => item.path),
+    changedAfterShip,
+    ...(marked.length ? { marked } : {})
+  };
+}
+
+/** The text line of an MCP read that marked slice documents, asking to commit them apart from the task's changes. */
+export const historyMarksText = (initiative, marked) => `Prism marked these slice documents of shipped initiative ${initiative} as history: ${marked.join(", ")}. Commit them in a commit of their own, apart from this task's changes.`;

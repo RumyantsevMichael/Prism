@@ -247,6 +247,31 @@ A shipped initiative's roadmap entry keeps its title, intent, requirements, and 
 `place` still refuses because a shipped initiative keeps its place in history, and another initiative may still require it.
 Start new work on a shipped initiative as a new initiative that references it.
 
+### Shipped history
+
+A shipped initiative's state is history: its contracts, slice documents, frozen tests, and reviews record finished work, and current intent lives only in Approved requirements, Accepted ADRs, the glossary, and feature files.
+Ship writes this history mark into every slice document of the initiative, under its first-line title, or at the top of a document without one:
+
+```markdown
+> Shipped history: initiative `reports` shipped on 2026-11-03, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+```
+
+A document that already holds a mark is not marked again.
+Ship also records each document's path and the SHA-256 of its content without the mark in the roadmap decision, as `documents`, with `documentsRecordedAt` and `documentsFrom` `ship`.
+The `ship` result lists the marked paths under `historyMarks`, and a document it cannot read or write under `historyMarkProblems` as `{ path, reason }`, and ship still succeeds.
+Commit the marked documents.
+
+An initiative that shipped before Prism recorded documents is handled at its first read: the first `get_initiative`, `get_coordination_state`, `get_review`, or `get_roadmap` that reaches it records its slice documents with `documentsFrom` `first-read` and marks each one.
+That read lists the marked paths under `marked`, or under `markedHistory` for `get_roadmap`, and adds a text line asking you to commit them in a commit of their own, apart from the task's changes.
+An initiative with no slice document in the checkout records nothing until a read finds one.
+
+`get_initiative`, `get_coordination_state`, and `get_review` of a shipped initiative, also one without an initiative record, return `shippedHistory` with `initiative`, `shippedAt`, a `message` that says the state is history, `documents`, and `changedAfterShip`.
+`get_coordination_state` also shows the message as a line of its text.
+`documents` lists the recorded slice documents in path order.
+`changedAfterShip` lists `{ path, change }` for each recorded document whose content differs, ignoring the mark, as `changed`, for each one that no longer exists as `removed`, and for a slice document in a folder that had none recorded as `added`.
+A copy of a document without the mark, as on a branch from before the ship commit, is not a change.
+
 ## Questions and answers
 
 Each question that waits on you is recorded, and the review browser's Attention page lists it with the artifacts to inspect.

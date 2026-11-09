@@ -16,7 +16,7 @@ import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, pars
 import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
 import { latestDependentsRun } from "./slice-design.mjs";
 import { proposeComponents } from "./workspace-manifests.mjs";
-import { entryShippedDecision, hasOpenWork, openWork, openWorkMessage, ShippedHistoryError } from "./shipped-history.mjs";
+import { documentDigests, entryShippedDecision, hasOpenWork, openWork, openWorkMessage, readSliceDocuments, recordEarlierShips, ShippedHistoryError, writeHistoryMarks } from "./shipped-history.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
@@ -114,6 +114,7 @@ function validateRoadmap(raw) {
     if (!BANDS.includes(item.band)) errors.push(`${field}.band must be one of ${BANDS.join(", ")}.`);
     for (const key of ["requirements", "requires"]) if (!Array.isArray(item[key]) || item[key].some((value) => typeof value !== "string")) errors.push(`${field}.${key} must be an array of strings.`);
     if (item.decision !== null && !["shipped", "superseded"].includes(item.decision?.kind)) errors.push(`${field}.decision must be null, shipped, or superseded.`);
+    else if (item.decision?.kind === "shipped") errors.push(...shippedDocumentErrors(item.decision, `${field}.decision`));
   }
   for (const item of raw.initiatives) {
     for (const target of item.requires ?? []) {
@@ -136,6 +137,15 @@ function validateRoadmap(raw) {
     };
     try { graph.forEach((_, node) => visit(node)); } catch (error) { errors.push(error.message); }
   }
+  return errors;
+}
+
+// A shipped decision records its slice documents once: documents with each path and SHA-256, when they were recorded, and whether at ship or at a first read.
+function shippedDocumentErrors(decision, field) {
+  const errors = [];
+  if (decision.documents !== undefined && (!Array.isArray(decision.documents) || decision.documents.some((item) => typeof item?.path !== "string" || !/^[0-9a-f]{64}$/.test(item?.sha256 ?? "")))) errors.push(`${field}.documents must be an array of { path, sha256 }.`);
+  if (decision.documentsRecordedAt !== undefined && typeof decision.documentsRecordedAt !== "string") errors.push(`${field}.documentsRecordedAt must be a string.`);
+  if (decision.documentsFrom !== undefined && !["ship", "first-read"].includes(decision.documentsFrom)) errors.push(`${field}.documentsFrom must be ship or first-read.`);
   return errors;
 }
 
@@ -340,10 +350,17 @@ export async function readWorkspaceName(projectRoot) {
   }
 }
 
+/**
+ * Read the roadmap; a shipped entry whose decision has no recorded slice documents has them recorded and marked by this read,
+ * and markedHistory lists { initiative, marked } for each entry whose documents it marked.
+ */
 export async function getRoadmap(input) {
   validateInput(GET_ROADMAP_SCHEMA, input);
-  const { resolved, loaded, derived } = await readRoadmap(input.projectRoot);
-  return { ...publicResult(resolved, loaded, derived), components: await roadmapComponents(resolved.root, resolved.config) };
+  let { resolved, loaded, derived } = await readRoadmap(input.projectRoot);
+  const recorded = loaded.valid && loaded.record ? await recordEarlierShips(resolved.root, loaded.record.initiatives) : [];
+  if (recorded.length) ({ resolved, loaded, derived } = await readRoadmap(input.projectRoot));
+  const markedHistory = recorded.filter((item) => item.marked.length);
+  return { ...publicResult(resolved, loaded, derived), components: await roadmapComponents(resolved.root, resolved.config), ...(markedHistory.length ? { markedHistory } : {}) };
 }
 
 function markdown(record, recordName) {
@@ -402,7 +419,7 @@ function roadmapRequirements(resolved, references) {
   });
 }
 
-async function applyOperation(resolved, record, operation, actor, at) {
+async function applyOperation(resolved, record, operation, actor, at, marks) {
   // A shipped entry keeps its content as history, so a change to it is refused before its arguments are normalized.
   if (operation.op === "update_initiative" || operation.op === "set_requires") {
     const shipped = entryShippedDecision(record.initiatives.find((candidate) => candidate.id === operation.id));
@@ -457,7 +474,10 @@ async function applyOperation(resolved, record, operation, actor, at) {
       // Shipping reads the components after the leaf check: an invalid declaration refuses with its own code and fields, and a red or unproven dependent blocks it.
       if (blocker?.problem) throw blocker.problem;
       if (blocker?.scopes) throw fail("dependents_blocked", dependentsMessage(blocker.scopes), { scopes: blocker.scopes });
-      item.decision = { kind: "shipped", at, actor };
+      // Ship records each slice document's content without the mark; the marks are written once the record is.
+      const { documents, problems } = await readSliceDocuments(resolved.root, item.id);
+      item.decision = { kind: "shipped", at, actor, documents: documentDigests(documents), documentsRecordedAt: at, documentsFrom: "ship" };
+      marks.push({ initiative: item.id, decision: item.decision, documents, problems });
       break;
     }
     case "supersede": {
@@ -495,7 +515,8 @@ export async function updateRoadmap(input) {
     const record = current.record ? structuredClone(current.record) : emptyRoadmap();
     const at = new Date().toISOString();
     const actor = input.actor ?? "agent";
-    for (const operation of input.operations) await applyOperation(resolved, record, operation, actor, at);
+    const marks = [];
+    for (const operation of input.operations) await applyOperation(resolved, record, operation, actor, at, marks);
     const errors = validateRoadmap(record);
     if (errors.length) throw fail("invalid_roadmap", `The proposed roadmap is invalid and was not written: ${errors[0]}`, { errors });
     const mutating = input.operations.filter((operation) => !["regenerate_markdown", "replace_hand_written_projection"].includes(operation.op));
@@ -516,21 +537,36 @@ export async function updateRoadmap(input) {
     } catch {
       projectionStale = true;
     }
+    const history = await markShipped(resolved.root, marks);
     const { loaded, derived } = await readRoadmap(input.projectRoot);
-    return { ...publicResult(resolved, loaded, derived), created: !current.exists, previousRevision: current.revision, projectionStale };
+    return { ...publicResult(resolved, loaded, derived), created: !current.exists, previousRevision: current.revision, projectionStale, ...history };
   }, fail));
+}
+
+// After a ship is written, each slice document it recorded takes the history mark; one it could not read or write is a problem, never a refusal.
+async function markShipped(root, marks) {
+  if (!marks.length) return {};
+  const historyMarks = [];
+  const historyMarkProblems = [];
+  for (const { initiative, decision, documents, problems } of marks) {
+    const written = await writeHistoryMarks(root, initiative, decision, documents);
+    historyMarks.push(...written.marked);
+    historyMarkProblems.push(...problems, ...written.problems);
+  }
+  historyMarkProblems.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  return { historyMarks: historyMarks.sort(), historyMarkProblems };
 }
 
 export const ROADMAP_TOOLS = [
   {
     name: "get_roadmap",
-    description: "Read the MCP-managed roadmap record with each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship, and the repository's components: its repository name, the declared components by identity <repository>/<component> with their folder, test command, and dependencies, the declaration's problem when it is invalid, and, when the configuration lists no component and a root workspace manifest (package.json, pnpm-workspace.yaml, Cargo.toml, or go.work) gives workspace patterns, a proposal of a ## Components block with its components, shared paths, skipped manifests, and problem. Reads never create files, and the proposal is never written; offer it to the person to commit.",
+    description: "Read the MCP-managed roadmap record with each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship, and the repository's components: its repository name, the declared components by identity <repository>/<component> with their folder, test command, and dependencies, the declaration's problem when it is invalid, and, when the configuration lists no component and a root workspace manifest (package.json, pnpm-workspace.yaml, Cargo.toml, or go.work) gives workspace patterns, a proposal of a ## Components block with its components, shared paths, skipped manifests, and problem. Reads never create files, and the proposal is never written; offer it to the person to commit. The one exception is a shipped entry whose decision has not recorded its slice documents: the read records them with documentsFrom first-read, writes the history mark into each, and lists them under markedHistory ({ initiative, marked }) to commit apart from the task's changes.",
     inputSchema: GET_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_roadmap",
-    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. A shipped initiative's entry keeps its title, intent, requirements, and required initiatives: update_initiative and set_requires naming it refuse with initiative_shipped, with its initiative and shippedAt. Ship refuses an existing decision with validation_failed, then refuses with open_work, listing gates ({ id, slice, question, answered }), claims ({ slice, label, activity, expiresAt }), and proposals (scope slugs), while the initiative has a pending user gate, answered or not, a live slice claim, or a pending design proposal. Ship then requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
+    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. A shipped initiative's entry keeps its title, intent, requirements, and required initiatives: update_initiative and set_requires naming it refuse with initiative_shipped, with its initiative and shippedAt. Ship refuses an existing decision with validation_failed, then refuses with open_work, listing gates ({ id, slice, question, answered }), claims ({ slice, label, activity, expiresAt }), and proposals (scope slugs), while the initiative has a pending user gate, answered or not, a live slice claim, or a pending design proposal. Ship then requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Ship records each slice document of the initiative in its decision as documents ({ path, sha256 } of its content without the history mark), with documentsRecordedAt and documentsFrom ship, writes the history mark into each, and lists the marked paths under historyMarks and each document it could not read or write under historyMarkProblems ({ path, reason }) without failing. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
     inputSchema: UPDATE_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

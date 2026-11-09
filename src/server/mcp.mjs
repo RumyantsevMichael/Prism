@@ -34,6 +34,7 @@ import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { opensAtStart } from "./review/open-at-start.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
+import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
@@ -174,6 +175,16 @@ function stateContent(result) {
   const answered = (result.state?.pending ?? []).filter((gate) => gate?.answer);
   const gates = `${opened}${answered.length ? `\nUser gates answered in the review browser: ${answered.map((gate) => gate.id).join(", ")}` : ""}`;
   return `Coordination state ${validity}: ${result.initiative}\nRevision: ${revision}${gates}`;
+}
+
+// A read of a shipped initiative that marked its slice documents asks to commit them apart from the task's changes.
+function historyMarksContent(history) {
+  return history?.marked?.length ? [{ type: "text", text: historyMarksText(history.initiative, history.marked) }] : [];
+}
+
+// The coordination state text of a shipped initiative carries the history message as a line of its own.
+function shippedHistoryContent(history) {
+  return history ? [{ type: "text", text: history.message }, ...historyMarksContent(history)] : [];
 }
 
 function contextPlanContent(plan) {
@@ -668,7 +679,7 @@ const tools = [
   },
   {
     name: "get_coordination_state",
-    description: "Read an initiative's coordination state record with its revision. Reads never create the record.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip }, where documents lists the slice documents its ship decision recorded and changedAfterShip each one changed, removed, or added since, ignoring the history mark; the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked, to commit apart from the task's changes. The text carries its message as a line.",
     inputSchema: {
       type: "object",
       properties: {
@@ -943,6 +954,8 @@ async function callStateTool(name, argumentsValue) {
   let resultValue;
   if (name === "get_coordination_state") {
     resultValue = await readCoordinationState(input);
+    const history = await shippedHistory(projectRoot, argumentsValue.initiative);
+    if (history) resultValue = { ...resultValue, shippedHistory: history };
   } else if (name === "validate_coordination_state") {
     resultValue = await validateCoordinationState(input);
   } else if (name === "update_coordination_state") {
@@ -964,7 +977,7 @@ async function callStateTool(name, argumentsValue) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
   }
-  const content = [{ type: "text", text: stateContent(resultValue) }];
+  const content = [{ type: "text", text: stateContent(resultValue) }, ...shippedHistoryContent(resultValue?.shippedHistory)];
   if (Array.isArray(resultValue?.keptSettings) && resultValue.keptSettings.length) content.push({ type: "text", text: keptSettingsText(resultValue.keptSettings) });
   return { content, structuredContent: resultValue };
 }
@@ -1191,7 +1204,9 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     let value = await callConservationTool(name, { ...argumentsValue, projectRoot });
     if (name === "get_review") value = { ...value, runTotals: await readReviewRunTotals(projectRoot, argumentsValue) };
-    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+    const history = name === "get_review" && typeof argumentsValue.initiative === "string" ? await shippedHistory(projectRoot, argumentsValue.initiative) : null;
+    if (history) value = { ...value, shippedHistory: history };
+    return { content: [{ type: "text", text: JSON.stringify(value) }, ...historyMarksContent(history)], structuredContent: value };
   }
   if (name === "update_design_view") {
     const value = await updateDesignView({ ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) });
@@ -1214,7 +1229,10 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
       : name === "get_initiative" ? await getInitiative(input)
       : initiativeAcknowledgement(await updateInitiative(input), input.operations);
     if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
-    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+    const marks = name === "get_initiative" ? historyMarksContent(value.shippedHistory)
+      : name === "get_roadmap" ? (value.markedHistory ?? []).map((item) => ({ type: "text", text: historyMarksText(item.initiative, item.marked) }))
+      : [];
+    return { content: [{ type: "text", text: JSON.stringify(value) }, ...marks], structuredContent: value };
   }
   if (repositoryTools.has(name)) {
     return callRepositoryTool(name, argumentsValue);
