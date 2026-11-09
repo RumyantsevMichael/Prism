@@ -15,7 +15,8 @@ import { ARTIFACT_CONTENT_MAX, ARTIFACT_LOCATION_MAX, artifactText, artifactVers
 import { roadmapPaths } from "./workflow-config.mjs";
 
 // On a checkout's first access to its store, the files Git tracks under its artifact paths move into its repository's scope once, and every file the move cannot take stays where it is.
-// The move writes the store and its ledger first and removes a checkout file only then, and only while it holds the bytes the store took, so an interruption leaves a file in both places rather than in neither.
+// The move writes the store and its ledger first and removes a checkout file only then, right before a tool result that reports the removal is written, and only while it holds the bytes the store took,
+// so an interruption leaves a file in both places rather than in neither, and every removed file is named in the result that follows the removal.
 const REFERENCE_FILES_MAX = 200;
 const REFERENCE_LINES_MAX = 20;
 const REFERENCE_BYTES_MAX = 4 * 1024 * 1024;
@@ -65,6 +66,33 @@ export async function waitingArtifactFiles(root, kinds) {
   const held = [];
   for (const file of listing.candidates) if ((await lstat(path.join(root, ...file.split("/"))).catch(() => null))?.isFile()) held.push(file);
   return held;
+}
+
+/**
+ * The files that Git tracks under a checkout's artifact paths and that its work tree holds, other than those that left says stay, sorted by what a move does with them: { waiting, kept } as counts,
+ * or null when Git cannot list them. A file is kept when a ledger of the repository lists it as kept and none lists it as moved, unless every such ledger kept it as too_large or not_text
+ * and it now holds at most 1 MiB of UTF-8 text; every other file waits for a move to decide on it. It reads the checkout and the store's ledgers, and writes nothing.
+ */
+export async function checkoutArtifactsByMove(root, kinds, { store, repository, left = () => false }) {
+  const held = await waitingArtifactFiles(root, kinds);
+  if (held === null) return null;
+  const files = held.filter((file) => !left(file));
+  const counts = { waiting: 0, kept: 0 };
+  if (!files.length) return counts;
+  const ledger = await ledgersOf(store, repository);
+  const resolvable = new Set(["too_large", "not_text"]);
+  await withCheckoutFiles(root, async (access) => {
+    for (const file of files) {
+      const reasons = ledger.keptFor.get(file);
+      let kept = reasons !== undefined && !ledger.movedFrom.has(file);
+      if (kept && [...reasons].every((reason) => resolvable.has(reason))) {
+        const read = await access.read(file, ARTIFACT_CONTENT_MAX).catch(() => null);
+        if (read?.bytes && artifactText(read.bytes) !== null) kept = false;
+      }
+      counts[kept ? "kept" : "waiting"] += 1;
+    }
+  });
+  return counts;
 }
 
 // Whether any configured artifact path exists in the checkout, so a checkout that Git cannot list is reported only when it holds something the move would have taken.
@@ -236,10 +264,12 @@ async function withCheckoutFiles(root, action, real = null) {
   try { return await action(access); } finally { await access.close(); }
 }
 
-// The ledgers of earlier moves of the repository: the locations each moved into the store, and the files each kept with their reasons.
-async function readLedgers(seen) {
-  const folder = path.join(seen.store.base, ARTIFACT_MIGRATIONS);
-  const ledger = { moved: new Set(), kept: new Set() };
+// The ledgers of earlier moves of the repository: the locations each moved into the store and the checkout paths each moved from, and the files each kept with their reasons.
+const readLedgers = (seen) => ledgersOf(seen.store.base, seen.repository);
+
+async function ledgersOf(storeBase, repository) {
+  const folder = path.join(storeBase, ARTIFACT_MIGRATIONS);
+  const ledger = { moved: new Set(), movedFrom: new Set(), kept: new Set(), keptFor: new Map() };
   let names = [];
   try { names = (await readdir(folder)).filter((name) => name.endsWith(".json")).sort(); }
   catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
@@ -247,9 +277,16 @@ async function readLedgers(seen) {
     let entry;
     try { entry = JSON.parse((await fileBytes(folder, name, 64 * 1024 * 1024))?.toString("utf8") ?? "null"); }
     catch { continue; }
-    if (entry?.repository !== seen.repository) continue;
-    for (const move of Array.isArray(entry.moved) ? entry.moved : []) if (typeof move?.to === "string") ledger.moved.add(move.to);
-    for (const kept of Array.isArray(entry.kept) ? entry.kept : []) if (typeof kept?.path === "string") ledger.kept.add(`${kept.path}\0${kept.reason}`);
+    if (entry?.repository !== repository) continue;
+    for (const move of Array.isArray(entry.moved) ? entry.moved : []) {
+      if (typeof move?.to === "string") ledger.moved.add(move.to);
+      if (typeof move?.from === "string") ledger.movedFrom.add(move.from);
+    }
+    for (const kept of Array.isArray(entry.kept) ? entry.kept : []) {
+      if (typeof kept?.path !== "string") continue;
+      ledger.kept.add(`${kept.path}\0${kept.reason}`);
+      ledger.keptFor.set(kept.path, new Set([...ledger.keptFor.get(kept.path) ?? [], kept.reason]));
+    }
   }
   return ledger;
 }
@@ -261,8 +298,9 @@ async function readLedgers(seen) {
  * and the frozen tests of accepted designs, which all stay in the checkout; pulled says that prepare runs right after a pull, while the store's sync lock is held.
  * pull(move) completes a pull of a synced store and, while it still holds the store's sync lock, runs move, so the move decides against no older pull;
  * it returns { pulled, state, outcome }, where outcome is what move returned, or null when another tool result carries it, and rejects with move's error.
- * What move returns is a report, or a decided move whose finish() removes the checkout's moved files and returns the report; pull's caller can hand that finish to a later tool call.
- * Returns null when there is nothing to report, else { repository, store, moved, kept, untracked, ignored, references, moreReferences, ledger },
+ * What move returns, and what this returns, is a report, or a decided move whose store copies, status records, and ledger are written and whose finish({ proceed, writes }) removes the checkout's moved files and returns the report,
+ * which the caller runs only right before it writes a tool result that carries the report, as finishedMove says.
+ * The report is null when there is nothing to report, else { repository, store, moved, kept, untracked, ignored, references, moreReferences, ledger },
  * or { repository, store, deferred } when the pull did not complete, or { repository, store, unlisted: true } when Git cannot list the checkout's files:
  * moved lists { from, to } from checkout path to location below artifacts/, kept lists { path, reason, location?, other?, size? }, untracked lists checkout paths,
  * references lists { file, lines, more }, and ledger names the ledger file the move wrote, or null; retry: true says that the ledger could not confirm some moves, whose files stay for a later move.
@@ -276,7 +314,7 @@ export async function migrateArtifacts({ root, kinds, store, repository, pull = 
     const files = listing.candidates.filter((file) => !recordSources.has(file) && !frozenTests.has(file));
     if (!files.length) return quiet(listing);
     const decided = await withArtifactStoreLock(seen, () => moveIntoStore(seen, files), MOVE_LOCK);
-    return { finish: () => finishMove(seen, listing, decided, report) };
+    return { finish: (options) => finishMove(seen, listing, decided, report, options) };
   };
   if (!listing.candidates.length) return quiet(listing);
   // A pull runs only when some file's decision reads the store, so files that every move keeps or passes over never make an access wait for the remote.
@@ -288,14 +326,21 @@ export async function migrateArtifacts({ root, kinds, store, repository, pull = 
       return fresh.candidates.length ? decide(fresh, await prepare({ pulled: true })) : quiet(fresh);
     });
     if (!pulled.pulled) return { repository, store, deferred: { state: pulled.state } };
-    return finishedMove(pulled.outcome);
+    return pulled.outcome;
   }
-  return finishedMove(await decide(listing, await prepare({ pulled: false })));
+  return decide(listing, await prepare({ pulled: false }));
 }
 
-/** The report of what a move returned: a decided move is finished first, which removes its checkout files. */
-export async function finishedMove(outcome) {
-  return typeof outcome?.finish === "function" ? outcome.finish() : outcome;
+/** Whether what a move returned is a decided move that still removes its checkout files. */
+export const unfinishedMove = (outcome) => typeof outcome?.finish === "function";
+
+/**
+ * The report of what a move returned: a decided move is finished first, which removes its checkout files; run it only right before writing the tool result that carries the report.
+ * proceed() says whether that result is still to be written, and the finish stops removing files once it says no, returning { interrupted: true }, so the move can be finished again later,
+ * which reports a file already removed as moved; writes maps each store file that an update_artifact of the same tool call wrote to the versions it wrote there.
+ */
+export async function finishedMove(outcome, { proceed = () => true, writes = null } = {}) {
+  return unfinishedMove(outcome) ? outcome.finish({ proceed, writes }) : outcome;
 }
 
 /**
@@ -475,11 +520,12 @@ async function writeLedger(seen, ledger, moved, kept) {
 }
 
 /**
- * Finish a move whose store copies, status records, and ledger are written: a moved checkout file goes only when the move's ledger names its move and its store location still holds the bytes the store took,
- * and only while the checkout file still holds them and lies inside the checkout through real folders; a file that changed meanwhile keeps its new bytes in the checkout, beside the store's copy of the earlier ones.
- * A move that a retry ran in the background is finished by a later tool call in the foreground, whose result reports it, so a process that ends first leaves every file in the checkout for a later move.
+ * Finish a move whose store copies, status records, and ledger are written, right before a tool result that reports it is written: a moved checkout file goes only when the move's ledger names its move
+ * and its store location still holds the bytes the store took, or bytes that an update_artifact of the finishing tool call wrote there, and only while the checkout file still holds the bytes the store took
+ * and lies inside the checkout through real folders; a file that changed meanwhile keeps its new bytes in the checkout, beside the store's copy of the earlier ones.
+ * A move whose tool call was refused or cancelled, or that a retry ran in the background, is finished by a later tool call whose result reports it, so a process that ends first leaves every file in the checkout for a later move.
  */
-async function finishMove(seen, listing, decided, report) {
+async function finishMove(seen, listing, decided, report, { proceed = () => true, writes = null } = {}) {
   const ledgered = await ledgerMoves(seen, decided.ledger);
   const confirmed = [], stayed = [];
   let retry = false;
@@ -488,8 +534,8 @@ async function finishMove(seen, listing, decided, report) {
   for (const move of decided.moved) {
     // A move that no ledger confirms is decided again by a later move, so its file stays in the checkout without a report.
     if (!ledgered?.has(`${move.from}\0${move.to}`)) { retry = true; continue; }
-    const stored = await storedVersion(seen, move.to, move.size).catch(() => "other");
-    if (stored === move.version) confirmed.push(move);
+    const stored = await storedVersion(seen, move.to, move.size, writes).catch(() => "other");
+    if (stored === move.version || stored?.updated) confirmed.push(move);
     else stay(move, stored === null ? "removed_in_store" : "differs");
   }
   // A checkout whose root resolves elsewhere than where the decision read its files keeps every file, which a later move decides again against the store.
@@ -499,6 +545,8 @@ async function finishMove(seen, listing, decided, report) {
   return withCheckoutFiles(seen.root, async (access) => {
     const done = [];
     for (const move of confirmed) {
+      // A result that will not be written, such as one that the host cancelled meanwhile, removes nothing more, and the move is finished again before a later result.
+      if (!proceed()) return { interrupted: true };
       // A file already gone left the checkout, and the store holds it.
       if (await access.remove(move.from, move) === "changed") stay(move, "differs");
       else done.push(move);
@@ -522,11 +570,22 @@ async function ledgerMoves(seen, name) {
   } catch { return null; }
 }
 
-// The version of the store's copy at a location below artifacts/: null when no file is there, and "other" for a file of another size, so no read takes more than the moved file's size.
-async function storedVersion(seen, location, size) {
+/**
+ * The version of the store's copy at a location below artifacts/: null when no file is there, and "other" for a file of another size, so no read takes more than the moved file's size,
+ * or { updated: true } when it holds a version that writes, the update_artifact writes of the finishing tool call, put there, read up to the artifact limit.
+ */
+async function storedVersion(seen, location, size, writes = null) {
   const file = await resolveArtifactFile(seen, location);
   const info = await lstat(file).catch((error) => { if (error.code === "ENOENT") return null; throw error; });
   if (info === null) return null;
+  const updates = writes?.get(file);
+  if (updates?.size && info.isFile() && info.size <= ARTIFACT_CONTENT_MAX) {
+    const bytes = await fileBytes(path.dirname(file), path.basename(file), ARTIFACT_CONTENT_MAX);
+    const version = bytes === null ? null : artifactVersion(bytes);
+    if (version !== null && updates.has(version)) return { updated: true };
+    if (version !== null && bytes.length === size) return version;
+    return "other";
+  }
   const bytes = info.isFile() && info.size === size ? await fileBytes(path.dirname(file), path.basename(file), size) : null;
   return bytes === null ? "other" : artifactVersion(bytes);
 }

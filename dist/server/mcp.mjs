@@ -7,7 +7,7 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { finishBackgroundMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
+import { finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { withCallSession } from "./workflow/slice-claims.mjs";
@@ -1200,12 +1200,14 @@ function artifactMoveNote(move) {
 // A sync that found the same record, or the same lines of an artifact, changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
 // A saved version stays pending until a tool result carries it, so a server that stopped before naming it leaves it to the next one.
 // Returns the result with the notes, and what to do once it was written or was not: a written result confirms the saved versions it names, and one never written leaves them for the next result.
-async function withRecordNotes(value, argumentsValue, roots) {
+// proceed() says whether the result is still to be written, such as while the host has not cancelled the call.
+async function withRecordNotes(value, argumentsValue, call, proceed = () => true) {
   const none = { value, written: async () => {}, unwritten: () => {} };
   if (!Array.isArray(value?.content)) return none;
-  // A move that a retry ran in the background removes the checkout's files only here, in a tool call of the checkout, so the result that follows names every file it removed.
-  await finishBackgroundMoves(roots).catch(() => {});
-  const reports = takeMigrationReports(roots);
+  // A decided move, the call's own or one that a refused, cancelled, or background call left, removes the checkout's files only here, right before a result of a tool call of the checkout is written,
+  // so the result that follows names every file it removed; a refused or cancelled call never gets here and removes nothing.
+  await finishUnfinishedMoves(call.roots, { proceed, writes: call.writes }).catch(() => {});
+  const reports = takeMigrationReports(call.roots);
   const taken = await takeSavedConflicts().catch(() => []);
   const saved = taken.filter((item) => item.record);
   const artifacts = taken.filter((item) => item.location);
@@ -1350,7 +1352,7 @@ input.on("line", async (line) => {
       // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
       if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;
       if (closing) { await result(request.id, value); return; }
-      const noted = await withRecordNotes(value, request.params?.arguments, call.roots);
+      const noted = await withRecordNotes(value, request.params?.arguments, call, () => !closing && !cancelledCalls.has(request.id));
       // A cancel that arrived while the notes were taken still stops the result, and nothing runs between this check and the write.
       if (cancelledCalls.has(request.id)) { noted.unwritten(); return; }
       if (await result(request.id, noted.value) && !closing) await noted.written();

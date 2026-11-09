@@ -516,8 +516,15 @@ export async function withToolCall(call, run) {
   try { return await toolCalls.run(call, run); } finally { call.open = false; }
 }
 
-/** A new tool call context: { roots, open }. */
-export const toolCallContext = () => ({ roots: new Set(), open: false });
+/** A new tool call context: { roots, open, writes }, where writes maps each store file that the call's update_artifact wrote to the versions it wrote there. */
+export const toolCallContext = () => ({ roots: new Set(), open: false, writes: new Map() });
+
+/** Note a store file and the version that an update_artifact of the current tool call wrote there, so finishing a move in that call does not keep a moved file whose artifact the call updated. */
+export function noteToolCallWrite(target, version) {
+  const call = toolCalls.getStore();
+  if (!call?.open || !call.writes) return;
+  call.writes.set(target, new Set([...call.writes.get(target) ?? [], version]));
+}
 
 /** Name a project root of the current tool call, whose first store access in the call may move the checkout's artifacts. */
 export function nameToolCallRoot(root) {
@@ -547,9 +554,10 @@ const RETRY_WAIT_MS = 1000;
 const PULLED = new Set(["ok", "conflicts", "push_rejected", "no_upstream", "not_a_repository"]);
 // What a checkout's later accesses find once a retry in the background moved its artifacts: nothing left to move or report.
 const MOVED = Promise.resolve(null);
-// Moves that a retry ran in the background after its access stopped waiting, as { key, root, store, outcome }: the store copies, status records, and ledger are written,
-// and the checkout's files stay until the next tool call finishes the move in the foreground, removing them and reporting the move in its result.
-const backgroundMoves = [];
+// Decided moves whose store copies, status records, and ledger are written, as { key, root, store, outcome }: a tool call's own move, and one that a retry ran in the background.
+// The checkout's files stay until a tool call of the checkout finishes the move right before it writes its result, removing them and reporting the move in that result,
+// so a refused or cancelled call, or one answered after the host closed input, leaves its move to the next result that is written.
+const unfinishedMoves = [];
 function migrateArtifactsOnce(root, store, config) {
   const key = `${root}\0${store.base}`;
   if (artifactMigrations.has(key)) return artifactMigrations.get(key).then(() => null);
@@ -621,67 +629,72 @@ async function pullThenMove(root, store, key, move) {
         deferredMoves.delete(key);
         artifactMigrations.set(key, MOVED);
       }
-      // An access that still waits finishes the move itself; otherwise the next tool call does.
-      const handoff = { key, root, store: store.base, outcome: result.outcome };
-      if (result.outcome) backgroundMoves.push(handoff);
-      return { ...result, handoff };
+      // The next tool call of the checkout whose result is written finishes the move, whether or not an access still waits for it.
+      if (result.outcome) unfinishedMoves.push({ key, root, store: store.base, outcome: result.outcome });
+      return { ...result, handedOff: true };
     });
   }
   let timer;
   const waited = await Promise.race([deferred.retry, new Promise((resolve) => { timer = setTimeout(resolve, RETRY_WAIT_MS, null); })]);
   clearTimeout(timer);
   if (!waited) return { pulled: false, state: deferred.state };
-  if (!waited.handoff) return settledMove(waited);
-  // Of the accesses that waited for one retry, the first takes its move, unless a tool call already finished it.
-  const index = backgroundMoves.indexOf(waited.handoff);
-  if (index === -1) return { pulled: true, state: waited.state, outcome: null };
-  backgroundMoves.splice(index, 1);
-  return { pulled: true, state: waited.state, outcome: waited.handoff.outcome };
+  if (!waited.handedOff) return settledMove(waited);
+  return { pulled: true, state: waited.state, outcome: null };
 }
 
 /**
- * Finish, in the foreground of a tool call of the checkout whose result reports them, the moves of the given checkouts that a retry ran in the background:
- * each removes a checkout file only once it confirms the file against the move's ledger and the store's bytes, and a file it cannot confirm stays in the checkout.
+ * Finish the decided moves of the given checkouts right before the tool call writes a result that reports them, so every file a move removes is named in the result written right after:
+ * each removes a checkout file only once it confirms the file against the move's ledger and the store's bytes, or bytes that writes, the call's update_artifact writes, put there,
+ * and a file it cannot confirm stays in the checkout. proceed() says whether the result is still to be written; once it says no, a move stops removing files and waits for the next result.
  * A move that fails is tried again by a later access.
  */
-export async function finishBackgroundMoves(roots) {
-  const handoffs = backgroundMoves.filter((handoff) => roots.has(handoff.root));
+export async function finishUnfinishedMoves(roots, { proceed = () => true, writes = null } = {}) {
+  const handoffs = unfinishedMoves.filter((handoff) => roots.has(handoff.root));
   if (!handoffs.length) return;
   const { finishedMove } = await import("./artifact-migration.mjs");
   for (const handoff of handoffs) {
-    const index = backgroundMoves.indexOf(handoff);
+    if (!proceed()) return;
+    const index = unfinishedMoves.indexOf(handoff);
     if (index === -1) continue;
-    backgroundMoves.splice(index, 1);
+    unfinishedMoves.splice(index, 1);
     let outcome;
-    try { outcome = await finishedMove(handoff.outcome); }
+    try { outcome = await finishedMove(handoff.outcome, { proceed, writes }); }
     catch { artifactMigrations.delete(handoff.key); continue; }
+    if (outcome?.interrupted) { unfinishedMoves.unshift(handoff); return; }
     if (outcome?.retry) artifactMigrations.delete(handoff.key);
     if (outcome) unreportedMoves.push({ root: handoff.root, store: handoff.store, moved: [], conflicts: [], artifacts: outcome });
   }
 }
 
 /**
- * The files that Git tracks under a checkout's artifact paths and that its work tree still holds, other than a frozen test of an accepted design and the record files that the record move takes:
- * { files, message } for people, saying that the checkout's next agent tool call moves them, or null when none waits, the project has no record store, or the store or Git cannot be used.
+ * The files that Git tracks under a checkout's artifact paths and that its work tree still holds, other than a frozen test of an accepted design and the record files that the record move takes,
+ * as notes for people: { awaitingMove?, keptInCheckout? }, each { files, message } and left out when it counts none, where awaitingMove counts the files that a move still decides on
+ * and keptInCheckout the files that a ledger keeps for a reason they still have; {} when the project has no record store, or the store or Git cannot be used.
  * It only reads, so a review browser shows what waits without moving, writing, or removing a file.
  */
-export async function awaitingArtifactMove(projectRootPath) {
+export async function artifactsInCheckout(projectRootPath) {
   try {
     const root = await projectRoot(projectRootPath);
     const store = await recordStoreOf(root);
-    if (!store.external) return null;
+    if (!store.external) return {};
     const config = await readWorkflowConfig(root);
-    const { waitingArtifactFiles } = await import("./artifact-migration.mjs");
-    const waiting = await waitingArtifactFiles(root, artifactKinds(config));
-    if (!waiting?.length) return null;
     const records = new Set((await legacyRecords(root, store, config)).map((move) => move.from));
     const frozenTests = await storedFrozenTests(store);
-    const files = waiting.filter((file) => !records.has(file) && !frozenTests.has(file)).length;
-    if (!files) return null;
-    const one = files === 1;
-    return { files, message: `${files} ${one ? "file" : "files"} that Git tracks under this checkout's artifact paths ${one ? "is" : "are"} still in the checkout and not in the record store; the checkout's next agent tool call moves ${one ? "it" : "them"} into the store or reports why ${one ? "it stays" : "each stays"}.` };
+    const { checkoutArtifactsByMove } = await import("./artifact-migration.mjs");
+    const counts = await checkoutArtifactsByMove(root, artifactKinds(config), { store: store.base, repository: store.repository, left: (file) => records.has(file) || frozenTests.has(file) });
+    if (!counts) return {};
+    const notes = {};
+    if (counts.waiting) {
+      const files = counts.waiting, one = files === 1;
+      notes.awaitingMove = { files, message: `${files} ${one ? "file" : "files"} that Git tracks under this checkout's artifact paths ${one ? "is" : "are"} still in the checkout and not in the record store. An agent's Prism tool call in this checkout moves ${one ? "it" : "them"} into the store and reports each move or why a file stays. An agent session moves the checkout's files once, so a file that Git starts tracking after that move waits for the next session.` };
+    }
+    if (counts.kept) {
+      const files = counts.kept, one = files === 1;
+      notes.keptInCheckout = { files, message: `${files} ${one ? "file" : "files"} that Git tracks under this checkout's artifact paths ${one ? "stays" : "stay"} in the checkout until a person settles ${one ? "it" : "each"}, as the report of the move that kept ${one ? "it" : "them"} gave ${one ? "its" : "each one's"} reason; no tool call is needed or waited for.` };
+    }
+    return notes;
   } catch {
-    return null;
+    return {};
   }
 }
 
@@ -751,7 +764,9 @@ export async function ensureRecords(root) {
   const { report, store, config } = await recordsMoved(root);
   if (store.external && inToolCallOf(root)) {
     const artifacts = await migrateArtifactsOnce(root, store, config);
-    if (artifacts) unreportedMoves.push({ root, store: store.base, moved: [], conflicts: [], artifacts });
+    // A decided move removes the checkout's files only right before the call writes a result that reports them; a report without removals waits for that result as it is.
+    if (typeof artifacts?.finish === "function") unfinishedMoves.push({ key: `${root}\0${store.base}`, root, store: store.base, outcome: artifacts });
+    else if (artifacts) unreportedMoves.push({ root, store: store.base, moved: [], conflicts: [], artifacts });
   }
   return report;
 }
@@ -772,7 +787,7 @@ export function forgetMigrations() {
   migrations.clear();
   artifactMigrations.clear();
   deferredMoves.clear();
-  backgroundMoves.length = 0;
+  unfinishedMoves.length = 0;
   pendingMoves.clear();
   nameChecks.clear();
 }

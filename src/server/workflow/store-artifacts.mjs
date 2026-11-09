@@ -7,7 +7,7 @@ import { assertInput } from "./artifact-schema.mjs";
 import { ARTIFACT_ACCEPTED, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, kindInScope, letterCaseKey, locationArtifact, malformedArtifactName, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { acceptedLocation, answerApproval, askApproval, hasStatus, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
-import { checkArtifactFolders, recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
+import { checkArtifactFolders, noteToolCallWrite, recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
 import { pruneArtifactFolders, scheduleRecordSync } from "./record-store-sync.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
 
@@ -539,7 +539,8 @@ export async function updateArtifact(input) {
     const { config, kinds } = await configuration(input.projectRoot);
     const checked = input.operations.map((operation) => checkOperation(config, kinds, operation));
     const seen = await seenScopes(input.projectRoot);
-    return withArtifactStoreLock(seen, () => applyOperations(seen, checked));
+    // The tool call notes what its update wrote, so a move that the call finishes still removes a moved file whose artifact the update changed.
+    return withArtifactStoreLock(seen, () => applyOperations(seen, checked, { noteWrites: true }));
   });
 }
 
@@ -547,7 +548,7 @@ export async function updateArtifact(input) {
  * Apply checked operations while the store's artifact lock is held: every operation is checked against the store before any file changes.
  * Every change to a store artifact, an agent's update and Prism's own plan files and views alike, goes through here.
  */
-async function applyOperations(seen, checked, { held = null } = {}) {
+async function applyOperations(seen, checked, { held = null, noteWrites = false } = {}) {
   // Each file's bytes as the earlier operations of this update leave them, so later operations see their effect.
   const original = new Map();
   const state = new Map();
@@ -705,6 +706,7 @@ async function applyOperations(seen, checked, { held = null } = {}) {
     await mkdir(path.dirname(target), { recursive: true });
     await resolveAgain(seen, target);
     await writeAtomically(target, record.bytes);
+    if (noteWrites) noteToolCallWrite(target, record.version);
   }
   for (const [target] of changed.filter(([, record]) => record === null)) {
     await rm(target, { force: true });

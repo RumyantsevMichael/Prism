@@ -303,7 +303,10 @@ Anyone may release any claim, and the initiative's history records who released 
 ## Sync status
 
 The review browser's status bar names the record store and when it last synced, and `.prism-sync/status.json` in the store holds the details.
-While files that Git tracks under a checkout's requirements, ADRs, plans, glossary, or roadmap paths still wait in the checkout, the status bar counts them beside the store, and the checkout's next agent tool call moves them into the store and reports each move, while the review browser itself never moves them and lists only the store's copies.
+While files that Git tracks under a checkout's requirements, ADRs, plans, glossary, or roadmap paths still wait in the checkout, the status bar warns of them beside the store, and an agent's Prism tool call in the checkout moves them into the store and reports each move or why a file stays, while the review browser itself never moves them and lists only the store's copies.
+An agent session moves a checkout's files once, so a file that Git starts tracking after that move waits for the next session.
+A moved file leaves the checkout only right before Prism writes the result that reports it, so a tool call that Prism refuses or that you interrupt writes the store's copies but leaves the files in the checkout, and the next tool call whose result is written removes them and reports the move.
+Files that a move kept in the checkout, such as an image in a plan folder or a file whose store copy differs, are counted apart beside the store as a plain note, without names, since they stay until a person settles each as the move's report said, and no tool call moves them.
 When the last sync did not succeed, clicking the sync state opens its message, its time, and every saved conflict.
 Each saved conflict shows the saved local copy against the current record as a diff, so you can ask an agent to redo the change that lost.
 The list shows saved records, while a saved artifact is named in the next tool result as described above.

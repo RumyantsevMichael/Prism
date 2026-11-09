@@ -12,9 +12,13 @@ export function storeItem(store) {
   const noun = store.kind === "remote" ? "Remote store" : "Store";
   if (store.unavailable) return { label: `${noun} unavailable`, title: store.unavailable, tone: "danger" };
   const title = [`Records live in the ${store.kind === "remote" ? "store named by its remote" : "store folder"} ${store.label}.`, store.location ? `Folder: ${store.location}` : ""].filter(Boolean).join("\n");
-  // Tracked files that still wait in the checkout for its next agent tool call to move them are named beside the store, since the browser lists only the store's artifacts.
+  // Tracked files that still wait in the checkout for an agent's tool call to move them are named beside the store as a warning, since the browser lists only the store's artifacts,
+  // and files that a move kept for a person to settle as a plain note, since no tool call moves them.
   const waiting = store.awaitingMove?.files;
-  if (waiting) return { label: `${noun} ${store.label} · ${plural(waiting, "file")} to move`, title: `${title}\n${store.awaitingMove.message}`, tone: "warn" };
+  const kept = store.keptInCheckout?.files;
+  const details = [title, store.awaitingMove?.message, store.keptInCheckout?.message].filter(Boolean).join("\n");
+  if (waiting) return { label: `${noun} ${store.label} · ${plural(waiting, "file")} to move`, title: details, tone: "warn" };
+  if (kept) return { label: `${noun} ${store.label} · ${plural(kept, "file")} kept in checkout`, title: details, tone: "muted" };
   return { label: `${noun} ${store.label}`, title, tone: "muted" };
 }
 
@@ -86,6 +90,7 @@ export function createRecordStoreStatus({ storeButton, storeLabel, syncButton, s
       <div class="store-dialog-body">
         ${store.unavailable ? `<p class="store-message is-danger">${escapeHtml(store.unavailable)}</p>` : ""}
         ${store.awaitingMove?.message ? `<p class="store-message is-warn">${escapeHtml(store.awaitingMove.message)}</p>` : ""}
+        ${store.keptInCheckout?.message ? `<p class="store-message" data-kept-in-checkout>${escapeHtml(store.keptInCheckout.message)}</p>` : ""}
         ${problem && status.message ? `<p class="store-message ${status.state === "conflicts" ? "is-warn" : "is-danger"}">${escapeHtml(status.message)}</p>` : ""}
         ${storeFacts(store, status)}
         ${store.kind === "project" ? "" : `<section class="store-conflicts"><h3>Saved conflicts</h3>
