@@ -311,6 +311,13 @@ The review setting decides review marks when a design is accepted: `all` marks e
 Defect repair stays outside this workflow.
 Reproduce and diagnose a defect against the existing specification, and change the specification only when the required behavior must change too.
 
+A fix to the work of a shipped initiative is a new initiative, because a shipped initiative's state is history.
+Add it with `update_roadmap` `add_initiative`, or later with `update_initiative`, and give it `corrects: { initiative, slices }` with the shipped initiative and each of its slices whose work the fix corrects.
+The roadmap Markdown shows it on the new entry as ``Corrects `reports`: `download`, `audit`.``
+Prism refuses `corrects` with `validation_failed` for an initiative that has not shipped, an unknown initiative, the entry's own id, an empty `slices` list, and a slice that the shipped initiative's record does not hold, which is every slice when that record is missing.
+Fix done work of an initiative that has not shipped inside that initiative instead, by reporting the defect on the done slice with `report_defect`, which is Planned.
+Every read of the shipped initiative that carries `shippedHistory` lists the initiatives that correct it under `laterFixes`, each as `{ initiative, title, state, slices }` with its current lifecycle state, in roadmap order.
+
 ## Project files
 
 Prism stores its configuration in `.prism/workflow.md`, and all configured paths resolve from the project root.

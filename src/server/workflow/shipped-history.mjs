@@ -313,7 +313,27 @@ async function documentChanges(projectRoot, initiative, recorded) {
 }
 
 /**
- * What a read of a shipped initiative reports: { initiative, shippedAt, message, documents, changedAfterShip }, with marked listing the documents
+ * The roadmap entries that correct a shipped initiative, in roadmap order: { initiative, title, state, slices } with each entry's derived lifecycle state.
+ * The roadmap module is loaded when this runs, because it imports this one.
+ */
+async function laterFixes(projectRoot, initiative) {
+  const bytes = await readRoadmapBytes(projectRoot);
+  if (!bytes) return [];
+  const entries = JSON.parse(bytes.toString("utf8"))?.initiatives;
+  const fixes = (Array.isArray(entries) ? entries : []).filter((entry) => entry?.corrects?.initiative === initiative && Array.isArray(entry.corrects.slices));
+  if (!fixes.length) return [];
+  const { deriveInitiative } = await import("./roadmap.mjs");
+  const config = await readWorkflowConfig(projectRoot);
+  const results = [];
+  for (const entry of fixes) {
+    const state = await deriveInitiative(projectRoot, config, entry).then((derived) => derived.state).catch(() => "envisioned");
+    results.push({ initiative: entry.id, title: entry.title, state, slices: [...entry.corrects.slices] });
+  }
+  return results;
+}
+
+/**
+ * What a read of a shipped initiative reports: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where laterFixes lists the roadmap entries that correct it, with marked listing the documents
  * this read marked when it recorded an earlier ship's documents, or null when the initiative has not shipped.
  */
 export async function shippedHistory(projectRoot, initiative) {
@@ -338,6 +358,7 @@ export async function shippedHistory(projectRoot, initiative) {
     message: shippedHistoryMessage(initiative, decision),
     documents: recorded.map((item) => item.path),
     changedAfterShip,
+    laterFixes: await laterFixes(projectRoot, initiative).catch(() => []),
     ...(marked.length ? { marked } : {})
   };
 }
