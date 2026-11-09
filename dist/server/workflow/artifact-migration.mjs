@@ -1,13 +1,13 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, rm, rmdir } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readlink, realpath, rmdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { writeAtomically } from "./artifact-store.mjs";
 import { ARTIFACT_MIGRATIONS, ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, malformedArtifactName, repositoryScope, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
 import { hasStatus, writtenStatus } from "./artifact-status.mjs";
-import { resolveLedgerFile, withArtifactStoreLock } from "./record-store.mjs";
+import { resolveArtifactFile, resolveLedgerFile, withArtifactStoreLock } from "./record-store.mjs";
 import { scheduleRecordSync } from "./record-store-sync.mjs";
 import { roadmapViewOf } from "./roadmap.mjs";
 import { generatedNotice } from "./projection.mjs";
@@ -64,33 +64,150 @@ async function holdsArtifactPaths(root, kinds) {
   return false;
 }
 
-// Whether every folder from the checkout's root down to a file is a real folder, never a symbolic link, so the move never reads through one.
-async function realFolders(root, file, cache) {
-  let current = "";
-  for (const name of file.split("/").slice(0, -1)) {
-    current = current === "" ? name : `${current}/${name}`;
-    if (!cache.has(current)) cache.set(current, await lstat(path.join(root, ...current.split("/"))).then((info) => info.isDirectory(), () => false));
-    if (!cache.get(current)) return false;
-  }
-  return true;
-}
-
-// The size of a checkout file, read without following a symbolic link, or null when it is gone or is no regular file.
-async function checkoutSize(root, file) {
-  const info = await lstat(path.join(root, ...file.split("/"))).catch(() => null);
-  return info?.isFile() ? info.size : null;
-}
-
-// The bytes of a checkout file, read without following a symbolic link, or null when it is gone, is no regular file, or holds more than max bytes, so no read takes more than that.
-async function checkoutBytes(root, file, max = Infinity) {
+// The bytes of a store file, read without following a symbolic link, or null when it is gone, is no regular file, or holds more than max bytes, so no read takes more than that.
+async function fileBytes(folder, file, max = Infinity) {
   let handle;
-  try { handle = await open(path.join(root, ...file.split("/")), constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
-  catch (error) { if (["ENOENT", "ENOTDIR", "ELOOP"].includes(error.code)) return null; throw error; }
+  try { handle = await open(path.join(folder, ...file.split("/")), READ_FLAGS); }
+  catch (error) { if (GONE.includes(error.code)) return null; throw error; }
   try {
     const info = await handle.stat();
     if (!info.isFile() || info.size > max) return null;
     return await handle.readFile();
   } finally { await handle.close(); }
+}
+
+/*
+ * A checkout's files are read into the store and removed only while each lies inside the checkout through real folders, so a folder swapped for a symbolic link
+ * at any point of a move makes the move pass over the files below it rather than read or remove files outside the checkout.
+ * Node has no openat or unlinkat. On Linux, a path below /proc/self/fd/<n> resolves inside the folder that the descriptor holds open, as openat would,
+ * and that link reads as the folder's real path at that moment, so each file is opened and removed through its folder held open,
+ * after the folder's real path is confirmed to be its place below the checkout's real path; the window that remains is the one system call between that confirmation
+ * and the open or unlink, in which the held folder could be renamed out of the checkout, so the move could read or remove only the file it decided on, never one that was outside the checkout.
+ * Elsewhere, each folder from the checkout's root down is checked by path to be a real folder before and after the file is opened and right before it is removed,
+ * and the file at the path must be the file opened, so the window is the one system call between the last check and the open or unlink.
+ * A removal also checks, right before the unlink, that the folder's entry is still the file whose bytes it hashed, unchanged; the window there is one system call,
+ * in which a file saved at the same path inside the checkout could be removed in its place.
+ */
+const READ_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0);
+const FOLDER_FLAGS = constants.O_RDONLY | (constants.O_DIRECTORY || 0);
+const GONE = ["ENOENT", "ENOTDIR", "ELOOP"];
+// The folders a checkout's access holds open at once, the most recently used ones, so a move of many folders never runs out of descriptors.
+const FOLDERS_OPEN_MAX = 16;
+let heldFolders = null;
+// Whether /proc/self/fd names the folders a process holds open, which Linux provides.
+function holdsFolders() {
+  heldFolders ??= (async () => {
+    if (process.platform !== "linux") return false;
+    let handle;
+    try { handle = await open("/", FOLDER_FLAGS); return await readlink(`/proc/self/fd/${handle.fd}`) === "/"; }
+    catch { return false; }
+    finally { await handle?.close().catch(() => {}); }
+  })();
+  return heldFolders;
+}
+
+const sameFile = (left, right) => right !== null && left.dev === right.dev && left.ino === right.ino;
+const unchangedFile = (left, right) => sameFile(left, right) && left.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
+
+/**
+ * Access to a checkout's files that reads and removes a file only while it lies inside the checkout through real folders:
+ * { read(file, max), remove(file, { version, size }), removeFolder(folder), close() }.
+ * read returns { size, bytes } with bytes null above max, or null when the file is gone, is no regular file, or does not lie inside the checkout through real folders;
+ * remove returns "removed", "gone" when it already left its folder, or "changed" when it holds other bytes, is no regular file, or does not lie inside the checkout through real folders.
+ */
+async function checkoutFiles(root) {
+  const real = await realpath(root);
+  const linked = await holdsFolders();
+  const handles = new Map();
+  const placeOf = (folder) => folder === "" ? real : path.join(real, ...folder.split("/"));
+  const parts = (file) => { const names = file.split("/"); return { folder: names.slice(0, -1).join("/"), name: names.at(-1) }; };
+  const release = async (folder) => { const handle = handles.get(folder); handles.delete(folder); await handle?.close().catch(() => {}); };
+  const hold = async (folder) => {
+    const handle = await open(placeOf(folder), FOLDER_FLAGS);
+    handles.set(folder, handle);
+    while (handles.size > FOLDERS_OPEN_MAX) await release(handles.keys().next().value);
+    return handle;
+  };
+  // A path that resolves inside the folder at its place right now; "gone" when no folder is there; null when what is there is no real folder at its place.
+  const placed = async (folder) => {
+    const place = placeOf(folder);
+    if (linked) {
+      for (const fresh of [false, true]) {
+        let handle = fresh ? null : handles.get(folder);
+        if (handle) { handles.delete(folder); handles.set(folder, handle); }
+        else {
+          if (fresh) await release(folder);
+          try { handle = await hold(folder); } catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return "gone"; if (error.code === "ELOOP") return null; throw error; }
+        }
+        const prefix = `/proc/self/fd/${handle.fd}`;
+        if (await readlink(prefix).catch(() => null) === place) return prefix;
+        // A folder held from an earlier file can have been replaced by another real folder since, which a fresh open finds.
+      }
+      return null;
+    }
+    let current = real;
+    for (const name of folder === "" ? [] : folder.split("/")) {
+      current = path.join(current, name);
+      const info = await lstat(current).catch(() => null);
+      if (info === null || !(info.isDirectory() || info.isSymbolicLink())) return "gone";
+      if (!info.isDirectory()) return null;
+    }
+    return await realpath(place).catch(() => null) === place ? place : null;
+  };
+  // The file opened without following a link, confirmed afterwards to be the file at its path in its folder at its place: { state: "open", ... }, or { state: "gone" | "outside" }.
+  const opened = async (file) => {
+    const { folder, name } = parts(file);
+    const prefix = await placed(folder);
+    if (prefix === "gone") return { state: "gone" };
+    if (prefix === null) return { state: "outside" };
+    const entry = `${prefix}/${name}`;
+    let handle;
+    try { handle = await open(entry, READ_FLAGS); }
+    catch (error) { if (error.code === "ENOENT") return { state: "gone" }; if (GONE.includes(error.code)) return { state: "outside" }; throw error; }
+    const info = await handle.stat({ bigint: true });
+    if (info.isFile() && await placed(folder) === prefix && sameFile(info, await lstat(entry, { bigint: true }).catch(() => null))) return { state: "open", handle, info, folder, prefix, entry };
+    await handle.close();
+    return { state: info.isFile() ? "outside" : "gone" };
+  };
+  return {
+    async read(file, max = Infinity) {
+      const found = await opened(file);
+      if (found.state !== "open") return null;
+      try {
+        const size = Number(found.info.size);
+        if (size > max) return { size, bytes: null };
+        const bytes = await found.handle.readFile();
+        return bytes.length > max ? { size: bytes.length, bytes: null } : { size: bytes.length, bytes };
+      } finally { await found.handle.close(); }
+    },
+    async remove(file, { version, size }) {
+      const found = await opened(file);
+      if (found.state !== "open") return found.state === "gone" ? "gone" : "changed";
+      try {
+        if (Number(found.info.size) !== size) return "changed";
+        const bytes = await found.handle.readFile();
+        const read = await found.handle.stat({ bigint: true });
+        if (bytes.length !== size || artifactVersion(bytes) !== version || !unchangedFile(found.info, read)) return "changed";
+        // Right before the unlink, the folder is still the real folder at its place, and its entry is still the file just hashed, unchanged.
+        if (await placed(found.folder) !== found.prefix || !unchangedFile(read, await lstat(found.entry, { bigint: true }).catch(() => null))) return "changed";
+        try { await unlink(found.entry); } catch (error) { if (error.code === "ENOENT") return "gone"; throw error; }
+        return "removed";
+      } finally { await found.handle.close(); }
+    },
+    async removeFolder(folder) {
+      const { folder: parent, name } = parts(folder);
+      const prefix = await placed(parent);
+      if (prefix === null || prefix === "gone") return false;
+      return rmdir(`${prefix}/${name}`).then(() => true, () => false);
+    },
+    async close() { for (const folder of [...handles.keys()]) await release(folder); }
+  };
+}
+
+// Run action with a checkout's file access, and close the folders it held open afterwards.
+async function withCheckoutFiles(root, action) {
+  const access = await checkoutFiles(root);
+  try { return await action(access); } finally { await access.close(); }
 }
 
 // The ledgers of earlier moves of the repository: the locations each moved into the store, and the files each kept with their reasons.
@@ -102,7 +219,7 @@ async function readLedgers(seen) {
   catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
   for (const name of names) {
     let entry;
-    try { entry = JSON.parse((await checkoutBytes(folder, name, 64 * 1024 * 1024))?.toString("utf8") ?? "null"); }
+    try { entry = JSON.parse((await fileBytes(folder, name, 64 * 1024 * 1024))?.toString("utf8") ?? "null"); }
     catch { continue; }
     if (entry?.repository !== seen.repository) continue;
     for (const move of Array.isArray(entry.moved) ? entry.moved : []) if (typeof move?.to === "string") ledger.moved.add(move.to);
@@ -117,11 +234,12 @@ async function readLedgers(seen) {
  * and prepare({ pulled }), which returns { seen, recordSources, frozenTests }: the scopes the checkout sees, the record files that the record move takes,
  * and the frozen tests of accepted designs, which all stay in the checkout; pulled says that prepare runs right after a pull, while the store's sync lock is held.
  * pull(move) completes a pull of a synced store and, while it still holds the store's sync lock, runs move, so the move decides against no older pull;
- * it returns { pulled, state, outcome }, where outcome is what move returned, or null when the tool result already carries it, and rejects with move's error.
+ * it returns { pulled, state, outcome }, where outcome is what move returned, or null when another tool result carries it, and rejects with move's error.
+ * What move returns is a report, or a decided move whose finish() removes the checkout's moved files and returns the report; pull's caller can hand that finish to a later tool call.
  * Returns null when there is nothing to report, else { repository, store, moved, kept, untracked, ignored, references, moreReferences, ledger },
  * or { repository, store, deferred } when the pull did not complete, or { repository, store, unlisted: true } when Git cannot list the checkout's files:
  * moved lists { from, to } from checkout path to location below artifacts/, kept lists { path, reason, location?, other?, size? }, untracked lists checkout paths,
- * references lists { file, lines, more }, and ledger names the ledger file the move wrote, or null.
+ * references lists { file, lines, more }, and ledger names the ledger file the move wrote, or null; retry: true says that the ledger could not confirm some moves, whose files stay for a later move.
  */
 export async function migrateArtifacts({ root, kinds, store, repository, pull = null, prepare }) {
   const listing = await checkoutListing(root, kinds);
@@ -132,11 +250,7 @@ export async function migrateArtifacts({ root, kinds, store, repository, pull = 
     const files = listing.candidates.filter((file) => !recordSources.has(file) && !frozenTests.has(file));
     if (!files.length) return quiet(listing);
     const decided = await withArtifactStoreLock(seen, () => moveIntoStore(seen, files), MOVE_LOCK);
-    const outcome = await removeMoved(seen.root, decided);
-    await pruneCheckoutFolders(root, kinds, outcome.moved.map((move) => move.from));
-    const removed = new Set(outcome.moved.map((move) => move.from));
-    const { references, moreReferences } = await referencesOf(root, kinds, listing.tracked.filter((file) => !removed.has(file)), outcome.moved.map((move) => move.from));
-    return report(listing, { moved: outcome.moved, kept: outcome.kept, references, moreReferences, ledger: decided.ledger });
+    return { finish: () => finishMove(seen, listing, decided, report) };
   };
   if (!listing.candidates.length) return quiet(listing);
   // A pull runs only when some file's decision reads the store, so files that every move keeps or passes over never make an access wait for the remote.
@@ -148,27 +262,30 @@ export async function migrateArtifacts({ root, kinds, store, repository, pull = 
       return fresh.candidates.length ? decide(fresh, await prepare({ pulled: true })) : quiet(fresh);
     });
     if (!pulled.pulled) return { repository, store, deferred: { state: pulled.state } };
-    return pulled.outcome;
+    return finishedMove(pulled.outcome);
   }
-  return decide(listing, await prepare({ pulled: false }));
+  return finishedMove(await decide(listing, await prepare({ pulled: false })));
+}
+
+/** The report of what a move returned: a decided move is finished first, which removes its checkout files. */
+export async function finishedMove(outcome) {
+  return typeof outcome?.finish === "function" ? outcome.finish() : outcome;
 }
 
 /**
- * What decides a file before the store is read: null when the move passes over it, because it is gone from the work tree, is no regular file, or sits below a symbolic link;
+ * What decides a file before the store is read: null when the move passes over it, because it is gone from the work tree, is no regular file, or does not lie inside the checkout through real folders;
  * { address, kept, details } for a file that every move keeps whatever the store holds; { address, size, roadmap: true } for a roadmap view;
  * and otherwise { address, size, bytes, text, location }, a file that the store decides.
  * The move checks these first, and the pull is skipped only for files these keep or pass over, so a file whose decision reads the store is always decided against a pull.
  */
-async function decideLocally(root, kinds, own, file, folders) {
+async function decideLocally(access, kinds, own, file) {
   const address = artifactAddress(kinds, file);
   if (malformedArtifactName(address) !== null) return { address, kept: "name_invalid" };
-  if (!(await realFolders(root, file, folders))) return null;
-  const size = await checkoutSize(root, file);
-  if (size === null) return null;
-  if (address.kind === "roadmap") return { address, size, roadmap: true };
-  if (size > ARTIFACT_CONTENT_MAX) return { address, kept: "too_large", details: { size } };
-  const bytes = await checkoutBytes(root, file, ARTIFACT_CONTENT_MAX);
-  if (bytes === null) return null;
+  const read = await access.read(file, address.kind === "roadmap" ? 0 : ARTIFACT_CONTENT_MAX);
+  if (read === null) return null;
+  if (address.kind === "roadmap") return { address, size: read.size, roadmap: true };
+  if (read.bytes === null) return { address, kept: "too_large", details: { size: read.size } };
+  const { size, bytes } = read;
   const text = artifactText(bytes);
   if (text === null) return { address, kept: "not_text" };
   // A location that is too long keeps the file whatever the store holds, so the store is never read for it, and a copy there decides nothing.
@@ -180,18 +297,25 @@ async function decideLocally(root, kinds, own, file, folders) {
 // Whether the decision for any of the files reads the store, which a file that the move keeps or passes over before reading it never does.
 async function anyDependsOnStore(root, kinds, repository, files) {
   const own = repositoryScope(repository);
-  const folders = new Map();
-  for (const file of files) {
-    try {
-      const local = await decideLocally(root, kinds, own, file, folders);
-      if (local !== null && !local.kept) return true;
-    } catch { return true; }
-  }
-  return false;
+  try {
+    return await withCheckoutFiles(root, async (access) => {
+      for (const file of files) {
+        try {
+          const local = await decideLocally(access, kinds, own, file);
+          if (local !== null && !local.kept) return true;
+        } catch { return true; }
+      }
+      return false;
+    });
+  } catch { return true; }
 }
 
 // Decide every file, write the store copies and status records, then the ledger, all while holding the store's artifact lock; the checkout's files are removed afterwards.
-async function moveIntoStore(seen, files) {
+function moveIntoStore(seen, files) {
+  return withCheckoutFiles(seen.root, (access) => decideAndWrite(seen, access, files));
+}
+
+async function decideAndWrite(seen, access, files) {
   const own = repositoryScope(seen.repository);
   const ledger = await readLedgers(seen);
   const held = await seenArtifacts(seen);
@@ -199,13 +323,12 @@ async function moveIntoStore(seen, files) {
   for (const entry of held) heldAt.set(entry.path, [...(heldAt.get(entry.path) ?? []), entry]);
   const moved = [], kept = [], creates = [], statuses = [];
   const keep = (file, reason, details = {}) => kept.push({ path: file, reason, ...details });
-  const folders = new Map();
   for (const file of files) {
-    const local = await decideLocally(seen.root, seen.kinds, own, file, folders);
+    const local = await decideLocally(access, seen.kinds, own, file);
     if (local === null) continue;
     if (local.kept) { keep(file, local.kept, local.details); continue; }
     const { address, size, bytes, text, location } = local;
-    if (local.roadmap) { await decideRoadmapView(seen, file, address, size, { moved, keep }); continue; }
+    if (local.roadmap) { await decideRoadmapView(seen, access, file, address, size, { moved, keep }); continue; }
     const version = artifactVersion(bytes);
     const holders = heldAt.get(file) ?? [];
     // The repository's scope, or one of its component scopes, already holding the path is where the file belongs; the workspace scope holding it keeps the file apart.
@@ -232,7 +355,7 @@ async function moveIntoStore(seen, files) {
     else keep(item.file, "name_conflict", { other });
   }
   for (const batch of batches(writes)) {
-    for (const item of await createWrites(seen, batch, keep, held)) moved.push({ from: item.file, to: item.location, version: item.version, size: item.size });
+    for (const item of await createWrites(seen, access, batch, keep, held)) moved.push({ from: item.file, to: item.location, version: item.version, size: item.size });
   }
   for (const { scope, address, written } of statuses) await recordMovedStatus(seen, scope, address, written);
   const name = await writeLedger(seen, ledger, moved, kept);
@@ -254,14 +377,13 @@ function* batches(writes) {
  * Write one batch: each file's bytes are read again, so a file that changed since the decision is checked and written as it is now.
  * The writes go in as one update; when the store refuses it, such as for a folder of another letter case that holds no artifact, each goes alone against the same listing, and a refused one stays in the checkout.
  */
-async function createWrites(seen, batch, keep, held) {
+async function createWrites(seen, access, batch, keep, held) {
   const items = [];
   for (const item of batch) {
-    const size = await checkoutSize(seen.root, item.file);
-    if (size === null) continue;
-    if (size > ARTIFACT_CONTENT_MAX) { keep(item.file, "too_large", { size }); continue; }
-    const bytes = await checkoutBytes(seen.root, item.file, ARTIFACT_CONTENT_MAX);
-    if (bytes === null) continue;
+    const read = await access.read(item.file, ARTIFACT_CONTENT_MAX);
+    if (read === null) continue;
+    if (read.bytes === null) { keep(item.file, "too_large", { size: read.size }); continue; }
+    const { bytes } = read;
     const text = artifactText(bytes);
     if (text === null) { keep(item.file, "not_text"); continue; }
     items.push({ ...item, bytes, text, size: bytes.length, version: artifactVersion(bytes), ...(hasStatus(item.address.kind) ? { writtenStatus: writtenStatus(text) } : {}) });
@@ -294,9 +416,9 @@ function keepRefused(item, error, keep) {
  * with a valid stored record, the store's view is generated from it, replacing a missing or generated view and never a hand-written one,
  * and the checkout's view goes only when its bytes equal the view the store then holds.
  */
-async function decideRoadmapView(seen, file, address, size, { moved, keep }) {
+async function decideRoadmapView(seen, access, file, address, size, { moved, keep }) {
   const recordName = path.posix.basename(roadmapPaths(seen.config).record);
-  const record = await checkoutBytes(seen.store.base, "roadmap.json", 64 * 1024 * 1024).catch(() => null);
+  const record = await fileBytes(seen.store.base, "roadmap.json", 64 * 1024 * 1024).catch(() => null);
   const view = roadmapViewOf(record, recordName);
   if (view === null) { keep(file, "no_roadmap_record"); return; }
   const current = await storedArtifactIn(seen, WORKSPACE_SCOPE, address);
@@ -306,7 +428,8 @@ async function decideRoadmapView(seen, file, address, size, { moved, keep }) {
     await writeMovedView(seen, file, address, WORKSPACE_SCOPE, view, current.record?.version ?? null);
     held = Buffer.from(view, "utf8");
   }
-  const bytes = held !== null && size === held.length ? await checkoutBytes(seen.root, file, held.length) : null;
+  const read = held !== null && size === held.length ? await access.read(file, held.length) : null;
+  const bytes = read?.bytes ?? null;
   if (bytes !== null && bytes.equals(held)) moved.push({ from: file, to: current.location, version: artifactVersion(bytes), size: bytes.length });
   else keep(file, "view_differs", { location: current.location });
 }
@@ -324,29 +447,65 @@ async function writeLedger(seen, ledger, moved, kept) {
   return name;
 }
 
-// A checkout file goes only once the store and the ledger hold it, and only while it still holds the bytes the store took; a file that changed meanwhile keeps its new bytes in the checkout, beside the store's copy of the earlier ones.
-async function removeMoved(root, { moved, kept }) {
-  const done = [], stayed = [];
-  for (const move of moved) {
-    const size = await checkoutSize(root, move.from);
-    // A file already gone left the checkout, and the store holds it.
-    if (size === null) { done.push(move); continue; }
-    const current = size === move.size ? await checkoutBytes(root, move.from, move.size) : null;
-    if (current !== null && artifactVersion(current) === move.version) {
-      await rm(path.join(root, ...move.from.split("/")), { force: true });
-      done.push(move);
-    } else stayed.push({ path: move.from, reason: move.to === artifactLocation(WORKSPACE_SCOPE, { kind: "roadmap", rest: null }) ? "view_differs" : "differs", location: move.to });
+/**
+ * Finish a move whose store copies, status records, and ledger are written: a moved checkout file goes only when the move's ledger names its move and its store location still holds the bytes the store took,
+ * and only while the checkout file still holds them and lies inside the checkout through real folders; a file that changed meanwhile keeps its new bytes in the checkout, beside the store's copy of the earlier ones.
+ * A move that a retry ran in the background is finished by a later tool call in the foreground, whose result reports it, so a process that ends first leaves every file in the checkout for a later move.
+ */
+async function finishMove(seen, listing, decided, report) {
+  const ledgered = await ledgerMoves(seen, decided.ledger);
+  const confirmed = [], stayed = [];
+  let retry = false;
+  const roadmapLocation = artifactLocation(WORKSPACE_SCOPE, { kind: "roadmap", rest: null });
+  const stay = (move, reason) => stayed.push({ path: move.from, reason: move.to === roadmapLocation ? "view_differs" : reason, location: move.to });
+  for (const move of decided.moved) {
+    // A move that no ledger confirms is decided again by a later move, so its file stays in the checkout without a report.
+    if (!ledgered?.has(`${move.from}\0${move.to}`)) { retry = true; continue; }
+    const stored = await storedVersion(seen, move.to, move.size).catch(() => "other");
+    if (stored === move.version) confirmed.push(move);
+    else stay(move, stored === null ? "removed_in_store" : "differs");
   }
-  return { moved: done.map(({ from, to }) => ({ from, to })), kept: [...kept, ...stayed].sort(byPath) };
+  return withCheckoutFiles(seen.root, async (access) => {
+    const done = [];
+    for (const move of confirmed) {
+      // A file already gone left the checkout, and the store holds it.
+      if (await access.remove(move.from, move) === "changed") stay(move, "differs");
+      else done.push(move);
+    }
+    const removed = done.map((move) => move.from);
+    await pruneCheckoutFolders(access, seen.kinds, removed);
+    const gone = new Set(removed);
+    const { references, moreReferences } = await referencesOf(access, seen.kinds, listing.tracked.filter((file) => !gone.has(file)), removed);
+    return report(listing, { moved: done.map(({ from, to }) => ({ from, to })), kept: [...decided.kept, ...stayed].sort(byPath), references, moreReferences, ledger: decided.ledger, ...(retry ? { retry } : {}) });
+  });
+}
+
+// The moves that a ledger file of the repository names, as from and to joined by a null character, or null when it cannot be read.
+async function ledgerMoves(seen, name) {
+  if (name === null) return null;
+  try {
+    const file = await resolveLedgerFile(seen, name);
+    const entry = JSON.parse((await fileBytes(path.dirname(file), path.basename(file), 64 * 1024 * 1024))?.toString("utf8") ?? "null");
+    if (entry?.repository !== seen.repository || !Array.isArray(entry.moved)) return null;
+    return new Set(entry.moved.map((move) => `${move?.from}\0${move?.to}`));
+  } catch { return null; }
+}
+
+// The version of the store's copy at a location below artifacts/: null when no file is there, and "other" for a file of another size, so no read takes more than the moved file's size.
+async function storedVersion(seen, location, size) {
+  const file = await resolveArtifactFile(seen, location);
+  const info = await lstat(file).catch((error) => { if (error.code === "ENOENT") return null; throw error; });
+  if (info === null) return null;
+  const bytes = info.isFile() && info.size === size ? await fileBytes(path.dirname(file), path.basename(file), size) : null;
+  return bytes === null ? "other" : artifactVersion(bytes);
 }
 
 // A folder that the move emptied goes, up to the configured folder, which stays.
-async function pruneCheckoutFolders(root, kinds, removed) {
+async function pruneCheckoutFolders(access, kinds, removed) {
   const tops = new Set(kinds.kinds.filter((entry) => entry.folder).map((entry) => entry.path));
   for (const file of removed) {
     for (let folder = path.posix.dirname(file); folder !== "." && folder !== "" && !tops.has(folder); folder = path.posix.dirname(folder)) {
-      try { await rmdir(path.join(root, ...folder.split("/"))); }
-      catch { break; }
+      if (!(await access.removeFolder(folder))) break;
     }
   }
 }
@@ -355,7 +514,7 @@ async function pruneCheckoutFolders(root, kinds, removed) {
  * Each tracked file left in the checkout whose text names a moved file's former path or the configured folder of a kind that lost files, as { file, lines, more },
  * with at most REFERENCE_LINES_MAX line numbers and the number of its other matching lines, at most REFERENCE_FILES_MAX files, with the count of the rest.
  */
-async function referencesOf(root, kinds, tracked, movedFiles) {
+async function referencesOf(access, kinds, tracked, movedFiles) {
   const none = { references: [], moreReferences: 0 };
   if (!movedFiles.length) return none;
   const folders = kinds.kinds.filter((entry) => entry.folder && entry.path !== "" && movedFiles.some((file) => artifactAddress(kinds, file)?.kind === entry.kind)).map((entry) => entry.path);
@@ -363,10 +522,8 @@ async function referencesOf(root, kinds, tracked, movedFiles) {
   const needles = [...new Set([...folders, ...movedFiles.filter((file) => !folders.some((folder) => file.startsWith(`${folder}/`)))])];
   const found = [];
   let more = 0;
-  const folderCache = new Map();
   for (const file of tracked) {
-    if (!(await realFolders(root, file, folderCache))) continue;
-    const bytes = await checkoutBytes(root, file, REFERENCE_BYTES_MAX).catch(() => null);
+    const bytes = (await access.read(file, REFERENCE_BYTES_MAX).catch(() => null))?.bytes ?? null;
     if (bytes === null || bytes.includes(0)) continue;
     const lines = [];
     let matching = 0;

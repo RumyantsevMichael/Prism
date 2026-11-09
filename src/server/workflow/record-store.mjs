@@ -511,6 +511,9 @@ const RETRY_WAIT_MS = 1000;
 const PULLED = new Set(["ok", "conflicts", "push_rejected", "no_upstream", "not_a_repository"]);
 // What a checkout's later accesses find once a retry in the background moved its artifacts: nothing left to move or report.
 const MOVED = Promise.resolve(null);
+// Moves that a retry ran in the background after its access stopped waiting, as { key, root, store, outcome }: the store copies, status records, and ledger are written,
+// and the checkout's files stay until the next tool call finishes the move in the foreground, removing them and reporting the move in its result.
+const backgroundMoves = [];
 function migrateArtifactsOnce(root, store, config) {
   const key = `${root}\0${store.base}`;
   if (artifactMigrations.has(key)) return artifactMigrations.get(key).then(() => null);
@@ -533,7 +536,12 @@ function migrateArtifactsOnce(root, store, config) {
   })();
   artifactMigrations.set(key, pending);
   const forget = () => { if (artifactMigrations.get(key) === pending) artifactMigrations.delete(key); };
-  pending.then((outcome) => { if (outcome?.deferred) forget(); else deferredMoves.delete(key); }, forget);
+  pending.then((outcome) => {
+    if (outcome?.deferred) forget();
+    else deferredMoves.delete(key);
+    // Moves that the ledger could not confirm wait for a later access to move again.
+    if (outcome?.retry) artifactMigrations.delete(key);
+  }, forget);
   return pending;
 }
 
@@ -557,7 +565,7 @@ const settledMove = (result) => { if (result.error) throw result.error; return r
 /**
  * Pull the store and run the move right after the pull, as pullAndMove does; a move decides only against a pull that it completed itself, never an earlier one.
  * The first access waits for its pull. After a deferral, a later access starts one retry at a time and waits for it at most RETRY_WAIT_MS;
- * a retry that ends later runs its move in the background as soon as its pull completes, and the next tool result reports what it moved.
+ * a retry that ends later runs its move in the background as soon as its pull completes, writing only the store, and the next tool call removes the checkout's files and reports them.
  */
 async function pullThenMove(root, store, key, move) {
   await prepareStoreFiles(store.base).catch(() => {});
@@ -577,14 +585,38 @@ async function pullThenMove(root, store, key, move) {
         deferredMoves.delete(key);
         artifactMigrations.set(key, MOVED);
       }
-      if (result.outcome) unreportedMoves.push({ root, store: store.base, moved: [], conflicts: [], artifacts: result.outcome });
-      return { ...result, outcome: null };
+      // An access that still waits finishes the move itself; otherwise the next tool call does.
+      const handoff = { key, root, store: store.base, outcome: result.outcome };
+      if (result.outcome) backgroundMoves.push(handoff);
+      return { ...result, handoff };
     });
   }
   let timer;
   const waited = await Promise.race([deferred.retry, new Promise((resolve) => { timer = setTimeout(resolve, RETRY_WAIT_MS, null); })]);
   clearTimeout(timer);
-  return waited ? settledMove(waited) : { pulled: false, state: deferred.state };
+  if (!waited) return { pulled: false, state: deferred.state };
+  if (!waited.handoff) return settledMove(waited);
+  // Of the accesses that waited for one retry, the first takes its move, unless a tool call already finished it.
+  const index = backgroundMoves.indexOf(waited.handoff);
+  if (index === -1) return { pulled: true, state: waited.state, outcome: null };
+  backgroundMoves.splice(index, 1);
+  return { pulled: true, state: waited.state, outcome: waited.handoff.outcome };
+}
+
+/**
+ * Finish, in the foreground of a tool call whose result reports them, the moves that a retry ran in the background:
+ * each removes a checkout file only once it confirms the file against the move's ledger and the store's bytes, and a file it cannot confirm stays in the checkout.
+ * A move that fails is tried again by a later access.
+ */
+export async function finishBackgroundMoves() {
+  const { finishedMove } = backgroundMoves.length ? await import("./artifact-migration.mjs") : {};
+  for (const handoff of backgroundMoves.splice(0)) {
+    let outcome;
+    try { outcome = await finishedMove(handoff.outcome); }
+    catch { artifactMigrations.delete(handoff.key); continue; }
+    if (outcome?.retry) artifactMigrations.delete(handoff.key);
+    if (outcome) unreportedMoves.push({ root: handoff.root, store: handoff.store, moved: [], conflicts: [], artifacts: outcome });
+  }
 }
 
 // The frozen tests of every accepted design that the store's initiative records hold, as project-relative paths; an unreadable record names none.
@@ -660,6 +692,7 @@ export function forgetMigrations() {
   migrations.clear();
   artifactMigrations.clear();
   deferredMoves.clear();
+  backgroundMoves.length = 0;
   pendingMoves.clear();
   nameChecks.clear();
 }

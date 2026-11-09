@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { checkout, cloneOf, commitFiles, eventually, exists, git, isolateGit, notes, ok, remoteFile, server, syncedWorkspace, text, workspace } from "./fixtures/workspace-artifacts.mjs";
@@ -225,4 +225,103 @@ test("with store sync on, a file whose location is too long stays in the checkou
   assert.equal(await text(path.join(api, file)), "# Long\n", "the file stays in the checkout");
   await eventually(async () => !(await exists(path.join(place.storeA, location))), 30000, "the pull of the other machine's removal");
   assert.equal(await text(path.join(api, file)), "# Long\n", "the file is still in the checkout once the store copy is gone");
+});
+
+// A slow network: every SSH connection to the store's remote waits this long, then runs the remote's command locally, so a retry's pull outlasts its access's wait.
+const slowRemote = (seconds) => ({ env: { GIT_SSH_COMMAND: `sh -c 'sleep ${seconds}; for last; do :; done; exec sh -c "$last"' x`, GIT_SSH_VARIANT: "simple" } });
+const plansIn = (store) => (file) => scoped(store, file.slice("docs/".length));
+
+// A deferred move whose retry completes its pull only after the access stopped waiting, so the move runs in the background: it returns once the move's ledger is in the store.
+async function backgroundMove(context, files) {
+  const place = await syncedWorkspace(context);
+  const api = await checkout(place.a, "api");
+  const registering = await server(context, place.a, api);
+  ok(await registering.call("get_artifact", {}));
+  await registering.close();
+  await eventually(() => remoteFile(place.remote, "repositories/api.json"), 30000, "the registration on the remote");
+  await commitFiles(api, files);
+  git(place.storeA, "remote", "set-url", "origin", path.join(place.parent, "unreachable.git"));
+  const prism = await server(context, place.a, api, slowRemote(3));
+  assert.match(notes(await prism.call("get_artifact", {})), /wait for a pull/);
+  git(place.storeA, "remote", "set-url", "origin", `ssh://git@store.example.invalid${place.remote}`);
+  await pastMigrationCache();
+  assert.match(notes(await prism.call("get_artifact", {})), /wait for a pull/, "the retry outlasts the access's wait");
+  await eventually(async () => (await ledgerNames(place.storeA)).length > 0, 60000, "the background move's ledger");
+  // The ledger is the move's last write; give the retry a moment to hand its move over.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const stored = plansIn(place.storeA);
+  for (const [file, content] of Object.entries(files)) {
+    assert.equal(await text(stored(file)), content, `the background move wrote ${file} into the store`);
+    assert.equal(await text(path.join(api, file)), content, `the background move leaves ${file} in the checkout`);
+  }
+  return { place, api, prism, stored };
+}
+
+test("with store sync on, a move that a late retry runs in the background removes the checkout's files only in the next tool call, which reports them and keeps a file edited since", async (context) => {
+  const files = { "docs/plans/reports/slice.md": "# Reports\n", "docs/plans/reports/notes.md": "# Notes\n" };
+  const { api, prism } = await backgroundMove(context, files);
+  await writeFile(path.join(api, "docs/plans/reports/notes.md"), "# Notes edited after the move\n");
+  const report = notes(await prism.call("get_artifact", {}));
+  assert.match(report, /docs\/plans\/reports\/slice\.md -> artifacts\/repositories\/api\/plans\/reports\/slice\.md/);
+  assert.equal(await exists(path.join(api, "docs/plans/reports/slice.md")), false, "the reported file left the checkout");
+  assert.match(report, /docs\/plans\/reports\/notes\.md \(differs\)/);
+  assert.doesNotMatch(report, /notes\.md -> /);
+  assert.equal(await text(path.join(api, "docs/plans/reports/notes.md")), "# Notes edited after the move\n", "the edited file stays in the checkout");
+  assert.equal(notes(await prism.call("get_artifact", {})), "", "the move is reported once");
+});
+
+test("with store sync on, a background move whose process ends before another tool call leaves every file in the checkout, and the next process moves and reports them", async (context) => {
+  const files = { "docs/plans/reports/slice.md": "# Reports\n", "docs/plans/reports/notes.md": "# Notes\n" };
+  const { place, api, prism } = await backgroundMove(context, files);
+  await prism.close();
+  for (const [file, content] of Object.entries(files)) assert.equal(await text(path.join(api, file)), content, `${file} stays in the checkout`);
+  git(place.storeA, "remote", "set-url", "origin", place.remote);
+  const report = notes(await (await server(context, place.a, api)).call("get_artifact", {}));
+  for (const file of Object.keys(files)) {
+    assert.match(report, new RegExp(`${file.replaceAll(".", "\\.")} -> artifacts/repositories/api/`), `the next process reports the move of ${file}`);
+    assert.equal(await exists(path.join(api, file)), false);
+  }
+});
+
+test("with store sync on, a folder swapped for a symbolic link before a background move is finished makes the move remove no file through it", async (context) => {
+  const files = { "docs/plans/reports/slice.md": "# Reports\n", "docs/plans/other/kept.md": "# Other\n" };
+  const { place, api, prism } = await backgroundMove(context, files);
+  // Outside the checkout, a file with the same bytes as the tracked one at the same name.
+  const outside = path.join(place.parent, "outside");
+  await mkdir(outside, { recursive: true });
+  await writeFile(path.join(outside, "slice.md"), "# Reports\n");
+  await rename(path.join(api, "docs/plans/reports"), path.join(place.parent, "reports-original"));
+  await symlink(outside, path.join(api, "docs/plans/reports"));
+  const report = notes(await prism.call("get_artifact", {}));
+  assert.equal(await text(path.join(outside, "slice.md")), "# Reports\n", "no file outside the checkout is removed");
+  assert.equal(await text(path.join(place.parent, "reports-original", "slice.md")), "# Reports\n", "nor the folder moved out of the checkout");
+  assert.doesNotMatch(report, /reports\/slice\.md -> /);
+  assert.match(report, /docs\/plans\/reports\/slice\.md \(differs\)/);
+  assert.match(report, /docs\/plans\/other\/kept\.md -> /, "a file in a real folder still moves");
+  assert.equal(await exists(path.join(api, "docs/plans/other/kept.md")), false);
+});
+
+test("a folder swapped for a symbolic link while a long move runs makes the move publish no bytes from outside the checkout and remove no file there", async (context) => {
+  const place = await workspace(context);
+  const outside = path.join(place.parent, "outside");
+  await mkdir(outside, { recursive: true });
+  await writeFile(path.join(outside, "secret.md"), "# Outside bytes\n");
+  await writeFile(path.join(outside, "same.md"), "# Same\n");
+  const files = { "docs/plans/zz/secret.md": "# Tracked\n", "docs/plans/zz/same.md": "# Same\n" };
+  for (let index = 0; index < 1000; index += 1) files[`docs/plans/aa/f${String(index).padStart(4, "0")}.md`] = `# ${index}\n`;
+  const api = await checkout(place, "api", { files });
+  const prism = await server(context, place, api);
+  // As soon as the move wrote its first store file, docs/plans/zz becomes a link to the outside folder.
+  const first = scoped(place.store, "plans/aa/f0000.md");
+  const swap = (async () => {
+    while (!(await exists(first))) await new Promise((resolve) => setTimeout(resolve, 2));
+    await rename(path.join(api, "docs/plans/zz"), path.join(place.parent, "zz-original"));
+    await symlink(outside, path.join(api, "docs/plans/zz"));
+  })();
+  const report = notes(await prism.call("get_artifact", {}));
+  await swap;
+  assert.notEqual(await text(scoped(place.store, "plans/zz/secret.md")), "# Outside bytes\n", "the store holds no bytes read through the link");
+  assert.equal(await text(path.join(outside, "secret.md")), "# Outside bytes\n");
+  assert.equal(await text(path.join(outside, "same.md")), "# Same\n", "no file outside the checkout is removed");
+  assert.doesNotMatch(report, /zz\/(secret|same)\.md -> /);
 });

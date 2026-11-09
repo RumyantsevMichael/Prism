@@ -7,7 +7,7 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { recordStoreOf, restoreMigrationReports, takeMigrationReports } from "./workflow/record-store.mjs";
+import { finishBackgroundMoves, recordStoreOf, restoreMigrationReports, takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { withCallSession } from "./workflow/slice-claims.mjs";
@@ -1201,6 +1201,8 @@ function artifactMoveNote(move) {
 async function withRecordNotes(value, argumentsValue) {
   const none = { value, written: async () => {}, unwritten: () => {} };
   if (!Array.isArray(value?.content)) return none;
+  // A move that a retry ran in the background removes the checkout's files only here, so the result that follows names every file it removed.
+  await finishBackgroundMoves().catch(() => {});
   const reports = takeMigrationReports();
   const taken = await takeSavedConflicts().catch(() => []);
   const saved = taken.filter((item) => item.record);
