@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { deliverGateAnswers } from "../../dist/hooks/deliver-gate-answers.mjs";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
-import { adrFile, browserRequest, checkout, git, isolateGit, ok, refused, requirementFile, reviewBrowser, server, text, today, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { adrFile, answerGate, browserRequest, checkout, git, isolateGit, ok, READ_ONLY, refused, requirementFile, reviewBrowser, server, text, today, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 30-38 of the workspace-artifacts design: requirement and ADR status changes only at gates answered in the browser.
 const environment = await isolateGit();
@@ -26,7 +26,10 @@ async function project(context, { named = true, host = {} } = {}) {
 }
 
 const pendingApprovals = async (review) => (await browserRequest(review, "/api/entity?ref=attention")).body.data.needsYou.filter((item) => item.type === "gate" && item.kind === "approval");
-const answer = (review, body) => browserRequest(review, "/api/gates/answer", { method: "POST", body });
+// An approval gate is answered through the review app's gate.answer action of the target approval:<id>, as every other gate is.
+const answer = (review, body) => answerGate(review, body);
+const approvalActions = (review, id, headers = {}) => browserRequest(review, `/api/actions?target=${encodeURIComponent(`approval:${id}`)}`, { headers });
+const apply = (review, body, headers = {}) => browserRequest(review, "/api/actions/apply", { method: "POST", body, headers });
 
 test("clauses 30, 31, and 32: a written status that no gate recorded is reported, the recorded one counts, and the browser shows it", async (context) => {
   const { api, prism } = await project(context);
@@ -103,6 +106,58 @@ test("clauses 33, 34, and 35: approving a requirement at its gate rewrites its s
   assert.equal(await text(path.join(api, FILE)), null, "nothing was written into the checkout");
 });
 
+test("clause 34: an approval is the gate.answer action of its approval target, under the page's origin and write session checks, and the old answer route is gone", async (context) => {
+  const { api, prism } = await project(context);
+  const created = await writeArtifact(prism, FILE, requirementFile("Billing"));
+  const gate = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: FILE, context: "Billing." }] })).artifacts[0].gate;
+  const review = await reviewBrowser(context, api);
+  const target = `approval:${gate}`;
+
+  const listed = await approvalActions(review, gate);
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  assert.equal(listed.body.target, target);
+  assert.equal(listed.body.writable, true);
+  const [action] = listed.body.actions;
+  assert.deepEqual([listed.body.actions.length, action.id, action.target, action.available, action.reason, action.revision], [1, "gate.answer", target, true, null, created.version], "the revision is the artifact's current version");
+  const [choice, note] = action.fields;
+  assert.deepEqual([choice.name, choice.options.map((option) => option.value), choice.required], ["choice", ["approve", "request-changes"], true]);
+  assert.deepEqual([note.name, note.requiredWhen], ["note", { field: "choice", values: ["request-changes"] }]);
+  assert.equal((await approvalActions(review, gate, READ_ONLY)).body.writable, false, "a tab without a write session reads the action and cannot apply it");
+
+  const body = { action: "gate.answer", target, input: { choice: "approve" }, revision: created.version };
+  const readOnly = await apply(review, body, READ_ONLY);
+  assert.deepEqual([readOnly.status, readOnly.body.code], [403, "write_forbidden"]);
+  const foreign = await apply(review, body, { Origin: "http://evil.example" });
+  assert.deepEqual([foreign.status, foreign.body.code], [403, "origin_refused"]);
+  const plain = await apply(review, JSON.stringify(body), { "Content-Type": "text/plain" });
+  assert.deepEqual([plain.status, plain.body.code], [403, "origin_refused"]);
+  const unknown = await apply(review, { ...body, target: "approval:approval-000000000000" });
+  assert.deepEqual([unknown.status, unknown.body.code], [404, "unknown_target"]);
+  const stale = await apply(review, { ...body, revision: version("older bytes") });
+  assert.deepEqual([stale.status, stale.body.code], [409, "stale_revision"]);
+  const noReason = await apply(review, { ...body, input: { choice: "request-changes" } });
+  assert.deepEqual([noReason.status, noReason.body.code, noReason.body.field], [400, "invalid_input", "note"]);
+  const unknownChoice = await apply(review, { ...body, input: { choice: "accept" } });
+  assert.deepEqual([unknownChoice.status, unknownChoice.body.code], [400, "invalid_input"]);
+  for (const old of [{ artifact: FILE, scope: "workspace", id: gate, choice: "approve", note: null }, { initiative: "reports", id: "gate-0123456789", choice: "done" }, {}, "not json"]) {
+    const gone = await browserRequest(review, "/api/gates/answer", { method: "POST", body: old });
+    assert.equal(gone.status, 404, `/api/gates/answer is gone for ${JSON.stringify(old)}`);
+  }
+  assert.equal(ok(await prism.call("get_artifact", { path: FILE })).status, "Draft", "no refused or removed request changed the status");
+
+  const answered = await apply(review, body);
+  assert.equal(answered.status, 200, JSON.stringify(answered.body));
+  const entry = answered.body.applied;
+  assert.deepEqual([entry.action, entry.target, entry.before, entry.after, entry.via], ["gate.answer", target, null, { choice: "approve", note: null }, "review-app"]);
+  assert.equal(entry.by.name, "Ada Reviewer");
+  assert.match(entry.id, /^[0-9a-f]{32}$/);
+  const read = ok(await prism.call("get_artifact", { path: FILE }));
+  assert.equal(read.status, "Approved");
+  assert.equal(read.latestAnswer.entry, entry.id, "the artifact's status record holds the applied entry");
+  const again = await apply(review, { ...body, revision: read.version });
+  assert.deepEqual([again.status, again.body.code], [404, "unknown_target"], "an answered gate is no longer a target");
+});
+
 test("clause 33: an approval gate is refused for a plan, for an ADR's acceptance, and when nothing changed since the last approval", async (context) => {
   const { api, prism } = await project(context);
   await writeArtifact(prism, "docs/plans/reports/slice.md", "# Reports\n");
@@ -124,12 +179,15 @@ test("clause 33: an approval gate is refused for a plan, for an ADR's acceptance
   assert.ok(amendment.artifacts[0].gate);
 });
 
-test("clause 36: an answer is refused when the artifact changed since the gate was asked, or when Git names no user", async (context) => {
+test("clause 36: an answer action is refused when the artifact changed since the gate was asked, or when Git names no user", async (context) => {
   const { api, prism } = await project(context);
   const created = await writeArtifact(prism, FILE, requirementFile("Billing"));
   const asked = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: FILE, context: "Billing." }] }));
   ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: FILE, expectedVersion: created.version, edits: [{ oldText: "Something is missing.", newText: "Something else is missing." }] }] }));
   const review = await reviewBrowser(context, api);
+  const [listedChanged] = (await approvalActions(review, asked.artifacts[0].gate)).body.actions;
+  assert.equal(listedChanged.available, false, "the listing shows that the artifact changed since the gate was asked");
+  assert.match(listedChanged.reason, /changed/i);
   const changed = await answer(review, { artifact: FILE, scope: "workspace", id: asked.artifacts[0].gate, choice: "approve", note: null });
   assert.equal(changed.status, 409);
   assert.equal(changed.body.code, "artifact_changed");

@@ -3,7 +3,7 @@ import os from "node:os";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { browserRequest, checkout, git, isolateGit, ok, requirementFile, reviewBrowser, server, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { answerGate, browserRequest, checkout, git, isolateGit, ok, requirementFile, reviewBrowser, server, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 39-42 of the workspace-artifacts design: people review artifact changes against the accepted version and comment through the store.
 const environment = await isolateGit();
@@ -35,7 +35,7 @@ test("clause 39: an artifact is shown against its accepted version, or as added 
   assert.deepEqual(fresh.artifact.comments, []);
 
   const asked = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: FILE, context: "Billing." }] }));
-  const answered = await browserRequest(review, "/api/gates/answer", { method: "POST", body: { artifact: FILE, scope: "workspace", id: asked.artifacts[0].gate, choice: "approve", note: null } });
+  const answered = await answerGate(review, { id: asked.artifacts[0].gate, choice: "approve" });
   assert.equal(answered.status, 200);
   const approved = ok(await prism.call("get_artifact", { path: FILE }));
   const same = await artifactView(review);

@@ -17,6 +17,8 @@ Accepting an ADR used to happen in the commit that landed its code, but store ar
 Where a repository's workflow configuration names a record store, Prism MUST record each requirement's and ADR's status in the store, and only a person's answer to a gate MAY change a recorded status.
 A status written into the file that differs from the recorded one MUST be treated as the recorded status and reported with the gate that changes it, and MUST NOT refuse the write.
 A requirement's status MUST change at an approval gate that a person answers in the review browser, and the answer MUST record who approved it and when.
+An approval answer MUST be the review app's gate answer action, applied through the action registry with the same write session and origin checks as every other gate answer, against the artifact's current version as its revision, and no other route of the review app MAY answer it.
+An applied approval MUST be recorded in the approved artifact's status record, since an approval belongs to no initiative; this partly supersedes the rule of the [review app actions ADR](review-app-actions.md) that every applied action is recorded in its initiative's or checkout's history, pending the person's acceptance of the [proposed amendment of review-app-actions.md§7](../../plans/workspace-artifacts/review-app-actions-amendment.md).
 An approval MUST apply only to the version that was asked about.
 An ADR MUST become Accepted only when a person confirms that an initiative whose contracts cite it ships, and Prism MUST record the repository and commit of every slice's latest passing verification run with it.
 Prism MUST keep each artifact's accepted version, the bytes at its latest approval, design acceptance, or ship acceptance, so a reviewer sees what changed since.
@@ -46,7 +48,7 @@ An ADR that no contract links stays Proposed until a person approves another sta
 ## Mechanism
 
 A status record beside each requirement and ADR keeps the recorded status, the pending approval gates, the accepted version, and the history of answers, and the accepted bytes are kept under their hash.
-The review browser lists pending approval gates on Attention and applies an approval by rewriting the status lines and recording the answer.
+The review browser lists pending approval gates on Attention, and the action registry offers each one as a gate answer action on its approval target, whose revision is the artifact's version; applying it rewrites the status lines, records the answer, and records the action's history entry in the status record.
 Ship reads the links in the initiative's slice designs, rewrites each cited Proposed ADR, and records the gate and the verification commits.
 
 ## Decision Log

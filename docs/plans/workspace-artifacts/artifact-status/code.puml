@@ -4,8 +4,10 @@ title artifact-status
 component "artifact-status\nwrittenStatus, askApproval, answerApproval, accepted bytes" as status
 component "store-artifacts\nstatus fields, ask_approval, accepted reads" as tools
 component "initiative\naccept_proposal accepted versions" as initiative
-component "workspace-model\nAttention, answerGate, libraries" as model
-component "review-server\n409 answers" as server
+component "workspace-model\nAttention, libraries" as model
+component "actions\napproval target, gate.answer" as actions
+component "review-server\napply route, 409 refusals" as server
+component "review page\nanswers through actions" as page
 component "attention view" as view
 component "gate-wait and wait-for-gate-answers hook" as wait
 component "mcp\nwait_for_user_gate artifact" as mcp
@@ -14,7 +16,10 @@ tools --> status
 initiative --> status
 model --> status
 server --> model
-view --> server
+server --> actions
+actions --> status
+view --> page
+page --> server
 mcp --> wait
 wait --> status
 @enduml

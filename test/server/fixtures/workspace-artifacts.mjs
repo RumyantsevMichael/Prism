@@ -152,10 +152,32 @@ export async function reviewBrowser(context, root) {
   const review = await startReviewServer({ projectRoot: root, openBrowser: async (url) => { opened.push(url); return true; } });
   context.after(() => review.close());
   await review.open([]);
+  assert.ok(opened.length, "Prism opened the review page");
   const grant = new URLSearchParams(new URL(opened.at(-1)).hash.slice(1)).get("write");
+  assert.ok(grant, "the opened URL carries a write grant in its fragment");
   const exchanged = await browserRequest(review, "/api/write-session", { method: "POST", body: { grant } });
+  assert.equal(exchanged.status, 200, `the write session exchange failed: ${JSON.stringify(exchanged.body)}`);
+  assert.equal(typeof exchanged.body.token, "string", "the exchange returns a write session token");
   review.writeHeaders = { "X-Prism-Write": exchanged.body.token };
   return review;
+}
+
+/** Request headers that take a review browser's write session away, as a tab that Prism did not open sends. */
+export const READ_ONLY = Object.freeze({ "X-Prism-Write": "" });
+
+/**
+ * Answer a gate as the review page does, through the review app's actions: list the gate.answer action of the gate's target and apply it against the revision the listing shows.
+ * An initiative's gate is the target gate:<initiative>/<id>, and a requirement's or ADR's approval gate is approval:<id>.
+ * It returns the apply response, or the listing response when the listing refuses.
+ */
+export async function answerGate(review, { initiative = null, id, choice = null, note = null }, { headers = {} } = {}) {
+  const target = initiative ? `gate:${initiative}/${id}` : `approval:${id}`;
+  const listed = await browserRequest(review, `/api/actions?target=${encodeURIComponent(target)}`, { headers });
+  if (listed.status !== 200) return listed;
+  const action = listed.body.actions.find((item) => item.id === "gate.answer");
+  assert.ok(action, `the target ${target} lists the gate.answer action`);
+  const input = { ...(choice === null ? {} : { choice }), ...(note === null ? {} : { note }) };
+  return browserRequest(review, "/api/actions/apply", { method: "POST", body: { action: "gate.answer", target, input, revision: action.revision }, headers });
 }
 
 /** One request to a review browser, with its write session when it holds one: { status, body }, with JSON bodies parsed. */

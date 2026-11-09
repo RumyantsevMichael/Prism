@@ -94,3 +94,6 @@ Prism keeps, per agent session and initiative in its private app directory, the 
 A Claude Code hook that runs before each tool use of Prism records which sub-agent made it, by tool use id, and the server reads that record for the call with the same id; on Codex the server reads the calling thread from the call's metadata.
 
 ## Decision Log
+
+- 2026-11-09: Proposed, not yet in force: the Proposed [artifact status ADR](artifact-status-at-gates.md) would partly supersede the rule that each applied action is recorded in its initiative's or checkout's history, by recording an approval of a requirement or ADR, which belongs to no initiative, in that artifact's status record.
+  It waits on the person's acceptance of the [proposed amendment of review-app-actions.md§7](../../plans/workspace-artifacts/review-app-actions-amendment.md), and until then this ADR stands unchanged.

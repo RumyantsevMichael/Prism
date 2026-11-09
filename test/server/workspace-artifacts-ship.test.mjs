@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
-import { adrFile, browserRequest, checkout, git, isolateGit, ok, refused, reviewBrowser, server, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { adrFile, answerGate, checkout, git, isolateGit, ok, refused, reviewBrowser, server, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 43 and 44 of the workspace-artifacts design: shipping after a person's confirmation accepts the initiative's Proposed ADRs.
 const environment = await isolateGit();
@@ -13,7 +13,8 @@ const CITED = "docs/ADRs/reports/storage.md";
 const REJECTED = "docs/ADRs/reports/retries.md";
 const UNCITED = "docs/ADRs/reports/caching.md";
 const CONTRACT = `# Reports\n\n## Contract\n1. \`check.mjs\` exits 0, as [the storage decision](../../ADRs/reports/storage.md) and [the retry decision](../../ADRs/reports/retries.md) require.\n\n## Changes\n- change \`check.mjs\`: exits 0 (§1).\n`;
-const answer = (review, body) => browserRequest(review, "/api/gates/answer", { method: "POST", body });
+// Every gate, an initiative's or an artifact's approval, is answered through the review app's gate.answer action.
+const answer = (review, body) => answerGate(review, body);
 
 // An initiative whose one slice cites two ADRs, has passed verification, and is done.
 async function finished(context) {
