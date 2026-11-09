@@ -11,6 +11,25 @@ const SERVER_PATH = fileURLToPath(new URL("../../../dist/server/mcp.mjs", import
 const NO_NATIVE_ASSETS = fileURLToPath(new URL("./native-manifest-unavailable.json", import.meta.url));
 
 const running = new Set();
+// A server that exits leaves running every Git process its store sync started, such as a push that still writes the remote's objects,
+// so each server leads a process group of its own, which those processes stay in, and closing it waits until that group has ended.
+const OWN_GROUP = process.platform !== "win32";
+
+// Whether any process of a group still runs; a group that has ended, or that the platform cannot signal, has none.
+function groupRuns(group) {
+  try { process.kill(-group, 0); return true; } catch { return false; }
+}
+
+// Wait until a server's process group has ended; one that runs ten seconds longer is killed.
+async function groupEnded(group) {
+  if (!OWN_GROUP) return;
+  const deadline = Date.now() + 10000;
+  while (groupRuns(group)) {
+    if (Date.now() > deadline) { try { process.kill(-group, "SIGKILL"); } catch { /* It ended meanwhile. */ } }
+    if (Date.now() > deadline + 5000) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
 
 /** Stop every server these helpers started, so a test removes its folders only after no server still writes them. */
 export async function closeServers() {
@@ -102,7 +121,7 @@ export async function registration(store, name) {
 export async function prismServer(context, root, { appFolder, hostRoot = true, env = {}, client = { name: "repository-names-test", version: "1" } } = {}) {
   const environment = isolatedEnv({ PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: NO_NATIVE_ASSETS, ...(appFolder ? { PRISM_REVIEW_APP_DIR: appFolder } : {}), ...env });
   if (hostRoot) environment.CLAUDE_PROJECT_DIR = root;
-  const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env: environment, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env: environment, stdio: ["pipe", "pipe", "pipe"], detached: OWN_GROUP });
   let stderr = "";
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -113,13 +132,16 @@ export async function prismServer(context, root, { appFolder, hostRoot = true, e
   });
   const exited = new Promise((resolve) => child.once("exit", resolve));
   // A server ends when its input closes; one that has not ended after ten seconds is killed, so a test never hangs on it.
+  // Closing ends once every process the server started has ended too, so no Git process it left still writes a folder the test removes.
   const close = async () => {
     running.delete(close);
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    child.stdin.end();
-    const timer = setTimeout(() => child.kill("SIGKILL"), 10000);
-    await exited;
-    clearTimeout(timer);
+    if (child.exitCode === null && child.signalCode === null) {
+      child.stdin.end();
+      const timer = setTimeout(() => child.kill("SIGKILL"), 10000);
+      await exited;
+      clearTimeout(timer);
+    }
+    await groupEnded(child.pid);
   };
   running.add(close);
   context.after(close);
